@@ -1,0 +1,122 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+%labels
+    Maintainer Simon M. Mudd
+    Version 1.0
+    Description lsdtt3 build and runtime environment
+
+%post
+    # -------------------------------------------------------------------------
+    # Prevent interactive prompts during apt installs
+    # -------------------------------------------------------------------------
+    export DEBIAN_FRONTEND=noninteractive
+    export TZ=UTC
+
+    apt-get update -y
+    apt-get upgrade -y
+
+    # -------------------------------------------------------------------------
+    # Core build tools
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        build-essential \
+        cmake \
+        ninja-build \
+        git \
+        pkg-config \
+        wget \
+        ca-certificates
+
+    # -------------------------------------------------------------------------
+    # GDAL — development headers and runtime binaries
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        gdal-bin \
+        libgdal-dev \
+        python3-gdal
+
+    # -------------------------------------------------------------------------
+    # FFTW3 — double precision (fftw_* API)
+    # Serial only — lsdtt3 does not use the threaded FFTW API
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        libfftw3-dev \
+        libfftw3-3
+
+    # -------------------------------------------------------------------------
+    # Eigen3 — header-only linear algebra library
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        libeigen3-dev
+
+    # -------------------------------------------------------------------------
+    # OpenCV — development headers
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        libopencv-dev
+
+    # -------------------------------------------------------------------------
+    # OpenMP — provided by GCC, but make explicit
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        libgomp1
+
+    # -------------------------------------------------------------------------
+    # Useful runtime utilities
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        python3 \
+        python3-pip \
+        less \
+        vim-tiny
+
+    # -------------------------------------------------------------------------
+    # Clean up apt cache to reduce image size
+    # -------------------------------------------------------------------------
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    # Make GDAL headers and pkg-config visible to CMake
+    export GDAL_DATA=/usr/share/gdal
+    export PROJ_LIB=/usr/share/proj
+
+    # Ensure pkg-config can find fftw3
+    export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}
+
+%runscript
+    echo "lsdtt3 build environment"
+    echo "  GCC:    $(gcc --version | head -1)"
+    echo "  CMake:  $(cmake --version | head -1)"
+    echo "  GDAL:   $(gdal-config --version)"
+    echo ""
+    echo "To build lsdtt3:"
+    echo "  mkdir build && cd build"
+    echo "  cmake .. -DCMAKE_BUILD_TYPE=Release"
+    echo "  make -j\$(nproc)"
+
+%test
+    # Verify key dependencies are present and pkg-config can find them
+    echo "--- Checking build tools ---"
+    gcc --version
+    g++ --version
+    cmake --version
+
+    echo "--- Checking GDAL ---"
+    gdal-config --version
+    gdal-config --cflags
+    gdal-config --libs
+
+    echo "--- Checking FFTW3 ---"
+    pkg-config --modversion fftw3
+    pkg-config --cflags fftw3
+    pkg-config --libs fftw3
+
+    echo "--- Checking Eigen3 ---"
+    pkg-config --modversion eigen3
+
+    echo "--- Checking OpenCV ---"
+    pkg-config --modversion opencv4 || pkg-config --modversion opencv
+
+    echo "--- All checks passed ---"
