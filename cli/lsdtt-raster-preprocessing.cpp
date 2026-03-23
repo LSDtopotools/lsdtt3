@@ -1,4 +1,4 @@
-// lsdtt_raster_preprocessing.cpp
+// lsdtt-raster-preprocessing.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -7,17 +7,29 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// lsdtt_raster_preprocessing
+// lsdtt-raster-preprocessing
 //
-// Raster preprocessing operations: hillshade, pit filling, depression
-// breaching, interior nodata filling, and rectangular clipping.
+// Raster preprocessing pipeline:
+//   1. Projection check and reprojection (if needed)
+//   2. Threshold masking
+//   3. Interior nodata filling
+//   4. Clip to maximum valid rectangle
+//   5. Depression breaching
+//   6. Pit filling
+//   7. Hillshade
+//
+// All steps after (1) operate on the reprojected raster when reprojection
+// occurs.  Output rasters receive a projection suffix when reprojected:
+//   _utm     — UTM zone of raster centre
+//   _polar   — NSIDC polar stereographic (|lat| > 75°)
+//   _lambert — custom Lambert Azimuthal Equal Area (wide-extent rasters)
 //
 // Usage:
-//   lsdtt_raster_preprocessing <path> <parameter_file>
-//   lsdtt_raster_preprocessing <parameter_file>   (path assumed to be ./)
-//   lsdtt_raster_preprocessing -h                 (print help and exit)
-//   lsdtt_raster_preprocessing -v                 (print version and exit)
-//   lsdtt_raster_preprocessing -c                 (print citation and exit)
+//   lsdtt-raster-preprocessing <path> <parameter_file>
+//   lsdtt-raster-preprocessing <parameter_file>   (path assumed to be ./)
+//   lsdtt-raster-preprocessing -h                 (print help and exit)
+//   lsdtt-raster-preprocessing -v                 (print version and exit)
+//   lsdtt-raster-preprocessing -c                 (print citation and exit)
 //
 // Parameter file format:
 //   key: value
@@ -29,13 +41,12 @@
 //   read_fname: my_dem
 //   write_path: /data/output/
 //   write_fname: my_dem_preprocessed
+//   enforce_projection: true
+//   resampling_method: cubic
+//   grid_spacing: -1
+//   allow_lambert_projection: false
 //   write_hillshade_raster: true
 //   write_fill_raster: true
-//   fill_algorithm_choice: barnes2014
-//   breach_before_fill: false
-//   write_breached_raster: false
-//   write_filled_nodata_raster: false
-//   write_clipped_rectangle_raster: false
 // -----------------------------------------------------------------------------
 
 #include <iostream>
@@ -48,12 +59,13 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
+#include "../src/core/lsdtt_raster_reproject.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 
-static const std::string k_version  = "0.1.0";
+static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 
 // -----------------------------------------------------------------------------
@@ -64,7 +76,7 @@ static void print_banner()
     std::cout
         << "=========================================================\n"
         << "|| Welcome to lsdtt3 raster preprocessing             ||\n"
-        << "|| Hillshade, filling, breaching, nodata repair        ||\n"
+        << "|| Projection, filling, breaching, nodata repair       ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                    ||\n"
         << "=========================================================\n"
         << "|| Version : " << k_version  << "\n"
@@ -77,32 +89,36 @@ static void print_banner()
 // -----------------------------------------------------------------------------
 static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
 {
-    auto is_flag = [](const std::string& s, std::initializer_list<std::string> flags)
+    auto is_flag = [](const std::string& s,
+                      std::initializer_list<std::string> flags)
     {
         for (const auto& f : flags) if (s == f) return true;
         return false;
     };
 
-    // Check for help/version/citation flags anywhere in args
     for (int i = 1; i < argc; ++i)
     {
         std::string a = argv[i];
         if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
         {
-            std::cout << "Usage: lsdtt_raster_preprocessing <path> <parameter_file>\n"
-                      << "       lsdtt_raster_preprocessing <parameter_file>\n"
-                      << "       lsdtt_raster_preprocessing -h   (this help)\n"
-                      << "       lsdtt_raster_preprocessing -v   (version)\n"
-                      << "       lsdtt_raster_preprocessing -c   (citation)\n\n"
-                      << "See docs/lsdtt_architecture.md for parameter file documentation.\n";
+            std::cout
+                << "Usage: lsdtt-raster-preprocessing <path> <parameter_file>\n"
+                << "       lsdtt-raster-preprocessing <parameter_file>\n"
+                << "       lsdtt-raster-preprocessing -h   (this help)\n"
+                << "       lsdtt-raster-preprocessing -v   (version)\n"
+                << "       lsdtt-raster-preprocessing -c   (citation)\n\n"
+                << "See docs/lsdtt_architecture.md for parameter file "
+                   "documentation.\n";
             exit(0);
         }
         if (is_flag(a, {"-v", "--version", "version", "-V"}))
         {
-            std::cout << "lsdtt_raster_preprocessing version " << k_version << "\n";
+            std::cout << "lsdtt-raster-preprocessing version "
+                      << k_version << "\n";
             exit(0);
         }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
+        if (is_flag(a, {"-c", "--cite", "citation", "-citation",
+                        "--citation"}))
         {
             std::cout << "Citation: " << k_citation << "\n";
             exit(0);
@@ -119,12 +135,10 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
     }
     else if (argc == 2)
     {
-        // Single argument — treat as filename, path = ./
         fname = argv[1];
     }
     else
     {
-        // Two (or more) arguments — first is path, second is filename
         path  = argv[1];
         fname = argv[2];
     }
@@ -133,9 +147,7 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
 }
 
 // -----------------------------------------------------------------------------
-// build_output_path
-// Returns write_path + write_fname + suffix (e.g. "_hillshade.tif")
-// The suffix should include the extension.
+// out_path — build a full output path from the param parser + suffix
 // -----------------------------------------------------------------------------
 static std::string out_path(
     const lsdtt::lsdtt_param_parser& pp,
@@ -172,6 +184,10 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     std::map<std::string, bool> bool_defaults =
     {
+        // Projection
+        {"enforce_projection",              true},
+        {"allow_lambert_projection",        false},
+
         // Output rasters
         {"write_hillshade_raster",          false},
         {"write_fill_raster",               false},
@@ -186,51 +202,87 @@ int main(int argc, char* argv[])
 
     std::map<std::string, float> float_defaults =
     {
+        // Projection
+        {"grid_spacing",             -1.0f},   // ≤ 0 = auto-detect
+
         // Hillshade
-        {"hillshade_azimuth",    315.0f},
-        {"hillshade_altitude",    45.0f},
-        {"hillshade_z_factor",     1.0f},
+        {"hillshade_azimuth",       315.0f},
+        {"hillshade_altitude",       45.0f},
+        {"hillshade_z_factor",        1.0f},
 
         // Fill
-        {"fill_min_slope",        0.0001f},
-
-        // Breach (Lindsay 2016)
-        // No numeric parameters — algorithm is parameter-free
+        {"fill_min_slope",          0.0001f},
 
         // Breach least-cost (Lindsay 2020)
-        {"breach_lc_max_cost",    std::numeric_limits<float>::max()},
+        {"breach_lc_max_cost",      std::numeric_limits<float>::max()},
         {"breach_lc_flat_increment", 0.0f},
 
         // Threshold masking
-        {"minimum_elevation",      0.0f},
-        {"maximum_elevation",  30000.0f},
+        {"minimum_elevation",        0.0f},
+        {"maximum_elevation",    30000.0f},
     };
 
     std::map<std::string, int> int_defaults =
     {
-        {"n_threads",               0},    // 0 = all available OpenMP threads
-        {"breach_lc_max_dist",   1000},    // least-cost breach search radius (pixels)
-        {"nodata_fill_max_iter", 10000},   // max iterations for nodata fill
+        {"n_threads",               0},
+        {"breach_lc_max_dist",   1000},
+        {"nodata_fill_max_iter", 10000},
+        {"warp_mem_mb",           512},    // GDALWarp working memory per thread
     };
 
     std::map<std::string, std::string> string_defaults =
     {
-        // "barnes2014" or "wang_liu" (kept for backwards compatibility)
+        // Projection
+        {"resampling_method",           "cubic"},
+
+        // Fill / breach algorithm choices
         {"fill_algorithm_choice",       "barnes2014"},
-
-        // "lindsay2016" or "least_cost" (lindsay2020)
         {"breach_algorithm_choice",     "lindsay2016"},
-
-        // "laplacian" or "iterative_weighted_average"
         {"nodata_fill_method_choice",   "laplacian"},
 
-        // "cog", "gtiff", or "same_as_input"
+        // Output format
         {"write_output_format",         "cog"},
     };
 
-    // Help map — {type, default, description, guidance}
+    // -------------------------------------------------------------------------
+    // Help map
+    // -------------------------------------------------------------------------
     std::map<std::string, std::vector<std::string>> help_map =
     {
+        // --- Projection ---
+        {"enforce_projection",
+            {"bool","true",
+             "Check and reproject the raster to a suitable projected CRS.",
+             "If true and the raster is geographic or Web Mercator, it will be "
+             "reprojected automatically before any analysis. "
+             "If false and the raster is not projected, the program exits with "
+             "an error. Default: true."}},
+        {"resampling_method",
+            {"string","cubic",
+             "GDAL resampling algorithm used during reprojection.",
+             "Accepted values: near, bilinear, cubic (default), cubicspline, "
+             "lanczos, average, mode, max, min, med, q1, q3, sum."}},
+        {"grid_spacing",
+            {"float","-1",
+             "Target grid spacing in metres after reprojection.",
+             "If negative (default), the spacing is inferred from the input "
+             "pixel size and rounded to a clean value: "
+             "≥20 m → nearest 5 m; 5–20 m → nearest 2 m; <5 m → nearest 1 m. "
+             "Set a positive value to enforce a specific spacing."}},
+        {"allow_lambert_projection",
+            {"bool","false",
+             "Use a custom Lambert Azimuthal Equal Area projection for "
+             "rasters spanning 3 or more UTM zones.",
+             "If true and the raster is very wide (≥3 UTM zones), a LAEA "
+             "projection centred on the raster is used instead of UTM. "
+             "Output files receive the suffix _lambert. Default: false."}},
+        {"warp_mem_mb",
+            {"int","512",
+             "GDALWarp working memory in MB.",
+             "Larger values reduce source tile re-reads for large rasters. "
+             "Reduce on memory-constrained systems (minimum ~64 MB)."}},
+
+        // --- Output rasters ---
         {"write_hillshade_raster",
             {"bool","false","Write a hillshade raster.",
              "Uses Zevenbergen and Thorne (1987) algorithm."}},
@@ -242,16 +294,15 @@ int main(int argc, char* argv[])
              "Use breach_algorithm_choice to select the algorithm."}},
         {"write_filled_nodata_raster",
             {"bool","false","Write a DEM with interior nodata pixels filled.",
-             "Only fills nodata pixels completely surrounded by valid data. "
-             "Edge-connected nodata (e.g. clipped boundary fringe) is left unchanged."}},
+             "Only fills nodata pixels completely surrounded by valid data."}},
         {"write_clipped_rectangle_raster",
             {"bool","false","Write a DEM clipped to the largest valid rectangle.",
-             "Finds the largest rectangle containing no nodata pixels. "
              "Consider running write_filled_nodata_raster first."}},
+
+        // --- Workflow ---
         {"breach_before_fill",
             {"bool","false","Breach depressions before filling.",
-             "Recommended for lidar DEMs: breach shallow pits first, "
-             "then fill any remaining depressions."}},
+             "Recommended for lidar DEMs."}},
         {"fill_remainder_after_breach",
             {"bool","true","Fill pits that could not be breached.",
              "Used with breach_before_fill or least-cost breaching."}},
@@ -267,39 +318,37 @@ int main(int argc, char* argv[])
             {"string","laplacian","Method for filling interior nodata pixels.",
              "laplacian: smooth Dirichlet interpolation (recommended). "
              "iterative_weighted_average: fast, good for thin voids."}},
+
+        // --- Hillshade ---
         {"hillshade_azimuth",
-            {"float","315","Sun azimuth in degrees clockwise from north.",
-             "315 = northwest (standard cartographic convention)."}},
+            {"float","315","Sun azimuth in degrees clockwise from north.",""}},
         {"hillshade_altitude",
             {"float","45","Sun altitude above horizon in degrees.",""}},
         {"hillshade_z_factor",
-            {"float","1.0","Vertical exaggeration factor for hillshade.",
-             "Use 1.0 for no exaggeration. Useful when horizontal and "
-             "vertical units differ."}},
+            {"float","1.0","Vertical exaggeration factor for hillshade.",""}},
+
+        // --- Fill / breach numeric ---
         {"fill_min_slope",
-            {"float","0.0001","Minimum slope between filled cells.",
-             "Prevents flat regions in filled DEMs. Set to 0 for exact flats."}},
+            {"float","0.0001","Minimum slope between filled cells.",""}},
         {"minimum_elevation",
-            {"float","0.0","Pixels below this elevation are set to nodata.",
-             "Useful for removing ocean pixels."}},
+            {"float","0.0","Pixels below this elevation are set to nodata.",""}},
         {"maximum_elevation",
-            {"float","30000","Pixels above this elevation are set to nodata.",
-             "Useful for removing artefacts."}},
+            {"float","30000","Pixels above this elevation are set to nodata.",""}},
         {"write_output_format",
             {"string","cog","Output raster format.",
-             "cog: Cloud Optimised GeoTIFF (default; falls back to plain GTiff "
-             "for rasters below ~262k pixels). "
+             "cog: Cloud Optimised GeoTIFF (default). "
              "gtiff: plain compressed GeoTIFF. "
-             "same_as_input: match the input raster format (e.g. ENVI bil)."}},
+             "same_as_input: match the input raster format."}},
         {"breach_lc_max_dist",
-            {"int","1000","Maximum search radius in pixels for least-cost breaching.",
-             "Pits whose outlet cannot be found within this radius are left unbreached."}},
+            {"int","1000","Maximum search radius in pixels for least-cost "
+             "breaching.",""}},
         {"breach_lc_max_cost",
-            {"float","unlimited","Maximum total elevation lowering for a breach path.",
-             "Paths more costly than this are abandoned."}},
+            {"float","unlimited","Maximum total elevation lowering for a "
+             "breach path.",""}},
     };
 
-    pp.parse_all_parameters(float_defaults, int_defaults, bool_defaults, string_defaults);
+    pp.parse_all_parameters(float_defaults, int_defaults,
+                            bool_defaults, string_defaults);
 
     auto bf  = pp.get_bool_parameters();
     auto ff  = pp.get_float_parameters();
@@ -331,14 +380,14 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
-    const std::string input_path = pp.get_full_read_path();
+    std::string active_path = pp.get_full_read_path();
 
-    std::cout << "Opening DEM: " << input_path << "\n";
+    std::cout << "Opening DEM: " << active_path << "\n";
 
     lsdtt::lsdtt_data_loader loader;
     try
     {
-        loader.open_raster(input_path);
+        loader.open_raster(active_path);
     }
     catch (const std::exception& e)
     {
@@ -349,32 +398,97 @@ int main(int argc, char* argv[])
     loader.print_raster_info();
 
     // -------------------------------------------------------------------------
-    // CRS validation — checks are in lsdtt_raster_meta::check_projected_metres()
-    // Will throw with clear messages if geographic or non-metre units
+    // Step 1 — Projection check and reprojection
+    //
+    // If the raster is geographic or Web Mercator, reproject it to the
+    // appropriate projected CRS.  All subsequent steps use the reprojected
+    // raster.  The reprojected file is written to the output directory with
+    // a projection suffix (_utm, _polar, _lambert).
+    //
+    // The existing check_projected_metres() hard-exit is replaced here by
+    // the enforce_projection parameter: if false, we still exit on geographic
+    // input (analysis cannot proceed), but give a clearer message.
     // -------------------------------------------------------------------------
-    try
     {
-        loader.get_meta().check_projected_metres();
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "\nFATAL: " << e.what() << "\n";
-        return 1;
+        std::cout << "\n--- Projection ---\n";
+
+        lsdtt::lsdtt_reproject_options proj_opts;
+        proj_opts.enforce_projection      = bf["enforce_projection"];
+        proj_opts.resampling_method       = sf["resampling_method"];
+        proj_opts.grid_spacing            = static_cast<double>(ff["grid_spacing"]);
+        proj_opts.allow_lambert_projection = bf["allow_lambert_projection"];
+        proj_opts.n_threads               = n_threads;   // shared with other steps
+        proj_opts.warp_mem_mb             = ifs["warp_mem_mb"];
+
+        lsdtt::lsdtt_reproject_result proj_result;
+        try
+        {
+            proj_result = lsdtt::lsdtt_reproject_if_needed(
+                active_path,
+                pp.get_write_path(),
+                pp.get_write_fname(),
+                loader.get_meta(),
+                proj_opts
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "\nFATAL: " << e.what() << "\n";
+            return 1;
+        }
+
+        if (proj_result.reprojected)
+        {
+            // Reload from the reprojected file for all downstream steps
+            active_path = proj_result.out_path;
+            loader.close_raster();
+            try
+            {
+                loader.open_raster(active_path);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Error reopening reprojected DEM: "
+                          << e.what() << "\n";
+                return 1;
+            }
+            std::cout << "Downstream pipeline will use: "
+                      << active_path << "\n";
+            loader.print_raster_info();
+        }
+
+        // Final CRS check — must be projected in metres at this point
+        try
+        {
+            loader.get_meta().check_projected_metres();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "\nFATAL: " << e.what() << "\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------
     // Load into CPU raster object
+    // (uses whichever file is now pointed to by active_path / loader)
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
 
+    // Build the write stem — the param-file write_fname, but if we
+    // reprojected it already has the projection suffix in active_path.
+    // For all subsequent outputs we keep the same stem so the filenames
+    // remain coherent.
+    const std::string write_stem = pp.get_write_fname();
+
     // -------------------------------------------------------------------------
-    // Threshold masking — apply before any analysis
+    // Step 2 — Threshold masking
     // -------------------------------------------------------------------------
     const float min_elev = ff["minimum_elevation"];
     const float max_elev = ff["maximum_elevation"];
     if (min_elev > 0.0f)
     {
-        std::cout << "Masking pixels below " << min_elev << " m\n";
+        std::cout << "\nMasking pixels below " << min_elev << " m\n";
         dem = lsdtt::mask_to_nodata_using_threshold(dem, min_elev, true);
     }
     if (max_elev < 30000.0f)
@@ -384,7 +498,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Interior nodata filling
+    // Step 3 — Interior nodata filling
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu nodata_filled_dem = dem;
     bool did_nodata_fill = false;
@@ -405,10 +519,10 @@ int main(int argc, char* argv[])
                 dem, nfm, ifs["nodata_fill_max_iter"], 1e-6f, n_threads
             );
 
-            std::string out = out_path(pp, "_nodata_filled.tif");
-            std::cout << "Writing: " << out << "\n";
+            std::string o = out_path(pp, "_nodata_filled.tif");
+            std::cout << "Writing: " << o << "\n";
             loader.write_full(nodata_filled_dem.get_data(),
-                              nodata_filled_dem.get_meta(), out, out_fmt);
+                              nodata_filled_dem.get_meta(), o, out_fmt);
             did_nodata_fill = true;
         }
         catch (const std::exception& e)
@@ -418,30 +532,32 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Clip to maximum valid rectangle
+    // Step 4 — Clip to maximum valid rectangle
     // -------------------------------------------------------------------------
     if (bf["write_clipped_rectangle_raster"])
     {
         std::cout << "\n--- Clip to maximum rectangle ---\n";
-        // Use nodata-filled DEM if available, otherwise raw DEM
         const lsdtt::lsdtt_raster_cpu& src = did_nodata_fill
-                                            ? nodata_filled_dem
-                                            : dem;
+                                           ? nodata_filled_dem
+                                           : dem;
         try
         {
-            lsdtt::lsdtt_raster_cpu clipped = lsdtt::clip_to_maximum_rectangle(src);
-            std::string out = out_path(pp, "_clipped_rect.tif");
-            std::cout << "Writing: " << out << "\n";
-            loader.write_full(clipped.get_data(), clipped.get_meta(), out, out_fmt);
+            lsdtt::lsdtt_raster_cpu clipped =
+                lsdtt::clip_to_maximum_rectangle(src);
+            std::string o = out_path(pp, "_clipped_rect.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(clipped.get_data(), clipped.get_meta(),
+                              o, out_fmt);
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: rectangle clipping failed: " << e.what() << "\n";
+            std::cerr << "Warning: rectangle clipping failed: "
+                      << e.what() << "\n";
         }
     }
 
     // -------------------------------------------------------------------------
-    // Breach before fill (optional preprocessing step)
+    // Step 5 — Depression breaching
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu working_dem = dem;
 
@@ -456,12 +572,13 @@ int main(int argc, char* argv[])
 
             if (algo == "least_cost")
             {
-                std::cout << "Algorithm: Lindsay (2020) least-cost breaching\n";
+                std::cout << "Algorithm: Lindsay (2020) least-cost "
+                             "breaching\n";
                 breached = lsdtt::breach_depressions_least_cost(
                     working_dem,
                     ifs["breach_lc_max_dist"],
                     ff["breach_lc_max_cost"],
-                    true,                              // min_dist
+                    true,
                     ff["breach_lc_flat_increment"],
                     bf["fill_remainder_after_breach"],
                     n_threads
@@ -469,15 +586,18 @@ int main(int argc, char* argv[])
             }
             else
             {
-                std::cout << "Algorithm: Lindsay (2016) efficient breaching\n";
-                breached = lsdtt::breach_depressions(working_dem, n_threads);
+                std::cout << "Algorithm: Lindsay (2016) efficient "
+                             "breaching\n";
+                breached = lsdtt::breach_depressions(working_dem,
+                                                     n_threads);
             }
 
             if (bf["write_breached_raster"])
             {
-                std::string out = out_path(pp, "_breached.tif");
-                std::cout << "Writing: " << out << "\n";
-                loader.write_full(breached.get_data(), breached.get_meta(), out, out_fmt);
+                std::string o = out_path(pp, "_breached.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(breached.get_data(),
+                                  breached.get_meta(), o, out_fmt);
             }
 
             if (bf["breach_before_fill"])
@@ -492,7 +612,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Pit filling
+    // Step 6 — Pit filling
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu filled_dem = working_dem;
     bool did_fill = false;
@@ -506,16 +626,13 @@ int main(int argc, char* argv[])
         {
             if (algo == "wang_liu")
             {
-                std::cout << "Algorithm: Wang and Liu (2006)\n";
-                // Wang-Liu is our old fill_pits — Barnes is now the default
-                // but we keep this for backwards compatibility
-                // Both call the same fill_pits function; Barnes is the default
-                std::cout << "Note: wang_liu selection uses Barnes (2014) "
-                          << "Priority-Flood (improved replacement).\n";
+                std::cout << "Algorithm: Wang and Liu (2006)  "
+                             "[note: routed through Barnes 2014]\n";
             }
             else
             {
-                std::cout << "Algorithm: Barnes et al. (2014) Priority-Flood\n";
+                std::cout << "Algorithm: Barnes et al. (2014) "
+                             "Priority-Flood\n";
             }
 
             filled_dem = lsdtt::fill_pits(
@@ -526,10 +643,10 @@ int main(int argc, char* argv[])
 
             if (bf["write_fill_raster"])
             {
-                std::string out = out_path(pp, "_fill.tif");
-                std::cout << "Writing: " << out << "\n";
+                std::string o = out_path(pp, "_fill.tif");
+                std::cout << "Writing: " << o << "\n";
                 loader.write_full(filled_dem.get_data(),
-                                  filled_dem.get_meta(), out, out_fmt);
+                                  filled_dem.get_meta(), o, out_fmt);
             }
             did_fill = true;
         }
@@ -540,14 +657,14 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Hillshade — computed on filled DEM if available, otherwise raw
+    // Step 7 — Hillshade
     // -------------------------------------------------------------------------
     if (bf["write_hillshade_raster"])
     {
         std::cout << "\n--- Hillshade ---\n";
-        std::cout << "Azimuth: "   << ff["hillshade_azimuth"]  << " degrees\n";
-        std::cout << "Altitude: "  << ff["hillshade_altitude"] << " degrees\n";
-        std::cout << "Z-factor: "  << ff["hillshade_z_factor"] << "\n";
+        std::cout << "Azimuth: "  << ff["hillshade_azimuth"]  << " deg\n";
+        std::cout << "Altitude: " << ff["hillshade_altitude"] << " deg\n";
+        std::cout << "Z-factor: " << ff["hillshade_z_factor"] << "\n";
 
         const lsdtt::lsdtt_raster_cpu& hs_src = did_fill
             ? filled_dem
@@ -562,9 +679,10 @@ int main(int argc, char* argv[])
                 ff["hillshade_z_factor"]
             );
 
-            std::string out = out_path(pp, "_hillshade.tif");
-            std::cout << "Writing: " << out << "\n";
-            loader.write_full(hillshade.get_data(), hillshade.get_meta(), out, out_fmt);
+            std::string o = out_path(pp, "_hillshade.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(hillshade.get_data(), hillshade.get_meta(),
+                              o, out_fmt);
         }
         catch (const std::exception& e)
         {
@@ -573,18 +691,15 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Help file
+    // Help file + parameter echo
     // -------------------------------------------------------------------------
     pp.print_help(help_map,
                   pp.get_write_fname() + "_README",
                   k_version,
                   k_citation);
 
-    // -------------------------------------------------------------------------
-    // Parameter echo
-    // -------------------------------------------------------------------------
     pp.print_parameters();
 
-    std::cout << "\nlsdtt_raster_preprocessing: done.\n";
+    std::cout << "\nlsdtt-raster-preprocessing: done.\n";
     return 0;
 }

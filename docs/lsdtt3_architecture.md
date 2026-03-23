@@ -2,7 +2,7 @@
 
 Paste this at the start of a new session to restore full context.
 
-Last updated: session 8 (lsdtt_flow_engine→lsdtt_flow_base; lsdtt_flowinfo→lsdtt_flowinfo_cpu; lsdtt_flowgraph→lsdtt_flowgraph_cpu; make_flow_base factory moved to lsdtt_flow_base.cpp in lsdtt3_cpu to avoid circular dependency)
+Last updated: session 9 (lsdtt_crs_suggest; lsdtt_raster_reproject; preprocessing pipeline v0.2.0 with projection step; CMakeLists.txt updated)
 
 ---
 
@@ -29,11 +29,13 @@ lsdtt3/
 │   │   ├── lsdtt_backend_factory.hpp/.cpp — make_raster_engine(), gpu_available()
 │   │   ├── lsdtt_param_parser.hpp/.cpp    — parameter file parser
 │   │   ├── lsdtt_flow_types.hpp           — shared flow types (header-only)
-│   │   ├── lsdtt_flow_base.hpp           — abstract D8 flow interface (header-only)
-│   │   └── lsdtt_flowgraph_cpu.hpp                      — D-inf/MFD DAG routing (stub)
+│   │   ├── lsdtt_flow_base.hpp            — abstract D8 flow interface (header-only)
+│   │   ├── lsdtt_flowgraph_cpu.hpp        — D-inf/MFD DAG routing (stub)
+│   │   ├── lsdtt_crs_suggest.hpp/.cpp     — CRS inspection and projection recommendation
+│   │   └── lsdtt_raster_reproject.hpp/.cpp — GDAL-warp reprojection + grid snapping
 │   ├── cpu/
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                    — concrete CPU raster class
-│   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                      — D8 CPU flow routing
+│   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                  — D8 CPU flow routing
 │   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp    — hillshade, moving window
 │   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp — fill, breach, nodata
 │   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp     — interior void filling
@@ -48,6 +50,8 @@ lsdtt3/
 │   ├── lsdtt-raster-preprocessing.cpp
 │   ├── lsdtt-raster-synthetic-tests.cpp
 │   └── lsdtt-test-flowinfo.cpp
+├── docs/
+│   └── preprocessing.md                  — user guide for preprocessing CLI
 ├── bin/
 ├── CMakeLists.txt
 └── README.md
@@ -64,7 +68,9 @@ Two static libraries: `lsdtt3_core` and `lsdtt3_cpu`.
 - `lsdtt_data_loader.cpp`
 - `lsdtt_backend_factory.cpp`
 - `lsdtt_param_parser.cpp`
-- *(removed — lsdtt_flow_base has no non-inline methods; factory moved to lsdtt3_cpu)
+- `lsdtt_crs_suggest.cpp`
+- `lsdtt_raster_reproject.cpp`
+- *(lsdtt_flow_base has no non-inline methods — factory lives in lsdtt3_cpu)*
 
 **`lsdtt3_cpu` sources** (`src/cpu/`):
 - `lsdtt_raster_cpu.cpp`
@@ -80,7 +86,7 @@ Two static libraries: `lsdtt3_core` and `lsdtt3_cpu`.
 `lsdtt3_cpu` and `lsdtt3_core`. OpenMP and FFTW link to `lsdtt3_cpu`.
 
 **Dependencies:**
-- GDAL — required
+- GDAL — required (`gdal_utils.h` needed for `GDALWarpAppOptions` in `lsdtt_raster_reproject`)
 - OpenMP — optional (warning if absent)
 - FFTW3 (double, `fftw3`) — optional via pkg-config
 - CUDA — optional (`-DLSDTT_GPU=ON`)
@@ -109,6 +115,11 @@ throws at runtime if FFTW not available.
 `<write_fname>_<descriptor>.tif`. If `write_fname` not set, defaults to stem
 of `read_fname`. E.g. input `my_DEM.tif` → `my_DEM_n_contributing_pixels.tif`.
 
+**Projection suffix convention** (applied by `lsdtt_raster_reproject`):
+- `_utm`     — UTM zone of raster centre
+- `_polar`   — NSIDC polar stereographic (|lat| > 75°)
+- `_lambert` — custom Lambert Azimuthal Equal Area (wide-extent rasters, opt-in)
+
 **File suffix convention:**
 CPU-specific analysis files use `_cpu` suffix: `lsdtt_raster_spectral_cpu.hpp`.
 The CPU raster class (`lsdtt_raster_cpu`) and CPU flow routing (`lsdtt_flowinfo_cpu`)
@@ -136,7 +147,7 @@ src/cpu/lsdtt_raster_cpu      ← CPU implementation
 src/gpu/lsdtt_raster_gpu      ← GPU implementation (placeholder)
 
 src/core/lsdtt_flow_base      ← abstract interface for flow routing
-src/cpu/lsdtt_flowinfo_cpu      ← CPU implementation
+src/cpu/lsdtt_flowinfo_cpu    ← CPU implementation
 src/gpu/lsdtt_flowinfo_gpu    ← GPU implementation (future)
 ```
 
@@ -151,9 +162,6 @@ make_flow_base()       →  lsdtt_flowinfo_cpu or lsdtt_flowinfo_gpu (future)
 // Flow routing: include lsdtt_flow_base.hpp, never lsdtt_flowinfo_cpu.hpp
 auto flow = lsdtt::make_flow_base(dem_data, dem_mask, meta, opts);
 // returns unique_ptr<lsdtt_flow_base>
-// currently wraps lsdtt_flowinfo_cpu; future: lsdtt_flowinfo_gpu
-flow->n_valid_cells();
-flow->upslope_nodes(flat);
 ```
 
 Any CLI written against `lsdtt_flow_base` works without modification when the
@@ -179,6 +187,106 @@ Key fields: `n_rows`, `n_cols`, `x_min`, `y_min`, `cell_size`, `no_data_value`,
     system like UTM."*
   - *"Your units are not in metres. Are you using feet? Please convert your
     raster to a unit that is not only used by lunatics."*
+
+---
+
+## lsdtt_crs_suggest
+
+Files: `src/core/lsdtt_crs_suggest.hpp/.cpp`
+
+Inspects a `lsdtt_raster_meta` and returns a `lsdtt_crs_suggestion` struct
+describing the appropriate projected CRS for analysis. Does **not** reproject —
+that is the job of `lsdtt_raster_reproject`.
+
+**Decision logic:**
+1. Already projected (non-geographic, non-Web Mercator) → return `already_projected`
+2. All four corners are unprojected to WGS84 lon/lat via `OGRCoordinateTransformation`
+3. `|centre_lat| > 75°` → NSIDC polar stereographic (EPSG:3413 north / EPSG:3976 south)
+4. Otherwise → UTM zone of centre longitude + hemisphere
+5. If raster spans ≥ 3 UTM zones: set `warn_multi_zone`, populate `laea_wkt`
+
+**Key types:**
+```cpp
+enum class CrsRecommendationType {
+    already_projected, polar_north, polar_south, utm, laea_custom
+};
+
+struct lsdtt_crs_suggestion {
+    CrsRecommendationType type;
+    std::string recommended_wkt;    // WKT for primary recommendation
+    std::string recommended_name;   // human-readable label
+    int         recommended_epsg;   // 0 for custom CRS
+    double centre_lon, centre_lat;
+    double min_lon, max_lon, min_lat, max_lat;
+    int    utm_zone_min, utm_zone_max, utm_zone_count;
+    bool   already_projected;
+    bool   warn_multi_zone;
+    std::string warning_message;
+    std::string laea_wkt;           // populated when warn_multi_zone && offer_laea
+    std::string laea_name;
+};
+```
+
+**Public API:**
+- `lsdtt_suggest_crs(meta, offer_laea=true)` → `lsdtt_crs_suggestion`
+- `lsdtt_print_crs_suggestion(sug)` — pretty-print to stdout
+
+Web Mercator (EPSG:3857) is treated as unsuitable alongside EPSG:4326 — both
+trigger the projection recommendation path.
+
+---
+
+## lsdtt_raster_reproject
+
+Files: `src/core/lsdtt_raster_reproject.hpp/.cpp`
+
+Reprojects a raster file on disk to a suitable projected CRS using `GDALWarp()`.
+Calls `lsdtt_suggest_crs()` internally. Returns a `lsdtt_reproject_result`
+containing the output path, the CRS applied, and the grid spacing used.
+
+**Key types:**
+```cpp
+struct lsdtt_reproject_options {
+    bool        enforce_projection      = true;
+    std::string resampling_method       = "cubic";
+    double      grid_spacing            = -1.0;  // ≤ 0 = auto
+    bool        allow_lambert_projection = false;
+};
+
+struct lsdtt_reproject_result {
+    bool        reprojected;
+    std::string out_path;        // empty if !reprojected
+    lsdtt_crs_suggestion suggestion;
+    double      grid_spacing_used;
+    std::string target_wkt;
+};
+```
+
+**Grid spacing snapping** (`snap_grid_spacing(pixel_m)`):
+
+| Estimated pixel size | Snapping rule |
+|---|---|
+| ≥ 20 m | nearest 5 m |
+| 5–20 m | nearest 2 m |
+| < 5 m  | nearest 1 m |
+| rounds to 0 | preserve raw pixel size (sub-metre guard) |
+| ≤ 0 after guard | clamp to 0.01 m (malformed metadata safety net) |
+
+**Output naming:** `write_path + write_stem + suffix + ".tif"`
+where suffix is `_utm`, `_polar`, or `_lambert`.
+
+**Resampling methods** (any GDAL-accepted string):
+`near`, `bilinear`, `cubic` (default), `cubicspline`, `lanczos`,
+`average`, `mode`, `max`, `min`, `med`, `q1`, `q3`, `sum`.
+
+**LAMBERT / LAEA path:**
+Only activated when `allow_lambert_projection == true` AND the raster spans
+≥ 3 UTM zones. The custom LAEA is centred on (centre_lon, centre_lat) of the
+raster. Output suffix: `_lambert`.
+
+**Public API:**
+- `lsdtt_reproject_if_needed(in_path, write_path, write_stem, meta, opts)` → `lsdtt_reproject_result`
+- `snap_grid_spacing(pixel_m)` → `double`
 
 ---
 
@@ -272,8 +380,7 @@ There are several flow-routing files. This table explains which one you need.
 | Changing `flat_index_type` (e.g. to int64_t) | `lsdtt_flow_types.hpp` | Change one typedef. All aliases follow. |
 
 **Analysis code** never needs to know about `lsdtt_flow_base`, `lsdtt_flow_types`,
-or `lsdtt_flow_base.cpp`. Those are infrastructure. The comment block at the top
-of `lsdtt_flowinfo_cpu.hpp` repeats this guidance in-source.
+or `lsdtt_flow_base.cpp`. Those are infrastructure.
 
 ---
 
@@ -282,31 +389,27 @@ of `lsdtt_flowinfo_cpu.hpp` repeats this guidance in-source.
 File: `src/core/lsdtt_flow_types.hpp` (header-only, no `.cpp`)
 
 Shared types included by both `lsdtt_flow_base.hpp` and `lsdtt_flowinfo_cpu.hpp`
-to avoid circular includes. Neither of those headers includes the other — both
-include this one.
+to avoid circular includes.
 
 **Include chain (acyclic):**
 ```
 lsdtt_flow_types.hpp         (no lsdtt3 includes — just <cstdint> etc.)
        ↑
-lsdtt_flow_base.hpp        (includes lsdtt_flow_types.hpp)
+lsdtt_flow_base.hpp          (includes lsdtt_flow_types.hpp)
        ↑
 lsdtt_flowinfo_cpu.hpp       (includes lsdtt_flow_types.hpp + lsdtt_flow_base.hpp)
        ↑
-lsdtt_flow_base.cpp       (in lsdtt3_cpu — includes lsdtt_flowinfo_cpu.hpp, no cycle)
+lsdtt_flow_base.cpp          (in lsdtt3_cpu — includes lsdtt_flowinfo_cpu.hpp, no cycle)
 ```
 
 **Contents:**
-- `flat_index_type = int32_t` — safe for grids up to ~46,340 × 46,340 (~2.15B cells).
-  **To support larger grids: change this one typedef to `int64_t`** — all aliases
-  and `k_max_flat_index` throughout the codebase track automatically.
-- `donor_count_type = uint8_t` — max 8 donors/incoming edges on regular grid;
-  correct for both D8 and MFD Kahn ordering
+- `flat_index_type = int32_t` — safe for grids up to ~46,340 × 46,340.
+  **To support larger grids: change this one typedef to `int64_t`.**
+- `donor_count_type = uint8_t`
 - `s_vector_size_type = uint32_t`
 - `k_nodata_receiver = -1`, `k_outlet_receiver = -2`, `k_no_direction = 255`
 - `k_max_flat_index` — max representable cell index for current `flat_index_type`
-- `lsdtt_flat_index_slice` — zero-copy view into s_vector; returned by
-  `upslope_nodes()`, valid for lifetime of the flow engine object
+- `lsdtt_flat_index_slice` — zero-copy view into s_vector
 - `lsdtt_flowinfo_options` — construction options shared by flow routing objects
 
 **`lsdtt_flowinfo_options` fields:**
@@ -327,29 +430,11 @@ Boundary codes: `o`=open, `n`=no-flux, `p`=periodic (symmetric pairs),
 
 File: `src/core/lsdtt_flow_base.hpp` (header-only — factory impl in src/cpu/lsdtt_flow_base.cpp)
 
-Abstract base class for D8 flow routing backends. Same role as
-`lsdtt_raster_base` for raster backends.
-
-**CLIs include this header, never `lsdtt_flowinfo_cpu.hpp` directly.**
-
-**Type aliases** (from `lsdtt_flow_types.hpp`):
-`flat_index_type`, `donor_count_type`, `s_vector_size_type`
-
-**Sentinel values** (from `lsdtt_flow_types.hpp`):
-`nodata_receiver = -1`, `outlet_receiver = -2`, `no_direction = 255`
-
-**Pure virtual methods:** full set of metadata accessors, index conversion,
-cell validity, routing queries (receiver, direction, donor count), s_vector
-queries (start, size, upslope_nodes, is_upslope_of), and iteration helpers.
-
-**`for_each_upslope_node`:** takes `const std::function<void(flat_index_type)>&`
-not a template, to enable virtual dispatch. Small runtime cost at the
-CLI/analysis boundary — acceptable.
+Abstract base class for D8 flow routing backends.
 
 **Factory function `make_flow_base()`**:
-Declared in `lsdtt_flow_base.hpp`, implemented in `lsdtt_flow_base.cpp` (lsdtt3_cpu). Currently returns `std::make_unique<lsdtt_flowinfo_cpu>`.
-When GPU backend is implemented: add `gpu_available()` branch here.
-No other files change.
+Declared in `lsdtt_flow_base.hpp`, implemented in `lsdtt_flow_base.cpp` (lsdtt3_cpu).
+Currently returns `std::make_unique<lsdtt_flowinfo_cpu>`.
 
 **Adding GPU flow routing in future:**
 1. Write `src/gpu/lsdtt_flowinfo_gpu.hpp/.cpp` implementing `lsdtt_flow_base`
@@ -376,29 +461,19 @@ first.
 ```
 
 **Build pipeline (in order):**
-1. `validate_inputs()` — dimensions, metadata, overflow guard using `k_max_flat_index`
-2. `parse_boundary_conditions()` — normalises, enforces periodic symmetry
-3. `initialise_storage()` — allocates all arrays, counts valid cells
-4. `build_receiver_graph_d8()` — steepest-descent D8; **safe to parallelise**
-   with `#pragma omp parallel for collapse(2) schedule(static)` (no write conflicts)
-5. `build_donor_count_d8()` — serial; parallel requires atomics on receiver
-6. `build_outlets()` — row-major scan, serial
+1. `validate_inputs()`
+2. `parse_boundary_conditions()`
+3. `initialise_storage()`
+4. `build_receiver_graph_d8()` — parallelisable with OMP collapse(2)
+5. `build_donor_count_d8()` — serial
+6. `build_outlets()` — serial
 7. `build_topological_order()` — Kahn's BFS, serial
-8. `build_s_vector()` — iterative DFS; serial. Parallel two-pass strategy
-   (subtree sizes → prefix sum → fill) documented in source comments
+8. `build_s_vector()` — iterative DFS, serial
 
 **s_vector contract:**
 - `s_vector_[s_vector_start_[i]] == i` — node is always first in its own slice
-- `s_vector_[start : start+size)` — all upslope nodes of `i` including `i`,
-  preorder DFS, donors sorted ascending by flat row-major index at each level
-- `is_upslope_of(candidate, target)` — O(1) interval membership test
 - `upslope_nodes(flat)` — returns zero-copy `lsdtt_flat_index_slice`
-
-**Why s_vector is D8-only:**
-D8 produces a forest of trees — one receiver per cell — so the upslope set of
-any node is a strict subtree, representable as a contiguous interval. In
-D-inf/MFD the graph is a DAG, upslope sets overlap and are fractional, and the
-interval representation breaks. See `lsdtt_flowgraph_cpu` for the DAG approach.
+- `is_upslope_of(candidate, target)` — O(1) interval membership test
 
 ---
 
@@ -409,15 +484,10 @@ File: `src/cpu/lsdtt_flowgraph_cpu.hpp` (stub — implementation pending)
 DAG-based flow routing for D-infinity and MFD. No s_vector.
 
 **Data model (CSR):**
-- `receiver_offsets_` — `n_cells+1` prefix array
-- `receiver_indices_` — flat receiver indices
-- `receiver_weights_` — `float` fractional weights summing to 1.0 per valid cell
+- `receiver_offsets_`, `receiver_indices_`, `receiver_weights_`
 - Cell `i`'s receivers: `[receiver_offsets_[i], receiver_offsets_[i+1])`
 
 **Routing methods:** `d_infinity` (Tarboton 1997), `mfd` (Quinn 1991)
-
-`flat_index_type` from `lsdtt_flow_types.hpp`. `donor_count_type = uint8_t`
-correct for Kahn ordering. MFD weight accumulation uses a separate `float` array.
 
 ---
 
@@ -428,7 +498,6 @@ All return `lsdtt_raster_cpu`. Input is never modified.
 
 **`lsdtt_raster_surface_metrics_cpu`:**
 - `compute_hillshade(raster, azimuth=315, altitude=45, z_factor=1.0)`
-  — Zevenbergen & Thorne (1987), float32 in [0,255]
 - `moving_window_mean(raster, radius=3, shape=square)`
 - `window_shape` enum: `square`, `circular`
 
@@ -441,24 +510,63 @@ All return `lsdtt_raster_cpu`. Input is never modified.
   min_dist=true, flat_increment=0, fill_remainder=true, n_threads=0)` — Lindsay 2020
 
 **`lsdtt_raster_nodata_filling_cpu`:**
-- `identify_interior_nodata(raster)` → `lsdtt_array2d<uint8_t>` (1=interior void)
-- `fill_interior_nodata(raster, method=laplacian, max_iter=10000,
-  tolerance=1e-6, n_threads=0)`
-- `clip_to_maximum_rectangle(raster)` — O(n) largest-rectangle-in-histogram
+- `identify_interior_nodata(raster)` → `lsdtt_array2d<uint8_t>`
+- `fill_interior_nodata(raster, method=laplacian, max_iter=10000, tolerance=1e-6, n_threads=0)`
+- `clip_to_maximum_rectangle(raster)`
 - `nodata_fill_method` enum: `iterative_weighted_average`, `laplacian`
 
 **`lsdtt_raster_spectral_cpu`:**
 - `wavelet_quadratic_fit(raster, lambda=100.0, n_threads=0)`
-  — FFTW double API, Gaussian kernel, conservative nodata masking
+  — FFTW double API, Gaussian kernel
   — Returns `poly_fit_coeffs{a, b, c, d, e, f}` — six `lsdtt_raster_cpu` members
-  — Fits: `z(x,y) = a*x² + b*y² + c*x*y + d*x + e*y + f`
-  — Throws if FFTW not available at build time
 
 **`lsdtt_raster_synthetic_surfaces_cpu`:**
-- Takes `lsdtt_raster_meta` or raw dimensions — no raster input, no signature change needed
+- Takes `lsdtt_raster_meta` or raw dimensions
 - Generators: uniform random, red noise, blue noise, diamond-square, periodic wave,
   global quadratic, random quadratic
-- All stochastic generators deterministic for a given seed
+
+---
+
+## lsdtt-raster-preprocessing CLI
+
+File: `cli/lsdtt-raster-preprocessing.cpp`  |  Version: 0.2.0
+
+**Preprocessing pipeline (in order):**
+1. **Projection** — detect and reproject geographic / Web Mercator rasters
+2. **Threshold masking** — remove pixels outside elevation range
+3. **Interior nodata filling** — fill enclosed voids
+4. **Clip to rectangle** — largest valid rectangle
+5. **Depression breaching** — Lindsay 2016 or Lindsay 2020 least-cost
+6. **Pit filling** — Barnes 2014 Priority-Flood
+7. **Hillshade** — Zevenbergen & Thorne 1987
+
+Steps 2–7 always operate on the (possibly reprojected) raster. If reprojection
+occurs the new file is reopened before step 2.
+
+**Projection parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `enforce_projection` | bool | true | Reproject geographic/WebMercator input automatically. If false, exit with error. |
+| `resampling_method` | string | cubic | Any GDAL warp resampling string. |
+| `grid_spacing` | float | -1 | Target grid spacing (m). ≤ 0 = auto-snap from input pixel size. |
+| `allow_lambert_projection` | bool | false | Use LAEA instead of UTM when raster spans ≥ 3 UTM zones. |
+
+**All other parameters** (unchanged from v0.1.0):
+```
+read_fname, write_fname, read_path, write_path
+write_output_format: cog / gtiff / same_as_input
+write_hillshade_raster, write_fill_raster, write_breached_raster
+write_filled_nodata_raster, write_clipped_rectangle_raster
+breach_before_fill, fill_remainder_after_breach
+fill_algorithm_choice: barnes2014 / wang_liu
+breach_algorithm_choice: lindsay2016 / least_cost
+nodata_fill_method_choice: laplacian / iterative_weighted_average
+hillshade_azimuth, hillshade_altitude, hillshade_z_factor
+fill_min_slope, minimum_elevation, maximum_elevation
+breach_lc_max_dist, breach_lc_max_cost, breach_lc_flat_increment
+n_threads, nodata_fill_max_iter
+```
 
 ---
 
@@ -467,84 +575,34 @@ All return `lsdtt_raster_cpu`. Input is never modified.
 File: `cli/lsdtt-test-flowinfo.cpp`
 
 Builds D8 flow routing from a DEM and writes diagnostic rasters. Uses
-`make_flow_base()` — compatible with
-future GPU backend without modification.
+`make_flow_base()` — compatible with future GPU backend without modification.
 
-**Includes** `lsdtt_flow_base.hpp`,
-NOT `lsdtt_flowinfo_cpu.hpp`.
+**Includes** `lsdtt_flow_base.hpp`, NOT `lsdtt_flowinfo_cpu.hpp`.
 
 **Construction pattern:**
 ```cpp
-std::unique_ptr<lsdtt::lsdtt_flow_base> flow =   
+std::unique_ptr<lsdtt::lsdtt_flow_base> flow =
     lsdtt::make_flow_base(dem_data, dem_mask, meta, fi_opts);
 flow->n_valid_cells();
-flow->s_vector_size_unchecked(flat);
+flow->upslope_nodes(flat);
 ```
 
 **Key parameters:**
 ```
-read_fname: my_dem.tif
-write_fname: my_dem
-read_path: /data/
-write_path: /output/
+read_fname, write_fname, read_path, write_path
 boundary_conditions: oooo
-breach_before_fill: false
-fill_remainder_after_breach: true
-fill_before_routing: true
-fill_algorithm_choice: barnes2014
-breach_algorithm_choice: lindsay2016
-fill_min_slope: 0.0001
-minimum_elevation: 0.0
-maximum_elevation: 30000.0
-write_n_contributing_pixels_raster: false
-write_flow_direction_raster: false
-write_donor_count_raster: false
-write_outlet_raster: false
-write_fill_raster: false
-write_breached_raster: false
+breach_before_fill, fill_remainder_after_breach, fill_before_routing
+fill_algorithm_choice, breach_algorithm_choice
+fill_min_slope, minimum_elevation, maximum_elevation
+write_n_contributing_pixels_raster, write_flow_direction_raster
+write_donor_count_raster, write_outlet_raster
+write_fill_raster, write_breached_raster
 write_output_format: cog
 n_threads: 0
 ```
 
 **Flow direction codes:**
 `0`=N `1`=NE `2`=E `3`=SE `4`=S `5`=SW `6`=W `7`=NW; outlets = `-2`
-
----
-
-## lsdtt-raster-preprocessing CLI
-
-File: `cli/lsdtt-raster-preprocessing.cpp`
-
-**Workflow order:** threshold mask → nodata fill → clip rectangle →
-breach (optional) → fill → hillshade.
-
-**Key parameters:**
-```
-read_fname: my_dem.tif
-write_fname: my_dem
-read_path: /data/
-write_path: /output/
-write_output_format: cog
-write_hillshade_raster: false
-write_fill_raster: false
-fill_algorithm_choice: barnes2014
-fill_min_slope: 0.0001
-breach_before_fill: false
-fill_remainder_after_breach: true
-write_breached_raster: false
-breach_algorithm_choice: lindsay2016
-breach_lc_max_dist: 1000
-breach_lc_max_cost: unlimited
-write_filled_nodata_raster: false
-nodata_fill_method_choice: laplacian
-write_clipped_rectangle_raster: false
-minimum_elevation: 0.0
-maximum_elevation: 30000.0
-hillshade_azimuth: 315.0
-hillshade_altitude: 45.0
-hillshade_z_factor: 1.0
-n_threads: 0
-```
 
 ---
 
@@ -581,3 +639,8 @@ n_threads: 0
 10. `src/core/` = abstract interfaces, factories, shared types, I/O only
 11. `src/cpu/` = all CPU implementations (raster and flow)
 12. `src/gpu/` = all GPU implementations
+13. `src/core/lsdtt_crs_suggest` inspects CRS; `src/core/lsdtt_raster_reproject`
+    acts on it — these are deliberately separate so suggestion logic can be used
+    without triggering I/O
+14. Reprojected rasters always receive a projection suffix (_utm / _polar / _lambert)
+    so the provenance of every output file is unambiguous from its filename
