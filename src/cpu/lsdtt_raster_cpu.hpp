@@ -104,13 +104,45 @@ public:
     // Core filtering — implement lsdtt_raster_base interface
     // -------------------------------------------------------------------------
 
-    void smooth_gaussian(double sigma)                              override;
-    void smooth_bilateral(double sigma_space, double sigma_colour)  override;
+    void smooth_gaussian(double sigma)                             override;
+    void smooth_bilateral(double sigma_space, double sigma_colour) override;
+
+
+    // -------------------------------------------------------------------------
+    // Mask consistency
+    //
+    // If a pixel has nodata in the data array, force its mask value to 0.
+    // Returns the number of mask entries changed.
+    // -------------------------------------------------------------------------
+    [[nodiscard]] std::int64_t assert_mask();
+
+
+    // -------------------------------------------------------------------------
+    // Whole-raster operations over valid pixels only (mask != 0)
+    // -------------------------------------------------------------------------
+
+    [[nodiscard]] std::int64_t count_valid_pixels() const;
+
+    [[nodiscard]] float min_value() const;
+    [[nodiscard]] float max_value() const;
+    [[nodiscard]] float mean_value() const;
+    [[nodiscard]] float median_value() const;
+    [[nodiscard]] float percentile(double p) const;   // p in [0, 100]
+    [[nodiscard]] float stddev_value() const;         // population stddev
+    [[nodiscard]] float range_value() const;
+
+    void add_value(float value);
+    void multiply_value(float factor);
+    void clip(float lower, float upper);
 
 private:
 
-    lsdtt_array2d_f  data_;
-    lsdtt_array2d_u8 mask_;
+    void validate_storage_sizes(const char* function_name) const;
+    [[nodiscard]] std::int64_t checked_cell_count(const char* function_name) const;
+    [[nodiscard]] std::vector<float> collect_valid_values() const;
+
+    lsdtt_array2d_f   data_;
+    lsdtt_array2d_u8  mask_;
     lsdtt_raster_meta meta_;
 };
 
