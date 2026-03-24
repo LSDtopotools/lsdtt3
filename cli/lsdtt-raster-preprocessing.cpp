@@ -64,6 +64,7 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -75,9 +76,9 @@ static void print_banner()
 {
     std::cout
         << "=========================================================\n"
-        << "|| Welcome to lsdtt3 raster preprocessing             ||\n"
+        << "|| Welcome to lsdtt3 raster preprocessing              ||\n"
         << "|| Projection, filling, breaching, nodata repair       ||\n"
-        << "|| Part of lsdtt3 by Simon M. Mudd                    ||\n"
+        << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
@@ -191,7 +192,9 @@ int main(int argc, char* argv[])
         // Output rasters
         {"write_hillshade_raster",          false},
         {"write_fill_raster",               false},
+        {"write_fill_diff_raster",          false},
         {"write_breached_raster",           false},
+        {"write_carve_diff_raster",         false},
         {"write_filled_nodata_raster",      false},
         {"write_clipped_rectangle_raster",  false},
 
@@ -289,9 +292,17 @@ int main(int argc, char* argv[])
         {"write_fill_raster",
             {"bool","false","Write a pit-filled DEM.",
              "Use fill_algorithm_choice to select the algorithm."}},
+        {"write_fill_diff_raster",
+            {"bool","false","Write the difference between the filled DEM and the original.",
+             "Positive values show where fill raised the surface. "
+             "Requires write_fill_raster or write_hillshade_raster to trigger filling."}},
         {"write_breached_raster",
             {"bool","false","Write a depression-breached DEM.",
              "Use breach_algorithm_choice to select the algorithm."}},
+        {"write_carve_diff_raster",
+            {"bool","false","Write the difference between the breached DEM and the original.",
+             "Negative values show where breaching lowered the surface. "
+             "Requires breach_before_fill or write_breached_raster to trigger breaching."}},
         {"write_filled_nodata_raster",
             {"bool","false","Write a DEM with interior nodata pixels filled.",
              "Only fills nodata pixels completely surrounded by valid data."}},
@@ -486,9 +497,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     const float min_elev = ff["minimum_elevation"];
     const float max_elev = ff["maximum_elevation"];
-    if (min_elev > 0.0f)
+    if (min_elev >= 0.0f)
     {
-        std::cout << "\nMasking pixels below " << min_elev << " m\n";
+        std::cout << "\nMasking pixels at or below " << min_elev << " m\n";
         dem = lsdtt::mask_to_nodata_using_threshold(dem, min_elev, true);
     }
     if (max_elev < 30000.0f)
@@ -561,7 +572,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu working_dem = dem;
 
-    if (bf["breach_before_fill"] || bf["write_breached_raster"])
+    if (bf["breach_before_fill"] || bf["write_breached_raster"] ||
+        bf["write_carve_diff_raster"])
     {
         std::cout << "\n--- Depression breaching ---\n";
         const std::string algo = sf["breach_algorithm_choice"];
@@ -600,6 +612,25 @@ int main(int argc, char* argv[])
                                   breached.get_meta(), o, out_fmt);
             }
 
+            if (bf["write_carve_diff_raster"])
+            {
+                std::cout << "Computing carve difference raster (breached - original)\n";
+                try
+                {
+                    lsdtt::lsdtt_raster_cpu carve_diff =
+                        lsdtt::algebra::raster_subtract(breached, working_dem);
+                    std::string o = out_path(pp, "_carve_diff.tif");
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(carve_diff.get_data(),
+                                      carve_diff.get_meta(), o, out_fmt);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: carve diff raster failed: "
+                              << e.what() << "\n";
+                }
+            }
+
             if (bf["breach_before_fill"])
             {
                 working_dem = breached;
@@ -617,7 +648,8 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu filled_dem = working_dem;
     bool did_fill = false;
 
-    if (bf["write_fill_raster"] || bf["write_hillshade_raster"])
+    if (bf["write_fill_raster"] || bf["write_fill_diff_raster"] ||
+        bf["write_hillshade_raster"])
     {
         std::cout << "\n--- Pit filling ---\n";
         const std::string algo = sf["fill_algorithm_choice"];
@@ -647,6 +679,25 @@ int main(int argc, char* argv[])
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(filled_dem.get_data(),
                                   filled_dem.get_meta(), o, out_fmt);
+            }
+
+            if (bf["write_fill_diff_raster"])
+            {
+                std::cout << "Computing fill difference raster (filled - original)\n";
+                try
+                {
+                    lsdtt::lsdtt_raster_cpu fill_diff =
+                        lsdtt::algebra::raster_subtract(filled_dem, working_dem);
+                    std::string o = out_path(pp, "_fill_diff.tif");
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(fill_diff.get_data(),
+                                      fill_diff.get_meta(), o, out_fmt);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: fill diff raster failed: "
+                              << e.what() << "\n";
+                }
             }
             did_fill = true;
         }
@@ -691,13 +742,8 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Help file + parameter echo
+    // Parameter echo (always) — README help file only on -h (handled above)
     // -------------------------------------------------------------------------
-    pp.print_help(help_map,
-                  pp.get_write_fname() + "_README",
-                  k_version,
-                  k_citation);
-
     pp.print_parameters();
 
     std::cout << "\nlsdtt-raster-preprocessing: done.\n";

@@ -21,9 +21,9 @@
 //   lsdtt::lsdtt_flowinfo fi(dem_data, dem_mask, meta, options);
 //
 //   // Query flow relationships:
-//   auto slice   = fi.upslope_nodes(flat);          // all upstream pixels
-//   auto rec     = fi.receiver_of_unchecked(flat);  // immediate downstream pixel
-//   bool upslope = fi.is_upslope_of(a, b);          // O(1) membership test
+//   auto slice   = fi.upslope_nodes(flat);           // all upstream pixels
+//   auto rec     = fi.receiver_of_unchecked(flat);   // immediate downstream pixel
+//   bool upslope = fi.is_upslope_of(a, b);           // O(1) membership test
 //   auto n_up    = fi.s_vector_size_unchecked(flat); // upstream pixel count
 //
 // You do not need to know about lsdtt_flow_base.hpp, lsdtt_flow_types.hpp,
@@ -62,8 +62,8 @@
 //   5  4  3
 //
 // Sentinel receiver values:
-//   nodata_receiver (-1) — cell is nodata / invalid
-//   outlet_receiver (-2) — cell drains off-grid or to a boundary outlet
+//   nodata_receiver — cell is nodata / invalid
+//   outlet_receiver — cell drains off-grid or to a boundary outlet
 //
 // s_vector contract:
 //   s_vector_[s_vector_start_[i]] == i
@@ -71,14 +71,16 @@
 //   (including i itself) in preorder DFS, donors sorted ascending by
 //   flat row-major index at each level.
 //
-// flat_index_type:
-//   Currently int32_t. Safe for grids up to ~46,340 x 46,340 (~2.15B cells).
-//   A runtime check in validate_inputs() throws clearly if this limit is
-//   exceeded. To support larger grids, change the typedef in
-//   lsdtt_flow_types.hpp — all downstream code uses the alias.
+// Indexing policy:
+//   Flat/node indices are fixed to std::int64_t.
+//   std::uint64_t is also fixed to std::int64_t.
+//   This removes flexible-type complexity for developers and supports very
+//   large DEMs, subject to memory limits and the indexing implementation of
+//   lsdtt_array2d.
 //
-//   donor_count_type (uint8_t) is correct for both D8 and MFD Kahn ordering
-//   (max 8 incoming edges on a regular grid).
+// std::uint8_t:
+//   std::uint8_t (uint8_t) is correct for D8 because a cell can have at
+//   most 8 direct donors on a regular grid.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -86,6 +88,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <string>
 #include <vector>
@@ -106,20 +109,11 @@ class lsdtt_flowinfo : public lsdtt_flow_base
 public:
 
     // -------------------------------------------------------------------------
-    // Type aliases — from lsdtt_flow_types.hpp.
-    // To widen flat_index_type to int64_t for very large grids, change the
-    // typedef in lsdtt_flow_types.hpp and recompile.
-    // validate_inputs() throws at runtime if the raster exceeds k_max_cells.
+    // Sentinel values and helper types — from lsdtt_flow_types.hpp
     // -------------------------------------------------------------------------
-    using flat_index_type    = lsdtt::flat_index_type;
-    using donor_count_type   = lsdtt::donor_count_type;
-    using s_vector_size_type = lsdtt::s_vector_size_type;
-
-    static constexpr flat_index_type nodata_receiver = lsdtt::k_nodata_receiver;
-    static constexpr flat_index_type outlet_receiver  = lsdtt::k_outlet_receiver;
-    static constexpr std::uint8_t    no_direction     = lsdtt::k_no_direction;
-
-    static constexpr std::int64_t k_max_cells = lsdtt::k_max_flat_index;
+    static constexpr std::int64_t nodata_receiver = lsdtt::k_nodata_receiver;
+    static constexpr std::int64_t outlet_receiver = lsdtt::k_outlet_receiver;
+    static constexpr std::uint8_t no_direction    = lsdtt::k_no_direction;
 
     lsdtt_flowinfo() = default;
 
@@ -137,27 +131,69 @@ public:
         const lsdtt_flowinfo_options& options = lsdtt_flowinfo_options{}
     );
 
-    void clear()    noexcept;
+    void clear() noexcept;
     void validate() const;
 
     // -------------------------------------------------------------------------
     // Object state
     // -------------------------------------------------------------------------
-    [[nodiscard]] bool empty()                const noexcept override { return mask_.size() == 0; }
-    [[nodiscard]] bool has_topological_order() const noexcept override { return has_topological_order_; }
-    [[nodiscard]] bool has_s_vector()          const noexcept override { return has_s_vector_; }
-    [[nodiscard]] bool is_acyclic()            const noexcept override { return is_acyclic_; }
+    [[nodiscard]] bool empty() const noexcept override
+    {
+        return !is_built_;
+    }
+
+    [[nodiscard]] bool has_topological_order() const noexcept override
+    {
+        return has_topological_order_;
+    }
+
+    [[nodiscard]] bool has_s_vector() const noexcept override
+    {
+        return has_s_vector_;
+    }
+
+    [[nodiscard]] bool is_acyclic() const noexcept override
+    {
+        return is_acyclic_;
+    }
 
     // -------------------------------------------------------------------------
     // Metadata
     // -------------------------------------------------------------------------
-    [[nodiscard]] const lsdtt_raster_meta& meta()       const noexcept override { return meta_; }
-    [[nodiscard]] int                      n_rows()      const noexcept override { return meta_.n_rows; }
-    [[nodiscard]] int                      n_cols()      const noexcept override { return meta_.n_cols; }
-    [[nodiscard]] double                   cell_size()   const noexcept override { return meta_.cell_size; }
-    [[nodiscard]] std::int64_t             n_valid_cells() const noexcept override { return n_valid_cells_; }
-    [[nodiscard]] std::size_t              full_grid_size() const noexcept override { return mask_.size(); }
-    [[nodiscard]] std::size_t             n_outlets()    const noexcept override { return outlets_.size(); }
+    [[nodiscard]] const lsdtt_raster_meta& meta() const noexcept override
+    {
+        return meta_;
+    }
+
+    [[nodiscard]] int n_rows() const noexcept override
+    {
+        return meta_.n_rows;
+    }
+
+    [[nodiscard]] int n_cols() const noexcept override
+    {
+        return meta_.n_cols;
+    }
+
+    [[nodiscard]] double cell_size() const noexcept override
+    {
+        return meta_.cell_size;
+    }
+
+    [[nodiscard]] std::int64_t n_valid_cells() const noexcept override
+    {
+        return n_valid_cells_;
+    }
+
+    [[nodiscard]] std::size_t full_grid_size() const noexcept override
+    {
+        return mask_.size();
+    }
+
+    [[nodiscard]] std::size_t n_outlets() const noexcept override
+    {
+        return outlets_.size();
+    }
 
     [[nodiscard]] std::string boundary_conditions() const
     {
@@ -178,36 +214,43 @@ public:
                col >= 0 && col < meta_.n_cols;
     }
 
-    [[nodiscard]] bool is_flat_in_range(flat_index_type flat) const noexcept override
+    [[nodiscard]] bool is_flat_in_range(std::int64_t flat) const noexcept override
     {
-        return flat >= 0 && static_cast<std::size_t>(flat) < mask_.size();
+        return flat >= 0 &&
+               flat < static_cast<std::int64_t>(mask_.size());
     }
 
-    [[nodiscard]] flat_index_type flat_index(int row, int col) const override;
+    [[nodiscard]] std::int64_t flat_index(int row, int col) const override;
 
-    [[nodiscard]] flat_index_type flat_index_unchecked(int row, int col) const noexcept override
+    [[nodiscard]] std::int64_t flat_index_unchecked(int row, int col) const noexcept override
     {
-        return static_cast<flat_index_type>(row) * meta_.n_cols + col;
+        return static_cast<std::int64_t>(row) *
+                   static_cast<std::int64_t>(meta_.n_cols) +
+               static_cast<std::int64_t>(col);
     }
 
-    [[nodiscard]] int row_from_flat(flat_index_type flat) const override;
+    [[nodiscard]] int row_from_flat(std::int64_t flat) const override;
 
-    [[nodiscard]] int row_from_flat_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] int row_from_flat_unchecked(std::int64_t flat) const noexcept override
     {
-        return flat / meta_.n_cols;
+        return static_cast<int>(
+            flat / static_cast<std::int64_t>(meta_.n_cols)
+        );
     }
 
-    [[nodiscard]] int col_from_flat(flat_index_type flat) const override;
+    [[nodiscard]] int col_from_flat(std::int64_t flat) const override;
 
-    [[nodiscard]] int col_from_flat_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] int col_from_flat_unchecked(std::int64_t flat) const noexcept override
     {
-        return flat % meta_.n_cols;
+        return static_cast<int>(
+            flat % static_cast<std::int64_t>(meta_.n_cols)
+        );
     }
 
     // -------------------------------------------------------------------------
     // Validity and routing queries
     // -------------------------------------------------------------------------
-    [[nodiscard]] bool is_valid_cell(flat_index_type flat) const noexcept override
+    [[nodiscard]] bool is_valid_cell(std::int64_t flat) const noexcept override
     {
         return is_flat_in_range(flat) && mask_.data()[flat] != 0;
     }
@@ -217,27 +260,27 @@ public:
         return in_bounds(row, col) && mask_(row, col) != 0;
     }
 
-    [[nodiscard]] bool             is_outlet(flat_index_type flat) const override;
-    [[nodiscard]] flat_index_type  receiver_of(flat_index_type flat) const override;
-    [[nodiscard]] std::uint8_t     receiver_dir_of(flat_index_type flat) const override;
-    [[nodiscard]] donor_count_type donor_count_of(flat_index_type flat) const override;
+    [[nodiscard]] bool             is_outlet(std::int64_t flat) const override;
+    [[nodiscard]] std::int64_t     receiver_of(std::int64_t flat) const override;
+    [[nodiscard]] std::uint8_t     receiver_dir_of(std::int64_t flat) const override;
+    [[nodiscard]] std::uint8_t donor_count_of(std::int64_t flat) const override;
 
-    [[nodiscard]] bool is_outlet_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] bool is_outlet_unchecked(std::int64_t flat) const noexcept override
     {
         return receiver_.data()[flat] == outlet_receiver;
     }
 
-    [[nodiscard]] flat_index_type receiver_of_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] std::int64_t receiver_of_unchecked(std::int64_t flat) const noexcept override
     {
         return receiver_.data()[flat];
     }
 
-    [[nodiscard]] std::uint8_t receiver_dir_of_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] std::uint8_t receiver_dir_of_unchecked(std::int64_t flat) const noexcept override
     {
         return receiver_dir_.data()[flat];
     }
 
-    [[nodiscard]] donor_count_type donor_count_of_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] std::uint8_t donor_count_of_unchecked(std::int64_t flat) const noexcept override
     {
         return donor_count_.data()[flat];
     }
@@ -252,30 +295,30 @@ public:
     // is_upslope_of(candidate, target) is O(1): it checks whether candidate's
     // position in s_vector_ falls inside target's upslope interval.
     // -------------------------------------------------------------------------
-    [[nodiscard]] flat_index_type    s_vector_start(flat_index_type flat) const override;
-    [[nodiscard]] s_vector_size_type s_vector_size(flat_index_type flat)  const override;
+    [[nodiscard]] std::int64_t       s_vector_start(std::int64_t flat) const override;
+    [[nodiscard]] std::uint64_t s_vector_size(std::int64_t flat) const override;
 
-    [[nodiscard]] flat_index_type s_vector_start_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] std::int64_t s_vector_start_unchecked(std::int64_t flat) const noexcept override
     {
         return s_vector_start_.data()[flat];
     }
 
-    [[nodiscard]] s_vector_size_type s_vector_size_unchecked(flat_index_type flat) const noexcept override
+    [[nodiscard]] std::uint64_t s_vector_size_unchecked(std::int64_t flat) const noexcept override
     {
         return s_vector_size_.data()[flat];
     }
 
-    [[nodiscard]] lsdtt_flat_index_slice upslope_nodes(flat_index_type flat) const override;
-    [[nodiscard]] lsdtt_flat_index_slice upslope_nodes(int row, int col)     const override;
+    [[nodiscard]] lsdtt_flat_index_slice upslope_nodes(std::int64_t flat) const override;
+    [[nodiscard]] lsdtt_flat_index_slice upslope_nodes(int row, int col) const override;
 
     [[nodiscard]] lsdtt_flat_index_slice upslope_nodes_unchecked(
-        flat_index_type flat
+        std::int64_t flat
     ) const noexcept override
     {
-        const flat_index_type    start = s_vector_start_.data()[flat];
-        const s_vector_size_type size  = s_vector_size_.data()[flat];
+        const std::int64_t       start = s_vector_start_.data()[flat];
+        const std::uint64_t size  = s_vector_size_.data()[flat];
 
-        if (start < 0 || size == 0)
+        if (start < 0 || size <= 0)
         {
             return lsdtt_flat_index_slice{};
         }
@@ -287,79 +330,113 @@ public:
     }
 
     [[nodiscard]] bool is_upslope_of(
-        flat_index_type candidate_flat,
-        flat_index_type target_flat
+        std::int64_t candidate_flat,
+        std::int64_t target_flat
     ) const override;
 
     [[nodiscard]] bool is_upslope_of_unchecked(
-        flat_index_type candidate_flat,
-        flat_index_type target_flat
+        std::int64_t candidate_flat,
+        std::int64_t target_flat
     ) const noexcept override
     {
-        const flat_index_type    target_start  = s_vector_start_.data()[target_flat];
-        const s_vector_size_type target_size   = s_vector_size_.data()[target_flat];
-        const flat_index_type    candidate_pos = s_vector_start_.data()[candidate_flat];
+        const std::int64_t       target_start  = s_vector_start_.data()[target_flat];
+        const std::uint64_t target_size   = s_vector_size_.data()[target_flat];
 
+        if (target_start < 0 || target_size <= 0)
+        {
+            return false;
+        }
+
+        const std::int64_t candidate_pos = s_vector_start_.data()[candidate_flat];
         const std::int64_t target_end =
-            static_cast<std::int64_t>(target_start) +
-            static_cast<std::int64_t>(target_size);
+            target_start + static_cast<std::int64_t>(target_size);
 
         return candidate_pos >= target_start &&
-               static_cast<std::int64_t>(candidate_pos) < target_end;
+               candidate_pos < target_end;
     }
 
     void for_each_upslope_node(
-        flat_index_type flat,
-        const std::function<void(flat_index_type)>& function) const override
+        std::int64_t flat,
+        const std::function<void(std::int64_t)>& function
+    ) const override
     {
         const lsdtt_flat_index_slice slice = upslope_nodes(flat);
-        for (const flat_index_type* it = slice.begin(); it != slice.end(); ++it)
+        for (const std::int64_t* it = slice.begin(); it != slice.end(); ++it)
         {
             function(*it);
         }
     }
 
     void for_each_upslope_node_unchecked(
-        flat_index_type flat,
-        const std::function<void(flat_index_type)>& function) const noexcept override
+        std::int64_t flat,
+        const std::function<void(std::int64_t)>& function
+    ) const noexcept override
     {
         const lsdtt_flat_index_slice slice = upslope_nodes_unchecked(flat);
-        for (const flat_index_type* it = slice.begin(); it != slice.end(); ++it)
+        for (const std::int64_t* it = slice.begin(); it != slice.end(); ++it)
         {
             function(*it);
         }
     }
 
     // -------------------------------------------------------------------------
+    // Source extraction
+    // -------------------------------------------------------------------------
+    [[nodiscard]] std::vector<std::int64_t>
+    get_sources_index_threshold(int threshold) const;
+
+    // -------------------------------------------------------------------------
     // Read-only array access
     // -------------------------------------------------------------------------
-    [[nodiscard]] const lsdtt_array2d_u8& mask_array()         const noexcept { return mask_; }
-    [[nodiscard]] const lsdtt_array2d_i&  receiver_array()     const noexcept { return receiver_; }
-    [[nodiscard]] const lsdtt_array2d_u8& receiver_dir_array() const noexcept { return receiver_dir_; }
-    [[nodiscard]] const lsdtt_array2d_u8& donor_count_array()  const noexcept { return donor_count_; }
+    [[nodiscard]] const lsdtt_array2d_u8& mask_array() const noexcept
+    {
+        return mask_;
+    }
 
-    [[nodiscard]] const std::vector<flat_index_type>& topological_order() const noexcept
+    [[nodiscard]] const lsdtt_array2d<std::int64_t>& receiver_array() const noexcept
+    {
+        return receiver_;
+    }
+
+    [[nodiscard]] const lsdtt_array2d_u8& receiver_dir_array() const noexcept
+    {
+        return receiver_dir_;
+    }
+
+    [[nodiscard]] const lsdtt_array2d<std::uint8_t>& donor_count_array() const noexcept
+    {
+        return donor_count_;
+    }
+
+    [[nodiscard]] const std::vector<std::int64_t>& topological_order() const noexcept
     {
         return topological_order_;
     }
 
-    [[nodiscard]] const std::vector<flat_index_type>& outlets()  const noexcept { return outlets_; }
-    [[nodiscard]] const std::vector<flat_index_type>& s_vector() const noexcept { return s_vector_; }
+    [[nodiscard]] const std::vector<std::int64_t>& outlets() const noexcept
+    {
+        return outlets_;
+    }
 
-    [[nodiscard]] const lsdtt_array2d_i& s_vector_start_array() const noexcept
+    [[nodiscard]] const std::vector<std::int64_t>& s_vector() const noexcept
+    {
+        return s_vector_;
+    }
+
+    [[nodiscard]] const lsdtt_array2d<std::int64_t>& s_vector_start_array() const noexcept
     {
         return s_vector_start_;
     }
 
-    [[nodiscard]] const lsdtt_array2d<s_vector_size_type>& s_vector_size_array() const noexcept
+    [[nodiscard]] const lsdtt_array2d<std::uint64_t>& s_vector_size_array() const noexcept
     {
         return s_vector_size_;
     }
 
 private:
 
-    void require_built()              const;
-    void require_valid_cell(flat_index_type flat) const;
+    void require_built() const;
+    void require_valid_cell(std::int64_t flat) const;
     void parse_boundary_conditions(const std::string& boundary_conditions);
 
     void validate_inputs(
@@ -397,32 +474,33 @@ private:
     // -------------------------------------------------------------------------
     // State
     // -------------------------------------------------------------------------
-    lsdtt_raster_meta      meta_;
-    std::array<char, 4>    boundary_conditions_{{ 'o', 'o', 'o', 'o' }};
+    lsdtt_raster_meta   meta_;
+    std::array<char, 4> boundary_conditions_{{'o', 'o', 'o', 'o'}};
 
     bool interior_nodata_is_outlet_ = true;
     bool has_topological_order_     = false;
     bool has_s_vector_              = false;
     bool is_acyclic_                = false;
+    bool is_built_                  = false;
 
     std::int64_t n_valid_cells_ = 0;
 
     // Full-grid arrays (all n_rows x n_cols, including nodata cells)
-    lsdtt_array2d_u8 mask_;
-    lsdtt_array2d_i  receiver_;
-    lsdtt_array2d_u8 receiver_dir_;
-    lsdtt_array2d_u8 donor_count_;
+    lsdtt_array2d_u8                 mask_;
+    lsdtt_array2d<std::int64_t>      receiver_;
+    lsdtt_array2d_u8                 receiver_dir_;
+    lsdtt_array2d<std::uint8_t>  donor_count_;
 
     // Valid-cell traversal
-    std::vector<flat_index_type> topological_order_;
-    std::vector<flat_index_type> outlets_;
+    std::vector<std::int64_t> topological_order_;
+    std::vector<std::int64_t> outlets_;
 
     // s_vector: flat preorder DFS over the drainage forest.
     // s_vector_start_[i] and s_vector_size_[i] define the contiguous interval
     // in s_vector_ that covers all upslope nodes of cell i (including i).
-    std::vector<flat_index_type>          s_vector_;
-    lsdtt_array2d_i                       s_vector_start_;
-    lsdtt_array2d<s_vector_size_type>     s_vector_size_;
+    std::vector<std::int64_t>          s_vector_;
+    lsdtt_array2d<std::int64_t>        s_vector_start_;
+    lsdtt_array2d<std::uint64_t>  s_vector_size_;
 };
 
 } // namespace lsdtt

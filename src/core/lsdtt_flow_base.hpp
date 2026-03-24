@@ -26,7 +26,7 @@
 //
 // The three flow infrastructure files and what each does:
 //
-//   lsdtt_flow_types.hpp  — shared types (flat_index_type, sentinel values,
+//   lsdtt_flow_types.hpp  — shared types (std::int64_t, sentinel values,
 //                           lsdtt_flowinfo_options, lsdtt_flat_index_slice).
 //                           Included by both this file and lsdtt_flowinfo_cpu.hpp
 //                           to avoid a circular include dependency.
@@ -47,7 +47,7 @@
 // for the flow routing layer. lsdtt_flowinfo_cpu is the CPU implementation;
 // a future lsdtt_flowinfo_gpu will be the GPU implementation.
 //
-// flat_index_type and all sentinel values come from lsdtt_flow_types.hpp —
+// std::int64_t and all sentinel values come from lsdtt_flow_types.hpp —
 // the single source of truth for flow routing types.
 //
 // Thread safety:
@@ -59,6 +59,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "lsdtt_raster_meta.hpp"
 #include "lsdtt_flow_types.hpp"
@@ -70,13 +71,6 @@ namespace lsdtt
 class lsdtt_flow_base
 {
 public:
-
-    // -------------------------------------------------------------------------
-    // Type aliases — from lsdtt_flow_types.hpp
-    // -------------------------------------------------------------------------
-    using flat_index_type    = lsdtt::flat_index_type;
-    using donor_count_type   = lsdtt::donor_count_type;
-    using s_vector_size_type = lsdtt::s_vector_size_type;
 
     // -------------------------------------------------------------------------
     // Destructor
@@ -106,38 +100,38 @@ public:
     // Index conversion
     // -------------------------------------------------------------------------
     [[nodiscard]] virtual bool in_bounds(int row, int col)        const noexcept = 0;
-    [[nodiscard]] virtual bool is_flat_in_range(flat_index_type)  const noexcept = 0;
+    [[nodiscard]] virtual bool is_flat_in_range(std::int64_t)  const noexcept = 0;
 
-    [[nodiscard]] virtual flat_index_type flat_index_unchecked(
+    [[nodiscard]] virtual std::int64_t flat_index_unchecked(
         int row, int col) const noexcept = 0;
 
     [[nodiscard]] virtual int row_from_flat_unchecked(
-        flat_index_type flat) const noexcept = 0;
+        std::int64_t flat) const noexcept = 0;
 
     [[nodiscard]] virtual int col_from_flat_unchecked(
-        flat_index_type flat) const noexcept = 0;
+        std::int64_t flat) const noexcept = 0;
 
     // Checked variants — throw on out-of-bounds
-    [[nodiscard]] virtual flat_index_type flat_index(int row, int col) const = 0;
-    [[nodiscard]] virtual int             row_from_flat(flat_index_type)     const = 0;
-    [[nodiscard]] virtual int             col_from_flat(flat_index_type)     const = 0;
+    [[nodiscard]] virtual std::int64_t flat_index(int row, int col) const = 0;
+    [[nodiscard]] virtual int             row_from_flat(std::int64_t)     const = 0;
+    [[nodiscard]] virtual int             col_from_flat(std::int64_t)     const = 0;
 
     // -------------------------------------------------------------------------
     // Cell validity and routing queries
     // -------------------------------------------------------------------------
-    [[nodiscard]] virtual bool is_valid_cell(flat_index_type flat) const noexcept = 0;
+    [[nodiscard]] virtual bool is_valid_cell(std::int64_t flat) const noexcept = 0;
     [[nodiscard]] virtual bool is_valid_cell(int row, int col)     const noexcept = 0;
 
-    [[nodiscard]] virtual bool            is_outlet_unchecked(flat_index_type)         const noexcept = 0;
-    [[nodiscard]] virtual flat_index_type receiver_of_unchecked(flat_index_type)       const noexcept = 0;
-    [[nodiscard]] virtual std::uint8_t    receiver_dir_of_unchecked(flat_index_type)   const noexcept = 0;
-    [[nodiscard]] virtual donor_count_type donor_count_of_unchecked(flat_index_type)   const noexcept = 0;
+    [[nodiscard]] virtual bool            is_outlet_unchecked(std::int64_t)         const noexcept = 0;
+    [[nodiscard]] virtual std::int64_t receiver_of_unchecked(std::int64_t)       const noexcept = 0;
+    [[nodiscard]] virtual std::uint8_t    receiver_dir_of_unchecked(std::int64_t)   const noexcept = 0;
+    [[nodiscard]] virtual std::uint8_t donor_count_of_unchecked(std::int64_t)   const noexcept = 0;
 
     // Checked variants — throw if cell is invalid or object not built
-    [[nodiscard]] virtual bool             is_outlet(flat_index_type)       const = 0;
-    [[nodiscard]] virtual flat_index_type  receiver_of(flat_index_type)     const = 0;
-    [[nodiscard]] virtual std::uint8_t     receiver_dir_of(flat_index_type) const = 0;
-    [[nodiscard]] virtual donor_count_type donor_count_of(flat_index_type)  const = 0;
+    [[nodiscard]] virtual bool             is_outlet(std::int64_t)       const = 0;
+    [[nodiscard]] virtual std::int64_t  receiver_of(std::int64_t)     const = 0;
+    [[nodiscard]] virtual std::uint8_t     receiver_dir_of(std::int64_t) const = 0;
+    [[nodiscard]] virtual std::uint8_t donor_count_of(std::int64_t)  const = 0;
 
     // -------------------------------------------------------------------------
     // s_vector queries
@@ -147,23 +141,23 @@ public:
     // (copying from device memory) — callers should not retain slices across
     // calls or across engine lifetime.
     // -------------------------------------------------------------------------
-    [[nodiscard]] virtual flat_index_type    s_vector_start_unchecked(flat_index_type) const noexcept = 0;
-    [[nodiscard]] virtual s_vector_size_type s_vector_size_unchecked(flat_index_type)  const noexcept = 0;
+    [[nodiscard]] virtual std::int64_t    s_vector_start_unchecked(std::int64_t) const noexcept = 0;
+    [[nodiscard]] virtual std::uint64_t s_vector_size_unchecked(std::int64_t)  const noexcept = 0;
 
-    [[nodiscard]] virtual flat_index_type    s_vector_start(flat_index_type) const = 0;
-    [[nodiscard]] virtual s_vector_size_type s_vector_size(flat_index_type)  const = 0;
+    [[nodiscard]] virtual std::int64_t    s_vector_start(std::int64_t) const = 0;
+    [[nodiscard]] virtual std::uint64_t s_vector_size(std::int64_t)  const = 0;
 
-    [[nodiscard]] virtual lsdtt_flat_index_slice upslope_nodes(flat_index_type) const = 0;
+    [[nodiscard]] virtual lsdtt_flat_index_slice upslope_nodes(std::int64_t) const = 0;
     [[nodiscard]] virtual lsdtt_flat_index_slice upslope_nodes(int row, int col) const = 0;
-    [[nodiscard]] virtual lsdtt_flat_index_slice upslope_nodes_unchecked(flat_index_type) const noexcept = 0;
+    [[nodiscard]] virtual lsdtt_flat_index_slice upslope_nodes_unchecked(std::int64_t) const noexcept = 0;
 
     [[nodiscard]] virtual bool is_upslope_of(
-        flat_index_type candidate,
-        flat_index_type target) const = 0;
+        std::int64_t candidate,
+        std::int64_t target) const = 0;
 
     [[nodiscard]] virtual bool is_upslope_of_unchecked(
-        flat_index_type candidate,
-        flat_index_type target) const noexcept = 0;
+        std::int64_t candidate,
+        std::int64_t target) const noexcept = 0;
 
     // -------------------------------------------------------------------------
     // Iteration helpers
@@ -173,18 +167,23 @@ public:
     // preorder traversal (node before its donors).
     // -------------------------------------------------------------------------
     virtual void for_each_upslope_node(
-        flat_index_type flat,
-        const std::function<void(flat_index_type)>& function) const = 0;
+        std::int64_t flat,
+        const std::function<void(std::int64_t)>& function) const = 0;
 
     virtual void for_each_upslope_node_unchecked(
-        flat_index_type flat,
-        const std::function<void(flat_index_type)>& function) const noexcept = 0;
+        std::int64_t flat,
+        const std::function<void(std::int64_t)>& function) const noexcept = 0;
+
+    // channel extraction
+    [[nodiscard]] virtual std::vector<std::int64_t>
+        get_sources_index_threshold(int threshold) const = 0;
+
 
     // -------------------------------------------------------------------------
     // Sentinel values — defined in lsdtt_flow_types.hpp
     // -------------------------------------------------------------------------
-    static constexpr flat_index_type nodata_receiver = lsdtt::k_nodata_receiver;
-    static constexpr flat_index_type outlet_receiver  = lsdtt::k_outlet_receiver;
+    static constexpr std::int64_t nodata_receiver = lsdtt::k_nodata_receiver;
+    static constexpr std::int64_t outlet_receiver  = lsdtt::k_outlet_receiver;
     static constexpr std::uint8_t    no_direction     = lsdtt::k_no_direction;
 };
 

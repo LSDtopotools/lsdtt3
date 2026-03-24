@@ -102,7 +102,7 @@ public:
     // Type aliases from lsdtt_flow_types.hpp — the single source of truth.
     // Widening flat_index_type to int64_t is done there; all aliases follow.
     using flat_index_type  = lsdtt::flat_index_type;
-    using donor_count_type = lsdtt::donor_count_type;   // Kahn ordering; max 8
+    using std::uint8_t = lsdtt::std::uint8_t;   // Kahn ordering; max 8
     using weight_type      = float;                     // fractional flow weights
 
     static constexpr flat_index_type nodata_index = lsdtt::k_nodata_receiver;
@@ -150,7 +150,7 @@ private:
     // Kahn's topological ordering (donors before receivers)
     std::vector<flat_index_type>  topological_order_;
     std::vector<flat_index_type>  outlets_;
-    std::vector<donor_count_type> donor_count_;        // uint8_t, max 8
+    std::vector<std::uint8_t> donor_count_;        // uint8_t, max 8
 };
 
 } // namespace lsdtt

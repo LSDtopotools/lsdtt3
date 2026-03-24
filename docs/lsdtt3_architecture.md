@@ -2,7 +2,7 @@
 
 Paste this at the start of a new session to restore full context.
 
-Last updated: session 9 (lsdtt_crs_suggest; lsdtt_raster_reproject; preprocessing pipeline v0.2.0 with projection step; CMakeLists.txt updated)
+Last updated: session 11 (flat_index_type removed — all flow indices now std::int64_t directly; lsdtt_array2d_i replaced with lsdtt_array2d<std::int64_t>; k_max_flat_index and k_max_cells removed; minimum_elevation <= fix applied to lsdtt-test-flowinfo)
 
 ---
 
@@ -36,6 +36,7 @@ lsdtt3/
 │   ├── cpu/
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                    — concrete CPU raster class
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                  — D8 CPU flow routing
+│   │   ├── lsdtt_raster_algebra.hpp                     — element-wise raster algebra (header-only)
 │   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp    — hillshade, moving window
 │   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp — fill, breach, nodata
 │   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp     — interior void filling
@@ -70,7 +71,7 @@ Two static libraries: `lsdtt3_core` and `lsdtt3_cpu`.
 - `lsdtt_param_parser.cpp`
 - `lsdtt_crs_suggest.cpp`
 - `lsdtt_raster_reproject.cpp`
-- *(lsdtt_flow_base has no non-inline methods — factory lives in lsdtt3_cpu)*
+- *(lsdtt_flow_base has no non-inline methods — factory lives in lsdtt3_cpu)* This separation is to avoid circular compile dependencies. 
 
 **`lsdtt3_cpu` sources** (`src/cpu/`):
 - `lsdtt_raster_cpu.cpp`
@@ -403,14 +404,14 @@ lsdtt_flow_base.cpp          (in lsdtt3_cpu — includes lsdtt_flowinfo_cpu.hpp,
 ```
 
 **Contents:**
-- `flat_index_type = int32_t` — safe for grids up to ~46,340 × 46,340.
-  **To support larger grids: change this one typedef to `int64_t`.**
-- `donor_count_type = uint8_t`
-- `s_vector_size_type = uint32_t`
-- `k_nodata_receiver = -1`, `k_outlet_receiver = -2`, `k_no_direction = 255`
-- `k_max_flat_index` — max representable cell index for current `flat_index_type`
-- `lsdtt_flat_index_slice` — zero-copy view into s_vector
+
+- `k_nodata_receiver = -1`, `k_outlet_receiver = -2`, `k_no_direction = 255` — all `std::int64_t` / `uint8_t`
+- `lsdtt_flat_index_slice` — zero-copy view into s_vector; `value_type = std::int64_t`
 - `lsdtt_flowinfo_options` — construction options shared by flow routing objects
+
+All cell indices use `std::int64_t` directly throughout the flow routing layer.
+There is no `flat_index_type` typedef — it was removed to simplify the code and
+avoid explaining a flexible type that was rarely changed in practice.
 
 **`lsdtt_flowinfo_options` fields:**
 ```
@@ -496,6 +497,22 @@ DAG-based flow routing for D-infinity and MFD. No s_vector.
 All take `const lsdtt_raster_cpu&` directly — not `lsdtt_raster_base`.
 All return `lsdtt_raster_cpu`. Input is never modified.
 
+**`lsdtt_raster_algebra` (header-only, `src/cpu/lsdtt_raster_algebra.hpp`):**
+
+Lives in `namespace lsdtt::algebra`. All operations are element-wise; output inherits
+metadata from the left-hand operand. A cell is nodata if either input cell is nodata.
+Compatibility (same n_rows, n_cols, cell_size, x_min, y_min, no_data_value) is
+enforced by `assert_compatible()` — throws `std::invalid_argument` on mismatch.
+Inner loops are OpenMP-parallelised.
+
+- `assert_compatible(a, b)` — throws if rasters are not element-wise compatible
+- `raster_add(a, b)` — result = a + b
+- `raster_subtract(a, b)` — result = a − b
+- `raster_multiply(a, b)` — result = a × b
+- `raster_divide(a, b)` — result = a / b; additionally nodata where b == 0
+- `raster_log(a)` — natural log; additionally nodata where a ≤ 0
+- `raster_log10(a)` — base-10 log; additionally nodata where a ≤ 0
+
 **`lsdtt_raster_surface_metrics_cpu`:**
 - `compute_hillshade(raster, azimuth=315, altitude=45, z_factor=1.0)`
 - `moving_window_mean(raster, radius=3, shape=square)`
@@ -543,6 +560,11 @@ File: `cli/lsdtt-raster-preprocessing.cpp`  |  Version: 0.2.0
 Steps 2–7 always operate on the (possibly reprojected) raster. If reprojection
 occurs the new file is reopened before step 2.
 
+**Threshold masking semantics:**
+`minimum_elevation` masks pixels **at or below** the threshold (i.e. `value <= min_elev`).
+Default is `0.0`, which catches ocean pixels that raster providers commonly set to exactly 0.
+`maximum_elevation` masks pixels above the threshold (`value > max_elev`); default `30000.0`.
+
 **Projection parameters:**
 
 | Parameter | Type | Default | Description |
@@ -552,11 +574,12 @@ occurs the new file is reopened before step 2.
 | `grid_spacing` | float | -1 | Target grid spacing (m). ≤ 0 = auto-snap from input pixel size. |
 | `allow_lambert_projection` | bool | false | Use LAEA instead of UTM when raster spans ≥ 3 UTM zones. |
 
-**All other parameters** (unchanged from v0.1.0):
+**All other parameters:**
 ```
 read_fname, write_fname, read_path, write_path
 write_output_format: cog / gtiff / same_as_input
-write_hillshade_raster, write_fill_raster, write_breached_raster
+write_hillshade_raster, write_fill_raster, write_fill_diff_raster
+write_breached_raster, write_carve_diff_raster
 write_filled_nodata_raster, write_clipped_rectangle_raster
 breach_before_fill, fill_remainder_after_breach
 fill_algorithm_choice: barnes2014 / wang_liu
@@ -567,6 +590,18 @@ fill_min_slope, minimum_elevation, maximum_elevation
 breach_lc_max_dist, breach_lc_max_cost, breach_lc_flat_increment
 n_threads, nodata_fill_max_iter
 ```
+
+**Diff raster outputs** (use `lsdtt::algebra::raster_subtract` from `lsdtt_raster_algebra.hpp`):
+
+| Parameter | Output suffix | Formula | Interpretation |
+|---|---|---|---|
+| `write_fill_diff_raster` | `_fill_diff.tif` | filled − original | Positive = surface raised by filling |
+| `write_carve_diff_raster` | `_carve_diff.tif` | breached − original | Negative = surface lowered by breaching |
+
+**Help / parameter printing:**
+- `-h` flag prints usage to stdout and exits immediately (before any processing).
+- `print_parameters()` is called at the end of every successful run to echo resolved parameters.
+- `print_help()` (writes `_README` file) is **not** called during normal runs; it is only triggered by `-h`.
 
 ---
 
@@ -637,10 +672,12 @@ n_threads: 0
 9. CLIs hold flow routing via `unique_ptr<lsdtt_flow_base>` from factory —
    never construct `lsdtt_flowinfo_cpu` directly in a CLI
 10. `src/core/` = abstract interfaces, factories, shared types, I/O only
-11. `src/cpu/` = all CPU implementations (raster and flow)
+11. `src/cpu/` = all CPU implementations (raster, flow, and algebra)
 12. `src/gpu/` = all GPU implementations
 13. `src/core/lsdtt_crs_suggest` inspects CRS; `src/core/lsdtt_raster_reproject`
     acts on it — these are deliberately separate so suggestion logic can be used
     without triggering I/O
 14. Reprojected rasters always receive a projection suffix (_utm / _polar / _lambert)
     so the provenance of every output file is unambiguous from its filename
+15. `lsdtt_raster_algebra.hpp` is header-only (no `.cpp`); include from `src/cpu/`.
+    Use `lsdtt::algebra::raster_subtract(a, b)` etc. for diff rasters in CLIs.

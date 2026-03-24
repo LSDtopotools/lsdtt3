@@ -372,9 +372,9 @@ int main(int argc, char* argv[])
     const float min_elev = ff.at("minimum_elevation");
     const float max_elev = ff.at("maximum_elevation");
 
-    if (min_elev > 0.0f)
+    if (min_elev >= 0.0f)
     {
-        std::cout << "Masking pixels below " << min_elev << " m\n";
+        std::cout << "Masking pixels at or below " << min_elev << " m\n";
         dem = lsdtt::mask_to_nodata_using_threshold(dem, min_elev, true);
     }
     if (max_elev < 30000.0f)
@@ -510,11 +510,11 @@ int main(int argc, char* argv[])
     const float  nodata  = static_cast<float>(fi_meta.no_data_value);
 
     // Convenience: write a float raster assembled from a per-cell lambda.
-    // The lambda receives a flat_index_type and returns float. Nodata and
+    // The lambda receives a std::int64_t flat cell index and returns float. Nodata and
     // invalid cells are written as nodata.
     auto write_diagnostic = [&](
         const std::string&                                          suffix,
-        std::function<float(lsdtt::lsdtt_flow_base::flat_index_type)> value_fn)
+        std::function<float(std::int64_t)> value_fn)
     {
         const std::string out = out_path(pp, suffix);
         std::cout << "Writing: " << out << "\n";
@@ -546,7 +546,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- n_contributing_pixels ---\n";
         write_diagnostic(
             "_n_contributing_pixels.tif",
-            [&](lsdtt::lsdtt_flow_base::flat_index_type flat) -> float
+            [&](std::int64_t flat) -> float
             {
                 return static_cast<float>(flow->s_vector_size_unchecked(flat));
             }
@@ -566,10 +566,10 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Flow direction ---\n";
         write_diagnostic(
             "_flow_direction.tif",
-            [&](lsdtt::lsdtt_flow_base::flat_index_type flat) -> float
+            [&](std::int64_t flat) -> float
             {
                 const std::uint8_t dir = flow->receiver_dir_of_unchecked(flat);
-                if (dir == lsdtt::lsdtt_flow_base::no_direction)
+                if (dir == lsdtt::k_no_direction)
                 {
                     return -2.0f;
                 }
@@ -586,7 +586,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Donor count ---\n";
         write_diagnostic(
             "_donor_count.tif",
-            [&](lsdtt::lsdtt_flow_base::flat_index_type flat) -> float
+            [&](std::int64_t flat) -> float
             {
                 return static_cast<float>(flow->donor_count_of_unchecked(flat));
             }
@@ -601,7 +601,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Outlet raster ---\n";
         write_diagnostic(
             "_outlet.tif",
-            [&](lsdtt::lsdtt_flow_base::flat_index_type flat) -> float
+            [&](std::int64_t flat) -> float
             {
                 return flow->is_outlet_unchecked(flat) ? 1.0f : 0.0f;
             }

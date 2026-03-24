@@ -36,8 +36,8 @@ namespace
 //   6  x  2
 //   5  4  3
 // -----------------------------------------------------------------------------
-constexpr std::array<int, 8> d8_row {{ -1, -1,  0,  1,  1,  1,  0, -1 }};
-constexpr std::array<int, 8> d8_col {{  0,  1,  1,  1,  0, -1, -1, -1 }};
+constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
+constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
 
 constexpr double k_sqrt_2 = 1.4142135623730950488;
 
@@ -69,8 +69,8 @@ resolved_neighbour resolve_neighbour(
 {
     resolved_neighbour result;
 
-    int  trial_row  = row + d8_row[dir];
-    int  trial_col  = col + d8_col[dir];
+    int  trial_row   = row + d8_row[dir];
+    int  trial_col   = col + d8_col[dir];
     bool outlet_path = false;
 
     // ---- North / south ----
@@ -199,37 +199,39 @@ void lsdtt_flowinfo::create(
     // caller did not request it, release the memory now.
     if (!options.build_topological_order)
     {
-        std::vector<flat_index_type>().swap(topological_order_);
+        std::vector<std::int64_t>().swap(topological_order_);
         has_topological_order_ = false;
     }
 
     validate();
+    is_built_ = true;
 }
 
 void lsdtt_flowinfo::clear() noexcept
 {
     meta_ = lsdtt_raster_meta{};
 
-    boundary_conditions_ = {{ 'o', 'o', 'o', 'o' }};
+    boundary_conditions_ = {{'o', 'o', 'o', 'o'}};
 
     interior_nodata_is_outlet_ = true;
     has_topological_order_     = false;
     has_s_vector_              = false;
     is_acyclic_                = false;
+    is_built_                  = false;
 
     n_valid_cells_ = 0;
 
     mask_         = lsdtt_array2d_u8{};
-    receiver_     = lsdtt_array2d_i{};
+    receiver_     = lsdtt_array2d<std::int64_t>{};
     receiver_dir_ = lsdtt_array2d_u8{};
-    donor_count_  = lsdtt_array2d_u8{};
+    donor_count_  = lsdtt_array2d<std::uint8_t>{};
 
     topological_order_.clear();
     outlets_.clear();
     s_vector_.clear();
 
-    s_vector_start_ = lsdtt_array2d_i{};
-    s_vector_size_  = lsdtt_array2d<s_vector_size_type>{};
+    s_vector_start_ = lsdtt_array2d<std::int64_t>{};
+    s_vector_size_  = lsdtt_array2d<std::uint64_t>{};
 }
 
 // =============================================================================
@@ -274,16 +276,20 @@ void lsdtt_flowinfo::validate() const
     }
 
     // ---- per-cell consistency checks ----
-    std::int64_t                counted_valid_cells = 0;
-    std::size_t                  counted_outlets     = 0;
-    std::vector<donor_count_type> expected_donor_count(mask_.size(), donor_count_type{0});
+    std::int64_t counted_valid_cells = 0;
+    std::size_t  counted_outlets     = 0;
+
+    std::vector<std::uint8_t> expected_donor_count(
+        mask_.size(),
+        std::uint8_t{0}
+    );
 
     for (int row = 0; row < meta_.n_rows; ++row)
     {
         for (int col = 0; col < meta_.n_cols; ++col)
         {
-            const flat_index_type flat    = flat_index_unchecked(row, col);
-            const bool            is_valid = (mask_(row, col) != 0);
+            const std::int64_t flat     = flat_index_unchecked(row, col);
+            const bool         is_valid = (mask_(row, col) != 0);
 
             if (!is_valid)
             {
@@ -304,8 +310,8 @@ void lsdtt_flowinfo::validate() const
 
             ++counted_valid_cells;
 
-            const flat_index_type rec = receiver_.data()[flat];
-            const std::uint8_t    dir = receiver_dir_.data()[flat];
+            const std::int64_t rec = receiver_.data()[flat];
+            const std::uint8_t dir = receiver_dir_.data()[flat];
 
             if (rec == nodata_receiver)
             {
@@ -379,7 +385,7 @@ void lsdtt_flowinfo::validate() const
     {
         for (int col = 0; col < meta_.n_cols; ++col)
         {
-            const flat_index_type flat = flat_index_unchecked(row, col);
+            const std::int64_t flat = flat_index_unchecked(row, col);
             if (mask_(row, col) != 0 && receiver_.data()[flat] == outlet_receiver)
             {
                 if (outlet_index >= outlets_.size() ||
@@ -409,11 +415,11 @@ void lsdtt_flowinfo::validate() const
             );
         }
 
-        std::vector<flat_index_type> position(mask_.size(), nodata_receiver);
+        std::vector<std::int64_t> position(mask_.size(), nodata_receiver);
 
         for (std::size_t i = 0; i < topological_order_.size(); ++i)
         {
-            const flat_index_type flat = topological_order_[i];
+            const std::int64_t flat = topological_order_[i];
 
             if (!is_valid_cell(flat))
             {
@@ -428,17 +434,17 @@ void lsdtt_flowinfo::validate() const
                 );
             }
 
-            position[flat] = static_cast<flat_index_type>(i);
+            position[flat] = static_cast<std::int64_t>(i);
         }
 
         for (int row = 0; row < meta_.n_rows; ++row)
         {
             for (int col = 0; col < meta_.n_cols; ++col)
             {
-                const flat_index_type flat = flat_index_unchecked(row, col);
+                const std::int64_t flat = flat_index_unchecked(row, col);
                 if (!is_valid_cell(flat)) continue;
 
-                const flat_index_type rec = receiver_.data()[flat];
+                const std::int64_t rec = receiver_.data()[flat];
                 if (rec >= 0)
                 {
                     if (position[flat] == nodata_receiver ||
@@ -487,7 +493,7 @@ void lsdtt_flowinfo::validate() const
 
         for (std::size_t i = 0; i < s_vector_.size(); ++i)
         {
-            const flat_index_type flat = s_vector_[i];
+            const std::int64_t flat = s_vector_[i];
             if (!is_valid_cell(flat))
             {
                 throw std::runtime_error(
@@ -507,7 +513,7 @@ void lsdtt_flowinfo::validate() const
         {
             for (int col = 0; col < meta_.n_cols; ++col)
             {
-                const flat_index_type flat = flat_index_unchecked(row, col);
+                const std::int64_t flat = flat_index_unchecked(row, col);
 
                 if (!is_valid_cell(flat))
                 {
@@ -526,8 +532,8 @@ void lsdtt_flowinfo::validate() const
                     continue;
                 }
 
-                const flat_index_type    start = s_vector_start_.data()[flat];
-                const s_vector_size_type size  = s_vector_size_.data()[flat];
+                const std::int64_t       start = s_vector_start_.data()[flat];
+                const std::uint64_t size  = s_vector_size_.data()[flat];
 
                 if (start < 0)
                 {
@@ -543,8 +549,7 @@ void lsdtt_flowinfo::validate() const
                 }
 
                 const std::int64_t end =
-                    static_cast<std::int64_t>(start) +
-                    static_cast<std::int64_t>(size);
+                    start + static_cast<std::int64_t>(size);
 
                 if (end > static_cast<std::int64_t>(s_vector_.size()))
                 {
@@ -560,18 +565,16 @@ void lsdtt_flowinfo::validate() const
                     );
                 }
 
-                const flat_index_type rec = receiver_.data()[flat];
+                const std::int64_t rec = receiver_.data()[flat];
                 if (rec >= 0)
                 {
-                    const flat_index_type    rec_start = s_vector_start_.data()[rec];
-                    const s_vector_size_type rec_size  = s_vector_size_.data()[rec];
+                    const std::int64_t       rec_start = s_vector_start_.data()[rec];
+                    const std::uint64_t rec_size  = s_vector_size_.data()[rec];
 
                     const std::int64_t rec_end =
-                        static_cast<std::int64_t>(rec_start) +
-                        static_cast<std::int64_t>(rec_size);
+                        rec_start + static_cast<std::int64_t>(rec_size);
 
-                    if (start < rec_start ||
-                        static_cast<std::int64_t>(start) >= rec_end)
+                    if (start < rec_start || start >= rec_end)
                     {
                         throw std::runtime_error(
                             "lsdtt_flowinfo: child node lies outside "
@@ -588,7 +591,7 @@ void lsdtt_flowinfo::validate() const
 // Index conversion
 // =============================================================================
 
-lsdtt_flowinfo::flat_index_type lsdtt_flowinfo::flat_index(int row, int col) const
+std::int64_t lsdtt_flowinfo::flat_index(int row, int col) const
 {
     require_built();
     if (!in_bounds(row, col))
@@ -598,7 +601,7 @@ lsdtt_flowinfo::flat_index_type lsdtt_flowinfo::flat_index(int row, int col) con
     return flat_index_unchecked(row, col);
 }
 
-int lsdtt_flowinfo::row_from_flat(flat_index_type flat) const
+int lsdtt_flowinfo::row_from_flat(std::int64_t flat) const
 {
     require_built();
     if (!is_flat_in_range(flat))
@@ -608,7 +611,7 @@ int lsdtt_flowinfo::row_from_flat(flat_index_type flat) const
     return row_from_flat_unchecked(flat);
 }
 
-int lsdtt_flowinfo::col_from_flat(flat_index_type flat) const
+int lsdtt_flowinfo::col_from_flat(std::int64_t flat) const
 {
     require_built();
     if (!is_flat_in_range(flat))
@@ -622,25 +625,25 @@ int lsdtt_flowinfo::col_from_flat(flat_index_type flat) const
 // Routing queries
 // =============================================================================
 
-bool lsdtt_flowinfo::is_outlet(flat_index_type flat) const
+bool lsdtt_flowinfo::is_outlet(std::int64_t flat) const
 {
     require_valid_cell(flat);
     return receiver_.data()[flat] == outlet_receiver;
 }
 
-lsdtt_flowinfo::flat_index_type lsdtt_flowinfo::receiver_of(flat_index_type flat) const
+std::int64_t lsdtt_flowinfo::receiver_of(std::int64_t flat) const
 {
     require_valid_cell(flat);
     return receiver_.data()[flat];
 }
 
-std::uint8_t lsdtt_flowinfo::receiver_dir_of(flat_index_type flat) const
+std::uint8_t lsdtt_flowinfo::receiver_dir_of(std::int64_t flat) const
 {
     require_valid_cell(flat);
     return receiver_dir_.data()[flat];
 }
 
-lsdtt_flowinfo::donor_count_type lsdtt_flowinfo::donor_count_of(flat_index_type flat) const
+std::uint8_t lsdtt_flowinfo::donor_count_of(std::int64_t flat) const
 {
     require_valid_cell(flat);
     return donor_count_.data()[flat];
@@ -650,7 +653,7 @@ lsdtt_flowinfo::donor_count_type lsdtt_flowinfo::donor_count_of(flat_index_type 
 // s_vector access
 // =============================================================================
 
-lsdtt_flowinfo::flat_index_type lsdtt_flowinfo::s_vector_start(flat_index_type flat) const
+std::int64_t lsdtt_flowinfo::s_vector_start(std::int64_t flat) const
 {
     require_valid_cell(flat);
     if (!has_s_vector_)
@@ -662,7 +665,7 @@ lsdtt_flowinfo::flat_index_type lsdtt_flowinfo::s_vector_start(flat_index_type f
     return s_vector_start_.data()[flat];
 }
 
-lsdtt_flowinfo::s_vector_size_type lsdtt_flowinfo::s_vector_size(flat_index_type flat) const
+std::uint64_t lsdtt_flowinfo::s_vector_size(std::int64_t flat) const
 {
     require_valid_cell(flat);
     if (!has_s_vector_)
@@ -674,7 +677,7 @@ lsdtt_flowinfo::s_vector_size_type lsdtt_flowinfo::s_vector_size(flat_index_type
     return s_vector_size_.data()[flat];
 }
 
-lsdtt_flat_index_slice lsdtt_flowinfo::upslope_nodes(flat_index_type flat) const
+lsdtt_flat_index_slice lsdtt_flowinfo::upslope_nodes(std::int64_t flat) const
 {
     require_valid_cell(flat);
     if (!has_s_vector_)
@@ -692,8 +695,8 @@ lsdtt_flat_index_slice lsdtt_flowinfo::upslope_nodes(int row, int col) const
 }
 
 bool lsdtt_flowinfo::is_upslope_of(
-    flat_index_type candidate_flat,
-    flat_index_type target_flat
+    std::int64_t candidate_flat,
+    std::int64_t target_flat
 ) const
 {
     require_valid_cell(candidate_flat);
@@ -713,7 +716,7 @@ bool lsdtt_flowinfo::is_upslope_of(
 
 void lsdtt_flowinfo::require_built() const
 {
-    if (empty())
+    if (!is_built_)
     {
         throw std::runtime_error(
             "lsdtt_flowinfo: object is empty; call create() first"
@@ -721,7 +724,7 @@ void lsdtt_flowinfo::require_built() const
     }
 }
 
-void lsdtt_flowinfo::require_valid_cell(flat_index_type flat) const
+void lsdtt_flowinfo::require_valid_cell(std::int64_t flat) const
 {
     require_built();
     if (!is_valid_cell(flat))
@@ -793,22 +796,18 @@ void lsdtt_flowinfo::validate_inputs(
         throw std::runtime_error("lsdtt_flowinfo: mask dimensions do not match metadata");
     }
 
-    // Guard against silent flat_index_type overflow.
-    // flat_index_type is currently int32_t, safe up to ~46,340 x 46,340.
-    // If you need larger grids, change the typedef in lsdtt_flowinfo.hpp.
+    // Guard against metadata corruption or impossible dimensions.
     const std::int64_t n_cells =
         static_cast<std::int64_t>(meta.n_rows) *
         static_cast<std::int64_t>(meta.n_cols);
 
-    if (n_cells > k_max_cells)
+    if (n_cells < 0)
     {
         throw std::runtime_error(
-            "lsdtt_flowinfo: raster has " + std::to_string(n_cells) +
-            " cells, which exceeds the maximum of " +
-            std::to_string(k_max_cells) +
-            " addressable by flat_index_type (currently int32_t). "
-            "To support this raster, change flat_index_type to int64_t "
-            "in lsdtt_flowinfo.hpp and recompile."
+            "lsdtt_flowinfo: raster dimensions (" +
+            std::to_string(meta.n_rows) + " x " +
+            std::to_string(meta.n_cols) +
+            ") produce an invalid int64_t cell count."
         );
     }
 }
@@ -832,7 +831,7 @@ void lsdtt_flowinfo::initialise_storage(
 
     receiver_.resize(meta_.n_rows, meta_.n_cols, nodata_receiver);
     receiver_dir_.resize(meta_.n_rows, meta_.n_cols, no_direction);
-    donor_count_.resize(meta_.n_rows, meta_.n_cols, donor_count_type{0});
+    donor_count_.resize(meta_.n_rows, meta_.n_cols, std::uint8_t{0});
 
     topological_order_.clear();
     topological_order_.reserve(static_cast<std::size_t>(n_valid_cells_));
@@ -843,12 +842,12 @@ void lsdtt_flowinfo::initialise_storage(
     if (options.build_s_vector)
     {
         s_vector_start_.resize(meta_.n_rows, meta_.n_cols, nodata_receiver);
-        s_vector_size_.resize(meta_.n_rows, meta_.n_cols, s_vector_size_type{0});
+        s_vector_size_.resize(meta_.n_rows, meta_.n_cols, std::uint64_t{0});
     }
     else
     {
-        s_vector_start_ = lsdtt_array2d_i{};
-        s_vector_size_  = lsdtt_array2d<s_vector_size_type>{};
+        s_vector_start_ = lsdtt_array2d<std::int64_t>{};
+        s_vector_size_  = lsdtt_array2d<std::uint64_t>{};
     }
 
     has_topological_order_ = false;
@@ -865,7 +864,7 @@ void lsdtt_flowinfo::initialise_storage(
 //   receiver_dir_(row,col) — its own entries. There are no write conflicts
 //   between cells. This loop is safe to parallelise with:
 //
-//     #pragma omp parallel for collapse(2) schedule(static) 
+//     #pragma omp parallel for collapse(2) schedule(static)
 //         num_threads(options.n_threads > 0 ? options.n_threads : omp_get_max_threads())
 //
 //   before the outer for loop. No atomics, no locks, no reduction needed.
@@ -904,10 +903,10 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
 
             const float z = dem(row, col);
 
-            double        best_slope    = 0.0;
-            flat_index_type best_receiver  = outlet_receiver;
-            std::uint8_t  best_dir      = no_direction;
-            bool          has_allowed_outlet = false;
+            double       best_slope         = 0.0;
+            std::int64_t best_receiver      = outlet_receiver;
+            std::uint8_t best_dir           = no_direction;
+            bool         has_allowed_outlet = false;
 
             for (int dir = 0; dir < 8; ++dir)
             {
@@ -991,7 +990,7 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
 // =============================================================================
 void lsdtt_flowinfo::build_donor_count_d8()
 {
-    donor_count_.fill(donor_count_type{0});
+    donor_count_.fill(std::uint8_t{0});
 
     for (int row = 0; row < meta_.n_rows; ++row)
     {
@@ -999,8 +998,8 @@ void lsdtt_flowinfo::build_donor_count_d8()
         {
             if (mask_(row, col) == 0) continue;
 
-            const flat_index_type flat = flat_index_unchecked(row, col);
-            const flat_index_type rec  = receiver_.data()[flat];
+            const std::int64_t flat = flat_index_unchecked(row, col);
+            const std::int64_t rec  = receiver_.data()[flat];
 
             if (rec >= 0)
             {
@@ -1023,7 +1022,7 @@ void lsdtt_flowinfo::build_outlets()
         {
             if (mask_(row, col) == 0) continue;
 
-            const flat_index_type flat = flat_index_unchecked(row, col);
+            const std::int64_t flat = flat_index_unchecked(row, col);
             if (receiver_.data()[flat] == outlet_receiver)
             {
                 outlets_.push_back(flat);
@@ -1055,12 +1054,12 @@ void lsdtt_flowinfo::build_topological_order()
     }
 
     // Working copy of donor counts; decremented as cells are processed.
-    std::vector<donor_count_type> remaining_donors(
+    std::vector<std::uint8_t> remaining_donors(
         donor_count_.data(),
         donor_count_.data() + donor_count_.size()
     );
 
-    std::vector<flat_index_type> ready_queue;
+    std::vector<std::int64_t> ready_queue;
     ready_queue.reserve(static_cast<std::size_t>(n_valid_cells_));
 
     // Seed the queue with headwater cells (no donors).
@@ -1070,7 +1069,7 @@ void lsdtt_flowinfo::build_topological_order()
         {
             if (mask_(row, col) == 0) continue;
 
-            const flat_index_type flat = flat_index_unchecked(row, col);
+            const std::int64_t flat = flat_index_unchecked(row, col);
             if (remaining_donors[flat] == 0)
             {
                 ready_queue.push_back(flat);
@@ -1081,10 +1080,10 @@ void lsdtt_flowinfo::build_topological_order()
     std::size_t head = 0;
     while (head < ready_queue.size())
     {
-        const flat_index_type flat = ready_queue[head++];
+        const std::int64_t flat = ready_queue[head++];
         topological_order_.push_back(flat);
 
-        const flat_index_type rec = receiver_.data()[flat];
+        const std::int64_t rec = receiver_.data()[flat];
         if (rec >= 0)
         {
             if (remaining_donors[rec] == 0)
@@ -1133,15 +1132,9 @@ void lsdtt_flowinfo::build_topological_order()
 //   The DFS serialises through s_vector_.push_back() because write positions
 //   are determined by traversal order. A parallel variant is possible via a
 //   two-pass approach:
-//     Pass 1 — compute subtree sizes in parallel (reverse topological order,
-//              trivially parallel since each node reads only its children).
-//     Pass 2 — compute start positions by exclusive prefix sum (O(n), serial
-//              or parallel scan).
-//     Pass 3 — fill s_vector_ in parallel (each node writes to its own
-//              pre-allocated interval).
-//   This requires retaining topological_order_ through build_s_vector(), and
-//   the prefix sum must account for the preorder contract (node precedes its
-//   subtree). Implement when large-raster parallel builds are needed.
+//     Pass 1 — compute subtree sizes in parallel.
+//     Pass 2 — compute start positions by exclusive prefix sum.
+//     Pass 3 — fill s_vector_ in parallel.
 // =============================================================================
 void lsdtt_flowinfo::build_s_vector()
 {
@@ -1154,7 +1147,7 @@ void lsdtt_flowinfo::build_s_vector()
     }
 
     s_vector_start_.resize(meta_.n_rows, meta_.n_cols, nodata_receiver);
-    s_vector_size_.resize(meta_.n_rows, meta_.n_cols, s_vector_size_type{0});
+    s_vector_size_.resize(meta_.n_rows, meta_.n_cols, std::uint64_t{0});
 
     s_vector_.clear();
     s_vector_.reserve(static_cast<std::size_t>(n_valid_cells_));
@@ -1172,26 +1165,22 @@ void lsdtt_flowinfo::build_s_vector()
         );
     }
 
-    // -------------------------------------------------------------------------
-    // DFS frame: stores the node and its pre-collected, sorted donor list so
-    // we don't re-scan neighbours when returning from a subtree.
-    // -------------------------------------------------------------------------
     struct dfs_frame
     {
-        flat_index_type              flat       = nodata_receiver;
-        std::array<flat_index_type, 8> donors   {};
-        std::uint8_t                 n_donors   = 0;
-        std::uint8_t                 next_donor = 0;
+        std::int64_t              flat       = nodata_receiver;
+        std::array<std::int64_t, 8> donors   {};
+        std::uint8_t              n_donors   = 0;
+        std::uint8_t              next_donor = 0;
     };
 
-    auto make_frame = [this](flat_index_type flat) -> dfs_frame
+    auto make_frame = [this](std::int64_t flat) -> dfs_frame
     {
         dfs_frame frame;
         frame.flat = flat;
 
         // Preorder: node is always first in its own slice.
-        const flat_index_type start =
-            static_cast<flat_index_type>(s_vector_.size());
+        const std::int64_t start =
+            static_cast<std::int64_t>(s_vector_.size());
 
         s_vector_start_.data()[flat] = start;
         s_vector_size_.data()[flat]  = 1;
@@ -1209,10 +1198,10 @@ void lsdtt_flowinfo::build_s_vector()
                 boundary_conditions_
             );
 
-            if (!nb.inside_grid)        continue;
+            if (!nb.inside_grid)           continue;
             if (mask_(nb.row, nb.col) == 0) continue;
 
-            const flat_index_type donor_flat =
+            const std::int64_t donor_flat =
                 flat_index_unchecked(nb.row, nb.col);
 
             if (receiver_.data()[donor_flat] != flat) continue;
@@ -1235,11 +1224,10 @@ void lsdtt_flowinfo::build_s_vector()
             }
         }
 
-        // Sort donors by ascending flat row-major index to match historical
-        // LSDTopoTools DonorStackVector insertion order.
+        // Sort donors by ascending flat row-major index.
         for (std::uint8_t i = 1; i < frame.n_donors; ++i)
         {
-            const flat_index_type key = frame.donors[i];
+            const std::int64_t key = frame.donors[i];
             std::uint8_t j = i;
 
             while (j > 0 && frame.donors[j - 1] > key)
@@ -1257,9 +1245,8 @@ void lsdtt_flowinfo::build_s_vector()
     std::vector<dfs_frame> stack;
     stack.reserve(256);
 
-    // outlets_ is in row-major order (built by build_outlets()), matching the
-    // historical BaseLevelNodeList ordering.
-    for (const flat_index_type outlet_flat : outlets_)
+    // outlets_ is in row-major order.
+    for (const std::int64_t outlet_flat : outlets_)
     {
         if (s_vector_start_.data()[outlet_flat] >= 0) continue;
 
@@ -1272,7 +1259,7 @@ void lsdtt_flowinfo::build_s_vector()
 
             if (frame.next_donor < frame.n_donors)
             {
-                const flat_index_type child_flat =
+                const std::int64_t child_flat =
                     frame.donors[frame.next_donor++];
 
                 if (s_vector_start_.data()[child_flat] >= 0)
@@ -1287,8 +1274,8 @@ void lsdtt_flowinfo::build_s_vector()
             }
 
             // Subtree complete: propagate its size to the parent.
-            const flat_index_type    completed_flat = frame.flat;
-            const s_vector_size_type completed_size =
+            const std::int64_t       completed_flat = frame.flat;
+            const std::uint64_t completed_size =
                 s_vector_size_.data()[completed_flat];
 
             stack.pop_back();
@@ -1308,6 +1295,81 @@ void lsdtt_flowinfo::build_s_vector()
     }
 
     has_s_vector_ = true;
+}
+
+std::vector<std::int64_t>
+lsdtt_flowinfo::get_sources_index_threshold(int threshold) const
+{
+    require_built();
+
+    if (threshold <= 0)
+    {
+        throw std::invalid_argument(
+            "get_sources_index_threshold: threshold must be positive"
+        );
+    }
+
+    if (!has_s_vector_)
+    {
+        throw std::logic_error(
+            "get_sources_index_threshold: s_vector not built — "
+            "set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    if (!has_topological_order_)
+    {
+        throw std::logic_error(
+            "s: topological_order not built — "
+            "set build_topological_order = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    std::vector<std::int64_t> sources;
+
+    for (const std::int64_t flat : topological_order_)
+    {
+        if ( int(s_vector_size_.data()[flat]) < threshold)
+        {
+            continue;
+        }
+
+        const std::uint8_t n_donors = donor_count_.data()[flat];
+
+        if (n_donors == 0)
+        {
+            sources.push_back(flat);
+            continue;
+        }
+
+        bool any_donor_above_threshold = false;
+
+        const lsdtt_flat_index_slice upslope = upslope_nodes_unchecked(flat);
+
+        for (const std::int64_t* it = upslope.begin() + 1;
+             it != upslope.end(); ++it)
+        {
+            const std::int64_t candidate = *it;
+
+            if (receiver_of_unchecked(candidate) != flat)
+            {
+                continue;
+            }
+
+            if ( int(s_vector_size_.data()[candidate]) >= threshold)
+            {
+                any_donor_above_threshold = true;
+                break;
+            }
+        }
+
+        if (!any_donor_above_threshold)
+        {
+            sources.push_back(flat);
+        }
+    }
+
+    return sources;
 }
 
 } // namespace lsdtt

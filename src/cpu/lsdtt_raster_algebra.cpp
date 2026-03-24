@@ -20,27 +20,6 @@ namespace lsdtt {
 namespace algebra {
 
 // =============================================================================
-// Internal helpers
-// =============================================================================
-
-namespace {
-
-/// Return a zeroed-out result raster that shares metadata with `src`.
-/// The mask is initialised to 0 (all nodata) and overwritten per-element.
-lsdtt_raster_cpu make_result(const lsdtt_raster_cpu& src)
-{
-    const lsdtt_raster_meta& m = src.get_meta();
-    const int n = m.n_rows * m.n_cols;
-
-    std::vector<float>   data(n, static_cast<float>(m.no_data_value));
-    std::vector<uint8_t> mask(n, 0u);
-
-    return lsdtt_raster_cpu(std::move(data), std::move(mask), m);
-}
-
-} // anonymous namespace
-
-// =============================================================================
 // assert_compatible
 // =============================================================================
 
@@ -99,25 +78,16 @@ lsdtt_raster_cpu raster_add(
 {
     assert_compatible(a, b);
 
-    lsdtt_raster_cpu result = make_result(a);
-
     const std::vector<float>&   da = a.get_data();
     const std::vector<uint8_t>& ma = a.get_mask();
     const std::vector<float>&   db = b.get_data();
     const std::vector<uint8_t>& mb = b.get_mask();
-    std::vector<float>&         dr = result.get_data();
-    // mask_ is private; access through get_mask_array() mutable ref via the
-    // non-const get_data_array() approach — use the vector accessor instead.
-    // We rebuild the mask in-place through get_data_array()'s sibling:
-    // lsdtt_raster_cpu exposes get_mask_array() const only, so we construct
-    // the mask vector separately and use the vector-move constructor path.
-    // Simplest: build both output vectors up front then construct the result.
 
-    const int n = static_cast<int>(da.size());
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
     std::vector<float>   out_data(n);
     std::vector<uint8_t> out_mask(n);
-
-    const float nodata = static_cast<float>(a.get_meta().no_data_value);
 
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < n; ++i)

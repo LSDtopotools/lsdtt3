@@ -9,7 +9,7 @@
 // -----------------------------------------------------------------------------
 // Shared types for D8 flow routing.
 //
-// Included by both lsdtt_flow_base.hpp and lsdtt_flowinfo.hpp to avoid a
+// Included by both lsdtt_flow_base.hpp and lsdtt_flowinfo_cpu.hpp to avoid a
 // circular include dependency. Neither of those headers includes the other —
 // they both include this one.
 // -----------------------------------------------------------------------------
@@ -18,39 +18,39 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <string>
 
 namespace lsdtt
 {
 
 // -----------------------------------------------------------------------------
-// flat_index_type
+// Flow routing index and count types.
 //
-// Row-major flat cell index. int32_t is safe for grids up to ~46,340 x 46,340.
-// Change this one typedef to int64_t to support larger grids; k_max_flat_index
-// tracks automatically. validate_inputs() in lsdtt_flowinfo throws clearly if
-// the raster exceeds the current limit.
+// Cell indices use int64_t throughout — safe for grids of any practical size
+// and removes the need to explain or change a flexible typedef.
+//
+// std::uint8_t stays uint8_t: no cell on a regular grid can have more than
+// 8 donors (D8 routing), so a byte is sufficient and keeps the array compact.
+//
+// std::uint64_t is uint32_t: the upslope set of a single cell is bounded
+// by the total number of valid cells, which fits comfortably in 32 bits for
+// any raster you can load into memory.
 // -----------------------------------------------------------------------------
-using flat_index_type    = std::int32_t;
-using donor_count_type   = std::uint8_t;   // max 8 donors on a regular grid
-using s_vector_size_type = std::uint32_t;
-
-static constexpr flat_index_type k_nodata_receiver = -1;
-static constexpr flat_index_type k_outlet_receiver = -2;
-static constexpr std::uint8_t    k_no_direction    = 255;
-
-static constexpr std::int64_t k_max_flat_index =
-    static_cast<std::int64_t>(std::numeric_limits<flat_index_type>::max());
+static constexpr std::int64_t k_nodata_receiver = -1;
+static constexpr std::int64_t k_outlet_receiver = -2;
+static constexpr std::uint8_t k_no_direction    = 255;
 
 // -----------------------------------------------------------------------------
 // lsdtt_flat_index_slice
 //
-// Zero-allocation view into a contiguous block of flat cell indices.
+// Zero-allocation view into a contiguous block of int64_t cell indices.
 // Returned by upslope_nodes() — valid for the lifetime of the engine object.
 // -----------------------------------------------------------------------------
 class lsdtt_flat_index_slice
 {
 public:
-    using value_type     = flat_index_type;
+    using value_type     = std::int64_t;
     using const_iterator = const value_type*;
 
     constexpr lsdtt_flat_index_slice() noexcept = default;
@@ -85,18 +85,18 @@ private:
 // -----------------------------------------------------------------------------
 // lsdtt_flowinfo_options
 //
-// Construction options shared by lsdtt_flowinfo and make_flow_engine().
+// Construction options shared by lsdtt_flowinfo and make_flow_base().
 // Boundary order: north, east, south, west.
 // Codes: o=open, n=no-flux, p=periodic (symmetric pairs), b=forced outlet edge
 // -----------------------------------------------------------------------------
 struct lsdtt_flowinfo_options
 {
-    std::string boundary_conditions      = "oooo";
+    std::string boundary_conditions       = "oooo";
     bool        interior_nodata_is_outlet = true;
-    bool        require_acyclic_graph    = true;
-    bool        build_topological_order  = true;
-    bool        build_s_vector           = true;
-    int         n_threads                = 0;
+    bool        require_acyclic_graph     = true;
+    bool        build_topological_order   = true;
+    bool        build_s_vector            = true;
+    int         n_threads                 = 0;
 };
 
 } // namespace lsdtt
