@@ -25,12 +25,20 @@ LSDTopoTools2:
 
 lsdtt3 has the following design goals compared to LSDTopoTools2:
 
+- Ability to load data in any format compatible with GDAL (e.g., geotiff, COG, vrt, bil, asc, etc).
+- Can write vector formats with correct georeferecing using GDAL
+- Can read any projection. Preprocessing tools that automate projection (UTM below 75 degrees north/south, polar projection at high latitude, option for custom lambert azimuthal equal area for large DEMs spanning >2 UTM zones).
 - Clean separation between file I/O, data storage, and computation
 - CPU and GPU compute backends behind a shared abstract interface
 - Analysis routines as free functions — changing one analysis file only
   recompiles that file
-- D8 and DAG (D-infinity / MFD) flow routing behind a common interface
+- Multithreading implemented for selected routines
+- D8 and DAG (D-infinity / MFD) flow routing behind a common interface (althougb DAG yet to be implemented)
 - Cloud Optimised GeoTIFF (COG) output by default
+- Pixel indexing for flow calculations using int64 which allow processing of very large (>40000x40000 pixels) DEMs. You will need a high memory system though!
+- More dependencies than LSDTopoTools2 but all dependencies are widely used and easily installed on Linux systems
+
+**lsdtt3 is NOT backward compatible with LSDTopotools2, it is a complete update of the data structures**
 
 ---
 
@@ -54,7 +62,7 @@ sudo apt install cmake build-essential libgdal-dev libfftw3-dev
 
 OpenMP is included with GCC on Linux — no separate install needed.
 
-### Installing with the Apptainer container (recommended)
+### Installing with the Apptainer container
 
 A pre-configured Apptainer container definition is provided at `lsdtt3.def`.
 It includes all dependencies (GDAL, FFTW3, Eigen3, OpenCV, OpenMP) on Ubuntu

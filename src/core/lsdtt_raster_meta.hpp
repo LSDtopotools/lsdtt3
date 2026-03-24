@@ -1,6 +1,6 @@
 // lsdtt_raster_meta.hpp
 //
-// Part of LSDTopoTools2 -- https://github.com/LSDtopotools/LSDTopoTools2
+// Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2025 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
