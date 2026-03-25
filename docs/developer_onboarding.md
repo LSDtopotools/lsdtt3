@@ -1,0 +1,230 @@
+# lsdtt3 Developer Onboarding
+
+This document is for developers porting analysis code from earlier versions of
+LSDTopoTools (LSDRaster, LSDFlowInfo, etc.) or writing new analyses against the
+lsdtt3 architecture.
+
+---
+
+## Code style
+
+All names use `snake_case` throughout — classes, functions, variables, parameters,
+and filenames. No camelCase anywhere. All code lives in `namespace lsdtt`. No
+`using namespace std` anywhere.
+
+Opening braces always go on their own line:
+
+```cpp
+if (condition)
+{
+    do_something();
+}
+```
+
+And we use a 4 space tab for indentation. 
+
+Output raster parameters follow the convention `write_*_raster`. Algorithm
+selection parameters follow `*_algorithm_choice`. These conventions exist so
+parameter files are self-documenting and consistent across CLIs.
+
+---
+
+## Where to put new code
+
+### The short version
+
+If you are porting or writing analysis code, **work entirely in `src/cpu/`**.
+You do not need to touch `src/core/` at all.
+
+`src/core/` contains the abstract interfaces (`lsdtt_raster_base`,
+`lsdtt_flow_base`), I/O (`lsdtt_data_loader`), metadata (`lsdtt_raster_meta`),
+the parameter parser, and CRS/reprojection utilities. These are infrastructure.
+New analysis code does not belong there and should never need to modify them.
+
+`src/cpu/` is where all analysis lives. It contains the concrete CPU raster
+class (`lsdtt_raster_cpu`), the D8 flow routing object (`lsdtt_flowinfo`), and
+all analysis grouped into thematic free-function files (this is a partial list):
+
+```
+src/cpu/lsdtt_raster_surface_metrics_cpu.hpp/.cpp   — hillshade, moving window
+src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp — fill, breach, masking
+src/cpu/lsdtt_raster_nodata_filling_cpu.hpp/.cpp     — void filling, clipping
+src/cpu/lsdtt_raster_algebra.hpp/.cpp               — element-wise arithmetic
+src/cpu/lsdtt_raster_spectral_cpu.hpp/.cpp          — spectral / wavelet
+src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp — test surface generators
+```
+
+To add a new group of analysis functions — say, chi analysis — you create
+`src/cpu/lsdtt_chi_analysis_cpu.hpp/.cpp`, write your free functions there, and
+add the `.cpp` to `LSDTT3_CPU_SOURCES` in `CMakeLists.txt`. That is the entire
+change required outside your new files.
+
+### Free functions vs member functions
+
+In LSDTopoTools2 the objects (especially LSDRaster) contained vast numbers of member function which made finding analyses a challenge.
+
+Here default choice for new analysis is a **free function** in a thematic
+`.hpp/.cpp` pair, taking `const lsdtt_raster_cpu&` or `const lsdtt_flowinfo&`, or any new class
+as arguments.
+
+Add a **member function** to `lsdtt_raster_cpu` or `lsdtt_flowinfo` only when
+the function needs direct access to private data members — i.e. data that is not
+reachable through the existing public accessors. For almost all analysis code
+this will not be the case.
+
+The practical test: if you can write the function using only `get_data()`,
+`get_mask()`, `get_meta()`, `upslope_nodes()`, `receiver_of_unchecked()` and
+similar public methods, write it as a free function. If you find yourself needing
+`receiver_[flat]` or `s_vector_start_[flat]` directly, it can go on the class.
+
+---
+
+## Example: adding a member function to lsdtt_raster_cpu
+
+Suppose you want a function that adds a constant value to every valid pixel.
+This is a reasonable member function because — while it could technically be
+written as a free function — it is a general-purpose operation on the raster's
+own data and fits naturally alongside the other primitive operations on the class.
+
+### 1. Declare it in `src/cpu/lsdtt_raster_cpu.hpp`
+
+Add the declaration in the public section:
+
+```cpp
+// Returns a new raster with val added to every valid pixel.
+// Nodata cells remain nodata.
+[[nodiscard]] lsdtt_raster_cpu add_constant(float val) const;
+```
+
+### 2. Implement it in `src/cpu/lsdtt_raster_cpu.cpp`
+
+```cpp
+lsdtt_raster_cpu lsdtt_raster_cpu::add_constant(float val) const
+{
+    const int   n      = meta_.n_rows * meta_.n_cols;
+    const float nodata = static_cast<float>(meta_.no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    const float* src_data = data_.data();
+    const uint8_t* src_mask = mask_.data();
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (src_mask[i])
+        {
+            out_data[i] = src_data[i] + val;
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta_);
+}
+```
+
+No changes to `CMakeLists.txt` are needed because `lsdtt_raster_cpu.cpp` is
+already in `LSDTT3_CPU_SOURCES`.
+
+### 3. Call it from a CLI
+
+In a CLI source file (e.g. `cli/lsdtt-raster-preprocessing.cpp`):
+
+```cpp
+#include "../src/cpu/lsdtt_raster_cpu.hpp"
+
+// dem is an lsdtt_raster_cpu already loaded from disk
+lsdtt_raster_cpu raised = dem.add_constant(1.0f);
+
+std::string o = out_path(pp, "_raised.tif");
+loader.write_full(raised.get_data(), raised.get_meta(), o, out_fmt);
+```
+
+If instead this were a thematic free function (e.g. a hillshade variant living
+in `lsdtt_raster_surface_metrics_cpu`), the call looks identical from the CLI's
+perspective — the only difference is the include path and that the raster is
+passed as an argument:
+
+```cpp
+#include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+
+lsdtt_raster_cpu hs = lsdtt::compute_hillshade(dem, 315.0f, 45.0f, 1.0f);
+```
+
+---
+
+## Notes on types
+
+### `[[nodiscard]]`
+
+You will see `[[nodiscard]]` on many functions throughout the headers, especially
+query functions on `lsdtt_flowinfo`:
+
+```cpp
+[[nodiscard]] flat_index_type receiver_of_unchecked(flat_index_type flat) const noexcept;
+[[nodiscard]] lsdtt_flat_index_slice upslope_nodes(flat_index_type flat) const;
+[[nodiscard]] lsdtt_raster_cpu add_constant(float val) const;
+```
+
+This attribute tells the compiler to emit a warning if the return value is
+discarded by the caller. It is used on query and analysis functions — functions
+with no side effects — because discarding their return value is almost certainly
+a mistake. For example:
+
+```cpp
+fi.upslope_nodes(flat);      // compiler warns — result thrown away, probably a bug
+dem.add_constant(1.0f);      // compiler warns — new raster thrown away, definitely a bug
+```
+
+Without `[[nodiscard]]` these would silently compile and do nothing useful.
+It is not used on functions that act through side effects (e.g. `clear()`,
+`print_raster_info()`), where a void return or ignored return is normal.
+
+### Cell indices and `lsdtt_flow_types.hpp`
+
+For a handful of data members in `lsdtt_flowinfo` we need to be able to hold very large integer numbers. For example a 50000x500000 DEM will have more pixels than there are integers available using a 32 bit integer. So we use `std::int64_t` for these. 
+
+All flow routing code uses `std::int64_t` for cell indices throughout. There is
+no `flat_index_type` typedef — using the concrete type directly makes the code
+easier to read and avoids explaining a flexible typedef that was rarely changed
+in practice. `int64_t` is safe for any raster you can load into memory.
+
+`lsdtt_flow_types.hpp` defines the sentinel values you will encounter when
+iterating the flow graph:
+
+```cpp
+k_nodata_receiver = -1   // cell is nodata / outside the valid mask
+k_outlet_receiver = -2   // cell drains off-grid or to a boundary outlet
+k_no_direction    = 255  // direction code for nodata cells
+```
+
+Always test against these constants rather than the raw values:
+
+```cpp
+if (fi.receiver_of_unchecked(flat) == lsdtt::k_outlet_receiver)
+{
+    // this cell is a basin outlet
+}
+```
+
+The `std::uint8_t` is `uint8_t` because no cell on a regular grid can have
+more than 8 donors (D8 routing), so a byte is sufficient and keeps the
+donor-count array compact.
+
+---
+
+## Summary checklist for new analysis code
+
+- Work in `src/cpu/` — do not modify `src/core/`
+- Write free functions unless you need private data members
+- Add new `.cpp` files to `LSDTT3_CPU_SOURCES` in `CMakeLists.txt`
+- Use `std::int64_t` for all cell indices, and the sentinel constants for
+  boundary/nodata tests
+- Mark query functions `[[nodiscard]]`
+- No `using namespace std`, no camelCase, braces on their own line
