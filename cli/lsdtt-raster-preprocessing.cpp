@@ -51,10 +51,12 @@
 
 #include <iostream>
 #include <fstream>
-#include <string>
+#include <limits>
 #include <map>
-#include <vector>
 #include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
@@ -157,9 +159,9 @@ static std::string out_path(
     return pp.get_full_write_path() + suffix;
 }
 
-// -----------------------------------------------------------------------------
+// =============================================================================
 // main
-// -----------------------------------------------------------------------------
+// =============================================================================
 int main(int argc, char* argv[])
 {
     print_banner();
@@ -181,192 +183,225 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Default parameter maps
+    // Parameter declarations
+    //
+    // Each parameter has its default value and help entry declared together
+    // so that a developer can read the full contract for each parameter in
+    // one place.  Parameters are grouped by the pipeline step that uses them.
+    // None are const — some booleans conditionally modify others below.
+    //
+    // help_map entry format: { type, default, short_desc, long_desc }
     // -------------------------------------------------------------------------
-    std::map<std::string, bool> bool_defaults =
-    {
-        // Projection
-        {"enforce_projection",              true},
-        {"allow_lambert_projection",        false},
+    std::map<std::string, bool>                        bool_default_map;
+    std::map<std::string, float>                       float_default_map;
+    std::map<std::string, int>                         int_default_map;
+    std::map<std::string, std::string>                 string_default_map;
+    std::map<std::string, std::vector<std::string>>    help_map;
 
-        // Output rasters
-        {"write_hillshade_raster",          false},
-        {"write_fill_raster",               false},
-        {"write_fill_diff_raster",          false},
-        {"write_breached_raster",           false},
-        {"write_carve_diff_raster",         false},
-        {"write_filled_nodata_raster",      false},
-        {"write_clipped_rectangle_raster",  false},
+    // --- Threading ---
+    int_default_map["n_threads"] = 0;
+    help_map["n_threads"] = {"int","0",
+        "Number of OpenMP threads.",
+        "0 = use all hardware threads. 1 = single-threaded. "
+        "Applies to filling, breaching, nodata repair, and wavelet steps."};
 
-        // Workflow options
-        {"breach_before_fill",              false},
-        {"fill_remainder_after_breach",     true},
-    };
+    // --- Output format ---
+    string_default_map["write_output_format"] = "cog";
+    help_map["write_output_format"] = {"string","cog",
+        "Output raster format.",
+        "cog: Cloud Optimised GeoTIFF (default). "
+        "gtiff: plain compressed GeoTIFF. "
+        "same_as_input: match the input raster format."};
 
-    std::map<std::string, float> float_defaults =
-    {
-        // Projection
-        {"grid_spacing",             -1.0f},   // ≤ 0 = auto-detect
+    // --- Projection ---
+    bool_default_map["enforce_projection"] = true;
+    help_map["enforce_projection"] = {"bool","true",
+        "Check and reproject the raster to a suitable projected CRS.",
+        "If true and the raster is geographic or Web Mercator, it is "
+        "reprojected automatically before any analysis. "
+        "If false and the raster is not projected, the program exits with "
+        "an error."};
 
-        // Hillshade
-        {"hillshade_azimuth",       315.0f},
-        {"hillshade_altitude",       45.0f},
-        {"hillshade_z_factor",        1.0f},
+    string_default_map["resampling_method"] = "cubic";
+    help_map["resampling_method"] = {"string","cubic",
+        "GDAL resampling algorithm used during reprojection.",
+        "Accepted values: near, bilinear, cubic (default), cubicspline, "
+        "lanczos, average, mode, max, min, med, q1, q3, sum."};
 
-        // Fill
-        {"fill_min_slope",          0.0001f},
+    float_default_map["grid_spacing"] = -1.0f;
+    help_map["grid_spacing"] = {"float","-1",
+        "Target grid spacing in metres after reprojection.",
+        "If negative (default), spacing is inferred from the input pixel size "
+        "and rounded: >=20 m -> nearest 5 m; 5-20 m -> nearest 2 m; "
+        "<5 m -> nearest 1 m. Set a positive value to enforce a specific spacing."};
 
-        // Breach least-cost (Lindsay 2020)
-        {"breach_lc_max_cost",      std::numeric_limits<float>::max()},
-        {"breach_lc_flat_increment", 0.0f},
+    bool_default_map["allow_lambert_projection"] = false;
+    help_map["allow_lambert_projection"] = {"bool","false",
+        "Use Lambert Azimuthal Equal Area for rasters spanning 3+ UTM zones.",
+        "If true and the raster is very wide (>=3 UTM zones), a LAEA projection "
+        "centred on the raster is used instead of UTM. "
+        "Output files receive the suffix _lambert."};
 
-        // Threshold masking
-        {"minimum_elevation",        0.0f},
-        {"maximum_elevation",    30000.0f},
-    };
+    int_default_map["warp_mem_mb"] = 512;
+    help_map["warp_mem_mb"] = {"int","512",
+        "GDALWarp working memory in MB.",
+        "Larger values reduce source tile re-reads for large rasters. "
+        "Reduce on memory-constrained systems (minimum ~64 MB)."};
 
-    std::map<std::string, int> int_defaults =
-    {
-        {"n_threads",               0},
-        {"breach_lc_max_dist",   1000},
-        {"nodata_fill_max_iter", 10000},
-        {"warp_mem_mb",           512},    // GDALWarp working memory per thread
-    };
+    // --- Threshold masking ---
+    float_default_map["minimum_elevation"] = 0.0f;
+    help_map["minimum_elevation"] = {"float","0.0",
+        "Pixels at or below this elevation (metres) are set to nodata.",
+        "Default of 0.0 removes ocean and below-sea-level artefacts common "
+        "in global DEMs. Set to a large negative number to disable."};
 
-    std::map<std::string, std::string> string_defaults =
-    {
-        // Projection
-        {"resampling_method",           "cubic"},
+    float_default_map["maximum_elevation"] = 30000.0f;
+    help_map["maximum_elevation"] = {"float","30000",
+        "Pixels above this elevation (metres) are set to nodata.",
+        "Default covers the full range of terrestrial elevations. "
+        "Reduce to remove artefacts in low-relief study areas."};
 
-        // Fill / breach algorithm choices
-        {"fill_algorithm_choice",       "barnes2014"},
-        {"breach_algorithm_choice",     "lindsay2016"},
-        {"nodata_fill_method_choice",   "laplacian"},
+    // --- Interior nodata filling ---
+    bool_default_map["write_filled_nodata_raster"] = false;
+    help_map["write_filled_nodata_raster"] = {"bool","false",
+        "Write a DEM with interior nodata pixels filled.",
+        "Only fills nodata pixels completely surrounded by valid data. "
+        "Does not fill nodata that touches the raster edge."};
 
-        // Output format
-        {"write_output_format",         "cog"},
-    };
+    string_default_map["nodata_fill_method_choice"] = "laplacian";
+    help_map["nodata_fill_method_choice"] = {"string","laplacian",
+        "Method for filling interior nodata pixels.",
+        "laplacian: smooth Dirichlet interpolation (recommended). "
+        "iterative_weighted_average: fast, well-suited to thin voids."};
+
+    int_default_map["nodata_fill_max_iter"] = 10000;
+    help_map["nodata_fill_max_iter"] = {"int","10000",
+        "Maximum iterations for iterative nodata fill methods.",
+        "Only used when nodata_fill_method_choice is laplacian or "
+        "iterative_weighted_average."};
+
+    // --- Clip to rectangle ---
+    bool_default_map["write_clipped_rectangle_raster"] = false;
+    help_map["write_clipped_rectangle_raster"] = {"bool","false",
+        "Write a DEM clipped to the largest rectangle of all-valid pixels.",
+        "Run write_filled_nodata_raster first to maximise the rectangle size."};
+
+    // --- Depression breaching ---
+    bool_default_map["write_breached_raster"] = false;
+    help_map["write_breached_raster"] = {"bool","false",
+        "Write a depression-breached DEM.",
+        "Use breach_algorithm_choice to select the algorithm."};
+
+    bool_default_map["write_carve_diff_raster"] = false;
+    help_map["write_carve_diff_raster"] = {"bool","false",
+        "Write the difference raster: breached minus original.",
+        "Negative values show where breaching lowered the surface."};
+
+    bool_default_map["breach_before_fill"] = false;
+    help_map["breach_before_fill"] = {"bool","false",
+        "Breach depressions before filling pits.",
+        "Recommended for lidar DEMs where channelised flow paths "
+        "must be carved before residual pits are filled."};
+
+    bool_default_map["fill_remainder_after_breach"] = true;
+    help_map["fill_remainder_after_breach"] = {"bool","true",
+        "Fill pits that could not be fully breached.",
+        "Used with breach_before_fill or least-cost breaching."};
+
+    string_default_map["breach_algorithm_choice"] = "lindsay2016";
+    help_map["breach_algorithm_choice"] = {"string","lindsay2016",
+        "Algorithm for depression breaching.",
+        "lindsay2016: Lindsay (2016) efficient breaching. "
+        "least_cost: Lindsay (2020) pit-centric least-cost breaching."};
+
+    int_default_map["breach_lc_max_dist"] = 1000;
+    help_map["breach_lc_max_dist"] = {"int","1000",
+        "Maximum search radius in pixels for least-cost breaching.",
+        "Only used when breach_algorithm_choice is least_cost."};
+
+    float_default_map["breach_lc_max_cost"] = std::numeric_limits<float>::max();
+    help_map["breach_lc_max_cost"] = {"float","unlimited",
+        "Maximum total elevation lowering allowed for a breach path.",
+        "Only used when breach_algorithm_choice is least_cost. "
+        "Paths that would require more lowering than this are skipped."};
+
+    float_default_map["breach_lc_flat_increment"] = 0.0f;
+    help_map["breach_lc_flat_increment"] = {"float","0.0",
+        "Small elevation increment added along flat breach paths.",
+        "Only used when breach_algorithm_choice is least_cost."};
+
+    // --- Pit filling ---
+    bool_default_map["write_fill_raster"] = false;
+    help_map["write_fill_raster"] = {"bool","false",
+        "Write a pit-filled DEM.",
+        "Use fill_algorithm_choice to select the algorithm."};
+
+    bool_default_map["write_fill_diff_raster"] = false;
+    help_map["write_fill_diff_raster"] = {"bool","false",
+        "Write the difference raster: filled minus original.",
+        "Positive values show where filling raised the surface."};
+
+    string_default_map["fill_algorithm_choice"] = "barnes2014";
+    help_map["fill_algorithm_choice"] = {"string","barnes2014",
+        "Algorithm for pit filling.",
+        "barnes2014: Improved Priority-Flood (Barnes et al. 2014, recommended). "
+        "wang_liu: original Wang and Liu (2006)."};
+
+    float_default_map["fill_min_slope"] = 0.0001f;
+    help_map["fill_min_slope"] = {"float","0.0001",
+        "Minimum gradient imposed between adjacent filled cells.",
+        "Prevents flat regions that cause ambiguous flow direction. "
+        "Increase slightly for very coarse DEMs."};
+
+    // --- Hillshade ---
+    bool_default_map["write_hillshade_raster"] = false;
+    help_map["write_hillshade_raster"] = {"bool","false",
+        "Write a hillshade raster.",
+        "Uses the Zevenbergen and Thorne (1987) algorithm. "
+        "Computed from the filled DEM when write_fill_raster is also true."};
+
+    float_default_map["hillshade_azimuth"] = 315.0f;
+    help_map["hillshade_azimuth"] = {"float","315",
+        "Sun azimuth in degrees clockwise from north.",
+        "315 (northwest) is the cartographic convention."};
+
+    float_default_map["hillshade_altitude"] = 45.0f;
+    help_map["hillshade_altitude"] = {"float","45",
+        "Sun altitude above the horizon in degrees.",
+        "45 degrees is a typical default."};
+
+    float_default_map["hillshade_z_factor"] = 1.0f;
+    help_map["hillshade_z_factor"] = {"float","1.0",
+        "Vertical exaggeration factor applied before computing hillshade.",
+        "Values greater than 1 emphasise relief in flat terrain."};
 
     // -------------------------------------------------------------------------
-    // Help map
+    // Parse — fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
-    std::map<std::string, std::vector<std::string>> help_map =
-    {
-        // --- Projection ---
-        {"enforce_projection",
-            {"bool","true",
-             "Check and reproject the raster to a suitable projected CRS.",
-             "If true and the raster is geographic or Web Mercator, it will be "
-             "reprojected automatically before any analysis. "
-             "If false and the raster is not projected, the program exits with "
-             "an error. Default: true."}},
-        {"resampling_method",
-            {"string","cubic",
-             "GDAL resampling algorithm used during reprojection.",
-             "Accepted values: near, bilinear, cubic (default), cubicspline, "
-             "lanczos, average, mode, max, min, med, q1, q3, sum."}},
-        {"grid_spacing",
-            {"float","-1",
-             "Target grid spacing in metres after reprojection.",
-             "If negative (default), the spacing is inferred from the input "
-             "pixel size and rounded to a clean value: "
-             "≥20 m → nearest 5 m; 5–20 m → nearest 2 m; <5 m → nearest 1 m. "
-             "Set a positive value to enforce a specific spacing."}},
-        {"allow_lambert_projection",
-            {"bool","false",
-             "Use a custom Lambert Azimuthal Equal Area projection for "
-             "rasters spanning 3 or more UTM zones.",
-             "If true and the raster is very wide (≥3 UTM zones), a LAEA "
-             "projection centred on the raster is used instead of UTM. "
-             "Output files receive the suffix _lambert. Default: false."}},
-        {"warp_mem_mb",
-            {"int","512",
-             "GDALWarp working memory in MB.",
-             "Larger values reduce source tile re-reads for large rasters. "
-             "Reduce on memory-constrained systems (minimum ~64 MB)."}},
-
-        // --- Output rasters ---
-        {"write_hillshade_raster",
-            {"bool","false","Write a hillshade raster.",
-             "Uses Zevenbergen and Thorne (1987) algorithm."}},
-        {"write_fill_raster",
-            {"bool","false","Write a pit-filled DEM.",
-             "Use fill_algorithm_choice to select the algorithm."}},
-        {"write_fill_diff_raster",
-            {"bool","false","Write the difference between the filled DEM and the original.",
-             "Positive values show where fill raised the surface. "
-             "Requires write_fill_raster or write_hillshade_raster to trigger filling."}},
-        {"write_breached_raster",
-            {"bool","false","Write a depression-breached DEM.",
-             "Use breach_algorithm_choice to select the algorithm."}},
-        {"write_carve_diff_raster",
-            {"bool","false","Write the difference between the breached DEM and the original.",
-             "Negative values show where breaching lowered the surface. "
-             "Requires breach_before_fill or write_breached_raster to trigger breaching."}},
-        {"write_filled_nodata_raster",
-            {"bool","false","Write a DEM with interior nodata pixels filled.",
-             "Only fills nodata pixels completely surrounded by valid data."}},
-        {"write_clipped_rectangle_raster",
-            {"bool","false","Write a DEM clipped to the largest valid rectangle.",
-             "Consider running write_filled_nodata_raster first."}},
-
-        // --- Workflow ---
-        {"breach_before_fill",
-            {"bool","false","Breach depressions before filling.",
-             "Recommended for lidar DEMs."}},
-        {"fill_remainder_after_breach",
-            {"bool","true","Fill pits that could not be breached.",
-             "Used with breach_before_fill or least-cost breaching."}},
-        {"fill_algorithm_choice",
-            {"string","barnes2014","Algorithm for pit filling.",
-             "barnes2014: Improved Priority-Flood (recommended). "
-             "wang_liu: original Wang and Liu (2006)."}},
-        {"breach_algorithm_choice",
-            {"string","lindsay2016","Algorithm for depression breaching.",
-             "lindsay2016: Lindsay (2016) efficient breaching. "
-             "least_cost: Lindsay (2020) pit-centric least-cost breaching."}},
-        {"nodata_fill_method_choice",
-            {"string","laplacian","Method for filling interior nodata pixels.",
-             "laplacian: smooth Dirichlet interpolation (recommended). "
-             "iterative_weighted_average: fast, good for thin voids."}},
-
-        // --- Hillshade ---
-        {"hillshade_azimuth",
-            {"float","315","Sun azimuth in degrees clockwise from north.",""}},
-        {"hillshade_altitude",
-            {"float","45","Sun altitude above horizon in degrees.",""}},
-        {"hillshade_z_factor",
-            {"float","1.0","Vertical exaggeration factor for hillshade.",""}},
-
-        // --- Fill / breach numeric ---
-        {"fill_min_slope",
-            {"float","0.0001","Minimum slope between filled cells.",""}},
-        {"minimum_elevation",
-            {"float","0.0","Pixels below this elevation are set to nodata.",""}},
-        {"maximum_elevation",
-            {"float","30000","Pixels above this elevation are set to nodata.",""}},
-        {"write_output_format",
-            {"string","cog","Output raster format.",
-             "cog: Cloud Optimised GeoTIFF (default). "
-             "gtiff: plain compressed GeoTIFF. "
-             "same_as_input: match the input raster format."}},
-        {"breach_lc_max_dist",
-            {"int","1000","Maximum search radius in pixels for least-cost "
-             "breaching.",""}},
-        {"breach_lc_max_cost",
-            {"float","unlimited","Maximum total elevation lowering for a "
-             "breach path.",""}},
-    };
-
-    pp.parse_all_parameters(float_defaults, int_defaults,
-                            bool_defaults, string_defaults);
+    pp.parse_all_parameters(float_default_map, int_default_map,
+                            bool_default_map, string_default_map);
 
     auto bf  = pp.get_bool_parameters();
     auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    const int n_threads = ifs["n_threads"];
+    // -------------------------------------------------------------------------
+    // Derived / cross-parameter logic
+    //
+    // These adjustments are the reason parameters are not const.
+    // If breach_before_fill is set, we always need to run breaching even if
+    // the user did not explicitly request the breached raster output.
+    // -------------------------------------------------------------------------
+    if (bf["breach_before_fill"])
+    {
+        // Ensure the breaching step runs even if no breached-raster output
+        // was requested — breach_before_fill implies we want a breached dem
+        // to feed into the fill step.
+        bf["write_breached_raster"] = bf["write_breached_raster"] || false;
+    }
+
+    int n_threads = ifs["n_threads"];
 
     // Resolve output format
     lsdtt::raster_output_format out_fmt = lsdtt::raster_output_format::cog;
@@ -415,21 +450,17 @@ int main(int argc, char* argv[])
     // appropriate projected CRS.  All subsequent steps use the reprojected
     // raster.  The reprojected file is written to the output directory with
     // a projection suffix (_utm, _polar, _lambert).
-    //
-    // The existing check_projected_metres() hard-exit is replaced here by
-    // the enforce_projection parameter: if false, we still exit on geographic
-    // input (analysis cannot proceed), but give a clearer message.
     // -------------------------------------------------------------------------
     {
         std::cout << "\n--- Projection ---\n";
 
         lsdtt::lsdtt_reproject_options proj_opts;
-        proj_opts.enforce_projection      = bf["enforce_projection"];
-        proj_opts.resampling_method       = sf["resampling_method"];
-        proj_opts.grid_spacing            = static_cast<double>(ff["grid_spacing"]);
+        proj_opts.enforce_projection       = bf["enforce_projection"];
+        proj_opts.resampling_method        = sf["resampling_method"];
+        proj_opts.grid_spacing             = static_cast<double>(ff["grid_spacing"]);
         proj_opts.allow_lambert_projection = bf["allow_lambert_projection"];
-        proj_opts.n_threads               = n_threads;   // shared with other steps
-        proj_opts.warp_mem_mb             = ifs["warp_mem_mb"];
+        proj_opts.n_threads                = n_threads;
+        proj_opts.warp_mem_mb              = ifs["warp_mem_mb"];
 
         lsdtt::lsdtt_reproject_result proj_result;
         try
@@ -450,7 +481,6 @@ int main(int argc, char* argv[])
 
         if (proj_result.reprojected)
         {
-            // Reload from the reprojected file for all downstream steps
             active_path = proj_result.out_path;
             loader.close_raster();
             try
@@ -482,21 +512,17 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Load into CPU raster object
-    // (uses whichever file is now pointed to by active_path / loader)
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
 
-    // Build the write stem — the param-file write_fname, but if we
-    // reprojected it already has the projection suffix in active_path.
-    // For all subsequent outputs we keep the same stem so the filenames
-    // remain coherent.
     const std::string write_stem = pp.get_write_fname();
 
     // -------------------------------------------------------------------------
     // Step 2 — Threshold masking
     // -------------------------------------------------------------------------
-    const float min_elev = ff["minimum_elevation"];
-    const float max_elev = ff["maximum_elevation"];
+    float min_elev = ff["minimum_elevation"];
+    float max_elev = ff["maximum_elevation"];
+
     if (min_elev >= 0.0f)
     {
         std::cout << "\nMasking pixels at or below " << min_elev << " m\n";
@@ -576,7 +602,7 @@ int main(int argc, char* argv[])
         bf["write_carve_diff_raster"])
     {
         std::cout << "\n--- Depression breaching ---\n";
-        const std::string algo = sf["breach_algorithm_choice"];
+        std::string algo = sf["breach_algorithm_choice"];
 
         try
         {
@@ -614,7 +640,8 @@ int main(int argc, char* argv[])
 
             if (bf["write_carve_diff_raster"])
             {
-                std::cout << "Computing carve difference raster (breached - original)\n";
+                std::cout << "Computing carve difference raster "
+                             "(breached - original)\n";
                 try
                 {
                     lsdtt::lsdtt_raster_cpu carve_diff =
@@ -652,7 +679,7 @@ int main(int argc, char* argv[])
         bf["write_hillshade_raster"])
     {
         std::cout << "\n--- Pit filling ---\n";
-        const std::string algo = sf["fill_algorithm_choice"];
+        std::string algo = sf["fill_algorithm_choice"];
 
         try
         {
@@ -683,7 +710,8 @@ int main(int argc, char* argv[])
 
             if (bf["write_fill_diff_raster"])
             {
-                std::cout << "Computing fill difference raster (filled - original)\n";
+                std::cout << "Computing fill difference raster "
+                             "(filled - original)\n";
                 try
                 {
                     lsdtt::lsdtt_raster_cpu fill_diff =
@@ -742,7 +770,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Parameter echo (always) — README help file only on -h (handled above)
+    // Parameter echo — always printed so runs are reproducible from the log
     // -------------------------------------------------------------------------
     pp.print_parameters();
 

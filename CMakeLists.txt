@@ -72,6 +72,22 @@ if(PkgConfig_FOUND)
 endif()
 
 # =============================================================================
+# Optional: OpenCV (core + imgproc — required by lsdtt_raster_opencv_cpu)
+# =============================================================================
+option(LSDTT_OPENCV "Build OpenCV image-analysis routines" ON)
+set(LSDTT_HAS_OPENCV OFF)
+if(LSDTT_OPENCV)
+    find_package(OpenCV QUIET COMPONENTS core imgproc)
+    if(OpenCV_FOUND)
+        set(LSDTT_HAS_OPENCV ON)
+        message(STATUS "OpenCV found (${OpenCV_VERSION}) — image analysis enabled")
+    else()
+        message(WARNING "OpenCV not found — lsdtt_raster_opencv_cpu will not be built "
+                        "(install libopencv-dev or pass -DLSDTT_OPENCV=OFF to silence)")
+    endif()
+endif()
+
+# =============================================================================
 # Optional: CUDA
 # =============================================================================
 if(LSDTT_GPU)
@@ -127,6 +143,10 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_flow_base.cpp
 )
 
+if(LSDTT_HAS_OPENCV)
+    list(APPEND LSDTT3_CPU_SOURCES src/cpu/lsdtt_raster_opencv_cpu.cpp)
+endif()
+
 add_library(lsdtt3_cpu STATIC ${LSDTT3_CPU_SOURCES})
 
 target_include_directories(lsdtt3_cpu
@@ -150,6 +170,13 @@ if(LSDTT_HAS_FFTW)
     target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_FFTW=1)
     target_include_directories(lsdtt3_cpu PUBLIC ${FFTW3_INCLUDE_DIRS})
     target_link_libraries(lsdtt3_cpu PUBLIC ${FFTW3_LIBRARIES})
+endif()
+
+if(LSDTT_HAS_OPENCV)
+    # OpenCV's CMake targets propagate their own include directories, so no
+    # manual target_include_directories call is needed here.
+    target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_OPENCV=1)
+    target_link_libraries(lsdtt3_cpu PUBLIC ${OpenCV_LIBS})
 endif()
 
 # =============================================================================
@@ -202,9 +229,10 @@ endmacro()
 # =============================================================================
 # CLI executables
 # =============================================================================
-lsdtt_cli(lsdtt-raster-preprocessing  cli/lsdtt-raster-preprocessing.cpp)
+lsdtt_cli(lsdtt-raster-preprocessing   cli/lsdtt-raster-preprocessing.cpp)
 lsdtt_cli(lsdtt-raster-synthetic-tests cli/lsdtt-raster-synthetic-tests.cpp)
 lsdtt_cli(lsdtt-test-flowinfo          cli/lsdtt-test-flowinfo.cpp)
+lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 
 # =============================================================================
 # Install libraries and headers (optional — useful for packaging)
@@ -227,6 +255,7 @@ message(STATUS "  C++ std     : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  GDAL        : ${GDAL_VERSION}")
 message(STATUS "  OpenMP      : ${OpenMP_CXX_FOUND}")
 message(STATUS "  FFTW3       : ${LSDTT_HAS_FFTW}")
+message(STATUS "  OpenCV      : ${LSDTT_HAS_OPENCV}")
 message(STATUS "  GPU (CUDA)  : ${LSDTT_GPU}")
 message(STATUS "===================================")
 message(STATUS "")

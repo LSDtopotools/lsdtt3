@@ -1012,6 +1012,9 @@ poly_fit_coeffs wavelet_quadratic_fit(
     };
 }
 
+
+
+
 #endif  // LSDTT_HAS_FFTW
 
 } // namespace lsdtt

@@ -7,6 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
+#include "lsdtt_raster_spectral_cpu.hpp"    // need this for the polyfit struct
 #include "../cpu/lsdtt_raster_cpu.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 
@@ -296,6 +297,13 @@ lsdtt_raster_cpu moving_window_mean(
         std::move(out_mask.get_vector()),
         meta
     );
+}
+
+
+
+lsdtt_raster_cpu compute_fitted_surface(lsdtt::poly_fit_coeffs polycoeff)
+{
+    return polycoeff.f;
 }
 
 } // namespace lsdtt

@@ -55,6 +55,7 @@
 #pragma once
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_spectral_cpu.hpp"    // need this for the polyfit struct
 
 namespace lsdtt {
 
@@ -85,5 +86,10 @@ lsdtt_raster_cpu moving_window_mean(
     int          radius = 3,
     window_shape shape  = window_shape::square
 );
+
+// -----------------------------------------------------------------------------
+// rasters for morphometric parameters from polyfit coefficients
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_polyfit_fitted_surface(poly_fit_coeffs polycoeff);
 
 } // namespace lsdtt
