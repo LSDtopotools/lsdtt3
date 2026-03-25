@@ -32,6 +32,8 @@
 #include <memory>
 #include <cstdint>
 #include <functional>
+#include <unordered_map>
+#include <variant>
 
 #include <gdal.h>
 #include <gdal_priv.h>
@@ -91,17 +93,45 @@ struct lsdtt_raster_tile {
     lsdtt_raster_meta       meta;
 };
 
+
+// -----------------------------------------------------------------------------
+// Vector field typing
+// -----------------------------------------------------------------------------
+enum class lsdtt_vector_field_type
+{
+    string_type,
+    int64_type,
+    double_type
+};
+
+// Field values may also be null / unset.
+using lsdtt_vector_field_value =
+    std::variant<std::monostate, std::int64_t, double, std::string>;
+
 // -----------------------------------------------------------------------------
 // lsdtt_vector_feature
 //
-// A minimal representation of a single OGR feature for passing vector data
-// between the loader and analysis code. Geometry is stored as WKT.
+// Minimal vector feature representation for passing vector data between the
+// loader and analysis code.
+//
+// Geometry is stored as WKT.
+// Attributes are stored as parallel arrays:
+//
+//   field_names   — field names
+//   field_types   — declared field types
+//   field_values  — typed values; may contain std::monostate for null
+//
+// The three vectors must have identical length.
+// For writing, all features in a layer must share the same field schema
+// (same names in same order, same types in same order).
 // -----------------------------------------------------------------------------
 struct lsdtt_vector_feature {
-    std::string           geometry_wkt;
-    std::vector<std::string>  field_names;
-    std::vector<std::string>  field_values;  // all values serialised to string
+    std::string                           geometry_wkt;
+    std::vector<std::string>              field_names;
+    std::vector<lsdtt_vector_field_type>  field_types;
+    std::vector<lsdtt_vector_field_value> field_values;
 };
+
 
 // -----------------------------------------------------------------------------
 // raster_output_format
@@ -328,6 +358,20 @@ public:
         const std::vector<std::vector<std::string>>& rows
     );
 
+    // Write a set of features to a FlatGeobuf layer.
+    //
+    //   out_path     — output .gpkg file path (created if it does not exist)
+    //   layer_name   — name of the layer to create or replace
+    //   features     — features to write
+    //   crs_wkt      — coordinate reference system as WKT    
+    void write_flatgeobuf(
+        const std::string&                    out_path,
+        const std::string&                    layer_name,
+        const std::vector<lsdtt_vector_feature>& features,
+        const std::string&                    crs_wkt
+    );
+
+    
     // -------------------------------------------------------------------------
     // Utility
     // -------------------------------------------------------------------------

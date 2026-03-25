@@ -1,0 +1,99 @@
+// lsdtt_junction_network_base.hpp
+//
+// Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
+//
+// Copyright (C) 2025 Simon M. Mudd
+// Released under the GNU General Public Licence v3 (GPL-3.0)
+// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+//
+// -----------------------------------------------------------------------------
+// lsdtt_junction_network_base
+//
+// Abstract interface for channel/junction networks built on top of flow routing.
+// Pixel flat indices remain int64_t; junction indices are int32_t.
+// -----------------------------------------------------------------------------
+
+#pragma once
+
+#include <cstdint>
+#include <functional>
+
+#include "lsdtt_raster_meta.hpp"
+#include "lsdtt_junction_network_types.hpp"
+
+namespace lsdtt
+{
+
+class lsdtt_junction_network_base
+{
+public:
+    virtual ~lsdtt_junction_network_base() = default;
+
+    // -------------------------------------------------------------------------
+    // object state
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual bool empty() const noexcept = 0;
+    [[nodiscard]] virtual bool has_topological_order() const noexcept = 0;
+    [[nodiscard]] virtual bool has_s_vector() const noexcept = 0;
+
+    // -------------------------------------------------------------------------
+    // metadata and counts
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual const lsdtt_raster_meta& meta() const noexcept = 0;
+    [[nodiscard]] virtual int n_rows() const noexcept = 0;
+    [[nodiscard]] virtual int n_cols() const noexcept = 0;
+
+    [[nodiscard]] virtual std::int64_t n_channel_cells() const noexcept = 0;
+    [[nodiscard]] virtual std::int32_t n_junctions() const noexcept = 0;
+    [[nodiscard]] virtual std::int32_t n_outlet_junctions() const noexcept = 0;
+
+    // -------------------------------------------------------------------------
+    // pixel-level queries
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual bool is_flat_in_range(std::int64_t flat) const noexcept = 0;
+    [[nodiscard]] virtual bool is_channel(std::int64_t flat) const noexcept = 0;
+    [[nodiscard]] virtual bool is_junction_flat(std::int64_t flat) const noexcept = 0;
+
+    [[nodiscard]] virtual std::int32_t junction_of_flat(std::int64_t flat) const = 0;
+
+    // -------------------------------------------------------------------------
+    // junction-level queries
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual bool is_valid_junction(std::int32_t junction) const noexcept = 0;
+    [[nodiscard]] virtual std::int64_t flat_of_junction(std::int32_t junction) const = 0;
+    [[nodiscard]] virtual int row_of_junction(std::int32_t junction) const = 0;
+    [[nodiscard]] virtual int col_of_junction(std::int32_t junction) const = 0;
+
+    [[nodiscard]] virtual bool is_outlet_junction(std::int32_t junction) const = 0;
+    [[nodiscard]] virtual std::int32_t receiver_of_junction(std::int32_t junction) const = 0;
+    [[nodiscard]] virtual std::uint8_t donor_count_of_junction(std::int32_t junction) const = 0;
+    [[nodiscard]] virtual std::int32_t stream_order_of_junction(std::int32_t junction) const = 0;
+
+    // -------------------------------------------------------------------------
+    // outlet and topological-order indexed access
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual std::int32_t outlet_junction(std::int32_t outlet_index) const = 0;
+    [[nodiscard]] virtual std::int32_t topological_junction(std::int32_t topo_index) const = 0;
+
+    // -------------------------------------------------------------------------
+    // s_vector access
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual std::int32_t s_vector_start(std::int32_t junction) const = 0;
+    [[nodiscard]] virtual std::int32_t s_vector_size(std::int32_t junction) const = 0;
+
+    [[nodiscard]] virtual lsdtt_junction_index_slice upslope_junctions(
+        std::int32_t junction
+    ) const = 0;
+
+    [[nodiscard]] virtual bool is_upslope_of(
+        std::int32_t candidate_junction,
+        std::int32_t target_junction
+    ) const = 0;
+
+    virtual void for_each_upslope_junction(
+        std::int32_t junction,
+        const std::function<void(std::int32_t)>& function
+    ) const = 0;
+};
+
+} // namespace lsdtt

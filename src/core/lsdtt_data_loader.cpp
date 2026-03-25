@@ -15,6 +15,10 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <type_traits>
+#include <variant>
+
+
 
 #include <gdal.h>
 #include <gdal_priv.h>
@@ -36,6 +40,161 @@ static void ensure_gdal_init()
         initialised = true;
     }
 }
+
+
+
+
+// some helper functions
+namespace
+{
+
+OGRFieldType to_ogr_field_type(lsdtt::lsdtt_vector_field_type type)
+{
+    switch (type)
+    {
+        case lsdtt::lsdtt_vector_field_type::int64_type:
+            return OFTInteger64;
+
+        case lsdtt::lsdtt_vector_field_type::double_type:
+            return OFTReal;
+
+        case lsdtt::lsdtt_vector_field_type::string_type:
+        default:
+            return OFTString;
+    }
+}
+
+lsdtt::lsdtt_vector_field_type from_ogr_field_type(OGRFieldType type)
+{
+    switch (type)
+    {
+        case OFTInteger:
+        case OFTInteger64:
+            return lsdtt::lsdtt_vector_field_type::int64_type;
+
+        case OFTReal:
+            return lsdtt::lsdtt_vector_field_type::double_type;
+
+        case OFTString:
+        case OFTWideString:
+        default:
+            return lsdtt::lsdtt_vector_field_type::string_type;
+    }
+}
+
+lsdtt::lsdtt_vector_field_value get_typed_field_value(
+    const OGRFeature*                 feature,
+    int                               field_index,
+    lsdtt::lsdtt_vector_field_type    field_type
+)
+{
+    if (!feature->IsFieldSetAndNotNull(field_index))
+    {
+        return std::monostate{};
+    }
+
+    switch (field_type)
+    {
+        case lsdtt::lsdtt_vector_field_type::int64_type:
+            return static_cast<std::int64_t>(
+                feature->GetFieldAsInteger64(field_index)
+            );
+
+        case lsdtt::lsdtt_vector_field_type::double_type:
+            return feature->GetFieldAsDouble(field_index);
+
+        case lsdtt::lsdtt_vector_field_type::string_type:
+        default:
+            return std::string(feature->GetFieldAsString(field_index));
+    }
+}
+
+void set_typed_field_value(
+    OGRFeature*                               feature,
+    int                                       field_index,
+    const lsdtt::lsdtt_vector_field_value&    value
+)
+{
+    std::visit(
+        [&](const auto& v)
+        {
+            using value_type = std::decay_t<decltype(v)>;
+
+            if constexpr (std::is_same_v<value_type, std::monostate>)
+            {
+                feature->SetFieldNull(field_index);
+            }
+            else if constexpr (std::is_same_v<value_type, std::int64_t>)
+            {
+                feature->SetField(
+                    field_index,
+                    static_cast<GIntBig>(v)
+                );
+            }
+            else if constexpr (std::is_same_v<value_type, double>)
+            {
+                feature->SetField(field_index, v);
+            }
+            else if constexpr (std::is_same_v<value_type, std::string>)
+            {
+                feature->SetField(field_index, v.c_str());
+            }
+        },
+        value
+    );
+}
+
+void validate_vector_feature_schema(
+    const std::vector<lsdtt::lsdtt_vector_feature>& features,
+    const std::string&                              where
+)
+{
+    if (features.empty())
+    {
+        return;
+    }
+
+    const auto& names0 = features[0].field_names;
+    const auto& types0 = features[0].field_types;
+    const auto& vals0  = features[0].field_values;
+
+    if (names0.size() != types0.size() || names0.size() != vals0.size())
+    {
+        throw std::runtime_error(
+            where + ": first feature has inconsistent field schema lengths"
+        );
+    }
+
+    for (std::size_t i = 1; i < features.size(); ++i)
+    {
+        const auto& feat = features[i];
+
+        if (feat.field_names.size() != feat.field_types.size() ||
+            feat.field_names.size() != feat.field_values.size())
+        {
+            throw std::runtime_error(
+                where + ": feature has inconsistent field schema lengths"
+            );
+        }
+
+        if (feat.field_names != names0)
+        {
+            throw std::runtime_error(
+                where + ": all features in a layer must share identical field names"
+            );
+        }
+
+        if (feat.field_types != types0)
+        {
+            throw std::runtime_error(
+                where + ": all features in a layer must share identical field types"
+            );
+        }
+    }
+}
+
+} // unnamed namespace
+
 
 // -----------------------------------------------------------------------------
 // Construction / destruction
@@ -580,13 +739,24 @@ std::vector<lsdtt_vector_feature> lsdtt_data_loader::read_layer(
             CPLFree(wkt);
         }
 
-        // Fields
+        // Typed fields
         feat.field_names.reserve(n_fields);
+        feat.field_types.reserve(n_fields);
         feat.field_values.reserve(n_fields);
+
         for (int f = 0; f < n_fields; ++f)
         {
-            feat.field_names.emplace_back(defn->GetFieldDefn(f)->GetNameRef());
-            feat.field_values.emplace_back(raw_feat->GetFieldAsString(f));
+            OGRFieldDefn* field_defn = defn->GetFieldDefn(f);
+
+            feat.field_names.emplace_back(field_defn->GetNameRef());
+
+            const lsdtt_vector_field_type field_type =
+                from_ogr_field_type(field_defn->GetType());
+
+            feat.field_types.push_back(field_type);
+            feat.field_values.push_back(
+                get_typed_field_value(raw_feat, f, field_type)
+            );
         }
 
         features.push_back(std::move(feat));
@@ -595,6 +765,7 @@ std::vector<lsdtt_vector_feature> lsdtt_data_loader::read_layer(
 
     return features;
 }
+
 
 void lsdtt_data_loader::close_vector()
 {
@@ -605,7 +776,6 @@ void lsdtt_data_loader::close_vector()
 // -----------------------------------------------------------------------------
 // Vector output
 // -----------------------------------------------------------------------------
-
 void lsdtt_data_loader::write_gpkg(
     const std::string&                       out_path,
     const std::string&                       layer_name,
@@ -620,6 +790,8 @@ void lsdtt_data_loader::write_gpkg(
             "lsdtt_data_loader: GeoPackage (GPKG) driver not available"
         );
     }
+
+    validate_vector_feature_schema(features, "lsdtt_data_loader::write_gpkg");
 
     // Open existing or create new GPKG
     GDALDataset* ds = nullptr;
@@ -642,18 +814,14 @@ void lsdtt_data_loader::write_gpkg(
         );
     }
 
-    // Wrap in RAII
     gdal_dataset_ptr ds_ptr(ds);
 
-    // Set up spatial reference
     OGRSpatialReference srs;
     if (!crs_wkt.empty())
     {
         srs.importFromWkt(crs_wkt.c_str());
     }
 
-    // Delete existing layer of same name if present.
-    // GDALDataset has no GetLayerIndex() — find the index by iterating layers.
     int existing = -1;
     for (int i = 0; i < ds->GetLayerCount(); ++i)
     {
@@ -682,22 +850,30 @@ void lsdtt_data_loader::write_gpkg(
         );
     }
 
-    // Create fields from first feature (if any)
+    // Create typed fields from first feature
     if (!features.empty())
     {
-        for (const auto& name : features[0].field_names)
+        for (std::size_t f = 0; f < features[0].field_names.size(); ++f)
         {
-            OGRFieldDefn field(name.c_str(), OFTString);
-            layer->CreateField(&field);
+            OGRFieldDefn field(
+                features[0].field_names[f].c_str(),
+                to_ogr_field_type(features[0].field_types[f])
+            );
+
+            if (layer->CreateField(&field) != OGRERR_NONE)
+            {
+                throw std::runtime_error(
+                    "lsdtt_data_loader: failed to create field: " +
+                    features[0].field_names[f]
+                );
+            }
         }
     }
 
-    // Write features
     for (const auto& feat : features)
     {
         OGRFeature* ogr_feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
 
-        // Geometry from WKT
         if (!feat.geometry_wkt.empty())
         {
             OGRGeometry* geom = nullptr;
@@ -710,10 +886,13 @@ void lsdtt_data_loader::write_gpkg(
             }
         }
 
-        // Fields
         for (int f = 0; f < static_cast<int>(feat.field_values.size()); ++f)
         {
-            ogr_feat->SetField(f, feat.field_values[f].c_str());
+            set_typed_field_value(
+                ogr_feat,
+                f,
+                feat.field_values[static_cast<std::size_t>(f)]
+            );
         }
 
         if (layer->CreateFeature(ogr_feat) != OGRERR_NONE)
@@ -723,9 +902,123 @@ void lsdtt_data_loader::write_gpkg(
                 "lsdtt_data_loader: failed to write feature to layer: " + layer_name
             );
         }
+
         OGRFeature::DestroyFeature(ogr_feat);
     }
 }
+
+
+
+
+void lsdtt_data_loader::write_flatgeobuf(
+    const std::string&                       out_path,
+    const std::string&                       layer_name,
+    const std::vector<lsdtt_vector_feature>& features,
+    const std::string&                       crs_wkt
+)
+{
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("FlatGeobuf");
+    if (!driver)
+    {
+        throw std::runtime_error(
+            "lsdtt_data_loader: FlatGeobuf driver not available"
+        );
+    }
+
+    validate_vector_feature_schema(features, "lsdtt_data_loader::write_flatgeobuf");
+
+    VSIUnlink(out_path.c_str());
+
+    GDALDataset* ds = driver->Create(out_path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds)
+    {
+        throw std::runtime_error(
+            "lsdtt_data_loader: could not create FlatGeobuf file: " + out_path
+        );
+    }
+
+    gdal_dataset_ptr ds_ptr(ds);
+
+    OGRSpatialReference srs;
+    if (!crs_wkt.empty())
+    {
+        srs.importFromWkt(crs_wkt.c_str());
+    }
+
+    OGRLayer* layer = ds->CreateLayer(
+        layer_name.c_str(),
+        crs_wkt.empty() ? nullptr : &srs,
+        wkbUnknown,
+        nullptr
+    );
+
+    if (!layer)
+    {
+        throw std::runtime_error(
+            "lsdtt_data_loader: could not create FlatGeobuf layer: " + layer_name
+        );
+    }
+
+    if (!features.empty())
+    {
+        for (std::size_t f = 0; f < features[0].field_names.size(); ++f)
+        {
+            OGRFieldDefn field(
+                features[0].field_names[f].c_str(),
+                to_ogr_field_type(features[0].field_types[f])
+            );
+
+            if (layer->CreateField(&field) != OGRERR_NONE)
+            {
+                throw std::runtime_error(
+                    "lsdtt_data_loader: failed creating field '" +
+                    features[0].field_names[f] + "' in FlatGeobuf layer"
+                );
+            }
+        }
+    }
+
+    for (const auto& feat : features)
+    {
+        OGRFeature* ogr_feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+
+        if (!feat.geometry_wkt.empty())
+        {
+            OGRGeometry* geom = nullptr;
+            OGRGeometryFactory::createFromWkt(
+                feat.geometry_wkt.c_str(), nullptr, &geom
+            );
+            if (geom)
+            {
+                ogr_feat->SetGeometryDirectly(geom);
+            }
+        }
+
+        for (int f = 0; f < static_cast<int>(feat.field_values.size()); ++f)
+        {
+            set_typed_field_value(
+                ogr_feat,
+                f,
+                feat.field_values[static_cast<std::size_t>(f)]
+            );
+        }
+
+        if (layer->CreateFeature(ogr_feat) != OGRERR_NONE)
+        {
+            OGRFeature::DestroyFeature(ogr_feat);
+            throw std::runtime_error(
+                "lsdtt_data_loader: failed to write feature to FlatGeobuf"
+            );
+        }
+
+        OGRFeature::DestroyFeature(ogr_feat);
+    }
+}
+
+
+
+
+
 
 // -----------------------------------------------------------------------------
 // Tabular output
