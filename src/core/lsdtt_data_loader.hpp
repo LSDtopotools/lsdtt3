@@ -1,6 +1,6 @@
 // lsdtt_data_loader.hpp
 //
-// Part of LSDTopoTools2 -- https://github.com/LSDtopotools/LSDTopoTools2
+// Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2025 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
@@ -9,7 +9,7 @@
 // -----------------------------------------------------------------------------
 // lsdtt_data_loader
 //
-// The sole GDAL/OGR interface in LSDTopoTools2. Responsible for all geospatial
+// The sole GDAL/OGR interface in lsdtt3. Responsible for all geospatial
 // file I/O — reading and writing rasters, vector layers, and tabular data.
 //
 // Compute objects (lsdtt_raster_cpu, lsdtt_raster_gpu) never touch GDAL directly.
