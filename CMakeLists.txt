@@ -109,6 +109,8 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_param_parser.cpp
     src/core/lsdtt_crs_suggest.cpp
     src/core/lsdtt_raster_reproject.cpp
+    src/core/lsdtt_vector_utils.cpp
+
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
@@ -141,6 +143,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_synthetic_surfaces_cpu.cpp
     src/cpu/lsdtt_flowinfo_cpu.cpp
     src/cpu/lsdtt_flow_base.cpp
+    src/cpu/lsdtt_junction_network_cpu.cpp
+
 )
 
 if(LSDTT_HAS_OPENCV)
@@ -233,6 +237,7 @@ lsdtt_cli(lsdtt-raster-preprocessing   cli/lsdtt-raster-preprocessing.cpp)
 lsdtt_cli(lsdtt-raster-synthetic-tests cli/lsdtt-raster-synthetic-tests.cpp)
 lsdtt_cli(lsdtt-test-flowinfo          cli/lsdtt-test-flowinfo.cpp)
 lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
+lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 
 # =============================================================================
 # Install libraries and headers (optional — useful for packaging)

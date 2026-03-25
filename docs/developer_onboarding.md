@@ -28,6 +28,34 @@ selection parameters follow `*_algorithm_choice`. These conventions exist so
 parameter files are self-documenting and consistent across CLIs.
 
 ---
+## CLI design rule
+
+Every CLI uses `lsdtt_param_parser`.
+
+CLI source files should follow a common layout:
+1. usage/banner helpers
+2. command-line flag parsing
+3. parameter defaults grouped by theme
+4. `help_map` entries immediately after each parameter declaration
+5. parameter parsing
+6. cross-parameter logic
+7. input loading
+8. processing pipeline
+9. output writing
+10. `print_parameters()` for reproducibility
+
+### Parameter declaration rule
+
+In CLI files:
+- parameters should **not** be declared `const`
+- parameters should be grouped by workflow theme
+- every `help_map` entry should appear **immediately after** the corresponding
+  parameter default declaration
+
+This pattern is now the standard for all CLIs because it makes developer-facing
+options easy to inspect and keeps the parameter contract readable in one place.
+
+---
 
 ## Where to put new code
 
@@ -221,7 +249,7 @@ donor-count array compact.
 
 ## Summary checklist for new analysis code
 
-- Work in `src/cpu/` — do not modify `src/core/`
+- Work in `src/cpu/` 
 - Write free functions unless you need private data members
 - Add new `.cpp` files to `LSDTT3_CPU_SOURCES` in `CMakeLists.txt`
 - Use `std::int64_t` for all cell indices, and the sentinel constants for

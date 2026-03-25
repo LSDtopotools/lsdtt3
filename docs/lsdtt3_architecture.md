@@ -71,10 +71,11 @@ Two static libraries: `lsdtt3_core` and `lsdtt3_cpu`.
 - `lsdtt_param_parser.cpp`
 - `lsdtt_crs_suggest.cpp`
 - `lsdtt_raster_reproject.cpp`
-- *(lsdtt_flow_base has no non-inline methods — factory lives in lsdtt3_cpu)* This separation is to avoid circular compile dependencies. 
+- `lsdtt_vector_utils.cpp`
 
 **`lsdtt3_cpu` sources** (`src/cpu/`):
 - `lsdtt_raster_cpu.cpp`
+- `lsdtt_raster_algebra.cpp`
 - `lsdtt_raster_surface_metrics_cpu.cpp`
 - `lsdtt_raster_flow_preprocessing_cpu.cpp`
 - `lsdtt_raster_nodata_filling_cpu.cpp`
@@ -82,15 +83,19 @@ Two static libraries: `lsdtt3_core` and `lsdtt3_cpu`.
 - `lsdtt_raster_synthetic_surfaces_cpu.cpp`
 - `lsdtt_flowinfo_cpu.cpp`
 - `lsdtt_flow_base.cpp`
+- `lsdtt_junction_network_cpu.cpp`
+- `lsdtt_raster_opencv_cpu.cpp` *(when OpenCV is available)*
 
 `lsdtt3_cpu` depends on `lsdtt3_core`. All CLI executables link against
-`lsdtt3_cpu` and `lsdtt3_core`. OpenMP and FFTW link to `lsdtt3_cpu`.
+`lsdtt3_cpu` and `lsdtt3_core`. OpenMP, FFTW, and OpenCV link to `lsdtt3_cpu`.
 
 **Dependencies:**
-- GDAL — required (`gdal_utils.h` needed for `GDALWarpAppOptions` in `lsdtt_raster_reproject`)
-- OpenMP — optional (warning if absent)
-- FFTW3 (double, `fftw3`) — optional via pkg-config
-- CUDA — optional (`-DLSDTT_GPU=ON`)
+- GDAL — required
+- OpenMP — optional
+- FFTW3 — optional
+- OpenCV — optional
+- CUDA — optional
+
 
 **FFTW:** Uses double API (`fftw_*`), NOT threaded FFTW, NOT float (`fftwf_*`).
 Compile definition: `LSDTT_HAS_FFTW=1`. Stub in `lsdtt_raster_spectral_cpu.cpp`
@@ -188,6 +193,59 @@ Key fields: `n_rows`, `n_cols`, `x_min`, `y_min`, `cell_size`, `no_data_value`,
     system like UTM."*
   - *"Your units are not in metres. Are you using feet? Please convert your
     raster to a unit that is not only used by lunatics."*
+
+---
+
+## CLI executables
+
+Current CLI programs are:
+
+- **`lsdtt-raster-preprocessing.cpp`**  
+  Raster preprocessing workflow: projection enforcement/reprojection, masking,
+  nodata filling, breaching, pit filling, hillshade, and related outputs.
+
+- **`lsdtt-raster-synthetic-tests.cpp`**  
+  Synthetic raster generation and testing utilities.
+
+- **`lsdtt-test-flowinfo.cpp`**  
+  Builds D8 flow routing and writes diagnostic flow-routing rasters.
+
+- **`lsdtt-surface-metrics.cpp`**  
+  Surface-analysis workflow that does not require flow routing: hillshade,
+  polynomial surface fit, Otsu segmentation, Hough line extraction.
+
+- **`lsdtt-channel-extraction.cpp`**  
+  Builds or reuses a pit-filled DEM, constructs D8 flow routing, extracts source
+  pixels from a contributing-pixel threshold, builds the junction/channel
+  network, and writes channel-network output to CSV, GeoPackage, or FlatGeobuf.
+
+### CLI design rule
+
+Every CLI uses `lsdtt_param_parser`.
+
+CLI source files should follow a common layout:
+1. usage/banner helpers
+2. command-line flag parsing
+3. parameter defaults grouped by theme
+4. `help_map` entries immediately after each parameter declaration
+5. parameter parsing
+6. cross-parameter logic
+7. input loading
+8. processing pipeline
+9. output writing
+10. `print_parameters()` for reproducibility
+
+### Parameter declaration rule
+
+In CLI files:
+- parameters should **not** be declared `const`
+- parameters should be grouped by workflow theme
+- every `help_map` entry should appear **immediately after** the corresponding
+  parameter default declaration
+
+This pattern is now the standard for all CLIs because it makes developer-facing
+options easy to inspect and keeps the parameter contract readable in one place.
+
 
 ---
 
@@ -356,17 +414,101 @@ Parameter file format: `key: value` (snake_case keys, `#` for comments).
 
 File: `src/core/lsdtt_data_loader.hpp/.cpp`
 
-**`raster_output_format` enum:**
-- `cog` — Cloud Optimised GeoTIFF (default; falls back to gtiff < 262144 px)
-- `gtiff` — plain compressed GeoTIFF (tiled DEFLATE)
-- `same_as_input` — uses the GDAL driver of the input raster
+`lsdtt_data_loader` handles both raster and vector I/O through GDAL/OGR.
 
-**Key methods:**
+### Raster output
+
+**`raster_output_format` enum:**
+- `cog` — Cloud Optimised GeoTIFF (default; falls back to gtiff for small rasters)
+- `gtiff` — plain compressed GeoTIFF
+- `same_as_input` — use the GDAL driver of the input raster
+
+**Key raster methods:**
 - `write_full(data, meta, path, format=cog)`
-- `finalise_output(path)` — format-aware
+- `finalise_output(path)`
 - `create_output_raster(path, meta, format=cog, n_bands=1)`
 
+### Vector output
+
+Preferred vector outputs are:
+- GeoPackage (`.gpkg`)
+- FlatGeobuf (`.fgb`)
+- CSV
+
+Vector features use:
+- WKT geometry
+- typed attribute fields
+- GDAL/OGR layer creation and feature writing
+
+Typical vector-writing methods include:
+- `write_gpkg(...)`
+- `write_flatgeobuf(...)`
+- `write_csv(...)`
+- `read_layer(...)`
+
+GeoPackage and FlatGeobuf are written through GDAL/OGR; no direct SQLite coding
+is required in `lsdtt3`.
+
+
 ---
+
+
+## Vector I/O
+
+Vector I/O is handled through `lsdtt_data_loader` and shared helpers in
+`src/core/lsdtt_vector_utils.hpp/.cpp`.
+
+### Preferred output formats
+
+Current preferred vector formats are:
+
+- **GeoPackage (`.gpkg`)**  
+  Default binary single-file GIS output.
+
+- **FlatGeobuf (`.fgb`)**  
+  Lightweight binary single-file GIS output.
+
+- **CSV**  
+  Mainly for backward-compatible tabular export and plotting workflows.
+
+### Attribute typing
+
+Vector fields should preserve their natural types:
+- integer attributes → integer fields
+- floating-point attributes → real fields
+- text attributes → string fields
+
+Do not coerce all vector attributes to strings unless there is a compelling
+backward-compatibility reason.
+
+This is important for fields such as:
+- stream order
+- junction id
+- receiver id
+- row / col / flat index
+- elevation
+- flow distance
+
+### CSV spatial convention
+
+If point data are written to CSV for interoperability with older scripts, the
+CSV should contain:
+- `latitude`
+- `longitude`
+
+in **EPSG:4326**, using GDAL/OGR coordinate transformation from the source CRS.
+
+### Shared helper split
+
+- **`src/utils/lsdtt_raster_geometry.hpp`**  
+  header-only grid geometry helpers such as row/col to cell-centre x/y
+
+- **`src/core/lsdtt_vector_utils.hpp/.cpp`**  
+  GDAL/OGR-backed vector/projection helpers such as reusable coordinate
+  transformations and simple WKT generation
+
+---
+
 
 ## Flow routing — how to navigate the files
 
@@ -491,6 +633,55 @@ DAG-based flow routing for D-infinity and MFD. No s_vector.
 **Routing methods:** `d_infinity` (Tarboton 1997), `mfd` (Quinn 1991)
 
 ---
+
+
+## Junction-network architecture
+
+The junction-network layer is the compact channel-graph analogue of the pixel
+flow-routing graph.
+
+### Files
+
+- `src/core/lsdtt_junction_network_types.hpp`
+- `src/core/lsdtt_junction_network_base.hpp`
+- `src/cpu/lsdtt_junction_network_cpu.hpp/.cpp`
+
+### Type policy
+
+- **pixel / raster flat indices** use `std::int64_t`
+- **junction indices** use `std::int32_t`
+
+This split is deliberate:
+- full rasters may exceed the safe range of 32-bit indexing
+- junction counts are much smaller than pixel counts
+
+### Construction model
+
+`lsdtt_junction_network_cpu` is built on top of an existing flow-routing object.
+
+The flow object is not owned by the junction network and must outlive it.
+
+### Persistent storage
+
+The persistent raster-scale storage is intentionally small:
+- channel mask
+- junction-id raster
+
+The compact graph stores:
+- junction flat index
+- receiver junction
+- donor count
+- stream order
+- outlets
+- topological order
+- junction `s_vector`
+
+Temporary per-pixel products, such as pixel stream order used during
+construction or export, should remain local and not be stored permanently unless
+there is a clear reason.
+
+---
+
 
 ## CPU analysis free functions (src/cpu/)
 
@@ -681,3 +872,14 @@ n_threads: 0
     so the provenance of every output file is unambiguous from its filename
 15. `lsdtt_raster_algebra.hpp` is header-only (no `.cpp`); include from `src/cpu/`.
     Use `lsdtt::algebra::raster_subtract(a, b)` etc. for diff rasters in CLIs.
+16. Every CLI uses `lsdtt_param_parser`
+17. CLI parameters are grouped by theme, not declared in one unstructured block
+18. In CLIs, `help_map` entries come immediately after the corresponding
+    parameter default declaration
+19. CLI parameter variables are intentionally not `const` because
+    cross-parameter logic may adjust them after parsing
+20. Pure grid-geometry helpers belong in `src/utils/`; GDAL/OGR-backed vector
+    and projection helpers belong in `src/core/`
+21. Vector outputs should prefer typed attributes and single-file binary formats
+    such as GeoPackage or FlatGeobuf
+
