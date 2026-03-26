@@ -657,6 +657,227 @@ static lsdtt_raster_cpu gaussian_smooth_conservative(
     return make_raster(std::move(out_data), std::move(out_mask), meta);
 }
 
+// -----------------------------------------------------------------------------
+// validate_drain_request
+// -----------------------------------------------------------------------------
+static void validate_drain_request(
+    const lsdtt_raster_cpu& raster,
+    const drain_request&    request)
+{
+    validate_frangi_request(raster, request.frangi);
+
+    if (!std::isfinite(request.response_threshold) ||
+        request.response_threshold < 0.0 ||
+        request.response_threshold > 1.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: response_threshold must be in [0, 1]"
+        );
+    }
+
+    if (request.min_component_pixels < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: min_component_pixels must be >= 1"
+        );
+    }
+
+    if (!std::isfinite(request.min_major_axis_pixels) ||
+        request.min_major_axis_pixels < 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: min_major_axis_pixels must be finite and >= 0"
+        );
+    }
+
+    if (!std::isfinite(request.min_elongation) ||
+        request.min_elongation < 1.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: min_elongation must be finite and >= 1"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------------
+// filter_binary_components_by_shape
+//
+// Input must be a binary raster with values 0/1 on valid pixels.
+// Connected components are 8-neighbourhood foreground regions.
+// Components are retained if they pass all of:
+//   - minimum pixel count
+//   - minimum major-axis length (pixels)
+//   - minimum elongation = major / minor
+//
+// The major/minor axes are estimated from the eigenvalues of the 2D covariance
+// matrix of pixel-centre coordinates within each component.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu filter_binary_components_by_shape(
+    const lsdtt_raster_cpu& binary,
+    int                     min_component_pixels,
+    double                  min_major_axis_pixels,
+    double                  min_elongation)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+    std::vector<uint8_t> visited(npix, uint8_t{0});
+
+    auto is_valid = [&](std::size_t idx) -> bool
+    {
+        return in_mask[idx] != 0 &&
+               !meta.is_nodata(in_data[idx]) &&
+               std::isfinite(in_data[idx]);
+    };
+
+    auto is_foreground = [&](std::size_t idx) -> bool
+    {
+        return is_valid(idx) && in_data[idx] > 0.5f;
+    };
+
+    for (std::size_t idx = 0; idx < npix; ++idx)
+    {
+        if (is_valid(idx))
+        {
+            out_mask[idx] = uint8_t{1};
+        }
+    }
+
+    for (int row0 = 0; row0 < nrows; ++row0)
+    {
+        for (int col0 = 0; col0 < ncols; ++col0)
+        {
+            const std::size_t seed =
+                static_cast<std::size_t>(row0) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(col0);
+
+            if (visited[seed] != 0 || !is_foreground(seed))
+            {
+                continue;
+            }
+
+            std::vector<std::size_t> stack;
+            std::vector<std::size_t> component;
+
+            stack.push_back(seed);
+            visited[seed] = uint8_t{1};
+
+            double sum_r  = 0.0;
+            double sum_c  = 0.0;
+            double sum_rr = 0.0;
+            double sum_cc = 0.0;
+            double sum_rc = 0.0;
+
+            while (!stack.empty())
+            {
+                const std::size_t idx = stack.back();
+                stack.pop_back();
+
+                component.push_back(idx);
+
+                const int row = static_cast<int>(idx / static_cast<std::size_t>(ncols));
+                const int col = static_cast<int>(idx % static_cast<std::size_t>(ncols));
+
+                const double r = static_cast<double>(row);
+                const double c = static_cast<double>(col);
+
+                sum_r  += r;
+                sum_c  += c;
+                sum_rr += r * r;
+                sum_cc += c * c;
+                sum_rc += r * c;
+
+                for (int dr = -1; dr <= 1; ++dr)
+                {
+                    for (int dc = -1; dc <= 1; ++dc)
+                    {
+                        if (dr == 0 && dc == 0) continue;
+
+                        const int rr = row + dr;
+                        const int cc = col + dc;
+
+                        if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols)
+                        {
+                            continue;
+                        }
+
+                        const std::size_t nidx =
+                            static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols) +
+                            static_cast<std::size_t>(cc);
+
+                        if (visited[nidx] == 0 && is_foreground(nidx))
+                        {
+                            visited[nidx] = uint8_t{1};
+                            stack.push_back(nidx);
+                        }
+                    }
+                }
+            }
+
+            const double n = static_cast<double>(component.size());
+
+            double major_axis_pixels = 0.0;
+            double minor_axis_pixels = 0.0;
+            double elongation        = 1.0;
+
+            if (n >= 2.0)
+            {
+                const double mean_r = sum_r / n;
+                const double mean_c = sum_c / n;
+
+                const double cov_rr = std::max(0.0, sum_rr / n - mean_r * mean_r);
+                const double cov_cc = std::max(0.0, sum_cc / n - mean_c * mean_c);
+                const double cov_rc =               sum_rc / n - mean_r * mean_c;
+
+                const double trace = cov_rr + cov_cc;
+                const double disc = std::sqrt(
+                    std::max(0.0, (cov_rr - cov_cc) * (cov_rr - cov_cc) +
+                                  4.0 * cov_rc * cov_rc)
+                );
+
+                const double lambda_max = std::max(0.0, 0.5 * (trace + disc));
+                const double lambda_min = std::max(0.0, 0.5 * (trace - disc));
+
+                major_axis_pixels = 4.0 * std::sqrt(lambda_max);
+                minor_axis_pixels = 4.0 * std::sqrt(lambda_min);
+
+                if (minor_axis_pixels > 1e-12)
+                {
+                    elongation = major_axis_pixels / minor_axis_pixels;
+                }
+                else if (major_axis_pixels > 0.0)
+                {
+                    elongation = std::numeric_limits<double>::infinity();
+                }
+            }
+
+            const bool keep =
+                static_cast<int>(component.size()) >= min_component_pixels &&
+                major_axis_pixels >= min_major_axis_pixels &&
+                elongation >= min_elongation;
+
+            if (keep)
+            {
+                for (std::size_t idx : component)
+                {
+                    out_data[idx] = 1.0f;
+                }
+            }
+        }
+    }
+
+    return make_raster(std::move(out_data), std::move(out_mask), meta);
+}
 
 
 
@@ -855,6 +1076,39 @@ frangi_result frangi_filter(
     };
 }
 
+// -----------------------------------------------------------------------------
+// find_drains
+// -----------------------------------------------------------------------------
+drain_result find_drains(
+    const lsdtt_raster_cpu& raster,
+    const drain_request&    request)
+{
+    validate_drain_request(raster, request);
+
+    frangi_result frangi = frangi_filter(raster, request.frangi);
+
+    lsdtt_raster_cpu threshold_mask =
+        threshold_binary(
+            frangi.response,
+            request.response_threshold
+        );
+
+    lsdtt_raster_cpu drain_mask =
+        filter_binary_components_by_shape(
+            threshold_mask,
+            request.min_component_pixels,
+            request.min_major_axis_pixels,
+            request.min_elongation
+        );
+
+    return drain_result
+    {
+        std::move(frangi.response),
+        std::move(frangi.best_scale_metres),
+        std::move(threshold_mask),
+        std::move(drain_mask)
+    };
+}
 
 
 // -----------------------------------------------------------------------------

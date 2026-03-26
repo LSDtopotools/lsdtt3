@@ -134,6 +134,48 @@ frangi_result frangi_filter(
     const frangi_request&   request
 );
 
+// -----------------------------------------------------------------------------
+// drain_request
+// -----------------------------------------------------------------------------
+struct drain_request
+{
+    frangi_request frangi;
+
+    double response_threshold   = 0.15;
+    int    min_component_pixels = 6;
+    double min_major_axis_pixels = 5.0;
+    double min_elongation       = 3.0;
+};
+
+// -----------------------------------------------------------------------------
+// drain_result
+// -----------------------------------------------------------------------------
+struct drain_result
+{
+    lsdtt_raster_cpu frangi_response;
+    lsdtt_raster_cpu frangi_best_scale_metres;
+    lsdtt_raster_cpu threshold_mask;
+    lsdtt_raster_cpu drain_mask;
+};
+
+// -----------------------------------------------------------------------------
+// find_drains
+//
+// Drain finder based on:
+//   1. Frangi valley enhancement
+//   2. thresholding of the Frangi response
+//   3. connected-component filtering by size and elongation
+//
+// Intended for narrow, line-like incised drainage or ditch features in
+// high-resolution DEMs.
+//
+// Throws:
+//   std::runtime_error on invalid input metadata or invalid request values.
+// -----------------------------------------------------------------------------
+drain_result find_drains(
+    const lsdtt_raster_cpu& raster,
+    const drain_request&    request
+);
 
 
 // -----------------------------------------------------------------------------

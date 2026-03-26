@@ -293,7 +293,7 @@ int main(int argc, char* argv[])
     string_default_map["feature_type"] = "channel_bottoms";
     help_map["feature_type"] = {"string","channel_bottoms",
         "Feature mode to run.",
-        "Currently only channel_bottoms is implemented in this first draft."};
+        "Supported values: channel_bottoms, find_drains."};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -387,6 +387,68 @@ int main(int argc, char* argv[])
         "Includes raw curvature rasters, derived channelness signals, curvature "
         "persistence, depth signal, and slope signal."};
 
+    // --- Drain finder ---
+    float_default_map["frangi_sigma_min_metres"] = 1.0f;
+    help_map["frangi_sigma_min_metres"] = {"float","1.0",
+        "Minimum Frangi Gaussian scale in metres.",
+        "Use small values for narrow drain bottoms in high-resolution DEMs."};
+
+    float_default_map["frangi_sigma_max_metres"] = 2.5f;
+    help_map["frangi_sigma_max_metres"] = {"float","2.5",
+        "Maximum Frangi Gaussian scale in metres.",
+        "Set this near the expected width of the drain-bottom signal rather "
+        "than the spacing between drains."};
+
+    int_default_map["frangi_n_scales"] = 4;
+    help_map["frangi_n_scales"] = {"int","4",
+        "Number of Frangi scales.",
+        "Scales are sampled logarithmically between the minimum and maximum "
+        "Frangi sigma values."};
+
+    float_default_map["frangi_beta"] = 0.4f;
+    help_map["frangi_beta"] = {"float","0.4",
+        "Frangi beta parameter.",
+        "Lower values more strongly prefer line-like over blob-like responses."};
+
+    float_default_map["frangi_c"] = 1.0f;
+    help_map["frangi_c"] = {"float","1.0",
+        "Frangi c parameter.",
+        "Controls suppression of weak-structure responses. Smaller values make "
+        "the filter respond more selectively to subtle narrow drains."};
+
+    float_default_map["drain_response_threshold"] = 0.15f;
+    help_map["drain_response_threshold"] = {"float","0.15",
+        "Threshold applied to the Frangi response before shape filtering.",
+        "Lower values retain more candidate pixels; higher values are more "
+        "conservative."};
+
+    int_default_map["drain_min_component_pixels"] = 6;
+    help_map["drain_min_component_pixels"] = {"int","6",
+        "Minimum connected-component size in pixels.",
+        "Small spotty detections below this size are removed."};
+
+    float_default_map["drain_min_major_axis_pixels"] = 5.0f;
+    help_map["drain_min_major_axis_pixels"] = {"float","5.0",
+        "Minimum estimated major-axis length in pixels.",
+        "Retains only components with a sufficiently line-like span."};
+
+    float_default_map["drain_min_elongation"] = 3.0f;
+    help_map["drain_min_elongation"] = {"float","3.0",
+        "Minimum component elongation = major_axis / minor_axis.",
+        "Higher values more aggressively reject leopard-spot style detections."};
+
+    bool_default_map["write_drain_mask_raster"] = true;
+    help_map["write_drain_mask_raster"] = {"bool","true",
+        "Write the final filtered binary drain mask.",
+        "Output pixels are 1.0 for retained drain detections and 0.0 otherwise."};
+
+    bool_default_map["write_drain_diagnostics"] = true;
+    help_map["write_drain_diagnostics"] = {"bool","true",
+        "Write intermediate drain-finder diagnostic rasters.",
+        "Includes Frangi response, Frangi best scale, and the thresholded "
+        "candidate mask before shape filtering."};
+
+
     // -------------------------------------------------------------------------
     // Parse parameters
     // -------------------------------------------------------------------------
@@ -407,6 +469,8 @@ int main(int argc, char* argv[])
 
     lsdtt::raster_output_format out_fmt;
     lsdtt::channel_bottom_request request;
+    lsdtt::drain_request drain_request;
+
 
     try
     {
@@ -437,6 +501,28 @@ int main(int argc, char* argv[])
         request.score_threshold =
             static_cast<double>(ff.at("channel_score_threshold"));
         request.n_threads = n_threads;
+        drain_request.frangi.sigma_min_metres =
+            static_cast<double>(ff.at("frangi_sigma_min_metres"));
+        drain_request.frangi.sigma_max_metres =
+            static_cast<double>(ff.at("frangi_sigma_max_metres"));
+        drain_request.frangi.n_scales =
+            ifs.at("frangi_n_scales");
+        drain_request.frangi.beta =
+            static_cast<double>(ff.at("frangi_beta"));
+        drain_request.frangi.c =
+            static_cast<double>(ff.at("frangi_c"));
+        drain_request.frangi.target = lsdtt::frangi_target::valleys;
+        drain_request.frangi.n_threads = n_threads;
+
+        drain_request.response_threshold =
+            static_cast<double>(ff.at("drain_response_threshold"));
+        drain_request.min_component_pixels =
+            ifs.at("drain_min_component_pixels");
+        drain_request.min_major_axis_pixels =
+            static_cast<double>(ff.at("drain_min_major_axis_pixels"));
+        drain_request.min_elongation =
+            static_cast<double>(ff.at("drain_min_elongation"));
+
     }
     catch (const std::exception& e)
     {
@@ -444,12 +530,14 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (feature_type != "channel_bottoms")
+    if (feature_type != "channel_bottoms" &&
+        feature_type != "find_drains")
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
-                  << "'. This first draft only supports channel_bottoms.\n";
+                  << "'. Supported values are channel_bottoms and find_drains.\n";
         return 1;
     }
+
 
     // -------------------------------------------------------------------------
     // Open DEM
@@ -485,69 +573,120 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu dem(loader);
 
     // -------------------------------------------------------------------------
-    // Feature mode: channel_bottoms
+    // Feature modes
     // -------------------------------------------------------------------------
     try
     {
-        std::cout << "\n--- Channel-bottom detector ---\n";
-        std::cout << "Small lambda         : " << request.polyfit_lambda_small << " m\n";
-        std::cout << "Large lambda         : " << request.polyfit_lambda_large << " m\n";
-        std::cout << "Curvature metric     : " << sf.at("polyfit_curvature_metric") << "\n";
-        std::cout << "Curvature sign       : " << sf.at("polyfit_curvature_sign") << "\n";
-        std::cout << "Depth radius         : " << request.depth_window_radius << " px\n";
-        std::cout << "Depth window shape   : " << sf.at("depth_window_shape") << "\n";
-        std::cout << "Weight persistent    : " << request.weight_persistent << "\n";
-        std::cout << "Weight depth         : " << request.weight_depth << "\n";
-        std::cout << "Weight slope         : " << request.weight_slope << "\n";
-        std::cout << "Score threshold      : " << request.score_threshold << "\n";
-
-        lsdtt::channel_bottom_result result =
-            lsdtt::find_channel_bottoms(dem, request);
-
-        if (bf.at("write_channel_score_raster"))
+        if (feature_type == "channel_bottoms")
         {
-            const std::string o = out_path(pp, "_channel_score.tif");
-            std::cout << "Writing: " << o << "\n";
-            write_raster(loader, result.score, o, out_fmt);
+            std::cout << "\n--- Channel-bottom detector ---\n";
+            std::cout << "Small lambda         : " << request.polyfit_lambda_small << " m\n";
+            std::cout << "Large lambda         : " << request.polyfit_lambda_large << " m\n";
+            std::cout << "Curvature metric     : " << sf.at("polyfit_curvature_metric") << "\n";
+            std::cout << "Curvature sign       : " << sf.at("polyfit_curvature_sign") << "\n";
+            std::cout << "Depth radius         : " << request.depth_window_radius << " px\n";
+            std::cout << "Depth window shape   : " << sf.at("depth_window_shape") << "\n";
+            std::cout << "Weight persistent    : " << request.weight_persistent << "\n";
+            std::cout << "Weight depth         : " << request.weight_depth << "\n";
+            std::cout << "Weight slope         : " << request.weight_slope << "\n";
+            std::cout << "Score threshold      : " << request.score_threshold << "\n";
+
+            lsdtt::channel_bottom_result result =
+                lsdtt::find_channel_bottoms(dem, request);
+
+            if (bf.at("write_channel_score_raster"))
+            {
+                const std::string o = out_path(pp, "_channel_score.tif");
+                std::cout << "Writing: " << o << "\n";
+                write_raster(loader, result.score, o, out_fmt);
+            }
+
+            if (bf.at("write_channel_bottom_mask_raster"))
+            {
+                const std::string o = out_path(pp, "_channel_bottom_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                write_raster(loader, result.mask, o, out_fmt);
+            }
+
+            if (bf.at("write_channel_diagnostics"))
+            {
+                const std::string o1 = out_path(pp, "_channel_curvature_small.tif");
+                const std::string o2 = out_path(pp, "_channel_curvature_large.tif");
+                const std::string o3 = out_path(pp, "_channel_signal_small.tif");
+                const std::string o4 = out_path(pp, "_channel_signal_large.tif");
+                const std::string o5 = out_path(pp, "_channel_persistent.tif");
+                const std::string o6 = out_path(pp, "_channel_depth_signal.tif");
+                const std::string o7 = out_path(pp, "_channel_slope_signal.tif");
+
+                std::cout << "Writing: " << o1 << "\n";
+                write_raster(loader, result.curvature_small_raw, o1, out_fmt);
+
+                std::cout << "Writing: " << o2 << "\n";
+                write_raster(loader, result.curvature_large_raw, o2, out_fmt);
+
+                std::cout << "Writing: " << o3 << "\n";
+                write_raster(loader, result.curvature_small_signal, o3, out_fmt);
+
+                std::cout << "Writing: " << o4 << "\n";
+                write_raster(loader, result.curvature_large_signal, o4, out_fmt);
+
+                std::cout << "Writing: " << o5 << "\n";
+                write_raster(loader, result.curvature_persistent, o5, out_fmt);
+
+                std::cout << "Writing: " << o6 << "\n";
+                write_raster(loader, result.depth_signal, o6, out_fmt);
+
+                std::cout << "Writing: " << o7 << "\n";
+                write_raster(loader, result.slope_signal, o7, out_fmt);
+            }
         }
-
-        if (bf.at("write_channel_bottom_mask_raster"))
+        else if (feature_type == "find_drains")
         {
-            const std::string o = out_path(pp, "_channel_bottom_mask.tif");
-            std::cout << "Writing: " << o << "\n";
-            write_raster(loader, result.mask, o, out_fmt);
-        }
+            std::cout << "\n--- Drain finder ---\n";
+            std::cout << "Frangi sigma min     : "
+                      << drain_request.frangi.sigma_min_metres << " m\n";
+            std::cout << "Frangi sigma max     : "
+                      << drain_request.frangi.sigma_max_metres << " m\n";
+            std::cout << "Frangi n scales      : "
+                      << drain_request.frangi.n_scales << "\n";
+            std::cout << "Frangi beta          : "
+                      << drain_request.frangi.beta << "\n";
+            std::cout << "Frangi c             : "
+                      << drain_request.frangi.c << "\n";
+            std::cout << "Response threshold   : "
+                      << drain_request.response_threshold << "\n";
+            std::cout << "Min component pixels : "
+                      << drain_request.min_component_pixels << "\n";
+            std::cout << "Min major axis       : "
+                      << drain_request.min_major_axis_pixels << " px\n";
+            std::cout << "Min elongation       : "
+                      << drain_request.min_elongation << "\n";
 
-        if (bf.at("write_channel_diagnostics"))
-        {
-            const std::string o1 = out_path(pp, "_channel_curvature_small.tif");
-            const std::string o2 = out_path(pp, "_channel_curvature_large.tif");
-            const std::string o3 = out_path(pp, "_channel_signal_small.tif");
-            const std::string o4 = out_path(pp, "_channel_signal_large.tif");
-            const std::string o5 = out_path(pp, "_channel_persistent.tif");
-            const std::string o6 = out_path(pp, "_channel_depth_signal.tif");
-            const std::string o7 = out_path(pp, "_channel_slope_signal.tif");
+            lsdtt::drain_result result =
+                lsdtt::find_drains(dem, drain_request);
 
-            std::cout << "Writing: " << o1 << "\n";
-            write_raster(loader, result.curvature_small_raw, o1, out_fmt);
+            if (bf.at("write_drain_mask_raster"))
+            {
+                const std::string o = out_path(pp, "_drain_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                write_raster(loader, result.drain_mask, o, out_fmt);
+            }
 
-            std::cout << "Writing: " << o2 << "\n";
-            write_raster(loader, result.curvature_large_raw, o2, out_fmt);
+            if (bf.at("write_drain_diagnostics"))
+            {
+                const std::string o1 = out_path(pp, "_drain_frangi_response.tif");
+                const std::string o2 = out_path(pp, "_drain_frangi_scale.tif");
+                const std::string o3 = out_path(pp, "_drain_threshold_mask.tif");
 
-            std::cout << "Writing: " << o3 << "\n";
-            write_raster(loader, result.curvature_small_signal, o3, out_fmt);
+                std::cout << "Writing: " << o1 << "\n";
+                write_raster(loader, result.frangi_response, o1, out_fmt);
 
-            std::cout << "Writing: " << o4 << "\n";
-            write_raster(loader, result.curvature_large_signal, o4, out_fmt);
+                std::cout << "Writing: " << o2 << "\n";
+                write_raster(loader, result.frangi_best_scale_metres, o2, out_fmt);
 
-            std::cout << "Writing: " << o5 << "\n";
-            write_raster(loader, result.curvature_persistent, o5, out_fmt);
-
-            std::cout << "Writing: " << o6 << "\n";
-            write_raster(loader, result.depth_signal, o6, out_fmt);
-
-            std::cout << "Writing: " << o7 << "\n";
-            write_raster(loader, result.slope_signal, o7, out_fmt);
+                std::cout << "Writing: " << o3 << "\n";
+                write_raster(loader, result.threshold_mask, o3, out_fmt);
+            }
         }
     }
     catch (const std::exception& e)
@@ -555,6 +694,7 @@ int main(int argc, char* argv[])
         std::cerr << "\nFATAL: feature finding failed: " << e.what() << "\n";
         return 1;
     }
+
 
     // -------------------------------------------------------------------------
     // Parameter echo
