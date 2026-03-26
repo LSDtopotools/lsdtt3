@@ -19,7 +19,7 @@
 //
 // Bounds checking:
 //   Every function asserts that both inputs share identical n_rows, n_cols,
-//   cell_size, x_min, y_min, and no_data_value.  A std::invalid_argument
+//   cell_size, x_min, y_min, and no_data_value. A std::invalid_argument
 //   exception is thrown if they differ.
 //
 // Parallelism:
@@ -56,29 +56,51 @@ void assert_compatible(
 // result(i) = nodata  if a(i) is nodata OR b(i) is nodata
 // -----------------------------------------------------------------------------
 
-/// Element-wise addition:  result = a + b
+/// Element-wise addition: result = a + b
 lsdtt_raster_cpu raster_add(
     const lsdtt_raster_cpu& a,
     const lsdtt_raster_cpu& b
 );
 
-/// Element-wise subtraction:  result = a - b
+/// Element-wise subtraction: result = a - b
 lsdtt_raster_cpu raster_subtract(
     const lsdtt_raster_cpu& a,
     const lsdtt_raster_cpu& b
 );
 
-/// Element-wise multiplication:  result = a * b
+/// Element-wise multiplication: result = a * b
 lsdtt_raster_cpu raster_multiply(
     const lsdtt_raster_cpu& a,
     const lsdtt_raster_cpu& b
 );
 
-/// Element-wise division:  result = a / b
+/// Element-wise division: result = a / b
 /// result(i) is additionally nodata if b(i) == 0.
 lsdtt_raster_cpu raster_divide(
     const lsdtt_raster_cpu& a,
     const lsdtt_raster_cpu& b
+);
+
+/// Element-wise minimum: result = min(a, b)
+lsdtt_raster_cpu raster_min(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b
+);
+
+/// Positive difference: result = max(a - b, 0)
+lsdtt_raster_cpu raster_positive_difference(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b
+);
+
+// -----------------------------------------------------------------------------
+// Unary transforms
+// -----------------------------------------------------------------------------
+
+/// Clamp valid pixels from below: result = max(a, lower)
+lsdtt_raster_cpu raster_clamp_min(
+    const lsdtt_raster_cpu& a,
+    float                   lower
 );
 
 // -----------------------------------------------------------------------------
@@ -88,10 +110,10 @@ lsdtt_raster_cpu raster_divide(
 // result(i) = nodata  if a(i) is nodata OR a(i) <= 0
 // -----------------------------------------------------------------------------
 
-/// Natural logarithm:  result = ln(a)
+/// Natural logarithm: result = ln(a)
 lsdtt_raster_cpu raster_log(const lsdtt_raster_cpu& a);
 
-/// Base-10 logarithm:  result = log10(a)
+/// Base-10 logarithm: result = log10(a)
 lsdtt_raster_cpu raster_log10(const lsdtt_raster_cpu& a);
 
 } // namespace algebra

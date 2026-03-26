@@ -8,6 +8,7 @@
 
 #include "lsdtt_raster_algebra.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -206,6 +207,118 @@ lsdtt_raster_cpu raster_divide(
         if (ma[i] && mb[i] && db[i] != 0.0f)
         {
             out_data[i] = da[i] / db[i];
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+lsdtt_raster_cpu raster_min(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b)
+{
+    assert_compatible(a, b);
+
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const std::vector<float>&   db = b.get_data();
+    const std::vector<uint8_t>& mb = b.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i] && mb[i])
+        {
+            out_data[i] = std::min(da[i], db[i]);
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+lsdtt_raster_cpu raster_positive_difference(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b)
+{
+    assert_compatible(a, b);
+
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const std::vector<float>&   db = b.get_data();
+    const std::vector<uint8_t>& mb = b.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i] && mb[i])
+        {
+            const float diff = da[i] - db[i];
+            out_data[i] = (diff > 0.0f) ? diff : 0.0f;
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+// =============================================================================
+// Unary transforms
+// =============================================================================
+
+lsdtt_raster_cpu raster_clamp_min(
+    const lsdtt_raster_cpu& a,
+    float                   lower)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i])
+        {
+            out_data[i] = std::max(da[i], lower);
             out_mask[i] = 1u;
         }
         else
