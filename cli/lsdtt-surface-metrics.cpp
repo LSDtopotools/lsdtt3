@@ -15,8 +15,9 @@
 // Pipeline:
 //   1. Hillshade
 //   2. Polynomial surface fit (wavelet quadratic)
-//   3. Otsu threshold segmentation (requires OpenCV)
-//   4. Hough line extraction (requires OpenCV)
+//   3. Polyfit-derived surface metrics
+//   4. Otsu threshold segmentation (requires OpenCV)
+//   5. Hough line extraction (requires OpenCV)
 //
 // Usage:
 //   lsdtt-surface-metrics <path> <parameter_file>
@@ -26,12 +27,13 @@
 //   lsdtt-surface-metrics -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
-#include <cmath>
-#include <iomanip>
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <initializer_list>
 #include <iostream>
-#include <limits>
 #include <map>
-#include <sstream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -74,13 +76,16 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
     auto is_flag = [](const std::string& s,
                       std::initializer_list<std::string> flags)
     {
-        for (const auto& f : flags) if (s == f) return true;
+        for (const auto& f : flags)
+        {
+            if (s == f) return true;
+        }
         return false;
     };
 
     for (int i = 1; i < argc; ++i)
     {
-        std::string a = argv[i];
+        const std::string a = argv[i];
 
         if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
         {
@@ -92,11 +97,13 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
                 << "       lsdtt-surface-metrics -c   (citation)\n";
             std::exit(0);
         }
+
         if (is_flag(a, {"-v", "--version", "version", "-V"}))
         {
             std::cout << "lsdtt-surface-metrics version " << k_version << "\n";
             std::exit(0);
         }
+
         if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
         {
             std::cout << "Citation: " << k_citation << "\n";
@@ -130,7 +137,7 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
 // -----------------------------------------------------------------------------
 static std::string out_path(
     const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix)
+    const std::string&               suffix)
 {
     return pp.get_full_write_path() + suffix;
 }
@@ -141,14 +148,196 @@ static std::string out_path(
 static lsdtt::raster_output_format resolve_output_format(
     const std::string& fmt_str)
 {
-    if (fmt_str == "gtiff")         return lsdtt::raster_output_format::gtiff;
-    if (fmt_str == "same_as_input") return lsdtt::raster_output_format::same_as_input;
+    if (fmt_str == "gtiff")
+    {
+        return lsdtt::raster_output_format::gtiff;
+    }
+    if (fmt_str == "same_as_input")
+    {
+        return lsdtt::raster_output_format::same_as_input;
+    }
     if (fmt_str != "cog")
     {
         std::cerr << "Warning: unknown write_output_format '"
                   << fmt_str << "' — defaulting to cog.\n";
     }
     return lsdtt::raster_output_format::cog;
+}
+
+// -----------------------------------------------------------------------------
+// trim_copy
+// -----------------------------------------------------------------------------
+static std::string trim_copy(const std::string& s)
+{
+    std::size_t start = 0;
+    while (start < s.size() &&
+           std::isspace(static_cast<unsigned char>(s[start])))
+    {
+        ++start;
+    }
+
+    std::size_t end = s.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(s[end - 1])))
+    {
+        --end;
+    }
+
+    return s.substr(start, end - start);
+}
+
+// -----------------------------------------------------------------------------
+// split_csv
+// -----------------------------------------------------------------------------
+static std::vector<std::string> split_csv(const std::string& csv)
+{
+    std::vector<std::string> out;
+    std::string current;
+
+    for (char ch : csv)
+    {
+        if (ch == ',')
+        {
+            std::string token = trim_copy(current);
+            if (!token.empty())
+            {
+                out.push_back(token);
+            }
+            current.clear();
+        }
+        else
+        {
+            current.push_back(ch);
+        }
+    }
+
+    std::string token = trim_copy(current);
+    if (!token.empty())
+    {
+        out.push_back(token);
+    }
+
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_entry
+// -----------------------------------------------------------------------------
+struct polyfit_metric_entry
+{
+    const char*           name;
+    lsdtt::polyfit_metric metric;
+    const char*           suffix;
+};
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_table
+// -----------------------------------------------------------------------------
+static const std::vector<polyfit_metric_entry>& polyfit_metric_table()
+{
+    static const std::vector<polyfit_metric_entry> table =
+    {
+        {"fitted_surface",               lsdtt::polyfit_metric::fitted_surface,              "_polyfit_fitted_surface.tif"},
+        {"dzdx",                         lsdtt::polyfit_metric::dzdx,                        "_polyfit_dzdx.tif"},
+        {"dzdy",                         lsdtt::polyfit_metric::dzdy,                        "_polyfit_dzdy.tif"},
+        {"d2zdx2",                       lsdtt::polyfit_metric::d2zdx2,                      "_polyfit_d2zdx2.tif"},
+        {"d2zdxdy",                      lsdtt::polyfit_metric::d2zdxdy,                     "_polyfit_d2zdxdy.tif"},
+        {"d2zdy2",                       lsdtt::polyfit_metric::d2zdy2,                      "_polyfit_d2zdy2.tif"},
+        {"slope",                        lsdtt::polyfit_metric::slope,                       "_polyfit_slope.tif"},
+        {"aspect_radians",               lsdtt::polyfit_metric::aspect_radians,              "_polyfit_aspect_radians.tif"},
+        {"aspect_degrees",               lsdtt::polyfit_metric::aspect_degrees,              "_polyfit_aspect_degrees.tif"},
+        {"laplacian",                    lsdtt::polyfit_metric::laplacian,                   "_polyfit_laplacian.tif"},
+        {"hessian_determinant",          lsdtt::polyfit_metric::hessian_determinant,         "_polyfit_hessian_determinant.tif"},
+        {"mean_curvature",               lsdtt::polyfit_metric::mean_curvature,              "_polyfit_mean_curvature.tif"},
+        {"gaussian_curvature",           lsdtt::polyfit_metric::gaussian_curvature,          "_polyfit_gaussian_curvature.tif"},
+        {"maximum_curvature",            lsdtt::polyfit_metric::maximum_curvature,           "_polyfit_maximum_curvature.tif"},
+        {"minimum_curvature",            lsdtt::polyfit_metric::minimum_curvature,           "_polyfit_minimum_curvature.tif"},
+        {"curvedness",                   lsdtt::polyfit_metric::curvedness,                  "_polyfit_curvedness.tif"},
+        {"shape_index",                  lsdtt::polyfit_metric::shape_index,                 "_polyfit_shape_index.tif"},
+        {"profile_curvature",            lsdtt::polyfit_metric::profile_curvature,           "_polyfit_profile_curvature.tif"},
+        {"plan_curvature",               lsdtt::polyfit_metric::plan_curvature,              "_polyfit_plan_curvature.tif"},
+        {"tangential_curvature",         lsdtt::polyfit_metric::tangential_curvature,        "_polyfit_tangential_curvature.tif"},
+        {"difference_curvature",         lsdtt::polyfit_metric::difference_curvature,        "_polyfit_difference_curvature.tif"},
+        {"horizontal_excess_curvature",  lsdtt::polyfit_metric::horizontal_excess_curvature, "_polyfit_horizontal_excess_curvature.tif"},
+        {"vertical_excess_curvature",    lsdtt::polyfit_metric::vertical_excess_curvature,   "_polyfit_vertical_excess_curvature.tif"},
+        {"accumulation_curvature",       lsdtt::polyfit_metric::accumulation_curvature,      "_polyfit_accumulation_curvature.tif"},
+        {"ring_curvature",               lsdtt::polyfit_metric::ring_curvature,              "_polyfit_ring_curvature.tif"},
+        {"rotor",                        lsdtt::polyfit_metric::rotor,                       "_polyfit_rotor.tif"}
+    };
+
+    return table;
+}
+
+// -----------------------------------------------------------------------------
+// parse_polyfit_metrics
+// -----------------------------------------------------------------------------
+static std::vector<lsdtt::polyfit_metric> parse_polyfit_metrics(
+    const std::string& csv)
+{
+    std::vector<lsdtt::polyfit_metric> metrics;
+    std::set<lsdtt::polyfit_metric>    seen;
+
+    const std::vector<std::string> tokens = split_csv(csv);
+    if (tokens.empty())
+    {
+        return metrics;
+    }
+
+    for (const std::string& token : tokens)
+    {
+        if (token == "all")
+        {
+            for (const auto& entry : polyfit_metric_table())
+            {
+                if (seen.insert(entry.metric).second)
+                {
+                    metrics.push_back(entry.metric);
+                }
+            }
+            continue;
+        }
+
+        bool found = false;
+        for (const auto& entry : polyfit_metric_table())
+        {
+            if (token == entry.name)
+            {
+                found = true;
+                if (seen.insert(entry.metric).second)
+                {
+                    metrics.push_back(entry.metric);
+                }
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            throw std::runtime_error(
+                "Unknown polyfit metric: " + token
+            );
+        }
+    }
+
+    return metrics;
+}
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_suffix
+// -----------------------------------------------------------------------------
+static std::string polyfit_metric_suffix(lsdtt::polyfit_metric metric)
+{
+    for (const auto& entry : polyfit_metric_table())
+    {
+        if (entry.metric == metric)
+        {
+            return entry.suffix;
+        }
+    }
+
+    throw std::runtime_error(
+        "No output suffix defined for requested polyfit metric."
+    );
 }
 
 // =============================================================================
@@ -184,18 +373,19 @@ int main(int argc, char* argv[])
     //
     // help_map entry format: { type, default, short_desc, long_desc }
     // -------------------------------------------------------------------------
-    std::map<std::string, bool>                        bool_default_map;
-    std::map<std::string, float>                       float_default_map;
-    std::map<std::string, int>                         int_default_map;
-    std::map<std::string, std::string>                 string_default_map;
-    std::map<std::string, std::vector<std::string>>    help_map;
+    std::map<std::string, bool>                     bool_default_map;
+    std::map<std::string, float>                    float_default_map;
+    std::map<std::string, int>                      int_default_map;
+    std::map<std::string, std::string>              string_default_map;
+    std::map<std::string, std::vector<std::string>> help_map;
 
     // --- Threading ---
     int_default_map["n_threads"] = 1;
     help_map["n_threads"] = {"int","1",
         "Number of OpenMP threads.",
         "0 = use all hardware threads. 1 = serial (default). "
-        "Applies to wavelet fit and OpenCV normalisation passes."};
+        "Applies to the wavelet quadratic fit, polyfit metric engine, "
+        "and OpenCV normalisation passes."};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -239,6 +429,32 @@ int main(int argc, char* argv[])
         "Characteristic lengthscale (metres) for the wavelet quadratic fit.",
         "Controls the size of the moving window. Default (70 m) is tuned for "
         "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m)."};
+
+    string_default_map["polyfit_metrics"] = "";
+    help_map["polyfit_metrics"] = {"string","",
+        "Comma-separated list of derived polyfit metrics to write.",
+        "Examples: slope,aspect_degrees,plan_curvature,profile_curvature. "
+        "Use all to write every supported metric. "
+        "Available metrics: fitted_surface, dzdx, dzdy, d2zdx2, d2zdxdy, "
+        "d2zdy2, slope, aspect_radians, aspect_degrees, laplacian, "
+        "hessian_determinant, mean_curvature, gaussian_curvature, "
+        "maximum_curvature, minimum_curvature, curvedness, shape_index, "
+        "profile_curvature, plan_curvature, tangential_curvature, "
+        "difference_curvature, horizontal_excess_curvature, "
+        "vertical_excess_curvature, accumulation_curvature, "
+        "ring_curvature, rotor."};
+
+    float_default_map["polyfit_z_factor"] = 1.0f;
+    help_map["polyfit_z_factor"] = {"float","1.0",
+        "Vertical scaling applied before interpreting polyfit derivatives.",
+        "Scales first and second derivatives consistently in the "
+        "polyfit metric engine."};
+
+    float_default_map["polyfit_flat_slope_tolerance"] = 1e-12f;
+    help_map["polyfit_flat_slope_tolerance"] = {"float","1e-12",
+        "Slope tolerance below which direction-dependent polyfit metrics are nodata.",
+        "Applies to aspect, plan curvature, tangential curvature, "
+        "profile curvature, and rotor."};
 
     // --- Otsu threshold segmentation (requires OpenCV) ---
     bool_default_map["write_otsu_raster"] = false;
@@ -305,13 +521,28 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parse — fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
-    pp.parse_all_parameters(float_default_map, int_default_map,
-                            bool_default_map, string_default_map);
+    pp.parse_all_parameters(
+        float_default_map,
+        int_default_map,
+        bool_default_map,
+        string_default_map
+    );
 
-    auto bf  = pp.get_bool_parameters();
-    auto ff  = pp.get_float_parameters();
-    auto ifs = pp.get_int_parameters();
-    auto sf  = pp.get_string_parameters();
+    std::map<std::string, bool>        bf  = pp.get_bool_parameters();
+    std::map<std::string, float>       ff  = pp.get_float_parameters();
+    std::map<std::string, int>         ifs = pp.get_int_parameters();
+    std::map<std::string, std::string> sf  = pp.get_string_parameters();
+
+    std::vector<lsdtt::polyfit_metric> requested_polyfit_metrics;
+    try
+    {
+        requested_polyfit_metrics = parse_polyfit_metrics(sf["polyfit_metrics"]);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error parsing polyfit_metrics: " << e.what() << "\n";
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Cross-parameter logic
@@ -334,11 +565,21 @@ int main(int argc, char* argv[])
     }
 #endif
 
-    int n_threads = ifs["n_threads"];
+    const int n_threads = ifs["n_threads"];
     const lsdtt::raster_output_format out_fmt =
         resolve_output_format(sf["write_output_format"]);
 
     std::cout << "Output format: " << sf["write_output_format"] << "\n";
+
+    if (!requested_polyfit_metrics.empty())
+    {
+        std::cout << "Requested polyfit metrics:";
+        for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
+        {
+            std::cout << " " << polyfit_metric_suffix(metric);
+        }
+        std::cout << "\n";
+    }
 
     // -------------------------------------------------------------------------
     // Open DEM
@@ -392,10 +633,15 @@ int main(int argc, char* argv[])
                 ff["hillshade_altitude"],
                 ff["hillshade_z_factor"]
             );
-            std::string o = out_path(pp, "_hillshade.tif");
+
+            const std::string o = out_path(pp, "_hillshade.tif");
             std::cout << "Writing: " << o << "\n";
-            loader.write_full(hillshade.get_data(), hillshade.get_meta(),
-                              o, out_fmt);
+            loader.write_full(
+                hillshade.get_data(),
+                hillshade.get_meta(),
+                o,
+                out_fmt
+            );
         }
         catch (const std::exception& e)
         {
@@ -404,9 +650,9 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2 — Polynomial surface fit
+    // Step 2 — Polynomial surface fit and derived metrics
     // -------------------------------------------------------------------------
-    if (bf["write_polyfit_rasters"])
+    if (bf["write_polyfit_rasters"] || !requested_polyfit_metrics.empty())
     {
         std::cout << "\n--- Polynomial surface fit ---\n";
         std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda"] << " m\n";
@@ -414,32 +660,77 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::poly_fit_coeffs fitted =
-                lsdtt::wavelet_quadratic_fit(dem, ff["polyfit_lambda"], n_threads);
+                lsdtt::wavelet_quadratic_fit(
+                    dem,
+                    ff["polyfit_lambda"],
+                    n_threads
+                );
 
-            // Write the six coefficient rasters produced by the fit.
-            // Suffixes match the standard lsdtt3 naming convention.
-            struct coeff_entry
+            if (bf["write_polyfit_rasters"])
             {
-                const lsdtt::lsdtt_raster_cpu& raster;
-                std::string                     suffix;
-            };
+                struct coeff_entry
+                {
+                    const lsdtt::lsdtt_raster_cpu& raster;
+                    std::string                    suffix;
+                };
 
-            const coeff_entry entries[] =
-            {
-                {fitted.a, "_polyfit_a.tif"},
-                {fitted.b, "_polyfit_b.tif"},
-                {fitted.c, "_polyfit_c.tif"},
-                {fitted.d, "_polyfit_d.tif"},
-                {fitted.e, "_polyfit_e.tif"},
-                {fitted.f, "_polyfit_f.tif"},
-            };
+                const coeff_entry entries[] =
+                {
+                    {fitted.a, "_polyfit_a.tif"},
+                    {fitted.b, "_polyfit_b.tif"},
+                    {fitted.c, "_polyfit_c.tif"},
+                    {fitted.d, "_polyfit_d.tif"},
+                    {fitted.e, "_polyfit_e.tif"},
+                    {fitted.f, "_polyfit_f.tif"}
+                };
 
-            for (const auto& entry : entries)
+                for (const auto& entry : entries)
+                {
+                    const std::string o = out_path(pp, entry.suffix);
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(
+                        entry.raster.get_data(),
+                        entry.raster.get_meta(),
+                        o,
+                        out_fmt
+                    );
+                }
+            }
+
+            if (!requested_polyfit_metrics.empty())
             {
-                std::string o = out_path(pp, entry.suffix);
-                std::cout << "Writing: " << o << "\n";
-                loader.write_full(entry.raster.get_data(),
-                                  entry.raster.get_meta(), o, out_fmt);
+                lsdtt::polyfit_metric_request request;
+                request.metrics              = requested_polyfit_metrics;
+                request.z_factor             = static_cast<double>(ff["polyfit_z_factor"]);
+                request.n_threads            = n_threads;
+                request.flat_slope_tolerance =
+                    static_cast<double>(ff["polyfit_flat_slope_tolerance"]);
+
+                lsdtt::polyfit_metric_result metric_result =
+                    lsdtt::compute_polyfit_metrics(fitted, request);
+
+                for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
+                {
+                    if (!metric_result.has(metric))
+                    {
+                        continue;
+                    }
+
+                    const std::string o =
+                        out_path(pp, polyfit_metric_suffix(metric));
+
+                    std::cout << "Writing: " << o << "\n";
+
+                    const lsdtt::lsdtt_raster_cpu& out_raster =
+                        metric_result.at(metric);
+
+                    loader.write_full(
+                        out_raster.get_data(),
+                        out_raster.get_meta(),
+                        o,
+                        out_fmt
+                    );
+                }
             }
         }
         catch (const std::exception& e)
@@ -464,13 +755,17 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::threshold_otsu(
                     dem,
                     n_threads,
-                    /*opencv_threads=*/0   // disable OpenCV pool; we use n_threads
+                    0   // disable OpenCV pool; we use n_threads
                 );
 
-            std::string o = out_path(pp, "_otsu.tif");
+            const std::string o = out_path(pp, "_otsu.tif");
             std::cout << "Writing: " << o << "\n";
-            loader.write_full(otsu_result.get_data(), otsu_result.get_meta(),
-                              o, out_fmt);
+            loader.write_full(
+                otsu_result.get_data(),
+                otsu_result.get_meta(),
+                o,
+                out_fmt
+            );
         }
         catch (const std::exception& e)
         {
@@ -487,10 +782,10 @@ int main(int argc, char* argv[])
     if (bf["write_hough_lines_raster"])
     {
         std::cout << "\n--- Hough line extraction ---\n";
-        std::cout << "rho          : " << ff["hough_rho"]           << " px\n";
+        std::cout << "rho          : " << ff["hough_rho"]            << " px\n";
         std::cout << "theta        : " << ff["hough_theta_deg"]      << " deg\n";
         std::cout << "threshold    : " << ifs["hough_threshold"]     << " votes\n";
-        std::cout << "min length   : " << ff["hough_min_line_length"]<< " px\n";
+        std::cout << "min length   : " << ff["hough_min_line_length"] << " px\n";
         std::cout << "max gap      : " << ff["hough_max_line_gap"]   << " px\n";
         std::cout << "canny low    : " << ff["canny_threshold"]      << "\n";
         std::cout << "canny ratio  : " << ff["canny_ratio"]          << "\n";
@@ -510,13 +805,17 @@ int main(int argc, char* argv[])
                     ff["canny_ratio"],
                     ff["canny_gaussian_sigma"],
                     n_threads,
-                    /*opencv_threads=*/0
+                    0
                 );
 
-            std::string o = out_path(pp, "_hough_lines.tif");
+            const std::string o = out_path(pp, "_hough_lines.tif");
             std::cout << "Writing: " << o << "\n";
-            loader.write_full(hough_result.get_data(), hough_result.get_meta(),
-                              o, out_fmt);
+            loader.write_full(
+                hough_result.get_data(),
+                hough_result.get_meta(),
+                o,
+                out_fmt
+            );
         }
         catch (const std::exception& e)
         {

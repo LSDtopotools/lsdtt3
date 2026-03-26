@@ -19,6 +19,8 @@
 #include <cmath>
 #include <stdexcept>
 #include <vector>
+#include <algorithm>
+#include <cctype>
 
 #ifdef _OPENMP
 #include <omp.h>
