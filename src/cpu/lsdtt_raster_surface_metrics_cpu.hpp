@@ -141,8 +141,22 @@ lsdtt_raster_cpu compute_hillshade(
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu moving_window_mean(
     const lsdtt_raster_cpu& raster,
-    int          radius = 3,
+    int          radius_pixels = 3,
     window_shape shape  = window_shape::square
+);
+
+
+// -----------------------------------------------------------------------------
+// moving_window_local_relief
+//
+// Local relief = max(window) - min(window) over valid pixels in the window.
+// The radius is in pixels. For square windows this is the half-width;
+// for circular windows it is the disc radius.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_local_relief(
+    const lsdtt_raster_cpu& raster,
+    int          radius_pixels = 3,
+    window_shape shape         = window_shape::square
 );
 
 // -----------------------------------------------------------------------------

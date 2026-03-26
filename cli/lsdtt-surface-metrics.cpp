@@ -164,6 +164,28 @@ static lsdtt::raster_output_format resolve_output_format(
     return lsdtt::raster_output_format::cog;
 }
 
+
+// -----------------------------------------------------------------------------
+// parse_window_shape
+// -----------------------------------------------------------------------------
+static lsdtt::window_shape parse_window_shape(const std::string& s)
+{
+    if (s == "square")
+    {
+        return lsdtt::window_shape::square;
+    }
+    if (s == "circular")
+    {
+        return lsdtt::window_shape::circular;
+    }
+
+    throw std::runtime_error(
+        "Unknown window shape: " + s +
+        ". Valid options are square or circular."
+    );
+}
+
+
 // -----------------------------------------------------------------------------
 // trim_copy
 // -----------------------------------------------------------------------------
@@ -417,6 +439,25 @@ int main(int argc, char* argv[])
         "Vertical exaggeration factor applied before computing hillshade.",
         "Values greater than 1 emphasise relief in flat terrain."};
 
+    // --- Local relief ---
+    bool_default_map["write_local_relief_raster"] = false;
+    help_map["write_local_relief_raster"] = {"bool","false",
+        "Write a local relief raster.",
+        "Local relief is computed as local_max - local_min within a moving "
+        "window over valid pixels only."};
+
+    int_default_map["local_relief_radius_pixels"] = 3;
+    help_map["local_relief_radius_pixels"] = {"int","3",
+        "Radius of the local-relief window in pixels.",
+        "For square windows this is the half-width. "
+        "For circular windows this is the disc radius."};
+
+    string_default_map["local_relief_window_shape"] = "circular";
+    help_map["local_relief_window_shape"] = {"string","circular",
+        "Shape of the local-relief window.",
+        "Valid options are square or circular."};
+
+
     // --- Polynomial surface fit ---
     bool_default_map["write_polyfit_rasters"] = false;
     help_map["write_polyfit_rasters"] = {"bool","false",
@@ -649,8 +690,47 @@ int main(int argc, char* argv[])
         }
     }
 
+
     // -------------------------------------------------------------------------
-    // Step 2 — Polynomial surface fit and derived metrics
+    // Step 2 — Local relief
+    // -------------------------------------------------------------------------
+    if (bf["write_local_relief_raster"])
+    {
+        std::cout << "\n--- Local relief ---\n";
+        std::cout << "Radius : " << ifs["local_relief_radius_pixels"] << " px\n";
+        std::cout << "Shape  : " << sf["local_relief_window_shape"] << "\n";
+
+        try
+        {
+            const lsdtt::window_shape local_relief_shape =
+                parse_window_shape(sf["local_relief_window_shape"]);
+
+            lsdtt::lsdtt_raster_cpu local_relief =
+                lsdtt::moving_window_local_relief(
+                    dem,
+                    ifs["local_relief_radius_pixels"],
+                    local_relief_shape
+                );
+
+            const std::string o = out_path(pp, "_local_relief.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(
+                local_relief.get_data(),
+                local_relief.get_meta(),
+                o,
+                out_fmt
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: local relief failed: "
+                      << e.what() << "\n";
+        }
+    }
+
+
+    // -------------------------------------------------------------------------
+    // Step 3 — Polynomial surface fit and derived metrics
     // -------------------------------------------------------------------------
     if (bf["write_polyfit_rasters"] || !requested_polyfit_metrics.empty())
     {
@@ -741,7 +821,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — Otsu threshold segmentation
+    // Step 4 — Otsu threshold segmentation
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_otsu_raster"])
@@ -776,7 +856,7 @@ int main(int argc, char* argv[])
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 4 — Hough line extraction
+    // Step 5 — Hough line extraction
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_hough_lines_raster"])

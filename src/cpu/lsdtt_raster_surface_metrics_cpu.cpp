@@ -194,7 +194,7 @@ lsdtt_raster_cpu compute_hillshade(
 
 lsdtt_raster_cpu moving_window_mean(
     const lsdtt_raster_cpu&raster,
-    int          radius,
+    int          radius_pixels,
     window_shape shape
 )
 {
@@ -207,10 +207,10 @@ lsdtt_raster_cpu moving_window_mean(
         );
     }
 
-    if (radius < 1)
+    if (radius_pixels < 1)
     {
         throw std::runtime_error(
-            "lsdtt::moving_window_mean: radius must be >= 1"
+            "lsdtt::moving_window_mean: radius_pixels must be >= 1"
         );
     }
 
@@ -229,10 +229,10 @@ lsdtt_raster_cpu moving_window_mean(
     std::vector<std::pair<int,int>> circle_offsets;
     if (shape == window_shape::circular)
     {
-        const double r2 = static_cast<double>(radius) * radius;
-        for (int dr = -radius; dr <= radius; ++dr)
+        const double r2 = static_cast<double>(radius_pixels) * radius_pixels;
+        for (int dr = -radius_pixels; dr <= radius_pixels; ++dr)
         {
-            for (int dc = -radius; dc <= radius; ++dc)
+            for (int dc = -radius_pixels; dc <= radius_pixels; ++dc)
             {
                 if (static_cast<double>(dr * dr + dc * dc) <= r2)
                 {
@@ -260,10 +260,10 @@ lsdtt_raster_cpu moving_window_mean(
             {
                 // Clamp window to raster bounds — allows partial windows
                 // at edges rather than forcing nodata there
-                const int row_min = std::max(0, row - radius);
-                const int row_max = std::min(nrows - 1, row + radius);
-                const int col_min = std::max(0, col - radius);
-                const int col_max = std::min(ncols - 1, col + radius);
+                const int row_min = std::max(0, row - radius_pixels);
+                const int row_max = std::min(nrows - 1, row + radius_pixels);
+                const int col_min = std::max(0, col - radius_pixels);
+                const int col_max = std::min(ncols - 1, col + radius_pixels);
 
                 for (int wr = row_min; wr <= row_max; ++wr)
                 {
@@ -305,6 +305,131 @@ lsdtt_raster_cpu moving_window_mean(
         meta
     );
 }
+
+
+
+
+
+// -----------------------------------------------------------------------------
+// moving_window_local_relief
+// -----------------------------------------------------------------------------
+
+lsdtt_raster_cpu moving_window_local_relief(
+    const lsdtt_raster_cpu& raster,
+    int                     radius_pixels,
+    window_shape            shape
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::moving_window_local_relief: input raster metadata is invalid"
+        );
+    }
+
+    if (radius_pixels < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::moving_window_local_relief: radius_pixels must be >= 1"
+        );
+    }
+
+    const int   nrows  = meta.n_rows;
+    const int   ncols  = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    std::vector<std::pair<int,int>> circle_offsets;
+    if (shape == window_shape::circular)
+    {
+        const double r2 = static_cast<double>(radius_pixels) * radius_pixels;
+        for (int dr = -radius_pixels; dr <= radius_pixels; ++dr)
+        {
+            for (int dc = -radius_pixels; dc <= radius_pixels; ++dc)
+            {
+                if (static_cast<double>(dr * dr + dc * dc) <= r2)
+                {
+                    circle_offsets.emplace_back(dr, dc);
+                }
+            }
+        }
+    }
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            double local_min =  std::numeric_limits<double>::infinity();
+            double local_max = -std::numeric_limits<double>::infinity();
+            int    count     = 0;
+
+            if (shape == window_shape::square)
+            {
+                const int row_min = std::max(0, row - radius_pixels);
+                const int row_max = std::min(nrows - 1, row + radius_pixels);
+                const int col_min = std::max(0, col - radius_pixels);
+                const int col_max = std::min(ncols - 1, col + radius_pixels);
+
+                for (int wr = row_min; wr <= row_max; ++wr)
+                {
+                    for (int wc = col_min; wc <= col_max; ++wc)
+                    {
+                        if (mask(wr, wc) == 0) continue;
+                        if (meta.is_nodata(dem(wr, wc))) continue;
+
+                        const double z = static_cast<double>(dem(wr, wc));
+                        if (z < local_min) local_min = z;
+                        if (z > local_max) local_max = z;
+                        ++count;
+                    }
+                }
+            }
+            else
+            {
+                for (const auto& [dr, dc] : circle_offsets)
+                {
+                    const int wr = row + dr;
+                    const int wc = col + dc;
+
+                    if (!dem.in_bounds(wr, wc)) continue;
+                    if (mask(wr, wc) == 0) continue;
+                    if (meta.is_nodata(dem(wr, wc))) continue;
+
+                    const double z = static_cast<double>(dem(wr, wc));
+                    if (z < local_min) local_min = z;
+                    if (z > local_max) local_max = z;
+                    ++count;
+                }
+            }
+
+            if (count > 0)
+            {
+                out(row, col)      = static_cast<float>(local_max - local_min);
+                out_mask(row, col) = 1;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
+
+
+
 
 
 // -----------------------------------------------------------------------------
