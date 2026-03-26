@@ -9,9 +9,10 @@
 // -----------------------------------------------------------------------------
 // Surface metrics — CPU free functions operating on lsdtt_raster_cpu objects.
 //
-// All functions return a new lsdtt_raster_cpu. The input raster is never
-// modified. Output rasters inherit the same lsdtt_raster_meta as the input
-// (same extent, cell size, CRS, and nodata value) unless otherwise stated.
+// All functions return new lsdtt_raster_cpu objects or structs containing new
+// rasters. The input raster is never modified. Output rasters inherit the same
+// lsdtt_raster_meta as the input raster or coefficient rasters unless
+// otherwise stated.
 //
 // Edge and nodata handling:
 //   Pixels where the required neighbourhood window cannot be fully populated
@@ -33,8 +34,8 @@
 //     q = dz/dy = (z6 - z4) / (2L)    north-south  [north = row - 1]
 //
 //   Hillshade:
-//     hs = 1 + 254 * ( sin(alt)*cos(slope)
-//                    + cos(alt)*sin(slope)*cos(az - pi/2 - aspect) )
+//     hs = 1 + 254 * ( sin(alt)*cos(slope_angle)
+//                    + cos(alt)*sin(slope_angle)*cos(az - pi/2 - aspect) )
 //     clamped to [0, 255], written as float32.
 //
 // Moving window algorithm:
@@ -43,6 +44,60 @@
 //   Window shape is either square or circular (disc). The radius parameter
 //   is in pixels. A pixel at offset (dr, dc) from the centre is inside a
 //   circular window if sqrt(dr^2 + dc^2) <= radius.
+//
+// Polyfit-derived surface metrics:
+//
+//   Some surface metrics are derived from the local quadratic fit returned by
+//   wavelet_quadratic_fit() in lsdtt_raster_spectral_cpu. The fitted surface is
+//
+//     z(x,y) = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f
+//
+//   Coordinate convention:
+//     x  — easting offset from the pixel centre, positive east
+//     y  — northing offset from the pixel centre, positive north
+//
+//   Internal derivative notation used throughout the polyfit metric code:
+//
+//     p = z_x
+//     q = z_y
+//     r = z_xx
+//     s = z_xy
+//     t = z_yy
+//
+//   For the fitted quadratic above, evaluated at the pixel centre
+//   (x = 0, y = 0):
+//
+//     p = d
+//     q = e
+//     r = 2*a
+//     s = c
+//     t = 2*b
+//
+//   This notation is used so that geomorphometric formulas can be written
+//   compactly and checked easily in both the header and implementation.
+//
+//   The derivative naming convention follows:
+//
+//     Florinsky, I. V. (2017). An illustrated introduction to general
+//     geomorphometry. Progress in Physical Geography: Earth and Environment,
+//     41(6), 723-752. doi:10.1177/0309133317733667
+//
+//   Original polyfit implementation:
+//
+//     Hurst, M. D., S. M. Mudd, R. Walcott, M. Attal, and K. Yoo (2012),
+//     Using hilltop curvature to derive the spatial distribution of erosion
+//     rates, Journal of Geophysical Research, 117, F02017,
+//     doi:10.1029/2011JF002057
+//
+//   Revised in lsdtt3 to use wavelet fitting for computational efficiency.
+//
+//   Important:
+//     - The coefficients returned by wavelet_quadratic_fit() have already been
+//       converted back to physical projected coordinates.
+//     - Therefore p and q are first derivatives with respect to projected x/y
+//       coordinates, and r, s, t are second derivatives in those same units.
+//     - In geomorphometric convention, slope means gradient magnitude
+//       sqrt(p^2 + q^2), not slope angle.
 //
 // References:
 //   Zevenbergen, L.W. and Thorne, C.R. (1987) Quantitative analysis of land
@@ -54,8 +109,11 @@
 
 #pragma once
 
+#include <map>
+#include <vector>
+
 #include "lsdtt_raster_cpu.hpp"
-#include "lsdtt_raster_spectral_cpu.hpp"    // need this for the polyfit struct
+#include "lsdtt_raster_spectral_cpu.hpp"    // poly_fit_coeffs
 
 namespace lsdtt {
 
@@ -88,8 +146,174 @@ lsdtt_raster_cpu moving_window_mean(
 );
 
 // -----------------------------------------------------------------------------
-// rasters for morphometric parameters from polyfit coefficients
+// polyfit_metric
+//
+// Metrics derived from the quadratic coefficient rasters returned by
+// wavelet_quadratic_fit().
+//
+// Naming follows Florinsky (2017) where possible. In particular:
+//   - slope means sqrt(p^2 + q^2)
+//   - maximum_curvature = k_max
+//   - minimum_curvature = k_min
+//
+// Some outputs are not true curvatures in the strict dimensional sense:
+//   - accumulation_curvature has units of 1/m^2
+//   - ring_curvature has units of 1/m^2
 // -----------------------------------------------------------------------------
-lsdtt_raster_cpu compute_polyfit_fitted_surface(poly_fit_coeffs polycoeff);
+enum class polyfit_metric
+{
+    fitted_surface,               // f
+
+    dzdx,                         // p = z_x = d
+    dzdy,                         // q = z_y = e
+    d2zdx2,                       // r = z_xx = 2*a
+    d2zdxdy,                      // s = z_xy = c
+    d2zdy2,                       // t = z_yy = 2*b
+
+    slope,                        // sqrt(p^2 + q^2)
+    aspect_radians,               // clockwise from north
+    aspect_degrees,               // clockwise from north
+
+    laplacian,                    // r + t
+    hessian_determinant,          // r*t - s^2
+
+    mean_curvature,
+    gaussian_curvature,
+    maximum_curvature,            // k_max
+    minimum_curvature,            // k_min
+    curvedness,
+    shape_index,
+
+    profile_curvature,            // vertical curvature, k_v
+    plan_curvature,
+    tangential_curvature,         // horizontal curvature, k_h
+
+    difference_curvature,         // 0.5 * (k_v - k_h)
+    horizontal_excess_curvature,  // k_h - k_min
+    vertical_excess_curvature,    // k_v - k_min
+    accumulation_curvature,       // k_h * k_v
+    ring_curvature,               // k_he * k_ve
+    rotor
+};
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_request
+//
+// Request describing which polyfit-derived metrics should be computed.
+//
+// metrics:
+//   List of requested output rasters. Duplicate entries are harmless; the
+//   implementation may deduplicate them internally.
+//
+// z_factor:
+//   Optional multiplicative scaling applied to elevation before derivatives are
+//   interpreted. Setting z_factor != 1 scales all first and second derivatives
+//   accordingly.
+//
+// n_threads:
+//   Number of OpenMP threads used by the metric engine. 0 means "use the
+//   runtime default / maximum available".
+//
+// flat_slope_tolerance:
+//   Small positive threshold used when metrics depend on slope direction.
+//   Pixels whose slope magnitude is smaller than this threshold are treated as
+//   too flat for direction-dependent outputs such as aspect, plan curvature,
+//   tangential curvature, profile curvature, or rotor.
+// -----------------------------------------------------------------------------
+struct polyfit_metric_request
+{
+    std::vector<polyfit_metric> metrics;
+    double z_factor             = 1.0;
+    int    n_threads            = 0;
+    double flat_slope_tolerance = 1e-12;
+};
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_result
+//
+// Output rasters from the polyfit batch engine. Only requested metrics are
+// present in the map.
+//
+// Convenience helpers:
+//   has(metric)  — true if this metric is present
+//   at(metric)   — returns the raster for that metric
+// -----------------------------------------------------------------------------
+struct polyfit_metric_result
+{
+    std::map<polyfit_metric, lsdtt_raster_cpu> rasters;
+
+    bool has(polyfit_metric metric) const
+    {
+        return rasters.find(metric) != rasters.end();
+    }
+
+    const lsdtt_raster_cpu& at(polyfit_metric metric) const
+    {
+        return rasters.at(metric);
+    }
+
+    lsdtt_raster_cpu& at(polyfit_metric metric)
+    {
+        return rasters.at(metric);
+    }
+};
+
+// -----------------------------------------------------------------------------
+// compute_polyfit_metrics
+//
+// Computes one or more surface-metric rasters from a set of quadratic-fit
+// coefficient rasters. This is the preferred high-level interface for
+// polyfit-derived metrics because it allows shared intermediate quantities
+// to be computed once per pixel and reused across multiple requested outputs.
+//
+// Internal derivative notation:
+//
+//   p = z_x
+//   q = z_y
+//   r = z_xx
+//   s = z_xy
+//   t = z_yy
+//
+// with
+//
+//   p = d
+//   q = e
+//   r = 2*a
+//   s = c
+//   t = 2*b
+//
+// for the fitted quadratic
+//
+//   z(x,y) = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f
+//
+// A few key metric definitions used by the implementation are:
+//
+//   slope = sqrt(p^2 + q^2)
+//
+//   plan_curvature
+//     = - (q^2*r - 2*p*q*s + p^2*t) / sqrt((p^2 + q^2)^3)
+//
+//   tangential_curvature
+//     = - (q^2*r - 2*p*q*s + p^2*t)
+//       / ((p^2 + q^2) * sqrt(1 + p^2 + q^2))
+//
+//   profile_curvature
+//     = - (p^2*r + 2*p*q*s + q^2*t)
+//       / ((p^2 + q^2) * (1 + p^2 + q^2)^(3/2))
+//
+//   rotor
+//     = ((p^2 - q^2)*s - p*q*(r - t)) / sqrt((p^2 + q^2)^3)
+//
+// The cpp file repeats the full equations immediately above each metric write
+// block so the implementation can be checked easily.
+//
+// Throws:
+//   std::runtime_error if the coefficient rasters are incompatible, if the
+//   request is invalid, or if required metadata are invalid.
+// -----------------------------------------------------------------------------
+polyfit_metric_result compute_polyfit_metrics(
+    const poly_fit_coeffs&        polycoeff,
+    const polyfit_metric_request& request
+);
 
 } // namespace lsdtt
