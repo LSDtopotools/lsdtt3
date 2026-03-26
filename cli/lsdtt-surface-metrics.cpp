@@ -18,9 +18,9 @@
 //   3. Polynomial surface fit (wavelet quadratic)
 //   4. Polyfit-derived surface metrics
 //   5. MADk2 roughness
-//   6. Otsu threshold segmentation (requires OpenCV)
-//   7. Hough line extraction (requires OpenCV)
-
+//   6. Frangi filter
+//   7. Otsu threshold segmentation (requires OpenCV)
+//   8. Hough line extraction (requires OpenCV)
 //
 // Usage:
 //   lsdtt-surface-metrics <path> <parameter_file>
@@ -47,6 +47,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 
 #ifdef LSDTT_HAS_OPENCV
 #include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
@@ -187,6 +188,26 @@ static lsdtt::window_shape parse_window_shape(const std::string& s)
         ". Valid options are square or circular."
     );
 }
+
+// -----------------------------------------------------------------------------
+// parse_frangi_target
+// -----------------------------------------------------------------------------
+static lsdtt::frangi_target parse_frangi_target(const std::string& s)
+{
+    if (s == "ridges")
+    {
+        return lsdtt::frangi_target::ridges;
+    }
+    if (s == "valleys")
+    {
+        return lsdtt::frangi_target::valleys;
+    }
+
+    throw std::runtime_error(
+        "Unknown Frangi target: " + s + ". Valid options are ridges or valleys."
+    );
+}
+
 
 
 // -----------------------------------------------------------------------------
@@ -519,6 +540,55 @@ int main(int argc, char* argv[])
     help_map["madk2_lag_pixels"] = {"int","1",
         "Lag in pixels for the MADk2 second-order directional differences.",
         "Must be >= 1. Typical values are 1 or 2."};
+
+    // --- Frangi filter ---
+    bool_default_map["write_frangi_raster"] = false;
+    help_map["write_frangi_raster"] = {"bool","false",
+        "Write a Frangi filter response raster.",
+        "Enhances line-like terrain features over multiple scales using the "
+        "Hessian of a Gaussian-smoothed DEM."};
+
+    bool_default_map["write_frangi_scale_raster"] = false;
+    help_map["write_frangi_scale_raster"] = {"bool","false",
+        "Write the scale-at-maximum-Frangi-response raster.",
+        "Stores the physical scale in metres at which the maximum Frangi "
+        "response occurred for each pixel."};
+
+    float_default_map["frangi_sigma_min_metres"] = 1.0f;
+    help_map["frangi_sigma_min_metres"] = {"float","1.0",
+        "Minimum Frangi scale in metres.",
+        "This is the smallest Gaussian smoothing scale tested by the Frangi "
+        "filter."};
+
+    float_default_map["frangi_sigma_max_metres"] = 5.0f;
+    help_map["frangi_sigma_max_metres"] = {"float","5.0",
+        "Maximum Frangi scale in metres.",
+        "This is the largest Gaussian smoothing scale tested by the Frangi "
+        "filter."};
+
+    int_default_map["frangi_n_scales"] = 4;
+    help_map["frangi_n_scales"] = {"int","4",
+        "Number of Frangi scales.",
+        "Scales are sampled logarithmically between frangi_sigma_min_metres "
+        "and frangi_sigma_max_metres."};
+
+    float_default_map["frangi_beta"] = 0.5f;
+    help_map["frangi_beta"] = {"float","0.5",
+        "Frangi beta parameter.",
+        "Controls suppression of blob-like structure relative to line-like "
+        "structure."};
+
+    float_default_map["frangi_c"] = 15.0f;
+    help_map["frangi_c"] = {"float","15.0",
+        "Frangi c parameter.",
+        "Controls suppression of low-structureness responses."};
+
+    string_default_map["frangi_target"] = "ridges";
+    help_map["frangi_target"] = {"string","ridges",
+        "Feature polarity for the Frangi filter.",
+        "Valid options are ridges or valleys."};
+
+
 
     // --- Otsu threshold segmentation (requires OpenCV) ---
     bool_default_map["write_otsu_raster"] = false;
@@ -898,9 +968,70 @@ int main(int argc, char* argv[])
     }
 
 
+    // -------------------------------------------------------------------------
+    // Step 5 — Frangi filter
+    // -------------------------------------------------------------------------
+    if (bf["write_frangi_raster"] || bf["write_frangi_scale_raster"])
+    {
+        std::cout << "\n--- Frangi filter ---\n";
+        std::cout << "Sigma min : " << ff["frangi_sigma_min_metres"] << " m\n";
+        std::cout << "Sigma max : " << ff["frangi_sigma_max_metres"] << " m\n";
+        std::cout << "N scales  : " << ifs["frangi_n_scales"]        << "\n";
+        std::cout << "Beta      : " << ff["frangi_beta"]             << "\n";
+        std::cout << "c         : " << ff["frangi_c"]                << "\n";
+        std::cout << "Target    : " << sf["frangi_target"]           << "\n";
+
+        try
+        {
+            lsdtt::frangi_request request;
+            request.sigma_min_metres =
+                static_cast<double>(ff["frangi_sigma_min_metres"]);
+            request.sigma_max_metres =
+                static_cast<double>(ff["frangi_sigma_max_metres"]);
+            request.n_scales = ifs["frangi_n_scales"];
+            request.beta     = static_cast<double>(ff["frangi_beta"]);
+            request.c        = static_cast<double>(ff["frangi_c"]);
+            request.target   = parse_frangi_target(sf["frangi_target"]);
+            request.n_threads = n_threads;
+
+            lsdtt::frangi_result frangi =
+                lsdtt::frangi_filter(dem, request);
+
+            if (bf["write_frangi_raster"])
+            {
+                const std::string o = out_path(pp, "_frangi.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    frangi.response.get_data(),
+                    frangi.response.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf["write_frangi_scale_raster"])
+            {
+                const std::string o = out_path(pp, "_frangi_scale.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    frangi.best_scale_metres.get_data(),
+                    frangi.best_scale_metres.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: Frangi filter failed: "
+                      << e.what() << "\n";
+        }
+    }
+
+
 
     // -------------------------------------------------------------------------
-    // Step 5 — Otsu threshold segmentation
+    // Step 6 — Otsu threshold segmentation
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_otsu_raster"])
@@ -935,7 +1066,7 @@ int main(int argc, char* argv[])
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 6 — Hough line extraction
+    // Step 7 — Hough line extraction
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_hough_lines_raster"])

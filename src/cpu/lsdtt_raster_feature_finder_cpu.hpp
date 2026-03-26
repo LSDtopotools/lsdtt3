@@ -88,6 +88,55 @@ struct channel_bottom_result
 };
 
 // -----------------------------------------------------------------------------
+// frangi_target
+// -----------------------------------------------------------------------------
+enum class frangi_target
+{
+    ridges,
+    valleys
+};
+
+// -----------------------------------------------------------------------------
+// frangi_request
+// -----------------------------------------------------------------------------
+struct frangi_request
+{
+    double sigma_min_metres = 1.0;
+    double sigma_max_metres = 5.0;
+    int    n_scales         = 4;
+    double beta             = 0.5;
+    double c                = 15.0;
+    frangi_target target    = frangi_target::ridges;
+    int    n_threads        = 0;
+};
+
+// -----------------------------------------------------------------------------
+// frangi_result
+// -----------------------------------------------------------------------------
+struct frangi_result
+{
+    lsdtt_raster_cpu response;
+    lsdtt_raster_cpu best_scale_metres;
+};
+
+// -----------------------------------------------------------------------------
+// frangi_filter
+//
+// Multiscale Frangi ridge/valley enhancement using the Hessian of a Gaussian-
+// smoothed DEM. Returns the maximum Frangi response across all tested scales
+// plus the scale (in metres) at which that maximum occurred.
+//
+// Throws:
+//   std::runtime_error on invalid input metadata or invalid request values.
+// -----------------------------------------------------------------------------
+frangi_result frangi_filter(
+    const lsdtt_raster_cpu& raster,
+    const frangi_request&   request
+);
+
+
+
+// -----------------------------------------------------------------------------
 // find_channel_bottoms
 //
 // Builds a channel-bottom likelihood score and thresholded binary mask from a

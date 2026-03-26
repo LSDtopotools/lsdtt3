@@ -12,12 +12,14 @@
 #include "lsdtt_raster_spectral_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
 
 namespace lsdtt
 {
@@ -394,7 +396,466 @@ static lsdtt_raster_cpu threshold_binary(
     return make_raster(std::move(out_data), std::move(out_mask), meta);
 }
 
+// -----------------------------------------------------------------------------
+// validate_frangi_request
+// -----------------------------------------------------------------------------
+static void validate_frangi_request(
+    const lsdtt_raster_cpu& raster,
+    const frangi_request&   request)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::frangi_filter: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    if (!std::isfinite(request.sigma_min_metres) ||
+        request.sigma_min_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::frangi_filter: sigma_min_metres must be finite and > 0"
+        );
+    }
+
+    if (!std::isfinite(request.sigma_max_metres) ||
+        request.sigma_max_metres < request.sigma_min_metres)
+    {
+        throw std::runtime_error(
+            "lsdtt::frangi_filter: sigma_max_metres must be finite and >= sigma_min_metres"
+        );
+    }
+
+    if (request.n_scales < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::frangi_filter: n_scales must be >= 1"
+        );
+    }
+
+    if (!std::isfinite(request.beta) || request.beta <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::frangi_filter: beta must be finite and > 0"
+        );
+    }
+
+    if (!std::isfinite(request.c) || request.c <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::frangi_filter: c must be finite and > 0"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------------
+// build_frangi_scales
+// -----------------------------------------------------------------------------
+static std::vector<double> build_frangi_scales(const frangi_request& request)
+{
+    std::vector<double> scales(static_cast<std::size_t>(request.n_scales));
+
+    if (request.n_scales == 1 || request.sigma_min_metres == request.sigma_max_metres)
+    {
+        scales[0] = request.sigma_min_metres;
+        return scales;
+    }
+
+    const double log_min = std::log(request.sigma_min_metres);
+    const double log_max = std::log(request.sigma_max_metres);
+
+    for (int i = 0; i < request.n_scales; ++i)
+    {
+        const double t = static_cast<double>(i) /
+                         static_cast<double>(request.n_scales - 1);
+        scales[static_cast<std::size_t>(i)] =
+            std::exp(log_min + t * (log_max - log_min));
+    }
+
+    return scales;
+}
+
+// -----------------------------------------------------------------------------
+// build_gaussian_kernel_1d
+// -----------------------------------------------------------------------------
+static std::vector<double> build_gaussian_kernel_1d(double sigma_pixels)
+{
+    if (!std::isfinite(sigma_pixels) || sigma_pixels <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::frangi_filter: sigma in pixels must be finite and > 0"
+        );
+    }
+
+    const int radius = std::max(
+        1,
+        static_cast<int>(std::ceil(3.0 * sigma_pixels))
+    );
+
+    std::vector<double> kernel(static_cast<std::size_t>(2 * radius + 1), 0.0);
+
+    double sum = 0.0;
+    for (int k = -radius; k <= radius; ++k)
+    {
+        const double x = static_cast<double>(k);
+        const double w = std::exp(-(x * x) / (2.0 * sigma_pixels * sigma_pixels));
+        kernel[static_cast<std::size_t>(k + radius)] = w;
+        sum += w;
+    }
+
+    for (double& w : kernel)
+    {
+        w /= sum;
+    }
+
+    return kernel;
+}
+
+// -----------------------------------------------------------------------------
+// gaussian_smooth_conservative
+//
+// Applies separable Gaussian smoothing. Output is valid only where the full
+// 1D support is in-bounds and all contributing pixels are valid.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu gaussian_smooth_conservative(
+    const lsdtt_raster_cpu& raster,
+    double                  sigma_metres)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (sigma_metres <= 0.0)
+    {
+        return raster;
+    }
+
+    const double sigma_pixels = sigma_metres / meta.cell_size;
+    const std::vector<double> kernel = build_gaussian_kernel_1d(sigma_pixels);
+    const int radius = static_cast<int>(kernel.size() / 2);
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    const std::vector<float>&   in_data = raster.get_data();
+    const std::vector<uint8_t>& in_mask = raster.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    std::vector<float>   temp_data(npix, nodata);
+    std::vector<uint8_t> temp_mask(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx0 =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(col);
+
+            if (in_mask[idx0] == 0 ||
+                meta.is_nodata(in_data[idx0]) ||
+                !std::isfinite(in_data[idx0]))
+            {
+                continue;
+            }
+
+            double sum = 0.0;
+            bool valid = true;
+
+            for (int k = -radius; k <= radius; ++k)
+            {
+                const int c = col + k;
+                if (c < 0 || c >= ncols)
+                {
+                    valid = false;
+                    break;
+                }
+
+                const std::size_t idx =
+                    static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(c);
+
+                if (in_mask[idx] == 0 ||
+                    meta.is_nodata(in_data[idx]) ||
+                    !std::isfinite(in_data[idx]))
+                {
+                    valid = false;
+                    break;
+                }
+
+                sum += kernel[static_cast<std::size_t>(k + radius)] *
+                       static_cast<double>(in_data[idx]);
+            }
+
+            if (valid)
+            {
+                temp_data[idx0] = static_cast<float>(sum);
+                temp_mask[idx0] = uint8_t{1};
+            }
+        }
+    }
+
+    std::vector<float>   out_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx0 =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(col);
+
+            if (temp_mask[idx0] == 0 ||
+                meta.is_nodata(temp_data[idx0]) ||
+                !std::isfinite(temp_data[idx0]))
+            {
+                continue;
+            }
+
+            double sum = 0.0;
+            bool valid = true;
+
+            for (int k = -radius; k <= radius; ++k)
+            {
+                const int r = row + k;
+                if (r < 0 || r >= nrows)
+                {
+                    valid = false;
+                    break;
+                }
+
+                const std::size_t idx =
+                    static_cast<std::size_t>(r) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col);
+
+                if (temp_mask[idx] == 0 ||
+                    meta.is_nodata(temp_data[idx]) ||
+                    !std::isfinite(temp_data[idx]))
+                {
+                    valid = false;
+                    break;
+                }
+
+                sum += kernel[static_cast<std::size_t>(k + radius)] *
+                       static_cast<double>(temp_data[idx]);
+            }
+
+            if (valid)
+            {
+                out_data[idx0] = static_cast<float>(sum);
+                out_mask[idx0] = uint8_t{1};
+            }
+        }
+    }
+
+    return make_raster(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+
+
 } // unnamed namespace
+
+
+// -----------------------------------------------------------------------------
+// frangi_filter
+// -----------------------------------------------------------------------------
+frangi_result frangi_filter(
+    const lsdtt_raster_cpu& raster,
+    const frangi_request&   request)
+{
+    validate_frangi_request(raster, request);
+
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+    const double cell_size = meta.cell_size;
+    const double inv_cell_sq = 1.0 / (cell_size * cell_size);
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    std::vector<double> best_response(npix, -1.0);
+
+    std::vector<float>   response_data(npix, nodata);
+    std::vector<uint8_t> response_mask(npix, uint8_t{0});
+
+    std::vector<float>   scale_data(npix, nodata);
+    std::vector<uint8_t> scale_mask(npix, uint8_t{0});
+
+    const std::vector<double> scales = build_frangi_scales(request);
+
+    const double beta_denom = 2.0 * request.beta * request.beta;
+    const double c_denom    = 2.0 * request.c    * request.c;
+    const double eps        = 1e-15;
+
+    for (double sigma_metres : scales)
+    {
+        lsdtt_raster_cpu smooth = gaussian_smooth_conservative(raster, sigma_metres);
+
+        const std::vector<float>&   z = smooth.get_data();
+        const std::vector<uint8_t>& m = smooth.get_mask();
+
+        const double sigma2 = sigma_metres * sigma_metres;
+
+        for (int row = 1; row < nrows - 1; ++row)
+        {
+            for (int col = 1; col < ncols - 1; ++col)
+            {
+                const std::size_t idx =
+                    static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col);
+
+                bool valid = true;
+                for (int dr = -1; dr <= 1 && valid; ++dr)
+                {
+                    for (int dc = -1; dc <= 1; ++dc)
+                    {
+                        const int rr = row + dr;
+                        const int cc = col + dc;
+
+                        const std::size_t nidx =
+                            static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols) +
+                            static_cast<std::size_t>(cc);
+
+                        if (m[nidx] == 0 ||
+                            meta.is_nodata(z[nidx]) ||
+                            !std::isfinite(z[nidx]))
+                        {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (!valid)
+                {
+                    continue;
+                }
+
+                const double zc  = static_cast<double>(z[idx]);
+
+                const std::size_t idx_n =
+                    static_cast<std::size_t>(row - 1) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col);
+                const std::size_t idx_s =
+                    static_cast<std::size_t>(row + 1) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col);
+                const std::size_t idx_e =
+                    static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col + 1);
+                const std::size_t idx_w =
+                    static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col - 1);
+
+                const std::size_t idx_ne =
+                    static_cast<std::size_t>(row - 1) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col + 1);
+                const std::size_t idx_nw =
+                    static_cast<std::size_t>(row - 1) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col - 1);
+                const std::size_t idx_se =
+                    static_cast<std::size_t>(row + 1) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col + 1);
+                const std::size_t idx_sw =
+                    static_cast<std::size_t>(row + 1) * static_cast<std::size_t>(ncols) +
+                    static_cast<std::size_t>(col - 1);
+
+                const double zn  = static_cast<double>(z[idx_n]);
+                const double zs  = static_cast<double>(z[idx_s]);
+                const double ze  = static_cast<double>(z[idx_e]);
+                const double zw  = static_cast<double>(z[idx_w]);
+                const double zne = static_cast<double>(z[idx_ne]);
+                const double znw = static_cast<double>(z[idx_nw]);
+                const double zse = static_cast<double>(z[idx_se]);
+                const double zsw = static_cast<double>(z[idx_sw]);
+
+                const double dxx =
+                    (ze - 2.0 * zc + zw) * inv_cell_sq;
+                const double dyy =
+                    (zn - 2.0 * zc + zs) * inv_cell_sq;
+                const double dxy =
+                    (zne - znw - zse + zsw) * (0.25 * inv_cell_sq);
+
+                // Scale-normalised Hessian
+                double hxx = sigma2 * dxx;
+                double hyy = sigma2 * dyy;
+                double hxy = sigma2 * dxy;
+
+                const double trace = hxx + hyy;
+                const double disc = std::sqrt(
+                    std::max(0.0, (hxx - hyy) * (hxx - hyy) + 4.0 * hxy * hxy)
+                );
+
+                double lambda1 = 0.5 * (trace - disc);
+                double lambda2 = 0.5 * (trace + disc);
+
+                if (std::abs(lambda1) > std::abs(lambda2))
+                {
+                    std::swap(lambda1, lambda2);
+                }
+
+                if (std::abs(lambda2) <= eps)
+                {
+                    continue;
+                }
+
+                if (request.target == frangi_target::ridges)
+                {
+                    if (lambda2 >= 0.0) continue;
+                }
+                else
+                {
+                    if (lambda2 <= 0.0) continue;
+                }
+
+                const double rb = std::abs(lambda1) / std::abs(lambda2);
+                const double s2 = lambda1 * lambda1 + lambda2 * lambda2;
+
+                const double response =
+                    std::exp(-(rb * rb) / beta_denom) *
+                    (1.0 - std::exp(-s2 / c_denom));
+
+                if (!std::isfinite(response))
+                {
+                    continue;
+                }
+
+                if (response > best_response[idx])
+                {
+                    best_response[idx] = response;
+                    response_data[idx] = static_cast<float>(response);
+                    response_mask[idx] = uint8_t{1};
+                    scale_data[idx]    = static_cast<float>(sigma_metres);
+                    scale_mask[idx]    = uint8_t{1};
+                }
+            }
+        }
+    }
+
+    return frangi_result
+    {
+        make_raster(
+            std::move(response_data),
+            std::move(response_mask),
+            meta
+        ),
+        make_raster(
+            std::move(scale_data),
+            std::move(scale_mask),
+            meta
+        )
+    };
+}
+
+
 
 // -----------------------------------------------------------------------------
 // find_channel_bottoms
