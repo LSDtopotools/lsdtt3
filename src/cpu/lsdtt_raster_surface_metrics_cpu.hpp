@@ -141,23 +141,45 @@ lsdtt_raster_cpu compute_hillshade(
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu moving_window_mean(
     const lsdtt_raster_cpu& raster,
-    int          radius_pixels = 3,
-    window_shape shape  = window_shape::square
+    double       radius_metres,
+    window_shape shape  = window_shape::circular
 );
-
 
 // -----------------------------------------------------------------------------
 // moving_window_local_relief
 //
-// Local relief = max(window) - min(window) over valid pixels in the window.
-// The radius is in pixels. For square windows this is the half-width;
-// for circular windows it is the disc radius.
+// Local relief = max(window) - min(window) over valid pixels in the moving
+// window. The window radius is in metres in the raster CRS.
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu moving_window_local_relief(
     const lsdtt_raster_cpu& raster,
-    int          radius_pixels = 3,
-    window_shape shape         = window_shape::square
+    double       radius_metres,
+    window_shape shape  = window_shape::circular
 );
+
+// -----------------------------------------------------------------------------
+// madk2_result
+//
+// Trevisani et al. (2023) MADk2 roughness outputs:
+//   - omnidirectional_roughness      (OR)
+//   - direction_maximum_continuity   (DMC, degrees on [0, 180))
+//   - roughness_anisotropy           (RA, [0, 1])
+// -----------------------------------------------------------------------------
+struct madk2_result
+{
+    lsdtt_raster_cpu omnidirectional_roughness;
+    lsdtt_raster_cpu direction_maximum_continuity;
+    lsdtt_raster_cpu roughness_anisotropy;
+};
+
+madk2_result calculate_madk2(
+    const lsdtt_raster_cpu& raster,
+    double window_radius_metres,
+    int    lag_pixels = 1,
+    int    n_threads  = 0
+);
+
+
 
 // -----------------------------------------------------------------------------
 // polyfit_metric

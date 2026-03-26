@@ -14,10 +14,13 @@
 //
 // Pipeline:
 //   1. Hillshade
-//   2. Polynomial surface fit (wavelet quadratic)
-//   3. Polyfit-derived surface metrics
-//   4. Otsu threshold segmentation (requires OpenCV)
-//   5. Hough line extraction (requires OpenCV)
+//   2. Local relief
+//   3. Polynomial surface fit (wavelet quadratic)
+//   4. Polyfit-derived surface metrics
+//   5. MADk2 roughness
+//   6. Otsu threshold segmentation (requires OpenCV)
+//   7. Hough line extraction (requires OpenCV)
+
 //
 // Usage:
 //   lsdtt-surface-metrics <path> <parameter_file>
@@ -446,16 +449,17 @@ int main(int argc, char* argv[])
         "Local relief is computed as local_max - local_min within a moving "
         "window over valid pixels only."};
 
-    int_default_map["local_relief_radius_pixels"] = 3;
-    help_map["local_relief_radius_pixels"] = {"int","3",
-        "Radius of the local-relief window in pixels.",
-        "For square windows this is the half-width. "
-        "For circular windows this is the disc radius."};
+    float_default_map["local_relief_radius_metres"] = 10.0f;
+    help_map["local_relief_radius_metres"] = {"float","10.0",
+        "Radius of the local-relief window in metres.",
+        "This is a physical radius in the raster CRS. The default window "
+        "shape is circular."};
 
     string_default_map["local_relief_window_shape"] = "circular";
     help_map["local_relief_window_shape"] = {"string","circular",
         "Shape of the local-relief window.",
-        "Valid options are square or circular."};
+        "Valid options are circular or square. Default is circular."};
+
 
 
     // --- Polynomial surface fit ---
@@ -465,8 +469,8 @@ int main(int argc, char* argv[])
         "Computes a, b, c, d, e, f where z = ax^2 + by^2 + cxy + dx + ey + f "
         "over a moving window controlled by polyfit_lambda."};
 
-    float_default_map["polyfit_lambda"] = 70.0f;
-    help_map["polyfit_lambda"] = {"float","70.0",
+    float_default_map["polyfit_lambda_metres"] = 70.0f;
+    help_map["polyfit_lambda_metres"] = {"float","70.0",
         "Characteristic lengthscale (metres) for the wavelet quadratic fit.",
         "Controls the size of the moving window. Default (70 m) is tuned for "
         "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m)."};
@@ -496,6 +500,25 @@ int main(int argc, char* argv[])
         "Slope tolerance below which direction-dependent polyfit metrics are nodata.",
         "Applies to aspect, plan curvature, tangential curvature, "
         "profile curvature, and rotor."};
+
+    // --- MADk2 roughness ---
+    bool_default_map["write_madk2_rasters"] = false;
+    help_map["write_madk2_rasters"] = {"bool","false",
+        "Write MADk2 roughness rasters.",
+        "Writes omnidirectional roughness (OR), direction of maximum "
+        "continuity (DMC), and roughness anisotropy (RA) following "
+        "Trevisani et al. (2023)."};
+
+    float_default_map["madk2_window_radius_metres"] = 10.0f;
+    help_map["madk2_window_radius_metres"] = {"float","10.0",
+        "Circular MADk2 window radius in metres.",
+        "This is the radius of the moving circular support window in "
+        "projected map units."};
+
+    int_default_map["madk2_lag_pixels"] = 1;
+    help_map["madk2_lag_pixels"] = {"int","1",
+        "Lag in pixels for the MADk2 second-order directional differences.",
+        "Must be >= 1. Typical values are 1 or 2."};
 
     // --- Otsu threshold segmentation (requires OpenCV) ---
     bool_default_map["write_otsu_raster"] = false;
@@ -697,8 +720,8 @@ int main(int argc, char* argv[])
     if (bf["write_local_relief_raster"])
     {
         std::cout << "\n--- Local relief ---\n";
-        std::cout << "Radius : " << ifs["local_relief_radius_pixels"] << " px\n";
-        std::cout << "Shape  : " << sf["local_relief_window_shape"] << "\n";
+        std::cout << "Radius: " << ff["local_relief_radius_metres"] << " m\n";
+        std::cout << "Shape : " << sf["local_relief_window_shape"]  << "\n";
 
         try
         {
@@ -708,7 +731,7 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_raster_cpu local_relief =
                 lsdtt::moving_window_local_relief(
                     dem,
-                    ifs["local_relief_radius_pixels"],
+                    ff["local_relief_radius_metres"],
                     local_relief_shape
                 );
 
@@ -723,10 +746,10 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: local relief failed: "
-                      << e.what() << "\n";
+            std::cerr << "Warning: local relief failed: " << e.what() << "\n";
         }
     }
+
 
 
     // -------------------------------------------------------------------------
@@ -735,14 +758,14 @@ int main(int argc, char* argv[])
     if (bf["write_polyfit_rasters"] || !requested_polyfit_metrics.empty())
     {
         std::cout << "\n--- Polynomial surface fit ---\n";
-        std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda"] << " m\n";
+        std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda_metres"] << " m\n";
 
         try
         {
             lsdtt::poly_fit_coeffs fitted =
                 lsdtt::wavelet_quadratic_fit(
                     dem,
-                    ff["polyfit_lambda"],
+                    ff["polyfit_lambda_metres"],
                     n_threads
                 );
 
@@ -820,8 +843,64 @@ int main(int argc, char* argv[])
         }
     }
 
+
     // -------------------------------------------------------------------------
-    // Step 4 — Otsu threshold segmentation
+    // Step 4 — MADk2 roughness
+    // -------------------------------------------------------------------------
+    if (bf["write_madk2_rasters"])
+    {
+        std::cout << "\n--- MADk2 roughness ---\n";
+        std::cout << "Radius: " << ff["madk2_window_radius_metres"] << " m\n";
+        std::cout << "Lag   : " << ifs["madk2_lag_pixels"]          << " px\n";
+
+        try
+        {
+            lsdtt::madk2_result madk2 =
+                lsdtt::calculate_madk2(
+                    dem,
+                    ff["madk2_window_radius_metres"],
+                    ifs["madk2_lag_pixels"],
+                    n_threads
+                );
+
+            const std::string o_or  = out_path(pp, "_madk2_or.tif");
+            const std::string o_dmc = out_path(pp, "_madk2_dmc.tif");
+            const std::string o_ra  = out_path(pp, "_madk2_ra.tif");
+
+            std::cout << "Writing: " << o_or  << "\n";
+            loader.write_full(
+                madk2.omnidirectional_roughness.get_data(),
+                madk2.omnidirectional_roughness.get_meta(),
+                o_or,
+                out_fmt
+            );
+
+            std::cout << "Writing: " << o_dmc << "\n";
+            loader.write_full(
+                madk2.direction_maximum_continuity.get_data(),
+                madk2.direction_maximum_continuity.get_meta(),
+                o_dmc,
+                out_fmt
+            );
+
+            std::cout << "Writing: " << o_ra  << "\n";
+            loader.write_full(
+                madk2.roughness_anisotropy.get_data(),
+                madk2.roughness_anisotropy.get_meta(),
+                o_ra,
+                out_fmt
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: MADk2 failed: " << e.what() << "\n";
+        }
+    }
+
+
+
+    // -------------------------------------------------------------------------
+    // Step 5 — Otsu threshold segmentation
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_otsu_raster"])
@@ -856,7 +935,7 @@ int main(int argc, char* argv[])
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 5 — Hough line extraction
+    // Step 6 — Hough line extraction
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_hough_lines_raster"])
