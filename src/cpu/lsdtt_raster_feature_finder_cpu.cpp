@@ -880,6 +880,250 @@ static lsdtt_raster_cpu filter_binary_components_by_shape(
 }
 
 
+// -----------------------------------------------------------------------------
+// thin_zhang_suen
+//
+// Pure CPU Zhang-Suen thinning for binary rasters.
+// Input convention:
+//   - valid pixels with value > 0.5 are foreground
+//   - valid pixels with value <= 0.5 are background
+//   - nodata / invalid pixels are treated as background
+//
+// Output convention:
+//   - data = 1.0 on skeleton foreground pixels, 0.0 otherwise
+//   - mask = 1 on all valid input pixels, 0 on nodata input pixels
+//
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu thin_zhang_suen(
+    const lsdtt_raster_cpu& binary)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::thin_zhang_suen: input raster metadata is invalid"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    // valid_domain = where the input raster is valid (mask == 1 and finite/non-nodata)
+    // work         = binary foreground/background used by the thinning iterations
+    std::vector<uint8_t> valid_domain(npix, uint8_t{0});
+    std::vector<uint8_t> work(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (meta.is_nodata(in_data[i])) continue;
+        if (!std::isfinite(in_data[i])) continue;
+
+        valid_domain[i] = uint8_t{1};
+        work[i] = (in_data[i] > 0.5f) ? uint8_t{1} : uint8_t{0};
+    }
+
+    // Nothing to do on tiny rasters
+    if (nrows < 3 || ncols < 3)
+    {
+        std::vector<float>   out_data(npix, 0.0f);
+        std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            if (valid_domain[i] != 0)
+            {
+                out_mask[i] = uint8_t{1};
+                out_data[i] = (work[i] != 0) ? 1.0f : 0.0f;
+            }
+        }
+
+        return make_raster(
+            std::move(out_data),
+            std::move(out_mask),
+            meta
+        );
+    }
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    auto pixel = [&](int row, int col) -> uint8_t
+    {
+        if (row < 0 || row >= nrows || col < 0 || col >= ncols)
+        {
+            return uint8_t{0};
+        }
+
+        const std::size_t idx = idx_of(row, col);
+
+        if (valid_domain[idx] == 0)
+        {
+            return uint8_t{0};
+        }
+
+        return work[idx];
+    };
+
+    auto neighbour_count = [&](int row, int col) -> int
+    {
+        return static_cast<int>(pixel(row - 1, col    )) +  // p2
+               static_cast<int>(pixel(row - 1, col + 1)) +  // p3
+               static_cast<int>(pixel(row,     col + 1)) +  // p4
+               static_cast<int>(pixel(row + 1, col + 1)) +  // p5
+               static_cast<int>(pixel(row + 1, col    )) +  // p6
+               static_cast<int>(pixel(row + 1, col - 1)) +  // p7
+               static_cast<int>(pixel(row,     col - 1)) +  // p8
+               static_cast<int>(pixel(row - 1, col - 1));   // p9
+    };
+
+    auto transition_count = [&](int row, int col) -> int
+    {
+        const uint8_t p2 = pixel(row - 1, col    );
+        const uint8_t p3 = pixel(row - 1, col + 1);
+        const uint8_t p4 = pixel(row,     col + 1);
+        const uint8_t p5 = pixel(row + 1, col + 1);
+        const uint8_t p6 = pixel(row + 1, col    );
+        const uint8_t p7 = pixel(row + 1, col - 1);
+        const uint8_t p8 = pixel(row,     col - 1);
+        const uint8_t p9 = pixel(row - 1, col - 1);
+
+        int a = 0;
+        if (p2 == 0 && p3 != 0) ++a;
+        if (p3 == 0 && p4 != 0) ++a;
+        if (p4 == 0 && p5 != 0) ++a;
+        if (p5 == 0 && p6 != 0) ++a;
+        if (p6 == 0 && p7 != 0) ++a;
+        if (p7 == 0 && p8 != 0) ++a;
+        if (p8 == 0 && p9 != 0) ++a;
+        if (p9 == 0 && p2 != 0) ++a;
+        return a;
+    };
+
+    std::vector<std::size_t> to_delete;
+    bool changed = true;
+
+    while (changed)
+    {
+        changed = false;
+        to_delete.clear();
+
+        // ---------------------------------------------------------------------
+        // Sub-iteration 1
+        // ---------------------------------------------------------------------
+        for (int row = 1; row < nrows - 1; ++row)
+        {
+            for (int col = 1; col < ncols - 1; ++col)
+            {
+                const std::size_t idx = idx_of(row, col);
+
+                if (valid_domain[idx] == 0 || work[idx] == 0)
+                {
+                    continue;
+                }
+
+                const uint8_t p2 = pixel(row - 1, col    );
+                const uint8_t p4 = pixel(row,     col + 1);
+                const uint8_t p6 = pixel(row + 1, col    );
+                const uint8_t p8 = pixel(row,     col - 1);
+
+                const int b = neighbour_count(row, col);
+                const int a = transition_count(row, col);
+
+                if (b < 2 || b > 6) continue;
+                if (a != 1)         continue;
+                if (p2 != 0 && p4 != 0 && p6 != 0) continue;
+                if (p4 != 0 && p6 != 0 && p8 != 0) continue;
+
+                to_delete.push_back(idx);
+            }
+        }
+
+        if (!to_delete.empty())
+        {
+            changed = true;
+            for (std::size_t idx : to_delete)
+            {
+                work[idx] = uint8_t{0};
+            }
+        }
+
+        to_delete.clear();
+
+        // ---------------------------------------------------------------------
+        // Sub-iteration 2
+        // ---------------------------------------------------------------------
+        for (int row = 1; row < nrows - 1; ++row)
+        {
+            for (int col = 1; col < ncols - 1; ++col)
+            {
+                const std::size_t idx = idx_of(row, col);
+
+                if (valid_domain[idx] == 0 || work[idx] == 0)
+                {
+                    continue;
+                }
+
+                const uint8_t p2 = pixel(row - 1, col    );
+                const uint8_t p4 = pixel(row,     col + 1);
+                const uint8_t p6 = pixel(row + 1, col    );
+                const uint8_t p8 = pixel(row,     col - 1);
+
+                const int b = neighbour_count(row, col);
+                const int a = transition_count(row, col);
+
+                if (b < 2 || b > 6) continue;
+                if (a != 1)         continue;
+                if (p2 != 0 && p4 != 0 && p8 != 0) continue;
+                if (p2 != 0 && p6 != 0 && p8 != 0) continue;
+
+                to_delete.push_back(idx);
+            }
+        }
+
+        if (!to_delete.empty())
+        {
+            changed = true;
+            for (std::size_t idx : to_delete)
+            {
+                work[idx] = uint8_t{0};
+            }
+        }
+    }
+
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (valid_domain[i] != 0)
+        {
+            out_mask[i] = uint8_t{1};
+            out_data[i] = (work[i] != 0) ? 1.0f : 0.0f;
+        }
+    }
+
+    return make_raster(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+
+
+
+
 
 } // unnamed namespace
 
@@ -1093,6 +1337,9 @@ drain_result find_drains(
             request.response_threshold
         );
 
+    lsdtt_raster_cpu skeleton_mask =
+        thin_zhang_suen(threshold_mask);
+
     lsdtt_raster_cpu drain_mask =
         filter_binary_components_by_shape(
             threshold_mask,
@@ -1106,8 +1353,10 @@ drain_result find_drains(
         std::move(frangi.response),
         std::move(frangi.best_scale_metres),
         std::move(threshold_mask),
+        std::move(skeleton_mask),
         std::move(drain_mask)
     };
+
 }
 
 

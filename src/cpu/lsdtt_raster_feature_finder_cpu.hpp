@@ -155,8 +155,10 @@ struct drain_result
     lsdtt_raster_cpu frangi_response;
     lsdtt_raster_cpu frangi_best_scale_metres;
     lsdtt_raster_cpu threshold_mask;
+    lsdtt_raster_cpu skeleton_mask;
     lsdtt_raster_cpu drain_mask;
 };
+
 
 // -----------------------------------------------------------------------------
 // find_drains

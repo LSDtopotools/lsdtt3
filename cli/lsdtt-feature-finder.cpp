@@ -677,6 +677,7 @@ int main(int argc, char* argv[])
                 const std::string o1 = out_path(pp, "_drain_frangi_response.tif");
                 const std::string o2 = out_path(pp, "_drain_frangi_scale.tif");
                 const std::string o3 = out_path(pp, "_drain_threshold_mask.tif");
+                const std::string o4 = out_path(pp, "_drain_skeleton_mask.tif");
 
                 std::cout << "Writing: " << o1 << "\n";
                 write_raster(loader, result.frangi_response, o1, out_fmt);
@@ -686,7 +687,11 @@ int main(int argc, char* argv[])
 
                 std::cout << "Writing: " << o3 << "\n";
                 write_raster(loader, result.threshold_mask, o3, out_fmt);
+
+                std::cout << "Writing: " << o4 << "\n";
+                write_raster(loader, result.skeleton_mask, o4, out_fmt);
             }
+
         }
     }
     catch (const std::exception& e)
