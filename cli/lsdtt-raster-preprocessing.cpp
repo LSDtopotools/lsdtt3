@@ -67,6 +67,8 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
+#include "../src/cpu/lsdtt_depression_hierarchy_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -373,6 +375,45 @@ int main(int argc, char* argv[])
         "Prevents flat regions that cause ambiguous flow direction. "
         "Increase slightly for very coarse DEMs."};
 
+
+    // --- Fill-Spill-Merge ---
+    bool_default_map["write_fsm_raster"] = false;
+    help_map["write_fsm_raster"] = {"bool","false",
+        "Write the Fill-Spill-Merge filled DEM (water surface + DEM).",
+        "Builds a depression hierarchy for the original (or breached/filled) "
+        "DEM and distributes fsm_rainfall_m metres of water per cell, "
+        "routing overflow between depressions. The output is the DEM raised "
+        "to the resulting water surface — suitable for use as a hydro-"
+        "conditioned DEM in lsdtt-channel-extraction. "
+        "Reference: Barnes, Callaghan & Wickert (2021) "
+        "doi:10.5194/esurf-9-105-2021."};
+ 
+    bool_default_map["write_fsm_water_depth_raster"] = false;
+    help_map["write_fsm_water_depth_raster"] = {"bool","false",
+        "Write the water depth raster produced by Fill-Spill-Merge.",
+        "Values are water_surface - original_dem at each cell. "
+        "Zero where the cell is above the water surface. "
+        "Requires write_fsm_raster to be true."};
+ 
+    float_default_map["fsm_rainfall_m"] = 0.1f;
+    help_map["fsm_rainfall_m"] = {"float","0.1",
+        "Uniform rainfall depth in metres of water per cell for FSM routing.",
+        "Higher values fill more depressions and produce a wetter landscape. "
+        "The value represents the equivalent water depth added uniformly to "
+        "every valid raster cell before routing. Must be >= 0."};
+ 
+    string_default_map["fsm_boundary_conditions"] = "oooo";
+    help_map["fsm_boundary_conditions"] = {"string","oooo",
+        "Boundary conditions for the depression hierarchy (north east south west).",
+        "Four characters, one per edge: "
+        "o = open (cells on this edge drain freely to the ocean, default). "
+        "b = forced baselevel outlet (same as o for hierarchy purposes). "
+        "n = no-flux (edge is NOT an ocean boundary). "
+        "p = periodic (edge wraps; NOT an ocean boundary). "
+        "Example: oooo = all four edges are open ocean (typical for a DEM tile). "
+        "Example: nnnn = closed basin (no edge is ocean; requires interior pits)."};
+ 
+
     // --- Hillshade ---
     bool_default_map["write_hillshade_raster"] = false;
     help_map["write_hillshade_raster"] = {"bool","false",
@@ -441,6 +482,12 @@ int main(int argc, char* argv[])
         // to feed into the fill step.
         bf["write_breached_raster"] = bf["write_breached_raster"] || false;
     }
+
+    if (bf["write_fsm_water_depth_raster"])
+    {
+        bf["write_fsm_raster"] = true;
+    }
+ 
 
     int n_threads = ifs["n_threads"];
 
@@ -783,7 +830,98 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 7 — Hillshade
+    // Step 7 — Fill-Spill-Merge
+    //
+    // The FSM pipeline operates on the working_dem (after optional breaching).
+    // It does NOT require a pre-filled DEM — the depression hierarchy itself
+    // captures the full topographic complexity of depressions and routes water
+    // through them without a prior pit-fill step. This is the key advantage of
+    // the Barnes et al. (2021) approach over simple pit filling.
+    //
+    // Pipeline:
+    //   a. build_depression_hierarchy() — labels every cell with its leaf
+    //      depression and builds the binary tree of nested depressions.
+    //   b. fill_spill_merge() / fsm_filled_dem() — distributes fsm_rainfall_m
+    //      metres of water across every cell, fills depressions from the
+    //      bottom up, and routes overflow between neighbouring depressions.
+    //   c. Write the FSM-filled DEM: max(working_dem, water_surface).
+    //   d. Optionally write the water-depth raster: water_surface - working_dem
+    //      (clamped to >= 0).
+    // -------------------------------------------------------------------------
+    if (bf["write_fsm_raster"])
+    {
+        std::cout << "\n--- Fill-Spill-Merge ---\n";
+        std::cout << "Rainfall: " << ff["fsm_rainfall_m"] << " m per cell\n";
+        std::cout << "Boundary conditions: "
+                  << sf["fsm_boundary_conditions"] << "\n";
+ 
+        try
+        {
+            // Build the depression hierarchy on the working (possibly breached)
+            // DEM. We do NOT use the pit-filled DEM here: the hierarchy
+            // explicitly represents depressions, so the input should still
+            // contain them.
+            lsdtt::depression_hierarchy_options dh_opts;
+            dh_opts.boundary_conditions = sf["fsm_boundary_conditions"];
+ 
+            std::vector<lsdtt::dep_label_t> fsm_label;
+ 
+            std::cout << "Building depression hierarchy...\n";
+            lsdtt::lsdtt_depression_hierarchy dh =
+                lsdtt::build_depression_hierarchy(working_dem, fsm_label,
+                                                  dh_opts);
+ 
+            std::cout << "Hierarchy: " << dh.size()
+                      << " nodes (ocean + leaves + meta-depressions)\n";
+ 
+            // fsm_filled_dem returns max(working_dem, water_surface).
+            std::cout << "Running Fill-Spill-Merge...\n";
+            lsdtt::lsdtt_raster_cpu fsm_dem =
+                lsdtt::fsm_filled_dem(working_dem, fsm_label, dh,
+                                      ff["fsm_rainfall_m"]);
+ 
+            std::string o = out_path(pp, "_fsm_fill.tif");
+            std::cout << "Writing FSM filled DEM: " << o << "\n";
+            loader.write_full(fsm_dem.get_data(), fsm_dem.get_meta(),
+                              o, out_fmt);
+ 
+            // Optional: water-depth raster (fsm_dem - working_dem, >= 0).
+            if (bf["write_fsm_water_depth_raster"])
+            {
+                std::cout << "Computing FSM water depth raster "
+                             "(water_surface - original, clamped to >= 0)\n";
+                try
+                {
+                    lsdtt::lsdtt_raster_cpu depth =
+                        lsdtt::algebra::raster_subtract(fsm_dem, working_dem);
+ 
+                    // Clamp negative values to zero (cells above the water
+                    // surface get exactly zero depth, not a small negative
+                    // due to floating-point rounding).
+                    depth = lsdtt::mask_to_nodata_using_threshold(
+                        depth, 0.0f, true);
+ 
+                    std::string od = out_path(pp, "_fsm_water_depth.tif");
+                    std::cout << "Writing: " << od << "\n";
+                    loader.write_full(depth.get_data(), depth.get_meta(),
+                                      od, out_fmt);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: FSM water depth raster failed: "
+                              << e.what() << "\n";
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: Fill-Spill-Merge failed: "
+                      << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 8 — Hillshade
     // -------------------------------------------------------------------------
     if (bf["write_hillshade_raster"])
     {
