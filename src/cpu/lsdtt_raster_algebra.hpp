@@ -97,11 +97,21 @@ lsdtt_raster_cpu raster_positive_difference(
 // Unary transforms
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// Unary transforms
+// -----------------------------------------------------------------------------
+
+/// Absolute value: result = abs(a)
+lsdtt_raster_cpu raster_abs(
+    const lsdtt_raster_cpu& a
+);
+
 /// Clamp valid pixels from below: result = max(a, lower)
 lsdtt_raster_cpu raster_clamp_min(
     const lsdtt_raster_cpu& a,
     float                   lower
 );
+
 
 // -----------------------------------------------------------------------------
 // Logarithm operations

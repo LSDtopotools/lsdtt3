@@ -141,11 +141,20 @@ struct drain_request
 {
     frangi_request frangi;
 
-    double response_threshold   = 0.15;
-    int    min_component_pixels = 6;
-    double min_major_axis_pixels = 5.0;
-    double min_elongation       = 3.0;
+    double response_threshold                 = 0.15;
+    int    min_component_pixels               = 6;
+    double min_major_axis_pixels              = 5.0;
+    double min_elongation                     = 3.0;
+
+    double accumulation_curvature_lambda      = 4.0;
+    double accumulation_curvature_z_factor    = 1.0;
+    double accumulation_curvature_flat_slope_tolerance = 1e-12;
+    double max_log10_abs_accumulation_curvature = -5.0;
+
+    double max_frangi_scale_metres            = 1.8;
 };
+
+
 
 // -----------------------------------------------------------------------------
 // drain_result
@@ -155,9 +164,39 @@ struct drain_result
     lsdtt_raster_cpu frangi_response;
     lsdtt_raster_cpu frangi_best_scale_metres;
     lsdtt_raster_cpu threshold_mask;
-    lsdtt_raster_cpu skeleton_mask;
+    lsdtt_raster_cpu accumulation_curvature;
+    lsdtt_raster_cpu log10_abs_accumulation_curvature;
+    lsdtt_raster_cpu masked_frangi_scale;
     lsdtt_raster_cpu drain_mask;
 };
+
+
+
+
+
+// -----------------------------------------------------------------------------
+// compute_relief_ratio
+//
+// Computes:
+//   relief_ratio = local_relief(short_radius) / local_relief(long_radius)
+//
+// using circular moving windows and the existing moving_window_local_relief()
+// routine from lsdtt_raster_surface_metrics_cpu.
+//
+// Intended use:
+//   narrow incised features such as drains may have relatively high local
+//   relief at short range but lower relief relative to broader channels when
+//   compared against a larger window.
+//
+// Throws:
+//   std::runtime_error on invalid metadata or invalid radius values.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_relief_ratio(
+    const lsdtt_raster_cpu& raster,
+    double                  short_radius_metres = 1.8,
+    double                  long_radius_metres  = 8.0
+);
+
 
 
 // -----------------------------------------------------------------------------

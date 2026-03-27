@@ -1061,7 +1061,13 @@ polyfit_metric_result compute_polyfit_metrics(
         out_curvedness.requested() ||
         out_shape_index.requested() ||
         out_profile_curvature.requested() ||
-        out_tangential_curvature.requested();
+        out_tangential_curvature.requested() ||
+        out_difference_curvature.requested() ||
+        out_horizontal_excess_curvature.requested() ||
+        out_vertical_excess_curvature.requested() ||
+        out_accumulation_curvature.requested() ||
+        out_ring_curvature.requested();
+
 
     const bool need_principal_curvatures =
         out_maximum_curvature.requested() ||

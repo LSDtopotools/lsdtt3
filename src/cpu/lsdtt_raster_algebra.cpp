@@ -333,6 +333,41 @@ lsdtt_raster_cpu raster_clamp_min(
     );
 }
 
+
+lsdtt_raster_cpu raster_abs(
+    const lsdtt_raster_cpu& a)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i])
+        {
+            out_data[i] = std::abs(da[i]);
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+
+
 // =============================================================================
 // Logarithm operations
 // =============================================================================

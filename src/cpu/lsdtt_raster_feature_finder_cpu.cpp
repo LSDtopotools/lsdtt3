@@ -396,6 +396,238 @@ static lsdtt_raster_cpu threshold_binary(
     return make_raster(std::move(out_data), std::move(out_mask), meta);
 }
 
+
+
+// -----------------------------------------------------------------------------
+// filter_binary_mask_by_value_raster_upper_threshold
+//
+// Keeps foreground pixels from a binary mask only where the value raster is
+// <= max_value. Background pixels remain 0.0. Validity follows the
+// intersection of both rasters.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu filter_binary_mask_by_value_raster_upper_threshold(
+    const lsdtt_raster_cpu& binary_mask,
+    const lsdtt_raster_cpu& value_raster,
+    double                  max_value)
+{
+    algebra::assert_compatible(binary_mask, value_raster);
+
+    const lsdtt_raster_meta& meta = binary_mask.get_meta();
+
+    const std::vector<float>&   b_data = binary_mask.get_data();
+    const std::vector<uint8_t>& b_mask = binary_mask.get_mask();
+    const std::vector<float>&   v_data = value_raster.get_data();
+    const std::vector<uint8_t>& v_mask = value_raster.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const bool valid =
+            b_mask[i] != 0 &&
+            v_mask[i] != 0 &&
+            !meta.is_nodata(b_data[i]) &&
+            !meta.is_nodata(v_data[i]) &&
+            std::isfinite(b_data[i]) &&
+            std::isfinite(v_data[i]);
+
+        if (!valid) continue;
+
+        out_mask[i] = uint8_t{1};
+
+        if (b_data[i] > 0.5f &&
+            static_cast<double>(v_data[i]) <= max_value)
+        {
+            out_data[i] = 1.0f;
+        }
+    }
+
+    return make_raster(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+
+
+// -----------------------------------------------------------------------------
+// mask_value_raster_by_upper_threshold
+//
+// Keeps the value raster where the threshold raster is <= max_value.
+// Sets output to nodata elsewhere.
+//
+// This is intended for products like the Frangi best-scale raster, where the
+// data values themselves should be preserved on retained pixels, not converted
+// to 0/1.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu mask_value_raster_by_upper_threshold(
+    const lsdtt_raster_cpu& values,
+    const lsdtt_raster_cpu& threshold_raster,
+    double                  max_value)
+{
+    algebra::assert_compatible(values, threshold_raster);
+
+    const lsdtt_raster_meta& meta = values.get_meta();
+
+    const std::vector<float>&   v_data = values.get_data();
+    const std::vector<uint8_t>& v_mask = values.get_mask();
+    const std::vector<float>&   t_data = threshold_raster.get_data();
+    const std::vector<uint8_t>& t_mask = threshold_raster.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   out_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const bool valid =
+            v_mask[i] != 0 &&
+            t_mask[i] != 0 &&
+            !meta.is_nodata(v_data[i]) &&
+            !meta.is_nodata(t_data[i]) &&
+            std::isfinite(v_data[i]) &&
+            std::isfinite(t_data[i]);
+
+        if (!valid) continue;
+
+        if (static_cast<double>(t_data[i]) <= max_value)
+        {
+            out_data[i] = v_data[i];
+            out_mask[i] = uint8_t{1};
+        }
+    }
+
+    return make_raster(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+
+
+// -----------------------------------------------------------------------------
+// filter_binary_mask_by_upper_threshold
+//
+// Keeps foreground pixels from a binary mask only where the threshold raster
+// is <= max_value. Background pixels remain 0.0. Validity follows the
+// intersection of both rasters.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu filter_binary_mask_by_upper_threshold(
+    const lsdtt_raster_cpu& binary_mask,
+    const lsdtt_raster_cpu& threshold_raster,
+    double                  max_value)
+{
+    algebra::assert_compatible(binary_mask, threshold_raster);
+
+    const lsdtt_raster_meta& meta = binary_mask.get_meta();
+
+    const std::vector<float>&   b_data = binary_mask.get_data();
+    const std::vector<uint8_t>& b_mask = binary_mask.get_mask();
+    const std::vector<float>&   t_data = threshold_raster.get_data();
+    const std::vector<uint8_t>& t_mask = threshold_raster.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const bool valid =
+            b_mask[i] != 0 &&
+            t_mask[i] != 0 &&
+            !meta.is_nodata(b_data[i]) &&
+            !meta.is_nodata(t_data[i]) &&
+            std::isfinite(b_data[i]) &&
+            std::isfinite(t_data[i]);
+
+        if (!valid) continue;
+
+        out_mask[i] = uint8_t{1};
+
+        if (b_data[i] > 0.5f &&
+            static_cast<double>(t_data[i]) <= max_value)
+        {
+            out_data[i] = 1.0f;
+        }
+    }
+
+    return make_raster(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+// -----------------------------------------------------------------------------
+// apply_binary_keep_mask_to_value_raster
+//
+// Writes the value raster where keep_mask > 0.5, and nodata elsewhere.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu apply_binary_keep_mask_to_value_raster(
+    const lsdtt_raster_cpu& values,
+    const lsdtt_raster_cpu& keep_mask)
+{
+    algebra::assert_compatible(values, keep_mask);
+
+    const lsdtt_raster_meta& meta = values.get_meta();
+
+    const std::vector<float>&   v_data = values.get_data();
+    const std::vector<uint8_t>& v_mask = values.get_mask();
+    const std::vector<float>&   k_data = keep_mask.get_data();
+    const std::vector<uint8_t>& k_mask = keep_mask.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   out_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const bool valid =
+            v_mask[i] != 0 &&
+            k_mask[i] != 0 &&
+            !meta.is_nodata(v_data[i]) &&
+            !meta.is_nodata(k_data[i]) &&
+            std::isfinite(v_data[i]) &&
+            std::isfinite(k_data[i]);
+
+        if (!valid) continue;
+
+        if (k_data[i] > 0.5f)
+        {
+            out_data[i] = v_data[i];
+            out_mask[i] = uint8_t{1};
+        }
+    }
+
+    return make_raster(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+
+
 // -----------------------------------------------------------------------------
 // validate_frangi_request
 // -----------------------------------------------------------------------------
@@ -697,6 +929,46 @@ static void validate_drain_request(
             "lsdtt::find_drains: min_elongation must be finite and >= 1"
         );
     }
+    if (!std::isfinite(request.accumulation_curvature_lambda) ||
+        request.accumulation_curvature_lambda <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: accumulation_curvature_lambda must be finite and > 0"
+        );
+    }
+
+    if (!std::isfinite(request.accumulation_curvature_z_factor) ||
+        request.accumulation_curvature_z_factor <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: accumulation_curvature_z_factor must be finite and > 0"
+        );
+    }
+
+    if (!std::isfinite(request.accumulation_curvature_flat_slope_tolerance) ||
+        request.accumulation_curvature_flat_slope_tolerance <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: accumulation_curvature_flat_slope_tolerance must be finite and > 0"
+        );
+    }
+
+    if (!std::isfinite(request.max_log10_abs_accumulation_curvature))
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: max_log10_abs_accumulation_curvature must be finite"
+        );
+    }
+
+    if (!std::isfinite(request.max_frangi_scale_metres) ||
+        request.max_frangi_scale_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: max_frangi_scale_metres must be finite and > 0"
+        );
+    }
+
+
 }
 
 // -----------------------------------------------------------------------------
@@ -1128,6 +1400,67 @@ static lsdtt_raster_cpu thin_zhang_suen(
 } // unnamed namespace
 
 
+
+// -----------------------------------------------------------------------------
+// compute_relief_ratio
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_relief_ratio(
+    const lsdtt_raster_cpu& raster,
+    double                  short_radius_metres,
+    double                  long_radius_metres)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_relief_ratio: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    if (!std::isfinite(short_radius_metres) || short_radius_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_relief_ratio: short_radius_metres must be finite and > 0"
+        );
+    }
+
+    if (!std::isfinite(long_radius_metres) || long_radius_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_relief_ratio: long_radius_metres must be finite and > 0"
+        );
+    }
+
+    if (long_radius_metres <= short_radius_metres)
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_relief_ratio: long_radius_metres must be > short_radius_metres"
+        );
+    }
+
+    lsdtt_raster_cpu short_relief =
+        moving_window_local_relief(
+            raster,
+            short_radius_metres,
+            window_shape::circular
+        );
+
+    lsdtt_raster_cpu long_relief =
+        moving_window_local_relief(
+            raster,
+            long_radius_metres,
+            window_shape::circular
+        );
+
+    return algebra::raster_divide(short_relief, long_relief);
+}
+
+
+
+
 // -----------------------------------------------------------------------------
 // frangi_filter
 // -----------------------------------------------------------------------------
@@ -1337,27 +1670,83 @@ drain_result find_drains(
             request.response_threshold
         );
 
-    lsdtt_raster_cpu skeleton_mask =
-        thin_zhang_suen(threshold_mask);
+    poly_fit_coeffs poly =
+        wavelet_quadratic_fit(
+            raster,
+            request.accumulation_curvature_lambda,
+            request.frangi.n_threads
+        );
+
+    polyfit_metric_request poly_request;
+    poly_request.metrics =
+    {
+        polyfit_metric::accumulation_curvature
+    };
+    poly_request.z_factor =
+        request.accumulation_curvature_z_factor;
+    poly_request.n_threads =
+        request.frangi.n_threads;
+    poly_request.flat_slope_tolerance =
+        request.accumulation_curvature_flat_slope_tolerance;
+
+    polyfit_metric_result poly_metrics =
+        compute_polyfit_metrics(poly, poly_request);
+
+    lsdtt_raster_cpu accumulation_curvature =
+        poly_metrics.at(polyfit_metric::accumulation_curvature);
+
+    lsdtt_raster_cpu abs_accumulation_curvature =
+        algebra::raster_abs(accumulation_curvature);
+
+    lsdtt_raster_cpu floored_abs_accumulation_curvature =
+        algebra::raster_clamp_min(abs_accumulation_curvature, 1e-30f);
+
+    lsdtt_raster_cpu log10_abs_accumulation_curvature =
+        algebra::raster_log10(floored_abs_accumulation_curvature);
+
+    lsdtt_raster_cpu accumulation_filtered_mask =
+        filter_binary_mask_by_upper_threshold(
+            threshold_mask,
+            log10_abs_accumulation_curvature,
+            request.max_log10_abs_accumulation_curvature
+        );
+
+    lsdtt_raster_cpu scale_filtered_mask =
+        filter_binary_mask_by_value_raster_upper_threshold(
+            accumulation_filtered_mask,
+            frangi.best_scale_metres,
+            request.max_frangi_scale_metres
+        );
+
+    lsdtt_raster_cpu thresholded_frangi_scale =
+        apply_binary_keep_mask_to_value_raster(
+            frangi.best_scale_metres,
+            threshold_mask
+        );
+
+    lsdtt_raster_cpu masked_frangi_scale =
+        apply_binary_keep_mask_to_value_raster(
+            frangi.best_scale_metres,
+            scale_filtered_mask
+        );
 
     lsdtt_raster_cpu drain_mask =
-        filter_binary_components_by_shape(
-            threshold_mask,
-            request.min_component_pixels,
-            request.min_major_axis_pixels,
-            request.min_elongation
-        );
+        scale_filtered_mask;
+
+
 
     return drain_result
     {
         std::move(frangi.response),
         std::move(frangi.best_scale_metres),
         std::move(threshold_mask),
-        std::move(skeleton_mask),
+        std::move(accumulation_curvature),
+        std::move(log10_abs_accumulation_curvature),
+        std::move(masked_frangi_scale),
         std::move(drain_mask)
     };
-
 }
+
 
 
 // -----------------------------------------------------------------------------

@@ -293,7 +293,7 @@ int main(int argc, char* argv[])
     string_default_map["feature_type"] = "channel_bottoms";
     help_map["feature_type"] = {"string","channel_bottoms",
         "Feature mode to run.",
-        "Supported values: channel_bottoms, find_drains."};
+        "Supported values: channel_bottoms- find_drains- relief_ratio."};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -387,6 +387,25 @@ int main(int argc, char* argv[])
         "Includes raw curvature rasters, derived channelness signals, curvature "
         "persistence, depth signal, and slope signal."};
 
+    // --- Relief-ratio detector ---
+    bool_default_map["write_relief_ratio_raster"] = true;
+    help_map["write_relief_ratio_raster"] = {"bool","true",
+        "Write the relief-ratio raster.",
+        "The output is local_relief(short_radius) / local_relief(long_radius), "
+        "using circular moving windows."};
+
+    float_default_map["relief_ratio_short_radius"] = 1.8f;
+    help_map["relief_ratio_short_radius"] = {"float","1.8",
+        "Short moving-window radius for local relief, in metres.",
+        "Use a radius matched to the narrow drain scale. This is a radius, "
+        "not a diameter."};
+
+    float_default_map["relief_ratio_long_radius"] = 8.0f;
+    help_map["relief_ratio_long_radius"] = {"float","8.0",
+        "Long moving-window radius for local relief, in metres.",
+        "Use a broader radius that captures channel-scale topographic relief."};
+
+
     // --- Drain finder ---
     float_default_map["frangi_sigma_min_metres"] = 1.0f;
     help_map["frangi_sigma_min_metres"] = {"float","1.0",
@@ -415,6 +434,13 @@ int main(int argc, char* argv[])
         "Frangi c parameter.",
         "Controls suppression of weak-structure responses. Smaller values make "
         "the filter respond more selectively to subtle narrow drains."};
+
+    float_default_map["drain_max_frangi_scale_metres"] = 1.8f;
+    help_map["drain_max_frangi_scale_metres"] = {"float","1.8",
+        "Maximum allowed Frangi best scale, in metres, for retained drain candidates.",
+        "Use this to suppress broader features such as channels while still "
+        "running Frangi over a wider diagnostic scale range."};
+
 
     float_default_map["drain_response_threshold"] = 0.15f;
     help_map["drain_response_threshold"] = {"float","0.15",
@@ -448,6 +474,29 @@ int main(int argc, char* argv[])
         "Includes Frangi response, Frangi best scale, and the thresholded "
         "candidate mask before shape filtering."};
 
+    float_default_map["drain_accumulation_curvature_lambda"] = 4.0f;
+    help_map["drain_accumulation_curvature_lambda"] = {"float","4.0",
+        "Wavelength used for the polyfit accumulation-curvature veto, in metres.",
+        "Use a scale that captures channel and broken-ground curvature structure "
+        "without being so large that subtle drains disappear."};
+
+    float_default_map["drain_accumulation_curvature_z_factor"] = 1.0f;
+    help_map["drain_accumulation_curvature_z_factor"] = {"float","1.0",
+        "Vertical scaling applied before interpreting accumulation curvature.",
+        "Usually leave at 1.0 unless you deliberately want to amplify or "
+        "suppress curvature magnitudes."};
+
+    float_default_map["drain_accumulation_curvature_flat_slope_tolerance"] = 1e-12f;
+    help_map["drain_accumulation_curvature_flat_slope_tolerance"] = {"float","1e-12",
+        "Flat-slope tolerance passed to the polyfit metric engine for the accumulation-curvature veto.",
+        "Very small default so only nearly flat terrain is treated as directionless."};
+
+    float_default_map["drain_log10_abs_accumulation_curvature_max"] = -5.0f;
+    help_map["drain_log10_abs_accumulation_curvature_max"] = {"float","-5.0",
+        "Maximum allowed value of log10(abs(accumulation_curvature)) for retained drain candidates.",
+        "Pixels above this value are removed from the thresholded Frangi candidates."};
+
+
 
     // -------------------------------------------------------------------------
     // Parse parameters
@@ -458,6 +507,7 @@ int main(int argc, char* argv[])
         bool_default_map,
         string_default_map
     );
+    std::cout << "I have parsed all the parameters for you." << std::endl;
 
     const std::map<std::string, bool>        bf  = pp.get_bool_parameters();
     const std::map<std::string, float>       ff  = pp.get_float_parameters();
@@ -466,12 +516,18 @@ int main(int argc, char* argv[])
 
     const std::string feature_type = sf.at("feature_type");
     const int         n_threads    = ifs.at("n_threads");
+    
+    const double relief_ratio_short_radius =
+        static_cast<double>(ff.at("relief_ratio_short_radius"));
+    const double relief_ratio_long_radius =
+        static_cast<double>(ff.at("relief_ratio_long_radius"));
+
 
     lsdtt::raster_output_format out_fmt;
     lsdtt::channel_bottom_request request;
     lsdtt::drain_request drain_request;
 
-
+    std::cout << "bug test, the feature_type is: " << feature_type << std::endl;
     try
     {
         out_fmt = resolve_output_format(sf.at("write_output_format"));
@@ -513,16 +569,25 @@ int main(int argc, char* argv[])
             static_cast<double>(ff.at("frangi_c"));
         drain_request.frangi.target = lsdtt::frangi_target::valleys;
         drain_request.frangi.n_threads = n_threads;
-
         drain_request.response_threshold =
             static_cast<double>(ff.at("drain_response_threshold"));
         drain_request.min_component_pixels =
             ifs.at("drain_min_component_pixels");
-        drain_request.min_major_axis_pixels =
+        drain_request.max_frangi_scale_metres =
+            static_cast<double>(ff.at("drain_max_frangi_scale_metres"));
+            drain_request.min_major_axis_pixels =
             static_cast<double>(ff.at("drain_min_major_axis_pixels"));
         drain_request.min_elongation =
             static_cast<double>(ff.at("drain_min_elongation"));
-
+        drain_request.accumulation_curvature_lambda =
+            static_cast<double>(ff.at("drain_accumulation_curvature_lambda"));
+        drain_request.accumulation_curvature_z_factor =
+            static_cast<double>(ff.at("drain_accumulation_curvature_z_factor"));
+        drain_request.accumulation_curvature_flat_slope_tolerance =
+            static_cast<double>(ff.at("drain_accumulation_curvature_flat_slope_tolerance"));
+        drain_request.max_log10_abs_accumulation_curvature =
+            static_cast<double>(ff.at("drain_log10_abs_accumulation_curvature_max"));
+            
     }
     catch (const std::exception& e)
     {
@@ -531,12 +596,15 @@ int main(int argc, char* argv[])
     }
 
     if (feature_type != "channel_bottoms" &&
-        feature_type != "find_drains")
+        feature_type != "find_drains" &&
+        feature_type != "relief_ratio")
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
-                  << "'. Supported values are channel_bottoms and find_drains.\n";
+                  << "'. Supported values are channel_bottoms, find_drains, "
+                  << "and relief_ratio.\n";
         return 1;
     }
+
 
 
     // -------------------------------------------------------------------------
@@ -575,6 +643,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Feature modes
     // -------------------------------------------------------------------------
+    std::cout << "Hey pal, your feature type is: " << feature_type << std::endl;
     try
     {
         if (feature_type == "channel_bottoms")
@@ -661,6 +730,14 @@ int main(int argc, char* argv[])
                       << drain_request.min_major_axis_pixels << " px\n";
             std::cout << "Min elongation       : "
                       << drain_request.min_elongation << "\n";
+            std::cout << "Accum. curv. lambda  : "
+                      << drain_request.accumulation_curvature_lambda << " m\n";
+            std::cout << "Accum. curv. z factor: "
+                      << drain_request.accumulation_curvature_z_factor << "\n";
+            std::cout << "Accum. curv. flat tol: "
+                      << drain_request.accumulation_curvature_flat_slope_tolerance << "\n";
+            std::cout << "Max log10|accum_curv|: "
+                      << drain_request.max_log10_abs_accumulation_curvature << "\n";
 
             lsdtt::drain_result result =
                 lsdtt::find_drains(dem, drain_request);
@@ -677,7 +754,9 @@ int main(int argc, char* argv[])
                 const std::string o1 = out_path(pp, "_drain_frangi_response.tif");
                 const std::string o2 = out_path(pp, "_drain_frangi_scale.tif");
                 const std::string o3 = out_path(pp, "_drain_threshold_mask.tif");
-                const std::string o4 = out_path(pp, "_drain_skeleton_mask.tif");
+                const std::string o4 = out_path(pp, "_drain_accumulation_curvature.tif");
+                const std::string o5 = out_path(pp, "_drain_log10_abs_accumulation_curvature.tif");
+                const std::string o6 = out_path(pp, "_drain_masked_frangi_scale.tif");
 
                 std::cout << "Writing: " << o1 << "\n";
                 write_raster(loader, result.frangi_response, o1, out_fmt);
@@ -689,10 +768,47 @@ int main(int argc, char* argv[])
                 write_raster(loader, result.threshold_mask, o3, out_fmt);
 
                 std::cout << "Writing: " << o4 << "\n";
-                write_raster(loader, result.skeleton_mask, o4, out_fmt);
+                write_raster(loader, result.accumulation_curvature, o4, out_fmt);
+
+                std::cout << "Writing: " << o5 << "\n";
+                write_raster(loader, result.log10_abs_accumulation_curvature, o5, out_fmt);
+
+                std::cout << "Writing: " << o6 << "\n";
+                write_raster(loader, result.masked_frangi_scale, o6, out_fmt);
             }
 
+
+
         }
+        else if (feature_type == "relief_ratio")
+        {
+            std::cout << "\n--- Relief ratio ---\n";
+            std::cout << "Short radius         : "
+                      << relief_ratio_short_radius << " m\n";
+            std::cout << "Long radius          : "
+                      << relief_ratio_long_radius << " m\n";
+
+            lsdtt::lsdtt_raster_cpu relief_ratio =
+                lsdtt::compute_relief_ratio(
+                    dem,
+                    relief_ratio_short_radius,
+                    relief_ratio_long_radius
+                );
+
+            if (bf.at("write_relief_ratio_raster"))
+            {
+                const std::string o = out_path(pp, "_relief_ratio.tif");
+                std::cout << "Writing: " << o << "\n";
+                write_raster(loader, relief_ratio, o, out_fmt);
+            }
+        }
+        else
+        {
+            throw std::runtime_error(
+                "Internal error: unhandled feature_type '" + feature_type + "'"
+            );
+        }
+
     }
     catch (const std::exception& e)
     {
