@@ -97,10 +97,6 @@ lsdtt_raster_cpu raster_positive_difference(
 // Unary transforms
 // -----------------------------------------------------------------------------
 
-// -----------------------------------------------------------------------------
-// Unary transforms
-// -----------------------------------------------------------------------------
-
 /// Absolute value: result = abs(a)
 lsdtt_raster_cpu raster_abs(
     const lsdtt_raster_cpu& a
@@ -112,6 +108,57 @@ lsdtt_raster_cpu raster_clamp_min(
     float                   lower
 );
 
+/// Positive part: result = max(a, 0)
+lsdtt_raster_cpu raster_positive_part(
+    const lsdtt_raster_cpu& a
+);
+
+/// Negative part: result = max(-a, 0)
+lsdtt_raster_cpu raster_negative_part(
+    const lsdtt_raster_cpu& a
+);
+
+/// Min-max normalise valid pixels to [0, 1].
+/// If all valid pixels have the same value, all valid outputs become 0.
+/// Nodata remains nodata.
+lsdtt_raster_cpu raster_normalise_unit_interval(
+    const lsdtt_raster_cpu& a
+);
+
+/// Binary threshold: result = 1 where a >= threshold, else 0.
+/// Valid input pixels remain valid in the output; nodata remains nodata.
+lsdtt_raster_cpu raster_threshold_binary(
+    const lsdtt_raster_cpu& a,
+    float                   threshold
+);
+
+// -----------------------------------------------------------------------------
+// Masking and conditional selection
+// -----------------------------------------------------------------------------
+
+/// Keep the values raster where keep_mask > 0.5; set nodata elsewhere.
+/// Both rasters must be compatible. Output metadata follow values.
+lsdtt_raster_cpu raster_mask_by_binary_keep(
+    const lsdtt_raster_cpu& values,
+    const lsdtt_raster_cpu& keep_mask
+);
+
+/// Keep the values raster where threshold_raster <= max_value;
+/// set nodata elsewhere. Both rasters must be compatible.
+lsdtt_raster_cpu raster_mask_by_upper_threshold(
+    const lsdtt_raster_cpu& values,
+    const lsdtt_raster_cpu& threshold_raster,
+    float                   max_value
+);
+
+/// Keep foreground pixels from a binary mask only where
+/// threshold_raster <= max_value. Background remains 0.
+/// Validity follows the intersection of the two rasters.
+lsdtt_raster_cpu raster_binary_filter_upper_threshold(
+    const lsdtt_raster_cpu& binary_mask,
+    const lsdtt_raster_cpu& threshold_raster,
+    float                   max_value
+);
 
 // -----------------------------------------------------------------------------
 // Logarithm operations
