@@ -594,6 +594,14 @@ static void validate_drain_request(
         );
     }
 
+    if (!std::isfinite(request.log10_abs_accumulation_curvature_blur_radius_metres) ||
+        request.log10_abs_accumulation_curvature_blur_radius_metres < 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_drains: log10_abs_accumulation_curvature_blur_radius_metres must be finite and >= 0"
+        );
+    }
+
     if (!std::isfinite(request.max_frangi_scale_metres) ||
         request.max_frangi_scale_metres <= 0.0)
     {
@@ -1333,10 +1341,23 @@ drain_result find_drains(
         algebra::raster_log10(floored_abs_accumulation_curvature);
 
     // -------------------------------------------------------------------------
+    // Blur log10(abs(accumulation_curvature)) if requested
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu blurred_log10_abs_accumulation_curvature =
+        log10_abs_accumulation_curvature;
+
+    if (request.log10_abs_accumulation_curvature_blur_radius_metres > 0.0)
+    {
+        blurred_log10_abs_accumulation_curvature =
+            moving_window_mean(
+                log10_abs_accumulation_curvature,
+                request.log10_abs_accumulation_curvature_blur_radius_metres,
+                window_shape::circular
+            );
+    }
+
+    // -------------------------------------------------------------------------
     // Diagnostic Frangi-response threshold mask
-    //
-    // Kept as a diagnostic product, but not used in the masking chain below
-    // because your requested logic acts directly on the Frangi-scale raster.
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu threshold_mask =
         algebra::raster_binary_true_above_threshold(
@@ -1345,10 +1366,7 @@ drain_result find_drains(
         );
 
     // -------------------------------------------------------------------------
-    // Step 1: mask the Frangi best-scale raster by its own upper threshold
-    //
-    // Keep only pixels where best_scale_metres <= max_frangi_scale_metres.
-    // Pixels above the threshold become nodata.
+    // Step 1: mask the RAW Frangi best-scale raster by its own upper threshold
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu masked_frangi_scale =
         algebra::raster_mask_keep_where_less_or_eq(
@@ -1358,28 +1376,18 @@ drain_result find_drains(
         );
 
     // -------------------------------------------------------------------------
-    // Step 2: further mask that already-masked Frangi-scale raster using the
-    // log10(abs(accumulation_curvature)) raster.
-    //
-    // Keep only pixels where
-    // log10_abs_accumulation_curvature <= max_log10_abs_accumulation_curvature.
-    // Pixels above the threshold become nodata.
+    // Step 2: further mask the already-masked Frangi-scale raster using the
+    // BLURRED log10(abs(accumulation_curvature)) raster
     // -------------------------------------------------------------------------
     masked_frangi_scale =
         algebra::raster_mask_keep_where_less_or_eq(
             masked_frangi_scale,
-            log10_abs_accumulation_curvature,
+            blurred_log10_abs_accumulation_curvature,
             static_cast<float>(request.max_log10_abs_accumulation_curvature)
         );
 
     // -------------------------------------------------------------------------
-    // Final binary drain mask derived from the surviving pixels in
-    // masked_frangi_scale.
-    //
-    // Output convention:
-    //   1.0 = retained drain pixel
-    //   0.0 = other valid DEM pixel
-    //   mask = 0 only where the original DEM is invalid/nodata
+    // Final binary drain mask from surviving pixels in masked_frangi_scale
     // -------------------------------------------------------------------------
     const lsdtt_raster_meta& meta = raster.get_meta();
 
@@ -1434,11 +1442,11 @@ drain_result find_drains(
         std::move(threshold_mask),
         std::move(accumulation_curvature),
         std::move(log10_abs_accumulation_curvature),
+        std::move(blurred_log10_abs_accumulation_curvature),
         std::move(masked_frangi_scale),
         std::move(drain_mask)
     };
 }
-
 
 
 

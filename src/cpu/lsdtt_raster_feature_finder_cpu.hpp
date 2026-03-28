@@ -150,9 +150,11 @@ struct drain_request
     double accumulation_curvature_z_factor    = 1.0;
     double accumulation_curvature_flat_slope_tolerance = 1e-12;
     double max_log10_abs_accumulation_curvature = -5.0;
+    double log10_abs_accumulation_curvature_blur_radius_metres = 20.0;
 
     double max_frangi_scale_metres            = 1.8;
 };
+
 
 
 
@@ -166,9 +168,11 @@ struct drain_result
     lsdtt_raster_cpu threshold_mask;
     lsdtt_raster_cpu accumulation_curvature;
     lsdtt_raster_cpu log10_abs_accumulation_curvature;
+    lsdtt_raster_cpu blurred_log10_abs_accumulation_curvature;
     lsdtt_raster_cpu masked_frangi_scale;
     lsdtt_raster_cpu drain_mask;
 };
+
 
 
 

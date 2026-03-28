@@ -441,6 +441,12 @@ int main(int argc, char* argv[])
         "Use this to suppress broader features such as channels while still "
         "running Frangi over a wider diagnostic scale range."};
 
+    float_default_map["drain_log10_abs_accumulation_curvature_blur_radius_metres"] = 20.0f;
+    help_map["drain_log10_abs_accumulation_curvature_blur_radius_metres"] = {"float","20.0",
+        "Radius of the moving-window mean used to smooth log10(abs(accumulation_curvature)), in metres.",
+        "The blurred log10 accumulation-curvature raster is then used for accumulation-curvature masking in the drain finder. "
+        "Set to 0 to disable smoothing."};
+
 
     float_default_map["drain_response_threshold"] = 0.15f;
     help_map["drain_response_threshold"] = {"float","0.15",
@@ -587,6 +593,9 @@ int main(int argc, char* argv[])
             static_cast<double>(ff.at("drain_accumulation_curvature_flat_slope_tolerance"));
         drain_request.max_log10_abs_accumulation_curvature =
             static_cast<double>(ff.at("drain_log10_abs_accumulation_curvature_max"));
+        drain_request.log10_abs_accumulation_curvature_blur_radius_metres =
+            static_cast<double>(
+                ff.at("drain_log10_abs_accumulation_curvature_blur_radius_metres"));
             
     }
     catch (const std::exception& e)
@@ -724,8 +733,11 @@ int main(int argc, char* argv[])
                       << drain_request.frangi.c << "\n";
             std::cout << "Max Frangi scale    : "
                     << drain_request.max_frangi_scale_metres << " m\n";
-            std::cout << "Response threshold   : "
+                    std::cout << "Response threshold   : "
                       << drain_request.response_threshold << "\n";
+            std::cout << "Log10|accum_curv| blur: "
+                    << drain_request.log10_abs_accumulation_curvature_blur_radius_metres
+                    << " m\n";
             std::cout << "Min component pixels : "
                       << drain_request.min_component_pixels << "\n";
             std::cout << "Min major axis       : "
@@ -758,7 +770,8 @@ int main(int argc, char* argv[])
                 const std::string o3 = out_path(pp, "_drain_threshold_mask.tif");
                 const std::string o4 = out_path(pp, "_drain_accumulation_curvature.tif");
                 const std::string o5 = out_path(pp, "_drain_log10_abs_accumulation_curvature.tif");
-                const std::string o6 = out_path(pp, "_drain_masked_frangi_scale.tif");
+                const std::string o6 = out_path(pp, "_drain_blurred_log10_abs_accumulation_curvature.tif");
+                const std::string o7 = out_path(pp, "_drain_masked_frangi_scale.tif");
 
                 std::cout << "Writing: " << o1 << "\n";
                 write_raster(loader, result.frangi_response, o1, out_fmt);
@@ -776,7 +789,11 @@ int main(int argc, char* argv[])
                 write_raster(loader, result.log10_abs_accumulation_curvature, o5, out_fmt);
 
                 std::cout << "Writing: " << o6 << "\n";
-                write_raster(loader, result.masked_frangi_scale, o6, out_fmt);
+                write_raster(loader, result.blurred_log10_abs_accumulation_curvature, o6, out_fmt);
+
+                std::cout << "Writing: " << o7 << "\n";
+                write_raster(loader, result.masked_frangi_scale, o7, out_fmt);
+
             }
 
 
