@@ -618,7 +618,7 @@ static void validate_drain_request(
 // The major/minor axes are estimated from the eigenvalues of the 2D covariance
 // matrix of pixel-centre coordinates within each component.
 // -----------------------------------------------------------------------------
-static lsdtt_raster_cpu filter_binary_components_by_shape(
+[[maybe_unused]] static lsdtt_raster_cpu filter_binary_components_by_shape(
     const lsdtt_raster_cpu& binary,
     int                     min_component_pixels,
     double                  min_major_axis_pixels,
@@ -627,7 +627,7 @@ static lsdtt_raster_cpu filter_binary_components_by_shape(
     const lsdtt_raster_meta& meta = binary.get_meta();
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;
-    const float nodata = static_cast<float>(meta.no_data_value);
+
 
     const std::vector<float>&   in_data = binary.get_data();
     const std::vector<uint8_t>& in_mask = binary.get_mask();
@@ -800,7 +800,7 @@ static lsdtt_raster_cpu filter_binary_components_by_shape(
 //   - mask = 1 on all valid input pixels, 0 on nodata input pixels
 //
 // -----------------------------------------------------------------------------
-static lsdtt_raster_cpu thin_zhang_suen(
+[[maybe_unused]] static lsdtt_raster_cpu thin_zhang_suen(
     const lsdtt_raster_cpu& binary)
 {
     const lsdtt_raster_meta& meta = binary.get_meta();
@@ -1293,13 +1293,10 @@ drain_result find_drains(
 {
     validate_drain_request(raster, request);
 
+    // -------------------------------------------------------------------------
+    // Independent products
+    // -------------------------------------------------------------------------
     frangi_result frangi = frangi_filter(raster, request.frangi);
-
-    lsdtt_raster_cpu threshold_mask =
-        algebra::raster_threshold_binary(
-            frangi.response,
-            static_cast<float>(request.response_threshold)
-        );
 
     poly_fit_coeffs poly =
         wavelet_quadratic_fit(
@@ -1335,28 +1332,100 @@ drain_result find_drains(
     lsdtt_raster_cpu log10_abs_accumulation_curvature =
         algebra::raster_log10(floored_abs_accumulation_curvature);
 
-    lsdtt_raster_cpu accumulation_filtered_mask =
-        algebra::raster_binary_filter_upper_threshold(
-            threshold_mask,
-            log10_abs_accumulation_curvature,
-            static_cast<float>(request.max_log10_abs_accumulation_curvature)
+    // -------------------------------------------------------------------------
+    // Diagnostic Frangi-response threshold mask
+    //
+    // Kept as a diagnostic product, but not used in the masking chain below
+    // because your requested logic acts directly on the Frangi-scale raster.
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu threshold_mask =
+        algebra::raster_binary_true_above_threshold(
+            frangi.response,
+            static_cast<float>(request.response_threshold)
         );
 
-    lsdtt_raster_cpu scale_filtered_mask =
-        algebra::raster_binary_filter_upper_threshold(
-            accumulation_filtered_mask,
+    // -------------------------------------------------------------------------
+    // Step 1: mask the Frangi best-scale raster by its own upper threshold
+    //
+    // Keep only pixels where best_scale_metres <= max_frangi_scale_metres.
+    // Pixels above the threshold become nodata.
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu masked_frangi_scale =
+        algebra::raster_mask_keep_where_less_or_eq(
+            frangi.best_scale_metres,
             frangi.best_scale_metres,
             static_cast<float>(request.max_frangi_scale_metres)
         );
 
-    lsdtt_raster_cpu masked_frangi_scale =
-        algebra::raster_mask_by_binary_keep(
-            frangi.best_scale_metres,
-            scale_filtered_mask
+    // -------------------------------------------------------------------------
+    // Step 2: further mask that already-masked Frangi-scale raster using the
+    // log10(abs(accumulation_curvature)) raster.
+    //
+    // Keep only pixels where
+    // log10_abs_accumulation_curvature <= max_log10_abs_accumulation_curvature.
+    // Pixels above the threshold become nodata.
+    // -------------------------------------------------------------------------
+    masked_frangi_scale =
+        algebra::raster_mask_keep_where_less_or_eq(
+            masked_frangi_scale,
+            log10_abs_accumulation_curvature,
+            static_cast<float>(request.max_log10_abs_accumulation_curvature)
         );
 
-    lsdtt_raster_cpu drain_mask =
-        scale_filtered_mask;
+    // -------------------------------------------------------------------------
+    // Final binary drain mask derived from the surviving pixels in
+    // masked_frangi_scale.
+    //
+    // Output convention:
+    //   1.0 = retained drain pixel
+    //   0.0 = other valid DEM pixel
+    //   mask = 0 only where the original DEM is invalid/nodata
+    // -------------------------------------------------------------------------
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    const std::vector<float>&   dem_data = raster.get_data();
+    const std::vector<uint8_t>& dem_mask = raster.get_mask();
+
+    const std::vector<float>&   mfs_data = masked_frangi_scale.get_data();
+    const std::vector<uint8_t>& mfs_mask = masked_frangi_scale.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    std::vector<float>   drain_mask_data(npix, 0.0f);
+    std::vector<uint8_t> drain_mask_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const bool dem_valid =
+            dem_mask[i] != 0 &&
+            !meta.is_nodata(dem_data[i]) &&
+            std::isfinite(dem_data[i]);
+
+        if (!dem_valid)
+        {
+            continue;
+        }
+
+        drain_mask_mask[i] = uint8_t{1};
+
+        const bool retained =
+            mfs_mask[i] != 0 &&
+            !meta.is_nodata(mfs_data[i]) &&
+            std::isfinite(mfs_data[i]);
+
+        if (retained)
+        {
+            drain_mask_data[i] = 1.0f;
+        }
+    }
+
+    lsdtt_raster_cpu drain_mask(
+        std::move(drain_mask_data),
+        std::move(drain_mask_mask),
+        meta
+    );
 
     return drain_result
     {
@@ -1369,6 +1438,7 @@ drain_result find_drains(
         std::move(drain_mask)
     };
 }
+
 
 
 
@@ -1497,7 +1567,7 @@ channel_bottom_result find_channel_bottoms(
         );
 
     lsdtt_raster_cpu mask =
-        algebra::raster_threshold_binary(
+        algebra::raster_binary_true_above_threshold(
             score,
             static_cast<float>(request.score_threshold)
         );
@@ -1515,6 +1585,7 @@ channel_bottom_result find_channel_bottoms(
         std::move(slope_signal)
     };
 }
+
 
 
 } // namespace lsdtt

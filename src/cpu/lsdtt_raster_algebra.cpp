@@ -301,8 +301,9 @@ lsdtt_raster_cpu raster_positive_difference(
 
 // =============================================================================
 // Unary transforms
+// operations that take one input raster and produce one output raster by transforming each pixel value.
 // =============================================================================
-
+// raster_clamp_min: If any pixel is less than lower, it gets raised to the value of lower
 lsdtt_raster_cpu raster_clamp_min(
     const lsdtt_raster_cpu& a,
     float                   lower)
@@ -336,6 +337,111 @@ lsdtt_raster_cpu raster_clamp_min(
     );
 }
 
+
+// If any pixel is greater than upper, it gets lowered to the value of upper
+lsdtt_raster_cpu raster_clamp_max(
+    const lsdtt_raster_cpu& a,
+    float                   upper)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i])
+        {
+            out_data[i] = std::min(da[i], upper);
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+lsdtt_raster_cpu raster_raise(
+    const lsdtt_raster_cpu& a,
+    float                   amount)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i])
+        {
+            out_data[i] = da[i] + amount;
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+lsdtt_raster_cpu raster_lower(
+    const lsdtt_raster_cpu& a,
+    float                   amount)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i])
+        {
+            out_data[i] = da[i] - amount;
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+
+// =============================================================================
+// Modification of bounds
+// =============================================================================
 lsdtt_raster_cpu raster_positive_part(
     const lsdtt_raster_cpu& a)
 {
@@ -463,7 +569,11 @@ lsdtt_raster_cpu raster_normalise_unit_interval(
     );
 }
 
-lsdtt_raster_cpu raster_threshold_binary(
+
+// =============================================================================
+// Masking and conditional selection
+// =============================================================================
+lsdtt_raster_cpu raster_binary_true_above_threshold(
     const lsdtt_raster_cpu& a,
     float                   threshold)
 {
@@ -492,10 +602,38 @@ lsdtt_raster_cpu raster_threshold_binary(
     );
 }
 
-// =============================================================================
-// Masking and conditional selection
-// =============================================================================
+lsdtt_raster_cpu raster_binary_true_below_threshold(
+    const lsdtt_raster_cpu& a,
+    float                   threshold)
+{
+    const lsdtt_raster_meta& meta = a.get_meta();
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
 
+    const int n = static_cast<int>(da.size());
+
+    std::vector<float>   out_data(n, 0.0f);
+    std::vector<uint8_t> out_mask(n, 0u);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        if (meta.is_nodata(da[i])) continue;
+        if (!std::isfinite(da[i])) continue;
+
+        out_data[i] = (da[i] <= threshold) ? 1.0f : 0.0f;
+        out_mask[i] = 1u;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta
+    );
+}
+
+
+
+// keep the values raster only where keep_mask is true; set everything else to nodata.
 lsdtt_raster_cpu raster_mask_by_binary_keep(
     const lsdtt_raster_cpu& values,
     const lsdtt_raster_cpu& keep_mask)
@@ -540,19 +678,23 @@ lsdtt_raster_cpu raster_mask_by_binary_keep(
     );
 }
 
-lsdtt_raster_cpu raster_mask_by_upper_threshold(
+
+// keep the values raster only where the threshold raster 
+// is less than or equal to a cutoff; set everything else to nodata.
+// Take this raster of values, but only keep pixels where some other raster is not too large.
+lsdtt_raster_cpu raster_mask_keep_where_less_or_eq(
     const lsdtt_raster_cpu& values,
-    const lsdtt_raster_cpu& threshold_raster,
+    const lsdtt_raster_cpu& selector,
     float                   max_value)
 {
-    assert_compatible(values, threshold_raster);
+    assert_compatible(values, selector);
 
     const lsdtt_raster_meta& meta = values.get_meta();
 
     const std::vector<float>&   v_data = values.get_data();
     const std::vector<uint8_t>& v_mask = values.get_mask();
-    const std::vector<float>&   t_data = threshold_raster.get_data();
-    const std::vector<uint8_t>& t_mask = threshold_raster.get_mask();
+    const std::vector<float>&   s_data = selector.get_data();
+    const std::vector<uint8_t>& s_mask = selector.get_mask();
 
     const int   n      = static_cast<int>(v_data.size());
     const float nodata = static_cast<float>(meta.no_data_value);
@@ -565,15 +707,15 @@ lsdtt_raster_cpu raster_mask_by_upper_threshold(
     {
         const bool valid =
             v_mask[i] != 0 &&
-            t_mask[i] != 0 &&
+            s_mask[i] != 0 &&
             !meta.is_nodata(v_data[i]) &&
-            !meta.is_nodata(t_data[i]) &&
+            !meta.is_nodata(s_data[i]) &&
             std::isfinite(v_data[i]) &&
-            std::isfinite(t_data[i]);
+            std::isfinite(s_data[i]);
 
         if (!valid) continue;
 
-        if (t_data[i] <= max_value)
+        if (s_data[i] <= max_value)
         {
             out_data[i] = v_data[i];
             out_mask[i] = 1u;
@@ -585,19 +727,66 @@ lsdtt_raster_cpu raster_mask_by_upper_threshold(
     );
 }
 
-lsdtt_raster_cpu raster_binary_filter_upper_threshold(
+// Take this raster of values, but only keep pixels where some other raster is not too small.
+lsdtt_raster_cpu raster_mask_keep_where_greater_or_eq(
+    const lsdtt_raster_cpu& values,
+    const lsdtt_raster_cpu& selector,
+    float                   min_value)
+{
+    assert_compatible(values, selector);
+
+    const lsdtt_raster_meta& meta = values.get_meta();
+
+    const std::vector<float>&   v_data = values.get_data();
+    const std::vector<uint8_t>& v_mask = values.get_mask();
+    const std::vector<float>&   s_data = selector.get_data();
+    const std::vector<uint8_t>& s_mask = selector.get_mask();
+
+    const int   n      = static_cast<int>(v_data.size());
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   out_data(n, nodata);
+    std::vector<uint8_t> out_mask(n, 0u);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        const bool valid =
+            v_mask[i] != 0 &&
+            s_mask[i] != 0 &&
+            !meta.is_nodata(v_data[i]) &&
+            !meta.is_nodata(s_data[i]) &&
+            std::isfinite(v_data[i]) &&
+            std::isfinite(s_data[i]);
+
+        if (!valid) continue;
+
+        if (s_data[i] >= min_value)
+        {
+            out_data[i] = v_data[i];
+            out_mask[i] = 1u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta
+    );
+}
+
+
+lsdtt_raster_cpu raster_binary_keep_true_where_less_or_eq(
     const lsdtt_raster_cpu& binary_mask,
-    const lsdtt_raster_cpu& threshold_raster,
+    const lsdtt_raster_cpu& selector,
     float                   max_value)
 {
-    assert_compatible(binary_mask, threshold_raster);
+    assert_compatible(binary_mask, selector);
 
     const lsdtt_raster_meta& meta = binary_mask.get_meta();
 
     const std::vector<float>&   b_data = binary_mask.get_data();
     const std::vector<uint8_t>& b_mask = binary_mask.get_mask();
-    const std::vector<float>&   t_data = threshold_raster.get_data();
-    const std::vector<uint8_t>& t_mask = threshold_raster.get_mask();
+    const std::vector<float>&   s_data = selector.get_data();
+    const std::vector<uint8_t>& s_mask = selector.get_mask();
 
     const int n = static_cast<int>(b_data.size());
 
@@ -609,17 +798,17 @@ lsdtt_raster_cpu raster_binary_filter_upper_threshold(
     {
         const bool valid =
             b_mask[i] != 0 &&
-            t_mask[i] != 0 &&
+            s_mask[i] != 0 &&
             !meta.is_nodata(b_data[i]) &&
-            !meta.is_nodata(t_data[i]) &&
+            !meta.is_nodata(s_data[i]) &&
             std::isfinite(b_data[i]) &&
-            std::isfinite(t_data[i]);
+            std::isfinite(s_data[i]);
 
         if (!valid) continue;
 
         out_mask[i] = 1u;
 
-        if (b_data[i] > 0.5f && t_data[i] <= max_value)
+        if (b_data[i] > 0.5f && s_data[i] <= max_value)
         {
             out_data[i] = 1.0f;
         }
@@ -630,6 +819,57 @@ lsdtt_raster_cpu raster_binary_filter_upper_threshold(
     );
 }
 
+lsdtt_raster_cpu raster_binary_keep_true_where_greater_or_eq(
+    const lsdtt_raster_cpu& binary_mask,
+    const lsdtt_raster_cpu& selector,
+    float                   min_value)
+{
+    assert_compatible(binary_mask, selector);
+
+    const lsdtt_raster_meta& meta = binary_mask.get_meta();
+
+    const std::vector<float>&   b_data = binary_mask.get_data();
+    const std::vector<uint8_t>& b_mask = binary_mask.get_mask();
+    const std::vector<float>&   s_data = selector.get_data();
+    const std::vector<uint8_t>& s_mask = selector.get_mask();
+
+    const int n = static_cast<int>(b_data.size());
+
+    std::vector<float>   out_data(n, 0.0f);
+    std::vector<uint8_t> out_mask(n, 0u);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        const bool valid =
+            b_mask[i] != 0 &&
+            s_mask[i] != 0 &&
+            !meta.is_nodata(b_data[i]) &&
+            !meta.is_nodata(s_data[i]) &&
+            std::isfinite(b_data[i]) &&
+            std::isfinite(s_data[i]);
+
+        if (!valid) continue;
+
+        out_mask[i] = 1u;
+
+        if (b_data[i] > 0.5f && s_data[i] >= min_value)
+        {
+            out_data[i] = 1.0f;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta
+    );
+}
+
+
+
+
+// =============================================================================
+// Absolute values
+// =============================================================================
 lsdtt_raster_cpu raster_abs(
     const lsdtt_raster_cpu& a)
 {

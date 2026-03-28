@@ -722,6 +722,8 @@ int main(int argc, char* argv[])
                       << drain_request.frangi.beta << "\n";
             std::cout << "Frangi c             : "
                       << drain_request.frangi.c << "\n";
+            std::cout << "Max Frangi scale    : "
+                    << drain_request.max_frangi_scale_metres << " m\n";
             std::cout << "Response threshold   : "
                       << drain_request.response_threshold << "\n";
             std::cout << "Min component pixels : "
