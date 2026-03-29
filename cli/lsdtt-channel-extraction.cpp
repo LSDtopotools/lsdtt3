@@ -175,6 +175,30 @@ static std::string output_extension(
     return ".gpkg";
 }
 
+// -----------------------------------------------------------------------------
+// resolve_raster_output_format
+// -----------------------------------------------------------------------------
+static lsdtt::raster_output_format resolve_raster_output_format(
+    const std::string& fmt_str)
+{
+    if (fmt_str == "gtiff")
+    {
+        return lsdtt::raster_output_format::gtiff;
+    }
+    if (fmt_str == "same_as_input")
+    {
+        return lsdtt::raster_output_format::same_as_input;
+    }
+    if (fmt_str != "cog")
+    {
+        std::cerr << "Warning: unknown flow_direction_output_format '"
+                  << fmt_str << "' — defaulting to cog.\n";
+    }
+    return lsdtt::raster_output_format::cog;
+}
+
+
+
 // =============================================================================
 // main
 // =============================================================================
@@ -257,6 +281,35 @@ int main(int argc, char* argv[])
         "Layer name for vector output.",
         "Used only for vector formats such as GeoPackage and FlatGeobuf."};
 
+    bool_default_map["write_flow_lines"] = false;
+    help_map["write_flow_lines"] = {"bool","false",
+        "Write D8 receiver links as a vector line layer.",
+        "Writes one line from each valid donor pixel centre to its receiver "
+        "pixel centre, following the D8 directions."};
+
+    string_default_map["flow_lines_output_format"] = "flatgeobuf";
+    help_map["flow_lines_output_format"] = {"string","flatgeobuf",
+        "Output format for D8 flow-line visualisation.",
+        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
+        "GeoPackage may have file I/O issues on some filesystems."};
+
+    string_default_map["flow_lines_layer_name"] = "flow_lines";
+    help_map["flow_lines_layer_name"] = {"string","flow_lines",
+        "Layer name for D8 flow-line visualisation output.",
+        "Used for vector outputs such as FlatGeobuf and GeoPackage."};
+
+    bool_default_map["write_arcmap_d8_flowdirection_raster"] = false;
+    help_map["write_arcmap_d8_flowdirection_raster"] = {"bool","false",
+        "Write a D8 flow-direction raster using ArcMap conventions.",
+        "ArcMap D8 codes are used: E=1, SE=2, S=4, SW=8, W=16, NW=32, "
+        "N=64, NE=128. Outlet pixels are written as 0."};
+
+    string_default_map["flow_direction_output_format"] = "cog";
+    help_map["flow_direction_output_format"] = {"string","cog",
+        "Output format for the ArcMap D8 flow-direction raster.",
+        "Allowed values: cog, gtiff, same_as_input."};
+
+
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
@@ -280,16 +333,37 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_channel_network_output_format output_format =
         resolve_channel_output_format(sf["channel_network_output_format"]);
 
+    lsdtt::lsdtt_channel_network_output_format flow_lines_output_format =
+        resolve_channel_output_format(sf["flow_lines_output_format"]);
+
+    lsdtt::raster_output_format flow_direction_output_format =
+        resolve_raster_output_format(sf["flow_direction_output_format"]);
+
     std::string extension = output_extension(output_format);
 
     std::cout << "Channel network output format: "
               << sf["channel_network_output_format"] << "\n";
+
+    if (bf["write_flow_lines"])
+    {
+        std::cout << "Flow-line output format      : "
+                  << sf["flow_lines_output_format"] << "\n";
+    }
+
+    if (bf["write_arcmap_d8_flowdirection_raster"])
+    {
+        std::cout << "Flow-direction raster format : "
+                  << sf["flow_direction_output_format"] << "\n";
+    }
+
+
 
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
     const std::string input_path = pp.get_full_read_path();
     std::cout << "\nOpening DEM: " << input_path << "\n";
+
 
     lsdtt::lsdtt_data_loader loader;
     try
@@ -379,6 +453,70 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: flow routing failed: " << e.what() << "\n";
         return 1;
     }
+
+
+    // -------------------------------------------------------------------------
+    // Optional flow-routing visualisation outputs
+    // -------------------------------------------------------------------------
+    if (bf["write_arcmap_d8_flowdirection_raster"])
+    {
+        const std::string flowdir_file =
+            out_path(pp, "_arcmap_d8_flowdirection", ".tif");
+
+        std::cout << "\n--- Writing ArcMap D8 flow-direction raster ---\n";
+        std::cout << "Writing: " << flowdir_file << "\n";
+
+        try
+        {
+            flow->print_arcmap_d8_flowdirection(
+                flowdir_file,
+                flow_direction_output_format
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing ArcMap D8 flow-direction raster failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (bf["write_flow_lines"])
+    {
+        const std::string flow_lines_extension =
+            output_extension(flow_lines_output_format);
+
+        const std::string flow_lines_file =
+            out_path(pp, "_flow_lines", flow_lines_extension);
+
+        std::cout << "\n--- Writing flow lines ---\n";
+        std::cout << "Layer name: " << sf["flow_lines_layer_name"] << "\n";
+        std::cout << "Writing: " << flow_lines_file << "\n";
+
+        if (flow_lines_output_format ==
+            lsdtt::lsdtt_channel_network_output_format::gpkg)
+        {
+            std::cerr << "Warning: flow-line output to GeoPackage may suffer "
+                      << "file I/O issues on some filesystems. If writing "
+                      << "fails, try flatgeobuf.\n";
+        }
+
+        try
+        {
+            flow->write_flow_lines(
+                flow_lines_file,
+                flow_lines_output_format,
+                sf["flow_lines_layer_name"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing flow lines failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
 
     // -------------------------------------------------------------------------
     // Step 3 — Extract source pixels

@@ -7,6 +7,9 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "../core/lsdtt_data_loader.hpp"
+#include "../core/lsdtt_vector_utils.hpp"
+#include "../utils/lsdtt_raster_geometry.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,7 +21,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <iostream>
 #include <vector>
+
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -38,6 +43,35 @@ namespace
 // -----------------------------------------------------------------------------
 constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
 constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+
+
+// This is the arcmap format
+//  
+//                // 32  64  128
+//                // 16  --  1
+//                // 8    4  2
+// 
+// used for printing the d8 grid to raster
+std::int64_t arcmap_d8_code(std::uint8_t dir)
+{
+    switch (dir)
+    {
+        case 0: return 64;   // N
+        case 1: return 128;  // NE
+        case 2: return 1;    // E
+        case 3: return 2;    // SE
+        case 4: return 4;    // S
+        case 5: return 8;    // SW
+        case 6: return 16;   // W
+        case 7: return 32;   // NW
+        default:
+            throw std::runtime_error(
+                "lsdtt_flowinfo: invalid internal D8 direction code"
+            );
+    }
+}
+
+
 
 constexpr double k_sqrt_2 = 1.4142135623730950488;
 
@@ -651,6 +685,7 @@ std::uint8_t lsdtt_flowinfo::donor_count_of(std::int64_t flat) const
 
 // =============================================================================
 // s_vector access
+// for finding upslope pixels and calculating drainage area
 // =============================================================================
 
 std::int64_t lsdtt_flowinfo::s_vector_start(std::int64_t flat) const
@@ -709,6 +744,15 @@ bool lsdtt_flowinfo::is_upslope_of(
     }
     return is_upslope_of_unchecked(candidate_flat, target_flat);
 }
+
+double lsdtt_flowinfo::drainage_area(std::int64_t flat) const
+{
+    const double pixel_area = meta_.cell_size * meta_.cell_size;
+
+    return static_cast<double>(s_vector_size(flat)) * pixel_area;
+}
+
+
 
 // =============================================================================
 // Private helpers
@@ -1371,5 +1415,180 @@ lsdtt_flowinfo::get_sources_index_threshold(int threshold) const
 
     return sources;
 }
+
+
+void lsdtt_flowinfo::print_arcmap_d8_flowdirection(
+    const std::string& out_path,
+    raster_output_format format
+) const
+{
+    require_built();
+
+    std::vector<float> out(
+        mask_.size(),
+        static_cast<float>(meta_.no_data_value)
+    );
+
+    for (std::size_t i = 0; i < mask_.size(); ++i)
+    {
+        if (mask_.data()[i] == 0)
+        {
+            out[i] = static_cast<float>(meta_.no_data_value);
+            continue;
+        }
+
+        const std::int64_t rec = receiver_.data()[i];
+
+        if (rec == outlet_receiver)
+        {
+            out[i] = 0.0f;
+            continue;
+        }
+
+        if (rec == nodata_receiver)
+        {
+            throw std::runtime_error(
+                "lsdtt_flowinfo: valid cell has nodata receiver while "
+                "exporting ArcMap D8 flow direction"
+            );
+        }
+
+        out[i] = static_cast<float>(
+            arcmap_d8_code(receiver_dir_.data()[i])
+        );
+    }
+
+    lsdtt_data_loader loader;
+    loader.write_full(out, meta_, out_path, format);
+}
+
+
+void lsdtt_flowinfo::write_flow_lines(
+    const std::string& out_path,
+    lsdtt_channel_network_output_format format,
+    const std::string& layer_name
+) const
+{
+    require_built();
+
+    lsdtt_data_loader loader;
+    std::vector<lsdtt_vector_feature> line_features;
+
+    if (n_valid_cells_ >= static_cast<std::int64_t>(outlets_.size()))
+    {
+        line_features.reserve(
+            static_cast<std::size_t>(
+                n_valid_cells_ - static_cast<std::int64_t>(outlets_.size())
+            )
+        );
+    }
+
+    const std::vector<std::string> field_names =
+    {
+        "flat",
+        "row",
+        "col",
+        "receiver_flat",
+        "receiver_row",
+        "receiver_col",
+        "arcmap_d8"
+    };
+
+    const std::vector<lsdtt_vector_field_type> field_types =
+    {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type
+    };
+
+    for (int row = 0; row < meta_.n_rows; ++row)
+    {
+        for (int col = 0; col < meta_.n_cols; ++col)
+        {
+            const std::int64_t flat = flat_index_unchecked(row, col);
+
+            if (!is_valid_cell(flat))
+            {
+                continue;
+            }
+
+            const std::int64_t rec = receiver_.data()[flat];
+
+            if (rec == outlet_receiver)
+            {
+                continue;
+            }
+
+            if (rec == nodata_receiver)
+            {
+                throw std::runtime_error(
+                    "lsdtt_flowinfo: valid cell has nodata receiver while "
+                    "exporting flow lines"
+                );
+            }
+
+            const int rec_row = row_from_flat_unchecked(rec);
+            const int rec_col = col_from_flat_unchecked(rec);
+
+            const lsdtt_xy xy = cell_center_from_row_col(meta_, row, col);
+            const lsdtt_xy rec_xy =
+                cell_center_from_row_col(meta_, rec_row, rec_col);
+
+            const std::int64_t arcmap_dir =
+                arcmap_d8_code(receiver_dir_.data()[flat]);
+
+            lsdtt_vector_feature feat;
+            feat.geometry_wkt = linestring_wkt({xy, rec_xy});
+            feat.field_names  = field_names;
+            feat.field_types  = field_types;
+            feat.field_values =
+            {
+                flat,
+                static_cast<std::int64_t>(row),
+                static_cast<std::int64_t>(col),
+                rec,
+                static_cast<std::int64_t>(rec_row),
+                static_cast<std::int64_t>(rec_col),
+                arcmap_dir
+            };
+
+            line_features.push_back(std::move(feat));
+        }
+    }
+
+    std::cout << "Flow line export: built "
+              << line_features.size() << " line features.\n";
+
+    if (format == lsdtt_channel_network_output_format::csv)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo: flow-line export does not support csv output"
+        );
+    }
+
+    if (format == lsdtt_channel_network_output_format::gpkg)
+    {
+        std::cerr << "Warning: writing flow lines to GeoPackage. "
+                  << "SQLite/GeoPackage file I/O can be problematic on some "
+                  << "filesystems. If writing fails, try FlatGeobuf.\n";
+
+        loader.write_gpkg(out_path, layer_name, line_features, meta_.crs_wkt);
+        return;
+    }
+
+    loader.write_flatgeobuf(
+        out_path,
+        layer_name,
+        line_features,
+        meta_.crs_wkt
+    );
+}
+
+
+
 
 } // namespace lsdtt

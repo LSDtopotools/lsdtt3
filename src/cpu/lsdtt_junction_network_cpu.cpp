@@ -1482,8 +1482,21 @@ void lsdtt_junction_network_cpu::write_channel_network(
         "flat",
         "row",
         "col",
-        "stream_order"
+        "stream_order",
+        "drainage_area"
     };
+
+
+    const std::vector<lsdtt_vector_field_type> field_types =
+    {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type
+    };
+
+
 
     for (int row = 0; row < meta_.n_rows; ++row)
     {
@@ -1503,14 +1516,17 @@ void lsdtt_junction_network_cpu::write_channel_network(
             lsdtt_vector_feature feat;
             feat.geometry_wkt = point_wkt(xy.x, xy.y);
             feat.field_names  = field_names;
+            feat.field_types  = field_types;
             feat.field_values =
             {
-                std::to_string(flat),
-                std::to_string(row),
-                std::to_string(col),
-                std::to_string(pixel_stream_order.data()[flat])
+                flat,
+                static_cast<std::int64_t>(row),
+                static_cast<std::int64_t>(col),
+                static_cast<std::int64_t>(pixel_stream_order.data()[flat]),
+                static_cast<double>(flow_->s_vector_size(flat)) *
+                    flow_->cell_size() *
+                    flow_->cell_size()
             };
-
             features.push_back(std::move(feat));
         }
     }

@@ -63,7 +63,11 @@
 
 #include "lsdtt_raster_meta.hpp"
 #include "lsdtt_flow_types.hpp"
+#include "lsdtt_data_loader.hpp"
+#include "lsdtt_junction_network_types.hpp"
 #include "../utils/lsdtt_array2d.hpp"
+
+
 
 namespace lsdtt
 {
@@ -177,6 +181,22 @@ public:
     // channel extraction
     [[nodiscard]] virtual std::vector<std::int64_t>
         get_sources_index_threshold(int threshold) const = 0;
+
+    // -------------------------------------------------------------------------
+    // Flow-routing visualisation outputs
+    // -------------------------------------------------------------------------
+    virtual void write_flow_lines(
+        const std::string& out_path,
+        lsdtt_channel_network_output_format format =
+            lsdtt_channel_network_output_format::flatgeobuf,
+        const std::string& layer_name = "flow_lines"
+    ) const = 0;
+
+    virtual void print_arcmap_d8_flowdirection(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const = 0;
+
 
 
     // -------------------------------------------------------------------------

@@ -96,7 +96,9 @@
 #include "../core/lsdtt_raster_meta.hpp"
 #include "../core/lsdtt_flow_types.hpp"
 #include "../core/lsdtt_flow_base.hpp"
+#include "../core/lsdtt_junction_network_types.hpp"
 #include "../utils/lsdtt_array2d.hpp"
+
 
 namespace lsdtt
 {
@@ -288,12 +290,54 @@ public:
     // -------------------------------------------------------------------------
     // s_vector access
     //
-    // upslope_nodes(flat) returns a zero-copy slice of s_vector_ covering all
-    // cells that drain through flat, including flat itself. The slice is valid
-    // for the lifetime of this lsdtt_flowinfo object.
+    // The s_vector stores a preorder DFS traversal of the drainage forest.
+    // For each valid cell i:
     //
-    // is_upslope_of(candidate, target) is O(1): it checks whether candidate's
-    // position in s_vector_ falls inside target's upslope interval.
+    //   start = s_vector_start_[i]
+    //   size  = s_vector_size_[i]
+    //
+    // defines the contiguous interval [start, start + size) in s_vector_
+    // containing every cell that drains through i, including i itself.
+    //
+    // Contract:
+    //
+    //   s_vector_[s_vector_start_[i]] == i
+    //
+    // so each cell is always the first entry in its own upslope slice.
+    //
+    // Notes on the individual accessors:
+    //
+    //   s_vector_start(flat)
+    //       Checked accessor returning the first index of flat's upslope slice
+    //       in s_vector_. Because the slice includes flat itself, this is also
+    //       the position of flat inside s_vector_.
+    //
+    //   s_vector_size(flat)
+    //       Checked accessor returning the total number of cells in flat's
+    //       upslope slice, including flat itself. This is the upstream pixel
+    //       count used for drainage-area-in-pixels calculations.
+    //
+    //   upslope_nodes(flat)
+    //       Checked zero-copy slice view over all cells that drain through
+    //       flat, including flat itself. The slice is valid for the lifetime
+    //       of this lsdtt_flowinfo object.
+    //
+    //   upslope_nodes(row, col)
+    //       Convenience overload of upslope_nodes(flat).
+    //
+    //   is_upslope_of(candidate, target)
+    //       O(1) membership test using the s_vector interval structure.
+    //       Returns true if candidate lies in target's upslope slice.
+    //       Since each cell lies in its own slice, candidate == target returns
+    //       true.
+    //
+    //   drainage_area(flat)
+    //       Total drainage area represented by flat's upslope slice, including
+    //       flat itself. Computed as:
+    //
+    //           s_vector_size(flat) * cell_size() * cell_size()
+    //
+    //       and returned in square map units.
     // -------------------------------------------------------------------------
     [[nodiscard]] std::int64_t       s_vector_start(std::int64_t flat) const override;
     [[nodiscard]] std::uint64_t s_vector_size(std::int64_t flat) const override;
@@ -333,6 +377,8 @@ public:
         std::int64_t candidate_flat,
         std::int64_t target_flat
     ) const override;
+
+    [[nodiscard]] double drainage_area(std::int64_t flat) const;
 
     [[nodiscard]] bool is_upslope_of_unchecked(
         std::int64_t candidate_flat,
@@ -384,6 +430,23 @@ public:
     // -------------------------------------------------------------------------
     [[nodiscard]] std::vector<std::int64_t>
     get_sources_index_threshold(int threshold) const;
+
+    // -------------------------------------------------------------------------
+    // Flow-routing visualisation outputs
+    // -------------------------------------------------------------------------
+    void write_flow_lines(
+        const std::string& out_path,
+        lsdtt_channel_network_output_format format =
+            lsdtt_channel_network_output_format::flatgeobuf,
+        const std::string& layer_name = "flow_lines"
+    ) const override;
+
+    void print_arcmap_d8_flowdirection(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const override;
+
+
 
     // -------------------------------------------------------------------------
     // Read-only array access
