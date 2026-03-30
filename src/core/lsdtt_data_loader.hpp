@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -17,7 +17,7 @@
 // result arrays to it for writing.
 //
 // Supported input formats: any format supported by the installed GDAL build.
-// Tested formats: GeoTIFF, Cloud Optimised GeoTIFF (COG), VRT, HDF5, NetCDF.
+// Tested formats: GeoTIFF, Cloud Optimised GeoTIFF (COG), VRT, HDF5, NetCDF, ENVI bil.
 //
 // Supported output formats:
 //   Raster  — Cloud Optimised GeoTIFF (.tif)
@@ -328,6 +328,20 @@ public:
 
     // -------------------------------------------------------------------------
     // Vector output (OGR)
+    //
+    // LSDTopoTools2 (the legacy codebase) printed data to csv and geojson
+    //  geojson has been retired as it was only implemented to be GIS readable
+    //  but has very large file sizes. csv output is still an option here
+    //  for backward compatibility with lsdviztools. Although we will favour binary file 
+    //  formats in the future (because of storage)
+    //
+    // The two binary formats available are GeoPackage (.gpkg) and FlatGeobuf. 
+    //  GeoPackage are backed by a full sqlite database and are a richer data format
+    //  but they are slower to load and sometimes have write issues (for example, 
+    //  this will fail if you are running in WSL2 and trying to write
+    //  to /mnt/c)
+    //  For this reason the FlatGeobuf is preferred. The FlatGeobuf can only hold one
+    //  layer, you cannot combine point and polylines in the same file, for example. 
     // -------------------------------------------------------------------------
 
     // Write a set of features to a GeoPackage layer.

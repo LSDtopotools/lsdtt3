@@ -2,14 +2,17 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // Original LSDTopoTools implementation by Simon M. Mudd and contributors.
 // Redesigned for lsdtt3: removed extension logic, removed hardcoded file
 // parameters, renamed keys to snake_case, removed external dependencies.
-
+// This reads parameter files (which we sometimes call driver files)
+// format is
+// parameter_name: value
+// lines with hash at beginning are treated as comments
 #include "lsdtt_param_parser.hpp"
 
 #include <algorithm>

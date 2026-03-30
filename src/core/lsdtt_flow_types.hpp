@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -36,6 +36,10 @@ namespace lsdtt
 // std::uint64_t is uint32_t: the upslope set of a single cell is bounded
 // by the total number of valid cells, which fits comfortably in 32 bits for
 // any raster you can load into memory.
+//
+// We use int64_t because these indicate the node number, and an int32 would run 
+// out of numbers at around a 40000x40000 pixel DEM
+//
 // -----------------------------------------------------------------------------
 static constexpr std::int64_t k_nodata_receiver = -1;
 static constexpr std::int64_t k_outlet_receiver = -2;
@@ -46,6 +50,10 @@ static constexpr std::uint8_t k_no_direction    = 255;
 //
 // Zero-allocation view into a contiguous block of int64_t cell indices.
 // Returned by upslope_nodes() — valid for the lifetime of the engine object.
+//
+// This has a memory cost but lsdtt3 has numerous functions that call
+//  on the flow relasionships and upslope pixels so we retain this for purposes
+//  of computation speed (in exchange for memory)
 // -----------------------------------------------------------------------------
 class lsdtt_flat_index_slice
 {

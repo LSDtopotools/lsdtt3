@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -18,6 +18,9 @@
 //   #include "lsdtt_flowinfo_cpu.hpp"
 //
 //   // Construct from a preprocessed (pit-free) DEM:
+//   // IMPORTANT: if you do not feed this a pit filled
+//   // DEM any pits will be treated as outlets
+//   // pit filling in lsdtt_raster_flow_preprocessing.cpu
 //   lsdtt::lsdtt_flowinfo fi(dem_data, dem_mask, meta, options);
 //
 //   // Query flow relationships:
@@ -40,6 +43,7 @@
 //
 // Persistent D8 flow-routing object. Builds and owns the full receiver graph,
 // donor counts, topological order, and s_vector for a preprocessed DEM.
+// s_vector is an index into upslope pixels, uses fastscape algorithm
 //
 // Relationship to lsdtt_flowgraph_cpu:
 //   lsdtt_flowinfo      — D8 only. One receiver per cell. Flow graph is a

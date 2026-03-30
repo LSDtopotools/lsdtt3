@@ -1,8 +1,8 @@
 # lsdtt3 Architecture Document
 
-Paste this at the start of a new session to restore full context.
-
-Last updated: session 11 (flat_index_type removed — all flow indices now std::int64_t directly; lsdtt_array2d_i replaced with lsdtt_array2d<std::int64_t>; k_max_flat_index and k_max_cells removed; minimum_elevation <= fix applied to lsdtt-test-flowinfo)
+A guide to the architecture of lsdtt3. 
+Use for context when interacting with AI  during code development. 
+Can also be used as a developer guide.
 
 ---
 
@@ -29,10 +29,13 @@ lsdtt3/
 │   │   ├── lsdtt_backend_factory.hpp/.cpp — make_raster_engine(), gpu_available()
 │   │   ├── lsdtt_param_parser.hpp/.cpp    — parameter file parser
 │   │   ├── lsdtt_flow_types.hpp           — shared flow types (header-only)
+│   │   ├── lsdtt_junction_network_base.hpp  - abstract channel network interface (header only)
+│   │   ├── lsdtt_junction_network_types.hpp - shared junction network types (header-only)
 │   │   ├── lsdtt_flow_base.hpp            — abstract D8 flow interface (header-only)
 │   │   ├── lsdtt_flowgraph_cpu.hpp        — D-inf/MFD DAG routing (stub)
 │   │   ├── lsdtt_crs_suggest.hpp/.cpp     — CRS inspection and projection recommendation
-│   │   └── lsdtt_raster_reproject.hpp/.cpp — GDAL-warp reprojection + grid snapping
+│   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
+│   │   └── lsdtt_raster-_reproject.hpp/.cpp — GDAL-warp reprojection + grid snapping
 │   ├── cpu/
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                    — concrete CPU raster class
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                  — D8 CPU flow routing
@@ -246,6 +249,10 @@ In CLI files:
 This pattern is now the standard for all CLIs because it makes developer-facing
 options easy to inspect and keeps the parameter contract readable in one place.
 
+Try to avoid helper functions at the top of CLIs. See if helpers have a more logical position
+within /cpu or /utils files. If necessary declare a new .hpp/.cpp pair instead of
+helper functions since it is very likeley that a helper in one CLI will be recycled by another.
+
 
 ---
 
@@ -430,7 +437,13 @@ File: `src/core/lsdtt_data_loader.hpp/.cpp`
 
 ### Vector output
 
-Preferred vector outputs are:
+Various file formats are available for vector output but preference is for either csv
+or FlatGeobuf. FlatGeobuf should be the default output since it is more storage efficient
+than csv, includes georeferencing, and does not have the same file writing issues
+as gpkg. GPKG struggles wien mapping across drives, which coould be a common problem if 
+users are on a WSL2 implementation of linux writing to `/mnt/c`.  
+
+Supported vector outputs are:
 - GeoPackage (`.gpkg`)
 - FlatGeobuf (`.fgb`)
 - CSV
@@ -449,6 +462,8 @@ Typical vector-writing methods include:
 GeoPackage and FlatGeobuf are written through GDAL/OGR; no direct SQLite coding
 is required in `lsdtt3`.
 
+Fields in FlatGeobuf should be typed and not strings.
+
 
 ---
 
@@ -460,7 +475,9 @@ Vector I/O is handled through `lsdtt_data_loader` and shared helpers in
 
 ### Preferred output formats
 
-Current preferred vector formats are:
+See above, FaltGeobuf is the preferred format. 
+
+Supported vector formats are:
 
 - **GeoPackage (`.gpkg`)**  
   Default binary single-file GIS output.
@@ -836,16 +853,6 @@ n_threads: 0
 
 | File | Issue | Fix |
 |------|-------|-----|
-| `lsdtt_raster_meta.hpp` | Missing `<stdexcept>` | Added include |
-| `lsdtt_raster_meta.hpp` | Unused `to_metres` variable | Removed |
-| `lsdtt_raster_flow_preprocessing_cpu.cpp` | Missing `<iostream>` | Added |
-| `lsdtt_raster_flow_preprocessing_cpu.cpp` | Several unused params | Removed |
-| `lsdtt_raster_flow_preprocessing_cpu.cpp` | `dest_backlink` set but unused | Removed |
-| `lsdtt_raster_flow_preprocessing_cpu.cpp` | Operator precedence `&&` in `\|\|` | Added parens |
-| `lsdtt_raster_nodata_filling_cpu.cpp` | `fill_laplacian` unused `meta` param | Removed |
-| `lsdtt_raster_nodata_filling_cpu.cpp` | `fill_interior_nodata` unused `nodata` | Removed |
-| `lsdtt_raster_nodata_filling_cpu.cpp` | No matching constructor for return | Fixed |
-| `lsdtt-raster-preprocessing.cpp` | `applied_threshold` set but unused | Removed |
 | `lsdtt-raster-preprocessing.cpp` | `const lsdtt_raster_base&` to cpu fn | Changed to `const lsdtt_raster_cpu&` |
 
 ---
@@ -881,5 +888,5 @@ n_threads: 0
 20. Pure grid-geometry helpers belong in `src/utils/`; GDAL/OGR-backed vector
     and projection helpers belong in `src/core/`
 21. Vector outputs should prefer typed attributes and single-file binary formats
-    such as GeoPackage or FlatGeobuf
+    such as FlatGeobuf
 

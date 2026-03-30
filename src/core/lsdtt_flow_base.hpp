@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -83,6 +83,9 @@ public:
 
     // -------------------------------------------------------------------------
     // Object state
+    // [[nodiscard]] is there so the compiler throws and error if this function
+    //  is called but the result is discarded. Used to prevent bugs
+    //  that are not visible to the compilers
     // -------------------------------------------------------------------------
     [[nodiscard]] virtual bool        empty()                const noexcept = 0;
     [[nodiscard]] virtual bool        is_acyclic()           const noexcept = 0;

@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -11,12 +11,16 @@
 //
 // Inspects a raster (via its lsdtt_raster_meta) and recommends a projected
 // coordinate system suitable for analysis.
+// For the time being this works on rasters on Earth. You will need different
+// logic for Mars or Titan or any other non-Earth coordinate system.
 //
 // Decision logic
 // ──────────────
 //   1. Raster must be in a geographic CRS (EPSG:4326 or Web Mercator are the
 //      common cases). If already projected the function returns early with a
-//      note that no reprojection is needed.
+//      note that no reprojection is needed. There will be cases where you 
+//      want to reproject or resample a projected raster but for the time being you will 
+//      need to do that using GDAL. 
 //
 //   2. The four corners of the raster are unprojected to geographic
 //      coordinates. The geographic centre is taken as the mean lat/lon.
@@ -54,6 +58,8 @@ namespace lsdtt {
 
 // -----------------------------------------------------------------------------
 // CrsRecommendationType — what kind of CRS was selected
+//  in future we may include a "force_projection" so you can change from
+//  on projection to another and update the gird spacing
 // -----------------------------------------------------------------------------
 enum class CrsRecommendationType
 {

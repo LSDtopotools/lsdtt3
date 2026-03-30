@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -11,6 +11,12 @@
 //
 // Abstract interface for channel/junction networks built on top of flow routing.
 // Pixel flat indices remain int64_t; junction indices are int32_t.
+// int64 is used for flowinfo but this is for junctions, of which there are far
+// fewer for junction indices. 
+//
+// Implementation is in the cpu/gpu directories so this is a list fo virtual functions
+// that will call the correct implementation (cpu/gpu) depending on your 
+// compile
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -31,6 +37,9 @@ public:
 
     // -------------------------------------------------------------------------
     // object state
+    // [[nodiscard]] is there so the compiler throws and error if this function
+    //  is called but the result is discarded. Used to prevent bugs
+    //  that are not visible to the compilers
     // -------------------------------------------------------------------------
     [[nodiscard]] virtual bool empty() const noexcept = 0;
     [[nodiscard]] virtual bool has_topological_order() const noexcept = 0;
