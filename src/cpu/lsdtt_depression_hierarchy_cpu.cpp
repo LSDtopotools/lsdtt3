@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Implementation of build_depression_hierarchy().
+// Implementation of build_depression_hierarchy() and write_label_raster().
 //
 // Algorithm: Barnes et al. 2021 ("A Universal System for Geomorphological
 // Terrain Description"). Ported from Richard Barnes's RichDEM:
@@ -42,16 +42,21 @@ namespace lsdtt {
 // ---------------------------------------------------------------------------
 namespace {
 
-// D8 direction offsets (direction index 0..7):
+// D8 direction offsets matching lsdtt_flowinfo convention:
 //   7  0  1
 //   6  x  2
 //   5  4  3
 constexpr std::array<int, 8> k_dy{{ -1, -1,  0,  1,  1,  1,  0, -1 }};
 constexpr std::array<int, 8> k_dx{{  0,  1,  1,  1,  0, -1, -1, -1 }};
 
+// The inverse of direction d: the direction a neighbour must have to point
+// back at the focal cell. Used to set flowdir_out for newly labelled cells.
+// inverse[d] = (d + 4) % 8
+constexpr std::array<uint8_t, 8> k_dinverse{{ 4, 5, 6, 7, 0, 1, 2, 3 }};
+
 // Parse and validate the 4-character boundary condition string.
-// Returns an array [north, east, south, west].
-// Periodic boundaries are forced symmetric (as in lsdtt_flowinfo).
+// Returns an array [north, east, south, west]. Periodic axes are forced
+// symmetric (as in lsdtt_flowinfo).
 std::array<char, 4> parse_boundary_conditions(const std::string& bc_str)
 {
     if (bc_str.size() != 4)
@@ -65,7 +70,8 @@ std::array<char, 4> parse_boundary_conditions(const std::string& bc_str)
     for (int i = 0; i < 4; ++i)
     {
         const char c = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(bc_str[static_cast<std::size_t>(i)])));
+            std::tolower(static_cast<unsigned char>(
+                bc_str[static_cast<std::size_t>(i)])));
         if (c != 'o' && c != 'b' && c != 'n' && c != 'p')
         {
             throw std::runtime_error(
@@ -84,33 +90,30 @@ std::array<char, 4> parse_boundary_conditions(const std::string& bc_str)
     return bc;
 }
 
-// Returns true if stepping off the grid in direction dir from (row, col) exits
-// through an open boundary ('o' or 'b'). Periodic and no-flux edges return
-// false (they are not ocean boundaries for the hierarchy).
+// Returns true if stepping off the grid in direction d from (row, col) exits
+// through an open boundary ('o' or 'b'). Periodic/no-flux return false.
 bool exits_through_open_boundary(
-    int                         row,
-    int                         col,
-    int                         dir,
-    int                         n_rows,
-    int                         n_cols,
-    const std::array<char, 4>&  bc)
+    int                        row,
+    int                        col,
+    int                        d,
+    int                        n_rows,
+    int                        n_cols,
+    const std::array<char, 4>& bc)
 {
-    const int nr = row + k_dy[dir];
-    const int nc = col + k_dx[dir];
+    const int nr = row + k_dy[d];
+    const int nc = col + k_dx[d];
 
-    if (nr < 0)         { const char c = bc[0]; return c == 'o' || c == 'b'; }
-    if (nr >= n_rows)   { const char c = bc[2]; return c == 'o' || c == 'b'; }
-    if (nc < 0)         { const char c = bc[3]; return c == 'o' || c == 'b'; }
-    if (nc >= n_cols)   { const char c = bc[1]; return c == 'o' || c == 'b'; }
+    if (nr < 0)       { const char c = bc[0]; return c == 'o' || c == 'b'; }
+    if (nr >= n_rows) { const char c = bc[2]; return c == 'o' || c == 'b'; }
+    if (nc < 0)       { const char c = bc[3]; return c == 'o' || c == 'b'; }
+    if (nc >= n_cols) { const char c = bc[1]; return c == 'o' || c == 'b'; }
 
-    return false; // step stays inside the grid
+    return false;
 }
 
 // ---------------------------------------------------------------------------
-// disjoint_set
-//
-// Minimal union–find with path-halving compression. Tracks which
-// meta-depression a leaf depression currently belongs to.
+// Minimal union–find with path-halving, used to track which meta-depression
+// each leaf depression currently belongs to.
 // ---------------------------------------------------------------------------
 class disjoint_set
 {
@@ -125,7 +128,7 @@ public:
     {
         while (parent_[x] != x)
         {
-            parent_[x] = parent_[parent_[x]]; // path halving
+            parent_[x] = parent_[parent_[x]];
             x = parent_[x];
         }
         return x;
@@ -152,22 +155,21 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// priority_queue_entry
-//
+// Priority queue entry.
 // Sorts on elevation ascending; ties go to the most recently inserted cell
-// (highest sequence_id), so that flat areas are assigned consistently to a
-// single depression — replicating the behaviour of Barnes's radix heap.
+// (highest sequence_id), replicating Barnes's radix-heap tie-breaking so that
+// flat areas are assigned consistently to a single depression.
 // ---------------------------------------------------------------------------
-struct priority_queue_entry
+struct pq_entry
 {
     float        elev;
     std::int64_t flat;
-    uint64_t     sequence_id;
+    uint64_t     seq;
 
-    bool operator<(const priority_queue_entry& o) const noexcept
+    bool operator<(const pq_entry& o) const noexcept
     {
-        if (elev != o.elev)       return elev > o.elev;       // min-heap on elev
-        return sequence_id < o.sequence_id;                    // max on seq for ties
+        if (elev != o.elev) return elev > o.elev; // min-heap on elevation
+        return seq < o.seq;                        // max on seq for ties
     }
 };
 
@@ -179,12 +181,13 @@ struct priority_queue_entry
 lsdtt_depression_hierarchy build_depression_hierarchy(
     const lsdtt_raster_cpu&             dem,
     std::vector<dep_label_t>&           label_out,
+    std::vector<uint8_t>&               flowdir_out,
     const depression_hierarchy_options& opts)
 {
     // ------------------------------------------------------------------
     // 0. Setup
     // ------------------------------------------------------------------
-    const lsdtt_raster_meta& meta   = dem.get_meta();
+    const lsdtt_raster_meta& meta = dem.get_meta();
     const int n_rows  = meta.n_rows;
     const int n_cols  = meta.n_cols;
     const std::int64_t n_cells =
@@ -193,22 +196,22 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
     const std::vector<float>&   elev_data = dem.get_data();
     const std::vector<uint8_t>& dem_mask  = dem.get_mask();
 
-    const std::array<char, 4> bc = parse_boundary_conditions(
-        opts.boundary_conditions);
+    const std::array<char, 4> bc =
+        parse_boundary_conditions(opts.boundary_conditions);
 
-    // Initialise the output label array: k_no_dep for all cells initially.
+    // Initialise output arrays.
     label_out.assign(static_cast<std::size_t>(n_cells), k_no_dep);
+    flowdir_out.assign(static_cast<std::size_t>(n_cells), k_dh_no_flow);
 
     // ------------------------------------------------------------------
     // 1. Collect seeds.
     //
-    // Ocean seeds: valid cells whose D8 neighbourhood includes at least
-    //   one step off-grid through an open boundary. These cells are
-    //   pre-labelled k_ocean_label and seed the BFS from the boundary.
-    //   This mirrors how lsdtt_flowinfo marks boundary cells as outlets.
+    // Ocean seeds: valid cells whose D8 neighbourhood touches an open
+    //   boundary. Pre-labelled k_ocean_label; flowdir = k_dh_no_flow
+    //   (they drain off the grid).
     //
-    // Pit seeds: valid land cells with no lower valid neighbour (local
-    //   minima, including the interiors of flat regions).
+    // Pit seeds:   valid cells with no lower valid neighbour (local
+    //   minima). These will become leaf depression pit cells.
     // ------------------------------------------------------------------
     std::vector<std::int64_t> ocean_seeds;
     std::vector<std::int64_t> land_seeds;
@@ -223,28 +226,27 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
                 static_cast<std::int64_t>(row) * n_cols + col;
 
             if (dem_mask[flat] == 0u)
-                continue; // nodata — skip
+                continue;
 
-            // Check whether any D8 step exits through an open boundary.
-            bool touches_open_boundary = false;
+            bool touches_open = false;
             for (int d = 0; d < 8; ++d)
             {
                 if (exits_through_open_boundary(row, col, d,
                                                 n_rows, n_cols, bc))
                 {
-                    touches_open_boundary = true;
+                    touches_open = true;
                     break;
                 }
             }
 
-            if (touches_open_boundary)
+            if (touches_open)
             {
                 label_out[flat] = k_ocean_label;
+                // flowdir stays k_dh_no_flow — drains off grid.
                 ocean_seeds.push_back(flat);
             }
             else
             {
-                // Check whether this cell is a local minimum (pit seed).
                 const float my_elev = elev_data[flat];
                 bool has_lower = false;
                 for (int d = 0; d < 8; ++d)
@@ -263,6 +265,9 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
                 }
                 if (!has_lower)
                     land_seeds.push_back(flat);
+                // flowdir for pit cells stays k_dh_no_flow until a
+                // neighbour claims them; pit cells themselves get
+                // k_dh_no_flow as their own flowdir.
             }
         }
     }
@@ -275,7 +280,6 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             "and that valid DEM cells exist on that edge.");
     }
 
-    // Sort for determinism.
     std::sort(ocean_seeds.begin(), ocean_seeds.end());
     std::sort(land_seeds.begin(),  land_seeds.end());
 
@@ -300,17 +304,18 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
     // ------------------------------------------------------------------
     // 3. Priority-queue BFS flood fill.
     //
-    // All seeds enter the queue. We pop cells from lowest to highest
-    // elevation. Each cell's label is propagated to unlabelled neighbours.
-    // When a cell meets a differently labelled neighbour, we record the
-    // outlet connecting the two depressions.
+    // When a cell claims an unlabelled neighbour it also sets that
+    // neighbour's flowdir to the inverse direction (pointing back toward
+    // the claiming cell). This is the same steepest-descent flow direction
+    // that GetDepressionHierarchy produces in RichDEM and is the field
+    // MoveWaterIntoPits uses to route water to pit cells.
     // ------------------------------------------------------------------
     using outlet_db_t =
         std::unordered_map<outlet_link, depression_outlet, outlet_link_hash>;
     outlet_db_t outlet_db;
     outlet_db.reserve(static_cast<std::size_t>(3 * (pit_cell_count + 1)));
 
-    std::priority_queue<priority_queue_entry> pq;
+    std::priority_queue<pq_entry> pq;
     uint64_t seq = 0u;
 
     for (const std::int64_t flat : ocean_seeds)
@@ -334,29 +339,26 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
 
         if (clabel == k_ocean_label)
         {
-            // Ocean cell — just expand to unlabelled neighbours.
+            // Ocean cell — expand to unlabelled neighbours.
         }
         else if (clabel == k_no_dep)
         {
-            // First visit to this pit cell: create a new leaf depression.
+            // First visit to a pit cell: create a new leaf depression.
             clabel = static_cast<dep_label_t>(depressions.size());
             depression_node& new_dep = depressions.emplace_back();
             new_dep.pit_cell  = ci;
             new_dep.pit_elev  = celev;
             new_dep.dep_label = clabel;
             label_out[ci]     = clabel;
+            // Pit cell has no downstream neighbour: flowdir stays k_dh_no_flow.
         }
-        // else: already labelled — check neighbours anyway (handles flats).
+        // else: already labelled — still check neighbours (handles flats).
 
         for (int d = 0; d < 8; ++d)
         {
             const int nr = crow + k_dy[d];
             const int nc = ccol + k_dx[d];
 
-            // Steps that exit the grid through an open boundary are already
-            // handled by the ocean-seed labelling: any valid cell touching
-            // such a boundary is already labelled k_ocean_label. We only
-            // need to deal with in-grid neighbours here.
             if (nr < 0 || nr >= n_rows || nc < 0 || nc >= n_cols)
                 continue;
 
@@ -364,14 +366,18 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
                 static_cast<std::int64_t>(nr) * n_cols + nc;
 
             if (dem_mask[ni] == 0u)
-                continue; // nodata — skip
+                continue;
 
             const dep_label_t nlabel = label_out[ni];
 
             if (nlabel == k_no_dep)
             {
-                // Unclaimed neighbour — give it our label and enqueue.
-                label_out[ni] = clabel;
+                // Unclaimed neighbour: give it our label and record its
+                // flow direction as pointing back toward us (direction d
+                // from focal to neighbour, so neighbour flows in
+                // k_dinverse[d] which points back to focal).
+                label_out[ni]   = clabel;
+                flowdir_out[ni] = k_dinverse[d];
                 pq.push({ elev_data[ni], ni, seq++ });
             }
             else if (nlabel == clabel)
@@ -380,8 +386,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             }
             else
             {
-                // Two different depressions meet: record the outlet.
-                // The outlet is the higher of the two touching cells.
+                // Two different depressions meet: record the saddle outlet.
                 std::int64_t out_cell = ci;
                 float        out_elev = celev;
                 if (elev_data[ni] > out_elev)
@@ -402,8 +407,8 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
                 }
                 else
                 {
-                    outlet_db[lnk] = depression_outlet(clabel, nlabel,
-                                                        out_cell, out_elev);
+                    outlet_db[lnk] = depression_outlet(
+                        clabel, nlabel, out_cell, out_elev);
                 }
             }
         }
@@ -420,7 +425,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
     outlets.reserve(outlet_db.size());
     for (auto& kv : outlet_db)
         outlets.push_back(kv.second);
-    outlet_db = outlet_db_t(); // release memory
+    outlet_db = outlet_db_t();
 
     std::sort(outlets.begin(), outlets.end(),
               [](const depression_outlet& a, const depression_outlet& b)
@@ -428,10 +433,6 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
 
     // ------------------------------------------------------------------
     // 5. Build the hierarchy from outlets (lowest to highest).
-    //
-    // A union–find tracks which meta-depression each leaf belongs to.
-    // Processing from lowest to highest outlet guarantees we always use
-    // the lowest saddle when two depressions first meet.
     // ------------------------------------------------------------------
     disjoint_set djset(depressions.size());
 
@@ -444,17 +445,15 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
         dep_label_t set_b = djset.find_set(outlet.dep_b);
 
         if (set_a == set_b)
-            continue; // already merged
+            continue;
 
         if (set_a == k_ocean_label || set_b == k_ocean_label)
         {
-            // Exactly one side is ocean; make set_b the ocean side.
             if (set_a == k_ocean_label)
             {
                 std::swap(outlet.dep_a, outlet.dep_b);
                 std::swap(set_a, set_b);
             }
-            // set_a = land meta-depression, set_b = ocean.
 
             depression_node& dep = depressions[set_a];
 
@@ -474,7 +473,6 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
         }
         else
         {
-            // Neither side is ocean: create a new meta-depression.
             depression_node& dep_a_node = depressions[set_a];
             depression_node& dep_b_node = depressions[set_b];
 
@@ -495,8 +493,6 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             dep_a_node.geolink  = outlet.dep_b;
             dep_b_node.geolink  = outlet.dep_a;
 
-            // Cache before emplace_back (which may reallocate, invalidating
-            // the references above).
             const std::int64_t new_pit = dep_a_node.pit_cell;
 
             djset.push(new_label);
@@ -525,14 +521,48 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
 }
 
 // ===========================================================================
+// write_label_raster
+// ===========================================================================
+void write_label_raster(
+    const std::vector<dep_label_t>&  label,
+    const lsdtt_raster_meta&         meta,
+    const std::string&               out_path,
+    raster_output_format             format)
+{
+    const std::size_t n_cells =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+
+    if (label.size() != n_cells)
+    {
+        throw std::runtime_error(
+            "write_label_raster: label array size does not match metadata");
+    }
+
+    std::vector<float> out_data(n_cells);
+
+    for (std::size_t i = 0; i < n_cells; ++i)
+    {
+        if (label[i] == k_no_dep)
+        {
+            // Nodata cell in the DEM — write nodata.
+            out_data[i] = static_cast<float>(meta.no_data_value);
+        }
+        else
+        {
+            // Cast uint32_t label to float. Labels up to ~16 million are
+            // represented exactly in float32.
+            out_data[i] = static_cast<float>(label[i]);
+        }
+    }
+
+    lsdtt_data_loader loader;
+    loader.write_full(out_data, meta, out_path, format);
+
+    std::cerr << "[lsdtt] write_label_raster: wrote " << out_path << "\n";
+}
+
+// ===========================================================================
 // detail::calculate_marginal_volumes
-//
-// For every raster cell below some depression's outlet, walk up the hierarchy
-// until we find the depression that contains it and accumulate cell_count and
-// total_elevation there.
-//
-// A per-call cache avoids redundant traversals when adjacent cells share the
-// same leaf depression label (common in flat regions).
 // ===========================================================================
 namespace detail {
 
@@ -541,7 +571,6 @@ namespace {
 struct outlet_cache
 {
     dep_label_t prev_leaf = k_no_dep;
-    // (outlet_elevation, meta-depression label) pairs, ascending by elevation.
     std::vector<std::pair<float, dep_label_t>> outlets;
 
     void reset(dep_label_t leaf)
@@ -550,9 +579,9 @@ struct outlet_cache
         outlets.clear();
     }
 
-    void record(dep_label_t label, float elev)
+    void record(dep_label_t lbl, float elev)
     {
-        outlets.emplace_back(elev, label);
+        outlets.emplace_back(elev, lbl);
     }
 
     dep_label_t find_start(dep_label_t leaf, float my_elev)
@@ -562,7 +591,6 @@ struct outlet_cache
             reset(leaf);
             return leaf;
         }
-        // Pop outlets whose elevation is <= my_elev (cell is above them).
         while (!outlets.empty() && my_elev <= outlets.back().first)
             outlets.pop_back();
 
@@ -598,9 +626,9 @@ void calculate_marginal_volumes(
         #pragma omp for schedule(static)
         for (std::int64_t i = 0; i < n_cells; ++i)
         {
-            if (dem_mask[i] == 0u)           continue;
+            if (dem_mask[i] == 0u)       continue;
             dep_label_t clabel = label[i];
-            if (clabel == k_ocean_label)     continue;
+            if (clabel == k_ocean_label) continue;
 
             const float my_elev = elev_data[i];
             clabel = cache.find_start(clabel, my_elev);
@@ -633,9 +661,9 @@ void calculate_marginal_volumes(
 
     for (std::int64_t i = 0; i < n_cells; ++i)
     {
-        if (dem_mask[i] == 0u)           continue;
+        if (dem_mask[i] == 0u)       continue;
         dep_label_t clabel = label[i];
-        if (clabel == k_ocean_label)     continue;
+        if (clabel == k_ocean_label) continue;
 
         const float my_elev = elev_data[i];
         clabel = cache.find_start(clabel, my_elev);
@@ -666,10 +694,6 @@ void calculate_marginal_volumes(
 
 // ===========================================================================
 // detail::calculate_total_volumes
-//
-// Single forward pass through the hierarchy vector (children always have
-// smaller indices than parents) to propagate cell_count and total_elevation
-// upward, then compute dep_vol for every node.
 // ===========================================================================
 void calculate_total_volumes(lsdtt_depression_hierarchy& deps)
 {
@@ -696,7 +720,6 @@ void calculate_total_volumes(lsdtt_depression_hierarchy& deps)
             static_cast<double>(dep.out_elev)
             - dep.total_elevation;
 
-        // Sanity: a meta-depression must hold at least as much as either child.
         assert(dep.lchild == k_no_label ||
                dep.dep_vol >= deps[dep.lchild].dep_vol
                             + deps[dep.rchild].dep_vol - 1e-6);

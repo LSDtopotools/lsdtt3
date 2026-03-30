@@ -9,10 +9,11 @@
 // -----------------------------------------------------------------------------
 // Fill-Spill-Merge flow routing for CPU analysis.
 //
-// Implements the Fill-Spill-Merge algorithm (Barnes, Callaghan & Wickert 2021,
-// "Computing water flow through complex landscapes — Part 3: Fill-Spill-Merge:
-// Flow routing in depression hierarchies", Earth Surface Dynamics 9, 105-121,
-// doi:10.5194/esurf-9-105-2021).
+// Implements the Fill-Spill-Merge algorithm:
+//   Barnes, Callaghan & Wickert (2021) "Computing water flow through complex
+//   landscapes — Part 3: Fill-Spill-Merge: Flow routing in depression
+//   hierarchies", Earth Surface Dynamics 9, 105-121.
+//   doi:10.5194/esurf-9-105-2021
 //
 // Ported from the reference implementation:
 //   https://github.com/r-barnes/Barnes2020-FillSpillMerge
@@ -23,16 +24,15 @@
 //  - All code lives in namespace lsdtt; no using namespace std.
 //  - richdem::Array2D replaced by lsdtt_raster_cpu and std::vector.
 //  - Flat cell indices use std::int64_t.
-//  - Depression labels use dep_label_t (uint32_t) from
-//    lsdtt_depression_hierarchy_cpu.hpp.
-//  - The Water Level Equation (WLE) and the recursive spill propagation are
-//    implemented as free functions.
-//  - The public entry point is fill_spill_merge(), which takes the original
-//    DEM, a pre-built lsdtt_depression_hierarchy, and a uniform rainfall
-//    intensity (m of water per cell) and returns the water-surface raster.
-//  - A convenience function fsm_filled_dem() returns the DEM with water
-//    added (i.e. max(original, water_surface)), suitable for use as a
-//    preprocessed DEM in subsequent analysis.
+//  - Depression labels use dep_label_t (uint32_t).
+//  - The original uses a `wtd` (water-table-depth) array as both input
+//    (initial surface water per cell) and output (standing water depth).
+//    Here we expose a uniform-rainfall interface: fill_spill_merge() takes
+//    a scalar rainfall_m and populates a uniform wtd internally. The wtd
+//    array is returned so callers can inspect it or use it further.
+//  - The four internal phases (move_water_into_pits, move_water_in_dep_hier,
+//    find_depressions_to_fill, fill_depressions) exactly mirror the original.
+//  - fsm_filled_dem() is a convenience wrapper returning max(dem, dem+wtd).
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -48,64 +48,51 @@ namespace lsdtt {
 // ---------------------------------------------------------------------------
 // fill_spill_merge
 //
-// Distributes rainfall across the landscape using the depression hierarchy,
-// computing the water surface elevation in every depression.
+// Distributes rainfall_m metres of water uniformly across every valid raster
+// cell, then routes it through the depression hierarchy.
 //
 // Parameters
 // ----------
-// dem        — original (unfilled) DEM in a projected metric CRS.
-// label      — per-cell leaf depression labels produced by
-//              build_depression_hierarchy() for the same DEM.
-// deps       — the depression hierarchy (mutated in-place: water_vol fields
-//              are updated). Pass a copy if you need the original volumes.
-// rainfall_m — uniform rainfall depth in metres of water added to every valid
-//              raster cell. Must be >= 0.
+// dem          — original (unfilled) DEM in a projected metric CRS.
+// label        — per-cell leaf depression labels from build_depression_hierarchy.
+// flowdir      — per-cell D8 flow-direction codes from build_depression_hierarchy
+//                (0=N..7=NW, 255=outlet/pit/ocean). Used to route surface
+//                water downhill to pit cells.
+// deps         — the depression hierarchy (taken by value — water_vol fields
+//                are reset and then mutated). Pass a copy to preserve originals.
+// rainfall_m   — uniform rainfall depth in metres per cell (>= 0).
 //
 // Returns
 // -------
-// lsdtt_raster_cpu whose values are the water-surface elevation at each cell.
-// Cells that receive no water (ocean cells, cells above their depression's
-// water level) retain their original DEM elevation. Nodata cells remain
-// nodata.
+// std::vector<float>  — water-depth array (same size as DEM). Value at cell i
+//   is the depth of standing water above the DEM surface at that cell after
+//   routing. Zero where the cell is above the water surface or is an ocean/
+//   boundary cell. Nodata cells have depth 0.
 //
-// Algorithm outline
-// -----------------
-// 1. For every leaf depression, add rainfall_m * cell_count to water_vol.
-// 2. Walk upward through the hierarchy, applying the Water Level Equation at
-//    each node to determine whether the depression fills to its outlet and
-//    spills into its neighbour.
-// 3. When both children of a meta-depression have spilled (their combined
-//    water_vol exceeds the combined dep_vol), they merge and the parent's
-//    water_vol receives the overflow.
-// 4. After all water has been distributed, rasterise: for each valid cell,
-//    look up the water-surface elevation of the leaf depression it belongs to
-//    (or the appropriate meta-depression if the leaf has fully merged).
-//
-// Throws std::runtime_error if rainfall_m < 0.
+// Throws std::runtime_error if rainfall_m < 0 or inputs are inconsistent.
 // ---------------------------------------------------------------------------
 [[nodiscard]]
-lsdtt_raster_cpu fill_spill_merge(
+std::vector<float> fill_spill_merge(
     const lsdtt_raster_cpu&          dem,
     const std::vector<dep_label_t>&  label,
-    lsdtt_depression_hierarchy       deps,   // taken by value — we mutate it
+    const std::vector<uint8_t>&      flowdir,
+    lsdtt_depression_hierarchy       deps,
     float                            rainfall_m);
 
 // ---------------------------------------------------------------------------
 // fsm_filled_dem
 //
 // Convenience wrapper: runs fill_spill_merge and returns the DEM with water
-// added (element-wise maximum of original DEM and water-surface raster).
+// added (element-wise max(dem_elevation, dem_elevation + water_depth)).
 //
-// This is the raster suitable for use as a "FSM-filled DEM" input to
+// This is the hydro-conditioned DEM suitable as input to
 // lsdtt-channel-extraction or subsequent flow routing.
-//
-// Parameters: same as fill_spill_merge.
-// Returns: lsdtt_raster_cpu whose values are max(dem, water_surface).
 // ---------------------------------------------------------------------------
 [[nodiscard]]
 lsdtt_raster_cpu fsm_filled_dem(
-    const lsdtt_raster_cpu&          dem,
-    const std::vector<dep_label_t>&  label,
+    const lsdtt_raster_cpu&           dem,
+    const std::vector<dep_label_t>&   label,
+    const std::vector<uint8_t>&       flowdir,
     const lsdtt_depression_hierarchy& deps,
     float                             rainfall_m);
 

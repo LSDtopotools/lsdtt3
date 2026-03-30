@@ -31,7 +31,12 @@
 //    lightweight std::cerr progress lines.
 //  - Boost serialisation is omitted.
 //  - D8 topology only (lsdtt3 is D8 throughout).
-//  - build_depression_hierarchy() is the public free-function entry point.
+//  - build_depression_hierarchy() now also outputs a flowdir_out array
+//    (uint8_t per cell, same direction-code convention as lsdtt_flowinfo:
+//     0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW, 255=outlet/no-flow).
+//    This is required by fill_spill_merge to route surface water downstream.
+//  - write_label_raster() writes the per-cell leaf-depression label array
+//    as a float GeoTIFF for inspection.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -45,6 +50,7 @@
 #include <utility>
 #include <vector>
 
+#include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
 #include "lsdtt_raster_cpu.hpp"
 
@@ -62,6 +68,10 @@ constexpr dep_label_t k_no_parent   = std::numeric_limits<dep_label_t>::max();
 constexpr dep_label_t k_no_label    = std::numeric_limits<dep_label_t>::max();
 constexpr dep_label_t k_no_dep      = std::numeric_limits<dep_label_t>::max();
 constexpr dep_label_t k_ocean_label = 0u;
+
+// Flow direction sentinel: cell is an outlet or has no downstream neighbour.
+// Matches the k_no_direction sentinel in lsdtt_flow_types.hpp.
+constexpr uint8_t k_dh_no_flow = 255u;
 
 // ---------------------------------------------------------------------------
 // depression_node
@@ -84,7 +94,7 @@ constexpr dep_label_t k_ocean_label = 0u;
 // Volume fields
 // -------------
 // dep_vol = cell_count * out_elev − total_elevation  (total fillable volume)
-// water_vol is used and mutated by fill_spill_merge.
+// water_vol is mutated by fill_spill_merge.
 // ---------------------------------------------------------------------------
 struct depression_node
 {
@@ -149,7 +159,7 @@ using lsdtt_depression_hierarchy = std::vector<depression_node>;
 // ---------------------------------------------------------------------------
 // depression_hierarchy_options
 //
-// Controls which boundary edges act as open ocean using the same four-
+// Controls which boundary edges act as open ocean, using the same four-
 // character boundary-condition string as lsdtt_flowinfo_options.
 //
 // boundary_conditions — 4 characters for [north, east, south, west]:
@@ -169,11 +179,12 @@ struct depression_hierarchy_options
 
 // ---------------------------------------------------------------------------
 // Internal data types used during construction.
-// Also included here so that fill_spill_merge can include this header.
+// Also included here so that lsdtt_fill_spill_merge_cpu can include this
+// header without additional declarations.
 // ---------------------------------------------------------------------------
 
 // Key for the outlet hash map: canonical (min, max) pair so that (A,B) and
-// (B,A) always map to the same entry.
+// (B,A) always map to the same slot.
 struct outlet_link : std::pair<dep_label_t, dep_label_t>
 {
     dep_label_t& dep_a = std::pair<dep_label_t, dep_label_t>::first;
@@ -220,15 +231,20 @@ struct depression_outlet
 // ---------------------------------------------------------------------------
 // build_depression_hierarchy (public entry point)
 //
+// Constructs the complete depression hierarchy from a DEM.
+//
 // Parameters
 // ----------
-// dem       — input elevation raster in a projected metric CRS. Call
-//             dem.get_meta().check_projected_metres() before calling this.
-// label_out — output: flat array (same size as dem) giving the leaf
-//             depression label for every valid cell, or k_ocean_label for
-//             cells on or adjacent to the open boundary. Allocated and filled
-//             by this function.
-// opts      — selects which boundary edges are treated as open ocean.
+// dem          — input elevation raster in a projected metric CRS. Call
+//               dem.get_meta().check_projected_metres() before calling this.
+// label_out    — output: flat array giving the leaf depression label for every
+//               valid cell, or k_ocean_label for boundary cells. Allocated and
+//               filled by this function.
+// flowdir_out  — output: flat array of D8 flow direction codes (same
+//               convention as lsdtt_flowinfo: 0=N,1=NE,...,7=NW). Ocean/pit
+//               cells receive k_dh_no_flow (255). Required by
+//               fill_spill_merge to route surface water to pit cells.
+// opts         — selects which boundary edges are treated as open ocean.
 //
 // Returns
 // -------
@@ -240,7 +256,31 @@ struct depression_outlet
 lsdtt_depression_hierarchy build_depression_hierarchy(
     const lsdtt_raster_cpu&             dem,
     std::vector<dep_label_t>&           label_out,
+    std::vector<uint8_t>&               flowdir_out,
     const depression_hierarchy_options& opts = depression_hierarchy_options{});
+
+// ---------------------------------------------------------------------------
+// write_label_raster
+//
+// Writes the per-cell leaf depression label array as a float GeoTIFF so that
+// each depression's spatial extent can be inspected in a GIS.
+//
+// The raster value at each valid cell is the floating-point cast of its
+// dep_label_t label (ocean cells = 0, leaf depressions = 1..N).
+// Nodata cells receive the DEM's no_data_value.
+//
+// Parameters
+// ----------
+// label    — label array produced by build_depression_hierarchy().
+// meta     — metadata from the DEM (used for georeferencing and nodata).
+// out_path — full output file path including extension (e.g. "_dep_labels.tif").
+// format   — output format (cog / gtiff / same_as_input).
+// ---------------------------------------------------------------------------
+void write_label_raster(
+    const std::vector<dep_label_t>&  label,
+    const lsdtt_raster_meta&         meta,
+    const std::string&               out_path,
+    raster_output_format             format = raster_output_format::cog);
 
 // ---------------------------------------------------------------------------
 // Internal helpers — implemented in the .cpp, not public API.
