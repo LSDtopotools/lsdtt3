@@ -21,6 +21,23 @@ Can also be used as a developer guide.
 
 ```
 lsdtt3/
+├── apptainer_def/
+│   └── apptainer_setup.md
+├── cli/
+│   ├── lsdtt-channel-extraction.cpp
+│   ├── lsdtt-feature-finder.cpp
+│   ├── lsdtt-raster-preprocessing.cpp
+│   ├── lsdtt-raster-synthetic-tests.cpp
+│   ├── lsdtt-surface-metrics.cpp
+│   └── lsdtt-test-flowinfo.cpp
+├── docs/
+│   ├── debian_packaging.md
+│   ├── developer_onboarding.md
+│   ├── lsdtt3_architecture.md
+│   └── using_lsdtt_flowinfo.md
+├── python_helpers/
+│   ├── dem_downloader_instructions.md
+│   └── download_dem_tiles.py
 ├── src/
 │   ├── core/
 │   │   ├── lsdtt_raster_meta.hpp          — metadata struct + CRS validation
@@ -32,32 +49,26 @@ lsdtt3/
 │   │   ├── lsdtt_junction_network_base.hpp  - abstract channel network interface (header only)
 │   │   ├── lsdtt_junction_network_types.hpp - shared junction network types (header-only)
 │   │   ├── lsdtt_flow_base.hpp            — abstract D8 flow interface (header-only)
-│   │   ├── lsdtt_flowgraph_cpu.hpp        — D-inf/MFD DAG routing (stub)
 │   │   ├── lsdtt_crs_suggest.hpp/.cpp     — CRS inspection and projection recommendation
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
-│   │   └── lsdtt_raster-_reproject.hpp/.cpp — GDAL-warp reprojection + grid snapping
+│   │   └── lsdtt_vector_utils.hpp/.cpp    — GDAL/OGR-backed vector helpers
 │   ├── cpu/
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                    — concrete CPU raster class
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                  — D8 CPU flow routing
-│   │   ├── lsdtt_raster_algebra.hpp                     — element-wise raster algebra (header-only)
+│   │   ├── lsdtt_flowgraph_cpu.hpp                      — D-inf/MFD DAG routing (stub)
+│   │   ├── lsdtt_raster_algebra.hpp/.cpp                — element-wise raster algebra
 │   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp    — hillshade, moving window
 │   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp — fill, breach, nodata
 │   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp     — interior void filling
 │   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp           — wavelet quadratic fit
+│   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp             — OpenCV-based raster processing
+│   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp     — feature-specific raster workflows
 │   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp — test surface generators
-│   ├── gpu/
-│   │   ├── lsdtt_raster_gpu.hpp/.cu       — GPU raster (LSDTT_GPU=ON)
-│   │   └── lsdtt_flowinfo_gpu.hpp/.cpp    — GPU flow routing (future)
 │   └── utils/
-│       └── lsdtt_array2d.hpp              — header-only 2D array
-├── cli/
-│   ├── lsdtt-raster-preprocessing.cpp
-│   ├── lsdtt-raster-synthetic-tests.cpp
-│   └── lsdtt-test-flowinfo.cpp
-├── docs/
-│   └── preprocessing.md                  — user guide for preprocessing CLI
-├── bin/
+│       ├── lsdtt_array2d.hpp              — header-only 2D array
+│       └── lsdtt_raster_geometry.hpp      — header-only raster geometry helpers
 ├── CMakeLists.txt
+├── diagnose_fftw.sh
 └── README.md
 ```
 
@@ -537,7 +548,7 @@ There are several flow-routing files. This table explains which one you need.
 | Writing a CLI that builds a flow object | `lsdtt_flow_base.hpp` | Call `make_flow_base()`. Returns `unique_ptr<lsdtt_flow_base>`. GPU-compatible. |
 | Writing D-inf / MFD distributed-flow analysis | `lsdtt_flowgraph_cpu.hpp` | Stub — implementation pending. |
 | Adding a GPU flow routing backend | `lsdtt_flow_base.hpp` + new `lsdtt_flowinfo_gpu.hpp` | Implement `lsdtt_flow_base`, add branch in `src/cpu/lsdtt_flow_base.cpp`. |
-| Changing `flat_index_type` (e.g. to int64_t) | `lsdtt_flow_types.hpp` | Change one typedef. All aliases follow. |
+| Understanding cell-index types | `lsdtt_flow_types.hpp` | Flow-routing cell indices use `std::int64_t` directly throughout; there is no `flat_index_type` typedef. |
 
 **Analysis code** never needs to know about `lsdtt_flow_base`, `lsdtt_flow_types`,
 or `lsdtt_flow_base.cpp`. Those are infrastructure.
@@ -705,7 +716,7 @@ there is a clear reason.
 All take `const lsdtt_raster_cpu&` directly — not `lsdtt_raster_base`.
 All return `lsdtt_raster_cpu`. Input is never modified.
 
-**`lsdtt_raster_algebra` (header-only, `src/cpu/lsdtt_raster_algebra.hpp`):**
+**`lsdtt_raster_algebra` (`src/cpu/lsdtt_raster_algebra.hpp/.cpp`):**
 
 Lives in `namespace lsdtt::algebra`. All operations are element-wise; output inherits
 metadata from the left-hand operand. A cell is nodata if either input cell is nodata.
@@ -809,7 +820,7 @@ n_threads, nodata_fill_max_iter
 **Help / parameter printing:**
 - `-h` flag prints usage to stdout and exits immediately (before any processing).
 - `print_parameters()` is called at the end of every successful run to echo resolved parameters.
-- `print_help()` (writes `_README` file) is **not** called during normal runs; it is only triggered by `-h`.
+- `print_help()` on `lsdtt_param_parser` writes CSV and HTML help files, but this CLI does not call it during `-h` handling or normal runs.
 
 ---
 
@@ -877,7 +888,7 @@ n_threads: 0
     without triggering I/O
 14. Reprojected rasters always receive a projection suffix (_utm / _polar / _lambert)
     so the provenance of every output file is unambiguous from its filename
-15. `lsdtt_raster_algebra.hpp` is header-only (no `.cpp`); include from `src/cpu/`.
+15. `lsdtt_raster_algebra` lives in `src/cpu/lsdtt_raster_algebra.hpp/.cpp`; include from `src/cpu/`.
     Use `lsdtt::algebra::raster_subtract(a, b)` etc. for diff rasters in CLIs.
 16. Every CLI uses `lsdtt_param_parser`
 17. CLI parameters are grouped by theme, not declared in one unstructured block
