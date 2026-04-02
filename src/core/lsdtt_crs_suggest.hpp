@@ -16,11 +16,8 @@
 //
 // Decision logic
 // ──────────────
-//   1. Raster must be in a geographic CRS (EPSG:4326 or Web Mercator are the
-//      common cases). If already projected the function returns early with a
-//      note that no reprojection is needed. There will be cases where you 
-//      want to reproject or resample a projected raster but for the time being you will 
-//      need to do that using GDAL. 
+//   1. Raster must **either** be in a geographic CRS (EPSG:4326 or Web Mercator are the
+//      common cases) **or** the user must call `force_reproject` 
 //
 //   2. The four corners of the raster are unprojected to geographic
 //      coordinates. The geographic centre is taken as the mean lat/lon.
@@ -151,13 +148,20 @@ struct lsdtt_crs_suggestion
 //   meta              — raster metadata (must contain a valid crs_wkt)
 //   offer_laea        — if true and the raster spans ≥ 3 UTM zones, also
 //                       build the laea_wkt alternative (default true)
+//   force_recommend_projected — if true, continue through the recommendation
+//                               logic even when the input raster is already in
+//                               a projected CRS. This is used when a caller
+//                               wants to force reprojection into the preferred
+//                               analysis CRS.
 //
 // Throws std::runtime_error if meta.crs_wkt is empty or cannot be parsed.
 // -----------------------------------------------------------------------------
 lsdtt_crs_suggestion lsdtt_suggest_crs(
     const lsdtt_raster_meta& meta,
-    bool offer_laea = true
+    bool offer_laea = true,
+    bool force_recommend_projected = false
 );
+
 
 // -----------------------------------------------------------------------------
 // lsdtt_print_crs_suggestion

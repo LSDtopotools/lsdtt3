@@ -262,7 +262,8 @@ static void count_utm_zones(lsdtt_crs_suggestion& sug)
 // -----------------------------------------------------------------------------
 lsdtt_crs_suggestion lsdtt_suggest_crs(
     const lsdtt_raster_meta& meta,
-    bool offer_laea)
+    bool offer_laea,
+    bool force_recommend_projected)
 {
     if (meta.crs_wkt.empty())
     {
@@ -284,9 +285,10 @@ lsdtt_crs_suggestion lsdtt_suggest_crs(
     }
 
     // ------------------------------------------------------------------
-    // 2. Check whether the raster is already in a suitable projected CRS
-    //    (not geographic and not Web Mercator, which severely distorts
-    //    areas and distances at high latitudes).
+    // 2. Check whether the raster is already in a suitable projected CRS.
+    //    If force_recommend_projected is false, return early.
+    //    If true, continue so we can recommend the preferred analysis CRS
+    //    from the raster footprint.
     //
     //    Web Mercator = EPSG:3857.  We detect it by checking the EPSG code
     //    embedded in the WKT.
@@ -305,7 +307,10 @@ lsdtt_crs_suggestion lsdtt_suggest_crs(
         }
     }
 
-    if (!src_srs.IsGeographic() && !is_web_mercator)
+    const bool input_is_projected_non_web_mercator =
+        (!src_srs.IsGeographic() && !is_web_mercator);
+
+    if (input_is_projected_non_web_mercator && !force_recommend_projected)
     {
         // Already a sensible projected CRS — nothing to recommend
         sug.already_projected = true;
@@ -317,6 +322,7 @@ lsdtt_crs_suggestion lsdtt_suggest_crs(
         sug.recommended_name = "Already projected — no reprojection needed";
         return sug;
     }
+
 
     // ------------------------------------------------------------------
     // 3. Unproject corners to geographic coordinates

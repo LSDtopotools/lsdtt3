@@ -336,19 +336,30 @@ lsdtt_reproject_result lsdtt_reproject_if_needed(
     // ------------------------------------------------------------------
     // 1. Get a CRS recommendation
     // ------------------------------------------------------------------
-    result.suggestion = lsdtt_suggest_crs(meta, opts.allow_lambert_projection);
+    result.suggestion = lsdtt_suggest_crs(
+        meta,
+        opts.allow_lambert_projection,
+        opts.force_reproject
+    );
     lsdtt_print_crs_suggestion(result.suggestion);
 
     // ------------------------------------------------------------------
-    // 2. Already projected — nothing to do
+    // 2. Already projected  check if we need to force the reprojection
     // ------------------------------------------------------------------
-    if (result.suggestion.already_projected)
+    if (result.suggestion.already_projected && !opts.force_reproject)
     {
         std::cout << "lsdtt_reproject: raster is already in a projected CRS "
                      "with metre units — skipping reprojection.\n";
         result.reprojected = false;
         return result;
     }
+
+    if (result.suggestion.already_projected && opts.force_reproject)
+    {
+        std::cout << "lsdtt_reproject: force_reproject is true — warping "
+                     "projected input to the recommended analysis CRS.\n";
+    }
+
 
     // ------------------------------------------------------------------
     // 3. enforce_projection == false — bail out
@@ -393,29 +404,41 @@ lsdtt_reproject_result lsdtt_reproject_if_needed(
     // ------------------------------------------------------------------
     // 5. Determine grid spacing
     // ------------------------------------------------------------------
-    double grid_m = opts.grid_spacing;
+    double grid_m = -1.0;
 
-    if (grid_m <= 0.0)
+    if (opts.force_resampling)
     {
-        // Estimate what the pixel size will be in the target projection
+        if (opts.forced_grid_spacing <= 0.0)
+        {
+            throw std::runtime_error(
+                "lsdtt_reproject: force_resampling is true but "
+                "forced_grid_spacing is not positive");
+        }
+
+        grid_m = opts.forced_grid_spacing;
+
+        std::cout << "lsdtt_reproject: force_resampling is true — using "
+                  << "forced_grid_spacing = " << grid_m << " m\n";
+    }
+    else if (opts.grid_spacing > 0.0)
+    {
+        grid_m = opts.grid_spacing;
+
+        std::cout << "lsdtt_reproject: using user-supplied grid spacing = "
+                  << grid_m << " m\n";
+    }
+    else
+    {
         double raw_pixel_m = estimate_projected_pixel_size(
             meta, result.suggestion, target_wkt);
 
         grid_m = snap_grid_spacing(raw_pixel_m);
 
         std::cout << "lsdtt_reproject: estimated projected pixel size = "
-                  << raw_pixel_m << " m  →  snapped grid spacing = "
-                  << grid_m << " m\n";
-    }
-    else
-    {
-        std::cout << "lsdtt_reproject: using user-supplied grid spacing = "
+                  << raw_pixel_m << " m  -> snapped grid spacing = "
                   << grid_m << " m\n";
     }
 
-    // Guard: gdalwarp rejects -tr 0.  snap_grid_spacing() preserves the raw
-    // pixel size for sub-metre inputs, but malformed metadata could still
-    // yield a non-positive value.  Clamp to 1 cm as an absolute floor.
     if (grid_m <= 0.0)
     {
         std::cerr << "lsdtt_reproject: WARNING — computed grid spacing is "

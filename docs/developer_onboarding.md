@@ -55,6 +55,17 @@ In CLI files:
 This pattern is now the standard for all CLIs because it makes developer-facing
 options easy to inspect and keeps the parameter contract readable in one place.
 
+### File I/O parameter note
+
+For CLIs using `lsdtt_param_parser`:
+
+- `read_fname` may include an extension (for example `my_dem.tif`)
+- `write_fname` should remain a stem with no extension
+
+If `read_fname` includes an extension, the parser splits it internally into
+stem + extension before reconstructing the full input path.
+
+
 ---
 
 ## Where to put new code

@@ -23,11 +23,12 @@
 //
 //   read_path   — directory from which input files are read (default: ./)
 //   write_path  — directory to which output files are written (default: read_path)
-//   read_fname  — input filename prefix (no path, no extension)
+//   read_fname  — input filename (no path; may include extension, e.g. my_dem.tif)
 //   write_fname — output filename prefix (no path, no extension)
 //
-// File extensions are not parsed here. lsdtt3 uses GDAL for all raster I/O
-// and GDAL auto-detects file formats — no extension configuration is needed.
+// If read_fname includes an extension, the parser splits it internally into
+// stem + extension. lsdtt3 uses GDAL for all raster I/O, so no separate file
+// extension parameter is needed.
 //
 // Boundary conditions:
 //   boundary_conditions — a string of characters, one per boundary segment.

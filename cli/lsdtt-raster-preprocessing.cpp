@@ -110,7 +110,7 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
                 << "       lsdtt-raster-preprocessing -h   (this help)\n"
                 << "       lsdtt-raster-preprocessing -v   (version)\n"
                 << "       lsdtt-raster-preprocessing -c   (citation)\n\n"
-                << "See docs/lsdtt_architecture.md for parameter file "
+                << "See docs/lsdtt3_architecture.md for parameter file "
                    "documentation.\n";
             exit(0);
         }
@@ -247,6 +247,26 @@ int main(int argc, char* argv[])
         "GDALWarp working memory in MB.",
         "Larger values reduce source tile re-reads for large rasters. "
         "Reduce on memory-constrained systems (minimum ~64 MB)."};
+
+    // projection forcing
+    bool_default_map["force_reproject"] = false;
+    help_map["force_reproject"] = {"bool","false",
+        "Force reprojection to the recommended analysis CRS.",
+        "If true, the raster is reprojected to the recommended CRS even when "
+        "the input raster is already projected. This allows conversion from an "
+        "existing projected CRS to the preferred UTM, polar stereographic, or "
+        "Lambert Azimuthal Equal Area analysis projection."};
+
+    bool_default_map["force_resampling"] = false;
+    help_map["force_resampling"] = {"bool","false",
+        "Force a user-specified grid spacing during reprojection.",
+        "If true, forced_grid_spacing is used as the target grid spacing "
+        "instead of the automatically estimated or user-supplied grid_spacing."};
+
+    float_default_map["forced_grid_spacing"] = -1.0f;
+    help_map["forced_grid_spacing"] = {"float","-1",
+        "Target grid spacing in metres when force_resampling is true.",
+        "Must be positive when force_resampling is true. Ignored otherwise."};
 
     // --- Threshold masking ---
     float_default_map["minimum_elevation"] = 0.0f;
@@ -386,6 +406,27 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
+    if (bf["force_resampling"] && ff["forced_grid_spacing"] <= 0.0f)
+    {
+        std::cerr << "FATAL: force_resampling is true but forced_grid_spacing "
+                  << "is not positive.\n";
+        return 1;
+    }
+
+    if (bf["force_resampling"])
+    {
+        std::cout << "Force resampling enabled: using forced_grid_spacing = "
+                  << ff["forced_grid_spacing"] << " m\n";
+    }
+
+    if (bf["force_reproject"])
+    {
+        std::cout << "Force reprojection enabled: projected inputs will also "
+                  << "be warped to the recommended analysis CRS.\n";
+    }
+
+
+
     // -------------------------------------------------------------------------
     // Derived / cross-parameter logic
     //
@@ -456,12 +497,18 @@ int main(int argc, char* argv[])
 
         lsdtt::lsdtt_reproject_options proj_opts;
         proj_opts.enforce_projection       = bf["enforce_projection"];
+        proj_opts.force_reproject          = bf["force_reproject"];
         proj_opts.resampling_method        = sf["resampling_method"];
         proj_opts.grid_spacing             = static_cast<double>(ff["grid_spacing"]);
+        proj_opts.force_resampling         = bf["force_resampling"];
+        proj_opts.forced_grid_spacing      = static_cast<double>(ff["forced_grid_spacing"]);
         proj_opts.allow_lambert_projection = bf["allow_lambert_projection"];
         proj_opts.n_threads                = n_threads;
         proj_opts.warp_mem_mb              = ifs["warp_mem_mb"];
 
+
+
+        
         lsdtt::lsdtt_reproject_result proj_result;
         try
         {

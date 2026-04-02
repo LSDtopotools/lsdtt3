@@ -57,6 +57,10 @@ struct lsdtt_reproject_options
     // If false, abort (caller should exit) when the raster is not projected.
     bool enforce_projection = true;
 
+    // If true, always warp to the recommended analysis CRS even if the
+    // input raster is already projected.
+    bool force_reproject = false;
+
     // Resampling algorithm string — any value accepted by GDALWarp:
     // "near", "bilinear", "cubic", "cubicspline", "lanczos",
     // "average", "mode", "max", "min", "med", "q1", "q3", "sum"
@@ -65,6 +69,13 @@ struct lsdtt_reproject_options
     // Target grid spacing in metres.
     // ≤ 0 means infer from input pixel size (see snap_grid_spacing()).
     double grid_spacing = -1.0;
+
+    // If true, override the normal grid spacing logic and use
+    // forced_grid_spacing instead.
+    bool force_resampling = false;
+
+    // Target grid spacing in metres when force_resampling is true.
+    double forced_grid_spacing = -1.0;
 
     // If true and the raster spans ≥ 3 UTM zones, use a custom Lambert
     // Azimuthal Equal Area projection instead of UTM.
