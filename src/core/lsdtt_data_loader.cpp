@@ -41,9 +41,6 @@ static void ensure_gdal_init()
     }
 }
 
-
-
-
 // some helper functions
 namespace
 {
@@ -144,57 +141,230 @@ void set_typed_field_value(
     );
 }
 
-void validate_vector_feature_schema(
-    const std::vector<lsdtt::lsdtt_vector_feature>& features,
-    const std::string&                              where
-)
+// Build an OGRGeometry* from an lsdtt_geom. Caller takes ownership via
+// OGRFeature::SetGeometryDirectly().
+OGRGeometry* build_ogr_geometry(const lsdtt_geom& geom)
 {
-    if (features.empty())
-    {
-        return;
-    }
-
-    const auto& names0 = features[0].field_names;
-    const auto& types0 = features[0].field_types;
-    const auto& vals0  = features[0].field_values;
-
-    if (names0.size() != types0.size() || names0.size() != vals0.size())
-    {
-        throw std::runtime_error(
-            where + ": first feature has inconsistent field schema lengths"
-        );
-    }
-
-    for (std::size_t i = 1; i < features.size(); ++i)
-    {
-        const auto& feat = features[i];
-
-        if (feat.field_names.size() != feat.field_types.size() ||
-            feat.field_names.size() != feat.field_values.size())
+    return std::visit(
+        [](const auto& g) -> OGRGeometry*
         {
-            throw std::runtime_error(
-                where + ": feature has inconsistent field schema lengths"
-            );
-        }
-
-        if (feat.field_names != names0)
-        {
-            throw std::runtime_error(
-                where + ": all features in a layer must share identical field names"
-            );
-        }
-
-        if (feat.field_types != types0)
-        {
-            throw std::runtime_error(
-                where + ": all features in a layer must share identical field types"
-            );
-        }
+            using T = std::decay_t<decltype(g)>;
+ 
+            if constexpr (std::is_same_v<T, std::monostate>)
+            {
+                return nullptr;
+            }
+            else if constexpr (std::is_same_v<T, lsdtt_point_geom>)
+            {
+                return new OGRPoint(g.x, g.y);
+            }
+            else if constexpr (std::is_same_v<T, lsdtt_line_geom>)
+            {
+                OGRLineString* ls = new OGRLineString();
+                ls->setNumPoints(static_cast<int>(g.points.size()));
+                for (int i = 0; i < static_cast<int>(g.points.size()); ++i)
+                    ls->setPoint(i, g.points[i].x, g.points[i].y);
+                return ls;
+            }
+            else if constexpr (std::is_same_v<T, lsdtt_polygon_geom>)
+            {
+                OGRPolygon*    poly = new OGRPolygon();
+                OGRLinearRing* ring = new OGRLinearRing();
+                for (const auto& pt : g.exterior) ring->addPoint(pt.x, pt.y);
+                ring->closeRings();
+                poly->addRingDirectly(ring);
+                for (const auto& hole : g.holes)
+                {
+                    OGRLinearRing* hr = new OGRLinearRing();
+                    for (const auto& pt : hole) hr->addPoint(pt.x, pt.y);
+                    hr->closeRings();
+                    poly->addRingDirectly(hr);
+                }
+                return poly;
+            }
+        },
+        geom
+    );
+}
+ 
+// Read an OGRGeometry into an lsdtt_geom. Returns monostate for unsupported types.
+lsdtt_geom read_ogr_geometry(OGRGeometry* ogr_geom)
+{
+    if (!ogr_geom) return std::monostate{};
+ 
+    const OGRwkbGeometryType gt = wkbFlatten(ogr_geom->getGeometryType());
+ 
+    if (gt == wkbPoint)
+    {
+        OGRPoint* pt = static_cast<OGRPoint*>(ogr_geom);
+        return lsdtt_point_geom{ pt->getX(), pt->getY() };
     }
+ 
+    if (gt == wkbLineString)
+    {
+        OGRLineString* ls = static_cast<OGRLineString*>(ogr_geom);
+        lsdtt_line_geom lg;
+        const int n = ls->getNumPoints();
+        lg.points.reserve(n);
+        for (int i = 0; i < n; ++i)
+            lg.points.push_back({ ls->getX(i), ls->getY(i) });
+        return lg;
+    }
+ 
+    if (gt == wkbPolygon)
+    {
+        OGRPolygon* poly = static_cast<OGRPolygon*>(ogr_geom);
+        lsdtt_polygon_geom pg;
+ 
+        auto read_ring = [](const OGRLinearRing* ring)
+        {
+            std::vector<lsdtt_xy> pts;
+            const int n = ring->getNumPoints();
+            pts.reserve(n);
+            for (int i = 0; i < n; ++i)
+                pts.push_back({ ring->getX(i), ring->getY(i) });
+            return pts;
+        };
+ 
+        if (const OGRLinearRing* ext = poly->getExteriorRing())
+            pg.exterior = read_ring(ext);
+        for (int h = 0; h < poly->getNumInteriorRings(); ++h)
+            pg.holes.push_back(read_ring(poly->getInteriorRing(h)));
+ 
+        return pg;
+    }
+ 
+    return std::monostate{};  // unsupported geometry type
 }
 
 } // unnamed namespace
 
+// =============================================================================
+// vector_write_session
+//
+// Holds all state for an open vector write session. Lives inside lsdtt_data_loader
+// as a unique_ptr so GDAL types don't leak into the header.
+// =============================================================================
+struct lsdtt_data_loader::vector_write_session
+{
+    // Configuration (set at begin_vector_write)
+    std::string                out_path;
+    std::string                layer_name;
+    lsdtt_vector_schema        schema;
+    std::string                crs_wkt;
+    lsdtt_vector_output_format format;
+    bool                       spatial_index;
+ 
+    // Streaming path: dataset and layer are open throughout the session.
+    struct gdal_dataset_deleter_local
+    {
+        void operator()(GDALDataset* ds) const { if (ds) GDALClose(ds); }
+    };
+    using ds_ptr = std::unique_ptr<GDALDataset, gdal_dataset_deleter_local>;
+ 
+    ds_ptr     dataset;
+    OGRLayer*  layer = nullptr;
+ 
+    // Buffered path: accumulate records here; write all in finish().
+    lsdtt_vector_layer buffer;
+ 
+    // -----------------------------------------------------------------------
+    // Open the GDAL dataset and create the layer.
+    // -----------------------------------------------------------------------
+    void open_dataset_and_layer(OGRwkbGeometryType geom_type)
+    {
+        const char* driver_name =
+            (format == lsdtt_vector_output_format::flatgeobuf)
+                ? "FlatGeobuf"
+                : "GPKG";
+ 
+        GDALDriver* driver =
+            GetGDALDriverManager()->GetDriverByName(driver_name);
+        if (!driver)
+            throw std::runtime_error(
+                std::string("lsdtt_data_loader: driver not available: ") +
+                driver_name
+            );
+ 
+        GDALDataset* ds = nullptr;
+ 
+        if (format == lsdtt_vector_output_format::flatgeobuf)
+        {
+            // FlatGeobuf is a single-layer single-file format: always recreate.
+            VSIUnlink(out_path.c_str());
+            ds = driver->Create(out_path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        }
+        else
+        {
+            // GeoPackage: open existing file for update, or create new.
+            VSIStatBufL stat;
+            if (VSIStatL(out_path.c_str(), &stat) == 0)
+            {
+                ds = static_cast<GDALDataset*>(
+                    GDALOpenEx(
+                        out_path.c_str(),
+                        GDAL_OF_VECTOR | GDAL_OF_UPDATE,
+                        nullptr, nullptr, nullptr
+                    )
+                );
+            }
+            if (!ds)
+                ds = driver->Create(out_path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        }
+ 
+        if (!ds)
+            throw std::runtime_error(
+                "lsdtt_data_loader: could not create/open file: " + out_path
+            );
+ 
+        dataset.reset(ds);
+ 
+        // Replace an existing layer of the same name (GeoPackage only;
+        // FlatGeobuf was already unlinked above).
+        for (int i = 0; i < ds->GetLayerCount(); ++i)
+        {
+            OGRLayer* l = ds->GetLayer(i);
+            if (l && layer_name == l->GetName()) { ds->DeleteLayer(i); break; }
+        }
+ 
+        OGRSpatialReference  srs;
+        OGRSpatialReference* srs_ptr = nullptr;
+        if (!crs_wkt.empty())
+        {
+            srs.importFromWkt(crs_wkt.c_str());
+            srs_ptr = &srs;
+        }
+ 
+        // Pass SPATIAL_INDEX=NO when not requested.
+        const char* opts_no_index[]  = { "SPATIAL_INDEX=NO", nullptr };
+        const char* opts_with_index[] = { nullptr };
+        char** layer_opts = const_cast<char**>(
+            spatial_index ? opts_with_index : opts_no_index
+        );
+ 
+        layer = ds->CreateLayer(
+            layer_name.c_str(), srs_ptr, geom_type, layer_opts
+        );
+        if (!layer)
+            throw std::runtime_error(
+                "lsdtt_data_loader: could not create layer: " + layer_name
+            );
+ 
+        // Create attribute fields from schema.
+        for (std::size_t f = 0; f < schema.size(); ++f)
+        {
+            OGRFieldDefn field(
+                schema.field_names[f].c_str(),
+                to_ogr_field_type(schema.field_types[f])
+            );
+            if (layer->CreateField(&field) != OGRERR_NONE)
+                throw std::runtime_error(
+                    "lsdtt_data_loader: failed to create field: " +
+                    schema.field_names[f]
+                );
+        }
+    }
+};
 
 // -----------------------------------------------------------------------------
 // Construction / destruction
@@ -699,73 +869,55 @@ std::vector<std::string> lsdtt_data_loader::get_layer_names() const
     return names;
 }
 
-std::vector<lsdtt_vector_feature> lsdtt_data_loader::read_layer(
+lsdtt_vector_layer lsdtt_data_loader::read_vector_layer(
     const std::string& layer_name
 ) const
 {
     if (!vector_open_)
-    {
         throw std::runtime_error(
-            "lsdtt_data_loader: read_layer() called with no vector dataset open"
+            "lsdtt_data_loader: read_vector_layer() called with no vector dataset open"
         );
-    }
-
+ 
     OGRLayer* layer = vector_dataset_->GetLayerByName(layer_name.c_str());
     if (!layer)
-    {
         throw std::runtime_error(
             "lsdtt_data_loader: layer not found: " + layer_name
         );
-    }
-
-    std::vector<lsdtt_vector_feature> features;
-    layer->ResetReading();
-
+ 
+    lsdtt_vector_layer result;
+ 
+    // Build schema once from the layer definition.
     OGRFeatureDefn* defn     = layer->GetLayerDefn();
-    int             n_fields = defn->GetFieldCount();
-
+    const int       n_fields = defn->GetFieldCount();
+    result.schema.field_names.reserve(n_fields);
+    result.schema.field_types.reserve(n_fields);
+    for (int f = 0; f < n_fields; ++f)
+    {
+        OGRFieldDefn* fd = defn->GetFieldDefn(f);
+        result.schema.field_names.emplace_back(fd->GetNameRef());
+        result.schema.field_types.push_back(from_ogr_field_type(fd->GetType()));
+    }
+ 
+    // Read features.
+    layer->ResetReading();
     OGRFeature* raw_feat = nullptr;
     while ((raw_feat = layer->GetNextFeature()) != nullptr)
     {
-        lsdtt_vector_feature feat;
-
-        // Geometry as WKT
-        OGRGeometry* geom = raw_feat->GetGeometryRef();
-        if (geom)
-        {
-            char* wkt = nullptr;
-            geom->exportToWkt(&wkt);
-            feat.geometry_wkt = wkt ? wkt : "";
-            CPLFree(wkt);
-        }
-
-        // Typed fields
-        feat.field_names.reserve(n_fields);
-        feat.field_types.reserve(n_fields);
-        feat.field_values.reserve(n_fields);
-
+        lsdtt_vector_record record;
+        record.geometry = read_ogr_geometry(raw_feat->GetGeometryRef());
+ 
+        record.field_values.reserve(n_fields);
         for (int f = 0; f < n_fields; ++f)
-        {
-            OGRFieldDefn* field_defn = defn->GetFieldDefn(f);
-
-            feat.field_names.emplace_back(field_defn->GetNameRef());
-
-            const lsdtt_vector_field_type field_type =
-                from_ogr_field_type(field_defn->GetType());
-
-            feat.field_types.push_back(field_type);
-            feat.field_values.push_back(
-                get_typed_field_value(raw_feat, f, field_type)
+            record.field_values.push_back(
+                get_typed_field_value(raw_feat, f, result.schema.field_types[f])
             );
-        }
-
-        features.push_back(std::move(feat));
+ 
+        result.records.push_back(std::move(record));
         OGRFeature::DestroyFeature(raw_feat);
     }
-
-    return features;
+ 
+    return result;
 }
-
 
 void lsdtt_data_loader::close_vector()
 {
@@ -776,249 +928,190 @@ void lsdtt_data_loader::close_vector()
 // -----------------------------------------------------------------------------
 // Vector output
 // -----------------------------------------------------------------------------
-void lsdtt_data_loader::write_gpkg(
-    const std::string&                       out_path,
-    const std::string&                       layer_name,
-    const std::vector<lsdtt_vector_feature>& features,
-    const std::string&                       crs_wkt
+void lsdtt_data_loader::begin_vector_write(
+    const std::string&          out_path,
+    const std::string&          layer_name,
+    const lsdtt_vector_schema&  schema,
+    const std::string&          crs_wkt,
+    lsdtt_vector_output_format  format,
+    bool                        spatial_index
 )
 {
-    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
-    if (!driver)
-    {
+    if (write_session_)
         throw std::runtime_error(
-            "lsdtt_data_loader: GeoPackage (GPKG) driver not available"
+            "lsdtt_data_loader: begin_vector_write() called while a write "
+            "session is already active — call finish_vector_write() first"
         );
-    }
-
-    validate_vector_feature_schema(features, "lsdtt_data_loader::write_gpkg");
-
-    // Open existing or create new GPKG
-    GDALDataset* ds = nullptr;
-    VSIStatBufL stat;
-    if (VSIStatL(out_path.c_str(), &stat) == 0)
+ 
+    if (format == lsdtt_vector_output_format::gpkg)
     {
-        ds = static_cast<GDALDataset*>(
-            GDALOpenEx(out_path.c_str(), GDAL_OF_VECTOR | GDAL_OF_UPDATE,
-                       nullptr, nullptr, nullptr)
-        );
+        std::cerr << "Warning: writing to GeoPackage. "
+                  << "SQLite/GeoPackage I/O can be problematic on some "
+                  << "filesystems (e.g. WSL2 /mnt/c). "
+                  << "If writing fails, use FlatGeobuf instead.\n";
     }
-    if (!ds)
+ 
+    write_session_ = std::make_unique<vector_write_session>();
+    write_session_->out_path      = out_path;
+    write_session_->layer_name    = layer_name;
+    write_session_->schema        = schema;
+    write_session_->crs_wkt       = crs_wkt;
+    write_session_->format        = format;
+    write_session_->spatial_index = spatial_index;
+ 
+    if (!spatial_index)
     {
-        ds = driver->Create(out_path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        // Streaming path: open the file and layer immediately.
+        // We don't know the geometry type yet so use wkbUnknown — this costs
+        // a per-feature type tag in FlatGeobuf but avoids a two-pass design.
+        write_session_->open_dataset_and_layer(wkbUnknown);
     }
-    if (!ds)
-    {
-        throw std::runtime_error(
-            "lsdtt_data_loader: could not create or open GeoPackage: " + out_path
-        );
-    }
-
-    gdal_dataset_ptr ds_ptr(ds);
-
-    OGRSpatialReference srs;
-    if (!crs_wkt.empty())
-    {
-        srs.importFromWkt(crs_wkt.c_str());
-    }
-
-    int existing = -1;
-    for (int i = 0; i < ds->GetLayerCount(); ++i)
-    {
-        OGRLayer* l = ds->GetLayer(i);
-        if (l && layer_name == l->GetName())
-        {
-            existing = i;
-            break;
-        }
-    }
-    if (existing >= 0)
-    {
-        ds->DeleteLayer(existing);
-    }
-
-    OGRLayer* layer = ds->CreateLayer(
-        layer_name.c_str(),
-        crs_wkt.empty() ? nullptr : &srs,
-        wkbUnknown,
-        nullptr
-    );
-    if (!layer)
-    {
-        throw std::runtime_error(
-            "lsdtt_data_loader: could not create layer: " + layer_name
-        );
-    }
-
-    // Create typed fields from first feature
-    if (!features.empty())
-    {
-        for (std::size_t f = 0; f < features[0].field_names.size(); ++f)
-        {
-            OGRFieldDefn field(
-                features[0].field_names[f].c_str(),
-                to_ogr_field_type(features[0].field_types[f])
-            );
-
-            if (layer->CreateField(&field) != OGRERR_NONE)
-            {
-                throw std::runtime_error(
-                    "lsdtt_data_loader: failed to create field: " +
-                    features[0].field_names[f]
-                );
-            }
-        }
-    }
-
-    for (const auto& feat : features)
-    {
-        OGRFeature* ogr_feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-
-        if (!feat.geometry_wkt.empty())
-        {
-            OGRGeometry* geom = nullptr;
-            OGRGeometryFactory::createFromWkt(
-                feat.geometry_wkt.c_str(), nullptr, &geom
-            );
-            if (geom)
-            {
-                ogr_feat->SetGeometryDirectly(geom);
-            }
-        }
-
-        for (int f = 0; f < static_cast<int>(feat.field_values.size()); ++f)
-        {
-            set_typed_field_value(
-                ogr_feat,
-                f,
-                feat.field_values[static_cast<std::size_t>(f)]
-            );
-        }
-
-        if (layer->CreateFeature(ogr_feat) != OGRERR_NONE)
-        {
-            OGRFeature::DestroyFeature(ogr_feat);
-            throw std::runtime_error(
-                "lsdtt_data_loader: failed to write feature to layer: " + layer_name
-            );
-        }
-
-        OGRFeature::DestroyFeature(ogr_feat);
-    }
+    // Buffered path: defer file creation until finish_vector_write(), when
+    // we can infer the geometry type from the first buffered record.
 }
-
-
-
-
-void lsdtt_data_loader::write_flatgeobuf(
-    const std::string&                       out_path,
-    const std::string&                       layer_name,
-    const std::vector<lsdtt_vector_feature>& features,
-    const std::string&                       crs_wkt
+ 
+void lsdtt_data_loader::write_record_to_layer(
+    const lsdtt_vector_record& record,
+    void*                      ogr_layer_ptr
+) const
+{
+    OGRLayer* layer = static_cast<OGRLayer*>(ogr_layer_ptr);
+ 
+    OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+ 
+    OGRGeometry* geom = build_ogr_geometry(record.geometry);
+    if (geom) feat->SetGeometryDirectly(geom);
+ 
+    for (int f = 0; f < static_cast<int>(record.field_values.size()); ++f)
+        set_typed_field_value(feat, f, record.field_values[static_cast<std::size_t>(f)]);
+ 
+    if (layer->CreateFeature(feat) != OGRERR_NONE)
+    {
+        OGRFeature::DestroyFeature(feat);
+        throw std::runtime_error("lsdtt_data_loader: failed to write feature");
+    }
+    OGRFeature::DestroyFeature(feat);
+}
+ 
+void lsdtt_data_loader::write_point(
+    double x, double y,
+    const std::vector<lsdtt_vector_field_value>& field_values
 )
 {
-    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("FlatGeobuf");
-    if (!driver)
-    {
+    if (!write_session_)
         throw std::runtime_error(
-            "lsdtt_data_loader: FlatGeobuf driver not available"
+            "lsdtt_data_loader: write_point() called outside a write session"
         );
-    }
-
-    validate_vector_feature_schema(features, "lsdtt_data_loader::write_flatgeobuf");
-
-    VSIUnlink(out_path.c_str());
-
-    GDALDataset* ds = driver->Create(out_path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!ds)
-    {
-        throw std::runtime_error(
-            "lsdtt_data_loader: could not create FlatGeobuf file: " + out_path
-        );
-    }
-
-    gdal_dataset_ptr ds_ptr(ds);
-
-    OGRSpatialReference srs;
-    if (!crs_wkt.empty())
-    {
-        srs.importFromWkt(crs_wkt.c_str());
-    }
-
-    OGRLayer* layer = ds->CreateLayer(
-        layer_name.c_str(),
-        crs_wkt.empty() ? nullptr : &srs,
-        wkbUnknown,
-        nullptr
-    );
-
-    if (!layer)
-    {
-        throw std::runtime_error(
-            "lsdtt_data_loader: could not create FlatGeobuf layer: " + layer_name
-        );
-    }
-
-    if (!features.empty())
-    {
-        for (std::size_t f = 0; f < features[0].field_names.size(); ++f)
-        {
-            OGRFieldDefn field(
-                features[0].field_names[f].c_str(),
-                to_ogr_field_type(features[0].field_types[f])
-            );
-
-            if (layer->CreateField(&field) != OGRERR_NONE)
-            {
-                throw std::runtime_error(
-                    "lsdtt_data_loader: failed creating field '" +
-                    features[0].field_names[f] + "' in FlatGeobuf layer"
-                );
-            }
-        }
-    }
-
-    for (const auto& feat : features)
-    {
-        OGRFeature* ogr_feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-
-        if (!feat.geometry_wkt.empty())
-        {
-            OGRGeometry* geom = nullptr;
-            OGRGeometryFactory::createFromWkt(
-                feat.geometry_wkt.c_str(), nullptr, &geom
-            );
-            if (geom)
-            {
-                ogr_feat->SetGeometryDirectly(geom);
-            }
-        }
-
-        for (int f = 0; f < static_cast<int>(feat.field_values.size()); ++f)
-        {
-            set_typed_field_value(
-                ogr_feat,
-                f,
-                feat.field_values[static_cast<std::size_t>(f)]
-            );
-        }
-
-        if (layer->CreateFeature(ogr_feat) != OGRERR_NONE)
-        {
-            OGRFeature::DestroyFeature(ogr_feat);
-            throw std::runtime_error(
-                "lsdtt_data_loader: failed to write feature to FlatGeobuf"
-            );
-        }
-
-        OGRFeature::DestroyFeature(ogr_feat);
-    }
+ 
+    lsdtt_vector_record record;
+    record.geometry     = lsdtt_point_geom{ x, y };
+    record.field_values = field_values;
+ 
+    if (!write_session_->spatial_index)
+        write_record_to_layer(record, write_session_->layer);
+    else
+        write_session_->buffer.records.push_back(std::move(record));
 }
-
-
-
-
-
+ 
+void lsdtt_data_loader::write_line(
+    const std::vector<lsdtt_xy>&                 points,
+    const std::vector<lsdtt_vector_field_value>& field_values
+)
+{
+    if (!write_session_)
+        throw std::runtime_error(
+            "lsdtt_data_loader: write_line() called outside a write session"
+        );
+ 
+    lsdtt_vector_record record;
+    record.geometry     = lsdtt_line_geom{ points };
+    record.field_values = field_values;
+ 
+    if (!write_session_->spatial_index)
+        write_record_to_layer(record, write_session_->layer);
+    else
+        write_session_->buffer.records.push_back(std::move(record));
+}
+ 
+void lsdtt_data_loader::write_polygon(
+    const std::vector<lsdtt_xy>&                 exterior,
+    const std::vector<lsdtt_vector_field_value>& field_values
+)
+{
+    write_polygon(exterior, {}, field_values);
+}
+ 
+void lsdtt_data_loader::write_polygon(
+    const std::vector<lsdtt_xy>&                 exterior,
+    const std::vector<std::vector<lsdtt_xy>>&    holes,
+    const std::vector<lsdtt_vector_field_value>& field_values
+)
+{
+    if (!write_session_)
+        throw std::runtime_error(
+            "lsdtt_data_loader: write_polygon() called outside a write session"
+        );
+ 
+    lsdtt_vector_record record;
+    record.geometry     = lsdtt_polygon_geom{ exterior, holes };
+    record.field_values = field_values;
+ 
+    if (!write_session_->spatial_index)
+        write_record_to_layer(record, write_session_->layer);
+    else
+        write_session_->buffer.records.push_back(std::move(record));
+}
+ 
+void lsdtt_data_loader::finish_vector_write()
+{
+    if (!write_session_)
+        throw std::runtime_error(
+            "lsdtt_data_loader: finish_vector_write() called with no active session"
+        );
+ 
+    if (write_session_->spatial_index)
+    {
+        // Buffered path: infer geometry type from first record, open the
+        // file, then write all buffered records in one pass. GDAL builds
+        // its Hilbert R-tree spatial index over the complete dataset.
+ 
+        OGRwkbGeometryType geom_type = wkbUnknown;
+        if (!write_session_->buffer.empty())
+        {
+            const lsdtt_geom& first_geom =
+                write_session_->buffer.records[0].geometry;
+ 
+            if (std::holds_alternative<lsdtt_point_geom>(first_geom))
+                geom_type = wkbPoint;
+            else if (std::holds_alternative<lsdtt_line_geom>(first_geom))
+                geom_type = wkbLineString;
+            else if (std::holds_alternative<lsdtt_polygon_geom>(first_geom))
+                geom_type = wkbPolygon;
+        }
+ 
+        write_session_->open_dataset_and_layer(geom_type);
+ 
+        std::cout << "lsdtt_data_loader: writing "
+                  << write_session_->buffer.size()
+                  << " buffered features with spatial index...\n";
+ 
+        for (const auto& record : write_session_->buffer.records)
+            write_record_to_layer(record, write_session_->layer);
+ 
+        // Free buffer memory before closing the dataset.
+        write_session_->buffer.records.clear();
+        write_session_->buffer.records.shrink_to_fit();
+    }
+ 
+    // Close dataset (flushes to disk for both paths).
+    write_session_->dataset.reset();
+    write_session_->layer = nullptr;
+ 
+    std::cout << "lsdtt_data_loader: finished writing to "
+              << write_session_->out_path << "\n";
+ 
+    write_session_.reset();
+}
 
 // -----------------------------------------------------------------------------
 // Tabular output

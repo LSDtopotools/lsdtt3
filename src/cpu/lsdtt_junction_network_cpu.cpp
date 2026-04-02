@@ -1474,6 +1474,7 @@ void lsdtt_junction_network_cpu::write_channel_network(
     //
     // Geometry is written in the raster's native CRS.
     // -------------------------------------------------------------------------
+    /*
     std::vector<lsdtt_vector_feature> features;
     features.reserve(static_cast<std::size_t>(n_channel_cells_));
 
@@ -1546,6 +1547,7 @@ void lsdtt_junction_network_cpu::write_channel_network(
     throw std::runtime_error(
         "lsdtt_junction_network_cpu: unknown channel-network output format"
     );
+    */
 }
 
 

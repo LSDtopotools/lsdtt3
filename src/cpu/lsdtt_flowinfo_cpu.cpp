@@ -1466,36 +1466,31 @@ void lsdtt_flowinfo::print_arcmap_d8_flowdirection(
 void lsdtt_flowinfo::write_flow_lines(
     const std::string& out_path,
     lsdtt_channel_network_output_format format,
-    const std::string& layer_name
+    const std::string& layer_name,
+    bool spatial_index
 ) const
 {
     require_built();
 
-    lsdtt_data_loader loader;
-    std::vector<lsdtt_vector_feature> line_features;
-
-    if (n_valid_cells_ >= static_cast<std::int64_t>(outlets_.size()))
+    if (format == lsdtt_channel_network_output_format::csv)
     {
-        line_features.reserve(
-            static_cast<std::size_t>(
-                n_valid_cells_ - static_cast<std::int64_t>(outlets_.size())
-            )
-        );
+    throw std::runtime_error(
+        "lsdtt_flowinfo: flow-line export does not support CSV output"
+    );
     }
 
-    const std::vector<std::string> field_names =
-    {
-        "flat",
+    // Declare schema (attribute types and field names)
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "flat", 
         "row",
         "col",
-        "receiver_flat",
-        "receiver_row",
+        "receiver_flat", 
+        "receiver_row", 
         "receiver_col",
         "arcmap_d8"
     };
-
-    const std::vector<lsdtt_vector_field_type> field_types =
-    {
+    schema.field_types = {
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
@@ -1504,7 +1499,23 @@ void lsdtt_flowinfo::write_flow_lines(
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type
     };
+ 
+    // Record the output format
+    const lsdtt_vector_output_format out_format =
+        (format == lsdtt_channel_network_output_format::gpkg)
+            ? lsdtt_vector_output_format::gpkg
+            : lsdtt_vector_output_format::flatgeobuf;
+ 
+    // Get an lsdtt data loader and start a vector write session
+    // This is buffered if it needs to get a spatial index
+    // This is not buffered if it does not need to get a spatial index,
+    //      which requires a lot less memory.
+    lsdtt_data_loader loader;
+    loader.begin_vector_write(
+        out_path, layer_name, schema, meta_.crs_wkt, out_format, spatial_index
+    );
 
+    // 
     for (int row = 0; row < meta_.n_rows; ++row)
     {
         for (int col = 0; col < meta_.n_cols; ++col)
@@ -1541,51 +1552,21 @@ void lsdtt_flowinfo::write_flow_lines(
             const std::int64_t arcmap_dir =
                 arcmap_d8_code(receiver_dir_.data()[flat]);
 
-            lsdtt_vector_feature feat;
-            feat.geometry_wkt = linestring_wkt({xy, rec_xy});
-            feat.field_names  = field_names;
-            feat.field_types  = field_types;
-            feat.field_values =
-            {
-                flat,
-                static_cast<std::int64_t>(row),
-                static_cast<std::int64_t>(col),
-                rec,
-                static_cast<std::int64_t>(rec_row),
-                static_cast<std::int64_t>(rec_col),
-                arcmap_dir
-            };
-
-            line_features.push_back(std::move(feat));
+            loader.write_line(
+                { xy, rec_xy },
+                {
+                    flat,
+                    static_cast<std::int64_t>(row),
+                    static_cast<std::int64_t>(col),
+                    rec,
+                    static_cast<std::int64_t>(rec_row),
+                    static_cast<std::int64_t>(rec_col),
+                    arcmap_dir
+                }
+            );
         }
     }
-
-    std::cout << "Flow line export: built "
-              << line_features.size() << " line features.\n";
-
-    if (format == lsdtt_channel_network_output_format::csv)
-    {
-        throw std::runtime_error(
-            "lsdtt_flowinfo: flow-line export does not support csv output"
-        );
-    }
-
-    if (format == lsdtt_channel_network_output_format::gpkg)
-    {
-        std::cerr << "Warning: writing flow lines to GeoPackage. "
-                  << "SQLite/GeoPackage file I/O can be problematic on some "
-                  << "filesystems. If writing fails, try FlatGeobuf.\n";
-
-        loader.write_gpkg(out_path, layer_name, line_features, meta_.crs_wkt);
-        return;
-    }
-
-    loader.write_flatgeobuf(
-        out_path,
-        layer_name,
-        line_features,
-        meta_.crs_wkt
-    );
+    loader.finish_vector_write();
 }
 
 

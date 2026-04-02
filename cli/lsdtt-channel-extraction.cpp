@@ -506,7 +506,8 @@ int main(int argc, char* argv[])
             flow->write_flow_lines(
                 flow_lines_file,
                 flow_lines_output_format,
-                sf["flow_lines_layer_name"]
+                sf["flow_lines_layer_name"],
+                false
             );
         }
         catch (const std::exception& e)

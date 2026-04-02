@@ -40,6 +40,7 @@
 #include <ogrsf_frmts.h>
 
 #include "lsdtt_raster_meta.hpp"
+#include "../utils/lsdtt_raster_geometry.hpp"
 
 namespace lsdtt {
 
@@ -95,43 +96,127 @@ struct lsdtt_raster_tile {
 
 
 // -----------------------------------------------------------------------------
-// Vector field typing
+// vector_output_format
+//
+// Controls how output vector data is written.
+//
 // -----------------------------------------------------------------------------
+enum class lsdtt_vector_output_format
+{
+    flatgeobuf, 
+    gpkg        
+};
+
+// =============================================================================
+// Geometry value types
+//
+// lsdtt_xy is defined in lsdtt_raster_geometry.hpp already.
+// =============================================================================
+struct lsdtt_point_geom
+{
+    double x = 0.0;
+    double y = 0.0;
+};
+ 
+struct lsdtt_line_geom
+{
+    std::vector<lsdtt_xy> points;   // >= 2 elements required when writing
+};
+ 
+struct lsdtt_polygon_geom
+{
+    std::vector<lsdtt_xy>              exterior;  // outer ring
+    std::vector<std::vector<lsdtt_xy>> holes;     // inner rings (may be empty)
+};
+ 
+// std::monostate = null / no geometry
+using lsdtt_geom = std::variant<
+    std::monostate,
+    lsdtt_point_geom,
+    lsdtt_line_geom,
+    lsdtt_polygon_geom
+>;
+ 
+// =============================================================================
+// Vector attribute types
+// =============================================================================
 enum class lsdtt_vector_field_type
 {
-    string_type,
     int64_type,
-    double_type
+    double_type,
+    string_type
 };
-
-// Field values may also be null / unset.
-using lsdtt_vector_field_value =
-    std::variant<std::monostate, std::int64_t, double, std::string>;
-
-// -----------------------------------------------------------------------------
-// lsdtt_vector_feature
+ 
+// std::monostate = SQL NULL
+using lsdtt_vector_field_value = std::variant<
+    std::monostate,
+    std::int64_t,
+    double,
+    std::string
+>;
+ 
+// =============================================================================
+// lsdtt_vector_schema
 //
-// Minimal vector feature representation for passing vector data between the
-// loader and analysis code.
+// Field names and types for a layer, stored once — not per feature.
+// =============================================================================
+struct lsdtt_vector_schema
+{
+    std::vector<std::string>             field_names;
+    std::vector<lsdtt_vector_field_type> field_types;
+ 
+    std::size_t size()  const noexcept { return field_names.size(); }
+    bool        empty() const noexcept { return field_names.empty(); }
+ 
+    // Returns the index of a named field, or -1 if not found.
+    int index_of(const std::string& name) const noexcept
+    {
+        for (std::size_t i = 0; i < field_names.size(); ++i)
+            if (field_names[i] == name) return static_cast<int>(i);
+        return -1;
+    }
+};
+ 
+// =============================================================================
+// lsdtt_vector_record
 //
-// Geometry is stored as WKT.
-// Attributes are stored as parallel arrays:
-//
-//   field_names   — field names
-//   field_types   — declared field types
-//   field_values  — typed values; may contain std::monostate for null
-//
-// The three vectors must have identical length.
-// For writing, all features in a layer must share the same field schema
-// (same names in same order, same types in same order).
-// -----------------------------------------------------------------------------
-struct lsdtt_vector_feature {
-    std::string                           geometry_wkt;
-    std::vector<std::string>              field_names;
-    std::vector<lsdtt_vector_field_type>  field_types;
+// One feature: geometry + positional attribute values matching a schema.
+// =============================================================================
+struct lsdtt_vector_record
+{
+    lsdtt_geom                            geometry;
     std::vector<lsdtt_vector_field_value> field_values;
 };
-
+ 
+// =============================================================================
+// lsdtt_vector_layer
+//
+// A complete in-memory layer: schema stored once, then records.
+// Used as the return type for read_vector_layer() and as the buffer
+// for spatial-index writes.
+// =============================================================================
+struct lsdtt_vector_layer
+{
+    lsdtt_vector_schema              schema;
+    std::vector<lsdtt_vector_record> records;
+ 
+    std::size_t size()  const noexcept { return records.size(); }
+    bool        empty() const noexcept { return records.empty(); }
+ 
+    // Typed geometry accessors — throw std::bad_variant_access if wrong type.
+    static lsdtt_point_geom   as_point(const lsdtt_vector_record& r)
+    {
+        return std::get<lsdtt_point_geom>(r.geometry);
+    }
+    static lsdtt_line_geom    as_line(const lsdtt_vector_record& r)
+    {
+        return std::get<lsdtt_line_geom>(r.geometry);
+    }
+    static lsdtt_polygon_geom as_polygon(const lsdtt_vector_record& r)
+    {
+        return std::get<lsdtt_polygon_geom>(r.geometry);
+    }
+};
 
 // -----------------------------------------------------------------------------
 // raster_output_format
@@ -316,18 +401,28 @@ public:
     // Return the names of all layers in the open vector dataset.
     std::vector<std::string> get_layer_names() const;
 
-    // Read all features from a named layer.
-    // Geometries are returned as WKT strings; attributes as string-serialised
-    // field values.
-    std::vector<lsdtt_vector_feature> read_layer(
+    // Read a vector layer. This is loaded in as an lsdtt_vector_layer,
+    // which contains the schema (attribute table names and field types) and
+    // the indiviudal features (including geometry and attribute values).
+    [[nodiscard]] lsdtt_vector_layer read_vector_layer(
         const std::string& layer_name
     ) const;
-
+ 
     // Close the open vector dataset.
     void close_vector();
 
-    // -------------------------------------------------------------------------
-    // Vector output (OGR)
+    // -----------------------------------------------------------------------
+    // Vector output — session interface
+    //
+    // 1. Call begin_vector_write() to open the file and declare the schema.
+    // 2. Call write_point / write_line / write_polygon for each feature.
+    // 3. Call finish_vector_write() to flush and close.
+    //
+    // spatial_index = false  →  streaming, no index (low memory)
+    // spatial_index = true   →  buffer all features, then write with GDAL
+    //                           spatial index (higher memory, but will the 
+    //                           index speeds up spatial queries when post-
+    //                           processing in a GIS system.
     //
     // LSDTopoTools2 (the legacy codebase) printed data to csv and geojson
     //  geojson has been retired as it was only implemented to be GIS readable
@@ -336,6 +431,7 @@ public:
     //  formats in the future (because of storage)
     //
     // The two binary formats available are GeoPackage (.gpkg) and FlatGeobuf. 
+    //  The formats are passed on to the vector write through the format parameter.
     //  GeoPackage are backed by a full sqlite database and are a richer data format
     //  but they are slower to load and sometimes have write issues (for example, 
     //  this will fail if you are running in WSL2 and trying to write
@@ -343,19 +439,40 @@ public:
     //  For this reason the FlatGeobuf is preferred. The FlatGeobuf can only hold one
     //  layer, you cannot combine point and polylines in the same file, for example. 
     // -------------------------------------------------------------------------
-
-    // Write a set of features to a GeoPackage layer.
-    //
-    //   out_path     — output .gpkg file path (created if it does not exist)
-    //   layer_name   — name of the layer to create or replace
-    //   features     — features to write
-    //   crs_wkt      — coordinate reference system as WKT
-    void write_gpkg(
-        const std::string&                    out_path,
-        const std::string&                    layer_name,
-        const std::vector<lsdtt_vector_feature>& features,
-        const std::string&                    crs_wkt
+    void begin_vector_write(
+        const std::string&          out_path,
+        const std::string&          layer_name,
+        const lsdtt_vector_schema&  schema,
+        const std::string&          crs_wkt,
+        lsdtt_vector_output_format  format,
+        bool                        spatial_index = false
     );
+ 
+    void write_point(
+        double x, double y,
+        const std::vector<lsdtt_vector_field_value>& field_values
+    );
+ 
+    void write_line(
+        const std::vector<lsdtt_xy>&                 points,
+        const std::vector<lsdtt_vector_field_value>& field_values
+    );
+ 
+    void write_polygon(
+        const std::vector<lsdtt_xy>&                 exterior,
+        const std::vector<lsdtt_vector_field_value>& field_values
+    );
+ 
+    void write_polygon(
+        const std::vector<lsdtt_xy>&                 exterior,
+        const std::vector<std::vector<lsdtt_xy>>&    holes,
+        const std::vector<lsdtt_vector_field_value>& field_values
+    );
+ 
+    // Flush and close the active write session. Must be called after all
+    // write_* calls. For the buffered path this triggers the GDAL write that
+    // includes spatial index.
+    void finish_vector_write();
 
     // -------------------------------------------------------------------------
     // Tabular output (CSV)
@@ -372,20 +489,6 @@ public:
         const std::vector<std::vector<std::string>>& rows
     );
 
-    // Write a set of features to a FlatGeobuf layer.
-    //
-    //   out_path     — output .gpkg file path (created if it does not exist)
-    //   layer_name   — name of the layer to create or replace
-    //   features     — features to write
-    //   crs_wkt      — coordinate reference system as WKT    
-    void write_flatgeobuf(
-        const std::string&                    out_path,
-        const std::string&                    layer_name,
-        const std::vector<lsdtt_vector_feature>& features,
-        const std::string&                    crs_wkt
-    );
-
-    
     // -------------------------------------------------------------------------
     // Utility
     // -------------------------------------------------------------------------
@@ -433,10 +536,22 @@ private:
     // Whether a vector dataset is currently open
     bool              vector_open_ = false;
 
+    // The state of a vector write sessoin
+    struct vector_write_session;
+    std::unique_ptr<vector_write_session> write_session_;
+
     // Internal helpers
     void              read_meta_from_dataset();
     lsdtt_tile_window   clamp_window_to_raster(const lsdtt_tile_window& win) const;
     void              add_cog_overviews(GDALDataset* ds);
+
+    // Write a single lsdtt_vector_record to an already-open OGRLayer.
+    // Used by both the streaming path (one at a time) and the buffered
+    // path (bulk write in finish_vector_write).
+    void write_record_to_layer(
+        const lsdtt_vector_record& record,
+        void*                      ogr_layer  // OGRLayer* — opaque to avoid
+    ) const;                                  // GDAL headers leaking into .hpp
 };
 
 } // namespace lsdtt
