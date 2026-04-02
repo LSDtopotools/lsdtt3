@@ -9,9 +9,10 @@
 // -----------------------------------------------------------------------------
 // Implementation of build_depression_hierarchy() and write_label_raster().
 //
-// Algorithm: Barnes et al. 2021 ("A Universal System for Geomorphological
-// Terrain Description"). Ported from Richard Barnes's RichDEM:
-//   richdem/include/richdem/depressions/depression_hierarchy.hpp
+// Implements Richard Barnes's depression hierarchy algorithm (Barnes et al.
+// 2020, "Computing water flow through complex landscapes - Part 2: Finding 
+// hierarchies in depressions and morphological segmentations, 
+// https://doi.org/10.5194/esurf-8-431-2020).
 //
 // See the header for the full list of adaptations.
 // -----------------------------------------------------------------------------

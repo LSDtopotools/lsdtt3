@@ -10,7 +10,10 @@
 // Depression hierarchy for CPU analysis.
 //
 // Implements Richard Barnes's depression hierarchy algorithm (Barnes et al.
-// 2021, "A Universal System for Geomorphological Terrain Description").
+// 2020, "Computing water flow through complex landscapes - Part 2: Finding 
+// hierarchies in depressions and morphological segmentations, 
+// https://doi.org/10.5194/esurf-8-431-2020).
+//
 // Ported from:
 //   richdem/include/richdem/depressions/depression_hierarchy.hpp
 //   https://github.com/r-barnes/richdem
