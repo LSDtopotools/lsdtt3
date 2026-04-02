@@ -110,8 +110,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_crs_suggest.cpp
     src/core/lsdtt_raster_reproject.cpp
     src/core/lsdtt_vector_utils.cpp
-
-
+    src/core/lsdtt_raster_warp.cpp
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
