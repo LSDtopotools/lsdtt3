@@ -190,9 +190,9 @@ public:
     // -------------------------------------------------------------------------
     virtual void write_flow_lines(
         const std::string& out_path,
-        lsdtt_channel_network_output_format format =
-            lsdtt_channel_network_output_format::flatgeobuf,
-        const std::string& layer_name = "flow_lines"
+        vector_output_format format,
+        const std::string& layer_name = "flow_lines",
+        bool spatial_index = true
     ) const = 0;
 
     virtual void print_arcmap_d8_flowdirection(

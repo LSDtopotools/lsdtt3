@@ -133,72 +133,6 @@ static std::string out_path(
     return pp.get_full_write_path() + suffix + extension;
 }
 
-// -----------------------------------------------------------------------------
-// resolve_channel_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::lsdtt_channel_network_output_format resolve_channel_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "csv")
-    {
-        return lsdtt::lsdtt_channel_network_output_format::csv;
-    }
-    if (fmt_str == "gpkg")
-    {
-        return lsdtt::lsdtt_channel_network_output_format::gpkg;
-    }
-    if (fmt_str == "flatgeobuf" || fmt_str == "fgb")
-    {
-        return lsdtt::lsdtt_channel_network_output_format::flatgeobuf;
-    }
-
-    std::cerr << "Warning: unknown channel_network_output_format '"
-              << fmt_str << "' — defaulting to gpkg.\n";
-
-    return lsdtt::lsdtt_channel_network_output_format::gpkg;
-}
-
-// -----------------------------------------------------------------------------
-// output_extension
-// -----------------------------------------------------------------------------
-static std::string output_extension(
-    lsdtt::lsdtt_channel_network_output_format fmt)
-{
-    if (fmt == lsdtt::lsdtt_channel_network_output_format::csv)
-    {
-        return ".csv";
-    }
-    if (fmt == lsdtt::lsdtt_channel_network_output_format::flatgeobuf)
-    {
-        return ".fgb";
-    }
-    return ".gpkg";
-}
-
-// -----------------------------------------------------------------------------
-// resolve_raster_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::raster_output_format resolve_raster_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "gtiff")
-    {
-        return lsdtt::raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return lsdtt::raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown flow_direction_output_format '"
-                  << fmt_str << "' — defaulting to cog.\n";
-    }
-    return lsdtt::raster_output_format::cog;
-}
-
-
-
 // =============================================================================
 // main
 // =============================================================================
@@ -268,19 +202,56 @@ int main(int argc, char* argv[])
         "Channel heads are extracted from the flow-routing object using a "
         "contributing-pixel threshold. Reduce this value to extract denser networks."};
 
-    // --- Output ---
-    string_default_map["channel_network_output_format"] = "gpkg";
+    // --- Output --- general
+    bool_default_map["calculate_spatial_index"] = true;
+    help_map["calculate_spatial_index"] = {"bool", "true",
+        "Whether or not to calculate a spatial index for vector data writes.",
+        "A spatial index helps a GIS to speed up spatial queries, so it is often "
+        "helpful to have a spatial index calculated. But calculating this requires "
+        "the entire vector layer to sit in memory, preventing feature-by-feature "
+        "writes and adding a lot of overhead. In some cases (e.g. large datasets) it "
+        "may therefore be preferred to generate vectors without spatial index - "
+        "these can always be calculated later on using e.g. gdal."
+    };
+
+    // --- Output --- channel network points
+    bool_default_map["write_channel_network_points"] = false;
+    help_map["write_channel_network"] = {"bool", "false",
+        "Write the channel network as point data, where each channel pixel "
+        "is a feature with attribute values, such as drainage_area.",
+        "Compared to write_channel_network_lines, this write will be larger "
+        "because there are more features, but it does record the drainage "
+        "area at each channel pixel."
+    };
+
+    string_default_map["channel_network_points_output_format"] = "flatgeobuf";
     help_map["channel_network_output_format"] = {"string","gpkg",
         "Output format for the exported channel network.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "
         "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
 
-    string_default_map["channel_layer_name"] = "channel_network";
-    help_map["channel_layer_name"] = {"string","channel_network",
-        "Layer name for vector output.",
-        "Used only for vector formats such as GeoPackage and FlatGeobuf."};
+    // --- Output --- channel network lines
+    bool_default_map["write_channel_network_lines"] = false;
+    help_map["write_channel_network_lines"] = {"bool", "false",
+        "Write the channel network as vector lines, where each channel "
+        "link (defined between source or upstream junction and outlet or "
+        "downstream junction) is a feature.",
+        "Does not support csv writes, only gpkg and flatgeobuf/fgb. "
+        "Compared to write_channel_network as points, the lines filesize "
+        "will be smaller (there are fewer features), at the cost of not "
+        "recording drainage area at each channel pixel."
+    };
 
+    string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
+    help_map["channel_network_lines_output_format"] = {"string", "flatgeobuf",
+        "Output format for D8 flow-line visualisation.",
+        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
+        "GeoPackage may have file I/O issues on some filesystems."
+        "CSV is not allowed for channel network lines."
+    };
+
+    // --- Output --- flow lines
     bool_default_map["write_flow_lines"] = false;
     help_map["write_flow_lines"] = {"bool","false",
         "Write D8 receiver links as a vector line layer.",
@@ -293,11 +264,7 @@ int main(int argc, char* argv[])
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
         "GeoPackage may have file I/O issues on some filesystems."};
 
-    string_default_map["flow_lines_layer_name"] = "flow_lines";
-    help_map["flow_lines_layer_name"] = {"string","flow_lines",
-        "Layer name for D8 flow-line visualisation output.",
-        "Used for vector outputs such as FlatGeobuf and GeoPackage."};
-
+    // --- Output --- flow direction raster
     bool_default_map["write_arcmap_d8_flowdirection_raster"] = false;
     help_map["write_arcmap_d8_flowdirection_raster"] = {"bool","false",
         "Write a D8 flow-direction raster using ArcMap conventions.",
@@ -330,19 +297,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    lsdtt::lsdtt_channel_network_output_format output_format =
-        resolve_channel_output_format(sf["channel_network_output_format"]);
+    lsdtt::point_output_format cn_points_output_format =
+        lsdtt::resolve_point_output_format(sf["channel_network_points_output_format"]);
 
-    lsdtt::lsdtt_channel_network_output_format flow_lines_output_format =
-        resolve_channel_output_format(sf["flow_lines_output_format"]);
+    lsdtt::vector_output_format cn_lines_output_format =
+        lsdtt::resolve_vector_output_format(sf["channel_network_lines_output_format"]);
+
+    lsdtt::vector_output_format flow_lines_output_format =
+        lsdtt::resolve_vector_output_format(sf["flow_lines_output_format"]);
 
     lsdtt::raster_output_format flow_direction_output_format =
-        resolve_raster_output_format(sf["flow_direction_output_format"]);
-
-    std::string extension = output_extension(output_format);
-
-    std::cout << "Channel network output format: "
-              << sf["channel_network_output_format"] << "\n";
+        lsdtt::resolve_raster_output_format(sf["flow_direction_output_format"]);
 
     if (bf["write_flow_lines"])
     {
@@ -484,17 +449,16 @@ int main(int argc, char* argv[])
     if (bf["write_flow_lines"])
     {
         const std::string flow_lines_extension =
-            output_extension(flow_lines_output_format);
+            lsdtt::output_extension(flow_lines_output_format);
 
         const std::string flow_lines_file =
             out_path(pp, "_flow_lines", flow_lines_extension);
 
         std::cout << "\n--- Writing flow lines ---\n";
-        std::cout << "Layer name: " << sf["flow_lines_layer_name"] << "\n";
         std::cout << "Writing: " << flow_lines_file << "\n";
 
         if (flow_lines_output_format ==
-            lsdtt::lsdtt_channel_network_output_format::gpkg)
+            lsdtt::vector_output_format::gpkg)
         {
             std::cerr << "Warning: flow-line output to GeoPackage may suffer "
                       << "file I/O issues on some filesystems. If writing "
@@ -506,7 +470,8 @@ int main(int argc, char* argv[])
             flow->write_flow_lines(
                 flow_lines_file,
                 flow_lines_output_format,
-                sf["flow_lines_layer_name"]
+                "flow_lines",
+                bf["calculate_spatial_index"]
             );
         }
         catch (const std::exception& e)
@@ -590,25 +555,54 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 5 — Write channel network
     // -------------------------------------------------------------------------
-    std::cout << "\n--- Writing channel network ---\n";
-    std::cout << "Layer name: " << sf["channel_layer_name"] << "\n";
-
-    std::string output_file = out_path(pp, "_channel_network", extension);
-    std::cout << "Writing: " << output_file << "\n";
-
-    try
+    if(bf["write_channel_network_points"])
     {
-        channel_network.write_channel_network(
-            output_file,
-            output_format,
-            sf["channel_layer_name"]
-        );
+        std::cout << "\n--- Writing channel network ---\n";
+        const std::string extension =
+            lsdtt::output_extension(cn_points_output_format);
+        std::string output_file = out_path(pp, "_channel_network_points", extension);
+        std::cout << "Writing: " << output_file << "\n";
+
+        try
+        {
+            channel_network.write_channel_network_points(
+                output_file,
+                cn_points_output_format,
+                "channel_network_points",
+                bf["calculate_spatial_index"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing channel network points failed: "
+                    << e.what() << "\n";
+            return 1;
+        }
     }
-    catch (const std::exception& e)
+
+    if(bf["write_channel_network_lines"])
     {
-        std::cerr << "FATAL: writing channel network failed: "
-                  << e.what() << "\n";
-        return 1;
+        std::cout << "\n--- Writing channel network lines ---\n";
+        const std::string extension =
+            lsdtt::output_extension(cn_points_output_format);
+        std::string output_file = out_path(pp, "_channel_network_lines", extension);
+        std::cout << "Writing: " << output_file << "\n";
+
+        try
+        {
+            channel_network.write_channel_network_lines(
+                output_file,
+                cn_lines_output_format,
+                "channel_network_lines",
+                bf["calculate_spatial_index"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing channel network lines failed: "
+                    << e.what() << "\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------

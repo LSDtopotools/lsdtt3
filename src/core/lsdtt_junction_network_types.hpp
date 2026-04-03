@@ -82,17 +82,4 @@ struct lsdtt_junction_network_options
     bool build_s_vector          = true;
 };
 
-
-// -----------------------------------------------------------------------------
-// lsdtt_channel_network_output_format
-// -----------------------------------------------------------------------------
-enum class lsdtt_channel_network_output_format
-{
-    csv,
-    gpkg,
-    flatgeobuf
-};
-
-
-
 } // namespace lsdtt

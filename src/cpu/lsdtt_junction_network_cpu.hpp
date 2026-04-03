@@ -218,12 +218,38 @@ public:
     }
 
 
-    // channel network printing
-    void write_channel_network(
+    // -------------------------------------------------------------------------
+    // Channel network writing
+    // -------------------------------------------------------------------------
+    
+    // This version writes point data, with each point having attributes:
+    // flat,row,col,stream_order,drainage_area
+    // Pros of writing points: data for each pixel, so better representation of
+    //  drainage area patterns.
+    // Cons of writing points: larger file sizes, no topology shown between 
+    //  points. 
+    void write_channel_network_points(
         const std::string& out_path,
-        lsdtt_channel_network_output_format format,
-        const std::string& layer_name = "channel_network"
+        point_output_format format,
+        const std::string& layer_name = "channel_network_points",
+        bool spatial_index = true
     ) const;
+
+
+    // This version writes line data, with each channel link having attributes:
+    // junction_upstream,junction_downstram,stream_order,length,drainage_area
+    // Pros of writing lines: see topologic links easily, smaller file (fewer 
+    //  features so fewer attribute values to be recorded)
+    // Cons of writing lines: drainage area is not stored per pixel. No csv 
+    //  support. For each link, drainage_area corresponds to that at the 
+    //  upstream junction.
+    void write_channel_network_lines(
+        const std::string& out_path,
+        vector_output_format format,
+        const std::string& layer_name = "channel_network_lines",
+        bool spatial_index = true
+    ) const;
+
 
 
 

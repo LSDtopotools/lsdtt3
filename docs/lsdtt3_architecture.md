@@ -459,16 +459,14 @@ Supported vector outputs are:
 - FlatGeobuf (`.fgb`)
 - CSV
 
-Vector features use:
-- WKT geometry
-- typed attribute fields
-- GDAL/OGR layer creation and feature writing
+lsdtt3 holds vector layers in memory using an `lsdtt_vector_layer` structure, which contains:
+- an `lsdtt_vector_schema` structure to hold attribute field names and types
+- a number of features, each stored as an `lsdtt_vector_record`. Records contain an `lsdtt_geom` geometry (which can be point, line or polygon) and a vector of attribute table values for that feature.
 
-Typical vector-writing methods include:
-- `write_gpkg(...)`
-- `write_flatgeobuf(...)`
-- `write_csv(...)`
-- `read_layer(...)`
+The `loader` object in `lsdtt_data_loader.hpp/cpp` manages vector writes, using:
+- `begin_vector_write(...)` to start a writing session, takes parameters for paths, layer names, the schema, the crs, the format (gpkg/flatgeobuf) and whether or not to write a spatial index. Including the spatial index makes loading data and spatial queries faster in a GIS, but to calculate the (optional) spatial index, the entire vector layer needs to sit in memory (no feature-by-feature writing) which results in large overheads when writing large vector datasets.
+- `write_point/line/polygon(..)` write individual features, which are streamed if no spatial index required and buffered in memory if spatial index required.
+- `finish_vector_write()` closes the writing session, and calculates the spatial index if required.
 
 GeoPackage and FlatGeobuf are written through GDAL/OGR; no direct SQLite coding
 is required in `lsdtt3`.
@@ -533,7 +531,7 @@ in **EPSG:4326**, using GDAL/OGR coordinate transformation from the source CRS.
 
 - **`src/core/lsdtt_vector_utils.hpp/.cpp`**  
   GDAL/OGR-backed vector/projection helpers such as reusable coordinate
-  transformations and simple WKT generation
+  transformations
 
 ---
 

@@ -67,6 +67,8 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
+#include "../src/cpu/lsdtt_depression_hierarchy_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -359,19 +361,44 @@ int main(int argc, char* argv[])
     bool_default_map["write_fill_diff_raster"] = false;
     help_map["write_fill_diff_raster"] = {"bool","false",
         "Write the difference raster: filled minus original.",
-        "Positive values show where filling raised the surface."};
+        "Positive values show where filling raised the surface."
+        "If fill_agorithm_choice is barnesetal2021, this represents"
+        " the water depth standing in topographic depressions."};
 
     string_default_map["fill_algorithm_choice"] = "barnes2014";
     help_map["fill_algorithm_choice"] = {"string","barnes2014",
         "Algorithm for pit filling.",
-        "barnes2014: Improved Priority-Flood (Barnes et al. 2014, recommended). "
-        "wang_liu: original Wang and Liu (2006)."};
+        "barnes2014: Improved Priority-Flood (Barnes et al. 2014). "
+        "barnesetal2021: The fill-spill-merge algorithm (note this intentionally"
+        " does not guarantee that all depressions are filled, see" 
+        " https://doi.org/10.5194/esurf-9-105-2021)."};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum gradient imposed between adjacent filled cells.",
         "Prevents flat regions that cause ambiguous flow direction. "
-        "Increase slightly for very coarse DEMs."};
+        "Increase slightly for very coarse DEMs."
+        "This does not apply to fill-spill-merge."};
+
+    float_default_map["fill_spill_merge_rainfall_rate"] = 0.1f;
+    help_map["fill_spill_merge_rainfall_depth"] = {"float", "0.1",
+        "Uniform rainfall depth in elevation units per cell for "
+        "fill-spill-merge flow routing (Barnes et al., 2021).",
+        "Spatial patterns in rainfall to route into and over "
+        "depressions are not currently supported."    
+    };
+
+    string_default_map["fsm_boundary_conditions"] = "oooo";
+    help_map["fsm_boundary_conditions"] = {"string","oooo",
+        "Boundary conditions for the depression hierarchy (north east south west).",
+        "Four characters, one per edge: "
+        "o = open (cells on this edge drain freely to the ocean, default). "
+        "b = forced baselevel outlet (same as o for hierarchy purposes). "
+        "n = no-flux (edge is NOT an ocean boundary). "
+        "p = periodic (edge wraps; NOT an ocean boundary). "
+        "Example: oooo = all four edges are open ocean (typical for a DEM tile). "
+        "Example: nnnn = closed basin (no edge is ocean; requires interior pits)."};
+ 
 
     // --- Hillshade ---
     bool_default_map["write_hillshade_raster"] = false;
@@ -441,6 +468,12 @@ int main(int argc, char* argv[])
         // to feed into the fill step.
         bf["write_breached_raster"] = bf["write_breached_raster"] || false;
     }
+
+    if (bf["write_fsm_water_depth_raster"])
+    {
+        bf["write_fsm_raster"] = true;
+    }
+ 
 
     int n_threads = ifs["n_threads"];
 
@@ -722,30 +755,63 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu filled_dem = working_dem;
     bool did_fill = false;
 
-    if (bf["write_fill_raster"] || bf["write_fill_diff_raster"] ||
-        bf["write_hillshade_raster"])
+    if (bf["write_fill_raster"] || bf["write_fill_diff_raster"])
     {
         std::cout << "\n--- Pit filling ---\n";
         std::string algo = sf["fill_algorithm_choice"];
 
         try
         {
-            if (algo == "wang_liu")
-            {
-                std::cout << "Algorithm: Wang and Liu (2006)  "
-                             "[note: routed through Barnes 2014]\n";
-            }
-            else
+            if (algo == "barnes2014")
             {
                 std::cout << "Algorithm: Barnes et al. (2014) "
                              "Priority-Flood\n";
-            }
 
-            filled_dem = lsdtt::fill_pits(
-                working_dem,
-                ff["fill_min_slope"],
-                n_threads
-            );
+                filled_dem = lsdtt::fill_pits(
+                    working_dem,
+                    ff["fill_min_slope"],
+                    n_threads
+                );
+            }
+            else if (algo == "barnesetal2021"){
+                std::cout << "Algorithm: Barnes et al. (2021), "
+                             "https://doi.org/10.5194/esurf-9-105-2021: "
+                             "Fill-Spill-Merge\n";
+
+                lsdtt::depression_hierarchy_options dh_opts;
+                dh_opts.boundary_conditions = sf["fsm_boundary_conditions"];
+    
+                std::vector<lsdtt::dep_label_t> fsm_label;
+                std::vector<uint8_t>            fsm_flowdir;
+    
+                std::cout << "I will first build the depression hierarchy "
+                             "following Barnes et al. (2020), "
+                             "https://doi.org/10.5194/esurf-8-431-2020, using "
+                             "boundary conditions: " 
+                             << sf["fsm_boundary_conditions"] << "\n";
+    
+                lsdtt::lsdtt_depression_hierarchy dh = lsdtt::build_depression_hierarchy(
+                    working_dem, fsm_label, fsm_flowdir, dh_opts
+                );
+                
+                std::cout << "I am now going to Fill-Spill-Merge this depression "
+                            "hierarchy using a uniform rainfall rate of: "
+                             << ff["fill_spill_merge_rainfall_rate"] << "\n";
+ 
+                filled_dem = lsdtt::fsm_filled_dem(
+                    working_dem, fsm_label, fsm_flowdir, dh,
+                    ff["fill_spill_merge_rainfall_rate"]
+                );
+
+            }
+            else {
+                std::cout << "Warning: no correct fill_algorithm choice supplied, "
+                          << "choose one of: \n"
+                          << "barnes2014, barnesetal2021 \n"
+                          << "I will now simply take the non-filled dem as filled dem. \n";
+
+                filled_dem = working_dem;
+            }
 
             if (bf["write_fill_raster"])
             {
@@ -783,7 +849,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 7 — Hillshade
+    // Step 8 — Hillshade
     // -------------------------------------------------------------------------
     if (bf["write_hillshade_raster"])
     {
