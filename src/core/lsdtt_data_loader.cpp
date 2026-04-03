@@ -239,6 +239,90 @@ lsdtt_geom read_ogr_geometry(OGRGeometry* ogr_geom)
 
 } // unnamed namespace
 
+
+
+// =============================================================================
+// Resolving output formats 
+// =============================================================================
+vector_output_format resolve_vector_output_format(
+    const std::string& fmt_str)
+{
+    if (fmt_str == "gpkg")
+    {
+        return vector_output_format::gpkg;
+    }
+    if (fmt_str == "flatgeobuf" || fmt_str == "fgb")
+    {
+        return vector_output_format::flatgeobuf;
+    }
+    std::cerr << "Warning: unknown vector_output_format '"
+              << fmt_str << "' — defaulting to flatgeobuf.\n";
+
+    return vector_output_format::flatgeobuf;
+}
+
+point_output_format resolve_point_output_format(
+    const std::string& fmt_str)
+{
+    if (fmt_str == "csv")
+    {
+        return point_output_format::csv;
+    }
+    if (fmt_str == "gpkg")
+    {
+        return point_output_format::gpkg;
+    }
+    if (fmt_str == "flatgeobuf" || fmt_str == "fgb")
+    {
+        return point_output_format::flatgeobuf;
+    }
+    std::cerr << "Warning: unknown vector_output_format '"
+              << fmt_str << "' — defaulting to flatgeobuf.\n";
+
+    return point_output_format::flatgeobuf;
+}
+
+vector_output_format convert_point_to_vector_output_format(
+    const point_output_format& format)
+{
+   
+    if (format == point_output_format::gpkg)
+    {
+        return vector_output_format::gpkg;
+    }
+    if (format == point_output_format::flatgeobuf)
+    {
+        return vector_output_format::flatgeobuf;
+    }
+    
+    std::cerr << "Warning: cannot convert point_output_format "
+                 "to vector_output_format — defaulting to flatgeobuf.\n";
+    return vector_output_format::flatgeobuf;
+}
+
+raster_output_format resolve_raster_output_format(
+    const std::string& fmt_str)
+{
+    if (fmt_str == "cog")
+    {
+        return raster_output_format::cog;
+    }
+    if (fmt_str == "gtiff")
+    {
+        return raster_output_format::gtiff;
+    }
+    if (fmt_str == "same_as_input")
+    {
+        return raster_output_format::same_as_input;
+    }
+    if (fmt_str != "cog")
+    {
+        std::cerr << "Warning: unknown raster_output_format"
+                  << fmt_str << "' — defaulting to cog.\n";
+    }
+    return raster_output_format::cog;
+}
+
 // =============================================================================
 // vector_write_session
 //
@@ -252,7 +336,7 @@ struct lsdtt_data_loader::vector_write_session
     std::string                layer_name;
     lsdtt_vector_schema        schema;
     std::string                crs_wkt;
-    lsdtt_vector_output_format format;
+    vector_output_format format;
     bool                       spatial_index;
  
     // Streaming path: dataset and layer are open throughout the session.
@@ -274,7 +358,7 @@ struct lsdtt_data_loader::vector_write_session
     void open_dataset_and_layer(OGRwkbGeometryType geom_type)
     {
         const char* driver_name =
-            (format == lsdtt_vector_output_format::flatgeobuf)
+            (format == vector_output_format::flatgeobuf)
                 ? "FlatGeobuf"
                 : "GPKG";
  
@@ -288,7 +372,7 @@ struct lsdtt_data_loader::vector_write_session
  
         GDALDataset* ds = nullptr;
  
-        if (format == lsdtt_vector_output_format::flatgeobuf)
+        if (format == vector_output_format::flatgeobuf)
         {
             // FlatGeobuf is a single-layer single-file format: always recreate.
             VSIUnlink(out_path.c_str());
@@ -368,7 +452,7 @@ struct lsdtt_data_loader::vector_write_session
         // all feature inserts are batched into a single SQLite commit.
         // (For the buffered path the transaction is opened in finish_vector_write
         // immediately before the bulk insert loop.)
-        if (format == lsdtt_vector_output_format::gpkg && !spatial_index)
+        if (format == vector_output_format::gpkg && !spatial_index)
         {
             if (layer->StartTransaction() != OGRERR_NONE)
                 throw std::runtime_error(
@@ -947,7 +1031,7 @@ void lsdtt_data_loader::begin_vector_write(
     const std::string&          layer_name,
     const lsdtt_vector_schema&  schema,
     const std::string&          crs_wkt,
-    lsdtt_vector_output_format  format,
+    vector_output_format  format,
     bool                        spatial_index
 )
 {
@@ -957,7 +1041,7 @@ void lsdtt_data_loader::begin_vector_write(
             "session is already active — call finish_vector_write() first"
         );
  
-    if (format == lsdtt_vector_output_format::gpkg)
+    if (format == vector_output_format::gpkg)
     {
         std::cerr << "Warning: writing to GeoPackage. "
                   << "SQLite/GeoPackage I/O can be problematic on some "
@@ -1128,7 +1212,7 @@ void lsdtt_data_loader::finish_vector_write()
         write_session_->buffer.records.clear();
         write_session_->buffer.records.shrink_to_fit();
     }
-    else if (write_session_->format == lsdtt_vector_output_format::gpkg)
+    else if (write_session_->format == vector_output_format::gpkg)
     {
         // Streaming path, GeoPackage: commit the transaction opened in
         // open_dataset_and_layer().

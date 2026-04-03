@@ -97,16 +97,54 @@ struct lsdtt_raster_tile {
 
 // -----------------------------------------------------------------------------
 // vector_output_format
-//
-// Controls how output vector data is written.
-//
+// point_output_format
 // -----------------------------------------------------------------------------
-enum class lsdtt_vector_output_format
+enum class vector_output_format
 {
     flatgeobuf, 
     gpkg        
 };
 
+enum class point_output_format
+{ 
+    csv,
+    flatgeobuf,
+    gpkg
+};
+
+// This takes a format string and returns the vector output format
+vector_output_format resolve_vector_output_format(const std::string& fmt_str);
+
+// This turns a point output format (not csv!) into a vector output format
+vector_output_format convert_point_to_vector_output_format(const point_output_format& format);
+
+// This takes a format string and returns the vector output format
+point_output_format resolve_point_output_format(const std::string& fmt_str);
+
+// These overloaded functions get the output extension for a 
+// vector output or point output format 
+inline std::string output_extension(const vector_output_format fmt)
+{
+    switch (fmt)
+    {
+        case vector_output_format::gpkg:       return ".gpkg";
+        case vector_output_format::flatgeobuf: return ".fgb";
+        default:
+            throw std::invalid_argument("Unknown vector_output_format");
+    }
+}
+
+inline std::string output_extension(const point_output_format fmt)
+{
+    switch (fmt)
+    {
+        case point_output_format::csv:        return ".csv";
+        case point_output_format::gpkg:       return ".gpkg";
+        case point_output_format::flatgeobuf: return ".fgb";
+        default:
+            throw std::invalid_argument("Unknown point_output_format");
+    }
+}
 // =============================================================================
 // Geometry value types
 //
@@ -250,6 +288,10 @@ enum class raster_output_format
     gtiff,          // Plain compressed GeoTIFF
     same_as_input   // Match the input raster driver
 };
+
+// This resolves the raster output format from a string 
+raster_output_format resolve_raster_output_format(const std::string& fmt_str);
+
 
 // Minimum pixel count for COG overhead to be worthwhile.
 // Below this threshold, write_full() uses plain GeoTIFF even when cog is requested.
@@ -444,7 +486,7 @@ public:
         const std::string&          layer_name,
         const lsdtt_vector_schema&  schema,
         const std::string&          crs_wkt,
-        lsdtt_vector_output_format  format,
+        vector_output_format  format,
         bool                        spatial_index = false
     );
  

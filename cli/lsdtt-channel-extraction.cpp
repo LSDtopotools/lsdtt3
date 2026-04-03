@@ -133,72 +133,6 @@ static std::string out_path(
     return pp.get_full_write_path() + suffix + extension;
 }
 
-// -----------------------------------------------------------------------------
-// resolve_channel_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::lsdtt_channel_network_output_format resolve_channel_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "csv")
-    {
-        return lsdtt::lsdtt_channel_network_output_format::csv;
-    }
-    if (fmt_str == "gpkg")
-    {
-        return lsdtt::lsdtt_channel_network_output_format::gpkg;
-    }
-    if (fmt_str == "flatgeobuf" || fmt_str == "fgb")
-    {
-        return lsdtt::lsdtt_channel_network_output_format::flatgeobuf;
-    }
-
-    std::cerr << "Warning: unknown channel_network_output_format '"
-              << fmt_str << "' — defaulting to gpkg.\n";
-
-    return lsdtt::lsdtt_channel_network_output_format::gpkg;
-}
-
-// -----------------------------------------------------------------------------
-// output_extension
-// -----------------------------------------------------------------------------
-static std::string output_extension(
-    lsdtt::lsdtt_channel_network_output_format fmt)
-{
-    if (fmt == lsdtt::lsdtt_channel_network_output_format::csv)
-    {
-        return ".csv";
-    }
-    if (fmt == lsdtt::lsdtt_channel_network_output_format::flatgeobuf)
-    {
-        return ".fgb";
-    }
-    return ".gpkg";
-}
-
-// -----------------------------------------------------------------------------
-// resolve_raster_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::raster_output_format resolve_raster_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "gtiff")
-    {
-        return lsdtt::raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return lsdtt::raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown flow_direction_output_format '"
-                  << fmt_str << "' — defaulting to cog.\n";
-    }
-    return lsdtt::raster_output_format::cog;
-}
-
-
-
 // =============================================================================
 // main
 // =============================================================================
@@ -278,7 +212,7 @@ int main(int argc, char* argv[])
         "area at each channel pixel."
     };
 
-    string_default_map["channel_network_output_format"] = "flatgeobuf";
+    string_default_map["channel_network_points_output_format"] = "flatgeobuf";
     help_map["channel_network_output_format"] = {"string","gpkg",
         "Output format for the exported channel network.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
@@ -351,19 +285,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    lsdtt::lsdtt_channel_network_output_format output_format =
-        resolve_channel_output_format(sf["channel_network_output_format"]);
+    lsdtt::point_output_format cn_points_output_format =
+        lsdtt::resolve_point_output_format(sf["channel_network_points_output_format"]);
 
-    lsdtt::lsdtt_channel_network_output_format flow_lines_output_format =
-        resolve_channel_output_format(sf["flow_lines_output_format"]);
+    lsdtt::vector_output_format cn_lines_output_format =
+        lsdtt::resolve_vector_output_format(sf["channel_network_lines_output_format"]);
+
+    lsdtt::vector_output_format flow_lines_output_format =
+        lsdtt::resolve_vector_output_format(sf["flow_lines_output_format"]);
 
     lsdtt::raster_output_format flow_direction_output_format =
-        resolve_raster_output_format(sf["flow_direction_output_format"]);
-
-    std::string extension = output_extension(output_format);
-
-    std::cout << "Channel network output format: "
-              << sf["channel_network_output_format"] << "\n";
+        lsdtt::resolve_raster_output_format(sf["flow_direction_output_format"]);
 
     if (bf["write_flow_lines"])
     {
@@ -505,7 +437,7 @@ int main(int argc, char* argv[])
     if (bf["write_flow_lines"])
     {
         const std::string flow_lines_extension =
-            output_extension(flow_lines_output_format);
+            lsdtt::output_extension(flow_lines_output_format);
 
         const std::string flow_lines_file =
             out_path(pp, "_flow_lines", flow_lines_extension);
@@ -514,7 +446,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing: " << flow_lines_file << "\n";
 
         if (flow_lines_output_format ==
-            lsdtt::lsdtt_channel_network_output_format::gpkg)
+            lsdtt::vector_output_format::gpkg)
         {
             std::cerr << "Warning: flow-line output to GeoPackage may suffer "
                       << "file I/O issues on some filesystems. If writing "
@@ -614,6 +546,8 @@ int main(int argc, char* argv[])
     if(bf["write_channel_network_points"])
     {
         std::cout << "\n--- Writing channel network ---\n";
+        const std::string extension =
+            lsdtt::output_extension(cn_points_output_format);
         std::string output_file = out_path(pp, "_channel_network_points", extension);
         std::cout << "Writing: " << output_file << "\n";
 
@@ -621,13 +555,13 @@ int main(int argc, char* argv[])
         {
             channel_network.write_channel_network_points(
                 output_file,
-                output_format,
+                cn_points_output_format,
                 "channel_network_points"
             );
         }
         catch (const std::exception& e)
         {
-            std::cerr << "FATAL: writing channel network failed: "
+            std::cerr << "FATAL: writing channel network points failed: "
                     << e.what() << "\n";
             return 1;
         }
@@ -636,7 +570,8 @@ int main(int argc, char* argv[])
     if(bf["write_channel_network_lines"])
     {
         std::cout << "\n--- Writing channel network lines ---\n";
-
+        const std::string extension =
+            lsdtt::output_extension(cn_points_output_format);
         std::string output_file = out_path(pp, "_channel_network_lines", extension);
         std::cout << "Writing: " << output_file << "\n";
 
@@ -644,13 +579,13 @@ int main(int argc, char* argv[])
         {
             channel_network.write_channel_network_lines(
                 output_file,
-                output_format,
+                cn_lines_output_format,
                 "channel_network_lines"
             );
         }
         catch (const std::exception& e)
         {
-            std::cerr << "FATAL: writing channel network failed: "
+            std::cerr << "FATAL: writing channel network lines failed: "
                     << e.what() << "\n";
             return 1;
         }

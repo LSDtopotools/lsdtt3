@@ -1371,7 +1371,7 @@ void lsdtt_junction_network_cpu::build_s_vector()
 
 void lsdtt_junction_network_cpu::write_channel_network_points(
     const std::string& out_path,
-    lsdtt_channel_network_output_format format,
+    point_output_format format,
     const std::string& layer_name,
     bool spatial_index
 ) const
@@ -1402,7 +1402,7 @@ void lsdtt_junction_network_cpu::write_channel_network_points(
     //
     // Always writes latitude / longitude in EPSG:4326 for backward compatibility.
     // -------------------------------------------------------------------------
-    if (format == lsdtt_channel_network_output_format::csv)
+    if (format == point_output_format::csv)
     {
         if (meta_.crs_wkt.empty())
         {
@@ -1493,12 +1493,10 @@ void lsdtt_junction_network_cpu::write_channel_network_points(
         lsdtt_vector_field_type::double_type
     };
 
-    // Record the output format
-    const lsdtt_vector_output_format out_format =
-        (format == lsdtt_channel_network_output_format::gpkg)
-            ? lsdtt_vector_output_format::gpkg
-            : lsdtt_vector_output_format::flatgeobuf;
- 
+    // This converts the point output format to a vector output format
+    // Necessary for the vector write, because that only takes vector_output_format
+    const vector_output_format out_format = convert_point_to_vector_output_format(format);
+
     // Start a vector write session
     // This is buffered if it needs to get a spatial index
     // This is not buffered if it does not need to get a spatial index,
@@ -1546,7 +1544,7 @@ void lsdtt_junction_network_cpu::write_channel_network_points(
 
 void lsdtt_junction_network_cpu::write_channel_network_lines(
     const std::string& out_path,
-    lsdtt_channel_network_output_format format,
+    vector_output_format format,
     const std::string& layer_name,
     bool spatial_index
 ) const
@@ -1557,13 +1555,6 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
     {
         throw std::runtime_error(
             "lsdtt_junction_network_cpu: cannot write empty channel network"
-        );
-    }
-
-    if (format == lsdtt_channel_network_output_format::csv)
-    {
-        throw std::runtime_error(
-            "lsdtt_junction_network_cpu: write_channel_network_lines does not support CSV output"
         );
     }
 
@@ -1589,14 +1580,9 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
     };
 
     // Set output format, get a data loader and begin the vector write
-    const lsdtt_vector_output_format out_format =
-        (format == lsdtt_channel_network_output_format::gpkg)
-            ? lsdtt_vector_output_format::gpkg
-            : lsdtt_vector_output_format::flatgeobuf;
-
     lsdtt_data_loader loader;
     loader.begin_vector_write(
-        out_path, layer_name, schema, meta_.crs_wkt, out_format, spatial_index
+        out_path, layer_name, schema, meta_.crs_wkt, format, spatial_index
     );
 
     // -------------------------------------------------------------------------

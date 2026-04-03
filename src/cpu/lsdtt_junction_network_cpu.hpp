@@ -221,6 +221,7 @@ public:
     // -------------------------------------------------------------------------
     // Channel network writing
     // -------------------------------------------------------------------------
+    
     // This version writes point data, with each point having attributes:
     // flat,row,col,stream_order,drainage_area
     // Pros of writing points: data for each pixel, so better representation of
@@ -229,7 +230,7 @@ public:
     //  points. 
     void write_channel_network_points(
         const std::string& out_path,
-        lsdtt_channel_network_output_format format,
+        point_output_format format,
         const std::string& layer_name = "channel_network_points",
         bool spatial_index = true
     ) const;
@@ -244,7 +245,7 @@ public:
     //  upstream junction.
     void write_channel_network_lines(
         const std::string& out_path,
-        lsdtt_channel_network_output_format format,
+        vector_output_format format,
         const std::string& layer_name = "channel_network_lines",
         bool spatial_index = true
     ) const;
