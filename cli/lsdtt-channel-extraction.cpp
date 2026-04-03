@@ -202,6 +202,18 @@ int main(int argc, char* argv[])
         "Channel heads are extracted from the flow-routing object using a "
         "contributing-pixel threshold. Reduce this value to extract denser networks."};
 
+    // --- Output --- general
+    bool_default_map["calculate_spatial_index"] = true;
+    help_map["calculate_spatial_index"] = {"bool", "true",
+        "Whether or not to calculate a spatial index for vector data writes.",
+        "A spatial index helps a GIS to speed up spatial queries, so it is often "
+        "helpful to have a spatial index calculated. But calculating this requires "
+        "the entire vector layer to sit in memory, preventing feature-by-feature "
+        "writes and adding a lot of overhead. In some cases (e.g. large datasets) it "
+        "may therefore be preferred to generate vectors without spatial index - "
+        "these can always be calculated later on using e.g. gdal."
+    };
+
     // --- Output --- channel network points
     bool_default_map["write_channel_network_points"] = false;
     help_map["write_channel_network"] = {"bool", "false",
@@ -459,7 +471,7 @@ int main(int argc, char* argv[])
                 flow_lines_file,
                 flow_lines_output_format,
                 "flow_lines",
-                false
+                bf["calculate_spatial_index"]
             );
         }
         catch (const std::exception& e)
@@ -556,7 +568,8 @@ int main(int argc, char* argv[])
             channel_network.write_channel_network_points(
                 output_file,
                 cn_points_output_format,
-                "channel_network_points"
+                "channel_network_points",
+                bf["calculate_spatial_index"]
             );
         }
         catch (const std::exception& e)
@@ -580,7 +593,8 @@ int main(int argc, char* argv[])
             channel_network.write_channel_network_lines(
                 output_file,
                 cn_lines_output_format,
-                "channel_network_lines"
+                "channel_network_lines",
+                bf["calculate_spatial_index"]
             );
         }
         catch (const std::exception& e)
