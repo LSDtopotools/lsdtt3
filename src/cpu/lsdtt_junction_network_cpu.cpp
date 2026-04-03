@@ -1372,7 +1372,8 @@ void lsdtt_junction_network_cpu::build_s_vector()
 void lsdtt_junction_network_cpu::write_channel_network(
     const std::string& out_path,
     lsdtt_channel_network_output_format format,
-    const std::string& layer_name
+    const std::string& layer_name,
+    bool spatial_index
 ) const
 {
     require_built();
@@ -1395,14 +1396,6 @@ void lsdtt_junction_network_cpu::write_channel_network(
     build_pixel_stream_order(pixel_stream_order);
 
     lsdtt_data_loader loader;
-
-    auto precise_string = [](double value) -> std::string
-    {
-        std::ostringstream ss;
-        ss.precision(17);
-        ss << value;
-        return ss.str();
-    };
 
     // -------------------------------------------------------------------------
     // CSV output
@@ -1429,6 +1422,14 @@ void lsdtt_junction_network_cpu::write_channel_network(
             "col",
             "flat",
             "stream_order"
+        };
+
+        auto precise_string = [](double value) -> std::string
+        {
+            std::ostringstream ss;
+            ss.precision(17);
+            ss << value;
+            return ss.str();
         };
 
         std::vector<std::vector<std::string>> rows;
@@ -1474,22 +1475,17 @@ void lsdtt_junction_network_cpu::write_channel_network(
     //
     // Geometry is written in the raster's native CRS.
     // -------------------------------------------------------------------------
-    /*
-    std::vector<lsdtt_vector_feature> features;
-    features.reserve(static_cast<std::size_t>(n_channel_cells_));
 
-    const std::vector<std::string> field_names =
-    {
-        "flat",
+    // Declare schema (attribute types and field names)
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "flat", 
         "row",
         "col",
-        "stream_order",
+        "stream_order", 
         "drainage_area"
     };
-
-
-    const std::vector<lsdtt_vector_field_type> field_types =
-    {
+    schema.field_types = {
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
@@ -1497,8 +1493,21 @@ void lsdtt_junction_network_cpu::write_channel_network(
         lsdtt_vector_field_type::double_type
     };
 
+    // Record the output format
+    const lsdtt_vector_output_format out_format =
+        (format == lsdtt_channel_network_output_format::gpkg)
+            ? lsdtt_vector_output_format::gpkg
+            : lsdtt_vector_output_format::flatgeobuf;
+ 
+    // Start a vector write session
+    // This is buffered if it needs to get a spatial index
+    // This is not buffered if it does not need to get a spatial index,
+    //      which requires a lot less memory.
+    loader.begin_vector_write(
+        out_path, layer_name, schema, meta_.crs_wkt, out_format, spatial_index
+    );
 
-
+    // Loop thorugh rows and cols
     for (int row = 0; row < meta_.n_rows; ++row)
     {
         for (int col = 0; col < meta_.n_cols; ++col)
@@ -1514,40 +1523,24 @@ void lsdtt_junction_network_cpu::write_channel_network(
             const lsdtt_xy xy =
                 cell_center_from_row_col(meta_, row, col);
 
-            lsdtt_vector_feature feat;
-            feat.geometry_wkt = point_wkt(xy.x, xy.y);
-            feat.field_names  = field_names;
-            feat.field_types  = field_types;
-            feat.field_values =
-            {
-                flat,
-                static_cast<std::int64_t>(row),
-                static_cast<std::int64_t>(col),
-                static_cast<std::int64_t>(pixel_stream_order.data()[flat]),
-                static_cast<double>(flow_->s_vector_size(flat)) *
+
+            loader.write_point(
+                xy.x,
+                xy.y,
+                {
+                    flat,
+                    static_cast<std::int64_t>(row),
+                    static_cast<std::int64_t>(col),
+                    static_cast<std::int64_t>(pixel_stream_order.data()[flat]),
+                    static_cast<double>(flow_->s_vector_size(flat)) *
                     flow_->cell_size() *
                     flow_->cell_size()
-            };
-            features.push_back(std::move(feat));
+
+                }
+            );
         }
     }
-
-    if (format == lsdtt_channel_network_output_format::gpkg)
-    {
-        loader.write_gpkg(out_path, layer_name, features, meta_.crs_wkt);
-        return;
-    }
-
-    if (format == lsdtt_channel_network_output_format::flatgeobuf)
-    {
-        loader.write_flatgeobuf(out_path, layer_name, features, meta_.crs_wkt);
-        return;
-    }
-
-    throw std::runtime_error(
-        "lsdtt_junction_network_cpu: unknown channel-network output format"
-    );
-    */
+    loader.finish_vector_write();
 }
 
 

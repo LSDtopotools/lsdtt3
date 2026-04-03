@@ -222,7 +222,8 @@ public:
     void write_channel_network(
         const std::string& out_path,
         lsdtt_channel_network_output_format format,
-        const std::string& layer_name = "channel_network"
+        const std::string& layer_name = "channel_network",
+        bool spatial_index = true
     ) const;
 
 

@@ -336,7 +336,7 @@ struct lsdtt_data_loader::vector_write_session
         }
  
         // Pass SPATIAL_INDEX=NO when not requested.
-        const char* opts_no_index[]  = { "SPATIAL_INDEX=NO", nullptr };
+        const char* opts_no_index[]   = { "SPATIAL_INDEX=NO", nullptr };
         const char* opts_with_index[] = { nullptr };
         char** layer_opts = const_cast<char**>(
             spatial_index ? opts_with_index : opts_no_index
@@ -361,6 +361,19 @@ struct lsdtt_data_loader::vector_write_session
                 throw std::runtime_error(
                     "lsdtt_data_loader: failed to create field: " +
                     schema.field_names[f]
+                );
+        }
+ 
+        // For GeoPackage streaming writes, open a transaction now so that
+        // all feature inserts are batched into a single SQLite commit.
+        // (For the buffered path the transaction is opened in finish_vector_write
+        // immediately before the bulk insert loop.)
+        if (format == lsdtt_vector_output_format::gpkg && !spatial_index)
+        {
+            if (layer->StartTransaction() != OGRERR_NONE)
+                throw std::runtime_error(
+                    "lsdtt_data_loader: failed to start transaction on layer: " +
+                    layer_name
                 );
         }
     }
@@ -824,19 +837,19 @@ void lsdtt_data_loader::finalise_output(const std::string& out_path)
 // -----------------------------------------------------------------------------
 // Vector input
 // -----------------------------------------------------------------------------
-
+ 
 void lsdtt_data_loader::open_vector(const std::string& filepath)
 {
     if (vector_open_)
     {
         close_vector();
     }
-
+ 
     GDALDataset* raw = static_cast<GDALDataset*>(
         GDALOpenEx(filepath.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                    nullptr, nullptr, nullptr)
     );
-
+ 
     if (!raw)
     {
         throw std::runtime_error(
@@ -844,11 +857,11 @@ void lsdtt_data_loader::open_vector(const std::string& filepath)
             "\nGDAL error: " + std::string(CPLGetLastErrorMsg())
         );
     }
-
+ 
     vector_dataset_.reset(raw);
     vector_open_ = true;
 }
-
+ 
 std::vector<std::string> lsdtt_data_loader::get_layer_names() const
 {
     if (!vector_open_)
@@ -857,7 +870,7 @@ std::vector<std::string> lsdtt_data_loader::get_layer_names() const
             "lsdtt_data_loader: get_layer_names() called with no vector dataset open"
         );
     }
-
+ 
     std::vector<std::string> names;
     int n = vector_dataset_->GetLayerCount();
     names.reserve(n);
@@ -868,7 +881,7 @@ std::vector<std::string> lsdtt_data_loader::get_layer_names() const
     }
     return names;
 }
-
+ 
 lsdtt_vector_layer lsdtt_data_loader::read_vector_layer(
     const std::string& layer_name
 ) const
@@ -918,16 +931,17 @@ lsdtt_vector_layer lsdtt_data_loader::read_vector_layer(
  
     return result;
 }
-
+ 
 void lsdtt_data_loader::close_vector()
 {
     vector_dataset_.reset();
     vector_open_ = false;
 }
-
+ 
 // -----------------------------------------------------------------------------
 // Vector output
 // -----------------------------------------------------------------------------
+ 
 void lsdtt_data_loader::begin_vector_write(
     const std::string&          out_path,
     const std::string&          layer_name,
@@ -1095,12 +1109,34 @@ void lsdtt_data_loader::finish_vector_write()
                   << write_session_->buffer.size()
                   << " buffered features with spatial index...\n";
  
+        if (write_session_->layer->StartTransaction() != OGRERR_NONE)
+            throw std::runtime_error(
+                "lsdtt_data_loader: failed to start transaction on layer: " +
+                write_session_->layer_name
+            );
+ 
         for (const auto& record : write_session_->buffer.records)
             write_record_to_layer(record, write_session_->layer);
+ 
+        if (write_session_->layer->CommitTransaction() != OGRERR_NONE)
+            throw std::runtime_error(
+                "lsdtt_data_loader: failed to commit transaction on layer: " +
+                write_session_->layer_name
+            );
  
         // Free buffer memory before closing the dataset.
         write_session_->buffer.records.clear();
         write_session_->buffer.records.shrink_to_fit();
+    }
+    else if (write_session_->format == lsdtt_vector_output_format::gpkg)
+    {
+        // Streaming path, GeoPackage: commit the transaction opened in
+        // open_dataset_and_layer().
+        if (write_session_->layer->CommitTransaction() != OGRERR_NONE)
+            throw std::runtime_error(
+                "lsdtt_data_loader: failed to commit transaction on layer: " +
+                write_session_->layer_name
+            );
     }
  
     // Close dataset (flushes to disk for both paths).
