@@ -1369,7 +1369,7 @@ void lsdtt_junction_network_cpu::build_s_vector()
 
 
 
-void lsdtt_junction_network_cpu::write_channel_network(
+void lsdtt_junction_network_cpu::write_channel_network_points(
     const std::string& out_path,
     lsdtt_channel_network_output_format format,
     const std::string& layer_name,
@@ -1540,6 +1540,194 @@ void lsdtt_junction_network_cpu::write_channel_network(
             );
         }
     }
+    loader.finish_vector_write();
+}
+
+
+void lsdtt_junction_network_cpu::write_channel_network_lines(
+    const std::string& out_path,
+    lsdtt_channel_network_output_format format,
+    const std::string& layer_name,
+    bool spatial_index
+) const
+{
+    require_built();
+
+    if (n_channel_cells_ == 0)
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu: cannot write empty channel network"
+        );
+    }
+
+    if (format == lsdtt_channel_network_output_format::csv)
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu: write_channel_network_lines does not support CSV output"
+        );
+    }
+
+    // We need pixel stream orders for the stream_order attribute.
+    lsdtt_array2d<std::int32_t> pixel_stream_order;
+    build_pixel_stream_order(pixel_stream_order);
+
+    // Define the schema
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "junction_upstream",     // junction id at the upstream end
+        "junction_downstream",   // junction id at the downstream end (or -1 for outlets)
+        "stream_order",          // Strahler order of the upstream junction pixel
+        "link_length",           // planar 2-D length of the link in map units
+        "drainage_area"          // drainage area at upstream junction in map units
+    };
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type
+    };
+
+    // Set output format, get a data loader and begin the vector write
+    const lsdtt_vector_output_format out_format =
+        (format == lsdtt_channel_network_output_format::gpkg)
+            ? lsdtt_vector_output_format::gpkg
+            : lsdtt_vector_output_format::flatgeobuf;
+
+    lsdtt_data_loader loader;
+    loader.begin_vector_write(
+        out_path, layer_name, schema, meta_.crs_wkt, out_format, spatial_index
+    );
+
+    // -------------------------------------------------------------------------
+    // Walk each junction downstream to the next junction.
+    //
+    // For junction j we trace pixel-by-pixel from junction_flat_[j] along
+    // receiver_of_unchecked() until we either:
+    //   (a) step onto a pixel whose junction_id_of_flat_ >= 0  → downstream junction
+    //   (b) find flow_->is_outlet_unchecked() is true on the current pixel
+    //       → the current pixel is the outlet and has no receiver.
+    //
+    // The resulting polyline includes both the upstream junction pixel and the
+    // downstream junction pixel (or the outlet pixel).
+    // -------------------------------------------------------------------------
+    const std::int32_t n_junctions =
+        static_cast<std::int32_t>(junction_flat_.size());
+
+    const std::int64_t max_steps =
+        static_cast<std::int64_t>(channel_mask_.size());
+
+    for (std::int32_t j = 0; j < n_junctions; ++j)
+    {
+        std::vector<lsdtt_xy> points;
+        points.reserve(16);
+
+        // Start at the upstream junction pixel.
+        const std::int64_t start_flat = junction_flat_[static_cast<std::size_t>(j)];
+        {
+            const int row = flow_->row_from_flat_unchecked(start_flat);
+            const int col = flow_->col_from_flat_unchecked(start_flat);
+            points.push_back(cell_center_from_row_col(meta_, row, col));
+        }
+
+        // Outlet junctions have no downstream link to trace; the feature is
+        // a degenerate single-pixel reach.  We still write it (with a
+        // duplicated point so OGR gets a valid linestring) and mark the
+        // downstream junction as -1.
+        const std::int32_t rec_junction =
+            receiver_junction_[static_cast<std::size_t>(j)];
+
+        if (rec_junction == k_outlet_junction)
+        {
+            // Duplicate the single point so the geometry has >= 2 vertices.
+            points.push_back(points.front());
+
+            const double link_length = 0.0;
+
+            loader.write_line(
+                points,
+                {
+                    static_cast<std::int64_t>(j),
+                    static_cast<std::int64_t>(-1),
+                    static_cast<std::int64_t>(
+                        pixel_stream_order.data()[start_flat]),
+                    link_length,
+                    static_cast<double>(flow_->s_vector_size(start_flat)) *
+                    flow_->cell_size() *
+                    flow_->cell_size()
+                }
+            );
+            continue;
+        }
+
+        // Walk pixel by pixel until we land on the downstream junction pixel.
+        std::int64_t current  = start_flat;
+        std::int64_t steps    = 0;
+        double       link_length   = 0.0;
+
+        while (true)
+        {
+            if (flow_->is_outlet_unchecked(current))
+            {
+                // Should not happen for a non-outlet junction, but guard anyway.
+                break;
+            }
+
+            const std::int64_t rec_flat = flow_->receiver_of_unchecked(current);
+
+            if (rec_flat < 0 || !is_channel(rec_flat))
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: channel link trace left the channel mask"
+                );
+            }
+
+            // Accumulate planar segment length.
+            {
+                const lsdtt_xy prev_xy = points.back();
+                const int rec_row      = flow_->row_from_flat_unchecked(rec_flat);
+                const int rec_col      = flow_->col_from_flat_unchecked(rec_flat);
+                const lsdtt_xy rec_xy  = cell_center_from_row_col(meta_, rec_row, rec_col);
+
+                const double dx = rec_xy.x - prev_xy.x;
+                const double dy = rec_xy.y - prev_xy.y;
+                link_length += std::sqrt(dx * dx + dy * dy);
+
+                points.push_back(rec_xy);
+            }
+
+            current = rec_flat;
+            ++steps;
+
+            if (steps > max_steps)
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: exceeded maximum steps while tracing channel link"
+                );
+            }
+
+            // Have we reached a junction pixel?
+            if (junction_id_of_flat_.data()[current] >= 0)
+            {
+                break;
+            }
+        }
+
+        loader.write_line(
+            points,
+            {
+                static_cast<std::int64_t>(j),
+                static_cast<std::int64_t>(rec_junction),
+                static_cast<std::int64_t>(
+                    pixel_stream_order.data()[start_flat]),
+                link_length,
+                static_cast<double>(flow_->s_vector_size(start_flat)) *
+                    flow_->cell_size() *
+                    flow_->cell_size()
+            }
+        );
+    }
+
     loader.finish_vector_write();
 }
 
