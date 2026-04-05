@@ -138,6 +138,7 @@ target_link_libraries(lsdtt3_core
 set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_statistics.cpp
     src/utils/lsdtt_histogram.cpp
+    src/utils/lsdtt_statistical_tests.cpp
 )
 
 add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
