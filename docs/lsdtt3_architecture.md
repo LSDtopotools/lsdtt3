@@ -77,8 +77,6 @@ lsdtt3/
 
 ## CMakeLists.txt summary
 
-Two static libraries: `lsdtt3_core`, `lsdtt_utils` and `lsdtt3_cpu`.
-
 Three main static libraries:
 
 - **`lsdtt3_core`** — abstract interfaces, factories, GDAL/OGR I/O, shared types
