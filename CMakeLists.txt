@@ -128,6 +128,27 @@ target_link_libraries(lsdtt3_core
 )
 
 # =============================================================================
+# lsdtt3_utils  (static library)
+#
+# Generic mathematical / utility code that is not GDAL-specific and not tied
+# to a particular backend implementation.
+# Header-only utilities in src/utils/ remain header-only; only compiled utility
+# sources are listed here.
+# =============================================================================
+set(LSDTT3_UTILS_SOURCES
+    src/utils/lsdtt_statistics.cpp
+)
+
+add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
+
+target_include_directories(lsdtt3_utils
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/utils
+)
+
+
+# =============================================================================
 # lsdtt3_cpu  (static library)
 #
 # All CPU-side implementations.
@@ -166,6 +187,7 @@ target_include_directories(lsdtt3_cpu
 target_link_libraries(lsdtt3_cpu
     PUBLIC
         lsdtt3_core
+        lsdtt3_utils
 )
 
 if(OpenMP_CXX_FOUND)
@@ -241,17 +263,25 @@ lsdtt_cli(lsdtt-test-flowinfo          cli/lsdtt-test-flowinfo.cpp)
 lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)
+lsdtt_cli(lsdtt-raster-basin-stats     cli/lsdtt-raster-basin-stats.cpp)
+
 
 # =============================================================================
 # Install libraries and headers (optional — useful for packaging)
 # =============================================================================
-install(TARGETS lsdtt3_core lsdtt3_cpu
+install(TARGETS lsdtt3_core lsdtt3_utils lsdtt3_cpu
     ARCHIVE DESTINATION lib
 )
+
 
 install(DIRECTORY src/core/ DESTINATION include/lsdtt3
     FILES_MATCHING PATTERN "*.hpp"
 )
+
+install(DIRECTORY src/utils/ DESTINATION include/lsdtt3/utils
+    FILES_MATCHING PATTERN "*.hpp"
+)
+
 
 # =============================================================================
 # Summary
