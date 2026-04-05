@@ -332,6 +332,221 @@ double mean_absolute_within_difference_v_statistic(
            (static_cast<double>(n) * static_cast<double>(n));
 }
 
+struct circle_difference_segments
+{
+    std::vector<double> diff_values;
+    std::vector<double> lengths;
+};
+
+std::vector<double> wrap_values_to_zero_origin(
+    const std::vector<double>& values,
+    double period,
+    double origin)
+{
+    std::vector<double> out;
+    out.reserve(values.size());
+
+    for (const double value : values)
+    {
+        out.push_back(wrap_circular_value(value, period, origin) - origin);
+    }
+
+    return out;
+}
+
+std::vector<double> axial_values_to_doubled_directional_zero_origin(
+    const std::vector<double>& values,
+    double axial_period,
+    double origin)
+{
+    if (!(axial_period > 0.0))
+    {
+        throw std::invalid_argument(
+            "axial_values_to_doubled_directional_zero_origin: axial_period must be > 0"
+        );
+    }
+
+    std::vector<double> out;
+    out.reserve(values.size());
+
+    for (const double value : values)
+    {
+        const double wrapped = wrap_circular_value(value, axial_period, origin);
+        out.push_back(2.0 * (wrapped - origin));
+    }
+
+    return out;
+}
+
+circle_difference_segments compute_circle_difference_segments(
+    const std::vector<double>& sorted_x_zero_origin,
+    const std::vector<double>& sorted_y_zero_origin,
+    double period)
+{
+    circle_difference_segments out;
+
+    if (sorted_x_zero_origin.empty() || sorted_y_zero_origin.empty())
+    {
+        return out;
+    }
+
+    const std::size_t n_x = sorted_x_zero_origin.size();
+    const std::size_t n_y = sorted_y_zero_origin.size();
+
+    std::size_t i = 0;
+    std::size_t j = 0;
+    double pos = 0.0;
+
+    while (i < n_x || j < n_y)
+    {
+        const double next_x =
+            (i < n_x)
+                ? sorted_x_zero_origin[i]
+                : std::numeric_limits<double>::infinity();
+
+        const double next_y =
+            (j < n_y)
+                ? sorted_y_zero_origin[j]
+                : std::numeric_limits<double>::infinity();
+
+        const double next = std::min(next_x, next_y);
+
+        if (next > pos)
+        {
+            out.diff_values.push_back(
+                static_cast<double>(i) / static_cast<double>(n_x) -
+                static_cast<double>(j) / static_cast<double>(n_y)
+            );
+            out.lengths.push_back(next - pos);
+            pos = next;
+        }
+
+        while (i < n_x && sorted_x_zero_origin[i] == next)
+        {
+            ++i;
+        }
+
+        while (j < n_y && sorted_y_zero_origin[j] == next)
+        {
+            ++j;
+        }
+    }
+
+    if (period > pos)
+    {
+        out.diff_values.push_back(
+            static_cast<double>(i) / static_cast<double>(n_x) -
+            static_cast<double>(j) / static_cast<double>(n_y)
+        );
+        out.lengths.push_back(period - pos);
+    }
+
+    if (out.lengths.empty())
+    {
+        out.diff_values.push_back(0.0);
+        out.lengths.push_back(period);
+    }
+
+    return out;
+}
+
+double weighted_median(
+    const std::vector<double>& values,
+    const std::vector<double>& weights)
+{
+    if (values.size() != weights.size())
+    {
+        throw std::invalid_argument(
+            "weighted_median: values and weights must have the same size"
+        );
+    }
+
+    if (values.empty())
+    {
+        return nan_value();
+    }
+
+    std::vector<std::pair<double, double>> vw;
+    vw.reserve(values.size());
+
+    double total_weight = 0.0;
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        vw.emplace_back(values[i], weights[i]);
+        total_weight += weights[i];
+    }
+
+    std::sort(vw.begin(), vw.end(),
+              [](const auto& a, const auto& b)
+              {
+                  return a.first < b.first;
+              });
+
+    const double half_weight = 0.5 * total_weight;
+    double cumulative = 0.0;
+
+    for (const auto& p : vw)
+    {
+        cumulative += p.second;
+        if (cumulative >= half_weight)
+        {
+            return p.first;
+        }
+    }
+
+    return vw.back().first;
+}
+
+double circular_wasserstein_from_sorted_zero_origin(
+    const std::vector<double>& sorted_x_zero_origin,
+    const std::vector<double>& sorted_y_zero_origin,
+    double period)
+{
+    if (sorted_x_zero_origin.empty() || sorted_y_zero_origin.empty())
+    {
+        return nan_value();
+    }
+
+    const circle_difference_segments segments =
+        compute_circle_difference_segments(
+            sorted_x_zero_origin,
+            sorted_y_zero_origin,
+            period
+        );
+
+    const double shift =
+        weighted_median(segments.diff_values, segments.lengths);
+
+    double distance = 0.0;
+    for (std::size_t i = 0; i < segments.diff_values.size(); ++i)
+    {
+        distance +=
+            segments.lengths[i] *
+            std::abs(segments.diff_values[i] - shift);
+    }
+
+    return distance;
+}
+
+std::vector<double> rotate_zero_origin_values_and_sort(
+    const std::vector<double>& zero_origin_values,
+    double shift,
+    double period)
+{
+    std::vector<double> out;
+    out.reserve(zero_origin_values.size());
+
+    for (const double value : zero_origin_values)
+    {
+        out.push_back(wrap_circular_value(value + shift, period, 0.0));
+    }
+
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+
+
 } // unnamed namespace
 
 // -----------------------------------------------------------------------------
@@ -612,5 +827,231 @@ lsdtt_energy_distance_result compute_energy_distance(
     out.distance = distance;
     return out;
 }
+
+
+lsdtt_kuiper_test_result compute_axial_kuiper_two_sample_test(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    double axial_period,
+    double origin)
+{
+    if (!(axial_period > 0.0))
+    {
+        throw std::invalid_argument(
+            "compute_axial_kuiper_two_sample_test: axial_period must be > 0"
+        );
+    }
+
+    const std::vector<double> doubled_x =
+        axial_values_to_doubled_directional_zero_origin(x, axial_period, origin);
+    const std::vector<double> doubled_y =
+        axial_values_to_doubled_directional_zero_origin(y, axial_period, origin);
+
+    lsdtt_kuiper_test_result out =
+        compute_kuiper_two_sample_test(
+            doubled_x,
+            doubled_y,
+            2.0 * axial_period,
+            0.0
+        );
+
+    out.period = axial_period;
+    out.origin = origin;
+
+    return out;
+}
+
+lsdtt_circular_wasserstein_result compute_circular_wasserstein_distance(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    double period,
+    double origin)
+{
+    lsdtt_circular_wasserstein_result out;
+    out.n_x = x.size();
+    out.n_y = y.size();
+    out.period = period;
+    out.origin = origin;
+    out.rotation_invariant = false;
+    out.optimal_rotation = 0.0;
+
+    if (!(period > 0.0))
+    {
+        throw std::invalid_argument(
+            "compute_circular_wasserstein_distance: period must be > 0"
+        );
+    }
+
+    if (x.empty() || y.empty())
+    {
+        return out;
+    }
+
+    std::vector<double> x0 = wrap_values_to_zero_origin(x, period, origin);
+    std::vector<double> y0 = wrap_values_to_zero_origin(y, period, origin);
+
+    std::sort(x0.begin(), x0.end());
+    std::sort(y0.begin(), y0.end());
+
+    out.distance = circular_wasserstein_from_sorted_zero_origin(x0, y0, period);
+    return out;
+}
+
+lsdtt_circular_wasserstein_result
+compute_rotation_invariant_circular_wasserstein_distance(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    double period,
+    double origin)
+{
+    lsdtt_circular_wasserstein_result out;
+    out.n_x = x.size();
+    out.n_y = y.size();
+    out.period = period;
+    out.origin = origin;
+    out.rotation_invariant = true;
+    out.optimal_rotation = nan_value();
+
+    if (!(period > 0.0))
+    {
+        throw std::invalid_argument(
+            "compute_rotation_invariant_circular_wasserstein_distance: period must be > 0"
+        );
+    }
+
+    if (x.empty() || y.empty())
+    {
+        return out;
+    }
+
+    std::vector<double> x0 = wrap_values_to_zero_origin(x, period, origin);
+    std::vector<double> y0 = wrap_values_to_zero_origin(y, period, origin);
+
+    std::sort(x0.begin(), x0.end());
+
+    std::vector<double> y0_sorted = y0;
+    std::sort(y0_sorted.begin(), y0_sorted.end());
+
+    double best_distance =
+        circular_wasserstein_from_sorted_zero_origin(x0, y0_sorted, period);
+    double best_shift = 0.0;
+
+    bool done = false;
+    for (const double x_i : x0)
+    {
+        for (const double y_j : y0)
+        {
+            const double shift =
+                wrap_circular_value(x_i - y_j, period, 0.0);
+
+            const std::vector<double> rotated_y =
+                rotate_zero_origin_values_and_sort(y0, shift, period);
+
+            const double distance =
+                circular_wasserstein_from_sorted_zero_origin(
+                    x0,
+                    rotated_y,
+                    period
+                );
+
+            if (distance < best_distance)
+            {
+                best_distance = distance;
+                best_shift = shift;
+
+                if (best_distance == 0.0)
+                {
+                    done = true;
+                    break;
+                }
+            }
+        }
+
+        if (done)
+        {
+            break;
+        }
+    }
+
+    out.distance = best_distance;
+    out.optimal_rotation = best_shift;
+    return out;
+}
+
+lsdtt_circular_wasserstein_result compute_axial_circular_wasserstein_distance(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    double axial_period,
+    double origin)
+{
+    if (!(axial_period > 0.0))
+    {
+        throw std::invalid_argument(
+            "compute_axial_circular_wasserstein_distance: axial_period must be > 0"
+        );
+    }
+
+    const std::vector<double> doubled_x =
+        axial_values_to_doubled_directional_zero_origin(x, axial_period, origin);
+    const std::vector<double> doubled_y =
+        axial_values_to_doubled_directional_zero_origin(y, axial_period, origin);
+
+    lsdtt_circular_wasserstein_result out =
+        compute_circular_wasserstein_distance(
+            doubled_x,
+            doubled_y,
+            2.0 * axial_period,
+            0.0
+        );
+
+    out.period = axial_period;
+    out.origin = origin;
+    out.distance *= 0.5;
+    out.optimal_rotation = 0.0;
+
+    return out;
+}
+
+lsdtt_circular_wasserstein_result
+compute_rotation_invariant_axial_circular_wasserstein_distance(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    double axial_period,
+    double origin)
+{
+    if (!(axial_period > 0.0))
+    {
+        throw std::invalid_argument(
+            "compute_rotation_invariant_axial_circular_wasserstein_distance: axial_period must be > 0"
+        );
+    }
+
+    const std::vector<double> doubled_x =
+        axial_values_to_doubled_directional_zero_origin(x, axial_period, origin);
+    const std::vector<double> doubled_y =
+        axial_values_to_doubled_directional_zero_origin(y, axial_period, origin);
+
+    lsdtt_circular_wasserstein_result out =
+        compute_rotation_invariant_circular_wasserstein_distance(
+            doubled_x,
+            doubled_y,
+            2.0 * axial_period,
+            0.0
+        );
+
+    out.period = axial_period;
+    out.origin = origin;
+    out.distance *= 0.5;
+
+    if (!std::isnan(out.optimal_rotation))
+    {
+        out.optimal_rotation =
+            wrap_circular_value(0.5 * out.optimal_rotation, axial_period, 0.0);
+    }
+
+    return out;
+}
+
+
 
 } // namespace lsdtt
