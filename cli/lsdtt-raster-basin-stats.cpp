@@ -70,6 +70,7 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
+#include "../src/utils/lsdtt_histogram.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -98,6 +99,68 @@ struct basin_stats_record
 
     lsdtt::lsdtt_descriptive_stats stats;
 };
+
+
+// -----------------------------------------------------------------------------
+// basin_pdf_cdf_path
+// -----------------------------------------------------------------------------
+static std::string basin_pdf_cdf_path(
+    const lsdtt::lsdtt_param_parser& pp,
+    int basin_id)
+{
+    return pp.get_full_write_path() +
+           "_basin_" + std::to_string(basin_id) +
+           "_pdf_cdf.csv";
+}
+
+// -----------------------------------------------------------------------------
+// write_basin_pdf_cdf_csv
+//
+// Writes one row per bin for a single basin.
+// -----------------------------------------------------------------------------
+static void write_basin_pdf_cdf_csv(
+    const std::string& csv_path,
+    int basin_id,
+    const lsdtt::lsdtt_histogram& hist)
+{
+    std::ofstream out(csv_path);
+    if (!out)
+    {
+        throw std::runtime_error(
+            "Could not open basin PDF/CDF CSV for writing: " + csv_path
+        );
+    }
+
+    out
+        << "basin_id"
+        << ",bin_index"
+        << ",bin_lower_edge"
+        << ",bin_upper_edge"
+        << ",bin_centre"
+        << ",bin_width"
+        << ",count"
+        << ",probability"
+        << ",pdf"
+        << ",cdf"
+        << "\n";
+
+    for (std::size_t i = 0; i < hist.n_bins; ++i)
+    {
+        out
+            << basin_id << ","
+            << i << ","
+            << hist.bin_edges[i] << ","
+            << hist.bin_edges[i + 1] << ","
+            << hist.bin_centres[i] << ","
+            << hist.bin_widths[i] << ","
+            << hist.counts[i] << ","
+            << hist.probabilities[i] << ","
+            << hist.pdf[i] << ","
+            << hist.cdf[i]
+            << "\n";
+    }
+}
+
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -602,6 +665,19 @@ int main(int argc, char* argv[])
         "Vertical exaggeration factor for hillshade.",
         "Values greater than 1 emphasise relief."};
 
+    // --- Basin distribution output ---
+    bool_default_map["write_basin_pdf_cdf_csv"] = false;
+    help_map["write_basin_pdf_cdf_csv"] = {"bool","false",
+        "Write PDF/CDF CSV output for each basin.",
+        "If true, writes one CSV per basin containing histogram counts, "
+        "probabilities, PDF, and CDF of basin elevations."};
+
+    int_default_map["n_histogram_bins"] = 100;
+    help_map["n_histogram_bins"] = {"int","100",
+        "Number of bins used for basin elevation histogram/PDF/CDF output.",
+        "Used when write_basin_pdf_cdf_csv is true. Default is 100 bins."};
+
+
     // -------------------------------------------------------------------------
     // Parse parameters
     // -------------------------------------------------------------------------
@@ -887,6 +963,28 @@ int main(int argc, char* argv[])
 
             const lsdtt::lsdtt_descriptive_stats stats =
                 lsdtt::compute_descriptive_stats(basin_values);
+
+            if (bf["write_basin_pdf_cdf_csv"])
+            {
+                const lsdtt::lsdtt_histogram hist =
+                    lsdtt::compute_histogram(
+                        basin_values,
+                        static_cast<std::size_t>(ifs["n_histogram_bins"])
+                    );
+
+                const std::string dist_csv =
+                    basin_pdf_cdf_path(pp, outlet.outlet_id);
+
+                std::cout << "  Writing PDF/CDF: " << dist_csv << "\n";
+
+                write_basin_pdf_cdf_csv(
+                    dist_csv,
+                    outlet.outlet_id,
+                    hist
+                );
+            }
+
+
 
             basin_stats_record row_out;
             row_out.basin_id    = outlet.outlet_id;
