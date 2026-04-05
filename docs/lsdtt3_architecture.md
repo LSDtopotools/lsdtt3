@@ -34,6 +34,7 @@ lsdtt3/
 │   ├── debian_packaging.md
 │   ├── developer_onboarding.md
 │   ├── lsdtt3_architecture.md
+│   ├── lsdtt_util_contents.md
 │   └── using_lsdtt_flowinfo.md
 ├── python_helpers/
 │   ├── dem_downloader_instructions.md
@@ -76,7 +77,19 @@ lsdtt3/
 
 ## CMakeLists.txt summary
 
-Two static libraries: `lsdtt3_core` and `lsdtt3_cpu`.
+Two static libraries: `lsdtt3_core`, `lsdtt_utils` and `lsdtt3_cpu`.
+
+Three main static libraries:
+
+- **`lsdtt3_core`** — abstract interfaces, factories, GDAL/OGR I/O, shared types
+- **`lsdtt3_utils`** — generic mathematical / statistical utilities on valid flat data
+- **`lsdtt3_cpu`** — concrete CPU implementations, raster operations, flow routing
+
+`lsdtt3_cpu` depends on `lsdtt3_core` and `lsdtt3_utils`.
+All CLI executables link against `lsdtt3_cpu` and therefore also gain access to
+the utility-layer numerical functions.
+
+
 
 **`lsdtt3_core` sources** (`src/core/`):
 - `lsdtt_raster_base.cpp`
@@ -114,6 +127,13 @@ Two static libraries: `lsdtt3_core` and `lsdtt3_cpu`.
 **FFTW:** Uses double API (`fftw_*`), NOT threaded FFTW, NOT float (`fftwf_*`).
 Compile definition: `LSDTT_HAS_FFTW=1`. Stub in `lsdtt_raster_spectral_cpu.cpp`
 throws at runtime if FFTW not available.
+
+**`docs/lsdtt_util_contents.md`**  
+Developer guide to the `src/utils/` layer. Explains what belongs in utils,
+what should remain in `core` / `cpu` / `gpu`, the valid-data contract for
+utility functions, and when to use the main statistical tests and distance
+measures.
+
 
 ---
 
@@ -761,6 +781,45 @@ Inner loops are OpenMP-parallelised.
 
 ---
 
+
+## Utility-layer design (`src/utils/`)
+
+The `src/utils/` layer is for generic mathematical, numerical, and lightweight
+helper code that is reusable across the project and is not tied to GDAL/OGR,
+file I/O, or a specific backend implementation.
+
+Typical contents include:
+- lightweight containers
+- metadata-only raster geometry helpers
+- descriptive statistics
+- histogram / PDF / CDF tools
+- binning utilities
+- nonparametric statistical tests
+- circular-data comparison tools
+
+### Valid-data contract
+
+Utility functions in `src/utils/` assume that the values passed to them are
+already valid.
+
+This means `utils` code should **not** perform:
+- nodata filtering
+- raster flattening
+- moving-window extraction
+- basin extraction
+- backend-specific mask handling
+
+Those tasks belong in:
+- `src/core/` when they are shared infrastructure or GDAL/OGR-aware helpers
+- `src/cpu/` for concrete CPU-side extraction and traversal
+- `src/gpu/` for concrete GPU-side extraction and traversal
+
+In practice, raster, moving-window, and basin code should extract valid values
+first and then pass the resulting flat sample into `src/utils/` routines.
+
+
+
+
 ## lsdtt-raster-preprocessing CLI
 
 File: `cli/lsdtt-raster-preprocessing.cpp`  |  Version: 0.2.0
@@ -865,6 +924,9 @@ n_threads: 0
 | `lsdtt-raster-preprocessing.cpp` | `const lsdtt_raster_base&` to cpu fn | Changed to `const lsdtt_raster_cpu&` |
 
 ---
+
+
+
 
 ## Key design principles
 
