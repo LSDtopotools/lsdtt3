@@ -59,7 +59,6 @@
 #include <utility>
 #include <vector>
 
-#include <ogr_spatialref.h>
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
@@ -71,6 +70,9 @@
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
+#include "../src/core/lsdtt_point_input.hpp"
+#include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
+
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -78,12 +80,6 @@ static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 // -----------------------------------------------------------------------------
 // Local record types
 // -----------------------------------------------------------------------------
-struct basin_outlet_record
-{
-    int    outlet_id = -1;
-    double latitude  = 0.0;
-    double longitude = 0.0;
-};
 
 struct basin_stats_record
 {
@@ -246,234 +242,6 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
     return {path, fname};
 }
 
-// -----------------------------------------------------------------------------
-// trim / string helpers
-// -----------------------------------------------------------------------------
-static std::string trim(const std::string& s)
-{
-    std::size_t begin = 0;
-    while (begin < s.size() &&
-           std::isspace(static_cast<unsigned char>(s[begin])))
-    {
-        ++begin;
-    }
-
-    std::size_t end = s.size();
-    while (end > begin &&
-           std::isspace(static_cast<unsigned char>(s[end - 1])))
-    {
-        --end;
-    }
-
-    return s.substr(begin, end - begin);
-}
-
-static std::string to_lower_copy(std::string s)
-{
-    for (char& ch : s)
-    {
-        ch = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(ch))
-        );
-    }
-    return s;
-}
-
-static std::string strip_utf8_bom(const std::string& s)
-{
-    if (s.size() >= 3 &&
-        static_cast<unsigned char>(s[0]) == 0xEF &&
-        static_cast<unsigned char>(s[1]) == 0xBB &&
-        static_cast<unsigned char>(s[2]) == 0xBF)
-    {
-        return s.substr(3);
-    }
-
-    return s;
-}
-
-// -----------------------------------------------------------------------------
-// split_csv_line
-//
-// Simple CSV splitter for the expected outlet CSV.
-// No quoted-field support is implemented here.
-// -----------------------------------------------------------------------------
-static std::vector<std::string> split_csv_line(const std::string& line)
-{
-    std::vector<std::string> tokens;
-    std::stringstream ss(line);
-    std::string item;
-
-    while (std::getline(ss, item, ','))
-    {
-        tokens.push_back(trim(item));
-    }
-
-    return tokens;
-}
-
-// -----------------------------------------------------------------------------
-// load_basin_outlet_csv
-//
-// Expects header columns named latitude and longitude.
-// -----------------------------------------------------------------------------
-static std::vector<basin_outlet_record> load_basin_outlet_csv(
-    const std::string& csv_path)
-{
-    std::ifstream infile(csv_path);
-    if (!infile)
-    {
-        throw std::runtime_error(
-            "Could not open basin_outlet_csv: " + csv_path
-        );
-    }
-
-    std::string header_line;
-    if (!std::getline(infile, header_line))
-    {
-        throw std::runtime_error(
-            "Basin outlet CSV is empty: " + csv_path
-        );
-    }
-
-    header_line = strip_utf8_bom(header_line);
-
-    const std::vector<std::string> header_tokens = split_csv_line(header_line);
-
-    int lat_col = -1;
-    int lon_col = -1;
-
-    for (std::size_t i = 0; i < header_tokens.size(); ++i)
-    {
-        const std::string key = to_lower_copy(header_tokens[i]);
-
-        if (key == "latitude")
-        {
-            lat_col = static_cast<int>(i);
-        }
-        else if (key == "longitude")
-        {
-            lon_col = static_cast<int>(i);
-        }
-    }
-
-    if (lat_col < 0 || lon_col < 0)
-    {
-        throw std::runtime_error(
-            "Basin outlet CSV must contain columns named latitude and longitude"
-        );
-    }
-
-    std::vector<basin_outlet_record> outlets;
-    std::string line;
-    int next_id = 1;
-
-    while (std::getline(infile, line))
-    {
-        if (trim(line).empty())
-        {
-            continue;
-        }
-
-        const std::vector<std::string> tokens = split_csv_line(line);
-
-        if (static_cast<int>(tokens.size()) <= std::max(lat_col, lon_col))
-        {
-            std::cerr << "Warning: skipping malformed CSV row: " << line << "\n";
-            continue;
-        }
-
-        basin_outlet_record rec;
-        rec.outlet_id = next_id++;
-
-        try
-        {
-            rec.latitude  = std::stod(tokens[static_cast<std::size_t>(lat_col)]);
-            rec.longitude = std::stod(tokens[static_cast<std::size_t>(lon_col)]);
-        }
-        catch (const std::exception&)
-        {
-            std::cerr << "Warning: skipping CSV row with invalid numeric "
-                      << "latitude/longitude: " << line << "\n";
-            continue;
-        }
-
-        outlets.push_back(rec);
-    }
-
-    if (outlets.empty())
-    {
-        throw std::runtime_error(
-            "No valid basin outlet rows were read from: " + csv_path
-        );
-    }
-
-    return outlets;
-}
-
-// -----------------------------------------------------------------------------
-// lonlat_to_raster_xy
-//
-// Input longitude and latitude are WGS84 / EPSG:4326.
-// Output x,y are in the raster CRS.
-// -----------------------------------------------------------------------------
-static lsdtt::lsdtt_xy lonlat_to_raster_xy(
-    double longitude,
-    double latitude,
-    const lsdtt::lsdtt_raster_meta& meta)
-{
-    if (meta.crs_wkt.empty())
-    {
-        throw std::runtime_error(
-            "Raster CRS WKT is empty; cannot transform outlet coordinates"
-        );
-    }
-
-    OGRSpatialReference src_srs;
-    OGRSpatialReference dst_srs;
-
-    src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-
-    if (src_srs.importFromEPSG(4326) != OGRERR_NONE)
-    {
-        throw std::runtime_error("Failed to initialise WGS84 spatial reference");
-    }
-
-    char* raster_wkt = const_cast<char*>(meta.crs_wkt.c_str());
-    if (dst_srs.importFromWkt(&raster_wkt) != OGRERR_NONE)
-    {
-        throw std::runtime_error(
-            "Failed to parse raster CRS WKT for coordinate transformation"
-        );
-    }
-
-    OGRCoordinateTransformation* ct =
-        OGRCreateCoordinateTransformation(&src_srs, &dst_srs);
-
-    if (ct == nullptr)
-    {
-        throw std::runtime_error(
-            "Failed to create WGS84 -> raster CRS coordinate transformation"
-        );
-    }
-
-    double x = longitude;
-    double y = latitude;
-    double z = 0.0;
-
-    const int ok = ct->Transform(1, &x, &y, &z);
-    OCTDestroyCoordinateTransformation(ct);
-
-    if (!ok)
-    {
-        throw std::runtime_error(
-            "Coordinate transformation from WGS84 to raster CRS failed"
-        );
-    }
-
-    return lsdtt::lsdtt_xy{x, y};
-}
 
 // -----------------------------------------------------------------------------
 // join_boundary_conditions
@@ -627,6 +395,41 @@ int main(int argc, char* argv[])
         "Required. CSV must contain columns named latitude and longitude. "
         "Coordinates are interpreted as WGS84 (EPSG:4326) decimal degrees."};
 
+    // --- Basin outlet snapping ---
+    string_default_map["basin_outlet_snapping_method"] = "none";
+    help_map["basin_outlet_snapping_method"] = {"string","none",
+        "Optional snapping of basin outlet CSV points to pixels that exceed "
+        "a contributing-pixel threshold.",
+        "Allowed values: none, expanding_square, downstream. "
+        "none: use the mapped raster pixel directly. "
+        "expanding_square: search outward ring-by-ring until a qualifying pixel "
+        "is found. downstream: follow the D8 receiver chain until a qualifying "
+        "pixel is found."
+    };
+
+    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
+        "Contributing-pixel threshold used for optional basin outlet snapping.",
+        "This is the total number of upslope contributing pixels from the "
+        "flow-routing object, not the number of direct donors to a pixel."
+    };
+
+    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+        "Minimum expanding-square snapping search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square. "
+        "0 means the mapped input pixel is tested first."
+    };
+
+    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+        "Maximum expanding-square snapping search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square. "
+        "The search stops at the first radius containing one or more qualifying pixels."
+    };
+
+
+
     // --- Sea removal ---
     float_default_map["minimum_elevation"] = 0.0f;
     help_map["minimum_elevation"] = {"float","0.0",
@@ -688,6 +491,70 @@ int main(int argc, char* argv[])
     auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
+
+    auto to_lower_copy = [](std::string s)
+    {
+        for (char& ch : s)
+        {
+            ch = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(ch))
+            );
+        }
+        return s;
+    };
+
+    const std::string basin_outlet_snapping_method =
+        to_lower_copy(sf["basin_outlet_snapping_method"]);
+
+    if (basin_outlet_snapping_method != "none" &&
+        basin_outlet_snapping_method != "expanding_square" &&
+        basin_outlet_snapping_method != "downstream")
+    {
+        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
+                  << "none, expanding_square, downstream.\n";
+        return 1;
+    }
+
+    if (ifs["basin_outlet_contributing_pixels_threshold"] <= 0)
+    {
+        std::cerr << "FATAL: basin_outlet_contributing_pixels_threshold "
+                  << "must be > 0.\n";
+        return 1;
+    }
+
+    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    {
+        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels "
+                  << "must be >= 0.\n";
+        return 1;
+    }
+
+    if (ifs["basin_outlet_max_search_radius_pixels"] <
+        ifs["basin_outlet_min_search_radius_pixels"])
+    {
+        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
+                  << "basin_outlet_min_search_radius_pixels.\n";
+        return 1;
+    }
+
+
+    if (basin_outlet_snapping_method != "none")
+    {
+        std::cout << "Outlet snapping method                 : "
+                  << basin_outlet_snapping_method << "\n";
+        std::cout << "Outlet snapping threshold (pixels)     : "
+                  << ifs["basin_outlet_contributing_pixels_threshold"] << "\n";
+
+        if (basin_outlet_snapping_method == "expanding_square")
+        {
+            std::cout << "Outlet snapping min search radius      : "
+                      << ifs["basin_outlet_min_search_radius_pixels"] << "\n";
+            std::cout << "Outlet snapping max search radius      : "
+                      << ifs["basin_outlet_max_search_radius_pixels"] << "\n";
+        }
+    }
+
+
 
     if (sf["basin_outlet_csv"] == "NULL" || sf["basin_outlet_csv"].empty())
     {
@@ -870,10 +737,16 @@ int main(int argc, char* argv[])
 
     std::cout << "\nReading basin outlet CSV: " << basin_csv_path << "\n";
 
-    std::vector<basin_outlet_record> requested_outlets;
+    const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
+
+    std::vector<lsdtt::lsdtt_input_point> requested_outlets;
     try
     {
-        requested_outlets = load_basin_outlet_csv(basin_csv_path);
+        requested_outlets =
+            lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
+                basin_csv_path,
+                meta
+            );
     }
     catch (const std::exception& e)
     {
@@ -884,38 +757,150 @@ int main(int argc, char* argv[])
     std::cout << "Read " << requested_outlets.size()
               << " outlet point(s)\n";
 
+
     // -------------------------------------------------------------------------
     // Basin statistics
     // -------------------------------------------------------------------------
     std::vector<basin_stats_record> basin_rows;
     basin_rows.reserve(requested_outlets.size());
 
-    const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
     const lsdtt::lsdtt_array2d_f& dem_data = dem.get_data_array();
     const lsdtt::lsdtt_array2d_u8& dem_mask = dem.get_mask_array();
 
+
+    lsdtt::lsdtt_square_snap_options square_snap_options;
+    square_snap_options.contributing_pixels_threshold =
+        static_cast<std::uint64_t>(
+            ifs["basin_outlet_contributing_pixels_threshold"]
+        );
+    square_snap_options.min_search_radius_pixels =
+        ifs["basin_outlet_min_search_radius_pixels"];
+    square_snap_options.max_search_radius_pixels =
+        ifs["basin_outlet_max_search_radius_pixels"];
+
+    lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
+    downstream_snap_options.contributing_pixels_threshold =
+        static_cast<std::uint64_t>(
+            ifs["basin_outlet_contributing_pixels_threshold"]
+        );
+
+    auto snap_status_to_string = [](lsdtt::lsdtt_snap_status status)
+    {
+        switch (status)
+        {
+            case lsdtt::lsdtt_snap_status::success:
+                return std::string("success");
+
+            case lsdtt::lsdtt_snap_status::input_out_of_bounds:
+                return std::string("input_out_of_bounds");
+
+            case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
+                return std::string("input_invalid_flow_cell");
+
+            case lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window:
+                return std::string("threshold_not_found_in_search_window");
+
+            case lsdtt::lsdtt_snap_status::outlet_reached_before_threshold:
+                return std::string("outlet_reached_before_threshold");
+        }
+
+        return std::string("unknown");
+    };
+
+
+
     for (const auto& outlet : requested_outlets)
     {
-        std::cout << "\nOutlet " << outlet.outlet_id
-                  << "  lat=" << outlet.latitude
-                  << " lon=" << outlet.longitude << "\n";
+        const double latitude  = outlet.original_y;
+        const double longitude = outlet.original_x;
+
+        std::cout << "\nOutlet " << outlet.point_id
+                  << "  lat=" << latitude
+                  << " lon=" << longitude << "\n";
 
         try
         {
-            // CSV is latitude,longitude.
-            // Transform expects x=longitude, y=latitude.
-            const lsdtt::lsdtt_xy xy =
-                lonlat_to_raster_xy(outlet.longitude, outlet.latitude, meta);
-
-            const int col = lsdtt::col_from_x(meta, xy.x);
-            const int row = lsdtt::row_from_y(meta, xy.y);
-            const std::int64_t flat = flow->flat_index(row, col);
-
-            if (!flow->is_valid_cell(flat))
+            if (outlet.status != lsdtt::lsdtt_point_input_status::success)
             {
-                std::cerr << "Warning: outlet " << outlet.outlet_id
-                          << " maps to an invalid or nodata pixel; skipping.\n";
+                std::cerr << "Warning: outlet " << outlet.point_id
+                          << " did not map to an in-bounds raster pixel; skipping.\n";
                 continue;
+            }
+
+            int row = outlet.row;
+            int col = outlet.col;
+            std::int64_t flat = outlet.flat;
+
+            lsdtt::lsdtt_xy xy{outlet.x, outlet.y};
+
+            if (basin_outlet_snapping_method == "expanding_square")
+            {
+                const lsdtt::lsdtt_snap_result snapped =
+                    lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
+                        *flow,
+                        row,
+                        col,
+                        square_snap_options
+                    );
+
+                if (snapped.status != lsdtt::lsdtt_snap_status::success)
+                {
+                    std::cerr << "Warning: outlet " << outlet.point_id
+                              << " could not be snapped with expanding_square ("
+                              << snap_status_to_string(snapped.status)
+                              << "); skipping.\n";
+                    continue;
+                }
+
+                row  = snapped.snapped_row;
+                col  = snapped.snapped_col;
+                flat = snapped.snapped_flat;
+                xy   = lsdtt::cell_center_from_row_col(meta, row, col);
+
+                std::cout << "  Snapped      : row=" << row
+                          << " col=" << col
+                          << " radius=" << snapped.search_radius_pixels
+                          << " contributing_pixels="
+                          << snapped.snapped_contributing_pixels << "\n";
+            }
+            else if (basin_outlet_snapping_method == "downstream")
+            {
+                const lsdtt::lsdtt_snap_result snapped =
+                    lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
+                        *flow,
+                        row,
+                        col,
+                        downstream_snap_options
+                    );
+
+                if (snapped.status != lsdtt::lsdtt_snap_status::success)
+                {
+                    std::cerr << "Warning: outlet " << outlet.point_id
+                              << " could not be snapped downstream ("
+                              << snap_status_to_string(snapped.status)
+                              << "); skipping.\n";
+                    continue;
+                }
+
+                row  = snapped.snapped_row;
+                col  = snapped.snapped_col;
+                flat = snapped.snapped_flat;
+                xy   = lsdtt::cell_center_from_row_col(meta, row, col);
+
+                std::cout << "  Snapped      : row=" << row
+                          << " col=" << col
+                          << " steps=" << snapped.downstream_steps
+                          << " contributing_pixels="
+                          << snapped.snapped_contributing_pixels << "\n";
+            }
+            else
+            {
+                if (!flow->is_valid_cell(flat))
+                {
+                    std::cerr << "Warning: outlet " << outlet.point_id
+                              << " maps to an invalid or nodata flow pixel; skipping.\n";
+                    continue;
+                }
             }
 
             const lsdtt::lsdtt_flat_index_slice upslope =
@@ -956,7 +941,7 @@ int main(int argc, char* argv[])
 
             if (basin_values.empty())
             {
-                std::cerr << "Warning: basin for outlet " << outlet.outlet_id
+                std::cerr << "Warning: basin for outlet " << outlet.point_id
                           << " contained no valid DEM pixels; skipping.\n";
                 continue;
             }
@@ -973,23 +958,21 @@ int main(int argc, char* argv[])
                     );
 
                 const std::string dist_csv =
-                    basin_pdf_cdf_path(pp, outlet.outlet_id);
+                    basin_pdf_cdf_path(pp, outlet.point_id);
 
                 std::cout << "  Writing PDF/CDF: " << dist_csv << "\n";
 
                 write_basin_pdf_cdf_csv(
                     dist_csv,
-                    outlet.outlet_id,
+                    outlet.point_id,
                     hist
                 );
             }
 
-
-
             basin_stats_record row_out;
-            row_out.basin_id    = outlet.outlet_id;
-            row_out.latitude    = outlet.latitude;
-            row_out.longitude   = outlet.longitude;
+            row_out.basin_id    = outlet.point_id;
+            row_out.latitude    = latitude;
+            row_out.longitude   = longitude;
             row_out.outlet_x    = xy.x;
             row_out.outlet_y    = xy.y;
             row_out.outlet_row  = row;
@@ -1008,9 +991,10 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "Warning: failed to process outlet "
-                      << outlet.outlet_id << ": " << e.what() << "\n";
+                      << outlet.point_id << ": " << e.what() << "\n";
         }
     }
+
 
     if (basin_rows.empty())
     {

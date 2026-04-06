@@ -1,0 +1,263 @@
+// lsdtt_point_input.hpp
+//
+// Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
+//
+// Copyright (C) 2026 Simon M. Mudd
+// Released under the GNU General Public Licence v3 (GPL-3.0)
+// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+//
+// -----------------------------------------------------------------------------
+// lsdtt_point_input
+//
+// Point-input helpers for raster and flow-routing workflows.
+//
+// This module loads user-supplied point data, transforms the coordinates into
+// the raster CRS, and maps them onto raster pixels.
+//
+// Supported input styles
+// ----------------------
+// 1. CSV with columns named latitude and longitude
+//    - interpreted as WGS84 / EPSG:4326 decimal degrees
+//    - this is the default CSV convention
+//
+// 2. OGR-supported point vector layers
+//    - examples: GeoPackage, FlatGeobuf, Shapefile, GeoJSON
+//    - feature coordinates are read in the layer CRS and then transformed to
+//      the raster CRS
+//
+// Notes
+// -----
+// - This is a GDAL/OGR-aware interface and therefore belongs in src/core/.
+// - Returned records preserve input order.
+// - Each returned record stores both raster-CRS coordinates and mapped raster
+//   pixel indices where possible.
+// - Dataset-level failures throw std::runtime_error.
+// - Per-point failures are recorded in lsdtt_point_input_status.
+// -----------------------------------------------------------------------------
+
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "lsdtt_raster_meta.hpp"
+#include "../utils/lsdtt_snapping_types.hpp"
+
+namespace lsdtt
+{
+
+// -----------------------------------------------------------------------------
+// lsdtt_point_input_format
+//
+// auto_detect
+//   Resolve the input path automatically.
+//   Recommended default:
+//     *.csv  -> csv_latitude_longitude_epsg4326
+//     other  -> ogr_vector_layer
+//
+// csv_latitude_longitude_epsg4326
+//   Read a CSV file containing columns named latitude and longitude.
+//   Coordinates are interpreted as WGS84 / EPSG:4326 decimal degrees.
+//
+// ogr_vector_layer
+//   Read a point layer through OGR. The layer CRS is used as the source CRS
+//   and the geometries are transformed to the raster CRS.
+// -----------------------------------------------------------------------------
+enum class lsdtt_point_input_format
+{
+    auto_detect,
+    csv_latitude_longitude_epsg4326,
+    ogr_vector_layer
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_point_input_status
+//
+// success
+//   Point was read, transformed to raster CRS, and mapped to an in-bounds
+//   raster pixel.
+//
+// unsupported_geometry_type
+//   Vector input feature was not a point geometry.
+//
+// missing_source_crs
+//   Vector input did not provide a usable source CRS, so transformation to the
+//   raster CRS could not be performed.
+//
+// coordinate_transform_failed
+//   Coordinate transformation to the raster CRS failed, or the input row could
+//   not provide usable numeric coordinates.
+//
+// outside_raster_extent
+//   Point was read and transformed successfully but falls outside the raster
+//   grid extent.
+//
+// empty_geometry
+//   Vector feature had no geometry.
+// -----------------------------------------------------------------------------
+enum class lsdtt_point_input_status
+{
+    success,
+    unsupported_geometry_type,
+    missing_source_crs,
+    coordinate_transform_failed,
+    outside_raster_extent,
+    empty_geometry
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_point_input_options
+//
+// input_format
+//   Controls how the input path is interpreted. In most workflows the default
+//   auto_detect behaviour should be appropriate.
+//
+// vector_layer_name
+//   Optional layer name for vector inputs. If empty, the implementation should
+//   use the only layer if there is one, otherwise the first layer.
+//
+// csv_latitude_field_name / csv_longitude_field_name
+//   Field names used for the CSV latitude/longitude path. Defaults match the
+//   basin-outlet convention used elsewhere in lsdtt3.
+//
+// keep_points_outside_raster
+//   Intended control over whether outside-raster points are retained in the
+//   returned vector. The current implementation preserves outside-raster points
+//   with status = outside_raster_extent so that input order remains stable.
+// -----------------------------------------------------------------------------
+struct lsdtt_point_input_options
+{
+    lsdtt_point_input_format input_format =
+        lsdtt_point_input_format::auto_detect;
+
+    std::string vector_layer_name = "";
+
+    std::string csv_latitude_field_name  = "latitude";
+    std::string csv_longitude_field_name = "longitude";
+
+    bool keep_points_outside_raster = true;
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_input_point
+//
+// One ingested point record after transformation into raster CRS.
+//
+// source_* fields
+//   Preserve provenance and original coordinate values where possible.
+//
+// x / y
+//   Coordinates in the raster CRS.
+//
+// row / col / flat
+//   Raster-pixel location corresponding to x / y when the point lies inside
+//   the raster extent. If the point is outside the raster, these remain unset.
+//
+// point_id
+//   Sequential 1-based identifier assigned in input order.
+// -----------------------------------------------------------------------------
+struct lsdtt_input_point
+{
+    int point_id = -1;
+
+    lsdtt_point_input_format source_format =
+        lsdtt_point_input_format::auto_detect;
+
+    lsdtt_point_input_status status =
+        lsdtt_point_input_status::outside_raster_extent;
+
+    std::string source_dataset_path = "";
+    std::string source_layer_name   = "";
+
+    std::int64_t source_feature_id = -1;
+
+    bool   has_original_coordinates = false;
+    double original_x               = 0.0;
+    double original_y               = 0.0;
+
+    bool original_coordinates_are_longitude_latitude = false;
+
+    double x = 0.0;
+    double y = 0.0;
+
+    int          row  = -1;
+    int          col  = -1;
+    std::int64_t flat = -1;
+};
+
+// -----------------------------------------------------------------------------
+// Generic point-file loader
+//
+// Reads any supported point input, transforms coordinates to the raster CRS,
+// and maps each point to a raster cell.
+//
+// Return policy
+// -------------
+// - Input order is preserved.
+// - One output record is returned per input row / feature where possible.
+// - Per-point problems are recorded in the status field.
+// - Irrecoverable dataset-level problems throw std::runtime_error.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_input_point>
+load_points_in_raster_crs(
+    const std::string&               input_path,
+    const lsdtt_raster_meta&         raster_meta,
+    const lsdtt_point_input_options& options = lsdtt_point_input_options{}
+);
+
+// -----------------------------------------------------------------------------
+// CSV-specific loader
+//
+// Reads a CSV file containing latitude / longitude columns and interprets those
+// coordinates as WGS84 / EPSG:4326 decimal degrees.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_input_point>
+load_csv_latitude_longitude_points_in_raster_crs(
+    const std::string& csv_path,
+    const lsdtt_raster_meta& raster_meta,
+    const std::string& latitude_field_name  = "latitude",
+    const std::string& longitude_field_name = "longitude",
+    bool keep_points_outside_raster = true
+);
+
+// -----------------------------------------------------------------------------
+// Vector-layer-specific loader
+//
+// Reads a point vector layer through OGR, transforms feature coordinates from
+// the layer CRS into the raster CRS, and maps them onto raster pixels.
+//
+// layer_name
+//   Optional. If empty, the implementation should select the only layer if the
+//   dataset has exactly one, otherwise the first layer.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_input_point>
+load_vector_point_layer_in_raster_crs(
+    const std::string& vector_path,
+    const lsdtt_raster_meta& raster_meta,
+    const std::string& layer_name = "",
+    bool keep_points_outside_raster = true
+);
+
+// -----------------------------------------------------------------------------
+// Convenience filters for downstream workflows
+//
+// These helpers extract only points that mapped successfully onto the raster.
+// They preserve order among successful records.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_input_point>
+filter_successfully_mapped_input_points(
+    const std::vector<lsdtt_input_point>& points
+);
+
+[[nodiscard]] std::vector<lsdtt_pixel_rc>
+successfully_mapped_input_points_to_pixels(
+    const std::vector<lsdtt_input_point>& points
+);
+
+[[nodiscard]] std::vector<std::int64_t>
+successfully_mapped_input_points_to_flats(
+    const std::vector<lsdtt_input_point>& points
+);
+
+} // namespace lsdtt

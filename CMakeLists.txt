@@ -111,6 +111,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_raster_reproject.cpp
     src/core/lsdtt_vector_utils.cpp
     src/core/lsdtt_raster_warp.cpp
+    src/core/lsdtt_point_input.cpp
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
@@ -172,6 +173,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_feature_finder_cpu.cpp
     src/cpu/lsdtt_depression_hierarchy_cpu.cpp
     src/cpu/lsdtt_fill_spill_merge_cpu.cpp
+    src/cpu/lsdtt_flow_snapping_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
