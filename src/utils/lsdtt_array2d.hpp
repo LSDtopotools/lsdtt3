@@ -2,13 +2,22 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt_array2d<T>
 //
+// Data from rasters is stored using GDAL format in a continuous
+// flattened vector. However code is  easier to read if you can use
+// row,column referencing (at least Simon thinks it is easier).
+// So this little helper object is made to facilitate that. 
+// Any time heavy matrix compuation is required you should pass to 
+// the Eigen linear algebra library, and if you want to do things 
+// with image processing you pass to OpenCV.
+//
+// Or, more succinctly (in AI speak):
 // Lightweight 2D array wrapper over a contiguous std::vector<T>.
 // Provides row/column indexing via operator()(row, col) with the same
 // memory layout as GDAL (row-major, origin top-left).
@@ -41,6 +50,9 @@
 //   // Access by row and column
 //   float z = dem(row, col);
 //   dem(row, col) = 0.0f;
+//
+//   // If you want to check bounds use
+//   float z = dem.at(row,col)
 //
 //   // Pass to OpenCV (zero copy)
 //   cv::Mat cv_dem = dem.to_cv_mat();
@@ -119,6 +131,8 @@ public:
     static constexpr from_ptr_tag from_ptr{};
 
     // Construct from an existing contiguous buffer (copies data).
+    // You give it the pointer and the the array2d then has the data, but need
+    // the from_ptr_tag to make sure it doens't think 0 is a null pointer
     // Use the from_ptr tag to call this constructor unambiguously:
     //   lsdtt_array2d<float> dem(nrows, ncols, lsdtt_array2d<float>::from_ptr, src);
     lsdtt_array2d(int n_rows, int n_cols, from_ptr_tag, const T* src)
@@ -158,6 +172,7 @@ public:
     // -------------------------------------------------------------------------
 
     // Bounds-checked access
+    // Slower but safer
     reference at(int row, int col)
     {
         check_bounds(row, col);
@@ -171,6 +186,10 @@ public:
     }
 
     // Unchecked access — use in performance-critical inner loops
+    // Because stuff is accessed via a pointer anything beyond bounds
+    // will still result in a number, but it won't be in the raster
+    // so make sure you use this where you are confident in the size of the
+    // raster
     reference operator()(int row, int col)
     {
         return data_[index(row, col)];

@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -216,7 +216,7 @@ int main(int argc, char* argv[])
 
     // --- Output --- channel network points
     bool_default_map["write_channel_network_points"] = false;
-    help_map["write_channel_network"] = {"bool", "false",
+    help_map["write_channel_network_points"] = {"bool", "false",
         "Write the channel network as point data, where each channel pixel "
         "is a feature with attribute values, such as drainage_area.",
         "Compared to write_channel_network_lines, this write will be larger "
@@ -225,7 +225,7 @@ int main(int argc, char* argv[])
     };
 
     string_default_map["channel_network_points_output_format"] = "flatgeobuf";
-    help_map["channel_network_output_format"] = {"string","gpkg",
+    help_map["channel_network_points_output_format"] = {"string","gpkg",
         "Output format for the exported channel network.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "

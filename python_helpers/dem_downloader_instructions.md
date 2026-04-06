@@ -1,6 +1,11 @@
 # Download DEM Tiles from Microsoft Planetary Computer
 
-This script downloads DEM tiles from Microsoft Planetary Computer using coordinates copied from Google Maps.
+
+This script downloads DEM tiles from Microsoft Planetary Computer using coordinates copied from Google Maps. We use Planetary Computer because it does not require an API token. 
+
+Its functionality is somewhat limitied, you can only get the Copernicus DEM and you get the data in tiles, so you will need to do postprocesing for clipping. If you want greater flexibility you can try the OpenTopography API for different formats, exact clips, and lidar data but this requires an API key so we keep this lighter weight version if you don't have that or don't want to bother with an API key. 
+
+---
 
 Google Maps gives coordinates in this format:
 
@@ -14,7 +19,7 @@ That is:
 latitude, longitude
 ```
 
-The script accepts either:
+This script accepts either:
 
 - **one coordinate string**: download the full DEM tile containing that point
 - **two coordinate strings**: download all full DEM tiles intersecting the bounding box defined by those two corners
