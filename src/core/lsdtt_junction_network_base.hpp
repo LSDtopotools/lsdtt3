@@ -25,10 +25,17 @@
 #include <functional>
 
 #include "lsdtt_raster_meta.hpp"
-#include "lsdtt_junction_network_types.hpp"
+#include "lsdtt_types.hpp"
 
 namespace lsdtt
 {
+
+struct lsdtt_junction_network_options
+{
+    bool build_topological_order = true;
+    bool build_s_vector          = true;
+};
+
 
 class lsdtt_junction_network_base
 {

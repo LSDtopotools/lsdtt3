@@ -22,7 +22,7 @@
 #include <ogr_geometry.h>
 
 #include "../core/lsdtt_data_loader.hpp"
-#include "../core/lsdtt_flow_types.hpp"
+#include "../core/lsdtt_types.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 

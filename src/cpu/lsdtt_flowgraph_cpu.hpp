@@ -51,7 +51,7 @@
 //   requires a separate float/double array and does not use donor_count_.
 //
 // Note on flat_index_type:
-//   Types come from lsdtt_flow_types.hpp — the single source of truth for
+//   Types come from lsdtt_types.hpp — the single source of truth for
 //   all flow routing types. To widen flat_index_type to int64_t for large
 //   rasters, change the typedef there and recompile.
 //
@@ -65,7 +65,7 @@
 #include <vector>
 
 #include "../core/lsdtt_raster_meta.hpp"
-#include "../core/lsdtt_flow_types.hpp"
+#include "../core/lsdtt_types.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 
 namespace lsdtt
@@ -99,7 +99,7 @@ class lsdtt_flowgraph_cpu
 {
 public:
 
-    // Type aliases from lsdtt_flow_types.hpp — the single source of truth.
+    // Type aliases from lsdtt_types.hpp — the single source of truth.
     // Widening flat_index_type to int64_t is done there; all aliases follow.
     using flat_index_type  = lsdtt::flat_index_type;
     using std::uint8_t = lsdtt::std::uint8_t;   // Kahn ordering; max 8

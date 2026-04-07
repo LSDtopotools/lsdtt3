@@ -42,7 +42,7 @@
 #include <vector>
 
 #include "lsdtt_raster_meta.hpp"
-#include "../utils/lsdtt_snapping_types.hpp"
+#include "lsdtt_types.hpp"
 
 namespace lsdtt
 {

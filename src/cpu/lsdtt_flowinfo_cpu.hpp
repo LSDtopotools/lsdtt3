@@ -29,7 +29,7 @@
 //   bool upslope = fi.is_upslope_of(a, b);           // O(1) membership test
 //   auto n_up    = fi.s_vector_size_unchecked(flat); // upstream pixel count
 //
-// You do not need to know about lsdtt_flow_base.hpp, lsdtt_flow_types.hpp,
+// You do not need to know about lsdtt_flow_base.hpp, lsdtt_types.hpp,
 // or lsdtt_flow_base.cpp. Those are infrastructure files used by the build
 // system and CLI layer — they are invisible to analysis code.
 //
@@ -98,9 +98,8 @@
 #include <vector>
 
 #include "../core/lsdtt_raster_meta.hpp"
-#include "../core/lsdtt_flow_types.hpp"
+#include "../core/lsdtt_types.hpp"
 #include "../core/lsdtt_flow_base.hpp"
-#include "../core/lsdtt_junction_network_types.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 
 
@@ -115,7 +114,7 @@ class lsdtt_flowinfo : public lsdtt_flow_base
 public:
 
     // -------------------------------------------------------------------------
-    // Sentinel values and helper types — from lsdtt_flow_types.hpp
+    // Sentinel values and helper types — from lsdtt_types.hpp
     // -------------------------------------------------------------------------
     static constexpr std::int64_t nodata_receiver = lsdtt::k_nodata_receiver;
     static constexpr std::int64_t outlet_receiver = lsdtt::k_outlet_receiver;

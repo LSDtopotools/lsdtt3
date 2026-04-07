@@ -14,6 +14,10 @@
 //   - no reprojection
 //   - no file I/O
 //
+// The primitive types used here (lsdtt_xy, lsdtt_extent, lsdtt_rowcol_window)
+// are defined in lsdtt_types.hpp. Include that header directly if you only need
+// the types and not the geometry helper functions.
+//
 // Coordinate convention:
 //   meta.x_min, meta.y_min are the lower-left raster edges.
 //   Array row 0 is the TOP row, matching GDAL row-major storage.
@@ -29,78 +33,9 @@
 #include <algorithm>
 
 #include "../core/lsdtt_raster_meta.hpp"
+#include "../core/lsdtt_types.hpp"
 
 namespace lsdtt {
-
-
-
-struct lsdtt_xy
-{
-    double x = 0.0;
-    double y = 0.0;
-};
-
-
-
-
-
-// -----------------------------------------------------------------------------
-// lsdtt_extent
-//
-// Axis-aligned raster extent in projected coordinates.
-// x_min/y_min are lower-left edges; x_max/y_max are upper-right edges.
-// -----------------------------------------------------------------------------
-struct lsdtt_extent
-{
-    double x_min = 0.0;
-    double y_min = 0.0;
-    double x_max = 0.0;
-    double y_max = 0.0;
-
-    bool is_valid() const
-    {
-        return x_max > x_min && y_max > y_min;
-    }
-
-    double width() const
-    {
-        return x_max - x_min;
-    }
-
-    double height() const
-    {
-        return y_max - y_min;
-    }
-};
-
-// -----------------------------------------------------------------------------
-// lsdtt_rowcol_window
-//
-// Half-open row/col window: [row_begin,row_end), [col_begin,col_end)
-// Suitable for vector slicing and subraster extraction.
-// -----------------------------------------------------------------------------
-struct lsdtt_rowcol_window
-{
-    int row_begin = 0;
-    int row_end   = 0;
-    int col_begin = 0;
-    int col_end   = 0;
-
-    bool is_valid() const
-    {
-        return row_end > row_begin && col_end > col_begin;
-    }
-
-    int n_rows() const
-    {
-        return row_end - row_begin;
-    }
-
-    int n_cols() const
-    {
-        return col_end - col_begin;
-    }
-};
 
 // -----------------------------------------------------------------------------
 // floating-point helpers
@@ -204,7 +139,6 @@ inline double cell_centre_y(
            (static_cast<double>(meta.n_rows - row) - 0.5) * meta.cell_size;
 }
 
-
 inline lsdtt_xy cell_center_from_row_col(
     const lsdtt_raster_meta& meta,
     int row,
@@ -216,6 +150,7 @@ inline lsdtt_xy cell_center_from_row_col(
     };
 }
 
+// US/UK spelling aliases
 inline double cell_center_x(
     const lsdtt_raster_meta& meta,
     int col)

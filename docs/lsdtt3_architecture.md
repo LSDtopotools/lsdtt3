@@ -41,15 +41,14 @@ lsdtt3/
 │   └── download_dem_tiles.py
 ├── src/
 │   ├── core/
+│   │   ├── lsdtt_types.hpp                — all lightweight shared primitive types (see below)
 │   │   ├── lsdtt_raster_meta.hpp          — metadata struct + CRS validation
 │   │   ├── lsdtt_raster_base.hpp/.cpp     — abstract raster dispatch interface
 │   │   ├── lsdtt_data_loader.hpp/.cpp     — GDAL/OGR I/O, RAII, COG output
 │   │   ├── lsdtt_backend_factory.hpp/.cpp — make_raster_engine(), gpu_available()
 │   │   ├── lsdtt_param_parser.hpp/.cpp    — parameter file parser
-│   │   ├── lsdtt_flow_types.hpp           — shared flow types (header-only)
-│   │   ├── lsdtt_junction_network_base.hpp  - abstract channel network interface (header only)
-│   │   ├── lsdtt_junction_network_types.hpp - shared junction network types (header-only)
-│   │   ├── lsdtt_flow_base.hpp            — abstract D8 flow interface (header-only)
+│   │   ├── lsdtt_junction_network_base.hpp  — abstract channel network interface + lsdtt_junction_network_options
+│   │   ├── lsdtt_flow_base.hpp            — abstract D8 flow interface + lsdtt_flowinfo_options
 │   │   ├── lsdtt_crs_suggest.hpp/.cpp     — CRS inspection and projection recommendation
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
 │   │   └── lsdtt_vector_utils.hpp/.cpp    — GDAL/OGR-backed vector helpers
@@ -544,8 +543,12 @@ in **EPSG:4326**, using GDAL/OGR coordinate transformation from the source CRS.
 
 ### Shared helper split
 
+- **`src/core/lsdtt_types.hpp`**  
+  all lightweight shared primitive types (spatial, raster geometry, flow, junction)
+
 - **`src/utils/lsdtt_raster_geometry.hpp`**  
-  header-only grid geometry helpers such as row/col to cell-centre x/y
+  header-only grid geometry helpers such as row/col to cell-centre x/y;
+  primitive types (lsdtt_xy, lsdtt_extent, lsdtt_rowcol_window) come from lsdtt_types.hpp
 
 - **`src/core/lsdtt_vector_utils.hpp/.cpp`**  
   GDAL/OGR-backed vector/projection helpers such as reusable coordinate
@@ -564,40 +567,68 @@ There are several flow-routing files. This table explains which one you need.
 | Writing a CLI that builds a flow object | `lsdtt_flow_base.hpp` | Call `make_flow_base()`. Returns `unique_ptr<lsdtt_flow_base>`. GPU-compatible. |
 | Writing D-inf / MFD distributed-flow analysis | `lsdtt_flowgraph_cpu.hpp` | Stub — implementation pending. |
 | Adding a GPU flow routing backend | `lsdtt_flow_base.hpp` + new `lsdtt_flowinfo_gpu.hpp` | Implement `lsdtt_flow_base`, add branch in `src/cpu/lsdtt_flow_base.cpp`. |
-| Understanding cell-index types | `lsdtt_flow_types.hpp` | Flow-routing cell indices use `std::int64_t` directly throughout; there is no `flat_index_type` typedef. |
+| Understanding cell-index types | `lsdtt_types.hpp` | Flow-routing cell indices use `std::int64_t` directly throughout; there is no `flat_index_type` typedef. |
 
 **Analysis code** never needs to know about `lsdtt_flow_base`, `lsdtt_flow_types`,
 or `lsdtt_flow_base.cpp`. Those are infrastructure.
 
 ---
 
-## lsdtt_flow_types
+## lsdtt_types
 
-File: `src/core/lsdtt_flow_types.hpp` (header-only, no `.cpp`)
+File: `src/core/lsdtt_types.hpp` (header-only, no `.cpp`)
 
-Shared types included by both `lsdtt_flow_base.hpp` and `lsdtt_flowinfo_cpu.hpp`
-to avoid circular includes.
+**Single home for all lightweight primitive types shared across lsdtt3.**
+
+Dependencies: only `<cstdint>`, `<cstddef>`. No GDAL, no OGR, no other lsdtt3 header.
+
+**Rule:** Do not create a new `*_types.hpp` file. If you need a new lightweight
+shared type, add it here. A separate types file is only justified when including
+the type everywhere would create an unwanted compile-time dependency — that
+situation should be extremely rare in this codebase.
 
 **Include chain (acyclic):**
 ```
-lsdtt_flow_types.hpp         (no lsdtt3 includes — just <cstdint> etc.)
+lsdtt_types.hpp                          (no lsdtt3 includes — just <cstdint> etc.)
        ↑
-lsdtt_flow_base.hpp          (includes lsdtt_flow_types.hpp)
+lsdtt_flow_base.hpp                      (includes lsdtt_types.hpp; owns lsdtt_flowinfo_options)
        ↑
-lsdtt_flowinfo_cpu.hpp       (includes lsdtt_flow_types.hpp + lsdtt_flow_base.hpp)
+lsdtt_flowinfo_cpu.hpp                   (includes lsdtt_flow_base.hpp)
        ↑
-lsdtt_flow_base.cpp          (in lsdtt3_cpu — includes lsdtt_flowinfo_cpu.hpp, no cycle)
+lsdtt_flow_base.cpp                      (in lsdtt3_cpu — includes lsdtt_flowinfo_cpu.hpp, no cycle)
+
+lsdtt_types.hpp
+       ↑
+lsdtt_junction_network_base.hpp          (includes lsdtt_types.hpp; owns lsdtt_junction_network_options)
+       ↑
+lsdtt_junction_network_cpu.hpp           (includes lsdtt_junction_network_base.hpp)
+
+lsdtt_types.hpp
+       ↑
+lsdtt_raster_geometry.hpp               (includes lsdtt_types.hpp + lsdtt_raster_meta.hpp)
 ```
 
 **Contents:**
 
-- `k_nodata_receiver = -1`, `k_outlet_receiver = -2`, `k_no_direction = 255` — all `std::int64_t` / `uint8_t`
-- `lsdtt_flat_index_slice` — zero-copy view into s_vector; `value_type = std::int64_t`
-- `lsdtt_flowinfo_options` — construction options shared by flow routing objects
+*Spatial primitives*
+- `lsdtt_pixel_rc` — integer row/col location; negative = unset/invalid
+- `lsdtt_xy` — double x/y projected coordinate pair
 
-All cell indices use `std::int64_t` directly throughout the flow routing layer.
-There is no `flat_index_type` typedef — it was removed to simplify the code and
-avoid explaining a flexible type that was rarely changed in practice.
+*Raster geometry*
+- `lsdtt_extent` — axis-aligned bounding box (lower-left origin)
+- `lsdtt_rowcol_window` — half-open `[row_begin, row_end)` / `[col_begin, col_end)` window
+
+*Flow-routing types*
+- `k_nodata_receiver = -1`, `k_outlet_receiver = -2` — `std::int64_t` sentinels
+- `k_no_direction = 255` — `std::uint8_t` sentinel
+- `lsdtt_flat_index_slice` — zero-copy view into s_vector; `value_type = std::int64_t`
+
+*Junction-network types*
+- `k_nodata_junction = -1`, `k_outlet_junction = -2` — `std::int32_t` sentinels
+- `lsdtt_junction_index_slice` — zero-copy view into junction s_vector; `value_type = std::int32_t`
+
+**`lsdtt_flowinfo_options`** lives in `src/core/lsdtt_flow_base.hpp` — it is
+domain-specific to flow routing and would only clutter the shared types file.
 
 **`lsdtt_flowinfo_options` fields:**
 ```
@@ -610,6 +641,8 @@ n_threads                 = 0
 ```
 Boundary codes: `o`=open, `n`=no-flux, `p`=periodic (symmetric pairs),
 `b`=forced outlet on that entire edge.
+
+**`lsdtt_junction_network_options`** lives in `src/core/lsdtt_junction_network_base.hpp`.
 
 ---
 
@@ -686,8 +719,8 @@ flow-routing graph.
 
 ### Files
 
-- `src/core/lsdtt_junction_network_types.hpp`
-- `src/core/lsdtt_junction_network_base.hpp`
+- `src/core/lsdtt_types.hpp` — shared primitive types (sentinels, index slices)
+- `src/core/lsdtt_junction_network_base.hpp` — abstract interface + `lsdtt_junction_network_options`
 - `src/cpu/lsdtt_junction_network_cpu.hpp/.cpp`
 
 ### Type policy
@@ -941,21 +974,25 @@ n_threads: 0
 10. `src/core/` = abstract interfaces, factories, shared types, I/O only
 11. `src/cpu/` = all CPU implementations (raster, flow, and algebra)
 12. `src/gpu/` = all GPU implementations
-13. `src/core/lsdtt_crs_suggest` inspects CRS; `src/core/lsdtt_raster_reproject`
+13. All lightweight shared primitive types live in `src/core/lsdtt_types.hpp`.
+    Do not create a new `*_types.hpp` file — add to lsdtt_types.hpp instead.
+    A separate types file is only justified when inclusion would create an
+    unwanted compile-time dependency; that situation should be extremely rare.
+14. `src/core/lsdtt_crs_suggest` inspects CRS; `src/core/lsdtt_raster_reproject`
     acts on it — these are deliberately separate so suggestion logic can be used
     without triggering I/O
-14. Reprojected rasters always receive a projection suffix (_utm / _polar / _lambert)
+15. Reprojected rasters always receive a projection suffix (_utm / _polar / _lambert)
     so the provenance of every output file is unambiguous from its filename
-15. `lsdtt_raster_algebra` lives in `src/cpu/lsdtt_raster_algebra.hpp/.cpp`; include from `src/cpu/`.
+16. `lsdtt_raster_algebra` lives in `src/cpu/lsdtt_raster_algebra.hpp/.cpp`; include from `src/cpu/`.
     Use `lsdtt::algebra::raster_subtract(a, b)` etc. for diff rasters in CLIs.
-16. Every CLI uses `lsdtt_param_parser`
-17. CLI parameters are grouped by theme, not declared in one unstructured block
-18. In CLIs, `help_map` entries come immediately after the corresponding
+17. Every CLI uses `lsdtt_param_parser`
+18. CLI parameters are grouped by theme, not declared in one unstructured block
+19. In CLIs, `help_map` entries come immediately after the corresponding
     parameter default declaration
-19. CLI parameter variables are intentionally not `const` because
+20. CLI parameter variables are intentionally not `const` because
     cross-parameter logic may adjust them after parsing
-20. Pure grid-geometry helpers belong in `src/utils/`; GDAL/OGR-backed vector
+21. Pure grid-geometry helpers belong in `src/utils/`; GDAL/OGR-backed vector
     and projection helpers belong in `src/core/`
-21. Vector outputs should prefer typed attributes and single-file binary formats
+22. Vector outputs should prefer typed attributes and single-file binary formats
     such as FlatGeobuf
 

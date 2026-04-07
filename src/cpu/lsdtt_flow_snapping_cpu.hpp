@@ -49,7 +49,7 @@
 #include <vector>
 
 #include "../core/lsdtt_flow_base.hpp"
-#include "../utils/lsdtt_snapping_types.hpp"
+#include "../core/lsdtt_types.hpp"
 
 
 namespace lsdtt
