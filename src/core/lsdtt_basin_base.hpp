@@ -8,25 +8,10 @@
 // Copyright Simon M. Mudd, GPL-3.0
 
 #include <cstdint>
-#include <vector>
+#include <string>
 
 namespace lsdtt
 {
-
-// -----------------------------------------------------------------------
-// Shared result types
-// -----------------------------------------------------------------------
-
-// Returned by check_basin_completeness. Carries the boolean result and,
-// optionally, a count of the boundary pixels that triggered incompleteness,
-// which is useful for diagnostics in the basin manager.
-struct lsdtt_basin_boundary_result
-{
-    bool     is_complete       = false;
-    int32_t  n_open_boundary   = 0;   // pixels on open (non-periodic, non-baselevel) boundary
-    int32_t  n_nodata_adjacent = 0;   // pixels adjacent to nodata
-};
-
 
 // -----------------------------------------------------------------------
 // lsdtt_basin_base
@@ -48,7 +33,7 @@ public:
     virtual ~lsdtt_basin_base() = default;
 
     // Returns the flat index of the outlet node that defines this basin.
-    [[nodiscard]] virtual std::int64_t get_outlet_flat_index() const noexcept = 0;
+    [[nodiscard]] virtual std::int64_t get_basin_outlet_flat_index() const noexcept = 0;
 
     // Returns the number of pixels contained in the basin.
     [[nodiscard]] virtual std::int32_t get_number_of_basin_pixels() const noexcept = 0;
@@ -58,7 +43,7 @@ public:
     // non-baselevel) boundary or a nodata pixel.
     // Takes the four boundary condition characters (north, east, south, west)
     // as a four-character string, e.g. "oooo".
-    [[nodiscard]] virtual lsdtt_basin_boundary_result
+    [[nodiscard]] virtual bool
         check_basin_completeness(const std::string& boundary_conditions) const = 0;
 
     // Returns the number of pixels in the basin. Identical to

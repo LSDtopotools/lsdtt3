@@ -14,9 +14,9 @@
 // Copyright Simon M. Mudd, GPL-3.0
 
 #include "../core/lsdtt_basin_base.hpp"
-#include "../core/lsdtt__types.hpp"
+#include "../core/lsdtt_flow_base.hpp"
+#include "../core/lsdtt_types.hpp"
 #include "lsdtt_raster_cpu.hpp"
-#include "lsdtt_flowinfo_cpu.hpp"
 
 #include <cstdint>
 #include <string>
@@ -32,30 +32,30 @@ namespace lsdtt
 // Represents a single drainage basin on the CPU backend.
 //
 // Construction requires:
-//   - the flat index of the outlet node (already validated by the caller)
-//   - a const reference to the lsdtt_flowinfo_cpu that owns the s_vector
-//     (the flowinfo object must outlive this basin)
+//   - the flat index of the outlet node
+//   - a const reference to the lsdtt_flow_base that owns the s_vector
+//     (the flow object must outlive this basin)
 //
 // The basin stores an lsdtt_flat_index_slice, a zero-copy view into the
-// flowinfo s_vector covering all upstream pixels. No pixel data is copied.
+// flow s_vector covering all upstream pixels. No pixel data is copied.
 class lsdtt_basin_cpu : public lsdtt_basin_base
 {
 public:
 
-    // Constructs a basin from a validated outlet flat index.
-    // The flowinfo object must outlive this basin.
-    lsdtt_basin_cpu(std::int64_t outlet_flat_index,
-                    const lsdtt_flowinfo_cpu& flowinfo);
+    // Constructs a basin from an outlet flat index and flow object.
+    // The flow object must outlive this basin.
+    lsdtt_basin_cpu(std::int64_t basin_outlet_flat_index,
+                    const lsdtt_flow_base& flow);
 
     // -----------------------------------------------------------------------
     // lsdtt_basin_base interface
     // -----------------------------------------------------------------------
 
-    [[nodiscard]] std::int64_t get_outlet_flat_index() const noexcept override;
+    [[nodiscard]] std::int64_t get_basin_outlet_flat_index() const noexcept override;
 
     [[nodiscard]] std::int32_t get_number_of_basin_pixels() const noexcept override;
 
-    [[nodiscard]] lsdtt_basin_boundary_result
+    [[nodiscard]] bool
         check_basin_completeness(const std::string& boundary_conditions) const override;
 
     [[nodiscard]] std::int32_t pixel_count() const noexcept override;
@@ -64,7 +64,7 @@ public:
     // CPU-specific accessors
     // -----------------------------------------------------------------------
 
-    // Returns the zero-copy slice into the flowinfo s_vector for this basin.
+    // Returns the zero-copy slice into the flow s_vector for this basin.
     [[nodiscard]] const lsdtt_flat_index_slice& get_slice() const noexcept;
 
     // Samples raster values for every pixel in the basin and returns them
@@ -84,9 +84,23 @@ public:
 
 private:
 
-    std::int64_t              outlet_flat_index_;
-    lsdtt_flat_index_slice    slice_;
-    const lsdtt_flowinfo_cpu* flowinfo_;   // non-owning pointer; flowinfo outlives basin
+    static void validate_inputs(const lsdtt_flow_base& flow,
+                                std::int64_t outlet_flat_index);
+
+    [[nodiscard]] static lsdtt_flat_index_slice make_slice(
+        const lsdtt_flow_base& flow,
+        std::int64_t basin_outlet_flat_index);
+
+private:
+
+    std::int64_t           basin_outlet_flat_index_; // note: the basin outlet
+                            // flat index is NOT the same as an outlet in flow
+                            // info or flow base. The basin outlet is a chosen
+                            // (arbitrary) pixel denoted by a flat_index, which
+                            // is the downstream most pixel in the basin. The
+                            // outlet in flow info/base is just a baselevel.
+    lsdtt_flat_index_slice slice_;
+    const lsdtt_flow_base* flow_;   // non-owning pointer; flow outlives basin
 };
 
 } // namespace lsdtt

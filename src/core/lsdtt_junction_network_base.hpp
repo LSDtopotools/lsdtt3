@@ -71,6 +71,7 @@ public:
     [[nodiscard]] virtual bool is_junction_flat(std::int64_t flat) const noexcept = 0;
 
     [[nodiscard]] virtual std::int32_t junction_of_flat(std::int64_t flat) const = 0;
+    [[nodiscard]] virtual std::int32_t junction_upstream_of_flat(std::int64_t flat) const = 0;
 
     // -------------------------------------------------------------------------
     // junction-level queries
