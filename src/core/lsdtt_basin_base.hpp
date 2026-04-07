@@ -1,0 +1,55 @@
+#pragma once
+
+// lsdtt3 — lsdtt_basin_base.hpp
+// Abstract interface for basin objects. Lives in src/core/ so that a future
+// GPU basin implementation can inherit from it without depending on CPU types.
+// Shared types (lsdtt_basin_boundary_result) also live here.
+//
+// Copyright Simon M. Mudd, GPL-3.0
+
+#include <cstdint>
+#include <string>
+
+namespace lsdtt
+{
+
+// -----------------------------------------------------------------------
+// lsdtt_basin_base
+// -----------------------------------------------------------------------
+
+// Abstract interface for a single drainage basin defined by an outlet node.
+// The outlet is identified by a flat index into the flow-routing s_vector.
+// Concrete implementations live in src/cpu/ (lsdtt_basin_cpu) and,
+// in the future, src/gpu/ (lsdtt_basin_gpu).
+//
+// The interface is intentionally minimal: only operations that must be
+// virtual (i.e. that differ by backend) are listed here. Statistical
+// analysis that operates on extracted value vectors belongs in free
+// functions in src/cpu/, not in this interface.
+class lsdtt_basin_base
+{
+public:
+
+    virtual ~lsdtt_basin_base() = default;
+
+    // Returns the flat index of the outlet node that defines this basin.
+    [[nodiscard]] virtual std::int64_t get_basin_outlet_flat_index() const noexcept = 0;
+
+    // Returns the number of pixels contained in the basin.
+    [[nodiscard]] virtual std::int32_t get_number_of_basin_pixels() const noexcept = 0;
+
+    // Checks whether the basin is hydrologically complete. A basin is
+    // incomplete if any of its pixels border an open (non-periodic,
+    // non-baselevel) boundary or a nodata pixel.
+    // Takes the four boundary condition characters (north, east, south, west)
+    // as a four-character string, e.g. "oooo".
+    [[nodiscard]] virtual bool
+        check_basin_completeness(const std::string& boundary_conditions) const = 0;
+
+    // Returns the number of pixels in the basin. Identical to
+    // get_number_of_basin_pixels but provided for consistency with the
+    // filtering interface in lsdtt_junction_basin_selection_cpu.
+    [[nodiscard]] virtual std::int32_t pixel_count() const noexcept = 0;
+};
+
+} // namespace lsdtt

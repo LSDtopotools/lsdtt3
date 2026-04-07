@@ -25,10 +25,17 @@
 #include <functional>
 
 #include "lsdtt_raster_meta.hpp"
-#include "lsdtt_junction_network_types.hpp"
+#include "lsdtt_types.hpp"
 
 namespace lsdtt
 {
+
+struct lsdtt_junction_network_options
+{
+    bool build_topological_order = true;
+    bool build_s_vector          = true;
+};
+
 
 class lsdtt_junction_network_base
 {
@@ -64,6 +71,7 @@ public:
     [[nodiscard]] virtual bool is_junction_flat(std::int64_t flat) const noexcept = 0;
 
     [[nodiscard]] virtual std::int32_t junction_of_flat(std::int64_t flat) const = 0;
+    [[nodiscard]] virtual std::int32_t junction_upstream_of_flat(std::int64_t flat) const = 0;
 
     // -------------------------------------------------------------------------
     // junction-level queries

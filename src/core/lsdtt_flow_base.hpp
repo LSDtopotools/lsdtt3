@@ -26,14 +26,15 @@
 //
 // The three flow infrastructure files and what each does:
 //
-//   lsdtt_flow_types.hpp  — shared types (std::int64_t, sentinel values,
-//                           lsdtt_flowinfo_options, lsdtt_flat_index_slice).
+//   lsdtt_types.hpp       — shared types (std::int64_t, sentinel values,
+//                           lsdtt_flat_index_slice).
 //                           Included by both this file and lsdtt_flowinfo_cpu.hpp
 //                           to avoid a circular include dependency.
 //
 //   lsdtt_flow_base.hpp   — THIS FILE. Abstract interface (pure virtual base
 //                           class) that lsdtt_flowinfo_cpu implements.
 //                           Exposes the same query API as lsdtt_flowinfo.
+//                           Also has a type for lsdtt_flowinfo_options.
 //
 //   lsdtt_flow_base.cpp   — Lives in src/cpu/ (not src/core/) because it
 //   (in src/cpu/)           instantiates lsdtt_flowinfo_cpu. Contains only
@@ -47,7 +48,7 @@
 // for the flow routing layer. lsdtt_flowinfo_cpu is the CPU implementation;
 // a future lsdtt_flowinfo_gpu will be the GPU implementation.
 //
-// std::int64_t and all sentinel values come from lsdtt_flow_types.hpp —
+// std::int64_t and all sentinel values come from lsdtt_types.hpp —
 // the single source of truth for flow routing types.
 //
 // Thread safety:
@@ -62,15 +63,24 @@
 #include <vector>
 
 #include "lsdtt_raster_meta.hpp"
-#include "lsdtt_flow_types.hpp"
+#include "lsdtt_types.hpp"
 #include "lsdtt_data_loader.hpp"
-#include "lsdtt_junction_network_types.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 
 
 
 namespace lsdtt
 {
+
+struct lsdtt_flowinfo_options
+{
+    std::string boundary_conditions       = "oooo";
+    bool        interior_nodata_is_outlet = true;
+    bool        require_acyclic_graph     = true;
+    bool        build_topological_order   = true;
+    bool        build_s_vector            = true;
+    int         n_threads                 = 0;
+};
 
 class lsdtt_flow_base
 {
@@ -203,7 +213,7 @@ public:
 
 
     // -------------------------------------------------------------------------
-    // Sentinel values — defined in lsdtt_flow_types.hpp
+    // Sentinel values — defined in lsdtt_types.hpp
     // -------------------------------------------------------------------------
     static constexpr std::int64_t nodata_receiver = lsdtt::k_nodata_receiver;
     static constexpr std::int64_t outlet_receiver  = lsdtt::k_outlet_receiver;

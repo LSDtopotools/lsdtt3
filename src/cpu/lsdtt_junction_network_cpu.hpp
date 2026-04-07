@@ -24,7 +24,7 @@
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "../core/lsdtt_junction_network_base.hpp"
-#include "../core/lsdtt_junction_network_types.hpp"
+#include "../core/lsdtt_types.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 #include "../core/lsdtt_data_loader.hpp"
@@ -127,6 +127,8 @@ public:
     }
 
     [[nodiscard]] std::int32_t junction_of_flat(std::int64_t flat) const override;
+
+    [[nodiscard]] std::int32_t junction_upstream_of_flat(std::int64_t flat) const override;
 
     // -------------------------------------------------------------------------
     // junction-level queries

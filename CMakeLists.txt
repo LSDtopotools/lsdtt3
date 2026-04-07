@@ -174,6 +174,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_depression_hierarchy_cpu.cpp
     src/cpu/lsdtt_fill_spill_merge_cpu.cpp
     src/cpu/lsdtt_flow_snapping_cpu.cpp
+    src/cpu/lsdtt_basin_cpu.cpp
+    src/cpu/lsdtt_junction_basin_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)

@@ -22,7 +22,7 @@
 #include <ogr_geometry.h>
 
 #include "../core/lsdtt_data_loader.hpp"
-#include "../core/lsdtt_flow_types.hpp"
+#include "../core/lsdtt_types.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -542,6 +542,122 @@ std::int32_t lsdtt_junction_network_cpu::junction_of_flat(std::int64_t flat) con
     }
 
     return junction_id_of_flat_.data()[flat];
+}
+
+std::int32_t lsdtt_junction_network_cpu::junction_upstream_of_flat(
+    std::int64_t flat
+) const
+{
+    require_built();
+ 
+    // ------------------------------------------------------------------
+    // Step 1 — flat must be on the channel.
+    // ------------------------------------------------------------------
+    if (!is_flat_in_range(flat))
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu::junction_upstream_of_flat: "
+            "flat index out of raster range"
+        );
+    }
+ 
+    if (!is_channel(flat))
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu::junction_upstream_of_flat: "
+            "flat index is not on the channel network"
+        );
+    }
+ 
+    // ------------------------------------------------------------------
+    // Step 2 — if flat is already a junction, return it immediately.
+    // ------------------------------------------------------------------
+    {
+        const std::int32_t jid = junction_id_of_flat_.data()[flat];
+        if (jid >= 0)
+        {
+            return jid;
+        }
+    }
+ 
+    // ------------------------------------------------------------------
+    // Step 3 — walk upstream, one channel donor at a time.
+    //
+    // We use flow_->get_donors() for the full donor list, then keep only
+    // those that are also channel pixels. On any non-junction channel pixel
+    // there is exactly one channel donor (were there more, the pixel itself
+    // would have been classified as a junction during build_pixel_stream_order).
+    // ------------------------------------------------------------------
+    std::int64_t current   = flat;
+    std::int64_t step      = 0;
+    const std::int64_t max_steps = n_channel_cells_;
+ 
+    while (true)
+    {
+        // Collect all D8 donors of the current pixel, then filter to
+        // channel-only donors.
+        std::vector<std::int64_t> all_donors;
+        collect_direct_channel_donors(current, all_donors);
+
+        // TODO the above should be replaced by a flowinfo implementation of get_donors!!!
+        //const std::vector<std::int64_t> all_donors =
+        //    flow_->get_donors(current);
+ 
+        std::int64_t channel_donor      = -1;
+        std::int32_t n_channel_donors   = 0;
+ 
+        for (const std::int64_t d : all_donors)
+        {
+            if (is_channel(d))
+            {
+                channel_donor = d;
+                ++n_channel_donors;
+            }
+        }
+ 
+        if (n_channel_donors == 0)
+        {
+            // Reached a channel head with no upstream junction — this
+            // should not happen on a well-formed network (sources are
+            // themselves junctions), but guard against corrupt state.
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu::junction_upstream_of_flat: "
+                "reached a channel pixel with no channel donor and no "
+                "junction; the channel mask or junction index may be corrupt"
+            );
+        }
+ 
+        if (n_channel_donors > 1)
+        {
+            // Multiple channel donors means current is a junction, which
+            // should have been caught by the junction_id_of_flat_ check
+            // at the start of the loop.  Guard against corrupt state.
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu::junction_upstream_of_flat: "
+                "found multiple channel donors on a non-junction pixel; "
+                "the channel mask or junction index may be corrupt"
+            );
+        }
+ 
+        // Advance upstream to the single channel donor.
+        current = channel_donor;
+        ++step;
+ 
+        if (step > max_steps)
+        {
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu::junction_upstream_of_flat: "
+                "exceeded maximum steps; possible cycle in channel mask"
+            );
+        }
+ 
+        // Check whether we have arrived at a junction.
+        const std::int32_t jid = junction_id_of_flat_.data()[current];
+        if (jid >= 0)
+        {
+            return jid;
+        }
+    }
 }
 
 std::int64_t lsdtt_junction_network_cpu::flat_of_junction(std::int32_t junction) const

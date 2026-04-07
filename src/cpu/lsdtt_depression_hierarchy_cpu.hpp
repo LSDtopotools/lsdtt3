@@ -73,7 +73,7 @@ constexpr dep_label_t k_no_dep      = std::numeric_limits<dep_label_t>::max();
 constexpr dep_label_t k_ocean_label = 0u;
 
 // Flow direction sentinel: cell is an outlet or has no downstream neighbour.
-// Matches the k_no_direction sentinel in lsdtt_flow_types.hpp.
+// Matches the k_no_direction sentinel in lsdtt_types.hpp.
 constexpr uint8_t k_dh_no_flow = 255u;
 
 // ---------------------------------------------------------------------------
