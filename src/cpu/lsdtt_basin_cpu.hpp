@@ -59,7 +59,6 @@ public:
         check_basin_completeness(const std::string& boundary_conditions) const override;
 
     [[nodiscard]] std::int32_t pixel_count() const noexcept override;
-
     // -----------------------------------------------------------------------
     // CPU-specific accessors
     // -----------------------------------------------------------------------

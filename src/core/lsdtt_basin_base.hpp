@@ -50,6 +50,7 @@ public:
     // get_number_of_basin_pixels but provided for consistency with the
     // filtering interface in lsdtt_junction_basin_selection_cpu.
     [[nodiscard]] virtual std::int32_t pixel_count() const noexcept = 0;
+
 };
 
 } // namespace lsdtt

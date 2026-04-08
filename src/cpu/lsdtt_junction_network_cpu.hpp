@@ -130,6 +130,8 @@ public:
 
     [[nodiscard]] std::int32_t junction_upstream_of_flat(std::int64_t flat) const override;
 
+    [[nodiscard]] std::int64_t basin_outlet_flat_of_junction(std::int32_t junction) const override;
+
     // -------------------------------------------------------------------------
     // junction-level queries
     // -------------------------------------------------------------------------

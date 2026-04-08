@@ -659,6 +659,52 @@ std::int32_t lsdtt_junction_network_cpu::junction_upstream_of_flat(
         }
     }
 }
+std::int64_t lsdtt_junction_network_cpu::basin_outlet_flat_of_junction(
+    std::int32_t junction
+) const
+{
+    require_built();
+    require_valid_junction(junction);
+
+    // If this junction has no downstream receiving junction, then by design
+    // its own junction pixel is the basin outlet flat index.
+    if (receiver_junction_[static_cast<std::size_t>(junction)] == k_junction_outlet)
+    {
+        return junction_flat_[static_cast<std::size_t>(junction)];
+    }
+
+    std::int64_t current_flat = junction_flat_[static_cast<std::size_t>(junction)];
+
+    while (true)
+    {
+        const std::int64_t receiver_flat = flow_->receiver_of(current_flat);
+
+        // In a valid channel-network construction, the downstream walk from a
+        // non-outlet junction should eventually encounter the next downstream
+        // junction. The basin outlet is the pixel immediately upstream of that
+        // downstream junction.
+        if (is_junction_flat(receiver_flat))
+        {
+            return current_flat;
+        }
+
+        // Defensive consistency check: according to the design of the junction 
+        // network, this branch should never occur for a junction that has a
+        // receiving junction. If it does, the junction graph and pixel flow
+        // graph are inconsistent.
+        if (!flow_->is_valid_cell(receiver_flat))
+        {
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu::basin_outlet_flat_of_junction: "
+                "downstream walk reached an invalid flow cell before reaching "
+                "the next downstream junction"
+            );
+        }
+
+        current_flat = receiver_flat;
+    }
+}
+
 
 std::int64_t lsdtt_junction_network_cpu::flat_of_junction(std::int32_t junction) const
 {
