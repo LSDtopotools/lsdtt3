@@ -1,243 +1,223 @@
-# Download DEM Tiles from Microsoft Planetary Computer
+# Download DEM Tiles
 
+`download_dem_tiles.py` supports three download methods:
 
-This script downloads DEM tiles from Microsoft Planetary Computer using coordinates copied from Google Maps. We use Planetary Computer because it does not require an API token. 
+| Method | Flag | API key needed? |
+|---|---|---|
+| Microsoft Planetary Computer | *(default)* | No |
+| OpenTopography REST API | `--ot-dataset` | Yes (free) |
+| WCS endpoint | `--wcs-url` | Depends on service |
 
-Its functionality is somewhat limitied, you can only get the Copernicus DEM and you get the data in tiles, so you will need to do postprocesing for clipping. If you want greater flexibility you can try the OpenTopography API for different formats, exact clips, and lidar data but this requires an API key so we keep this lighter weight version if you don't have that or don't want to bother with an API key. 
-
----
-
-Google Maps gives coordinates in this format:
-
-```text
-55.95244789111162, -3.2193971081922665
-```
-
-That is:
-
-```text
-latitude, longitude
-```
-
-This script accepts either:
-
-- **one coordinate string**: download the full DEM tile containing that point
-- **two coordinate strings**: download all full DEM tiles intersecting the bounding box defined by those two corners
+Coordinates are always given as quoted `"lat, lon"` pairs, copied directly from Google Maps.
 
 ---
 
-## Requirements
+## Method 1: Microsoft Planetary Computer (default)
 
-Install the required Python packages:
+No account or API key required. Downloads full source tiles intersecting a point or bounding box. The default dataset is the Copernicus GLO-30 (30 m global DEM).
+
+### Requirements
 
 ```bash
 pip install requests pystac-client planetary-computer
 ```
 
----
-
-## Usage
-
-### 1. Download the full tile containing a single point
+### Single point — download the tile containing that point
 
 ```bash
-python3 download_dem_tiles.py "55.95244789111162, -3.2193971081922665"
+python3 download_dem_tiles.py "55.95, -3.21"
 ```
 
-This will usually save the output as:
+### Two corners — download all tiles intersecting the bounding box
 
-```text
-my_DEM.tif
+```bash
+python3 download_dem_tiles.py "55.95, -3.21" "55.96, -3.20"
 ```
 
----
-
-### 2. Download all tiles intersecting a box
-
-Pass two opposite corners:
+### Custom output prefix and directory
 
 ```bash
 python3 download_dem_tiles.py \
-  "55.95244789111162, -3.2193971081922665" \
-  "55.96244789111162, -3.2093971081922665"
-```
-
-If multiple tiles are found, they will be saved as:
-
-```text
-my_DEM_001.tif
-my_DEM_002.tif
-my_DEM_003.tif
-```
-
-You can paste the two corners in any order.
-
----
-
-## Choose the output filename prefix
-
-Use `--output-prefix`:
-
-```bash
-python3 download_dem_tiles.py \
-  "55.95244789111162, -3.2193971081922665" \
-  --output-prefix edinburgh_dem
-```
-
-Single-tile output:
-
-```text
-edinburgh_dem.tif
-```
-
-Multiple-tile output:
-
-```text
-edinburgh_dem_001.tif
-edinburgh_dem_002.tif
-```
-
----
-
-## Save files to a specific folder
-
-Use `--output-dir`:
-
-```bash
-python3 download_dem_tiles.py \
-  "55.95244789111162, -3.2193971081922665" \
-  --output-prefix my_DEM \
+  "55.95, -3.21" "55.96, -3.20" \
+  --output-prefix edinburgh_dem \
   --output-dir dem_tiles
 ```
 
----
+Output files are named `edinburgh_dem.tif` (one tile) or `edinburgh_dem_001.tif`, `edinburgh_dem_002.tif`, … (multiple tiles).
 
-## Choose DEM collection
-
-By default the script uses:
-
-```text
-cop-dem-glo-30
-```
-
-To use the 90 m DEM instead:
+### Use the 90 m DEM instead
 
 ```bash
+python3 download_dem_tiles.py "55.95, -3.21" --collection cop-dem-glo-90
+```
+
+### Key optional arguments
+
+| Argument | Short | Default | Description |
+|---|---|---|---|
+| `--output-prefix` | `-o` | `my_DEM` | Prefix for output filenames |
+| `--output-dir` | `-d` | `.` | Directory to save files |
+| `--collection` | `-c` | `cop-dem-glo-30` | Planetary Computer collection |
+| `--asset` | `-a` | `data` | Asset key within each STAC item |
+| `--limit` | | `200` | Max tiles to fetch |
+
+---
+
+## Method 2: OpenTopography REST API
+
+Downloads an exact clip of your bounding box (no tile seams). Supports a wider range of global and US datasets including lidar. Requires a **free** API key from [opentopography.org](https://opentopography.org).
+
+### Requirements
+
+```bash
+pip install requests
+```
+
+### Available datasets
+
+| Dataset | Resolution | Notes |
+|---|---|---|
+| `SRTMGL1` | 30 m | SRTM global |
+| `SRTMGL3` | 90 m | SRTM global |
+| `AW3D30` | 30 m | ALOS global |
+| `COP30` | 30 m | Copernicus global |
+| `COP90` | 90 m | Copernicus global |
+| `SRTM15Plus` | 500 m | Ocean bathymetry included |
+| `USGS30m` | 30 m | USGS (USA only) |
+| `USGS10m` | 10 m | USGS (USA only) |
+| `USGS1m` | 1 m | USGS (USA only, academic account required) |
+
+### Providing your API key
+
+The script looks for the key in this order — first found wins:
+
+**1. Environment variable (recommended)**
+
+```bash
+export OT_API_KEY="your_key_here"
+```
+
+Set this in your shell profile (`~/.bashrc` or `~/.zshrc`) so you never have to think about it again.
+
+**2. Key file**
+
+```bash
+python3 download_dem_tiles.py ... --ot-api-key-file ~/ot_key.txt
+```
+
+The file should contain just the key on the first line. Protect it and keep it out of any repository:
+
+```bash
+chmod 600 ~/ot_key.txt
+echo "ot_key.txt" >> ~/.gitignore
+```
+
+**3. Interactive prompt**
+
+If neither of the above is set the script will prompt you:
+
+```
+OpenTopography API key:
+```
+
+The key is not echoed to the terminal.
+
+### Example calls
+
+```bash
+# Copernicus 30 m, key from environment variable
+export OT_API_KEY="your_key_here"
 python3 download_dem_tiles.py \
-  "55.95244789111162, -3.2193971081922665" \
-  --collection cop-dem-glo-90
+  "37.036, -2.408" "37.063, -2.374" \
+  --ot-dataset COP30 \
+  --output-prefix tabernas
+
+# SRTM 30 m, key from file
+python3 download_dem_tiles.py \
+  "55.95, -3.21" "55.96, -3.20" \
+  --ot-dataset SRTMGL1 \
+  --ot-api-key-file ~/ot_key.txt \
+  --output-prefix edinburgh_dem \
+  --output-dir dem_tiles
+
+# USGS 10 m (USA only), interactive key prompt
+python3 download_dem_tiles.py \
+  "37.20, -112.05" "37.25, -111.98" \
+  --ot-dataset USGS10m \
+  --output-prefix bryce_canyon
 ```
+
+Output filename includes the dataset name, e.g. `tabernas_COP30.tif`.
 
 ---
 
-## Optional arguments
+## Method 3: WCS endpoint
 
-### Output prefix
+Downloads from any OGC Web Coverage Service. Useful for national mapping agency datasets (e.g. Spanish IGN, Copernicus EU DEM via EEA). The bounding box is passed directly in the requested CRS — since lsdtt3 handles reprojection, the default CRS is `EPSG:4326` (WGS84 lat/lon).
 
-```bash
--o my_DEM
---output-prefix my_DEM
-```
-
-### Output directory
+### Requirements
 
 ```bash
--d dem_tiles
---output-dir dem_tiles
+pip install requests owslib
 ```
 
-### Collection
+### API keys for WCS
+
+Many public WCS services require no key. If one is needed, the same priority order applies:
+
+1. Environment variable: `export WCS_API_KEY="your_key_here"`
+2. Key file: `--api-key-file /path/to/keyfile.txt`
+3. Interactive prompt
+
+The key is appended to the URL as a query parameter. The parameter name defaults to `key`; override with `--api-key-param`.
+
+### Example calls
 
 ```bash
--c cop-dem-glo-30
---collection cop-dem-glo-30
+# Spanish IGN 5 m DEM (no key required), default EPSG:4326
+python3 download_dem_tiles.py \
+  "37.036, -2.408" "37.063, -2.374" \
+  --wcs-url "https://servicios.idee.es/wcs-inspire/mdt" \
+  --wcs-coverage "Elevacion25830_5" \
+  --wcs-res 0.00005 \
+  --output-prefix tabernas_ign
+
+# Copernicus EU DEM v1.1 via EEA (no key required)
+python3 download_dem_tiles.py \
+  "55.95, -3.21" "55.96, -3.20" \
+  --wcs-url "https://image.discomap.eea.europa.eu/arcgis/services/GioLandPublic/EU_DEM_v11/ImageServer/WCSServer" \
+  --wcs-coverage "EU_DEM_v11" \
+  --wcs-version 1.0.0 \
+  --output-prefix edinburgh_eudem
+
+# Service requiring an API key passed as ?token=...
+python3 download_dem_tiles.py \
+  "55.95, -3.21" "55.96, -3.20" \
+  --wcs-url "https://example.service/wcs" \
+  --wcs-coverage "MyDEM" \
+  --api-key-file ~/wcs_key.txt \
+  --api-key-param token \
+  --output-prefix my_dem
 ```
 
-### Asset key
+### Key WCS optional arguments
 
-Default:
-
-```text
-data
-```
-
-You can override it if needed:
-
-```bash
---asset data
-```
-
-### Search limit
-
-Default:
-
-```text
-200
-```
-
-Override with:
-
-```bash
---limit 200
-```
+| Argument | Default | Description |
+|---|---|---|
+| `--wcs-url` | | WCS endpoint URL (triggers WCS mode) |
+| `--wcs-coverage` | | Coverage ID (required) |
+| `--wcs-version` | `1.0.0` | WCS protocol version |
+| `--wcs-crs` | `EPSG:4326` | CRS for the request |
+| `--wcs-res` | | Cell size in CRS units |
+| `--wcs-format` | `image/tiff` | Requested output format |
+| `--api-key-file` | | Path to WCS key file |
+| `--api-key-param` | `key` | URL parameter name for the key |
 
 ---
 
 ## Notes
 
 - Coordinates must be quoted so the shell treats each `lat, lon` pair as one argument.
-- The script downloads **full source tiles**.
-- It does **not** clip, crop, or merge rasters.
-- With one coordinate, the script searches for tile(s) containing that point.
-- With two coordinates, the script searches for tile(s) intersecting the bounding box formed by those corners.
-
----
-
-## Make the script executable
-
-```bash
-chmod +x download_dem_tiles.py
-```
-
-Then run it as:
-
-```bash
-./download_dem_tiles.py "55.95244789111162, -3.2193971081922665"
-```
-
-or:
-
-```bash
-./download_dem_tiles.py \
-  "55.95244789111162, -3.2193971081922665" \
-  "55.96244789111162, -3.2093971081922665"
-```
-
----
-
-## Examples
-
-### Single point, default output name
-
-```bash
-python3 download_dem_tiles.py "55.95244789111162, -3.2193971081922665"
-```
-
-### Single point, custom output name
-
-```bash
-python3 download_dem_tiles.py \
-  "55.95244789111162, -3.2193971081922665" \
-  --output-prefix edinburgh_dem
-```
-
-### Two corners, custom output folder
-
-```bash
-python3 download_dem_tiles.py \
-  "55.95244789111162, -3.2193971081922665" \
-  "55.96244789111162, -3.2093971081922665" \
-  --output-prefix edinburgh_dem \
-  --output-dir dem_tiles
-```
-
+- Planetary Computer downloads **full source tiles** and does not clip or merge them.
+- OpenTopography and WCS both return an **exact clip** of the bounding box.
+- lsdtt3 handles reprojection, so downloading in `EPSG:4326` is fine for all methods.
