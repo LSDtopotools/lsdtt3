@@ -92,6 +92,18 @@ lsdtt_raster_cpu fftw2D_wiener_filter(
     throw std::runtime_error(std::string("lsdtt::fftw2D_wiener_filter: ") + k_no_fftw_msg);
 }
 
+lsdtt_spectral_analysis_result full_spectral_analysis(
+    const lsdtt_raster_cpu&,
+    const lsdtt_spectral_analysis_options&)
+{
+    throw std::runtime_error(
+        "lsdtt::full_spectral_analysis: lsdtt3 was built without FFTW support. "
+        "Install FFTW development files and rebuild."
+    );
+}
+
+
+
 #else
 
 // -----------------------------------------------------------------------------
@@ -2999,6 +3011,280 @@ lsdtt_raster_cpu fftw2D_wiener_filter(
         }
     );
 }
+
+
+// -----------------------------------------------------------------------------
+// full_spectral_analysis
+// -----------------------------------------------------------------------------
+lsdtt_spectral_analysis_result full_spectral_analysis(
+    const lsdtt_raster_cpu&                dem,
+    const lsdtt_spectral_analysis_options& opts)
+{
+    if (!dem.get_meta().is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::full_spectral_analysis: invalid raster metadata"
+        );
+    }
+
+    dem.get_meta().check_projected_metres();
+
+    if (!std::isfinite(opts.log_bin_width) || opts.log_bin_width <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::full_spectral_analysis: log_bin_width must be finite and > 0"
+        );
+    }
+
+    if (opts.n_background_iterations < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::full_spectral_analysis: n_background_iterations must be >= 1"
+        );
+    }
+
+    // Optional crop to largest valid rectangle before any spectral work.
+    const lsdtt_raster_cpu clipped_storage =
+        opts.clip_to_valid_rectangle ? clip_to_maximum_rectangle(dem)
+                                     : lsdtt_raster_cpu{};
+    const lsdtt_raster_cpu& work =
+        opts.clip_to_valid_rectangle ? clipped_storage : dem;
+
+    // -------------------------------------------------------------------------
+    // 1. Observed periodogram
+    // -------------------------------------------------------------------------
+    const spectral_psd_product observed_psd =
+        compute_periodogram(
+            work,
+            opts.window,
+            opts.n_threads
+        );
+
+    // -------------------------------------------------------------------------
+    // 2. Rollover estimation from binned radial spectrum
+    // -------------------------------------------------------------------------
+    const rollover_fit_product rollover =
+        estimate_rollover_from_binned_spectrum(
+            observed_psd.radial_frequency,
+            observed_psd.radial_psd,
+            opts.log_bin_width
+        );
+
+    // Use the sub-rollover beta if available; otherwise fall back to the main
+    // rollover beta, and finally to a conservative default.
+    double background_beta = rollover.sub_rollover_beta;
+    if (!std::isfinite(background_beta) || background_beta <= 0.0)
+    {
+        background_beta = rollover.rollover_beta;
+    }
+    if (!std::isfinite(background_beta) || background_beta <= 0.0)
+    {
+        background_beta = 2.0;
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Monte Carlo background spectrum
+    // -------------------------------------------------------------------------
+    const background_spectrum_product background =
+        construct_background_spectrum(
+            work,
+            observed_psd,
+            background_beta,
+            opts.n_background_iterations,
+            opts.window,
+            opts.n_threads
+        );
+
+    // -------------------------------------------------------------------------
+    // 4. Validate observed/background frequency compatibility
+    // -------------------------------------------------------------------------
+    const std::size_t n_radial = observed_psd.radial_frequency.size();
+
+    if (observed_psd.radial_psd.size() != n_radial ||
+        background.background_radial_frequency.size() != n_radial ||
+        background.background_radial_psd.size() != n_radial)
+    {
+        throw std::runtime_error(
+            "lsdtt::full_spectral_analysis: radial spectrum size mismatch"
+        );
+    }
+
+    for (std::size_t i = 0; i < n_radial; ++i)
+    {
+        const double f_obs = observed_psd.radial_frequency[i];
+        const double f_bg  = background.background_radial_frequency[i];
+
+        if (!std::isfinite(f_obs) || !std::isfinite(f_bg) ||
+            std::abs(f_obs - f_bg) > 1e-12)
+        {
+            throw std::runtime_error(
+                "lsdtt::full_spectral_analysis: radial frequency mismatch between "
+                "observed and background spectra"
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Populate result
+    // -------------------------------------------------------------------------
+    lsdtt_spectral_analysis_result result;
+
+    result.padded_rows = observed_psd.padded_rows;
+    result.padded_cols = observed_psd.padded_cols;
+    result.dfx = observed_psd.dfx;
+    result.dfy = observed_psd.dfy;
+    result.nyquist_frequency = observed_psd.nyquist_frequency;
+    result.window_sum_squared = observed_psd.window_sum_squared;
+    result.detrended_variance = observed_psd.detrended_variance;
+
+    result.rollover_frequency = rollover.rollover_frequency;
+    result.rollover_beta = rollover.rollover_beta;
+    result.sub_rollover_beta = background_beta;
+
+    // Convert flat 2D PSD vectors into array2d outputs
+    result.psd_2d = lsdtt_array2d_f(
+        observed_psd.padded_rows,
+        observed_psd.padded_cols,
+        0.0f
+    );
+
+    result.background_psd_2d = lsdtt_array2d_f(
+        background.padded_rows,
+        background.padded_cols,
+        0.0f
+    );
+
+    for (int row = 0; row < observed_psd.padded_rows; ++row)
+    {
+        for (int col = 0; col < observed_psd.padded_cols; ++col)
+        {
+            const std::size_t idx =
+                flat_index(row, col, observed_psd.padded_cols);
+
+            result.psd_2d(row, col) =
+                static_cast<float>(observed_psd.psd_2d_flat[idx]);
+
+            result.background_psd_2d(row, col) =
+                static_cast<float>(background.background_psd_2d_flat[idx]);
+        }
+    }
+
+    result.radial_frequency = observed_psd.radial_frequency;
+    result.radial_psd = observed_psd.radial_psd;
+
+    result.radial_wavelength.resize(n_radial, 0.0);
+    result.background_psd.resize(n_radial, 0.0);
+    result.normalised_psd.resize(n_radial, 0.0);
+    result.ci95.resize(n_radial, 0.0);
+    result.norm_ci95.resize(n_radial, 0.0);
+    result.norm_ci99.resize(n_radial, 0.0);
+
+    const double chi_squared_95 = 5.991;
+    const double chi_squared_99 = 9.210;
+    const double norm_ci95 = 0.5 * chi_squared_95;
+    const double norm_ci99 = 0.5 * chi_squared_99;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    for (std::size_t i = 0; i < n_radial; ++i)
+    {
+        const double f   = observed_psd.radial_frequency[i];
+        const double psd = observed_psd.radial_psd[i];
+        const double bg  = background.background_radial_psd[i];
+
+        result.radial_wavelength[i] =
+            (f > 0.0) ? (1.0 / f) : std::numeric_limits<double>::infinity();
+
+        result.background_psd[i] = bg;
+
+        if (std::isfinite(psd) && std::isfinite(bg) && bg > 0.0)
+        {
+            result.normalised_psd[i] = psd / bg;
+            result.ci95[i] = norm_ci95 * bg;
+        }
+        else
+        {
+            result.normalised_psd[i] = nan;
+            result.ci95[i] = nan;
+        }
+
+        result.norm_ci95[i] = norm_ci95;
+        result.norm_ci99[i] = norm_ci99;
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Shared-valid binned outputs
+    //
+    // To keep the binned frequency grid consistent across PSD, background PSD,
+    // and normalised PSD, only retain raw points that are valid and positive in
+    // all three series before log-binning.
+    // -------------------------------------------------------------------------
+    std::vector<double> shared_freq;
+    std::vector<double> shared_obs_psd;
+    std::vector<double> shared_bg_psd;
+    std::vector<double> shared_norm_psd;
+
+    shared_freq.reserve(n_radial);
+    shared_obs_psd.reserve(n_radial);
+    shared_bg_psd.reserve(n_radial);
+    shared_norm_psd.reserve(n_radial);
+
+    for (std::size_t i = 0; i < n_radial; ++i)
+    {
+        const double f  = result.radial_frequency[i];
+        const double p  = result.radial_psd[i];
+        const double bg = result.background_psd[i];
+        const double np = result.normalised_psd[i];
+
+        if (!std::isfinite(f)  || f  <= 0.0) continue;
+        if (!std::isfinite(p)  || p  <= 0.0) continue;
+        if (!std::isfinite(bg) || bg <= 0.0) continue;
+        if (!std::isfinite(np) || np <= 0.0) continue;
+
+        shared_freq.push_back(f);
+        shared_obs_psd.push_back(p);
+        shared_bg_psd.push_back(bg);
+        shared_norm_psd.push_back(np);
+    }
+
+    const std::pair<std::vector<double>, std::vector<double>> binned_obs =
+        log_bin_mean_xy(shared_freq, shared_obs_psd, opts.log_bin_width);
+
+    const std::pair<std::vector<double>, std::vector<double>> binned_bg =
+        log_bin_mean_xy(shared_freq, shared_bg_psd, opts.log_bin_width);
+
+    const std::pair<std::vector<double>, std::vector<double>> binned_norm =
+        log_bin_mean_xy(shared_freq, shared_norm_psd, opts.log_bin_width);
+
+    if (binned_obs.first.size() != binned_bg.first.size() ||
+        binned_obs.first.size() != binned_norm.first.size() ||
+        binned_obs.second.size() != binned_bg.second.size() ||
+        binned_obs.second.size() != binned_norm.second.size())
+    {
+        throw std::runtime_error(
+            "lsdtt::full_spectral_analysis: binned spectrum size mismatch"
+        );
+    }
+
+    result.binned.frequency = binned_obs.first;
+    result.binned.psd = binned_obs.second;
+    result.binned.background_psd = binned_bg.second;
+    result.binned.normalised_psd = binned_norm.second;
+    result.binned.beta_by_bin = rollover.beta_by_bin;
+    result.binned.r_sq_by_bin = rollover.r_sq_by_bin;
+
+    result.binned.wavelength.resize(result.binned.frequency.size(), 0.0);
+    for (std::size_t i = 0; i < result.binned.frequency.size(); ++i)
+    {
+        const double f = result.binned.frequency[i];
+        result.binned.wavelength[i] =
+            (f > 0.0) ? (1.0 / f) : std::numeric_limits<double>::infinity();
+    }
+
+    return result;
+}
+
+
+
 
 #endif  // LSDTT_HAS_FFTW
 
