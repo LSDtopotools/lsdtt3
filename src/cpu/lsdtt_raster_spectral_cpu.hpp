@@ -74,4 +74,131 @@ poly_fit_coeffs wavelet_quadratic_fit(
     int    n_threads = 0
 );
 
+// =============================================================================
+// 2D FFT-based spectral filters
+//
+// All filters operate on a full DEM raster through a shared pipeline:
+//   1. Detrend  — fit and subtract an OLS planar trend (all valid pixels)
+//   2. Window   — 2D elliptical taper to suppress edge leakage (optional)
+//   3. Pad      — zero-pad to next power-of-2 dimensions
+//   4. Forward FFT (real-to-complex, r2c)
+//   5. Apply filter kernel in frequency domain
+//   6. Inverse FFT (complex-to-real, c2r), normalise by Ly * Lx
+//   7. Restore planar trend
+//   8. Apply original nodata mask
+//
+// Frequency convention:
+//   Radial frequency  f = sqrt(fx^2 + fy^2)   [cycles / metre]
+//   Wavelength        lambda = 1 / f           [metres]
+//   Nyquist           f_ny = 1 / (2 * cell_size)
+//
+// Filter shape — Gaussian rolloff, -3 dB at the specified cutoff:
+//
+//   Lowpass   H(f)  = exp( -ln(2) * (f / f_c)^2 )
+//   Highpass  H(f)  = 1 - exp( -ln(2) * (f / f_c)^2 )
+//   Bandpass  H(f)  = H_highpass(f, f_low) * H_lowpass(f, f_high)
+//
+// where f_c = 1 / lambda_cutoff_metres.
+//
+// Edge nodata handling
+// --------------------
+// DEMs often have nodata around the edges — either triangular slices from
+// reprojection out of a geographic CRS, or irregular boundaries from
+// basin-clipping.  The detrend step sets these pixels to the trend plane level
+// and the windowing taper then drives them to zero before zero-padding.  For
+// mild edge fringing this is adequate.  For heavily clipped DEMs the transition
+// from data to zero can still introduce low-frequency artefacts.
+//
+// Set clip_to_valid_rectangle = true to first crop the DEM to the largest
+// interior rectangle that contains no nodata (via clip_to_maximum_rectangle),
+// eliminating edge nodata before filtering.  The returned raster will be
+// smaller than the input; the caller is responsible for mosaicking or
+// interpreting the cropped extent.
+//
+// For spectral analysis (Perron et al. 2008) see lsdtt_spectral_analysis_result
+// which is in this same file (to be added alongside full_spectral_analysis).
+//
+// If lsdtt3 is built without FFTW, all filter functions throw at runtime with
+// a clear message.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// spectral_window_type
+//
+// none    — unity window; maximum frequency resolution but prone to edge leakage
+// hann    — 2D elliptical raised-cosine window; recommended for most analyses
+// hamming — 2D elliptical Hamming window; slightly different sidelobe profile
+// -----------------------------------------------------------------------------
+enum class spectral_window_type { none, hann, hamming };
+
+// -----------------------------------------------------------------------------
+// fftw2D_lowpass_filter
+//
+// Returns the long-wavelength component of the DEM.
+// Wavelengths >> lambda_cutoff_metres pass through; shorter wavelengths are
+// suppressed with a Gaussian rolloff.  -3 dB point at lambda_cutoff_metres.
+//
+// Typical use: recover the gently-sloping piedmont / alluvial-fan surface
+// from a DEM that also contains incised channels and short-wavelength relief.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_lowpass_filter(
+    const lsdtt_raster_cpu& dem,
+    double               lambda_cutoff_metres,
+    spectral_window_type window                = spectral_window_type::hann,
+    bool                 clip_to_valid_rectangle = false,
+    int                  n_threads              = 0
+);
+
+// -----------------------------------------------------------------------------
+// fftw2D_highpass_filter
+//
+// Returns the short-wavelength residual (DEM minus lowpass component).
+// -3 dB point at lambda_cutoff_metres.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_highpass_filter(
+    const lsdtt_raster_cpu& dem,
+    double               lambda_cutoff_metres,
+    spectral_window_type window                = spectral_window_type::hann,
+    bool                 clip_to_valid_rectangle = false,
+    int                  n_threads              = 0
+);
+
+// -----------------------------------------------------------------------------
+// fftw2D_bandpass_filter
+//
+// Passes wavelengths between lambda_short_metres and lambda_long_metres.
+// lambda_short_metres must be < lambda_long_metres.
+// Gaussian rolloff at both edges.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_bandpass_filter(
+    const lsdtt_raster_cpu& dem,
+    double               lambda_short_metres,
+    double               lambda_long_metres,
+    spectral_window_type window                = spectral_window_type::hann,
+    bool                 clip_to_valid_rectangle = false,
+    int                  n_threads              = 0
+);
+
+// -----------------------------------------------------------------------------
+// fftw2D_wiener_filter
+//
+// Adaptive noise-removal filter following Milodowski / Perron et al.:
+//   - Fits a power law S(f) = c * f^m to the spectrum in the mid-frequency
+//     band (signal_wavelength_long_m to signal_wavelength_short_m).
+//   - Estimates white noise amplitude N from the near-Nyquist spectrum.
+//   - Applies Wiener weighting: phi(f) = S(f) / (S(f) + N).
+//
+// At low frequencies (signal dominates) phi -> 1; at high frequencies (noise
+// dominates) phi -> 0.  The result is a DEM with noise attenuated while
+// preserving the dominant topographic signal.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_wiener_filter(
+    const lsdtt_raster_cpu& dem,
+    double               signal_wavelength_long_m  = 1000.0,
+    double               signal_wavelength_short_m = 100.0,
+    spectral_window_type window                    = spectral_window_type::hann,
+    bool                 clip_to_valid_rectangle   = false,
+    int                  n_threads                 = 0
+);
+
 } // namespace lsdtt

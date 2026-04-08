@@ -357,4 +357,228 @@ lsdtt_global_quadratic_surface generate_random_quadratic_test_surface(
     int    n_threads         = 0
 );
 
+// -----------------------------------------------------------------------------
+// lsdtt_range_edge
+//
+// Which DEM edge a half-space or arc mountain range is associated with.
+// -----------------------------------------------------------------------------
+enum class lsdtt_range_edge { north, south, east, west };
+
+// -----------------------------------------------------------------------------
+// lsdtt_mountain_range_surface
+//
+// dem        — synthetic elevation raster
+// front_mask — ground-truth zone labels: 1.0 = mountain, 0.0 = piedmont
+//
+// All four mountain-range generators return this type.
+// The front is the boundary of the mask and is what mountain-front detection
+// algorithms should recover.
+// -----------------------------------------------------------------------------
+struct lsdtt_mountain_range_surface
+{
+    lsdtt_raster_cpu dem;
+    lsdtt_raster_cpu front_mask;
+};
+
+// -----------------------------------------------------------------------------
+// generate_linear_range_surface
+//
+// A Gaussian ridge running the full length of the DEM interior, with symmetrical
+// piedmont zones on both flanks.  The ridge position and half-width are expressed
+// as fractions of the cross-axis extent so the geometry is resolution-independent.
+//
+// ridge_runs_north_south
+//   true  — ridge runs parallel to the y-axis (N-S); cross-axis is E-W (x)
+//   false — ridge runs parallel to the x-axis (E-W); cross-axis is N-S (y)
+//
+// ridge_position_fraction
+//   Position of the ridge crest along the cross-axis (0 = west/south edge,
+//   1 = east/north edge).  Default 0.5 places the ridge at the centre.
+//
+// ridge_half_width_fraction
+//   Half-width of the mountain zone as a fraction of the cross-axis extent.
+//   Pixels within this distance of the ridge are labelled mountain.
+//   Must be in (0, 0.5].
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_linear_range_surface(
+    const lsdtt_raster_meta& meta,
+    double ridge_elevation            = 2000.0,
+    double piedmont_elevation         = 0.0,
+    double ridge_position_fraction    = 0.5,
+    double ridge_half_width_fraction  = 0.15,
+    double mountain_noise_amplitude   = 200.0,
+    double piedmont_noise_amplitude   = 20.0,
+    bool   ridge_runs_north_south     = true,
+    double noise_roughness            = 0.55,
+    int    noise_seed                 = 1,
+    int    n_threads                  = 0
+);
+
+lsdtt_mountain_range_surface generate_linear_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    double ridge_elevation            = 2000.0,
+    double piedmont_elevation         = 0.0,
+    double ridge_position_fraction    = 0.5,
+    double ridge_half_width_fraction  = 0.15,
+    double mountain_noise_amplitude   = 200.0,
+    double piedmont_noise_amplitude   = 20.0,
+    bool   ridge_runs_north_south     = true,
+    double noise_roughness            = 0.55,
+    int    noise_seed                 = 1,
+    int    n_threads                  = 0
+);
+
+// -----------------------------------------------------------------------------
+// generate_halfspace_range_surface
+//
+// The ridge occupies one DEM edge entirely — analogous to the south face of the
+// Himalayas draining to the Ganges plains: the high terrain runs off the edge
+// and only one piedmont side is represented.
+//
+// edge
+//   Which DEM edge the mountains are against.
+//
+// front_fraction
+//   Distance of the mountain front from that edge, expressed as a fraction of
+//   the perpendicular DEM extent (e.g. 0.3 places the front 30 % of the way
+//   across the DEM).  The Gaussian decay places the exp(-0.5) contour exactly
+//   at this depth.  Must be in (0, 1).
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_halfspace_range_surface(
+    const lsdtt_raster_meta& meta,
+    lsdtt_range_edge edge                 = lsdtt_range_edge::north,
+    double ridge_elevation                = 2000.0,
+    double piedmont_elevation             = 0.0,
+    double front_fraction                 = 0.3,
+    double mountain_noise_amplitude       = 200.0,
+    double piedmont_noise_amplitude       = 20.0,
+    double noise_roughness                = 0.55,
+    int    noise_seed                     = 1,
+    int    n_threads                      = 0
+);
+
+lsdtt_mountain_range_surface generate_halfspace_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    lsdtt_range_edge edge                 = lsdtt_range_edge::north,
+    double ridge_elevation                = 2000.0,
+    double piedmont_elevation             = 0.0,
+    double front_fraction                 = 0.3,
+    double mountain_noise_amplitude       = 200.0,
+    double piedmont_noise_amplitude       = 20.0,
+    double noise_roughness                = 0.55,
+    int    noise_seed                     = 1,
+    int    n_threads                      = 0
+);
+
+// -----------------------------------------------------------------------------
+// generate_circular_range_surface
+//
+// An elliptical mountain dome in the DEM interior, with a continuous piedmont
+// surrounding it.  Useful for testing detection of circular or basin-and-range
+// type geometries.
+//
+// centre_{x,y}_fraction
+//   Position of the dome centre as fractions of Lx and Ly (0 = west/south edge,
+//   1 = east/north edge).
+//
+// radius_{x,y}_fraction
+//   Semi-axis lengths of the ellipse as fractions of Lx and Ly respectively.
+//   Pixels within the unit ellipse (normalised radius < 1) are labelled mountain.
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_circular_range_surface(
+    const lsdtt_raster_meta& meta,
+    double ridge_elevation            = 2000.0,
+    double piedmont_elevation         = 0.0,
+    double centre_x_fraction         = 0.5,
+    double centre_y_fraction         = 0.5,
+    double radius_x_fraction         = 0.25,
+    double radius_y_fraction         = 0.25,
+    double mountain_noise_amplitude   = 200.0,
+    double piedmont_noise_amplitude   = 20.0,
+    double noise_roughness            = 0.55,
+    int    noise_seed                 = 1,
+    int    n_threads                  = 0
+);
+
+lsdtt_mountain_range_surface generate_circular_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    double ridge_elevation            = 2000.0,
+    double piedmont_elevation         = 0.0,
+    double centre_x_fraction         = 0.5,
+    double centre_y_fraction         = 0.5,
+    double radius_x_fraction         = 0.25,
+    double radius_y_fraction         = 0.25,
+    double mountain_noise_amplitude   = 200.0,
+    double piedmont_noise_amplitude   = 20.0,
+    double noise_roughness            = 0.55,
+    int    noise_seed                 = 1,
+    int    n_threads                  = 0
+);
+
+// -----------------------------------------------------------------------------
+// generate_arc_range_surface
+//
+// A mountain range occupying one DEM edge whose front curves parabolically into
+// the piedmont — deepest at the arc centre, shallowing toward the sides.  This
+// approximates a concave range front as seen from the foreland (e.g. an eroded
+// dome draining outward, or a range segment with a salient).
+//
+// edge
+//   Which DEM edge the mountains are against.
+//
+// front_fraction
+//   Maximum depth of the arc front from the edge (at the arc centre), expressed
+//   as a fraction of the perpendicular DEM extent.
+//
+// arc_centre_fraction
+//   Position of the arc centre along the edge (0..1).  Default 0.5.
+//
+// arc_half_width_fraction
+//   Half-width of the arc as a fraction of the parallel DEM extent.  Controls
+//   how far across the DEM the range extends.  Setting this to >= 1.0 makes the
+//   mountains span the full DEM width with a gradual taper at the ends.
+//   Must be > 0.
+//
+// The ground-truth front is the parabola
+//   depth(u) = front_fraction * L_perp * max(0, 1 - u^2)
+// where u = (parallel_coord - arc_centre) / arc_half_width.
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_arc_range_surface(
+    const lsdtt_raster_meta& meta,
+    lsdtt_range_edge edge                   = lsdtt_range_edge::north,
+    double ridge_elevation                  = 2000.0,
+    double piedmont_elevation               = 0.0,
+    double front_fraction                   = 0.3,
+    double arc_centre_fraction              = 0.5,
+    double arc_half_width_fraction          = 1.0,
+    double mountain_noise_amplitude         = 200.0,
+    double piedmont_noise_amplitude         = 20.0,
+    double noise_roughness                  = 0.55,
+    int    noise_seed                       = 1,
+    int    n_threads                        = 0
+);
+
+lsdtt_mountain_range_surface generate_arc_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    lsdtt_range_edge edge                   = lsdtt_range_edge::north,
+    double ridge_elevation                  = 2000.0,
+    double piedmont_elevation               = 0.0,
+    double front_fraction                   = 0.3,
+    double arc_centre_fraction              = 0.5,
+    double arc_half_width_fraction          = 1.0,
+    double mountain_noise_amplitude         = 200.0,
+    double piedmont_noise_amplitude         = 20.0,
+    double noise_roughness                  = 0.55,
+    int    noise_seed                       = 1,
+    int    n_threads                        = 0
+);
+
 } // namespace lsdtt

@@ -1307,4 +1307,576 @@ lsdtt_global_quadratic_surface generate_random_quadratic_test_surface(
     );
 }
 
+
+// =============================================================================
+// Mountain-range synthetic surface generators
+// =============================================================================
+
+// Pixels whose alpha >= this threshold are labelled mountain in the mask.
+// exp(-0.5) places the front at the 1-sigma half-width of the ridge Gaussian,
+// giving a clean, well-defined boundary that is still gradual enough in elevation
+// to make the segmentation problem non-trivial.
+static constexpr double k_mountain_mask_threshold = 0.6065306597633104; // exp(-0.5)
+
+// -----------------------------------------------------------------------------
+// build_range_surface_from_alpha
+//
+// Common kernel for all four range generators.  Takes a pre-computed alpha
+// field (0..1) and produces the DEM and ground-truth mask.
+//
+//   z(pixel) = piedmont_elevation
+//            + (ridge_elevation - piedmont_elevation) * alpha
+//            + diamond_square_noise * noise_amplitude(alpha)
+//
+//   noise_amplitude(alpha) = piedmont_noise + (mountain_noise - piedmont_noise) * alpha
+//
+//   mask(pixel) = (alpha >= k_mountain_mask_threshold) ? 1.0 : 0.0
+// -----------------------------------------------------------------------------
+static lsdtt_mountain_range_surface build_range_surface_from_alpha(
+    const lsdtt_raster_meta&  meta,
+    const std::vector<float>& alpha_data,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    const int          n_rows   = meta.n_rows;
+    const int          n_cols   = meta.n_cols;
+    const std::size_t  n_pixels = static_cast<std::size_t>(n_rows)
+                                * static_cast<std::size_t>(n_cols);
+    const int          threads  = resolve_thread_count(n_threads);
+
+    // Noise raster normalised to mean=0, stddev=1.
+    // Per-pixel amplitude is applied below so mountain and piedmont zones have
+    // independently controllable roughness.
+    const lsdtt_raster_cpu noise_raster = generate_diamond_square_surface(
+        meta,
+        noise_seed,
+        noise_roughness,
+        1.0,   // initial_scale
+        0.0,   // target_mean
+        1.0,   // target_stddev
+        n_threads
+    );
+    const std::vector<float>& noise = noise_raster.get_data();
+
+    std::vector<float> dem_data (n_pixels, 0.0f);
+    std::vector<float> mask_data(n_pixels, 0.0f);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(threads)
+#endif
+    for (std::size_t i = 0; i < n_pixels; ++i)
+    {
+        const double alpha = static_cast<double>(alpha_data[i]);
+
+        const double z_base    = piedmont_elevation
+                               + (ridge_elevation - piedmont_elevation) * alpha;
+
+        const double noise_amp = piedmont_noise_amplitude
+                               + (mountain_noise_amplitude - piedmont_noise_amplitude) * alpha;
+
+        dem_data[i]  = static_cast<float>(z_base + static_cast<double>(noise[i]) * noise_amp);
+        mask_data[i] = (alpha_data[i] >= static_cast<float>(k_mountain_mask_threshold))
+                       ? 1.0f : 0.0f;
+    }
+
+    lsdtt_mountain_range_surface out;
+    out.dem        = make_raster(std::move(dem_data),  meta);
+    out.front_mask = make_raster(std::move(mask_data), meta);
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// validate_range_noise_params  — shared parameter checks
+// -----------------------------------------------------------------------------
+static void validate_range_noise_params(
+    const char*  fn_name,
+    double       mountain_noise_amplitude,
+    double       piedmont_noise_amplitude,
+    double       noise_roughness)
+{
+    if (mountain_noise_amplitude < 0.0)
+    {
+        throw std::runtime_error(
+            std::string(fn_name) + ": mountain_noise_amplitude must be >= 0"
+        );
+    }
+    if (piedmont_noise_amplitude < 0.0)
+    {
+        throw std::runtime_error(
+            std::string(fn_name) + ": piedmont_noise_amplitude must be >= 0"
+        );
+    }
+    if (!std::isfinite(noise_roughness) || noise_roughness <= 0.0)
+    {
+        throw std::runtime_error(
+            std::string(fn_name) + ": noise_roughness must be finite and > 0"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------------
+// generate_linear_range_surface
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_linear_range_surface(
+    const lsdtt_raster_meta& meta,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double ridge_position_fraction,
+    double ridge_half_width_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    bool   ridge_runs_north_south,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    static const char* fn = "lsdtt::generate_linear_range_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (ridge_position_fraction < 0.0 || ridge_position_fraction > 1.0)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": ridge_position_fraction must be in [0, 1]"
+        );
+    }
+    if (ridge_half_width_fraction <= 0.0 || ridge_half_width_fraction > 0.5)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": ridge_half_width_fraction must be in (0, 0.5]"
+        );
+    }
+    validate_range_noise_params(fn,
+        mountain_noise_amplitude, piedmont_noise_amplitude, noise_roughness);
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+    const double Lx        = static_cast<double>(n_cols) * cell_size;
+    const double Ly        = static_cast<double>(n_rows) * cell_size;
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    // Cross-axis extent, ridge position, and half-width in physical coordinates
+    const double L_cross  = ridge_runs_north_south ? Lx : Ly;
+    const double ridge_pos = L_cross * ridge_position_fraction;
+    const double ridge_hw  = L_cross * ridge_half_width_fraction;
+
+    const int threads = resolve_thread_count(n_threads);
+
+    std::vector<float> alpha(n_pixels);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const double x = (static_cast<double>(col) + 0.5) * cell_size;
+            const double y = (static_cast<double>(n_rows - row) - 0.5) * cell_size;
+
+            const double coord = ridge_runs_north_south ? x : y;
+            const double t     = (coord - ridge_pos) / ridge_hw;
+
+            alpha[flat_index(row, col, n_cols)] =
+                static_cast<float>(std::exp(-0.5 * t * t));
+        }
+    }
+
+    return build_range_surface_from_alpha(
+        meta, alpha,
+        ridge_elevation, piedmont_elevation,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
+lsdtt_mountain_range_surface generate_linear_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double ridge_position_fraction,
+    double ridge_half_width_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    bool   ridge_runs_north_south,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_linear_range_surface(
+        meta,
+        ridge_elevation, piedmont_elevation,
+        ridge_position_fraction, ridge_half_width_fraction,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        ridge_runs_north_south,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
+// -----------------------------------------------------------------------------
+// generate_halfspace_range_surface
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_halfspace_range_surface(
+    const lsdtt_raster_meta& meta,
+    lsdtt_range_edge edge,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double front_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    static const char* fn = "lsdtt::generate_halfspace_range_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (front_fraction <= 0.0 || front_fraction >= 1.0)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": front_fraction must be in (0, 1)"
+        );
+    }
+    validate_range_noise_params(fn,
+        mountain_noise_amplitude, piedmont_noise_amplitude, noise_roughness);
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+    const double Lx        = static_cast<double>(n_cols) * cell_size;
+    const double Ly        = static_cast<double>(n_rows) * cell_size;
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    // Decay length: the exp(-0.5) contour sits at d = decay_length from the edge
+    const double L_perp    = (edge == lsdtt_range_edge::north ||
+                              edge == lsdtt_range_edge::south) ? Ly : Lx;
+    const double decay_len = L_perp * front_fraction;
+
+    const int threads = resolve_thread_count(n_threads);
+
+    std::vector<float> alpha(n_pixels);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const double x = (static_cast<double>(col) + 0.5) * cell_size;
+            const double y = (static_cast<double>(n_rows - row) - 0.5) * cell_size;
+
+            double d = 0.0;
+            switch (edge)
+            {
+            case lsdtt_range_edge::north: d = Ly - y; break;
+            case lsdtt_range_edge::south: d = y;      break;
+            case lsdtt_range_edge::east:  d = Lx - x; break;
+            case lsdtt_range_edge::west:  d = x;      break;
+            }
+
+            const double t = d / decay_len;
+            alpha[flat_index(row, col, n_cols)] =
+                static_cast<float>(std::exp(-0.5 * t * t));
+        }
+    }
+
+    return build_range_surface_from_alpha(
+        meta, alpha,
+        ridge_elevation, piedmont_elevation,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
+lsdtt_mountain_range_surface generate_halfspace_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    lsdtt_range_edge edge,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double front_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_halfspace_range_surface(
+        meta, edge,
+        ridge_elevation, piedmont_elevation,
+        front_fraction,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
+// -----------------------------------------------------------------------------
+// generate_circular_range_surface
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_circular_range_surface(
+    const lsdtt_raster_meta& meta,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double centre_x_fraction,
+    double centre_y_fraction,
+    double radius_x_fraction,
+    double radius_y_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    static const char* fn = "lsdtt::generate_circular_range_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (radius_x_fraction <= 0.0 || radius_y_fraction <= 0.0)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": radius fractions must be > 0"
+        );
+    }
+    validate_range_noise_params(fn,
+        mountain_noise_amplitude, piedmont_noise_amplitude, noise_roughness);
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+    const double Lx        = static_cast<double>(n_cols) * cell_size;
+    const double Ly        = static_cast<double>(n_rows) * cell_size;
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    const double cx = Lx * centre_x_fraction;
+    const double cy = Ly * centre_y_fraction;
+    const double rx = Lx * radius_x_fraction;
+    const double ry = Ly * radius_y_fraction;
+
+    const int threads = resolve_thread_count(n_threads);
+
+    std::vector<float> alpha(n_pixels);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const double x  = (static_cast<double>(col) + 0.5) * cell_size;
+            const double y  = (static_cast<double>(n_rows - row) - 0.5) * cell_size;
+            const double dx = (x - cx) / rx;
+            const double dy = (y - cy) / ry;
+            const double r2 = dx * dx + dy * dy;
+
+            alpha[flat_index(row, col, n_cols)] =
+                static_cast<float>(std::exp(-0.5 * r2));
+        }
+    }
+
+    return build_range_surface_from_alpha(
+        meta, alpha,
+        ridge_elevation, piedmont_elevation,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
+lsdtt_mountain_range_surface generate_circular_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double centre_x_fraction,
+    double centre_y_fraction,
+    double radius_x_fraction,
+    double radius_y_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_circular_range_surface(
+        meta,
+        ridge_elevation, piedmont_elevation,
+        centre_x_fraction, centre_y_fraction,
+        radius_x_fraction, radius_y_fraction,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
+// -----------------------------------------------------------------------------
+// generate_arc_range_surface
+//
+// Alpha is computed using a distance-from-edge Gaussian whose effective decay
+// length is modulated by a parabolic lateral weight:
+//
+//   u            = (parallel_coord - arc_centre) / arc_half_width
+//   lw(u)        = max(0, 1 - u^2)          [parabolic lateral weight]
+//   eff_decay(u) = decay_length * max(lw, epsilon)
+//   alpha        = lw > 0 ? exp(-0.5 * (d / eff_decay)^2) : 0
+//
+// The mask threshold contour is then the parabola
+//   d_front(u) = decay_length * lw(u)
+// which gives depth = decay_length at the centre, tapering to 0 at u = ±1.
+// The mountain zone is deepest at the arc centre and shallows toward the ends,
+// producing a convex front as seen from the piedmont.
+// -----------------------------------------------------------------------------
+lsdtt_mountain_range_surface generate_arc_range_surface(
+    const lsdtt_raster_meta& meta,
+    lsdtt_range_edge edge,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double front_fraction,
+    double arc_centre_fraction,
+    double arc_half_width_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    static const char* fn = "lsdtt::generate_arc_range_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (front_fraction <= 0.0 || front_fraction >= 1.0)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": front_fraction must be in (0, 1)"
+        );
+    }
+    if (arc_half_width_fraction <= 0.0)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": arc_half_width_fraction must be > 0"
+        );
+    }
+    validate_range_noise_params(fn,
+        mountain_noise_amplitude, piedmont_noise_amplitude, noise_roughness);
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+    const double Lx        = static_cast<double>(n_cols) * cell_size;
+    const double Ly        = static_cast<double>(n_rows) * cell_size;
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    const bool ns_edge = (edge == lsdtt_range_edge::north ||
+                          edge == lsdtt_range_edge::south);
+
+    // Perpendicular extent (depth axis) and parallel extent (along-range axis)
+    const double L_perp     = ns_edge ? Ly : Lx;
+    const double L_par      = ns_edge ? Lx : Ly;
+    const double decay_len  = L_perp * front_fraction;
+    const double arc_centre = L_par  * arc_centre_fraction;
+    const double arc_hw     = L_par  * arc_half_width_fraction;
+
+    // Guard against numerical issues when lw is very small
+    static constexpr double k_lw_epsilon = 1e-6;
+
+    const int threads = resolve_thread_count(n_threads);
+
+    std::vector<float> alpha(n_pixels);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const double x = (static_cast<double>(col) + 0.5) * cell_size;
+            const double y = (static_cast<double>(n_rows - row) - 0.5) * cell_size;
+
+            // Distance from the edge (depth into the DEM)
+            double d        = 0.0;
+            double par_coord = 0.0;
+            switch (edge)
+            {
+            case lsdtt_range_edge::north: d = Ly - y; par_coord = x; break;
+            case lsdtt_range_edge::south: d = y;      par_coord = x; break;
+            case lsdtt_range_edge::east:  d = Lx - x; par_coord = y; break;
+            case lsdtt_range_edge::west:  d = x;      par_coord = y; break;
+            }
+
+            const double u  = (par_coord - arc_centre) / arc_hw;
+            const double lw = std::max(0.0, 1.0 - u * u);
+
+            float a = 0.0f;
+            if (lw > k_lw_epsilon)
+            {
+                const double eff_decay = decay_len * lw;
+                const double t         = d / eff_decay;
+                a = static_cast<float>(lw * std::exp(-0.5 * t * t));
+            }
+
+            alpha[flat_index(row, col, n_cols)] = a;
+        }
+    }
+
+    return build_range_surface_from_alpha(
+        meta, alpha,
+        ridge_elevation, piedmont_elevation,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
+lsdtt_mountain_range_surface generate_arc_range_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    lsdtt_range_edge edge,
+    double ridge_elevation,
+    double piedmont_elevation,
+    double front_fraction,
+    double arc_centre_fraction,
+    double arc_half_width_fraction,
+    double mountain_noise_amplitude,
+    double piedmont_noise_amplitude,
+    double noise_roughness,
+    int    noise_seed,
+    int    n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_arc_range_surface(
+        meta, edge,
+        ridge_elevation, piedmont_elevation,
+        front_fraction,
+        arc_centre_fraction, arc_half_width_fraction,
+        mountain_noise_amplitude, piedmont_noise_amplitude,
+        noise_roughness, noise_seed, n_threads
+    );
+}
+
 } // namespace lsdtt

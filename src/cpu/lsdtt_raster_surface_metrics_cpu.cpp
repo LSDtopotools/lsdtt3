@@ -10,6 +10,7 @@
 #include "lsdtt_raster_spectral_cpu.hpp"    // need this for the polyfit struct
 #include "../cpu/lsdtt_raster_cpu.hpp"
 #include "../utils/lsdtt_array2d.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <map>
 #include <array>
@@ -474,6 +475,297 @@ lsdtt_raster_cpu moving_window_local_relief(
 
 
 
+
+// -----------------------------------------------------------------------------
+// moving_window_stddev
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_stddev(
+    const lsdtt_raster_cpu& raster,
+    double                  radius_metres,
+    window_shape            shape
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::moving_window_stddev: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int   nrows  = meta.n_rows;
+    const int   ncols  = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            std::vector<float> values;
+            values.reserve(win.offsets.size());
+
+            for (const auto& [dr, dc] : win.offsets)
+            {
+                const int wr = row + dr;
+                const int wc = col + dc;
+
+                if (!dem.in_bounds(wr, wc)) continue;
+                if (mask(wr, wc) == 0) continue;
+                if (meta.is_nodata(dem(wr, wc))) continue;
+
+                values.push_back(dem(wr, wc));
+            }
+
+            if (!values.empty())
+            {
+                out(row, col)      = static_cast<float>(
+                    compute_stddev_population(values)
+                );
+                out_mask(row, col) = 1;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
+// -----------------------------------------------------------------------------
+// moving_window_median
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_median(
+    const lsdtt_raster_cpu& raster,
+    double                  radius_metres,
+    window_shape            shape
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::moving_window_median: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int   nrows  = meta.n_rows;
+    const int   ncols  = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            std::vector<float> values;
+            values.reserve(win.offsets.size());
+
+            for (const auto& [dr, dc] : win.offsets)
+            {
+                const int wr = row + dr;
+                const int wc = col + dc;
+
+                if (!dem.in_bounds(wr, wc)) continue;
+                if (mask(wr, wc) == 0) continue;
+                if (meta.is_nodata(dem(wr, wc))) continue;
+
+                values.push_back(dem(wr, wc));
+            }
+
+            if (!values.empty())
+            {
+                out(row, col)      = static_cast<float>(compute_median(values));
+                out_mask(row, col) = 1;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
+// -----------------------------------------------------------------------------
+// moving_window_mad
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_mad(
+    const lsdtt_raster_cpu& raster,
+    double                  radius_metres,
+    window_shape            shape
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::moving_window_mad: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int   nrows  = meta.n_rows;
+    const int   ncols  = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            std::vector<float> values;
+            values.reserve(win.offsets.size());
+
+            for (const auto& [dr, dc] : win.offsets)
+            {
+                const int wr = row + dr;
+                const int wc = col + dc;
+
+                if (!dem.in_bounds(wr, wc)) continue;
+                if (mask(wr, wc) == 0) continue;
+                if (meta.is_nodata(dem(wr, wc))) continue;
+
+                values.push_back(dem(wr, wc));
+            }
+
+            if (!values.empty())
+            {
+                out(row, col)      = static_cast<float>(compute_mad(values));
+                out_mask(row, col) = 1;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
+// -----------------------------------------------------------------------------
+// moving_window_tpi
+//
+// TPI = z_centre - mean(z_neighbours)
+// The centre pixel is excluded from the neighbourhood mean (Weiss 2001).
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_tpi(
+    const lsdtt_raster_cpu& raster,
+    double                  radius_metres,
+    window_shape            shape
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::moving_window_tpi: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int   nrows  = meta.n_rows;
+    const int   ncols  = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            // Centre must be valid
+            if (mask(row, col) == 0) continue;
+            if (meta.is_nodata(dem(row, col))) continue;
+
+            const double z_centre = static_cast<double>(dem(row, col));
+
+            double sum   = 0.0;
+            int    count = 0;
+
+            for (const auto& [dr, dc] : win.offsets)
+            {
+                // Exclude the centre pixel from the neighbourhood mean
+                if (dr == 0 && dc == 0) continue;
+
+                const int wr = row + dr;
+                const int wc = col + dc;
+
+                if (!dem.in_bounds(wr, wc)) continue;
+                if (mask(wr, wc) == 0) continue;
+                if (meta.is_nodata(dem(wr, wc))) continue;
+
+                sum += static_cast<double>(dem(wr, wc));
+                ++count;
+            }
+
+            if (count > 0)
+            {
+                out(row, col)      = static_cast<float>(z_centre - sum / count);
+                out_mask(row, col) = 1;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
 
 // -----------------------------------------------------------------------------
 // calculate_madk2

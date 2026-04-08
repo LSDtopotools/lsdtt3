@@ -26,47 +26,66 @@ lsdtt3/
 ├── cli/
 │   ├── lsdtt-channel-extraction.cpp
 │   ├── lsdtt-feature-finder.cpp
+│   ├── lsdtt-raster-basin-stats.cpp
 │   ├── lsdtt-raster-preprocessing.cpp
 │   ├── lsdtt-raster-synthetic-tests.cpp
 │   ├── lsdtt-surface-metrics.cpp
 │   └── lsdtt-test-flowinfo.cpp
 ├── docs/
+│   ├── basin_extraction_guide.md
 │   ├── debian_packaging.md
 │   ├── developer_onboarding.md
 │   ├── lsdtt3_architecture.md
-│   ├── lsdtt_util_contents.md
+│   ├── lsdtt_utils_guide.md
 │   └── using_lsdtt_flowinfo.md
 ├── python_helpers/
 │   ├── dem_downloader_instructions.md
 │   └── download_dem_tiles.py
 ├── src/
 │   ├── core/
-│   │   ├── lsdtt_types.hpp                — all lightweight shared primitive types (see below)
-│   │   ├── lsdtt_raster_meta.hpp          — metadata struct + CRS validation
-│   │   ├── lsdtt_raster_base.hpp/.cpp     — abstract raster dispatch interface
-│   │   ├── lsdtt_data_loader.hpp/.cpp     — GDAL/OGR I/O, RAII, COG output
-│   │   ├── lsdtt_backend_factory.hpp/.cpp — make_raster_engine(), gpu_available()
-│   │   ├── lsdtt_param_parser.hpp/.cpp    — parameter file parser
+│   │   ├── lsdtt_types.hpp                  — all lightweight shared primitive types (see below)
+│   │   ├── lsdtt_raster_meta.hpp            — metadata struct + CRS validation
+│   │   ├── lsdtt_raster_base.hpp/.cpp       — abstract raster dispatch interface
+│   │   ├── lsdtt_data_loader.hpp/.cpp       — GDAL/OGR I/O, RAII, COG output
+│   │   ├── lsdtt_backend_factory.hpp/.cpp   — make_raster_engine(), gpu_available()
+│   │   ├── lsdtt_param_parser.hpp/.cpp      — parameter file parser
+│   │   ├── lsdtt_basin_base.hpp             — abstract basin interface
 │   │   ├── lsdtt_junction_network_base.hpp  — abstract channel network interface + lsdtt_junction_network_options
-│   │   ├── lsdtt_flow_base.hpp            — abstract D8 flow interface + lsdtt_flowinfo_options
-│   │   ├── lsdtt_crs_suggest.hpp/.cpp     — CRS inspection and projection recommendation
+│   │   ├── lsdtt_flow_base.hpp              — abstract D8 flow interface + lsdtt_flowinfo_options
+│   │   ├── lsdtt_crs_suggest.hpp/.cpp       — CRS inspection and projection recommendation
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
-│   │   └── lsdtt_vector_utils.hpp/.cpp    — GDAL/OGR-backed vector helpers
+│   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
+│   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
+│   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
 │   ├── cpu/
-│   │   ├── lsdtt_raster_cpu.hpp/.cpp                    — concrete CPU raster class
-│   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                  — D8 CPU flow routing
-│   │   ├── lsdtt_flowgraph_cpu.hpp                      — D-inf/MFD DAG routing (stub)
-│   │   ├── lsdtt_raster_algebra.hpp/.cpp                — element-wise raster algebra
-│   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp    — hillshade, moving window
-│   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp — fill, breach, nodata
-│   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp     — interior void filling
-│   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp           — wavelet quadratic fit
-│   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp             — OpenCV-based raster processing
-│   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp     — feature-specific raster workflows
-│   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp — test surface generators
+│   │   ├── lsdtt_raster_cpu.hpp/.cpp                       — concrete CPU raster class
+│   │   ├── lsdtt_flow_base.cpp                             — factory impl for make_flow_base()
+│   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                     — D8 CPU flow routing
+│   │   ├── lsdtt_flowgraph_cpu.hpp                         — D-inf/MFD DAG routing (stub)
+│   │   ├── lsdtt_depression_hierarchy_cpu.hpp/.cpp         — depression hierarchy construction
+│   │   ├── lsdtt_fill_spill_merge_cpu.hpp/.cpp             — fill-spill-merge depression routing
+│   │   ├── lsdtt_flow_snapping_cpu.hpp/.cpp                — snapping points to channel network
+│   │   ├── lsdtt_junction_network_cpu.hpp/.cpp             — CPU channel junction network
+│   │   ├── lsdtt_basin_cpu.hpp/.cpp                        — CPU basin objects
+│   │   ├── lsdtt_junction_basin_cpu.hpp/.cpp               — junction-based basin extraction
+│   │   ├── lsdtt_junction_basin_selection_cpu.hpp/.cpp     — basin selection helpers
+│   │   ├── lsdtt_raster_algebra.hpp/.cpp                   — element-wise raster algebra
+│   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp       — hillshade, moving window, polyfit metrics
+│   │   ├── lsdtt_raster_surface_fitting_cpu.hpp/.cpp       — plane and polynomial surface fitting to masks
+│   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp    — fill, breach, nodata
+│   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp        — interior void filling
+│   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp              — wavelet quadratic fit; home for future spectral surface fitting
+│   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp                — OpenCV-based raster processing
+│   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp        — feature-specific raster workflows
+│   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp    — test surface generators including mountain range geometries
 │   └── utils/
 │       ├── lsdtt_array2d.hpp              — header-only 2D array
-│       └── lsdtt_raster_geometry.hpp      — header-only raster geometry helpers
+│       ├── lsdtt_raster_geometry.hpp      — header-only raster geometry helpers
+│       ├── lsdtt_statistics.hpp/.cpp      — descriptive statistics (median, MAD, stddev, etc.)
+│       ├── lsdtt_histogram.hpp/.cpp       — histogram, PDF, CDF
+│       ├── lsdtt_statistical_tests.hpp/.cpp — nonparametric tests, KS, circular statistics
+│       ├── lsdtt_splines.hpp/.cpp         — 1D spline interpolation
+│       └── lsdtt_regression.hpp/.cpp      — linear and polynomial regression helpers
 ├── CMakeLists.txt
 ├── diagnose_fftw.sh
 └── README.md
@@ -95,19 +114,28 @@ the utility-layer numerical functions.
 - `lsdtt_param_parser.cpp`
 - `lsdtt_crs_suggest.cpp`
 - `lsdtt_raster_reproject.cpp`
+- `lsdtt_raster_warp.cpp`
 - `lsdtt_vector_utils.cpp`
+- `lsdtt_point_input.cpp`
 
 **`lsdtt3_cpu` sources** (`src/cpu/`):
 - `lsdtt_raster_cpu.cpp`
 - `lsdtt_raster_algebra.cpp`
 - `lsdtt_raster_surface_metrics_cpu.cpp`
+- `lsdtt_raster_surface_fitting_cpu.cpp`
 - `lsdtt_raster_flow_preprocessing_cpu.cpp`
 - `lsdtt_raster_nodata_filling_cpu.cpp`
 - `lsdtt_raster_spectral_cpu.cpp`
 - `lsdtt_raster_synthetic_surfaces_cpu.cpp`
+- `lsdtt_raster_feature_finder_cpu.cpp`
 - `lsdtt_flowinfo_cpu.cpp`
 - `lsdtt_flow_base.cpp`
 - `lsdtt_junction_network_cpu.cpp`
+- `lsdtt_depression_hierarchy_cpu.cpp`
+- `lsdtt_fill_spill_merge_cpu.cpp`
+- `lsdtt_flow_snapping_cpu.cpp`
+- `lsdtt_basin_cpu.cpp`
+- `lsdtt_junction_basin_cpu.cpp`
 - `lsdtt_raster_opencv_cpu.cpp` *(when OpenCV is available)*
 
 `lsdtt3_cpu` depends on `lsdtt3_core`. All CLI executables link against
@@ -125,7 +153,7 @@ the utility-layer numerical functions.
 Compile definition: `LSDTT_HAS_FFTW=1`. Stub in `lsdtt_raster_spectral_cpu.cpp`
 throws at runtime if FFTW not available.
 
-**`docs/lsdtt_util_contents.md`**  
+**`docs/lsdtt_utils_guide.md`**  
 Developer guide to the `src/utils/` layer. Explains what belongs in utils,
 what should remain in `core` / `cpu` / `gpu`, the valid-data contract for
 utility functions, and when to use the main statistical tests and distance
@@ -249,6 +277,9 @@ Current CLI programs are:
   Builds or reuses a pit-filled DEM, constructs D8 flow routing, extracts source
   pixels from a contributing-pixel threshold, builds the junction/channel
   network, and writes channel-network output to CSV, GeoPackage, or FlatGeobuf.
+
+- **`lsdtt-raster-basin-stats.cpp`**  
+  Extracts basins from a junction network and computes raster statistics per basin.
 
 ### CLI design rule
 
@@ -783,8 +814,32 @@ Inner loops are OpenMP-parallelised.
 
 **`lsdtt_raster_surface_metrics_cpu`:**
 - `compute_hillshade(raster, azimuth=315, altitude=45, z_factor=1.0)`
-- `moving_window_mean(raster, radius=3, shape=square)`
+- `moving_window_mean(raster, radius_metres, shape=circular)`
+- `moving_window_local_relief(raster, radius_metres, shape=circular)` — max minus min in window
+- `moving_window_stddev(raster, radius_metres, shape=circular)` — population stddev
+- `moving_window_median(raster, radius_metres, shape=circular)`
+- `moving_window_mad(raster, radius_metres, shape=circular)` — median absolute deviation
+- `moving_window_tpi(raster, radius_metres, shape=circular)` — Topographic Position Index (Weiss 2001)
+- `calculate_madk2(raster, window_radius_metres, lag_pixels=1, n_threads=0)` → `madk2_result` — Trevisani et al. (2023) directional roughness
+- `compute_polyfit_metrics(polycoeff, request)` → `polyfit_metric_result` — batch computation of curvature and derivative rasters from wavelet quadratic fit coefficients
 - `window_shape` enum: `square`, `circular`
+- `polyfit_metric` enum: slope, aspect, curvatures (mean, Gaussian, max, min, profile, plan, tangential, etc.), rotor
+
+**`lsdtt_raster_surface_fitting_cpu`:**
+
+Plane and polynomial surface fitting to masked or labelled raster regions.
+Use for piedmont / fan fitting, terrace treads, floodplain surfaces.
+For spectral (long-wavelength) surface fitting see `lsdtt_raster_spectral_cpu`.
+
+- `fit_plane_to_mask(dem, mask)` → `lsdtt_plane_fit_result` — OLS plane, z = a*x + b*y + c
+- `fit_plane_to_mask_ransac(dem, mask, inlier_tolerance, max_iter=1000, seed=1)` → `lsdtt_plane_fit_result` — robust RANSAC fit; tolerates incised channels and outliers
+- `evaluate_fitted_plane(meta, coeffs, n_threads=0)` → `lsdtt_raster_cpu`
+- `residual_from_fitted_plane(dem, coeffs, n_threads=0)` → `lsdtt_raster_cpu`
+- `fit_planes_to_labels(dem, label_raster)` → `std::map<int, lsdtt_plane_fit_result>` — one plane per label
+- `fit_poly2_to_mask(dem, mask)` → `lsdtt_poly2_fit_result` — OLS degree-2 polynomial, z = a*x² + b*y² + c*x*y + d*x + e*y + f
+- `evaluate_fitted_poly2(meta, coeffs, n_threads=0)` → `lsdtt_raster_cpu`
+- `residual_from_fitted_poly2(dem, coeffs, n_threads=0)` → `lsdtt_raster_cpu`
+- `poly2_max_principal_curvature(coeffs)` → `double` — max Hessian eigenvalue for curvature screening
 
 **`lsdtt_raster_flow_preprocessing_cpu`:**
 - `mask_to_nodata_using_threshold(raster, threshold, is_below_nodata)`
@@ -806,9 +861,15 @@ Inner loops are OpenMP-parallelised.
   — Returns `poly_fit_coeffs{a, b, c, d, e, f}` — six `lsdtt_raster_cpu` members
 
 **`lsdtt_raster_synthetic_surfaces_cpu`:**
-- Takes `lsdtt_raster_meta` or raw dimensions
-- Generators: uniform random, red noise, blue noise, diamond-square, periodic wave,
+- Takes `lsdtt_raster_meta` or raw dimensions (n_rows, n_cols, cell_size)
+- Basic generators: uniform random, red noise, blue noise, diamond-square, periodic wave,
   global quadratic, random quadratic
+- Mountain range generators (return `lsdtt_mountain_range_surface{dem, front_mask}`):
+  - `generate_linear_range_surface` — bilateral piedmont, ridge in DEM interior
+  - `generate_halfspace_range_surface` — ridge at DEM edge (Himalaya half-space analogy)
+  - `generate_circular_range_surface` — elliptical dome in DEM interior
+  - `generate_arc_range_surface` — parabolic curved front at one edge
+- `lsdtt_range_edge` enum: `north`, `south`, `east`, `west`
 
 ---
 

@@ -22,6 +22,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_spectral_cpu.hpp"
+#include "lsdtt_raster_nodata_filling_cpu.hpp"
 
 #include <algorithm>
 #include <array>
@@ -29,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -57,6 +59,34 @@ poly_fit_coeffs wavelet_quadratic_fit(
         "lsdtt::wavelet_quadratic_fit: lsdtt3 was built without FFTW support. "
         "Install FFTW development files and rebuild."
     );
+}
+
+static const char* k_no_fftw_msg =
+    "lsdtt3 was built without FFTW support. "
+    "Install FFTW development files and rebuild.";
+
+lsdtt_raster_cpu fftw2D_lowpass_filter(
+    const lsdtt_raster_cpu&, double, spectral_window_type, bool, int)
+{
+    throw std::runtime_error(std::string("lsdtt::fftw2D_lowpass_filter: ") + k_no_fftw_msg);
+}
+
+lsdtt_raster_cpu fftw2D_highpass_filter(
+    const lsdtt_raster_cpu&, double, spectral_window_type, bool, int)
+{
+    throw std::runtime_error(std::string("lsdtt::fftw2D_highpass_filter: ") + k_no_fftw_msg);
+}
+
+lsdtt_raster_cpu fftw2D_bandpass_filter(
+    const lsdtt_raster_cpu&, double, double, spectral_window_type, bool, int)
+{
+    throw std::runtime_error(std::string("lsdtt::fftw2D_bandpass_filter: ") + k_no_fftw_msg);
+}
+
+lsdtt_raster_cpu fftw2D_wiener_filter(
+    const lsdtt_raster_cpu&, double, double, spectral_window_type, bool, int)
+{
+    throw std::runtime_error(std::string("lsdtt::fftw2D_wiener_filter: ") + k_no_fftw_msg);
 }
 
 #else
@@ -197,6 +227,141 @@ public:
     {
         return plan_;
     }
+
+private:
+    fftw_plan plan_ = nullptr;
+};
+
+// -----------------------------------------------------------------------------
+// fftw_double_buffer — RAII wrapper for a real double array allocated via FFTW
+// -----------------------------------------------------------------------------
+class fftw_double_buffer
+{
+public:
+    fftw_double_buffer(std::size_t n, const std::string& name)
+        : n_(n)
+    {
+        ptr_ = reinterpret_cast<double*>(fftw_malloc(sizeof(double) * n));
+        if (!ptr_)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral filter: FFTW double buffer allocation failed for " + name
+            );
+        }
+    }
+
+    ~fftw_double_buffer() { if (ptr_) fftw_free(ptr_); }
+
+    fftw_double_buffer(const fftw_double_buffer&)            = delete;
+    fftw_double_buffer& operator=(const fftw_double_buffer&) = delete;
+
+    double*     get()  { return ptr_; }
+    std::size_t size() const { return n_; }
+
+private:
+    double*     ptr_ = nullptr;
+    std::size_t n_   = 0;
+};
+
+// -----------------------------------------------------------------------------
+// fftw_halfcomplex_buffer
+//
+// Holds the r2c output: Ly rows × (Lx/2+1) complex columns.
+// The non-redundant half of the spectrum for a real input of size Ly × Lx.
+// -----------------------------------------------------------------------------
+class fftw_halfcomplex_buffer
+{
+public:
+    fftw_halfcomplex_buffer(std::size_t n, const std::string& name)
+        : n_(n)
+    {
+        ptr_ = reinterpret_cast<fftw_complex*>(
+            fftw_malloc(sizeof(fftw_complex) * n)
+        );
+        if (!ptr_)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral filter: FFTW halfcomplex buffer allocation failed for " + name
+            );
+        }
+    }
+
+    ~fftw_halfcomplex_buffer() { if (ptr_) fftw_free(ptr_); }
+
+    fftw_halfcomplex_buffer(const fftw_halfcomplex_buffer&)            = delete;
+    fftw_halfcomplex_buffer& operator=(const fftw_halfcomplex_buffer&) = delete;
+
+    fftw_complex* get()  { return ptr_; }
+    std::size_t   size() const { return n_; }
+
+private:
+    fftw_complex* ptr_ = nullptr;
+    std::size_t   n_   = 0;
+};
+
+// -----------------------------------------------------------------------------
+// fftw_r2c_plan_handle / fftw_c2r_plan_handle
+//
+// RAII plan handles for real-to-complex and complex-to-real 2D transforms.
+// Always uses FFTW_ESTIMATE so planning never touches the data arrays.
+// The c2r transform may destroy its complex input on execution — this is
+// expected and accounted for in spectral_filter_pipeline.
+// -----------------------------------------------------------------------------
+class fftw_r2c_plan_handle
+{
+public:
+    fftw_r2c_plan_handle(
+        int            nrows,
+        int            ncols,
+        double*        in,
+        fftw_complex*  out,
+        const std::string& name)
+    {
+        plan_ = fftw_plan_dft_r2c_2d(nrows, ncols, in, out, FFTW_ESTIMATE);
+        if (!plan_)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral filter: r2c plan creation failed for " + name
+            );
+        }
+    }
+
+    ~fftw_r2c_plan_handle() { if (plan_) fftw_destroy_plan(plan_); }
+
+    fftw_r2c_plan_handle(const fftw_r2c_plan_handle&)            = delete;
+    fftw_r2c_plan_handle& operator=(const fftw_r2c_plan_handle&) = delete;
+
+    fftw_plan get() const { return plan_; }
+
+private:
+    fftw_plan plan_ = nullptr;
+};
+
+class fftw_c2r_plan_handle
+{
+public:
+    fftw_c2r_plan_handle(
+        int            nrows,
+        int            ncols,
+        fftw_complex*  in,
+        double*        out,
+        const std::string& name)
+    {
+        plan_ = fftw_plan_dft_c2r_2d(nrows, ncols, in, out, FFTW_ESTIMATE);
+        if (!plan_)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral filter: c2r plan creation failed for " + name
+            );
+        }
+    }
+
+    ~fftw_c2r_plan_handle() { if (plan_) fftw_destroy_plan(plan_); }
+
+    fftw_c2r_plan_handle(const fftw_c2r_plan_handle&)            = delete;
+    fftw_c2r_plan_handle& operator=(const fftw_c2r_plan_handle&) = delete;
+
+    fftw_plan get() const { return plan_; }
 
 private:
     fftw_plan plan_ = nullptr;
@@ -636,6 +801,330 @@ static int resolve_thread_count(int n_threads)
     return threads;
 }
 
+// =============================================================================
+// Spectral filter helpers
+// =============================================================================
+
+// Next power of 2 >= n
+static int next_pow2(int n)
+{
+    if (n <= 1) return 1;
+    int p = 1;
+    while (p < n) p <<= 1;
+    return p;
+}
+
+// -----------------------------------------------------------------------------
+// fit_detrend_plane
+//
+// Fits z = a*col + b*row + c to all valid pixels using 3×3 normal equations
+// with partial pivoting.  Row/col are used as x/y (pixel index coordinates)
+// since the trend is only used as a DC/tilt removal step before FFT; physical
+// coordinates are not needed.
+//
+// Returns true on success.  On failure (< 3 valid pixels or singular system)
+// returns false and sets all coefficients to 0 (no detrend applied).
+// -----------------------------------------------------------------------------
+static bool fit_detrend_plane(
+    const std::vector<float>&   data,
+    const std::vector<uint8_t>& mask,
+    const lsdtt_raster_meta&    meta,
+    double& a_out,
+    double& b_out,
+    double& c_out)
+{
+    a_out = b_out = c_out = 0.0;
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+
+    double Sxx = 0, Sxy = 0, Sx = 0;
+    double             Syy = 0, Sy = 0;
+    double                         Sn = 0;
+    double Sxz = 0, Syz = 0, Sz = 0;
+
+    for (int r = 0; r < nrows; ++r)
+    {
+        for (int c = 0; c < ncols; ++c)
+        {
+            const std::size_t i =
+                static_cast<std::size_t>(r) * static_cast<std::size_t>(ncols) + c;
+            if (mask[i] == 0 || meta.is_nodata(data[i])) continue;
+
+            const double x = static_cast<double>(c);
+            const double y = static_cast<double>(r);
+            const double z = static_cast<double>(data[i]);
+
+            Sxx += x*x;  Sxy += x*y;  Sx += x;
+            Syy += y*y;  Sy  += y;    Sn += 1.0;
+            Sxz += x*z;  Syz += y*z;  Sz += z;
+        }
+    }
+
+    if (Sn < 3.0) return false;
+
+    // Augmented matrix [A | b] for Gaussian elimination
+    double A[3][4] =
+    {
+        { Sxx, Sxy, Sx, Sxz },
+        { Sxy, Syy, Sy, Syz },
+        { Sx,  Sy,  Sn, Sz  }
+    };
+
+    for (int col = 0; col < 3; ++col)
+    {
+        int    prow = col;
+        double pval = std::abs(A[col][col]);
+        for (int row = col + 1; row < 3; ++row)
+        {
+            if (std::abs(A[row][col]) > pval)
+            {
+                pval = std::abs(A[row][col]);
+                prow = row;
+            }
+        }
+        if (pval < 1e-14) return false;
+
+        if (prow != col)
+            for (int j = 0; j <= 3; ++j) std::swap(A[col][j], A[prow][j]);
+
+        for (int row = col + 1; row < 3; ++row)
+        {
+            const double f = A[row][col] / A[col][col];
+            for (int j = col; j <= 3; ++j) A[row][j] -= f * A[col][j];
+        }
+    }
+
+    double x[3];
+    for (int i = 2; i >= 0; --i)
+    {
+        x[i] = A[i][3];
+        for (int j = i + 1; j < 3; ++j) x[i] -= A[i][j] * x[j];
+        if (std::abs(A[i][i]) < 1e-30) return false;
+        x[i] /= A[i][i];
+        if (!std::isfinite(x[i])) return false;
+    }
+
+    a_out = x[0];
+    b_out = x[1];
+    c_out = x[2];
+    return true;
+}
+
+// -----------------------------------------------------------------------------
+// build_2d_window
+//
+// Returns a flat (nrows × ncols, row-major) array of window weights in [0, 1].
+//
+// For hann:    w(r) = 0.5 * (1 + cos(pi * r / r'))
+// For hamming: w(r) = 0.54 + 0.46 * cos(pi * r / r')
+//
+// where r is the Euclidean distance from the raster centre and r' is the
+// distance to the edge of the inscribed ellipse at the same angle.
+// Both are 1.0 at the centre, taper to near-zero at the ellipse boundary,
+// and are 0 outside.  The Hamming window retains a small non-zero base level
+// (~0.08) that further reduces spectral leakage.
+// -----------------------------------------------------------------------------
+static std::vector<double> build_2d_window(
+    int                  nrows,
+    int                  ncols,
+    spectral_window_type win_type)
+{
+    const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
+    std::vector<double> w(npix, 1.0);
+
+    if (win_type == spectral_window_type::none) return w;
+
+    const double a = (ncols - 1) * 0.5;   // x semi-axis (cols)
+    const double b = (nrows - 1) * 0.5;   // y semi-axis (rows)
+
+    for (int r = 0; r < nrows; ++r)
+    {
+        for (int c = 0; c < ncols; ++c)
+        {
+            const double x    = c - a;
+            const double y    = r - b;
+            const double dist = std::sqrt(x*x + y*y);
+
+            double r_prime;
+            if (dist < 1e-12)
+            {
+                r_prime = std::min(a, b);
+            }
+            else
+            {
+                const double cos_t = x / dist;
+                const double sin_t = y / dist;
+                r_prime = (a * b) /
+                          std::sqrt(b*b*cos_t*cos_t + a*a*sin_t*sin_t);
+            }
+
+            double coeff = 0.0;
+            if (dist < r_prime)
+            {
+                const double ratio = k_pi * dist / r_prime;
+                if (win_type == spectral_window_type::hann)
+                    coeff = 0.5 * (1.0 + std::cos(ratio));
+                else   // hamming — corrected formula, equals 1 at centre
+                    coeff = 0.54 + 0.46 * std::cos(ratio);
+            }
+
+            w[static_cast<std::size_t>(r) * ncols + c] = coeff;
+        }
+    }
+
+    return w;
+}
+
+// -----------------------------------------------------------------------------
+// radial_freq_r2c
+//
+// Radial frequency (cycles/metre) of element (i, j) in the UNSHIFTED r2c
+// output of a transform with padded dimensions Ly × Lx:
+//
+//   f_x = j / (Lx * cell_size)                        j in [0, Lx/2]
+//   f_y = i / (Ly * cell_size)      for i in [0, Ly/2]
+//   f_y = (i - Ly) / (Ly * cell_size)  for i in [Ly/2+1, Ly-1]
+// -----------------------------------------------------------------------------
+static inline double radial_freq_r2c(
+    int i, int j, int Ly, double dfx, double dfy)
+{
+    const double fy = (i <= Ly / 2) ? i * dfy : (i - Ly) * dfy;
+    const double fx = j * dfx;
+    return std::sqrt(fx*fx + fy*fy);
+}
+
+// -----------------------------------------------------------------------------
+// spectral_filter_pipeline
+//
+// Shared forward / inverse FFT pipeline.  The caller provides apply_kernel,
+// which receives a pointer to the r2c spectrum (Ly × Lx_half complex elements,
+// row-major, unshifted) and modifies it in place.
+//
+// Parameters passed to apply_kernel:
+//   spec     — pointer to Ly × Lx_half fftw_complex array
+//   Ly, Lx   — padded dimensions
+//   Lx_half  — Lx/2 + 1
+//   dfx, dfy — frequency increments in cycles/metre
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu spectral_filter_pipeline(
+    const lsdtt_raster_cpu& dem,
+    spectral_window_type     win_type,
+    const std::function<void(fftw_complex*, int, int, int, double, double)>&
+        apply_kernel)
+{
+    const lsdtt_raster_meta& meta      = dem.get_meta();
+    const int                NRows     = meta.n_rows;
+    const int                NCols     = meta.n_cols;
+    const double             cell_size = meta.cell_size;
+    const float              nodata_f  = static_cast<float>(meta.no_data_value);
+
+    const std::vector<float>&   data  = dem.get_data();
+    const std::vector<uint8_t>& valid = dem.get_mask();
+    const std::size_t npix = static_cast<std::size_t>(NRows) * NCols;
+
+    // -------------------------------------------------------------------------
+    // 1. Detrend: fit plane z = a*col + b*row + c, subtract from valid pixels.
+    //    Set nodata and invalid pixels to 0 (they become zero-padding).
+    // -------------------------------------------------------------------------
+    double a_tr = 0.0, b_tr = 0.0, c_tr = 0.0;
+    fit_detrend_plane(data, valid, meta, a_tr, b_tr, c_tr);
+
+    std::vector<double> detrended(npix, 0.0);
+    std::vector<double> trend_vals(npix, 0.0);
+
+    for (int r = 0; r < NRows; ++r)
+    {
+        for (int c = 0; c < NCols; ++c)
+        {
+            const std::size_t i =
+                static_cast<std::size_t>(r) * NCols + c;
+            const double t = a_tr * c + b_tr * r + c_tr;
+            trend_vals[i] = t;
+
+            if (valid[i] != 0 && !meta.is_nodata(data[i]))
+                detrended[i] = static_cast<double>(data[i]) - t;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Window: multiply detrended values by 2D taper
+    // -------------------------------------------------------------------------
+    const std::vector<double> win_w = build_2d_window(NRows, NCols, win_type);
+
+    // -------------------------------------------------------------------------
+    // 3. Pad to next power-of-2 dimensions
+    // -------------------------------------------------------------------------
+    const int Ly      = next_pow2(NRows);
+    const int Lx      = next_pow2(NCols);
+    const int Lx_half = Lx / 2 + 1;
+
+    const double dfx = 1.0 / (cell_size * Lx);
+    const double dfy = 1.0 / (cell_size * Ly);
+
+    const std::size_t n_real    = static_cast<std::size_t>(Ly)  * Lx;
+    const std::size_t n_complex = static_cast<std::size_t>(Ly)  * Lx_half;
+
+    fftw_double_buffer      real_buf (n_real,    "real");
+    fftw_halfcomplex_buffer cplx_buf (n_complex, "spectrum");
+
+    // Create both plans before writing any data (FFTW_ESTIMATE never touches
+    // the arrays during planning; safe to plan before filling).
+    fftw_r2c_plan_handle r2c_plan(Ly, Lx, real_buf.get(), cplx_buf.get(), "r2c");
+    fftw_c2r_plan_handle c2r_plan(Ly, Lx, cplx_buf.get(), real_buf.get(), "c2r");
+
+    // Fill real buffer: windowed detrended signal, zero-padded
+    std::fill(real_buf.get(), real_buf.get() + n_real, 0.0);
+    for (int r = 0; r < NRows; ++r)
+    {
+        for (int c = 0; c < NCols; ++c)
+        {
+            const std::size_t i_dem = static_cast<std::size_t>(r) * NCols + c;
+            real_buf.get()[static_cast<std::size_t>(r) * Lx + c] =
+                detrended[i_dem] * win_w[i_dem];
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Forward FFT (r2c)
+    // -------------------------------------------------------------------------
+    fftw_execute(r2c_plan.get());
+
+    // -------------------------------------------------------------------------
+    // 5. Apply filter kernel (caller-provided)
+    // -------------------------------------------------------------------------
+    apply_kernel(cplx_buf.get(), Ly, Lx, Lx_half, dfx, dfy);
+
+    // -------------------------------------------------------------------------
+    // 6. Inverse FFT (c2r), normalise, restore trend, re-apply nodata mask
+    //    c2r may destroy cplx_buf — that is expected.
+    // -------------------------------------------------------------------------
+    fftw_execute(c2r_plan.get());
+
+    const double norm = 1.0 / static_cast<double>(n_real);  // 1 / (Ly * Lx)
+
+    std::vector<float>   out_data(npix, nodata_f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (int r = 0; r < NRows; ++r)
+    {
+        for (int c = 0; c < NCols; ++c)
+        {
+            const std::size_t i_dem = static_cast<std::size_t>(r) * NCols + c;
+            if (valid[i_dem] == 0 || meta.is_nodata(data[i_dem])) continue;
+
+            const double z = real_buf.get()[static_cast<std::size_t>(r) * Lx + c]
+                           * norm
+                           + trend_vals[i_dem];
+
+            out_data[i_dem] = static_cast<float>(z);
+            out_mask[i_dem] = uint8_t{1};
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
 // -----------------------------------------------------------------------------
 // wavelet_quadratic_fit
 // -----------------------------------------------------------------------------
@@ -1014,6 +1503,387 @@ poly_fit_coeffs wavelet_quadratic_fit(
 
 
 
+
+// =============================================================================
+// Public spectral filter functions
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// fftw2D_lowpass_filter
+//
+// H(f) = exp( -ln(2) * (f / f_c)^2 )   with f_c = 1 / lambda_cutoff_metres
+//
+// H(0)   = 1.0   (DC and low frequencies pass unchanged)
+// H(f_c) = 0.5   (-3 dB at the cutoff)
+// H >> f_c → 0  (high frequencies suppressed)
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_lowpass_filter(
+    const lsdtt_raster_cpu& dem,
+    double               lambda_cutoff_metres,
+    spectral_window_type window,
+    bool                 clip_to_valid_rectangle,
+    int                  /*n_threads*/)
+{
+    if (!std::isfinite(lambda_cutoff_metres) || lambda_cutoff_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_lowpass_filter: lambda_cutoff_metres must be > 0"
+        );
+    }
+
+    dem.get_meta().check_projected_metres();
+
+    // Perform rectangle clip once, before the pipeline, if requested.
+    const lsdtt_raster_cpu clipped_storage =
+        clip_to_valid_rectangle ? clip_to_maximum_rectangle(dem) : lsdtt_raster_cpu{};
+    const lsdtt_raster_cpu& work = clip_to_valid_rectangle ? clipped_storage : dem;
+
+    const double f_c    = 1.0 / lambda_cutoff_metres;
+    const double ln2    = std::log(2.0);
+    const double inv_fc2 = 1.0 / (f_c * f_c);
+
+    return spectral_filter_pipeline(
+        work, window,
+        [ln2, inv_fc2](
+            fftw_complex* spec,
+            int Ly, int /*Lx*/, int Lx_half,
+            double dfx, double dfy)
+        {
+            for (int i = 0; i < Ly; ++i)
+            {
+                for (int j = 0; j < Lx_half; ++j)
+                {
+                    const double f = radial_freq_r2c(i, j, Ly, dfx, dfy);
+                    const double H = (f == 0.0)
+                        ? 1.0
+                        : std::exp(-ln2 * f * f * inv_fc2);
+
+                    const std::size_t k =
+                        static_cast<std::size_t>(i) * Lx_half + j;
+                    spec[k][0] *= H;
+                    spec[k][1] *= H;
+                }
+            }
+        }
+    );
+}
+
+// -----------------------------------------------------------------------------
+// fftw2D_highpass_filter
+//
+// H(f) = 1 - exp( -ln(2) * (f / f_c)^2 )
+//
+// H(0) = 0   (DC removed)
+// H(f_c) = 0.5   (-3 dB at cutoff)
+// H >> f_c → 1   (high frequencies pass unchanged)
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_highpass_filter(
+    const lsdtt_raster_cpu& dem,
+    double               lambda_cutoff_metres,
+    spectral_window_type window,
+    bool                 clip_to_valid_rectangle,
+    int                  /*n_threads*/)
+{
+    if (!std::isfinite(lambda_cutoff_metres) || lambda_cutoff_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_highpass_filter: lambda_cutoff_metres must be > 0"
+        );
+    }
+
+    dem.get_meta().check_projected_metres();
+
+    const lsdtt_raster_cpu clipped_storage =
+        clip_to_valid_rectangle ? clip_to_maximum_rectangle(dem) : lsdtt_raster_cpu{};
+    const lsdtt_raster_cpu& work = clip_to_valid_rectangle ? clipped_storage : dem;
+
+    const double f_c     = 1.0 / lambda_cutoff_metres;
+    const double ln2     = std::log(2.0);
+    const double inv_fc2 = 1.0 / (f_c * f_c);
+
+    return spectral_filter_pipeline(
+        work, window,
+        [ln2, inv_fc2](
+            fftw_complex* spec,
+            int Ly, int /*Lx*/, int Lx_half,
+            double dfx, double dfy)
+        {
+            for (int i = 0; i < Ly; ++i)
+            {
+                for (int j = 0; j < Lx_half; ++j)
+                {
+                    const double f = radial_freq_r2c(i, j, Ly, dfx, dfy);
+                    const double H = (f == 0.0)
+                        ? 0.0
+                        : 1.0 - std::exp(-ln2 * f * f * inv_fc2);
+
+                    const std::size_t k =
+                        static_cast<std::size_t>(i) * Lx_half + j;
+                    spec[k][0] *= H;
+                    spec[k][1] *= H;
+                }
+            }
+        }
+    );
+}
+
+// -----------------------------------------------------------------------------
+// fftw2D_bandpass_filter
+//
+// H(f) = H_high(f, f_low) * H_low(f, f_high)
+//
+// where:
+//   f_low  = 1 / lambda_long_metres   (low-frequency edge, long-wavelength cutoff)
+//   f_high = 1 / lambda_short_metres  (high-frequency edge, short-wavelength cutoff)
+//
+// H_high(f, f_low)  = 1 - exp(-ln2 * (f/f_low)^2)   — passes f >> f_low
+// H_low(f, f_high)  =     exp(-ln2 * (f/f_high)^2)   — passes f << f_high
+//
+// The combined response is 0.25 (-6 dB) at each edge and peaks near the
+// geometric mean of f_low and f_high.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_bandpass_filter(
+    const lsdtt_raster_cpu& dem,
+    double               lambda_short_metres,
+    double               lambda_long_metres,
+    spectral_window_type window,
+    bool                 clip_to_valid_rectangle,
+    int                  /*n_threads*/)
+{
+    if (!std::isfinite(lambda_short_metres) || lambda_short_metres <= 0.0 ||
+        !std::isfinite(lambda_long_metres)  || lambda_long_metres  <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_bandpass_filter: wavelengths must be > 0"
+        );
+    }
+    if (lambda_short_metres >= lambda_long_metres)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_bandpass_filter: lambda_short_metres must be < "
+            "lambda_long_metres"
+        );
+    }
+
+    dem.get_meta().check_projected_metres();
+
+    const lsdtt_raster_cpu clipped_storage =
+        clip_to_valid_rectangle ? clip_to_maximum_rectangle(dem) : lsdtt_raster_cpu{};
+    const lsdtt_raster_cpu& work = clip_to_valid_rectangle ? clipped_storage : dem;
+
+    // f_low  = 1/lambda_long  (lower frequency edge — long-wavelength cutoff)
+    // f_high = 1/lambda_short (higher frequency edge — short-wavelength cutoff)
+    const double f_low   = 1.0 / lambda_long_metres;
+    const double f_high  = 1.0 / lambda_short_metres;
+    const double ln2     = std::log(2.0);
+    const double inv_fl2 = 1.0 / (f_low  * f_low);
+    const double inv_fh2 = 1.0 / (f_high * f_high);
+
+    return spectral_filter_pipeline(
+        work, window,
+        [ln2, f_low, inv_fl2, inv_fh2](
+            fftw_complex* spec,
+            int Ly, int /*Lx*/, int Lx_half,
+            double dfx, double dfy)
+        {
+            for (int i = 0; i < Ly; ++i)
+            {
+                for (int j = 0; j < Lx_half; ++j)
+                {
+                    const double f = radial_freq_r2c(i, j, Ly, dfx, dfy);
+                    double H;
+                    if (f == 0.0)
+                    {
+                        H = 0.0;
+                    }
+                    else
+                    {
+                        const double H_hp =
+                            1.0 - std::exp(-ln2 * f * f * inv_fl2);
+                        const double H_lp =
+                            std::exp(-ln2 * f * f * inv_fh2);
+                        H = H_hp * H_lp;
+                    }
+
+                    const std::size_t k =
+                        static_cast<std::size_t>(i) * Lx_half + j;
+                    spec[k][0] *= H;
+                    spec[k][1] *= H;
+                }
+            }
+            (void)f_low;  // captured but only used via inv_fl2
+        }
+    );
+}
+
+// -----------------------------------------------------------------------------
+// fftw2D_wiener_filter
+//
+// Adaptive noise-removal filter.  Algorithm:
+//
+//   1. Forward FFT (inside spectral_filter_pipeline).
+//   2. Compute radial PSD: P(f) = |F(f)|^2 / (Ly * Lx) for all r2c bins.
+//   3. Collect points in the signal band [f_sig_low, f_sig_high] in log-log
+//      space and fit a power law log(P) = m*log(f) + log(c).
+//   4. Estimate white noise N from the mean PSD at f > 0.8 * f_nyquist
+//      (the near-Nyquist high-frequency region where noise dominates).
+//   5. Build Wiener weight phi(f) = S(f) / (S(f) + N)
+//      where S(f) = c * f^m is the signal model.
+//   6. Apply phi(f) to spectrum.
+//
+// The Wiener weight approaches 1 at low frequencies (signal >> noise) and 0
+// at high frequencies (noise >> signal).  The transition band is determined
+// automatically from the spectrum of the DEM itself, so no explicit cutoff
+// needs to be specified.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_wiener_filter(
+    const lsdtt_raster_cpu& dem,
+    double               signal_wavelength_long_m,
+    double               signal_wavelength_short_m,
+    spectral_window_type window,
+    bool                 clip_to_valid_rectangle,
+    int                  /*n_threads*/)
+{
+    if (!std::isfinite(signal_wavelength_long_m) || signal_wavelength_long_m <= 0.0 ||
+        !std::isfinite(signal_wavelength_short_m)|| signal_wavelength_short_m <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_wiener_filter: signal wavelengths must be > 0"
+        );
+    }
+    if (signal_wavelength_short_m >= signal_wavelength_long_m)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_wiener_filter: signal_wavelength_short_m must be < "
+            "signal_wavelength_long_m"
+        );
+    }
+
+    dem.get_meta().check_projected_metres();
+
+    const lsdtt_raster_cpu clipped_storage =
+        clip_to_valid_rectangle ? clip_to_maximum_rectangle(dem) : lsdtt_raster_cpu{};
+    const lsdtt_raster_cpu& work = clip_to_valid_rectangle ? clipped_storage : dem;
+
+    const double cell_size  = work.get_meta().cell_size;
+    const double f_nyquist  = 1.0 / (2.0 * cell_size);
+    const double f_sig_low  = 1.0 / signal_wavelength_long_m;   // lower freq of signal band
+    const double f_sig_high = 1.0 / signal_wavelength_short_m;  // upper freq of signal band
+    const double f_noise_lo = 0.8 * f_nyquist;                  // near-Nyquist noise region
+
+    return spectral_filter_pipeline(
+        work, window,
+        [f_sig_low, f_sig_high, f_noise_lo, f_nyquist](
+            fftw_complex* spec,
+            int Ly, int Lx, int Lx_half,
+            double dfx, double dfy)
+        {
+            const double inv_n = 1.0 / static_cast<double>(
+                static_cast<std::size_t>(Ly) * Lx);
+
+            // --- Step 1: compute radial PSD and identify signal / noise bins ---
+            double sum_log_f   = 0.0, sum_log_p   = 0.0;
+            double sum_log_f2  = 0.0, sum_log_fp  = 0.0;
+            int    n_sig       = 0;
+
+            double noise_sum   = 0.0;
+            int    n_noise     = 0;
+
+            for (int i = 0; i < Ly; ++i)
+            {
+                for (int j = 0; j < Lx_half; ++j)
+                {
+                    const double f = radial_freq_r2c(i, j, Ly, dfx, dfy);
+                    if (f == 0.0 || f > f_nyquist) continue;
+
+                    const std::size_t k =
+                        static_cast<std::size_t>(i) * Lx_half + j;
+                    const double re  = spec[k][0];
+                    const double im  = spec[k][1];
+                    // Factor-of-2 for the folded half-spectrum (except DC and Nyquist)
+                    const double deg = (j == 0 || j == Lx_half - 1) ? 1.0 : 2.0;
+                    const double psd = deg * (re*re + im*im) * inv_n;
+
+                    // Signal band — log-log regression
+                    if (f >= f_sig_low && f <= f_sig_high && psd > 0.0)
+                    {
+                        const double lf = std::log10(f);
+                        const double lp = std::log10(psd);
+                        sum_log_f  += lf;
+                        sum_log_p  += lp;
+                        sum_log_f2 += lf * lf;
+                        sum_log_fp += lf * lp;
+                        ++n_sig;
+                    }
+
+                    // Noise region — near Nyquist
+                    if (f >= f_noise_lo)
+                    {
+                        noise_sum += psd;
+                        ++n_noise;
+                    }
+                }
+            }
+
+            // --- Step 2: fit power law log(P) = m*log(f) + log(c) ---
+            double c_model = 1.0;
+            double m_model = -2.0;   // typical topographic spectral slope
+
+            if (n_sig >= 2)
+            {
+                const double fn   = static_cast<double>(n_sig);
+                const double denom = fn * sum_log_f2 - sum_log_f * sum_log_f;
+                if (std::abs(denom) > 1e-30)
+                {
+                    m_model  = (fn * sum_log_fp - sum_log_f * sum_log_p) / denom;
+                    const double log_c = (sum_log_p - m_model * sum_log_f) / fn;
+                    c_model  = std::pow(10.0, log_c);
+                }
+            }
+
+            // --- Step 3: estimate white noise level ---
+            double noise_level = (n_noise > 0)
+                ? noise_sum / static_cast<double>(n_noise)
+                : 0.0;
+
+            // Guard: if noise estimate is zero or very small relative to
+            // signal, set it to a tiny fraction of the DC component so the
+            // Wiener filter doesn't become a unity passthrough everywhere.
+            if (noise_level <= 0.0)
+            {
+                const double psd_dc =
+                    (spec[0][0]*spec[0][0] + spec[0][1]*spec[0][1]) * inv_n;
+                noise_level = std::max(psd_dc * 1e-6, 1e-30);
+            }
+
+            // --- Step 4: apply Wiener weights ---
+            for (int i = 0; i < Ly; ++i)
+            {
+                for (int j = 0; j < Lx_half; ++j)
+                {
+                    const double f = radial_freq_r2c(i, j, Ly, dfx, dfy);
+
+                    double phi;
+                    if (f == 0.0)
+                    {
+                        phi = 1.0;   // keep DC
+                    }
+                    else
+                    {
+                        const double S = c_model * std::pow(f, m_model);
+                        phi = S / (S + noise_level);
+                        phi = std::max(0.0, std::min(1.0, phi));
+                    }
+
+                    const std::size_t k =
+                        static_cast<std::size_t>(i) * Lx_half + j;
+                    spec[k][0] *= phi;
+                    spec[k][1] *= phi;
+                }
+            }
+        }
+    );
+}
 
 #endif  // LSDTT_HAS_FFTW
 

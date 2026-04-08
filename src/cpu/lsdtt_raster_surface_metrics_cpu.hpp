@@ -158,6 +158,66 @@ lsdtt_raster_cpu moving_window_local_relief(
 );
 
 // -----------------------------------------------------------------------------
+// moving_window_stddev
+//
+// Population standard deviation of elevation values within the moving window.
+// Uses a divisor of n (all pixels in window treated as the full sample of
+// interest), consistent with the convention in lsdtt_statistics.hpp.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_stddev(
+    const lsdtt_raster_cpu& raster,
+    double       radius_metres,
+    window_shape shape  = window_shape::circular
+);
+
+// -----------------------------------------------------------------------------
+// moving_window_median
+//
+// Median elevation within the moving window over valid pixels.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_median(
+    const lsdtt_raster_cpu& raster,
+    double       radius_metres,
+    window_shape shape  = window_shape::circular
+);
+
+// -----------------------------------------------------------------------------
+// moving_window_mad
+//
+// Median absolute deviation (MAD) of elevation within the moving window:
+//   MAD = median( |z_i - median(z)| )
+// This is the raw MAD, not the normal-distribution-scaled version.
+// For a robust roughness estimate comparable to stddev under normality,
+// multiply the result by 1.4826.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_mad(
+    const lsdtt_raster_cpu& raster,
+    double       radius_metres,
+    window_shape shape  = window_shape::circular
+);
+
+// -----------------------------------------------------------------------------
+// moving_window_tpi
+//
+// Topographic Position Index (TPI) after Weiss (2001):
+//   TPI = z_centre - mean( z_neighbours )
+// where the mean is taken over all valid pixels in the window EXCLUDING the
+// centre pixel itself.
+//
+// Positive values indicate the centre pixel is higher than its surroundings
+// (ridge, hilltop). Negative values indicate lower (valley, depression).
+//
+// Reference:
+//   Weiss, A.D. (2001). Topographic position and landforms analysis.
+//   ESRI User Conference, San Diego, CA.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_tpi(
+    const lsdtt_raster_cpu& raster,
+    double       radius_metres,
+    window_shape shape  = window_shape::circular
+);
+
+// -----------------------------------------------------------------------------
 // madk2_result
 //
 // Trevisani et al. (2023) MADk2 roughness outputs:
