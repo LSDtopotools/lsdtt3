@@ -28,7 +28,13 @@ namespace lsdtt {
 
 lsdtt_raster_cpu::lsdtt_raster_cpu(const lsdtt_data_loader& loader)
 {
-    read_from_loader(loader);
+    lsdtt_raster_tile tile = loader.read_full();
+
+    set_from_vectors(
+        std::move(tile.data),
+        std::move(tile.mask),
+        tile.meta
+    );
 }
 
 lsdtt_raster_cpu::lsdtt_raster_cpu(const lsdtt_raster_tile& tile)
@@ -72,48 +78,27 @@ lsdtt_raster_cpu::lsdtt_raster_cpu(
 }
 
 // -----------------------------------------------------------------------------
-// I/O
+// Loader-to-backend transfer
 // -----------------------------------------------------------------------------
 
-void lsdtt_raster_cpu::read_from_loader(const lsdtt_data_loader& loader)
+void lsdtt_raster_cpu::set_from_vectors(
+    std::vector<float>&&        data,
+    std::vector<std::uint8_t>&& mask,
+    const lsdtt_raster_meta&    meta
+)
 {
-    lsdtt_raster_tile tile = loader.read_full();
-    meta_ = tile.meta;
+    meta_ = meta;
 
     data_ = lsdtt_array2d_f(
-        meta_.n_rows,
-        meta_.n_cols,
-        std::move(tile.data)
+        meta.n_rows,
+        meta.n_cols,
+        std::move(data)
     );
 
     mask_ = lsdtt_array2d_u8(
-        meta_.n_rows,
-        meta_.n_cols,
-        std::move(tile.mask)
-    );
-}
-
-void lsdtt_raster_cpu::write_to_loader(lsdtt_data_loader& loader)
-{
-    loader.write_full(data_.get_vector(), meta_, "");
-}
-
-// -----------------------------------------------------------------------------
-// Core filtering — placeholders
-// -----------------------------------------------------------------------------
-
-void lsdtt_raster_cpu::smooth_gaussian(double /*sigma*/)
-{
-    throw std::runtime_error(
-        "lsdtt_raster_cpu: smooth_gaussian() not yet implemented"
-    );
-}
-
-void lsdtt_raster_cpu::smooth_bilateral(double /*sigma_space*/,
-                                        double /*sigma_colour*/)
-{
-    throw std::runtime_error(
-        "lsdtt_raster_cpu: smooth_bilateral() not yet implemented"
+        meta.n_rows,
+        meta.n_cols,
+        std::move(mask)
     );
 }
 
@@ -497,7 +482,6 @@ float lsdtt_raster_cpu::range_value() const
     return static_cast<float>(max_val - min_val);
 }
 
-
 std::int64_t lsdtt_raster_cpu::assert_mask()
 {
     const std::int64_t n_cells = checked_cell_count("assert_mask");
@@ -531,8 +515,6 @@ std::int64_t lsdtt_raster_cpu::assert_mask()
 
     return n_changed;
 }
-
-
 
 // -----------------------------------------------------------------------------
 // Whole-raster arithmetic over valid pixels (mask != 0)
