@@ -183,6 +183,44 @@ lsdtt_raster_cpu generate_diamond_square_surface(
 );
 
 
+// -----------------------------------------------------------------------------
+// generate_power_law_fractal_surface_fft
+//
+// FFT-based synthetic fractal DEM generator for spectral background modelling.
+//
+// Intended use:
+//   - generate reference DEMs with an approximate power-law spectrum
+//   - used by full spectral analysis background-spectrum construction
+//
+// Parameters:
+//   beta          — target PSD slope exponent (> 0)
+//   target_mean   — mean of the output raster after normalisation
+//   target_stddev — standard deviation of the output raster after normalisation
+//
+// Notes:
+//   - Same seed => identical surface
+//   - Implementation will use FFTW when added
+//   - For now this is a declared public API used by spectral analysis
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu generate_power_law_fractal_surface_fft(
+    const lsdtt_raster_meta& meta,
+    int    seed          = 1,
+    double beta          = 2.0,
+    double target_mean   = 0.0,
+    double target_stddev = 1.0,
+    int    n_threads     = 0
+);
+
+lsdtt_raster_cpu generate_power_law_fractal_surface_fft(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    int    seed          = 1,
+    double beta          = 2.0,
+    double target_mean   = 0.0,
+    double target_stddev = 1.0,
+    int    n_threads     = 0
+);
 
 
 

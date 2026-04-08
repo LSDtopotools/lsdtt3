@@ -17,6 +17,10 @@
 #include <vector>
 #include <cstdint>
 
+#ifdef LSDTT_HAS_FFTW
+#include <fftw3.h>
+#endif
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -782,6 +786,286 @@ lsdtt_raster_cpu generate_diamond_square_surface(
         seed,
         roughness,
         initial_scale,
+        target_mean,
+        target_stddev,
+        n_threads
+    );
+}
+
+
+// -----------------------------------------------------------------------------
+// generate_power_law_fractal_surface_fft
+//
+// FFT-based synthetic fractal DEM generator for spectral background modelling.
+//
+// Method:
+//   1. Generate deterministic white noise on a padded power-of-2 grid
+//   2. Forward complex FFT
+//   3. Apply amplitude scaling proportional to f^(-beta/2)
+//   4. Inverse FFT
+//   5. Crop back to the requested raster size
+//   6. Normalise to target mean and target standard deviation
+//
+// Notes:
+//   - beta is the PSD slope exponent, so amplitude is scaled by beta/2
+//   - same seed => identical output
+//   - if built without FFTW, throws at runtime with a clear message
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu generate_power_law_fractal_surface_fft(
+    const lsdtt_raster_meta& meta,
+    int    seed,
+    double beta,
+    double target_mean,
+    double target_stddev,
+    int    n_threads)
+{
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::generate_power_law_fractal_surface_fft: invalid raster metadata"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    if (!std::isfinite(beta))
+    {
+        throw std::runtime_error(
+            "lsdtt::generate_power_law_fractal_surface_fft: beta must be finite"
+        );
+    }
+
+    if (!std::isfinite(target_mean) ||
+        !std::isfinite(target_stddev) ||
+        target_stddev < 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::generate_power_law_fractal_surface_fft: invalid target mean/stddev"
+        );
+    }
+
+#ifndef LSDTT_HAS_FFTW
+    (void)seed;
+    (void)n_threads;
+
+    throw std::runtime_error(
+        "lsdtt::generate_power_law_fractal_surface_fft: lsdtt3 was built "
+        "without FFTW support. Install FFTW development files and rebuild."
+    );
+#else
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+
+    auto next_pow2_local = [](int n) -> int
+    {
+        if (n <= 1) return 1;
+        int p = 1;
+        while (p < n) p <<= 1;
+        return p;
+    };
+
+    const int padded_rows = next_pow2_local(n_rows);
+    const int padded_cols = next_pow2_local(n_cols);
+
+    const double dfx = 1.0 / (cell_size * static_cast<double>(padded_cols));
+    const double dfy = 1.0 / (cell_size * static_cast<double>(padded_rows));
+
+    const std::size_t n_fft =
+        static_cast<std::size_t>(padded_rows) *
+        static_cast<std::size_t>(padded_cols);
+
+    fftw_complex* in  = nullptr;
+    fftw_complex* out = nullptr;
+    fftw_plan forward  = nullptr;
+    fftw_plan backward = nullptr;
+
+    try
+    {
+        in = reinterpret_cast<fftw_complex*>(
+            fftw_malloc(sizeof(fftw_complex) * n_fft)
+        );
+        out = reinterpret_cast<fftw_complex*>(
+            fftw_malloc(sizeof(fftw_complex) * n_fft)
+        );
+
+        if (!in || !out)
+        {
+            throw std::runtime_error(
+                "lsdtt::generate_power_law_fractal_surface_fft: FFTW allocation failed"
+            );
+        }
+
+        forward = fftw_plan_dft_2d(
+            padded_rows, padded_cols,
+            in, out,
+            FFTW_FORWARD,
+            FFTW_ESTIMATE
+        );
+
+        backward = fftw_plan_dft_2d(
+            padded_rows, padded_cols,
+            out, in,
+            FFTW_BACKWARD,
+            FFTW_ESTIMATE
+        );
+
+        if (!forward || !backward)
+        {
+            throw std::runtime_error(
+                "lsdtt::generate_power_law_fractal_surface_fft: FFTW plan creation failed"
+            );
+        }
+
+        const int threads = resolve_thread_count(n_threads);
+
+        // ---------------------------------------------------------------------
+        // 1. Deterministic white noise on the full padded grid
+        // ---------------------------------------------------------------------
+#ifdef _OPENMP
+        #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+        for (int row = 0; row < padded_rows; ++row)
+        {
+            for (int col = 0; col < padded_cols; ++col)
+            {
+                const std::size_t idx = flat_index(row, col, padded_cols);
+
+                const std::uint64_t key = make_hash_key(
+                    seed,
+                    0x504F574C41574646ULL, // "POWLAWFF"
+                    static_cast<std::uint64_t>(row),
+                    static_cast<std::uint64_t>(col)
+                );
+
+                const double z = symmetric_uniform(key);
+
+                in[idx][0] = z;
+                in[idx][1] = 0.0;
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 2. Forward FFT
+        // ---------------------------------------------------------------------
+        fftw_execute(forward);
+
+        // ---------------------------------------------------------------------
+        // 3. Apply spectral amplitude scaling ∝ f^(-beta/2)
+        //
+        // Frequency convention is unshifted FFT order:
+        //   fx = col * dfx                    for col <= padded_cols/2
+        //      = (col - padded_cols) * dfx    otherwise
+        //
+        //   fy = row * dfy                    for row <= padded_rows/2
+        //      = (row - padded_rows) * dfy    otherwise
+        //
+        // DC term is set to 0 to avoid singular scaling at f = 0 and to keep
+        // the generated field mean-free before final normalisation.
+        // ---------------------------------------------------------------------
+        const double amplitude_exponent = 0.5 * beta;
+
+#ifdef _OPENMP
+        #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+        for (int row = 0; row < padded_rows; ++row)
+        {
+            for (int col = 0; col < padded_cols; ++col)
+            {
+                const double fy =
+                    (row <= padded_rows / 2)
+                        ? static_cast<double>(row) * dfy
+                        : static_cast<double>(row - padded_rows) * dfy;
+
+                const double fx =
+                    (col <= padded_cols / 2)
+                        ? static_cast<double>(col) * dfx
+                        : static_cast<double>(col - padded_cols) * dfx;
+
+                const double f = std::sqrt(fx * fx + fy * fy);
+
+                double scale = 0.0;
+                if (f > 0.0)
+                {
+                    scale = std::pow(f, -amplitude_exponent);
+                }
+
+                const std::size_t idx = flat_index(row, col, padded_cols);
+
+                out[idx][0] *= scale;
+                out[idx][1] *= scale;
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 4. Inverse FFT
+        // ---------------------------------------------------------------------
+        fftw_execute(backward);
+
+        // ---------------------------------------------------------------------
+        // 5. Crop back to requested raster size and normalise FFTW inverse by N
+        // ---------------------------------------------------------------------
+        std::vector<float> cropped(
+            static_cast<std::size_t>(n_rows) *
+            static_cast<std::size_t>(n_cols),
+            0.0f
+        );
+
+        const double inv_n = 1.0 / static_cast<double>(n_fft);
+
+#ifdef _OPENMP
+        #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+        for (int row = 0; row < n_rows; ++row)
+        {
+            for (int col = 0; col < n_cols; ++col)
+            {
+                const std::size_t src_idx = flat_index(row, col, padded_cols);
+                const std::size_t dst_idx = flat_index(row, col, n_cols);
+
+                cropped[dst_idx] = static_cast<float>(in[src_idx][0] * inv_n);
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 6. Match requested mean and standard deviation
+        // ---------------------------------------------------------------------
+        normalise_to_mean_std(cropped, target_mean, target_stddev);
+
+        if (forward)  fftw_destroy_plan(forward);
+        if (backward) fftw_destroy_plan(backward);
+        if (in)       fftw_free(in);
+        if (out)      fftw_free(out);
+
+        return make_raster(std::move(cropped), meta);
+    }
+    catch (...)
+    {
+        if (forward)  fftw_destroy_plan(forward);
+        if (backward) fftw_destroy_plan(backward);
+        if (in)       fftw_free(in);
+        if (out)      fftw_free(out);
+        throw;
+    }
+#endif
+}
+
+lsdtt_raster_cpu generate_power_law_fractal_surface_fft(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    int    seed,
+    double beta,
+    double target_mean,
+    double target_stddev,
+    int    n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+
+    return generate_power_law_fractal_surface_fft(
+        meta,
+        seed,
+        beta,
         target_mean,
         target_stddev,
         n_threads

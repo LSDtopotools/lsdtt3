@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -12,6 +12,7 @@
 //
 // Current contents:
 //   wavelet_quadratic_fit
+//   various specral filters
 //
 // Notes:
 //   - Gaussian kernel only.
@@ -23,6 +24,8 @@
 
 #include "lsdtt_raster_spectral_cpu.hpp"
 #include "lsdtt_raster_nodata_filling_cpu.hpp"
+#include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
+
 
 #include <algorithm>
 #include <array>
@@ -1124,6 +1127,1118 @@ static lsdtt_raster_cpu spectral_filter_pipeline(
 
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
+
+
+
+namespace
+{
+
+// -----------------------------------------------------------------------------
+// spectral_psd_product
+//
+// Internal product from a full DEM periodogram calculation.
+// Stores the 2D PSD in a flat row-major vector and the derived radial PSD.
+// -----------------------------------------------------------------------------
+struct spectral_psd_product
+{
+    int padded_rows = 0;
+    int padded_cols = 0;
+
+    double dfx = 0.0;
+    double dfy = 0.0;
+    double nyquist_frequency = 0.0;
+
+    double window_sum_squared = 0.0;
+    double detrended_variance = 0.0;
+
+    std::vector<double> psd_2d_flat;
+    std::vector<double> radial_frequency;
+    std::vector<double> radial_psd;
+};
+
+// -----------------------------------------------------------------------------
+// background_spectrum_product
+//
+// Internal averaged background spectrum built from many synthetic DEMs.
+// -----------------------------------------------------------------------------
+struct background_spectrum_product
+{
+    int padded_rows = 0;
+    int padded_cols = 0;
+
+    double dfx = 0.0;
+    double dfy = 0.0;
+    double nyquist_frequency = 0.0;
+
+    std::vector<double> background_psd_2d_flat;
+    std::vector<double> background_radial_frequency;
+    std::vector<double> background_radial_psd;
+};
+
+// -----------------------------------------------------------------------------
+// compute_window_sum_squared
+//
+// Returns sum(w^2) for the chosen window weights.
+// -----------------------------------------------------------------------------
+static double compute_window_sum_squared(
+    const std::vector<double>& window_weights)
+{
+    double wss = 0.0;
+    for (double w : window_weights)
+    {
+        wss += w * w;
+    }
+    return wss;
+}
+
+// -----------------------------------------------------------------------------
+// compute_valid_mean_and_variance
+//
+// Computes mean and population variance over valid raster pixels only.
+// Valid means:
+//   mask != 0
+//   value is not nodata
+//
+// Throws if there are no valid pixels.
+// -----------------------------------------------------------------------------
+static std::pair<double, double> compute_valid_mean_and_variance(
+    const std::vector<float>&   data,
+    const std::vector<uint8_t>& mask,
+    const lsdtt_raster_meta&    meta)
+{
+    double sum = 0.0;
+    double sumsq = 0.0;
+    std::size_t count = 0;
+
+    const std::size_t n = data.size();
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask[i] == 0) continue;
+        if (meta.is_nodata(data[i])) continue;
+
+        const double z = static_cast<double>(data[i]);
+        if (!std::isfinite(z)) continue;
+
+        sum += z;
+        sumsq += z * z;
+        ++count;
+    }
+
+    if (count == 0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: no valid pixels available for mean/variance"
+        );
+    }
+
+    const double mean = sum / static_cast<double>(count);
+    const double var =
+        std::max(0.0, sumsq / static_cast<double>(count) - mean * mean);
+
+    return std::make_pair(mean, var);
+}
+
+
+// -----------------------------------------------------------------------------
+// sort_xy_pairs_by_x
+//
+// Sorts paired vectors (x, y) by ascending x.
+// Throws if the input sizes differ.
+// -----------------------------------------------------------------------------
+static void sort_xy_pairs_by_x(
+    std::vector<double>& x,
+    std::vector<double>& y)
+{
+    if (x.size() != y.size())
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: sort_xy_pairs_by_x size mismatch"
+        );
+    }
+
+    std::vector<std::size_t> index(x.size(), 0);
+    for (std::size_t i = 0; i < index.size(); ++i)
+    {
+        index[i] = i;
+    }
+
+    std::stable_sort(
+        index.begin(),
+        index.end(),
+        [&x](std::size_t a, std::size_t b)
+        {
+            return x[a] < x[b];
+        }
+    );
+
+    std::vector<double> x_sorted(x.size(), 0.0);
+    std::vector<double> y_sorted(y.size(), 0.0);
+
+    for (std::size_t i = 0; i < index.size(); ++i)
+    {
+        x_sorted[i] = x[index[i]];
+        y_sorted[i] = y[index[i]];
+    }
+
+    x.swap(x_sorted);
+    y.swap(y_sorted);
+}
+
+// -----------------------------------------------------------------------------
+// collapse_shifted_psd_to_radial
+//
+// Converts a shifted 2D PSD into a radial PSD.
+//
+// Assumptions:
+//   - psd_2d_flat is row-major with size padded_rows * padded_cols
+//   - the PSD has already been fftshift-ed so that zero frequency is at:
+//         row = padded_rows / 2
+//         col = padded_cols / 2
+//
+// Legacy-parity note:
+//   This follows the old LSDRasterSpectral logic and uses only the left half
+//   of the shifted spectrum (cols 0..Lx/2 inclusive), multiplying every kept
+//   PSD value by 2.0 to account for Hermitian symmetry of the FFT of a real
+//   input field.
+// -----------------------------------------------------------------------------
+static std::pair<std::vector<double>, std::vector<double>>
+collapse_shifted_psd_to_radial(
+    const std::vector<double>& psd_2d_flat,
+    int                        padded_rows,
+    int                        padded_cols,
+    double                     dfx,
+    double                     dfy,
+    double                     nyquist_frequency)
+{
+    if (padded_rows <= 0 || padded_cols <= 0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: invalid padded dimensions in "
+            "collapse_shifted_psd_to_radial"
+        );
+    }
+
+    const std::size_t expected_size =
+        static_cast<std::size_t>(padded_rows) *
+        static_cast<std::size_t>(padded_cols);
+
+    if (psd_2d_flat.size() != expected_size)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: 2D PSD size mismatch in "
+            "collapse_shifted_psd_to_radial"
+        );
+    }
+
+    if (!std::isfinite(dfx) || dfx <= 0.0 ||
+        !std::isfinite(dfy) || dfy <= 0.0 ||
+        !std::isfinite(nyquist_frequency) || nyquist_frequency <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: invalid frequency metadata in "
+            "collapse_shifted_psd_to_radial"
+        );
+    }
+
+    const int centre_row = padded_rows / 2;
+    const int centre_col = padded_cols / 2;
+    const int half_cols  = padded_cols / 2;
+
+    std::vector<double> radial_frequency;
+    std::vector<double> radial_psd;
+
+    radial_frequency.reserve(
+        static_cast<std::size_t>(padded_rows) *
+        static_cast<std::size_t>(half_cols + 1)
+    );
+    radial_psd.reserve(
+        static_cast<std::size_t>(padded_rows) *
+        static_cast<std::size_t>(half_cols + 1)
+    );
+
+    for (int row = 0; row < padded_rows; ++row)
+    {
+        for (int col = 0; col <= half_cols; ++col)
+        {
+            const double y = static_cast<double>(row - centre_row);
+            const double x = static_cast<double>(col - centre_col);
+
+            const double radial_freq =
+                std::sqrt(y * y * dfy * dfy + x * x * dfx * dfx);
+
+            if (radial_freq > nyquist_frequency)
+            {
+                continue;
+            }
+
+            const std::size_t idx = flat_index(row, col, padded_cols);
+            const double p = psd_2d_flat[idx];
+
+            if (!std::isfinite(p))
+            {
+                continue;
+            }
+
+            radial_frequency.push_back(radial_freq);
+            radial_psd.push_back(2.0 * p);
+        }
+    }
+
+    sort_xy_pairs_by_x(radial_frequency, radial_psd);
+
+    return std::make_pair(
+        std::move(radial_frequency),
+        std::move(radial_psd)
+    );
+}
+
+
+
+// -----------------------------------------------------------------------------
+// Forward declarations for helpers we will add next
+// -----------------------------------------------------------------------------
+static spectral_psd_product compute_periodogram(
+    const lsdtt_raster_cpu& dem,
+    spectral_window_type    window,
+    int                     n_threads
+);
+
+static background_spectrum_product construct_background_spectrum(
+    const lsdtt_raster_cpu&   dem,
+    const spectral_psd_product& observed_psd,
+    double                    sub_rollover_beta,
+    int                       n_iterations,
+    spectral_window_type      window,
+    int                       n_threads
+);
+
+
+// -----------------------------------------------------------------------------
+// compute_periodogram
+//
+// Computes the shifted 2D periodogram and the derived radial PSD for a DEM.
+//
+// Workflow:
+//   1. Fit and subtract planar trend from valid pixels
+//   2. Apply selected 2D window over the raster footprint
+//   3. Zero-pad to next power-of-2 dimensions
+//   4. Forward complex FFT
+//   5. Compute shifted 2D PSD using legacy-compatible scaling:
+//          PSD = |F|^2 / (Ly * Lx * WSS)
+//   6. Collapse shifted PSD to radial PSD
+//
+// Notes:
+//   - Invalid / nodata pixels are set to zero before FFT.
+//   - detrended_variance is computed from the detrended valid pixels
+//     before windowing, matching the old background-spectrum workflow.
+// -----------------------------------------------------------------------------
+static spectral_psd_product compute_periodogram(
+    const lsdtt_raster_cpu& dem,
+    spectral_window_type    window,
+    int                     n_threads)
+{
+    (void)n_threads;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: invalid raster metadata in compute_periodogram"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+    const float  nodata    = static_cast<float>(meta.no_data_value);
+
+    const std::vector<float>&   data = dem.get_data();
+    const std::vector<uint8_t>& mask = dem.get_mask();
+
+    const std::size_t n_pixels =
+        checked_mul(
+            static_cast<std::size_t>(n_rows),
+            static_cast<std::size_t>(n_cols),
+            "compute_periodogram input pixel count"
+        );
+
+    if (data.size() != n_pixels || mask.size() != n_pixels)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: data/mask size mismatch in compute_periodogram"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. Detrend valid pixels using fitted plane z = a*col + b*row + c
+    // -------------------------------------------------------------------------
+    double a_tr = 0.0;
+    double b_tr = 0.0;
+    double c_tr = 0.0;
+
+    fit_detrend_plane(data, mask, meta, a_tr, b_tr, c_tr);
+
+    std::vector<float> detrended(n_pixels, nodata);
+
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const std::size_t idx = flat_index(row, col, n_cols);
+
+            if (mask[idx] == 0) continue;
+            if (meta.is_nodata(data[idx])) continue;
+
+            const double trend =
+                a_tr * static_cast<double>(col) +
+                b_tr * static_cast<double>(row) +
+                c_tr;
+
+            const double z_dt = static_cast<double>(data[idx]) - trend;
+            detrended[idx] = static_cast<float>(z_dt);
+        }
+    }
+
+    const std::pair<double, double> mean_var =
+        compute_valid_mean_and_variance(detrended, mask, meta);
+
+    const double detrended_variance = mean_var.second;
+
+    // -------------------------------------------------------------------------
+    // 2. Build 2D window and WSS over the original raster footprint
+    // -------------------------------------------------------------------------
+    const std::vector<double> window_weights =
+        build_2d_window(n_rows, n_cols, window);
+
+    if (window_weights.size() != n_pixels)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: window size mismatch in compute_periodogram"
+        );
+    }
+
+    const double window_sum_squared =
+        compute_window_sum_squared(window_weights);
+
+    if (!std::isfinite(window_sum_squared) || window_sum_squared <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: invalid WSS in compute_periodogram"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Pad to next power-of-2 dimensions
+    // -------------------------------------------------------------------------
+    const int padded_rows = next_pow2(n_rows);
+    const int padded_cols = next_pow2(n_cols);
+
+    const double dfx = 1.0 / (cell_size * static_cast<double>(padded_cols));
+    const double dfy = 1.0 / (cell_size * static_cast<double>(padded_rows));
+    const double nyquist_frequency = 1.0 / (2.0 * cell_size);
+
+    const std::size_t n_fft =
+        checked_mul(
+            static_cast<std::size_t>(padded_rows),
+            static_cast<std::size_t>(padded_cols),
+            "compute_periodogram FFT element count"
+        );
+
+    // -------------------------------------------------------------------------
+    // 4. Full complex FFTW buffers and forward plan
+    //
+    // Important:
+    //   create the plan before filling the input buffer because FFTW_MEASURE
+    //   may overwrite working arrays during planning.
+    // -------------------------------------------------------------------------
+    fftw_complex_buffer fft_in (n_fft, "periodogram fft_in");
+    fftw_complex_buffer fft_out(n_fft, "periodogram fft_out");
+
+
+    fftw_plan_handle plan_fwd(
+        padded_rows,
+        padded_cols,
+        fft_in.get(),
+        fft_out.get(),
+        FFTW_FORWARD,
+        FFTW_MEASURE,
+        "periodogram forward transform"
+    );
+
+    std::memset(fft_in.get(), 0, fft_in.bytes());
+
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const std::size_t src_idx = flat_index(row, col, n_cols);
+
+            if (mask[src_idx] == 0) continue;
+            if (meta.is_nodata(detrended[src_idx])) continue;
+
+            const std::size_t dst_idx = flat_index(row, col, padded_cols);
+
+            fft_in.get()[dst_idx][0] =
+                static_cast<double>(detrended[src_idx]) * window_weights[src_idx];
+            fft_in.get()[dst_idx][1] = 0.0;
+        }
+    }
+
+    fftw_execute(plan_fwd.get());
+
+    // -------------------------------------------------------------------------
+    // 5. Compute shifted 2D PSD
+    //
+    // Legacy-compatible scaling:
+    //   P_DFT = |F|^2 / (Ly * Lx * WSS)
+    //
+    // We build the PSD directly into shifted order so that zero frequency lies
+    // at (padded_rows/2, padded_cols/2), matching the old LSDRasterSpectral
+    // workflow.
+    // -------------------------------------------------------------------------
+    std::vector<double> psd_2d_flat(n_fft, 0.0);
+
+    const int half_rows = padded_rows / 2;
+    const int half_cols = padded_cols / 2;
+    const double denom =
+        static_cast<double>(padded_rows) *
+        static_cast<double>(padded_cols) *
+        window_sum_squared;
+
+    for (int row = 0; row < padded_rows; ++row)
+    {
+        for (int col = 0; col < padded_cols; ++col)
+        {
+            const std::size_t src_idx = flat_index(row, col, padded_cols);
+
+            const double re = fft_out.get()[src_idx][0];
+            const double im = fft_out.get()[src_idx][1];
+            const double power = (re * re + im * im) / denom;
+
+            const int shifted_row = (row + half_rows) % padded_rows;
+            const int shifted_col = (col + half_cols) % padded_cols;
+            const std::size_t dst_idx =
+                flat_index(shifted_row, shifted_col, padded_cols);
+
+            psd_2d_flat[dst_idx] = power;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Collapse shifted PSD to radial PSD
+    // -------------------------------------------------------------------------
+    const std::pair<std::vector<double>, std::vector<double>> radial =
+        collapse_shifted_psd_to_radial(
+            psd_2d_flat,
+            padded_rows,
+            padded_cols,
+            dfx,
+            dfy,
+            nyquist_frequency
+        );
+
+    spectral_psd_product out;
+    out.padded_rows = padded_rows;
+    out.padded_cols = padded_cols;
+    out.dfx = dfx;
+    out.dfy = dfy;
+    out.nyquist_frequency = nyquist_frequency;
+    out.window_sum_squared = window_sum_squared;
+    out.detrended_variance = detrended_variance;
+    out.psd_2d_flat = std::move(psd_2d_flat);
+    out.radial_frequency = std::move(radial.first);
+    out.radial_psd = std::move(radial.second);
+
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// construct_background_spectrum
+//
+// Builds an averaged background spectrum by:
+//
+//   1. Generating synthetic power-law fractal DEMs
+//   2. Matching their detrended standard deviation to the observed DEM
+//   3. Computing the same periodogram product for each synthetic DEM
+//   4. Averaging the 2D PSD and radial PSD across iterations
+//
+// Notes:
+//   - The synthetic DEM generator is intentionally delegated to
+//     lsdtt_raster_synthetic_surfaces_cpu.
+//   - This helper assumes the observed periodogram has already been computed.
+//   - Radial frequencies should be identical between observed and synthetic
+//     runs because raster dimensions, padding, and PSD collapse rules match.
+// -----------------------------------------------------------------------------
+static background_spectrum_product construct_background_spectrum(
+    const lsdtt_raster_cpu&     dem,
+    const spectral_psd_product& observed_psd,
+    double                      sub_rollover_beta,
+    int                         n_iterations,
+    spectral_window_type        window,
+    int                         n_threads)
+{
+    if (n_iterations < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: n_iterations must be >= 1 in "
+            "construct_background_spectrum"
+        );
+    }
+
+    if (!std::isfinite(sub_rollover_beta) || sub_rollover_beta <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: sub_rollover_beta must be finite and > 0 "
+            "in construct_background_spectrum"
+        );
+    }
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: invalid raster metadata in "
+            "construct_background_spectrum"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    if (observed_psd.padded_rows <= 0 || observed_psd.padded_cols <= 0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: invalid observed padded dimensions in "
+            "construct_background_spectrum"
+        );
+    }
+
+    const std::size_t n_psd_2d =
+        checked_mul(
+            static_cast<std::size_t>(observed_psd.padded_rows),
+            static_cast<std::size_t>(observed_psd.padded_cols),
+            "construct_background_spectrum background 2D PSD size"
+        );
+
+    if (observed_psd.psd_2d_flat.size() != n_psd_2d)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: observed 2D PSD size mismatch in "
+            "construct_background_spectrum"
+        );
+    }
+
+    const std::size_t n_radial = observed_psd.radial_psd.size();
+
+    if (observed_psd.radial_frequency.size() != n_radial)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: observed radial PSD/frequency size mismatch "
+            "in construct_background_spectrum"
+        );
+    }
+
+    if (!std::isfinite(observed_psd.detrended_variance) ||
+        observed_psd.detrended_variance < 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: invalid observed detrended variance in "
+            "construct_background_spectrum"
+        );
+    }
+
+    std::vector<double> background_psd_2d_accum(n_psd_2d, 0.0);
+    std::vector<double> background_radial_psd_accum(n_radial, 0.0);
+    std::vector<double> background_radial_frequency = observed_psd.radial_frequency;
+
+    const double target_stddev = std::sqrt(observed_psd.detrended_variance);
+
+    for (int iter = 0; iter < n_iterations; ++iter)
+    {
+        // Use a simple deterministic seed mapping for repeatability.
+        const int seed = 1000 + iter;
+
+        lsdtt_raster_cpu synthetic_dem =
+            generate_power_law_fractal_surface_fft(
+                meta,
+                seed,
+                sub_rollover_beta,
+                0.0,             // target_mean
+                target_stddev,   // target_stddev
+                n_threads
+            );
+
+        spectral_psd_product synthetic_psd =
+            compute_periodogram(
+                synthetic_dem,
+                window,
+                n_threads
+            );
+
+        if (synthetic_psd.padded_rows != observed_psd.padded_rows ||
+            synthetic_psd.padded_cols != observed_psd.padded_cols)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral analysis: synthetic padded dimensions do not match "
+                "observed padded dimensions in construct_background_spectrum"
+            );
+        }
+
+        if (synthetic_psd.psd_2d_flat.size() != n_psd_2d)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral analysis: synthetic 2D PSD size mismatch in "
+                "construct_background_spectrum"
+            );
+        }
+
+        if (synthetic_psd.radial_psd.size() != n_radial ||
+            synthetic_psd.radial_frequency.size() != n_radial)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral analysis: synthetic radial PSD size mismatch in "
+                "construct_background_spectrum"
+            );
+        }
+
+        for (std::size_t i = 0; i < n_radial; ++i)
+        {
+            const double f_obs = observed_psd.radial_frequency[i];
+            const double f_syn = synthetic_psd.radial_frequency[i];
+
+            if (!std::isfinite(f_obs) || !std::isfinite(f_syn) ||
+                std::abs(f_obs - f_syn) > 1e-12)
+            {
+                throw std::runtime_error(
+                    "lsdtt spectral analysis: synthetic radial frequency mismatch "
+                    "in construct_background_spectrum"
+                );
+            }
+        }
+
+        for (std::size_t i = 0; i < n_psd_2d; ++i)
+        {
+            background_psd_2d_accum[i] += synthetic_psd.psd_2d_flat[i];
+        }
+
+        for (std::size_t i = 0; i < n_radial; ++i)
+        {
+            background_radial_psd_accum[i] += synthetic_psd.radial_psd[i];
+        }
+    }
+
+    const double inv_n = 1.0 / static_cast<double>(n_iterations);
+
+    for (double& v : background_psd_2d_accum)
+    {
+        v *= inv_n;
+    }
+
+    for (double& v : background_radial_psd_accum)
+    {
+        v *= inv_n;
+    }
+
+    background_spectrum_product out;
+    out.padded_rows = observed_psd.padded_rows;
+    out.padded_cols = observed_psd.padded_cols;
+    out.dfx = observed_psd.dfx;
+    out.dfy = observed_psd.dfy;
+    out.nyquist_frequency = observed_psd.nyquist_frequency;
+    out.background_psd_2d_flat = std::move(background_psd_2d_accum);
+    out.background_radial_frequency = std::move(background_radial_frequency);
+    out.background_radial_psd = std::move(background_radial_psd_accum);
+
+    return out;
+}
+
+
+
+// -----------------------------------------------------------------------------
+// linear_regression_product
+// -----------------------------------------------------------------------------
+struct linear_regression_product
+{
+    bool   ok        = false;
+    double slope     = 0.0;
+    double intercept = 0.0;
+    double r_sq      = 0.0;
+};
+
+// -----------------------------------------------------------------------------
+// rollover_fit_product
+//
+// Internal result from binned-spectrum rollover estimation.
+// -----------------------------------------------------------------------------
+struct rollover_fit_product
+{
+    double rollover_frequency = 0.0;
+    double rollover_beta = 0.0;
+    double sub_rollover_beta = 0.0;
+
+    std::vector<double> binned_frequency;
+    std::vector<double> binned_psd;
+    std::vector<double> beta_by_bin;
+    std::vector<double> r_sq_by_bin;
+};
+
+// -----------------------------------------------------------------------------
+// fit_simple_linear_regression
+//
+// Fits y = slope * x + intercept and returns coefficient of determination.
+// Returns ok=false if the fit is ill-posed.
+// -----------------------------------------------------------------------------
+static linear_regression_product fit_simple_linear_regression(
+    const std::vector<double>& x,
+    const std::vector<double>& y)
+{
+    linear_regression_product out;
+
+    if (x.size() != y.size() || x.size() < 2)
+    {
+        return out;
+    }
+
+    const std::size_t n = x.size();
+
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!std::isfinite(x[i]) || !std::isfinite(y[i]))
+        {
+            return out;
+        }
+
+        sum_x += x[i];
+        sum_y += y[i];
+    }
+
+    const double mean_x = sum_x / static_cast<double>(n);
+    const double mean_y = sum_y / static_cast<double>(n);
+
+    double ss_xx = 0.0;
+    double ss_xy = 0.0;
+    double ss_yy = 0.0;
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const double dx = x[i] - mean_x;
+        const double dy = y[i] - mean_y;
+
+        ss_xx += dx * dx;
+        ss_xy += dx * dy;
+        ss_yy += dy * dy;
+    }
+
+    if (!std::isfinite(ss_xx) || ss_xx <= 0.0)
+    {
+        return out;
+    }
+
+    out.slope = ss_xy / ss_xx;
+    out.intercept = mean_y - out.slope * mean_x;
+
+    if (ss_yy > 0.0)
+    {
+        out.r_sq = (ss_xy * ss_xy) / (ss_xx * ss_yy);
+    }
+    else
+    {
+        out.r_sq = 1.0;
+    }
+
+    out.ok = std::isfinite(out.slope) &&
+             std::isfinite(out.intercept) &&
+             std::isfinite(out.r_sq);
+
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// log_bin_mean_xy
+//
+// Log-bins paired (x, y) data by x using bins of width log_bin_width in log10
+// space. Returns the mean x and mean y in each occupied bin.
+//
+// Only pairs with:
+//   x > 0
+//   y > 0
+//   finite x and y
+// are retained.
+// -----------------------------------------------------------------------------
+static std::pair<std::vector<double>, std::vector<double>> log_bin_mean_xy(
+    const std::vector<double>& x_in,
+    const std::vector<double>& y_in,
+    double                     log_bin_width)
+{
+    if (x_in.size() != y_in.size())
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: x/y size mismatch in log_bin_mean_xy"
+        );
+    }
+
+    if (!std::isfinite(log_bin_width) || log_bin_width <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: log_bin_width must be finite and > 0 "
+            "in log_bin_mean_xy"
+        );
+    }
+
+    std::vector<double> x;
+    std::vector<double> y;
+    x.reserve(x_in.size());
+    y.reserve(y_in.size());
+
+    for (std::size_t i = 0; i < x_in.size(); ++i)
+    {
+        const double xv = x_in[i];
+        const double yv = y_in[i];
+
+        if (!std::isfinite(xv) || !std::isfinite(yv)) continue;
+        if (xv <= 0.0 || yv <= 0.0) continue;
+
+        x.push_back(xv);
+        y.push_back(yv);
+    }
+
+    if (x.empty())
+    {
+        return std::make_pair(std::vector<double>{}, std::vector<double>{});
+    }
+
+    sort_xy_pairs_by_x(x, y);
+
+    std::vector<double> binned_x;
+    std::vector<double> binned_y;
+
+    std::int64_t current_bin =
+        static_cast<std::int64_t>(std::floor(std::log10(x[0]) / log_bin_width));
+
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+    std::size_t count = 0;
+
+    for (std::size_t i = 0; i < x.size(); ++i)
+    {
+        const std::int64_t this_bin =
+            static_cast<std::int64_t>(std::floor(std::log10(x[i]) / log_bin_width));
+
+        if (this_bin != current_bin)
+        {
+            if (count > 0)
+            {
+                binned_x.push_back(sum_x / static_cast<double>(count));
+                binned_y.push_back(sum_y / static_cast<double>(count));
+            }
+
+            current_bin = this_bin;
+            sum_x = 0.0;
+            sum_y = 0.0;
+            count = 0;
+        }
+
+        sum_x += x[i];
+        sum_y += y[i];
+        ++count;
+    }
+
+    if (count > 0)
+    {
+        binned_x.push_back(sum_x / static_cast<double>(count));
+        binned_y.push_back(sum_y / static_cast<double>(count));
+    }
+
+    return std::make_pair(std::move(binned_x), std::move(binned_y));
+}
+
+// -----------------------------------------------------------------------------
+// estimate_rollover_from_binned_spectrum
+//
+// Legacy-inspired rollover finder:
+//
+//   1. Log-bin the radial PSD
+//   2. Repeatedly fit linear regressions to suffixes in log-log space
+//   3. Track beta = -slope and R^2 at each suffix start
+//   4. Select rollover using max beta, with R^2 as fallback
+//
+// Returns:
+//   - rollover_frequency
+//   - rollover_beta
+//   - sub_rollover_beta
+//   - binned spectrum
+//   - beta and R^2 traces by bin
+// -----------------------------------------------------------------------------
+static rollover_fit_product estimate_rollover_from_binned_spectrum(
+    const std::vector<double>& radial_frequency,
+    const std::vector<double>& radial_psd,
+    double                     log_bin_width)
+{
+    rollover_fit_product out;
+
+    const std::pair<std::vector<double>, std::vector<double>> binned =
+        log_bin_mean_xy(radial_frequency, radial_psd, log_bin_width);
+
+    out.binned_frequency = binned.first;
+    out.binned_psd = binned.second;
+
+    const std::size_t n_bins = out.binned_frequency.size();
+
+    if (n_bins != out.binned_psd.size() || n_bins < 3)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: insufficient binned data for rollover fit"
+        );
+    }
+
+    std::vector<double> log_f(n_bins, 0.0);
+    std::vector<double> log_p(n_bins, 0.0);
+
+    for (std::size_t i = 0; i < n_bins; ++i)
+    {
+        if (!std::isfinite(out.binned_frequency[i]) ||
+            !std::isfinite(out.binned_psd[i]) ||
+            out.binned_frequency[i] <= 0.0 ||
+            out.binned_psd[i] <= 0.0)
+        {
+            throw std::runtime_error(
+                "lsdtt spectral analysis: invalid binned spectrum values in "
+                "estimate_rollover_from_binned_spectrum"
+            );
+        }
+
+        log_f[i] = std::log10(out.binned_frequency[i]);
+        log_p[i] = std::log10(out.binned_psd[i]);
+    }
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    out.beta_by_bin.assign(n_bins, nan);
+    out.r_sq_by_bin.assign(n_bins, nan);
+
+    std::size_t cutoff = n_bins - n_bins / 5;
+    if (cutoff < 1) cutoff = 1;
+    if (cutoff > n_bins) cutoff = n_bins;
+
+    double best_beta = -std::numeric_limits<double>::infinity();
+    double best_rsq  = -std::numeric_limits<double>::infinity();
+
+    std::size_t best_beta_index = 0;
+    std::size_t best_rsq_index  = 0;
+
+    bool any_fit = false;
+
+    for (std::size_t start = 0; start < cutoff; ++start)
+    {
+        std::vector<double> x(log_f.begin() + static_cast<std::ptrdiff_t>(start), log_f.end());
+        std::vector<double> y(log_p.begin() + static_cast<std::ptrdiff_t>(start), log_p.end());
+
+        const linear_regression_product fit =
+            fit_simple_linear_regression(x, y);
+
+        if (!fit.ok) continue;
+
+        any_fit = true;
+
+        const double beta_here = -fit.slope;
+
+        out.beta_by_bin[start] = beta_here;
+        out.r_sq_by_bin[start] = fit.r_sq;
+
+        if (std::isfinite(beta_here) && beta_here > best_beta)
+        {
+            best_beta = beta_here;
+            best_beta_index = start;
+        }
+
+        if (std::isfinite(fit.r_sq) && fit.r_sq > best_rsq)
+        {
+            best_rsq = fit.r_sq;
+            best_rsq_index = start;
+        }
+    }
+
+    if (!any_fit)
+    {
+        throw std::runtime_error(
+            "lsdtt spectral analysis: no valid regression fits in rollover estimation"
+        );
+    }
+
+    std::size_t rollover_index = best_beta_index;
+
+    if (rollover_index == 0 || rollover_index >= n_bins - 1)
+    {
+        rollover_index = best_rsq_index;
+    }
+
+    if (rollover_index == 0 && n_bins > 1)
+    {
+        rollover_index = n_bins - 1;
+    }
+
+    out.rollover_frequency = out.binned_frequency[rollover_index];
+
+    if (std::isfinite(out.beta_by_bin[rollover_index]))
+    {
+        out.rollover_beta = out.beta_by_bin[rollover_index];
+    }
+    else if (std::isfinite(best_beta))
+    {
+        out.rollover_beta = best_beta;
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-rollover fit:
+    // mimic the old code roughly by skipping the first two lowest-frequency bins
+    // when enough bins are available.
+    // -------------------------------------------------------------------------
+    std::size_t sub_begin = 0;
+    if (rollover_index > 2)
+    {
+        sub_begin = 2;
+    }
+
+    std::size_t sub_end = rollover_index + 1;
+
+    if (sub_end > sub_begin && (sub_end - sub_begin) >= 2)
+    {
+        std::vector<double> x(
+            log_f.begin() + static_cast<std::ptrdiff_t>(sub_begin),
+            log_f.begin() + static_cast<std::ptrdiff_t>(sub_end)
+        );
+        std::vector<double> y(
+            log_p.begin() + static_cast<std::ptrdiff_t>(sub_begin),
+            log_p.begin() + static_cast<std::ptrdiff_t>(sub_end)
+        );
+
+        const linear_regression_product fit =
+            fit_simple_linear_regression(x, y);
+
+        if (fit.ok)
+        {
+            out.sub_rollover_beta = -fit.slope;
+        }
+    }
+
+    return out;
+}
+
+
+
+
+
+} // unnamed namespace
+
+
+
+
 
 // -----------------------------------------------------------------------------
 // wavelet_quadratic_fit

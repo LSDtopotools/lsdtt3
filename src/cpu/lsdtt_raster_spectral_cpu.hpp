@@ -2,7 +2,7 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2025 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
@@ -11,6 +11,7 @@
 //
 // Current contents:
 //   wavelet_quadratic_fit
+//   various spectral filters
 //
 // The fitted quadratic surface is:
 //
@@ -32,6 +33,8 @@
 #pragma once
 
 #include "lsdtt_raster_cpu.hpp"
+
+#include <vector>
 
 namespace lsdtt
 {
@@ -130,6 +133,99 @@ poly_fit_coeffs wavelet_quadratic_fit(
 // hamming — 2D elliptical Hamming window; slightly different sidelobe profile
 // -----------------------------------------------------------------------------
 enum class spectral_window_type { none, hann, hamming };
+
+// -----------------------------------------------------------------------------
+// lsdtt_spectral_binned_result
+//
+// Log-binned radial spectrum product used by full_spectral_analysis().
+// beta_by_bin and r_sq_by_bin are the rollover-fit traces evaluated from
+// repeated suffix regressions on the binned spectrum.
+// -----------------------------------------------------------------------------
+struct lsdtt_spectral_binned_result
+{
+    std::vector<double> frequency;
+    std::vector<double> wavelength;
+    std::vector<double> psd;
+    std::vector<double> background_psd;
+    std::vector<double> normalised_psd;
+    std::vector<double> beta_by_bin;
+    std::vector<double> r_sq_by_bin;
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_spectral_analysis_options
+//
+// Options controlling the Perron-style full spectral analysis workflow.
+// -----------------------------------------------------------------------------
+struct lsdtt_spectral_analysis_options
+{
+    double               log_bin_width           = 0.1;
+    int                  n_background_iterations = 100;
+    spectral_window_type window                  = spectral_window_type::hann;
+    bool                 clip_to_valid_rectangle = false;
+    int                  n_threads               = 0;
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_spectral_analysis_result
+//
+// Full spectral-analysis product.
+//
+// psd_2d and background_psd_2d are stored in shifted frequency order
+// (zero frequency at the centre of the array).
+// -----------------------------------------------------------------------------
+struct lsdtt_spectral_analysis_result
+{
+    int padded_rows = 0;
+    int padded_cols = 0;
+
+    double dfx = 0.0;
+    double dfy = 0.0;
+    double nyquist_frequency = 0.0;
+
+    double window_sum_squared = 0.0;
+    double detrended_variance = 0.0;
+
+    lsdtt_array2d_f psd_2d;
+    lsdtt_array2d_f background_psd_2d;
+
+    std::vector<double> radial_frequency;
+    std::vector<double> radial_wavelength;
+    std::vector<double> radial_psd;
+
+    std::vector<double> background_psd;
+    std::vector<double> normalised_psd;
+
+    std::vector<double> ci95;
+    std::vector<double> norm_ci95;
+    std::vector<double> norm_ci99;
+
+    double rollover_frequency = 0.0;
+    double rollover_beta = 0.0;
+    double sub_rollover_beta = 0.0;
+
+    lsdtt_spectral_binned_result binned;
+};
+
+// -----------------------------------------------------------------------------
+// full_spectral_analysis
+//
+// Performs the legacy-style full spectral analysis workflow:
+//
+//   1. compute observed periodogram
+//   2. estimate rollover frequency / beta from log-binned radial PSD
+//   3. generate power-law synthetic reference DEMs
+//   4. average their spectra into a background spectrum
+//   5. normalise the observed spectrum by the background spectrum
+//
+// Returns a full result struct and performs no file writing.
+// -----------------------------------------------------------------------------
+lsdtt_spectral_analysis_result full_spectral_analysis(
+    const lsdtt_raster_cpu&              dem,
+    const lsdtt_spectral_analysis_options& opts = {}
+);
+
+
 
 // -----------------------------------------------------------------------------
 // fftw2D_lowpass_filter
