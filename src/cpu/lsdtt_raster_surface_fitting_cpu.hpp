@@ -29,6 +29,14 @@
 //   Pixels are included in a fit when their mask raster value is > 0.5.
 //   This handles both binary masks (0/1) and integer-labelled rasters stored
 //   as float (0 = background / unclassified, positive integers = classes).
+//
+// Related fitting routines elsewhere
+// ------------------------------------
+// lsdtt_raster_spectral_cpu  — spectral (Fourier / wavelet) surface fitting.
+//   Includes wavelet_quadratic_fit() for local polynomial fitting via the
+//   spectral domain, and is the intended home for any future routines that
+//   recover long-wavelength background surfaces from masked or gapped data
+//   (e.g. iterative FFT inpainting, Gerchberg-Papoulis lowpass recovery).
 // -----------------------------------------------------------------------------
 
 #pragma once
