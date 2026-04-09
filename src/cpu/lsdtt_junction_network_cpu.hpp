@@ -237,22 +237,22 @@ public:
         point_output_format format,
         const std::string& layer_name = "channel_network_points",
         bool spatial_index = true
-    ) const;
+    ) const override;
 
 
     // This version writes line data, with each channel link having attributes:
     // junction_upstream,junction_downstram,stream_order,length,drainage_area
-    // Pros of writing lines: see topologic links easily, smaller file (fewer 
+    // Pros of writing lines: see topologic links easily, smaller file (fewer
     //  features so fewer attribute values to be recorded)
-    // Cons of writing lines: drainage area is not stored per pixel. No csv 
-    //  support. For each link, drainage_area corresponds to that at the 
+    // Cons of writing lines: drainage area is not stored per pixel. No csv
+    //  support. For each link, drainage_area corresponds to that at the
     //  upstream junction.
     void write_channel_network_lines(
         const std::string& out_path,
         vector_output_format format,
         const std::string& layer_name = "channel_network_lines",
         bool spatial_index = true
-    ) const;
+    ) const override;
 
 
 

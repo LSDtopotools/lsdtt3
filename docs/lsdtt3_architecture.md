@@ -232,6 +232,32 @@ auto flow = lsdtt::make_flow_base(dem_data, dem_mask, meta, opts);
 Any CLI written against `lsdtt_flow_base` works without modification when the
 GPU flow backend is added — only the factory changes.
 
+
+### Backend abstraction rules
+
+`lsdtt3` uses **two backend-abstraction patterns**. See
+`docs/backend_abstraction_rules.md` for the full design notes, rationale, and examples.
+
+1. **Selective dispatch for broad compute substrates**  
+   `lsdtt_raster_cpu` is a special case and remains a concrete CPU-side working
+   object. Most raster analyses stay as CPU free functions taking
+   `const lsdtt_raster_cpu&` and returning `lsdtt_raster_cpu`. Only the small
+   subset of heavy kernels that are realistic GPU targets should use dispatch
+   wrappers. Dispatch declarations live in `src/core/`; implementations live in
+   `src/cpu/`; optional GPU kernels live in `src/gpu/`.
+
+2. **Narrow abstract bases for persistent stateful engines**  
+   Flow-like engines should use abstract bases in `src/core/` plus factories
+   implemented in `src/cpu/`, so CLIs and workflows hold
+   `std::unique_ptr<..._base>` rather than concrete CPU classes. This applies to
+   `lsdtt_flow_base`, should also apply to `lsdtt_junction_network_base`, and is
+   the intended long-term pattern for the basin-manager and particle-tracer
+   layers. These interfaces must remain narrow, stable, and behaviour-oriented.
+
+In short: **rasters stay concrete and selectively dispatched; stateful engines
+use narrow abstract bases and factories.**
+
+
 ---
 
 ## lsdtt_raster_meta

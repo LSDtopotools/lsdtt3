@@ -37,10 +37,10 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
-#include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 
@@ -536,10 +536,10 @@ int main(int argc, char* argv[])
     jn_opts.build_topological_order = true;
     jn_opts.build_s_vector          = true;
 
-    lsdtt::lsdtt_junction_network_cpu channel_network;
+    std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
     try
     {
-        channel_network.create(*flow, source_flats, jn_opts);
+        channel_network = lsdtt::make_junction_network_base(*flow, source_flats, jn_opts);
     }
     catch (const std::exception& e)
     {
@@ -548,9 +548,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "Channel cells : " << channel_network.n_channel_cells() << "\n";
-    std::cout << "Junctions     : " << channel_network.n_junctions() << "\n";
-    std::cout << "Outlet nodes  : " << channel_network.n_outlet_junctions() << "\n";
+    std::cout << "Channel cells : " << channel_network->n_channel_cells() << "\n";
+    std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
+    std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
 
     // -------------------------------------------------------------------------
     // Step 5 — Write channel network
@@ -565,7 +565,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            channel_network.write_channel_network_points(
+            channel_network->write_channel_network_points(
                 output_file,
                 cn_points_output_format,
                 "channel_network_points",
@@ -590,7 +590,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            channel_network.write_channel_network_lines(
+            channel_network->write_channel_network_lines(
                 output_file,
                 cn_lines_output_format,
                 "channel_network_lines",

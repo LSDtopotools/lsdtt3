@@ -23,7 +23,12 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <string>
+#include <vector>
 
+#include "lsdtt_data_loader.hpp"
+#include "lsdtt_flow_base.hpp"
 #include "lsdtt_raster_meta.hpp"
 #include "lsdtt_types.hpp"
 
@@ -113,6 +118,34 @@ public:
         std::int32_t junction,
         const std::function<void(std::int32_t)>& function
     ) const = 0;
+
+    // -------------------------------------------------------------------------
+    // output
+    // -------------------------------------------------------------------------
+    virtual void write_channel_network_points(
+        const std::string& out_path,
+        point_output_format format,
+        const std::string& layer_name = "channel_network_points",
+        bool spatial_index = true
+    ) const = 0;
+
+    virtual void write_channel_network_lines(
+        const std::string& out_path,
+        vector_output_format format,
+        const std::string& layer_name = "channel_network_lines",
+        bool spatial_index = true
+    ) const = 0;
 };
+
+// -----------------------------------------------------------------------------
+// Factory
+// Declared here; implemented in src/cpu/lsdtt_junction_network_base.cpp
+// so that core does not depend on cpu.
+// -----------------------------------------------------------------------------
+std::unique_ptr<lsdtt_junction_network_base> make_junction_network_base(
+    const lsdtt_flow_base&                    flow,
+    const std::vector<std::int64_t>&          source_flats,
+    const lsdtt_junction_network_options&     options = lsdtt_junction_network_options{}
+);
 
 } // namespace lsdtt
