@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -799,6 +800,133 @@ lsdtt_binned_descriptive_stats compute_binned_descriptive_stats_natural_breaks(
     return compute_binned_descriptive_stats(
         bin_values_natural_breaks(guide_values, values_to_bin, n_classes)
     );
+}
+
+// -----------------------------------------------------------------------------
+// log_bin_mean_xy
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// Sort paired (x, y) vectors by ascending x, in-place.
+static void sort_xy_pairs_by_x(
+    std::vector<double>& x,
+    std::vector<double>& y)
+{
+    std::vector<std::size_t> index(x.size(), 0);
+    for (std::size_t i = 0; i < index.size(); ++i)
+    {
+        index[i] = i;
+    }
+
+    std::stable_sort(
+        index.begin(),
+        index.end(),
+        [&x](std::size_t a, std::size_t b)
+        {
+            return x[a] < x[b];
+        }
+    );
+
+    std::vector<double> x_sorted(x.size(), 0.0);
+    std::vector<double> y_sorted(y.size(), 0.0);
+
+    for (std::size_t i = 0; i < index.size(); ++i)
+    {
+        x_sorted[i] = x[index[i]];
+        y_sorted[i] = y[index[i]];
+    }
+
+    x.swap(x_sorted);
+    y.swap(y_sorted);
+}
+
+} // anonymous namespace
+
+std::pair<std::vector<double>, std::vector<double>> log_bin_mean_xy(
+    const std::vector<double>& x_in,
+    const std::vector<double>& y_in,
+    double                     log_bin_width)
+{
+    if (x_in.size() != y_in.size())
+    {
+        throw std::runtime_error(
+            "lsdtt::log_bin_mean_xy: x and y must have the same size"
+        );
+    }
+
+    if (!std::isfinite(log_bin_width) || log_bin_width <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::log_bin_mean_xy: log_bin_width must be finite and > 0"
+        );
+    }
+
+    std::vector<double> x;
+    std::vector<double> y;
+    x.reserve(x_in.size());
+    y.reserve(y_in.size());
+
+    for (std::size_t i = 0; i < x_in.size(); ++i)
+    {
+        const double xv = x_in[i];
+        const double yv = y_in[i];
+
+        if (!std::isfinite(xv) || !std::isfinite(yv)) continue;
+        if (xv <= 0.0 || yv <= 0.0) continue;
+
+        x.push_back(xv);
+        y.push_back(yv);
+    }
+
+    if (x.empty())
+    {
+        return std::make_pair(std::vector<double>{}, std::vector<double>{});
+    }
+
+    sort_xy_pairs_by_x(x, y);
+
+    std::vector<double> binned_x;
+    std::vector<double> binned_y;
+
+    std::int64_t current_bin =
+        static_cast<std::int64_t>(std::floor(std::log10(x[0]) / log_bin_width));
+
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+    std::size_t count = 0;
+
+    for (std::size_t i = 0; i < x.size(); ++i)
+    {
+        const std::int64_t this_bin =
+            static_cast<std::int64_t>(std::floor(std::log10(x[i]) / log_bin_width));
+
+        if (this_bin != current_bin)
+        {
+            if (count > 0)
+            {
+                binned_x.push_back(sum_x / static_cast<double>(count));
+                binned_y.push_back(sum_y / static_cast<double>(count));
+            }
+
+            current_bin = this_bin;
+            sum_x = 0.0;
+            sum_y = 0.0;
+            count = 0;
+        }
+
+        sum_x += x[i];
+        sum_y += y[i];
+        ++count;
+    }
+
+    if (count > 0)
+    {
+        binned_x.push_back(sum_x / static_cast<double>(count));
+        binned_y.push_back(sum_y / static_cast<double>(count));
+    }
+
+    return std::make_pair(std::move(binned_x), std::move(binned_y));
 }
 
 } // namespace lsdtt

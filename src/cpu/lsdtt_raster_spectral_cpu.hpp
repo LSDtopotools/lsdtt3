@@ -140,16 +140,25 @@ enum class spectral_window_type { none, hann, hamming };
 // Log-binned radial spectrum product used by full_spectral_analysis().
 // beta_by_bin and r_sq_by_bin are the rollover-fit traces evaluated from
 // repeated suffix regressions on the binned spectrum.
+//
+// Units:
+//   frequency      — cycles/m  (= 1/m)
+//   wavelength     — metres    (= 1/frequency)
+//   psd            — m^2 / (cycles/m)
+//   background_psd — m^2 / (cycles/m)
+//   normalised_psd — dimensionless  (psd / background_psd)
+//   beta_by_bin    — dimensionless spectral slope from rollover suffix regression
+//   r_sq_by_bin    — R^2 of that regression (dimensionless, 0–1)
 // -----------------------------------------------------------------------------
 struct lsdtt_spectral_binned_result
 {
-    std::vector<double> frequency;
-    std::vector<double> wavelength;
-    std::vector<double> psd;
-    std::vector<double> background_psd;
-    std::vector<double> normalised_psd;
-    std::vector<double> beta_by_bin;
-    std::vector<double> r_sq_by_bin;
+    std::vector<double> frequency;       // cycles/m
+    std::vector<double> wavelength;      // m
+    std::vector<double> psd;             // m^2/(cycles/m)
+    std::vector<double> background_psd;  // m^2/(cycles/m)
+    std::vector<double> normalised_psd;  // dimensionless
+    std::vector<double> beta_by_bin;     // spectral slope
+    std::vector<double> r_sq_by_bin;     // R^2
 };
 
 // -----------------------------------------------------------------------------
@@ -164,6 +173,12 @@ struct lsdtt_spectral_analysis_options
     spectral_window_type window                  = spectral_window_type::hann;
     bool                 clip_to_valid_rectangle = false;
     int                  n_threads               = 0;
+    // Base seed for Monte Carlo background iterations.
+    // Iteration i uses seed = background_seed + i.
+    // Negative (default) uses the built-in sequence (base 1000), which is
+    // always reproducible. Set an explicit non-negative value to pin a
+    // specific realisation and document it alongside the results.
+    int                  background_seed         = -1;
 };
 
 // -----------------------------------------------------------------------------
@@ -171,17 +186,36 @@ struct lsdtt_spectral_analysis_options
 //
 // Full spectral-analysis product.
 //
-// psd_2d and background_psd_2d are stored in shifted frequency order
-// (zero frequency at the centre of the array).
+// 2D arrays (psd_2d, background_psd_2d):
+//   - Stored in fftshift order: zero frequency (DC) at row padded_rows/2,
+//     col padded_cols/2 (integer division).
+//   - Row index r has y-frequency (r - padded_rows/2) * dfy  [cycles/m].
+//   - Col index c has x-frequency (c - padded_cols/2) * dfx  [cycles/m].
+//   - When written as a GeoTIFF via lsdtt_data_loader::write_full(), set the
+//     origin so that the DC pixel centre maps to coordinate (0, 0) in
+//     cycles/m. See lsdtt-spectral-analysis CLI for the derivation.
+//
+// Radial vectors (radial_frequency, radial_psd, etc.):
+//   - One entry per non-redundant (row, col) pair in the left half of the
+//     shifted spectrum. Radial frequency is in cycles/m.
+//
+// Units summary:
+//   dfx, dfy, nyquist_frequency  — cycles/m
+//   radial_frequency             — cycles/m
+//   radial_wavelength            — m
+//   radial_psd, background_psd   — m^2/(cycles/m)
+//   normalised_psd               — dimensionless
+//   rollover_frequency           — cycles/m
+//   rollover_beta, sub_rollover_beta — dimensionless spectral slope
 // -----------------------------------------------------------------------------
 struct lsdtt_spectral_analysis_result
 {
     int padded_rows = 0;
     int padded_cols = 0;
 
-    double dfx = 0.0;
-    double dfy = 0.0;
-    double nyquist_frequency = 0.0;
+    double dfx = 0.0;               // x-frequency spacing, cycles/m
+    double dfy = 0.0;               // y-frequency spacing, cycles/m
+    double nyquist_frequency = 0.0; // cycles/m
 
     double window_sum_squared = 0.0;
     double detrended_variance = 0.0;
@@ -217,6 +251,14 @@ struct lsdtt_spectral_analysis_result
 //   3. generate power-law synthetic reference DEMs
 //   4. average their spectra into a background spectrum
 //   5. normalise the observed spectrum by the background spectrum
+//
+// The dem must be in a projected coordinate system with metres as the linear
+// unit (enforced via lsdtt_raster_meta::check_projected_metres()).
+//
+// All frequencies in the result are in cycles/m (= 1/m).
+// All wavelengths are in metres.
+// A frequency f is significant at the 95% confidence level when
+//   normalised_psd > 2.9955  (= 0.5 * chi^2_0.95 with 2 DOF).
 //
 // Returns a full result struct and performs no file writing.
 // -----------------------------------------------------------------------------
