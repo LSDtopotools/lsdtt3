@@ -55,10 +55,14 @@ public:
 
     [[nodiscard]] std::int32_t get_number_of_basin_pixels() const noexcept override;
 
-    [[nodiscard]] bool
-        check_basin_completeness(const std::string& boundary_conditions) const override;
+    [[nodiscard]] bool check_basin_completeness() const override;
 
     [[nodiscard]] std::int32_t pixel_count() const noexcept override;
+
+    // Paint this basin into an existing raster_result and return the modified raster.
+    // The caller supplies the fill value.
+    [[nodiscard]] lsdtt_raster_result
+        get_basin_raster(lsdtt_raster_result raster, float fill_value) const override;
     // -----------------------------------------------------------------------
     // CPU-specific accessors
     // -----------------------------------------------------------------------
@@ -81,6 +85,16 @@ public:
     // TODO: lsdtt_basin_outline is not yet designed — stub returns empty vector.
     [[nodiscard]] std::vector<std::int64_t> get_basin_outline() const;
 
+    // CPU-only optimisation of check_basin_completeness()
+    // This allows excluding basin completeness checks of part of this
+    // basins svector slice, by suppling sub-slices.
+    // Used by the basin manager to avoid checking nested basin pixels multiple
+    // times.
+    [[nodiscard]] bool check_basin_completeness_excluding_slices(
+        const std::vector<lsdtt_flat_index_slice>& excluded_slices
+    ) const;
+
+
 private:
 
     static void validate_inputs(const lsdtt_flow_base& flow,
@@ -89,6 +103,8 @@ private:
     [[nodiscard]] static lsdtt_flat_index_slice make_slice(
         const lsdtt_flow_base& flow,
         std::int64_t basin_outlet_flat_index);
+
+    void validate_basin_raster_input(const lsdtt_raster_result& raster) const;
 
 private:
 

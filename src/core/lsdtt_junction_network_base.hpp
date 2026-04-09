@@ -135,6 +135,14 @@ public:
         const std::string& layer_name = "channel_network_lines",
         bool spatial_index = true
     ) const = 0;
+
+    virtual void write_junction_network_points(
+        const std::string& out_path,
+        point_output_format format,
+        const std::string& layer_name = "junction_network_points",
+        bool spatial_index = true
+    ) const = 0;
+
 };
 
 // -----------------------------------------------------------------------------

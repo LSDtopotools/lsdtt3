@@ -77,8 +77,7 @@ public:
     // -----------------------------------------------------------------------
 
     // Removes basins that are hydrologically incomplete.
-    lsdtt_junction_basin_manager_cpu&
-        filter_incomplete(const std::string& boundary_conditions);
+    lsdtt_junction_basin_manager_cpu& filter_incomplete();
 
     // Removes basins whose pixel count is outside [min_pixels, max_pixels].
     // Pass -1 for either bound to leave that end open.
@@ -139,6 +138,14 @@ public:
 
     // Returns stream orders for all surviving basins, in order.
     [[nodiscard]] std::vector<std::int32_t> get_stream_orders() const;
+
+    // -----------------------------------------------------------------------
+    // Raster output
+    // -----------------------------------------------------------------------
+    // Combined labelled raster of all currently selected basins.
+    // Painting order is downstream -> upstream using the junction-network s_vector,
+    // so nested basins overwrite their parents.
+    [[nodiscard]] lsdtt_raster_result get_junction_basins_raster() const;
 
 private:
 
