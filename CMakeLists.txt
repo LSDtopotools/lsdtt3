@@ -177,6 +177,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_flow_snapping_cpu.cpp
     src/cpu/lsdtt_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_cpu.cpp
+    src/cpu/lsdtt_junction_basin_manager_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
@@ -273,6 +274,7 @@ lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)
 lsdtt_cli(lsdtt-raster-basin-stats     cli/lsdtt-raster-basin-stats.cpp)
+lsdtt_cli(lsdtt-basin-extraction       cli/lsdtt-basin-extraction.cpp)
 
 
 # =============================================================================

@@ -27,8 +27,10 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 #include "../core/lsdtt_raster_base.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
@@ -70,6 +72,15 @@ public:
     );
 
     // -------------------------------------------------------------------------
+    // Cloning
+    // -------------------------------------------------------------------------
+    [[nodiscard]] std::unique_ptr<lsdtt_raster_base> clone() const override
+    {
+        return std::make_unique<lsdtt_raster_cpu>(*this);
+    }
+
+
+    // -------------------------------------------------------------------------
     // lsdtt_array2d accessors — preferred for analysis code
     // Zero-copy: returns reference into internal storage.
     // -------------------------------------------------------------------------
@@ -79,8 +90,7 @@ public:
     const lsdtt_array2d_u8& get_mask_array() const { return mask_; }
 
     // -------------------------------------------------------------------------
-    // std::vector accessors — implement lsdtt_raster_base interface
-    // Zero-copy: returns reference into the vector owned by lsdtt_array2d.
+    // std::vector accessors — zero-copy into the array2d-owned vector
     // -------------------------------------------------------------------------
 
     const std::vector<float>&   get_data() const { return data_.get_vector(); }
@@ -88,25 +98,60 @@ public:
     const std::vector<uint8_t>& get_mask() const { return mask_.get_vector(); }
 
     // -------------------------------------------------------------------------
-    // Metadata accessor — implement lsdtt_raster_base interface
+    // Metadata accessor retained for existing CPU analysis code
     // -------------------------------------------------------------------------
 
-    const lsdtt_raster_meta& get_meta() const override { return meta_; }
+    const lsdtt_raster_meta& get_meta() const { return meta_; }
 
     // -------------------------------------------------------------------------
-    // I/O — implement lsdtt_raster_base interface
+    // lsdtt_raster_base interface
     // -------------------------------------------------------------------------
 
-    void write_to_loader(lsdtt_data_loader& loader)        override;
-    void read_from_loader(const lsdtt_data_loader& loader) override;
+    [[nodiscard]] bool empty() const noexcept override
+    {
+        return data_.size() == 0;
+    }
 
-    // -------------------------------------------------------------------------
-    // Core filtering — implement lsdtt_raster_base interface
-    // -------------------------------------------------------------------------
+    [[nodiscard]] std::size_t full_grid_size() const noexcept override
+    {
+        return data_.size();
+    }
 
-    void smooth_gaussian(double sigma)                             override;
-    void smooth_bilateral(double sigma_space, double sigma_colour) override;
+    [[nodiscard]] const lsdtt_raster_meta& meta() const noexcept override
+    {
+        return meta_;
+    }
 
+    [[nodiscard]] int n_rows() const noexcept override
+    {
+        return meta_.n_rows;
+    }
+
+    [[nodiscard]] int n_cols() const noexcept override
+    {
+        return meta_.n_cols;
+    }
+
+    [[nodiscard]] double cell_size() const noexcept override
+    {
+        return meta_.cell_size;
+    }
+
+    [[nodiscard]] const float* data_ptr() const noexcept override
+    {
+        return data_.data();
+    }
+
+    [[nodiscard]] const std::uint8_t* mask_ptr() const noexcept override
+    {
+        return mask_.data();
+    }
+
+    void set_from_vectors(
+        std::vector<float>&&        data,
+        std::vector<std::uint8_t>&& mask,
+        const lsdtt_raster_meta&    meta
+    ) override;
 
     // -------------------------------------------------------------------------
     // Mask consistency
@@ -115,7 +160,6 @@ public:
     // Returns the number of mask entries changed.
     // -------------------------------------------------------------------------
     [[nodiscard]] std::int64_t assert_mask();
-
 
     // -------------------------------------------------------------------------
     // Whole-raster operations over valid pixels only (mask != 0)

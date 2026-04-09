@@ -9,102 +9,88 @@
 // -----------------------------------------------------------------------------
 // lsdtt_raster_base
 //
-// Abstract base class for all raster compute objects in lsdtt3.
-// Defines the dispatch interface that lsdtt_raster_cpu and lsdtt_raster_gpu
-// must satisfy.
+// Abstract base class for raster backends.
 //
-// Design:
-//   This class is a pure dispatch interface. It does NOT expose data accessors
-//   (get_data / get_mask) because those are CPU-specific concepts — GPU memory
-//   lives in device memory, not in std::vector. Analysis free functions in
-//   src/cpu/ take lsdtt_raster_cpu directly and access data through its own
-//   member functions.
+// This is the raster analogue of lsdtt_flow_base:
+//   - small abstract interface
+//   - no backend-specific storage exposed as concrete containers
+//   - enough functionality for core-layer raster I/O
 //
-//   get_meta() is retained here because raster metadata (dimensions, CRS,
-//   cell size, nodata value) is always host-side regardless of backend.
+// Concrete backends own the raster data. For the current CPU backend that is
+// lsdtt_raster_cpu, which stores data in lsdtt_array2d wrappers over
+// contiguous std::vector storage.
 //
-// Virtual method categories:
-//
-//   Pure virtual  — must be implemented by every backend. Operations where
-//                   GPU coverage is guaranteed from the start, or where the
-//                   class cannot function without them.
-//
-//   CPU fallback  — base provides a working CPU implementation. The GPU
-//                   subclass inherits and uses it until a GPU kernel is
-//                   written, at which point the subclass overrides.
-//
-// Reference:
-//   Zevenbergen, L.W. and Thorne, C.R. (1987) Quantitative analysis of land
-//   surface topography. Earth Surface Processes and Landforms, 12, 47-56.
+// Raster I/O remains in src/core/ via lsdtt_data_loader.
 // -----------------------------------------------------------------------------
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-
+#include <vector>
+#include <memory>
+#include "lsdtt_data_loader.hpp"
 #include "lsdtt_raster_meta.hpp"
 
-// Forward declaration
 namespace lsdtt
 {
-    class lsdtt_data_loader;
-}
-
-namespace lsdtt {
 
 class lsdtt_raster_base
 {
 public:
 
     // -------------------------------------------------------------------------
-    // Metadata accessor
-    //
-    // Metadata is always host-side regardless of backend. This is the only
-    // data accessor on the base class. For data access (float*, vector<float>)
-    // use lsdtt_raster_cpu directly — those are CPU-specific types.
-    // -------------------------------------------------------------------------
-
-    virtual const lsdtt_raster_meta& get_meta() const = 0;
-
-    // -------------------------------------------------------------------------
-    // Pure virtual — every backend must implement these
-    // -------------------------------------------------------------------------
-
-    // Data exchange with the loader
-    virtual void write_to_loader(lsdtt_data_loader& loader)        = 0;
-    virtual void read_from_loader(const lsdtt_data_loader& loader) = 0;
-
-    // Core filtering — OpenCV operations where GPU coverage is straightforward
-    virtual void smooth_gaussian(double sigma)                              = 0;
-    virtual void smooth_bilateral(double sigma_space, double sigma_colour)  = 0;
-
-    // -------------------------------------------------------------------------
-    // CPU fallback — base provides working CPU implementation
-    // GPU subclass overrides when GPU kernel is ready
-    // -------------------------------------------------------------------------
-
-    // Flow routing — complex GPU implementation, developed later
-    virtual void compute_flow_direction();
-    virtual void compute_flow_accumulation();
-
-    // Spectral — GPU version added incrementally
-    virtual void compute_fft();
-    virtual void apply_wavelet_filter();
-
-    // -------------------------------------------------------------------------
     // Destructor
     // -------------------------------------------------------------------------
-
     virtual ~lsdtt_raster_base() = default;
 
-protected:
+    // -------------------------------------------------------------------------
+    // Object state
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual bool        empty()          const noexcept = 0;
+    [[nodiscard]] virtual std::size_t full_grid_size() const noexcept = 0;
 
-    // CPU implementations used by the fallback methods above.
-    // Also callable from lsdtt_raster_cpu for direct use.
-    void cpu_compute_flow_direction();
-    void cpu_compute_flow_accumulation();
-    void cpu_compute_fft();
-    void cpu_apply_wavelet_filter();
+    // -------------------------------------------------------------------------
+    // Metadata
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual const lsdtt_raster_meta& meta()      const noexcept = 0;
+    [[nodiscard]] virtual int                       n_rows()    const noexcept = 0;
+    [[nodiscard]] virtual int                       n_cols()    const noexcept = 0;
+    [[nodiscard]] virtual double                    cell_size() const noexcept = 0;
+
+    // -------------------------------------------------------------------------
+    // Contiguous storage access
+    //
+    // These expose backend-owned contiguous storage for efficient core-layer
+    // raster writing. For CPU backends these point directly into the underlying
+    // std::vector storage. For future GPU backends these methods can be adapted
+    // once the GPU I/O path is designed.
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual const float*        data_ptr() const noexcept = 0;
+    [[nodiscard]] virtual const std::uint8_t* mask_ptr() const noexcept = 0;
+
+    // -------------------------------------------------------------------------
+    // Cloning the raster base
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual std::unique_ptr<lsdtt_raster_base> clone() const = 0;
+
+    // -------------------------------------------------------------------------
+    // Loader-to-backend transfer
+    //
+    // The loader reads raster data into plain vectors and passes ownership of
+    // those vectors to the backend through this method. CPU backends can adopt
+    // the vectors directly with no element-by-element copy.
+    // -------------------------------------------------------------------------
+    virtual void set_from_vectors(
+        std::vector<float>&&        data,
+        std::vector<std::uint8_t>&& mask,
+        const lsdtt_raster_meta&    meta
+    ) = 0;
 };
+
+std::unique_ptr<lsdtt_raster_base> make_raster_base(
+    const lsdtt_data_loader& loader
+);
+
 
 } // namespace lsdtt
