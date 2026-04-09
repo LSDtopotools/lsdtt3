@@ -10,8 +10,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -438,6 +441,83 @@ lsdtt_raster_cpu raster_lower(
     );
 }
 
+
+lsdtt_raster_cpu raster_scale(
+    const lsdtt_raster_cpu& a,
+    float                   factor)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i])
+        {
+            out_data[i] = da[i] * factor;
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
+lsdtt_raster_cpu raster_clip(
+    const lsdtt_raster_cpu& a,
+    float                   lower,
+    float                   upper)
+{
+    if (lower > upper)
+    {
+        throw std::invalid_argument(
+            "lsdtt::algebra::raster_clip(): lower must be <= upper"
+        );
+    }
+
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i])
+        {
+            float v = da[i];
+            if (v < lower)      v = lower;
+            else if (v > upper) v = upper;
+            out_data[i] = v;
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
 
 // =============================================================================
 // Modification of bounds
@@ -967,6 +1047,236 @@ lsdtt_raster_cpu raster_log10(const lsdtt_raster_cpu& a)
     return lsdtt_raster_cpu(
         std::move(out_data), std::move(out_mask), a.get_meta()
     );
+}
+
+// =============================================================================
+// Scalar summary statistics
+// =============================================================================
+
+namespace {
+
+// Collects all valid pixel values into a vector. Throws if none exist.
+std::vector<float> collect_valid(const lsdtt_raster_cpu& a)
+{
+    const std::vector<float>&    da = a.get_data();
+    const std::vector<uint8_t>&  ma = a.get_mask();
+    const int n = static_cast<int>(da.size());
+
+    std::vector<float> out;
+    out.reserve(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i]) out.push_back(da[i]);
+    }
+
+    if (out.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt::algebra: raster contains no valid pixels"
+        );
+    }
+
+    return out;
+}
+
+} // anonymous namespace
+
+float raster_min_value(const lsdtt_raster_cpu& a)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const int n = static_cast<int>(da.size());
+
+    double min_val = std::numeric_limits<double>::infinity();
+    std::int64_t n_valid = 0;
+
+    #pragma omp parallel for schedule(static) reduction(+:n_valid) reduction(min:min_val)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        const double v = static_cast<double>(da[i]);
+        if (v < min_val) min_val = v;
+        ++n_valid;
+    }
+
+    if (n_valid == 0)
+    {
+        throw std::runtime_error(
+            "lsdtt::algebra::raster_min_value(): raster contains no valid pixels"
+        );
+    }
+
+    return static_cast<float>(min_val);
+}
+
+float raster_max_value(const lsdtt_raster_cpu& a)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const int n = static_cast<int>(da.size());
+
+    double max_val = -std::numeric_limits<double>::infinity();
+    std::int64_t n_valid = 0;
+
+    #pragma omp parallel for schedule(static) reduction(+:n_valid) reduction(max:max_val)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        const double v = static_cast<double>(da[i]);
+        if (v > max_val) max_val = v;
+        ++n_valid;
+    }
+
+    if (n_valid == 0)
+    {
+        throw std::runtime_error(
+            "lsdtt::algebra::raster_max_value(): raster contains no valid pixels"
+        );
+    }
+
+    return static_cast<float>(max_val);
+}
+
+float raster_mean_value(const lsdtt_raster_cpu& a)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const int n = static_cast<int>(da.size());
+
+    double sum = 0.0;
+    std::int64_t n_valid = 0;
+
+    #pragma omp parallel for schedule(static) reduction(+:n_valid,sum)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        sum += static_cast<double>(da[i]);
+        ++n_valid;
+    }
+
+    if (n_valid == 0)
+    {
+        throw std::runtime_error(
+            "lsdtt::algebra::raster_mean_value(): raster contains no valid pixels"
+        );
+    }
+
+    return static_cast<float>(sum / static_cast<double>(n_valid));
+}
+
+float raster_median_value(const lsdtt_raster_cpu& a)
+{
+    return raster_percentile(a, 50.0);
+}
+
+float raster_percentile(const lsdtt_raster_cpu& a, double p)
+{
+    if (p < 0.0 || p > 100.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt::algebra::raster_percentile(): p must be in [0, 100]"
+        );
+    }
+
+    std::vector<float> values = collect_valid(a);
+    const std::size_t n = values.size();
+
+    if (n == 1) return values[0];
+
+    const double rank = (p / 100.0) * static_cast<double>(n - 1);
+
+    const std::size_t lower_index = static_cast<std::size_t>(std::floor(rank));
+    const std::size_t upper_index = static_cast<std::size_t>(std::ceil(rank));
+
+    std::nth_element(
+        values.begin(),
+        values.begin() + static_cast<std::ptrdiff_t>(upper_index),
+        values.end()
+    );
+    const float upper_value = values[upper_index];
+
+    if (lower_index == upper_index) return upper_value;
+
+    std::nth_element(
+        values.begin(),
+        values.begin() + static_cast<std::ptrdiff_t>(lower_index),
+        values.begin() + static_cast<std::ptrdiff_t>(upper_index) + 1
+    );
+    const float lower_value = values[lower_index];
+
+    const double weight_upper = rank - static_cast<double>(lower_index);
+    return static_cast<float>(
+        (1.0 - weight_upper) * static_cast<double>(lower_value) +
+        weight_upper         * static_cast<double>(upper_value)
+    );
+}
+
+float raster_stddev_value(const lsdtt_raster_cpu& a)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const int n = static_cast<int>(da.size());
+
+    double sum = 0.0;
+    std::int64_t n_valid = 0;
+
+    #pragma omp parallel for schedule(static) reduction(+:n_valid,sum)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        sum += static_cast<double>(da[i]);
+        ++n_valid;
+    }
+
+    if (n_valid == 0)
+    {
+        throw std::runtime_error(
+            "lsdtt::algebra::raster_stddev_value(): raster contains no valid pixels"
+        );
+    }
+
+    const double mean = sum / static_cast<double>(n_valid);
+    double sq_sum = 0.0;
+
+    #pragma omp parallel for schedule(static) reduction(+:sq_sum)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        const double d = static_cast<double>(da[i]) - mean;
+        sq_sum += d * d;
+    }
+
+    return static_cast<float>(std::sqrt(sq_sum / static_cast<double>(n_valid)));
+}
+
+float raster_range_value(const lsdtt_raster_cpu& a)
+{
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const int n = static_cast<int>(da.size());
+
+    double min_val =  std::numeric_limits<double>::infinity();
+    double max_val = -std::numeric_limits<double>::infinity();
+    std::int64_t n_valid = 0;
+
+    #pragma omp parallel for schedule(static) reduction(+:n_valid) reduction(min:min_val) reduction(max:max_val)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        const double v = static_cast<double>(da[i]);
+        if (v < min_val) min_val = v;
+        if (v > max_val) max_val = v;
+        ++n_valid;
+    }
+
+    if (n_valid == 0)
+    {
+        throw std::runtime_error(
+            "lsdtt::algebra::raster_range_value(): raster contains no valid pixels"
+        );
+    }
+
+    return static_cast<float>(max_val - min_val);
 }
 
 } // namespace algebra

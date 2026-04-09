@@ -1417,6 +1417,284 @@ lsdtt_flowinfo::get_sources_index_threshold(int threshold) const
 }
 
 
+// =============================================================================
+// Flow-routing raster outputs
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// get_d8_flow_direction_raster
+//
+// Returns the D8 receiver-direction raster using lsdtt internal codes:
+//
+//   7  0  1
+//   6  x  2
+//   5  4  3
+//
+// Outlet pixels (cells that drain off-grid or to a boundary) carry the
+// direction code of the edge they drain to (0-7) — they have a valid
+// direction, they simply have no in-grid receiver.
+// Nodata/invalid pixels carry meta.no_data_value.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_d8_flow_direction_raster() const
+{
+    require_built();
+
+    const std::size_t n    = mask_.size();
+    const float       ndv  = static_cast<float>(meta_.no_data_value);
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i)
+    {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        if (mask_.data()[idx] == 0) continue;
+        r.data[idx] = static_cast<float>(receiver_dir_.data()[idx]);
+        r.mask[idx] = 1u;
+    }
+
+    return r;
+}
+
+void lsdtt_flowinfo::write_d8_flow_direction_raster(
+    const std::string& out_path,
+    raster_output_format format
+) const
+{
+    lsdtt_raster_result r = get_d8_flow_direction_raster();
+    lsdtt_data_loader loader;
+    loader.write_full(r, out_path, format);
+}
+
+// -----------------------------------------------------------------------------
+// get_n_contributing_pixels_raster  (include-self convention)
+//
+// Value at each valid cell = total number of pixels that drain through it,
+// including the cell itself.  Computed from s_vector_size_[i].
+//
+// Requires the s_vector to have been built (lsdtt_flowinfo_options::build_s_vector
+// must have been true at construction time).
+//
+// Note: values are stored as float.  For very large DEMs (> ~16 M pixels)
+// the float representation may round the count to the nearest power-of-two
+// interval.  Use the raw s_vector_size() accessor if full integer precision is
+// needed.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_n_contributing_pixels_raster() const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_n_contributing_pixels_raster(): "
+            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n   = mask_.size();
+    const float       ndv = static_cast<float>(meta_.no_data_value);
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i)
+    {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        if (mask_.data()[idx] == 0) continue;
+        // s_vector_size_[i] includes i itself — this is the include-self convention
+        r.data[idx] = static_cast<float>(s_vector_size_.data()[idx]);
+        r.mask[idx] = 1u;
+    }
+
+    return r;
+}
+
+void lsdtt_flowinfo::write_n_contributing_pixels_raster(
+    const std::string& out_path,
+    raster_output_format format
+) const
+{
+    lsdtt_raster_result r = get_n_contributing_pixels_raster();
+    lsdtt_data_loader loader;
+    loader.write_full(r, out_path, format);
+}
+
+// -----------------------------------------------------------------------------
+// get_n_contributing_pixels_exclude_outlet_raster  (exclude-self convention)
+//
+// Value at each valid cell = number of pixels strictly upstream (s_vector_size - 1).
+// Headwater pixels (no upstream donors) return 0.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_n_contributing_pixels_exclude_outlet_raster() const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_n_contributing_pixels_exclude_outlet_raster(): "
+            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n   = mask_.size();
+    const float       ndv = static_cast<float>(meta_.no_data_value);
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i)
+    {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        if (mask_.data()[idx] == 0) continue;
+        // subtract 1 to exclude the cell itself from its own contributing count
+        const std::uint64_t sz = s_vector_size_.data()[idx];
+        r.data[idx] = static_cast<float>(sz > 0u ? sz - 1u : 0u);
+        r.mask[idx] = 1u;
+    }
+
+    return r;
+}
+
+void lsdtt_flowinfo::write_n_contributing_pixels_exclude_outlet_raster(
+    const std::string& out_path,
+    raster_output_format format
+) const
+{
+    lsdtt_raster_result r = get_n_contributing_pixels_exclude_outlet_raster();
+    lsdtt_data_loader loader;
+    loader.write_full(r, out_path, format);
+}
+
+// -----------------------------------------------------------------------------
+// get_drainage_area_raster  (include-self convention)
+//
+// Value at each valid cell = n_contributing_pixels * cell_size^2
+// in square map units (typically square metres for a projected DEM).
+// This is the standard hydrological drainage-area convention: every cell
+// contributes its own area to its drainage area.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster() const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_drainage_area_raster(): "
+            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n          = mask_.size();
+    const float       ndv        = static_cast<float>(meta_.no_data_value);
+    const double      pixel_area = meta_.cell_size * meta_.cell_size;
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i)
+    {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        if (mask_.data()[idx] == 0) continue;
+        r.data[idx] = static_cast<float>(
+            static_cast<double>(s_vector_size_.data()[idx]) * pixel_area
+        );
+        r.mask[idx] = 1u;
+    }
+
+    return r;
+}
+
+void lsdtt_flowinfo::write_drainage_area_raster(
+    const std::string& out_path,
+    raster_output_format format
+) const
+{
+    lsdtt_raster_result r = get_drainage_area_raster();
+    lsdtt_data_loader loader;
+    loader.write_full(r, out_path, format);
+}
+
+// -----------------------------------------------------------------------------
+// get_drainage_area_exclude_outlet_raster  (exclude-self convention)
+//
+// Value = (n_contributing_pixels - 1) * cell_size^2  (square map units).
+// Headwater pixels (no upstream donors) return 0.0.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_exclude_outlet_raster() const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_drainage_area_exclude_outlet_raster(): "
+            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n          = mask_.size();
+    const float       ndv        = static_cast<float>(meta_.no_data_value);
+    const double      pixel_area = meta_.cell_size * meta_.cell_size;
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i)
+    {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        if (mask_.data()[idx] == 0) continue;
+        const std::uint64_t sz = s_vector_size_.data()[idx];
+        r.data[idx] = static_cast<float>(
+            static_cast<double>(sz > 0u ? sz - 1u : 0u) * pixel_area
+        );
+        r.mask[idx] = 1u;
+    }
+
+    return r;
+}
+
+void lsdtt_flowinfo::write_drainage_area_exclude_outlet_raster(
+    const std::string& out_path,
+    raster_output_format format
+) const
+{
+    lsdtt_raster_result r = get_drainage_area_exclude_outlet_raster();
+    lsdtt_data_loader loader;
+    loader.write_full(r, out_path, format);
+}
+
+// =============================================================================
+// ArcMap flow direction (legacy — uses ArcMap codes, not lsdtt codes)
+// =============================================================================
+
 void lsdtt_flowinfo::print_arcmap_d8_flowdirection(
     const std::string& out_path,
     raster_output_format format

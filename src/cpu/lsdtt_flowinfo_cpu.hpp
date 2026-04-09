@@ -435,7 +435,40 @@ public:
     get_sources_index_threshold(int threshold) const;
 
     // -------------------------------------------------------------------------
-    // Flow-routing visualisation outputs
+    // Flow-routing raster outputs
+    // -------------------------------------------------------------------------
+    [[nodiscard]] lsdtt_raster_result get_d8_flow_direction_raster() const override;
+    void write_d8_flow_direction_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_n_contributing_pixels_raster() const override;
+    void write_n_contributing_pixels_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_n_contributing_pixels_exclude_outlet_raster() const override;
+    void write_n_contributing_pixels_exclude_outlet_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_drainage_area_raster() const override;
+    void write_drainage_area_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_drainage_area_exclude_outlet_raster() const override;
+    void write_drainage_area_exclude_outlet_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const override;
+
+    // -------------------------------------------------------------------------
+    // Flow-routing vector outputs
     // -------------------------------------------------------------------------
     void write_flow_lines(
         const std::string& out_path,

@@ -46,6 +46,7 @@ lsdtt3/
 │   │   ├── lsdtt_types.hpp                  — all lightweight shared primitive types (see below)
 │   │   ├── lsdtt_raster_meta.hpp            — metadata struct + CRS validation
 │   │   ├── lsdtt_raster_base.hpp/.cpp       — abstract raster dispatch interface
+│   │   ├── lsdtt_raster_result.hpp          — plain data-transfer struct for rasters returned by core-layer engines
 │   │   ├── lsdtt_data_loader.hpp/.cpp       — GDAL/OGR I/O, RAII, COG output
 │   │   ├── lsdtt_backend_factory.hpp/.cpp   — make_raster_engine(), gpu_available()
 │   │   ├── lsdtt_param_parser.hpp/.cpp      — parameter file parser
@@ -256,6 +257,56 @@ GPU flow backend is added — only the factory changes.
 
 In short: **rasters stay concrete and selectively dispatched; stateful engines
 use narrow abstract bases and factories.**
+
+
+### Returning rasters from core-layer engine objects
+
+**Problem:** abstract base classes in `src/core/` sometimes need to return a
+raster (e.g. a flow-direction raster, a channel-mask raster). They cannot
+include `lsdtt_raster_cpu` because that would create a forbidden `core → cpu`
+dependency.
+
+**Solution: `lsdtt_raster_result`** — a plain data-transfer struct in
+`src/core/lsdtt_raster_result.hpp`:
+
+```cpp
+struct lsdtt_raster_result
+{
+    std::vector<float>   data;
+    std::vector<uint8_t> mask;
+    lsdtt_raster_meta    meta;
+};
+```
+
+Base-class virtual methods that produce rasters return `lsdtt_raster_result`.
+The CPU implementation fills it from its internal storage and returns it.
+
+**Two patterns for callers (CLIs, workflows):**
+
+```cpp
+// 1. Write directly to disk — no lsdtt_raster_cpu needed
+lsdtt_raster_result r = engine->get_some_raster();
+loader.write_full(r, out_path, format);
+
+// 2. Promote to lsdtt_raster_cpu for further analysis (move — O(1))
+lsdtt_raster_result r = engine->get_some_raster();
+lsdtt_raster_cpu raster(std::move(r));
+auto hillshade = lsdtt::compute_hillshade(raster);
+```
+
+**Choosing between `lsdtt_raster_result` and a `write_*(path, format)` method:**
+
+- If the CLI only ever writes the raster to disk and never analyses it,
+  a `write_*(path, format)` virtual method is simpler — the implementation
+  creates the data internally and calls `loader.write_full()` directly.
+  `print_arcmap_d8_flowdirection` on `lsdtt_flow_base` is an example of this.
+
+- If the CLI may want to analyse the raster (pass it to an algebra function,
+  compute derivatives, etc.), the method should return `lsdtt_raster_result`
+  so the caller can promote it to `lsdtt_raster_cpu`.
+
+**Convention:** pixels with `mask == 0` must already carry `meta.no_data_value`
+in the `data` array. `lsdtt_data_loader::write_full` does not consult the mask.
 
 
 ---

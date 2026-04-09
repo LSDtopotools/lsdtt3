@@ -40,6 +40,7 @@
 #include <ogrsf_frmts.h>
 
 #include "lsdtt_raster_meta.hpp"
+#include "lsdtt_raster_result.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
 namespace lsdtt {
@@ -424,6 +425,13 @@ public:
         const lsdtt_raster_meta&  meta,
         const std::string&        out_path,
         raster_output_format      format = raster_output_format::cog
+    );
+
+    // Convenience overload for raster results returned by core-layer engines.
+    void write_full(
+        const lsdtt_raster_result& result,
+        const std::string&         out_path,
+        raster_output_format       format = raster_output_format::cog
     );
 
     // Finalise a tiled output file.

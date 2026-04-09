@@ -54,7 +54,7 @@ namespace lsdtt
 #ifndef LSDTT_HAS_FFTW
 
 poly_fit_coeffs wavelet_quadratic_fit(
-    const lsdtt_raster_base&,
+    const lsdtt_raster_cpu&,
     double,
     int)
 {
@@ -1145,6 +1145,9 @@ static lsdtt_raster_cpu spectral_filter_pipeline(
 namespace
 {
 
+
+
+
 // -----------------------------------------------------------------------------
 // spectral_psd_product
 //
@@ -1186,6 +1189,11 @@ struct background_spectrum_product
     std::vector<double> background_radial_frequency;
     std::vector<double> background_radial_psd;
 };
+
+
+
+
+
 
 // -----------------------------------------------------------------------------
 // compute_window_sum_squared

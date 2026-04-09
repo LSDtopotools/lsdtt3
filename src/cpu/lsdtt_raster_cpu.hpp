@@ -34,6 +34,7 @@
 
 #include "../core/lsdtt_raster_base.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
+#include "../core/lsdtt_raster_result.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 
@@ -70,6 +71,11 @@ public:
         std::vector<uint8_t>&&   mask,
         const lsdtt_raster_meta& meta
     );
+
+    // Construct from a core-layer raster result (move).
+    // Use this to promote an lsdtt_raster_result returned by a base-class
+    // engine method into a full CPU raster for further analysis.
+    explicit lsdtt_raster_cpu(lsdtt_raster_result&& result);
 
     // -------------------------------------------------------------------------
     // Cloning
@@ -167,24 +173,10 @@ public:
 
     [[nodiscard]] std::int64_t count_valid_pixels() const;
 
-    [[nodiscard]] float min_value() const;
-    [[nodiscard]] float max_value() const;
-    [[nodiscard]] float mean_value() const;
-    [[nodiscard]] float median_value() const;
-    [[nodiscard]] float percentile(double p) const;   // p in [0, 100]
-    [[nodiscard]] float stddev_value() const;         // population stddev
-    [[nodiscard]] float range_value() const;
-
-    void add_value(float value);
-    void multiply_value(float factor);
-    void clip(float lower, float upper);
-
 private:
 
     void validate_storage_sizes(const char* function_name) const;
     [[nodiscard]] std::int64_t checked_cell_count(const char* function_name) const;
-    [[nodiscard]] std::vector<float> collect_valid_values() const;
-
     lsdtt_array2d_f   data_;
     lsdtt_array2d_u8  mask_;
     lsdtt_raster_meta meta_;

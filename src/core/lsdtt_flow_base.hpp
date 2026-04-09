@@ -196,7 +196,77 @@ public:
         get_sources_index_threshold(int threshold) const = 0;
 
     // -------------------------------------------------------------------------
-    // Flow-routing visualisation outputs
+    // Flow-routing raster outputs
+    //
+    // Two conventions are used throughout:
+    //
+    //   "include self"  — the pixel in question is counted as part of its own
+    //                     upslope basin (s_vector_size includes the cell itself).
+    //                     This is the standard hydrological drainage-area
+    //                     convention: every cell contributes its own area.
+    //
+    //   "exclude outlet" — the pixel in question is NOT counted (s_vector_size - 1).
+    //                     Useful when you want only the area/count strictly
+    //                     upstream of a cell, not including the cell itself.
+    //                     Headwater pixels return 0 under this convention.
+    //
+    // get_* methods return an lsdtt_raster_result that the caller can write to
+    // disk with loader.write_full() or promote to lsdtt_raster_cpu for analysis.
+    //
+    // write_* methods write directly to disk; they call the corresponding get_*
+    // internally and exist as a convenience so the caller does not need to
+    // manage a loader object.
+    // -------------------------------------------------------------------------
+
+    // D8 flow direction — lsdtt internal direction codes:
+    //   7 0 1
+    //   6 x 2
+    //   5 4 3
+    // Outlet pixels carry their direction code (the edge they drain to).
+    // Nodata pixels carry meta.no_data_value.
+    [[nodiscard]] virtual lsdtt_raster_result get_d8_flow_direction_raster() const = 0;
+    virtual void write_d8_flow_direction_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const = 0;
+
+    // Number of contributing pixels — include self convention.
+    // Value at each valid cell = total pixels draining through it,
+    // including the cell itself (s_vector_size).
+    [[nodiscard]] virtual lsdtt_raster_result get_n_contributing_pixels_raster() const = 0;
+    virtual void write_n_contributing_pixels_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const = 0;
+
+    // Number of contributing pixels — exclude self convention.
+    // Value = pixels strictly upstream (s_vector_size - 1).
+    // Headwater pixels return 0.
+    [[nodiscard]] virtual lsdtt_raster_result get_n_contributing_pixels_exclude_outlet_raster() const = 0;
+    virtual void write_n_contributing_pixels_exclude_outlet_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const = 0;
+
+    // Drainage area — include self convention.
+    // Value = n_contributing_pixels * cell_size^2  (square map units).
+    [[nodiscard]] virtual lsdtt_raster_result get_drainage_area_raster() const = 0;
+    virtual void write_drainage_area_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const = 0;
+
+    // Drainage area — exclude self convention.
+    // Value = (n_contributing_pixels - 1) * cell_size^2  (square map units).
+    // Headwater pixels return 0.0.
+    [[nodiscard]] virtual lsdtt_raster_result get_drainage_area_exclude_outlet_raster() const = 0;
+    virtual void write_drainage_area_exclude_outlet_raster(
+        const std::string& out_path,
+        raster_output_format format = raster_output_format::cog
+    ) const = 0;
+
+    // -------------------------------------------------------------------------
+    // Flow-routing vector outputs
     // -------------------------------------------------------------------------
     virtual void write_flow_lines(
         const std::string& out_path,

@@ -854,6 +854,15 @@ void lsdtt_data_loader::write_full(
     finalise_output(out_path);
 }
 
+void lsdtt_data_loader::write_full(
+    const lsdtt_raster_result& result,
+    const std::string&         out_path,
+    raster_output_format       format
+)
+{
+    write_full(result.data, result.meta, out_path, format);
+}
+
 void lsdtt_data_loader::finalise_output(const std::string& out_path)
 {
     auto ds_it  = output_datasets_.find(out_path);

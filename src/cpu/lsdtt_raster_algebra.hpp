@@ -130,6 +130,20 @@ lsdtt_raster_cpu raster_lower(
     float                   amount
 );
 
+/// Scale valid pixels by a scalar factor: result = a * factor
+lsdtt_raster_cpu raster_scale(
+    const lsdtt_raster_cpu& a,
+    float                   factor
+);
+
+/// Clamp valid pixels to [lower, upper]: result = clamp(a, lower, upper)
+/// Throws std::invalid_argument if lower > upper.
+lsdtt_raster_cpu raster_clip(
+    const lsdtt_raster_cpu& a,
+    float                   lower,
+    float                   upper
+);
+
 
 
 /// Positive part: result = max(a, 0)
@@ -228,6 +242,37 @@ lsdtt_raster_cpu raster_log(const lsdtt_raster_cpu& a);
 
 /// Base-10 logarithm: result = log10(a)
 lsdtt_raster_cpu raster_log10(const lsdtt_raster_cpu& a);
+
+
+// -----------------------------------------------------------------------------
+// Scalar summary statistics
+//
+// Each function scans all valid pixels (mask != 0) and returns a single float.
+// Throws std::runtime_error if the raster contains no valid pixels.
+// raster_percentile additionally throws std::invalid_argument if p is outside
+// [0, 100].
+// -----------------------------------------------------------------------------
+
+/// Minimum value over all valid pixels.
+float raster_min_value(const lsdtt_raster_cpu& a);
+
+/// Maximum value over all valid pixels.
+float raster_max_value(const lsdtt_raster_cpu& a);
+
+/// Arithmetic mean over all valid pixels.
+float raster_mean_value(const lsdtt_raster_cpu& a);
+
+/// Median value (50th percentile) over all valid pixels.
+float raster_median_value(const lsdtt_raster_cpu& a);
+
+/// Percentile over all valid pixels. p must be in [0, 100].
+float raster_percentile(const lsdtt_raster_cpu& a, double p);
+
+/// Population standard deviation over all valid pixels.
+float raster_stddev_value(const lsdtt_raster_cpu& a);
+
+/// Range (max − min) over all valid pixels.
+float raster_range_value(const lsdtt_raster_cpu& a);
 
 } // namespace algebra
 } // namespace lsdtt
