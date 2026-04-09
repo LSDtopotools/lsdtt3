@@ -1,25 +1,29 @@
 # tif_to_png.py — instructions
 
-Converts GeoTIFF rasters to PNG images for quick visual inspection.  Uses GDAL for raster I/O and matplotlib for rendering.
+Converts GeoTIFF rasters to PNG images for quick visual inspection.
+Calls `gdalinfo` and `gdal_translate` from the GDAL command-line tools.
+No Python GDAL bindings or numpy required — only the standard library plus
+a working GDAL installation.
 
 ---
 
 ## Dependencies
 
-```
-pip install gdal numpy matplotlib
-```
-
-`gdal` must match the GDAL system library version.  On a Debian/Ubuntu system with the UbuntuGIS PPA:
+Only the GDAL command-line tools are needed:
 
 ```bash
-sudo apt install python3-gdal
+# Debian / Ubuntu
+sudo apt install gdal-bin
+
+# conda
+conda install -c conda-forge gdal
 ```
 
-Or in a conda environment:
+Verify with:
 
 ```bash
-conda install -c conda-forge gdal numpy matplotlib
+gdal_translate --version
+gdalinfo --version
 ```
 
 ---
@@ -40,7 +44,7 @@ Finds every `*.tif` in the directory and writes a matching `.png` alongside it.
 python tif_to_png.py /path/to/outputs --file my_dem_mountain_mask.tif
 ```
 
-The `--file` argument can be a filename relative to the directory argument, or an absolute path:
+`--file` can be a filename relative to the directory argument, or an absolute path:
 
 ```bash
 python tif_to_png.py --file /absolute/path/to/my_raster.tif
@@ -60,39 +64,36 @@ python tif_to_png.py
 |---|---|---|
 | `directory` | `.` | Directory to search for `.tif` files |
 | `--file`, `-f` | — | Process only this single `.tif` file |
-| `--colormap`, `-c` | `terrain` | Matplotlib colormap for single-band rasters |
 | `--width` | `5.0` | Output image width in inches |
-| `--dpi` | `300` | Output resolution in dots per inch |
+| `--dpi` | `300` | Pixels per inch (output pixel width = width × dpi) |
 
-### Useful colormaps for lsdtt3 outputs
-
-| Raster type | Suggested colormap |
-|---|---|
-| DEM / elevation | `terrain`, `gist_earth` |
-| Residual (positive + negative) | `RdBu_r`, `bwr` |
-| Binary mask (0/1) | `grey` |
-| Local relief | `hot_r`, `plasma` |
-| Slope / curvature | `viridis`, `magma` |
+Default output is **1500 pixels wide** (5 in × 300 DPI).
+Height is calculated to preserve the raster's aspect ratio.
 
 ---
 
-## Output
+## Rendering
 
-Each `.tif` produces a `.png` with the same stem in the same directory.  Output images are **5 inches wide at 300 DPI** (1 500 pixels wide) by default, with height set to preserve the raster's aspect ratio.
+`gdal_translate` is called with:
+- `-of PNG` — PNG output
+- `-outsize W H` — pixel dimensions calculated from width and DPI
+- `-scale` — auto-stretches values to the full data range (min → 0, max → 255)
+- `-ot Byte` — output as 8-bit
 
-Single-band rasters are stretched with a **2 %–98 % percentile linear stretch**.  Nodata pixels are rendered transparent (white when viewed on a white background).  Three-band rasters are treated as RGB.
+This gives a usable image for any raster type (DEM, mask, residual, etc.)
+without requiring knowledge of the data range in advance.
 
 ---
 
 ## Example: inspect lsdtt-mountain-front outputs
 
-After running `lsdtt-mountain-front` with default outputs in `/data/tabernas/`:
+After running `lsdtt-mountain-front` in `/data/tabernas/`:
 
 ```bash
 python tif_to_png.py /data/tabernas/
 ```
 
-This produces:
+Produces:
 
 ```
 tabernas_synthetic_dem.png
@@ -103,8 +104,8 @@ tabernas_residual.png
 tabernas_mountain_mask.png
 ```
 
-To inspect just the residual with a diverging colormap:
+To convert just one file at a lower resolution:
 
 ```bash
-python tif_to_png.py /data/tabernas/ --file tabernas_residual.tif --colormap RdBu_r
+python tif_to_png.py /data/tabernas/ --file tabernas_residual.tif --dpi 150
 ```

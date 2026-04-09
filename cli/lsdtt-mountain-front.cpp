@@ -459,13 +459,21 @@ int main(int argc, char* argv[])
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
+    // Retrieve parsed values — these reflect the parameter file, falling back
+    // to the defaults declared above.  Never read from the *_default_map after
+    // this point; those maps still hold the original defaults.
+    auto bf = pp.get_bool_parameters();
+    auto ff = pp.get_float_parameters();
+    auto ip = pp.get_int_parameters();
+    auto sf = pp.get_string_parameters();
+
     // -------------------------------------------------------------------------
     // Cross-parameter logic
     // -------------------------------------------------------------------------
-    const bool use_synthetic = bool_default_map["use_synthetic_dem"];
+    const bool use_synthetic = bf["use_synthetic_dem"];
 
     // Validate fit_method string
-    const std::string fit_method_str = string_default_map["fit_method"];
+    const std::string fit_method_str = sf["fit_method"];
     lsdtt::mountain_front_fit_method fit_method;
     if      (fit_method_str == "plane_ols")       fit_method = lsdtt::mountain_front_fit_method::plane_ols;
     else if (fit_method_str == "plane_ransac")     fit_method = lsdtt::mountain_front_fit_method::plane_ransac;
@@ -481,7 +489,7 @@ int main(int argc, char* argv[])
     // Validate synthetic_range_edge
     lsdtt::lsdtt_range_edge range_edge = lsdtt::lsdtt_range_edge::north;
     {
-        const std::string e = string_default_map["synthetic_range_edge"];
+        const std::string e = sf["synthetic_range_edge"];
         if      (e == "north") range_edge = lsdtt::lsdtt_range_edge::north;
         else if (e == "south") range_edge = lsdtt::lsdtt_range_edge::south;
         else if (e == "east")  range_edge = lsdtt::lsdtt_range_edge::east;
@@ -497,12 +505,12 @@ int main(int argc, char* argv[])
     // Raster output format
     lsdtt::raster_output_format out_format = lsdtt::raster_output_format::cog;
     {
-        const std::string& fmt = string_default_map["write_output_format"];
+        const std::string& fmt = sf["write_output_format"];
         if      (fmt == "gtiff" || fmt == "geotiff") out_format = lsdtt::raster_output_format::gtiff;
         else if (fmt == "same_as_input")             out_format = lsdtt::raster_output_format::same_as_input;
     }
 
-    const int n_threads = int_default_map["n_threads"];
+    const int n_threads = ip["n_threads"];
 
     // -------------------------------------------------------------------------
     // Build mountain_front_request
@@ -510,25 +518,21 @@ int main(int argc, char* argv[])
     lsdtt::mountain_front_request mf_req;
 
     mf_req.relief_scales = {
-        { static_cast<double>(float_default_map["relief_radius_short_metres"]),
-          static_cast<double>(float_default_map["relief_max_short_metres"])  },
-        { static_cast<double>(float_default_map["relief_radius_long_metres"]),
-          static_cast<double>(float_default_map["relief_max_long_metres"])   }
+        { static_cast<double>(ff["relief_radius_short_metres"]),
+          static_cast<double>(ff["relief_max_short_metres"])  },
+        { static_cast<double>(ff["relief_radius_long_metres"]),
+          static_cast<double>(ff["relief_max_long_metres"])   }
     };
-    mf_req.require_all_scales_pass      = bool_default_map["require_all_scales_pass"];
-    mf_req.use_elevation_filter         = bool_default_map["use_elevation_filter"];
-    mf_req.elevation_upper_percentile   =
-        static_cast<double>(float_default_map["elevation_upper_percentile"]);
+    mf_req.require_all_scales_pass      = bf["require_all_scales_pass"];
+    mf_req.use_elevation_filter         = bf["use_elevation_filter"];
+    mf_req.elevation_upper_percentile   = static_cast<double>(ff["elevation_upper_percentile"]);
     mf_req.fit_method                   = fit_method;
-    mf_req.ransac_inlier_tolerance      =
-        static_cast<double>(float_default_map["ransac_inlier_tolerance"]);
-    mf_req.ransac_max_iterations        = int_default_map["ransac_max_iterations"];
-    mf_req.ransac_seed                  = int_default_map["ransac_seed"];
-    mf_req.spectral_lambda_metres       =
-        static_cast<double>(float_default_map["spectral_lambda_metres"]);
-    mf_req.residual_percentile_threshold =
-        static_cast<double>(float_default_map["residual_percentile_threshold"]);
-    mf_req.return_diagnostics           = bool_default_map["return_diagnostics"];
+    mf_req.ransac_inlier_tolerance      = static_cast<double>(ff["ransac_inlier_tolerance"]);
+    mf_req.ransac_max_iterations        = ip["ransac_max_iterations"];
+    mf_req.ransac_seed                  = ip["ransac_seed"];
+    mf_req.spectral_lambda_metres       = static_cast<double>(ff["spectral_lambda_metres"]);
+    mf_req.residual_percentile_threshold = static_cast<double>(ff["residual_percentile_threshold"]);
+    mf_req.return_diagnostics           = bf["return_diagnostics"];
     mf_req.n_threads                    = n_threads;
 
     // -------------------------------------------------------------------------
@@ -540,17 +544,17 @@ int main(int argc, char* argv[])
 
     if (use_synthetic)
     {
-        const int    n_rows    = int_default_map["synthetic_n_rows"];
-        const int    n_cols    = int_default_map["synthetic_n_cols"];
-        const double cell_size = static_cast<double>(float_default_map["synthetic_cell_size"]);
+        const int    n_rows    = ip["synthetic_n_rows"];
+        const int    n_cols    = ip["synthetic_n_cols"];
+        const double cell_size = static_cast<double>(ff["synthetic_cell_size"]);
 
-        const double ridge_elev     = static_cast<double>(float_default_map["synthetic_ridge_elevation"]);
-        const double piedmont_elev  = static_cast<double>(float_default_map["synthetic_piedmont_elevation"]);
-        const double mtn_noise      = static_cast<double>(float_default_map["synthetic_mountain_noise"]);
-        const double pdt_noise      = static_cast<double>(float_default_map["synthetic_piedmont_noise"]);
-        const int    noise_seed     = int_default_map["synthetic_noise_seed"];
+        const double ridge_elev    = static_cast<double>(ff["synthetic_ridge_elevation"]);
+        const double piedmont_elev = static_cast<double>(ff["synthetic_piedmont_elevation"]);
+        const double mtn_noise     = static_cast<double>(ff["synthetic_mountain_noise"]);
+        const double pdt_noise     = static_cast<double>(ff["synthetic_piedmont_noise"]);
+        const int    noise_seed    = ip["synthetic_noise_seed"];
 
-        const std::string& geom = string_default_map["synthetic_geometry"];
+        const std::string& geom = sf["synthetic_geometry"];
 
         std::cout << "Generating synthetic " << geom << " mountain range...\n";
 
@@ -561,8 +565,8 @@ int main(int argc, char* argv[])
             surf = lsdtt::generate_linear_range_surface(
                 n_rows, n_cols, cell_size,
                 ridge_elev, piedmont_elev,
-                static_cast<double>(float_default_map["synthetic_ridge_position_fraction"]),
-                static_cast<double>(float_default_map["synthetic_ridge_half_width_fraction"]),
+                static_cast<double>(ff["synthetic_ridge_position_fraction"]),
+                static_cast<double>(ff["synthetic_ridge_half_width_fraction"]),
                 mtn_noise, pdt_noise,
                 true, 0.55, noise_seed, n_threads
             );
@@ -573,7 +577,7 @@ int main(int argc, char* argv[])
                 n_rows, n_cols, cell_size,
                 range_edge,
                 ridge_elev, piedmont_elev,
-                static_cast<double>(float_default_map["synthetic_front_fraction"]),
+                static_cast<double>(ff["synthetic_front_fraction"]),
                 mtn_noise, pdt_noise,
                 0.55, noise_seed, n_threads
             );
@@ -583,10 +587,10 @@ int main(int argc, char* argv[])
             surf = lsdtt::generate_circular_range_surface(
                 n_rows, n_cols, cell_size,
                 ridge_elev, piedmont_elev,
-                static_cast<double>(float_default_map["synthetic_centre_x_fraction"]),
-                static_cast<double>(float_default_map["synthetic_centre_y_fraction"]),
-                static_cast<double>(float_default_map["synthetic_radius_x_fraction"]),
-                static_cast<double>(float_default_map["synthetic_radius_y_fraction"]),
+                static_cast<double>(ff["synthetic_centre_x_fraction"]),
+                static_cast<double>(ff["synthetic_centre_y_fraction"]),
+                static_cast<double>(ff["synthetic_radius_x_fraction"]),
+                static_cast<double>(ff["synthetic_radius_y_fraction"]),
                 mtn_noise, pdt_noise,
                 0.55, noise_seed, n_threads
             );
@@ -597,9 +601,9 @@ int main(int argc, char* argv[])
                 n_rows, n_cols, cell_size,
                 range_edge,
                 ridge_elev, piedmont_elev,
-                static_cast<double>(float_default_map["synthetic_front_fraction"]),
-                static_cast<double>(float_default_map["synthetic_arc_centre_fraction"]),
-                static_cast<double>(float_default_map["synthetic_arc_half_width_fraction"]),
+                static_cast<double>(ff["synthetic_front_fraction"]),
+                static_cast<double>(ff["synthetic_arc_centre_fraction"]),
+                static_cast<double>(ff["synthetic_arc_half_width_fraction"]),
                 mtn_noise, pdt_noise,
                 0.55, noise_seed, n_threads
             );
@@ -656,11 +660,11 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     std::cout << "Running mountain front identification...\n";
     std::cout << "  Stage 1: multi-scale relief (short="
-              << float_default_map["relief_radius_short_metres"] << " m, long="
-              << float_default_map["relief_radius_long_metres"] << " m)\n";
+              << ff["relief_radius_short_metres"] << " m, long="
+              << ff["relief_radius_long_metres"] << " m)\n";
     std::cout << "  Stage 2: surface fitting (" << fit_method_str << ")\n";
     std::cout << "  Stage 3: residual threshold at "
-              << float_default_map["residual_percentile_threshold"] * 100.0f
+              << ff["residual_percentile_threshold"] * 100.0f
               << "th percentile\n\n";
 
     lsdtt::mountain_front_result result;
@@ -679,14 +683,14 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     const std::string stem = pp.get_full_write_path();
 
-    if (use_synthetic && bool_default_map["write_synthetic_dem_raster"])
+    if (use_synthetic && bf["write_synthetic_dem_raster"])
     {
         const std::string p = stem + "_synthetic_dem.tif";
         std::cout << "Writing synthetic DEM: " << p << "\n";
         loader.write_full(dem.get_data(), dem.get_meta(), p, out_format);
     }
 
-    if (use_synthetic && bool_default_map["write_synthetic_front_raster"])
+    if (use_synthetic && bf["write_synthetic_front_raster"])
     {
         const std::string p = stem + "_synthetic_front.tif";
         std::cout << "Writing ground-truth front mask: " << p << "\n";
@@ -694,7 +698,7 @@ int main(int argc, char* argv[])
                           synthetic_front_mask.get_meta(), p, out_format);
     }
 
-    if (bool_default_map["write_low_ground_mask_raster"])
+    if (bf["write_low_ground_mask_raster"])
     {
         const std::string p = stem + "_low_ground_mask.tif";
         std::cout << "Writing low-ground mask: " << p << "\n";
@@ -702,7 +706,7 @@ int main(int argc, char* argv[])
                           result.low_ground_mask.get_meta(), p, out_format);
     }
 
-    if (bool_default_map["write_fitted_surface_raster"])
+    if (bf["write_fitted_surface_raster"])
     {
         const std::string p = stem + "_fitted_surface.tif";
         std::cout << "Writing fitted surface: " << p << "\n";
@@ -710,7 +714,7 @@ int main(int argc, char* argv[])
                           result.fitted_surface.get_meta(), p, out_format);
     }
 
-    if (bool_default_map["write_residual_raster"])
+    if (bf["write_residual_raster"])
     {
         const std::string p = stem + "_residual.tif";
         std::cout << "Writing residual: " << p << "\n";
@@ -718,7 +722,7 @@ int main(int argc, char* argv[])
                           result.residual.get_meta(), p, out_format);
     }
 
-    if (bool_default_map["write_mountain_mask_raster"])
+    if (bf["write_mountain_mask_raster"])
     {
         const std::string p = stem + "_mountain_mask.tif";
         std::cout << "Writing mountain mask: " << p << "\n";
@@ -726,7 +730,7 @@ int main(int argc, char* argv[])
                           result.mountain_mask.get_meta(), p, out_format);
     }
 
-    if (bool_default_map["return_diagnostics"] &&
+    if (bf["return_diagnostics"] &&
         !result.relief_rasters.empty())
     {
         for (std::size_t i = 0; i < result.relief_rasters.size(); ++i)
