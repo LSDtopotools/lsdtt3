@@ -26,10 +26,6 @@
 namespace lsdtt {
 namespace {
 
-double nan_value()
-{
-    return std::numeric_limits<double>::quiet_NaN();
-}
 
 void require_positive_bin_count(std::size_t n_bins, const char* function_name)
 {

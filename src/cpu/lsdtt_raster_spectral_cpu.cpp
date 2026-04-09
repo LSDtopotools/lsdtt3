@@ -28,7 +28,7 @@
 
 #include "../utils/lsdtt_histogram.hpp"
 #include "../utils/lsdtt_regression.hpp"
-//#include "../utils/lsdtt_thread_utils.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1411,15 +1411,6 @@ static spectral_psd_product compute_periodogram(
     const lsdtt_raster_cpu& dem,
     spectral_window_type    window,
     int                     n_threads
-);
-
-static background_spectrum_product construct_background_spectrum(
-    const lsdtt_raster_cpu&   dem,
-    const spectral_psd_product& observed_psd,
-    double                    sub_rollover_beta,
-    int                       n_iterations,
-    spectral_window_type      window,
-    int                       n_threads
 );
 
 

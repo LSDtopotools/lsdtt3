@@ -11,6 +11,7 @@
 #include "../cpu/lsdtt_raster_cpu.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 #include "../utils/lsdtt_statistics.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <map>
 #include <array>
