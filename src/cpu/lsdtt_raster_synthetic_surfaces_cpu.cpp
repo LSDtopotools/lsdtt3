@@ -8,7 +8,7 @@
 
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
-#include "../utils/lsdtt_thread_utils.hpp"
+//#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <cmath>
 #include <cstddef>
