@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -1679,7 +1680,8 @@ static background_spectrum_product construct_background_spectrum(
     double                      sub_rollover_beta,
     int                         n_iterations,
     spectral_window_type        window,
-    int                         n_threads)
+    int                         n_threads,
+    int                         seed_base)
 {
     if (n_iterations < 1)
     {
@@ -1759,8 +1761,10 @@ static background_spectrum_product construct_background_spectrum(
 
     for (int iter = 0; iter < n_iterations; ++iter)
     {
-        // Use a simple deterministic seed mapping for repeatability.
-        const int seed = 1000 + iter;
+        std::cout << "  Background iteration " << (iter + 1)
+                  << " / " << n_iterations << "\n" << std::flush;
+
+        const int seed = (seed_base >= 0) ? (seed_base + iter) : (1000 + iter);
 
         lsdtt_raster_cpu synthetic_dem =
             generate_power_law_fractal_surface_fft(
@@ -2855,22 +2859,26 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
     // -------------------------------------------------------------------------
     // 1. Observed periodogram
     // -------------------------------------------------------------------------
+    std::cout << "Computing observed periodogram...\n" << std::flush;
     const spectral_psd_product observed_psd =
         compute_periodogram(
             work,
             opts.window,
             opts.n_threads
         );
+    std::cout << "Observed periodogram complete.\n" << std::flush;
 
     // -------------------------------------------------------------------------
     // 2. Rollover estimation from binned radial spectrum
     // -------------------------------------------------------------------------
+    std::cout << "Estimating rollover frequency...\n" << std::flush;
     const rollover_fit_product rollover =
         estimate_rollover_from_binned_spectrum(
             observed_psd.radial_frequency,
             observed_psd.radial_psd,
             opts.log_bin_width
         );
+    std::cout << "Rollover estimation complete.\n" << std::flush;
 
     // Use the sub-rollover beta if available; otherwise fall back to the main
     // rollover beta, and finally to a conservative default.
@@ -2887,6 +2895,13 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
     // -------------------------------------------------------------------------
     // 3. Monte Carlo background spectrum
     // -------------------------------------------------------------------------
+    const int effective_seed =
+        (opts.background_seed >= 0) ? opts.background_seed : 1000;
+    std::cout << "Constructing background spectrum ("
+              << opts.n_background_iterations << " iteration"
+              << (opts.n_background_iterations == 1 ? "" : "s")
+              << ", seed base = " << effective_seed << ")...\n"
+              << std::flush;
     const background_spectrum_product background =
         construct_background_spectrum(
             work,
@@ -2894,8 +2909,10 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
             background_beta,
             opts.n_background_iterations,
             opts.window,
-            opts.n_threads
+            opts.n_threads,
+            opts.background_seed
         );
+    std::cout << "Background spectrum complete.\n" << std::flush;
 
     // -------------------------------------------------------------------------
     // 4. Validate observed/background frequency compatibility
@@ -3015,6 +3032,7 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
 
     // -------------------------------------------------------------------------
     // 6. Shared-valid binned outputs
+    std::cout << "Binning radial spectrum...\n" << std::flush;
     //
     // To keep the binned frequency grid consistent across PSD, background PSD,
     // and normalised PSD, only retain raw points that are valid and positive in
