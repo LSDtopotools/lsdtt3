@@ -101,6 +101,21 @@ lsdtt_basin_cpu::check_basin_completeness(const std::string& boundary_conditions
     return true;
 }
 
+lsdtt_raster_result
+lsdtt_basin_cpu::get_basin_raster(lsdtt_raster_result raster, float fill_value) const
+{
+    validate_basin_raster_input(raster);
+
+    for (const std::int64_t flat : slice_)
+    {
+        const std::size_t idx = static_cast<std::size_t>(flat);
+        raster.data[idx] = fill_value;
+        raster.mask[idx] = 1u;
+    }
+
+    return raster;
+}
+
 
 // -----------------------------------------------------------------------
 // CPU-specific accessors
@@ -135,6 +150,40 @@ std::vector<std::int64_t> lsdtt_basin_cpu::get_basin_outline() const
 {
     // TODO: implement edge-tracing algorithm to return boundary flat indices.
     return {};
+}
+
+
+void lsdtt_basin_cpu::validate_basin_raster_input(
+    const lsdtt_raster_result& raster) const
+{
+    if (flow_ == nullptr)
+    {
+        throw std::runtime_error(
+            "lsdtt_basin_cpu::get_basin_raster: flow pointer is null"
+        );
+    }
+
+    if (raster.meta.n_rows != flow_->n_rows() ||
+        raster.meta.n_cols != flow_->n_cols())
+    {
+        throw std::runtime_error(
+            "lsdtt_basin_cpu::get_basin_raster: raster dimensions do not match flow"
+        );
+    }
+
+    if (raster.data.size() != flow_->full_grid_size())
+    {
+        throw std::runtime_error(
+            "lsdtt_basin_cpu::get_basin_raster: raster data size does not match flow grid size"
+        );
+    }
+
+    if (raster.mask.size() != flow_->full_grid_size())
+    {
+        throw std::runtime_error(
+            "lsdtt_basin_cpu::get_basin_raster: raster mask size does not match flow grid size"
+        );
+    }
 }
 
 } // namespace lsdtt

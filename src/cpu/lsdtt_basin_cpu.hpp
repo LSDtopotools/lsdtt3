@@ -59,6 +59,11 @@ public:
         check_basin_completeness(const std::string& boundary_conditions) const override;
 
     [[nodiscard]] std::int32_t pixel_count() const noexcept override;
+
+    // Paint this basin into an existing raster_result and return the modified raster.
+    // The caller supplies the fill value.
+    [[nodiscard]] lsdtt_raster_result
+        get_basin_raster(lsdtt_raster_result raster, float fill_value) const override;
     // -----------------------------------------------------------------------
     // CPU-specific accessors
     // -----------------------------------------------------------------------
@@ -89,6 +94,8 @@ private:
     [[nodiscard]] static lsdtt_flat_index_slice make_slice(
         const lsdtt_flow_base& flow,
         std::int64_t basin_outlet_flat_index);
+
+    void validate_basin_raster_input(const lsdtt_raster_result& raster) const;
 
 private:
 

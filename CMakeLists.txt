@@ -270,7 +270,6 @@ endmacro()
 # =============================================================================
 lsdtt_cli(lsdtt-raster-preprocessing   cli/lsdtt-raster-preprocessing.cpp)
 lsdtt_cli(lsdtt-raster-synthetic-tests cli/lsdtt-raster-synthetic-tests.cpp)
-lsdtt_cli(lsdtt-test-flowinfo          cli/lsdtt-test-flowinfo.cpp)
 lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)

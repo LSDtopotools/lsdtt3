@@ -926,9 +926,30 @@ int main(int argc, char* argv[])
         if (bf["write_basins_raster"])
         {
             std::cout << "\n--- Basin raster output ---\n";
-            std::cout << "write_basins_raster is true, but basin raster writing "
-                      << "has not yet been implemented on "
-                      << "lsdtt_junction_basin_manager_cpu.\n";
+
+            const std::string output_file =
+                out_path(pp, "_junction_basins", ".tif");
+
+            std::cout << "Writing: " << output_file << "\n";
+
+            try
+            {
+                lsdtt::lsdtt_raster_result basin_raster =
+                    basin_manager.get_junction_basins_raster();
+
+                lsdtt::lsdtt_data_loader basin_loader;
+                basin_loader.write_full(
+                    basin_raster,
+                    output_file,
+                    lsdtt::raster_output_format::cog
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing basin raster failed: "
+                        << e.what() << "\n";
+                return 1;
+            }
         }
     }
 

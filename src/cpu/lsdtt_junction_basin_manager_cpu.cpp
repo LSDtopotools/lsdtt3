@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <numeric>
 
 namespace lsdtt
 {
@@ -399,5 +400,57 @@ lsdtt_junction_basin_manager_cpu::get_stream_orders() const
 
     return stream_orders;
 }
+
+// -----------------------------------------------------------------------
+// Raster output
+// -----------------------------------------------------------------------
+lsdtt_raster_result
+lsdtt_junction_basin_manager_cpu::get_junction_basins_raster() const
+{
+    if (basins_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_basin_manager_cpu::get_junction_basins_raster: "
+            "no basins have been selected"
+        );
+    }
+
+    lsdtt_raster_result out;
+    out.meta = flow_->meta();
+
+    const std::size_t n_cells = flow_->full_grid_size();
+    const float ndv = static_cast<float>(out.meta.no_data_value);
+
+    out.data.assign(n_cells, ndv);
+    out.mask.assign(n_cells, 0u);
+
+    std::vector<std::size_t> order(basins_.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+
+    std::stable_sort(
+        order.begin(),
+        order.end(),
+        [this](std::size_t a, std::size_t b)
+        {
+            const std::int32_t ja = basins_[a].get_junction_number();
+            const std::int32_t jb = basins_[b].get_junction_number();
+
+            return junction_network_->s_vector_start(ja) <
+                   junction_network_->s_vector_start(jb);
+        });
+
+    for (const std::size_t basin_index : order)
+    {
+        const lsdtt_junction_basin_cpu& basin = basins_[basin_index];
+        const float junction_number =
+            static_cast<float>(basin.get_junction_number());
+
+        out = basin.get_basin_raster(std::move(out), junction_number);
+    }
+
+    return out;
+}
+
+
 
 } // namespace lsdtt

@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <string>
 
+#include "lsdtt_raster_result.hpp"
+
 namespace lsdtt
 {
 
@@ -50,6 +52,12 @@ public:
     // get_number_of_basin_pixels but provided for consistency with the
     // filtering interface in lsdtt_junction_basin_selection_cpu.
     [[nodiscard]] virtual std::int32_t pixel_count() const noexcept = 0;
+
+    // Paint this basin into an existing raster_result and return the modified raster.
+    // The caller supplies the fill value.
+    [[nodiscard]] virtual lsdtt_raster_result
+    get_basin_raster(lsdtt_raster_result raster, float fill_value) const = 0;
+
 
 };
 
