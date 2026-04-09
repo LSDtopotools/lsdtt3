@@ -251,6 +251,22 @@ int main(int argc, char* argv[])
         "CSV is not allowed for channel network lines."
     };
 
+        // --- Output --- junctions
+    bool_default_map["write_channel_network_junctions"] = false;
+    help_map["write_channel_network_junctions"] = {"bool", "false",
+        "Write the channel network junctions as point data",
+        "Contains feature attributes: junction_number, receiver_junction"
+        "and stream_order"
+    };
+
+    string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
+    help_map["channel_network_junctions_output_format"] = {"string","gpkg",
+        "Output format for the exported channel network.",
+        "csv: writes latitude/longitude point rows in EPSG:4326. "
+        "gpkg: writes a GeoPackage in the raster CRS. "
+        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
+
+
     // --- Output --- flow lines
     bool_default_map["write_flow_lines"] = false;
     help_map["write_flow_lines"] = {"bool","false",
@@ -308,6 +324,11 @@ int main(int argc, char* argv[])
 
     lsdtt::raster_output_format flow_direction_output_format =
         lsdtt::resolve_raster_output_format(sf["flow_direction_output_format"]);
+
+    lsdtt::point_output_format cn_junctions_output_format =
+        lsdtt::resolve_point_output_format(
+            sf["channel_network_junctions_output_format"]
+        );
 
     if (bf["write_flow_lines"])
     {
@@ -601,6 +622,33 @@ int main(int argc, char* argv[])
         {
             std::cerr << "FATAL: writing channel network lines failed: "
                     << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (bf["write_channel_network_junctions"])
+    {
+        std::cout << "\n--- Writing channel network junctions ---\n";
+        const std::string extension =
+            lsdtt::output_extension(cn_junctions_output_format);
+        const std::string output_file =
+            out_path(pp, "_channel_network_junctions", extension);
+
+        std::cout << "Writing: " << output_file << "\n";
+
+        try
+        {
+            channel_network->write_junction_network_points(
+                output_file,
+                cn_junctions_output_format,
+                "channel_network_junctions",
+                bf["calculate_spatial_index"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing channel network points failed: "
+                      << e.what() << "\n";
             return 1;
         }
     }

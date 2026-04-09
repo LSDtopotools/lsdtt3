@@ -1880,6 +1880,156 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
 }
 
 
+void lsdtt_junction_network_cpu::write_junction_network_points(
+    const std::string& out_path,
+    point_output_format format,
+    const std::string& layer_name,
+    bool spatial_index
+) const
+{
+    require_built();
+
+    if (junction_flat_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu: cannot write empty junction network"
+        );
+    }
+
+    lsdtt_data_loader loader;
+
+    // -------------------------------------------------------------------------
+    // CSV output
+    //
+    // Always writes latitude / longitude in EPSG:4326 for backward compatibility.
+    // -------------------------------------------------------------------------
+    if (format == point_output_format::csv)
+    {
+        if (meta_.crs_wkt.empty())
+        {
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu: CSV output requires a valid raster CRS "
+                "so points can be transformed to EPSG:4326"
+            );
+        }
+
+        const lsdtt_coordinate_transform transform =
+            lsdtt_coordinate_transform::from_epsg(meta_.crs_wkt, 4326);
+
+        std::vector<std::string> headers =
+        {
+            "latitude",
+            "longitude",
+            "row",
+            "col",
+            "flat",
+            "junction_number",
+            "receiver_junction",
+            "stream_order"
+        };
+
+        auto precise_string = [](double value) -> std::string
+        {
+            std::ostringstream ss;
+            ss.precision(17);
+            ss << value;
+            return ss.str();
+        };
+
+        std::vector<std::vector<std::string>> rows;
+        rows.reserve(junction_flat_.size());
+
+        for (std::int32_t junction = 0;
+             junction < static_cast<std::int32_t>(junction_flat_.size());
+             ++junction)
+        {
+            const std::int64_t flat = junction_flat_[static_cast<std::size_t>(junction)];
+            const int row = flow_->row_from_flat_unchecked(flat);
+            const int col = flow_->col_from_flat_unchecked(flat);
+
+            const lsdtt_lonlat ll =
+                cell_center_to_lonlat(meta_, row, col, transform);
+
+            std::vector<std::string> this_row;
+            this_row.reserve(7);
+
+            this_row.push_back(precise_string(ll.latitude));
+            this_row.push_back(precise_string(ll.longitude));
+            this_row.push_back(std::to_string(row));
+            this_row.push_back(std::to_string(col));
+            this_row.push_back(std::to_string(flat));
+            this_row.push_back(std::to_string(junction));
+            this_row.push_back(
+                std::to_string(
+                    receiver_junction_[static_cast<std::size_t>(junction)]
+                )
+            );
+            this_row.push_back(
+                std::to_string(
+                    stream_order_junction_[static_cast<std::size_t>(junction)]
+                )
+            );
+
+            rows.push_back(std::move(this_row));
+        }
+
+        loader.write_csv(out_path, headers, rows);
+        return;
+    }
+
+    // -------------------------------------------------------------------------
+    // Vector output: GPKG / FlatGeobuf
+    //
+    // Geometry is written in the raster's native CRS.
+    // -------------------------------------------------------------------------
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "junction_number",
+        "receiver_junction",
+        "stream_order"
+    };
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type
+    };
+
+    const vector_output_format out_format =
+        convert_point_to_vector_output_format(format);
+
+    loader.begin_vector_write(
+        out_path, layer_name, schema, meta_.crs_wkt, out_format, spatial_index
+    );
+
+    for (std::int32_t junction = 0;
+         junction < static_cast<std::int32_t>(junction_flat_.size());
+         ++junction)
+    {
+        const std::int64_t flat = junction_flat_[static_cast<std::size_t>(junction)];
+        const int row = flow_->row_from_flat_unchecked(flat);
+        const int col = flow_->col_from_flat_unchecked(flat);
+
+        const lsdtt_xy xy =
+            cell_center_from_row_col(meta_, row, col);
+
+        loader.write_point(
+            xy.x,
+            xy.y,
+            {
+                static_cast<std::int64_t>(junction),
+                static_cast<std::int64_t>(
+                    receiver_junction_[static_cast<std::size_t>(junction)]
+                ),
+                static_cast<std::int64_t>(
+                    stream_order_junction_[static_cast<std::size_t>(junction)]
+                )
+            }
+        );
+    }
+
+    loader.finish_vector_write();
+}
+
+
 
 
 } // namespace lsdtt

@@ -256,6 +256,22 @@ int main(int argc, char* argv[])
         "CSV is not allowed for channel network lines."
     };
 
+    // --- Output --- junctions
+    bool_default_map["write_channel_network_junctions"] = false;
+    help_map["write_channel_network_junctions"] = {"bool", "false",
+        "Write the channel network junctions as point data",
+        "Contains feature attributes: junction_number, receiver_junction"
+        "and stream_order"
+    };
+
+    string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
+    help_map["channel_network_junctions_output_format"] = {"string","gpkg",
+        "Output format for the exported channel network.",
+        "csv: writes latitude/longitude point rows in EPSG:4326. "
+        "gpkg: writes a GeoPackage in the raster CRS. "
+        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
+
+
     // --- Basin outlet input ---
     string_default_map["basin_outlet_csv"] = "NULL";
     help_map["basin_outlet_csv"] = {"string","NULL",
@@ -378,6 +394,11 @@ int main(int argc, char* argv[])
     lsdtt::vector_output_format cn_lines_output_format =
         lsdtt::resolve_vector_output_format(
             sf["channel_network_lines_output_format"]
+        );
+    
+    lsdtt::point_output_format cn_junctions_output_format =
+        lsdtt::resolve_point_output_format(
+            sf["channel_network_junctions_output_format"]
         );
 
     const bool select_basins_from_outlets =
@@ -625,10 +646,10 @@ int main(int argc, char* argv[])
     jn_opts.build_topological_order = true;
     jn_opts.build_s_vector          = true;
 
-    lsdtt::lsdtt_junction_network_cpu channel_network;
+    std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
     try
     {
-        channel_network.create(*flow, source_flats, jn_opts);
+        channel_network = lsdtt::make_junction_network_base(*flow, source_flats, jn_opts);
     }
     catch (const std::exception& e)
     {
@@ -637,9 +658,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "Channel cells : " << channel_network.n_channel_cells() << "\n";
-    std::cout << "Junctions     : " << channel_network.n_junctions() << "\n";
-    std::cout << "Outlet nodes  : " << channel_network.n_outlet_junctions() << "\n";
+    std::cout << "Channel cells : " << channel_network->n_channel_cells() << "\n";
+    std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
+    std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
 
     // -------------------------------------------------------------------------
     // Step 5 — Optional channel-network writing
@@ -656,7 +677,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            channel_network.write_channel_network_points(
+            channel_network->write_channel_network_points(
                 output_file,
                 cn_points_output_format,
                 "channel_network_points",
@@ -683,7 +704,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            channel_network.write_channel_network_lines(
+            channel_network->write_channel_network_lines(
                 output_file,
                 cn_lines_output_format,
                 "channel_network_lines",
@@ -698,6 +719,34 @@ int main(int argc, char* argv[])
         }
     }
 
+
+    if (bf["write_channel_network_junctions"])
+    {
+        std::cout << "\n--- Writing channel network junctions ---\n";
+        const std::string extension =
+            lsdtt::output_extension(cn_junctions_output_format);
+        const std::string output_file =
+            out_path(pp, "_channel_network_junctions", extension);
+
+        std::cout << "Writing: " << output_file << "\n";
+
+        try
+        {
+            channel_network->write_junction_network_points(
+                output_file,
+                cn_junctions_output_format,
+                "channel_network_junctions",
+                bf["calculate_spatial_index"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing channel network points failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Step 6 — Optional basin selection
     // -------------------------------------------------------------------------
@@ -707,7 +756,7 @@ int main(int argc, char* argv[])
 
         lsdtt::lsdtt_junction_basin_manager_cpu basin_manager(
             *flow,
-            channel_network
+            *channel_network
         );
 
         if (select_all_basins)

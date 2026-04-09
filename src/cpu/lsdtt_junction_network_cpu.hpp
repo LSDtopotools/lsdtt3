@@ -254,6 +254,25 @@ public:
         bool spatial_index = true
     ) const override;
 
+    // -------------------------------------------------------------------------
+    // Junction writing
+    // -------------------------------------------------------------------------
+    // Writes one point per junction.
+    // Attributes are:
+    //   junction_number
+    //   receiver_junction
+    //   junction_stream_order
+    //
+    // For CSV, coordinates are written as latitude/longitude in EPSG:4326.
+    // For vector formats, geometry is written in the raster native CRS.
+    void write_junction_network_points(
+        const std::string& out_path,
+        point_output_format format,
+        const std::string& layer_name = "junction_network_points",
+        bool spatial_index = true
+    ) const override;
+
+
 
 
 
