@@ -256,6 +256,22 @@ int main(int argc, char* argv[])
         "CSV is not allowed for channel network lines."
     };
 
+    // --- Output --- junctions
+    bool_default_map["write_channel_network_junctions"] = false;
+    help_map["write_channel_network_junctions"] = {"bool", "false",
+        "Write the channel network junctions as point data",
+        "Contains feature attributes: junction_number, receiver_junction"
+        "and stream_order"
+    };
+
+    string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
+    help_map["channel_network_junctions_output_format"] = {"string","gpkg",
+        "Output format for the exported channel network.",
+        "csv: writes latitude/longitude point rows in EPSG:4326. "
+        "gpkg: writes a GeoPackage in the raster CRS. "
+        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
+
+
     // --- Basin outlet input ---
     string_default_map["basin_outlet_csv"] = "NULL";
     help_map["basin_outlet_csv"] = {"string","NULL",
@@ -322,6 +338,77 @@ int main(int argc, char* argv[])
         "junction and constructs one lsdtt_junction_basin per junction."
     };
 
+    // --- Basin filtering ---
+    // NOTE: filtering is applied to the selected basins in the order 
+    // that these options are listed!
+    bool_default_map["filter_basins_by_stream_order"] = false;
+    help_map["filter_basins_by_stream_order"] = {"bool", "false",
+        "This will only keep basins between (and inclusive of) "
+        "basins_min_stream_order and basins_max_stream_order.",
+        "Use the -1 flag for either min/max order to not consider "
+        "min or max bound."
+    };
+
+    int_default_map["basins_min_stream_order"] = -1;
+    help_map["basins_min_stream_order"] = {"int", "-1",
+        "The min stream order (inclusive) to keep, when filtering basins "
+        "by stream order.",
+        "Defaults to -1, which means ignore minimum"
+    };
+
+    int_default_map["basins_max_stream_order"] = -1;
+    help_map["basins_max_stream_order"] = {"int", "-1",
+        "The max stream order (inclusive) to keep, when filtering basins "
+        "by stream order.",
+        "Defaults to -1, which means ignore maximum."
+    };
+
+    bool_default_map["filter_basins_by_area"] = false;
+    help_map["filter_basins_by_area"] = {"bool", "false",
+        "This will only keep basins between (and inclusive of) "
+        "basins_min_area_pixels and basins_max_area_pixels.",
+        "Use the -1 flag for either min/max order to not consider "
+        "min or max bound."
+    };
+
+    int_default_map["basins_min_area_pixels"] = -1;
+    help_map["basins_min_stream_order"] = {"int", "-1",
+        "The min basin area in pixels (inclusive) to keep, when filtering basins "
+        "by area.",
+        "Defaults to -1, which means ignore minimum"
+    };
+
+    int_default_map["basins_max_area_pixels"] = -1;
+    help_map["basins_max_stream_order"] = {"int", "-1",
+        "The max basin area in pixels (inclusive) to keep, when filtering basins "
+        "by area.",
+        "Defaults to -1, which means ignore maximum."
+    };
+
+    bool_default_map["filter_incomplete_basins"] = false;
+    help_map["filter_incomplete_basins"] = {"bool", "false",
+        "This removes all basins that are incomplete.",
+        "An incomplete basin has at least one DEM pixel that is adjacent "
+        "to an invalid pixel. Off-grid neighbours are invalid, unless "
+        "an n or p boundary is supplied."
+    };
+
+    bool_default_map["filter_all_but_largest_basin"] = false;
+    help_map["filter_all_but_largest_basin"] = {"bool", "false",
+        "This only keeps the largest basin.",
+        "Intentionally later on in the filtering order, because it is quite "
+        "likely you will want to pick the largest basin from the set of "
+        "basins that are complete."
+    };
+
+    bool_default_map["filter_nested_basins"] = false;
+    help_map["filter_nested_basins"] = {"bool", "false",
+        "This removes any nested basins. So effectively only keeps the largest "
+        "basins that are still in the selection.",
+        "Intentionally later on in the filtering order, because it is quite "
+        "likely you will want to do this after a completeness check."
+    };
+
     // --- Basin output placeholders ---
     bool_default_map["write_basins_vector"] = false;
     help_map["write_basins_vector"] = {"bool","false",
@@ -378,6 +465,11 @@ int main(int argc, char* argv[])
     lsdtt::vector_output_format cn_lines_output_format =
         lsdtt::resolve_vector_output_format(
             sf["channel_network_lines_output_format"]
+        );
+    
+    lsdtt::point_output_format cn_junctions_output_format =
+        lsdtt::resolve_point_output_format(
+            sf["channel_network_junctions_output_format"]
         );
 
     const bool select_basins_from_outlets =
@@ -625,10 +717,10 @@ int main(int argc, char* argv[])
     jn_opts.build_topological_order = true;
     jn_opts.build_s_vector          = true;
 
-    lsdtt::lsdtt_junction_network_cpu channel_network;
+    std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
     try
     {
-        channel_network.create(*flow, source_flats, jn_opts);
+        channel_network = lsdtt::make_junction_network_base(*flow, source_flats, jn_opts);
     }
     catch (const std::exception& e)
     {
@@ -637,9 +729,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "Channel cells : " << channel_network.n_channel_cells() << "\n";
-    std::cout << "Junctions     : " << channel_network.n_junctions() << "\n";
-    std::cout << "Outlet nodes  : " << channel_network.n_outlet_junctions() << "\n";
+    std::cout << "Channel cells : " << channel_network->n_channel_cells() << "\n";
+    std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
+    std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
 
     // -------------------------------------------------------------------------
     // Step 5 — Optional channel-network writing
@@ -656,7 +748,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            channel_network.write_channel_network_points(
+            channel_network->write_channel_network_points(
                 output_file,
                 cn_points_output_format,
                 "channel_network_points",
@@ -683,7 +775,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            channel_network.write_channel_network_lines(
+            channel_network->write_channel_network_lines(
                 output_file,
                 cn_lines_output_format,
                 "channel_network_lines",
@@ -698,6 +790,34 @@ int main(int argc, char* argv[])
         }
     }
 
+
+    if (bf["write_channel_network_junctions"])
+    {
+        std::cout << "\n--- Writing channel network junctions ---\n";
+        const std::string extension =
+            lsdtt::output_extension(cn_junctions_output_format);
+        const std::string output_file =
+            out_path(pp, "_channel_network_junctions", extension);
+
+        std::cout << "Writing: " << output_file << "\n";
+
+        try
+        {
+            channel_network->write_junction_network_points(
+                output_file,
+                cn_junctions_output_format,
+                "channel_network_junctions",
+                bf["calculate_spatial_index"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing channel network points failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Step 6 — Optional basin selection
     // -------------------------------------------------------------------------
@@ -707,7 +827,7 @@ int main(int argc, char* argv[])
 
         lsdtt::lsdtt_junction_basin_manager_cpu basin_manager(
             *flow,
-            channel_network
+            *channel_network
         );
 
         if (select_all_basins)
@@ -913,7 +1033,50 @@ int main(int argc, char* argv[])
         std::cout << "Selected basins: " << basin_manager.size() << "\n";
 
         // ---------------------------------------------------------------------
-        // Step 7 — Future basin writing hooks
+        // Step 7 — Basin filtering
+        // ---------------------------------------------------------------------
+        if(bf["filter_basins_by_stream_order"]){
+            std::cout << "\n--- Filtering out basins by stream order ---\n";
+            std::cout << "min stream order is: " << ifs["basins_min_stream_order"] << "\n";
+            std::cout << "max stream order is: " << ifs["basins_max_stream_order"] << "\n";
+            basin_manager.filter_by_stream_order(
+                ifs["basins_min_stream_order"],
+                ifs["basins_max_stream_order"]
+            );
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        if(bf["filter_basins_by_area"]){
+            std::cout << "\n--- Filtering out basins by stream order ---\n";
+            std::cout << "min area pixels is: " << ifs["basins_min_area_pixels"] << "\n";
+            std::cout << "max area pixels is: " << ifs["basins_max_area_pixels"] << "\n";
+            basin_manager.filter_by_stream_order(
+                ifs["basins_min_area_pixels"],
+                ifs["basins_max_area_pixels"]
+            );
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+        
+        if(bf["filter_incomplete_basins"]){
+            std::cout << "\n--- Filtering out incomplete basins ---\n";
+            basin_manager.filter_incomplete();
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        if(bf["filter_all_but_largest_basin"]){
+            std::cout << "\n--- Filtering out all basins, keeping the largest only ---\n";
+            basin_manager.filter_largest();
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        if(bf["filter_nested_basins"]){
+            std::cout << "\n--- Filtering out all nested basins ---\n";
+            basin_manager.filter_nested();
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        // ---------------------------------------------------------------------
+        // Step 8 — Basin writing
         // ---------------------------------------------------------------------
         if (bf["write_basins_vector"])
         {
@@ -926,9 +1089,30 @@ int main(int argc, char* argv[])
         if (bf["write_basins_raster"])
         {
             std::cout << "\n--- Basin raster output ---\n";
-            std::cout << "write_basins_raster is true, but basin raster writing "
-                      << "has not yet been implemented on "
-                      << "lsdtt_junction_basin_manager_cpu.\n";
+
+            const std::string output_file =
+                out_path(pp, "_junction_basins", ".tif");
+
+            std::cout << "Writing: " << output_file << "\n";
+
+            try
+            {
+                lsdtt::lsdtt_raster_result basin_raster =
+                    basin_manager.get_junction_basins_raster();
+
+                lsdtt::lsdtt_data_loader basin_loader;
+                basin_loader.write_full(
+                    basin_raster,
+                    output_file,
+                    lsdtt::raster_output_format::cog
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing basin raster failed: "
+                        << e.what() << "\n";
+                return 1;
+            }
         }
     }
 

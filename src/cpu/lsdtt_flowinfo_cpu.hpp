@@ -290,6 +290,14 @@ public:
         return donor_count_.data()[flat];
     }
 
+    // This checks if cell is next to an invalid cell or DEM edge
+    // For DEM edge, this takes into account boundary conditions:
+    // stepping off-grid across "o" or "b" results in cell influenced by invalid
+    // stepping off-grid across "n" does not result in cell influenced by invalid
+    // stepping off-grid across "p" checks if cell wrapped to opposite side is valid
+    [[nodiscard]] bool is_influenced_by_invalid(std::int64_t flat) const override;
+
+
     // -------------------------------------------------------------------------
     // s_vector access
     //

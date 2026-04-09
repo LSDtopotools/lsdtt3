@@ -683,6 +683,47 @@ std::uint8_t lsdtt_flowinfo::donor_count_of(std::int64_t flat) const
     return donor_count_.data()[flat];
 }
 
+bool lsdtt_flowinfo::is_influenced_by_invalid(std::int64_t flat) const
+{
+    require_valid_cell(flat);
+
+    const int row = row_from_flat_unchecked(flat);
+    const int col = col_from_flat_unchecked(flat);
+
+    for (int dir = 0; dir < 8; ++dir)
+    {
+        const resolved_neighbour nb = resolve_neighbour(
+            row, col, dir,
+            meta_.n_rows, meta_.n_cols,
+            boundary_conditions_
+        );
+
+        // Stepping out of the domain through an open/baselevel boundary means
+        // this cell is influenced by invalid/out-of-domain terrain.
+        if (nb.outlet_path)
+        {
+            return true;
+        }
+
+        // No inside-grid neighbour was reached. This corresponds to a blocked
+        // / closed boundary ('n'), which we treat as hydrologically complete.
+        if (!nb.inside_grid)
+        {
+            continue;
+        }
+
+        // Wrapped periodic neighbours arrive here as normal inside-grid cells.
+        // Any invalid/nodata neighbour inside the grid makes the cell incomplete.
+        if (mask_(nb.row, nb.col) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
 // =============================================================================
 // s_vector access
 // for finding upslope pixels and calculating drainage area

@@ -275,7 +275,6 @@ lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)
 lsdtt_cli(lsdtt-raster-basin-stats     cli/lsdtt-raster-basin-stats.cpp)
 lsdtt_cli(lsdtt-basin-extraction       cli/lsdtt-basin-extraction.cpp)
-lsdtt_cli(lsdtt-spectral-analysis     cli/lsdtt-spectral-analysis.cpp)
 
 
 # =============================================================================

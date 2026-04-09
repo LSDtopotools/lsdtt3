@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <numeric>
 
 namespace lsdtt
 {
@@ -159,21 +160,185 @@ void lsdtt_junction_basin_manager_cpu::select_junction_basins_from_basin_outlets
 // -----------------------------------------------------------------------
 
 lsdtt_junction_basin_manager_cpu&
-lsdtt_junction_basin_manager_cpu::filter_incomplete(
-    const std::string& boundary_conditions)
+lsdtt_junction_basin_manager_cpu::filter_incomplete()
 {
-    basins_.erase(
-        std::remove_if(
-            basins_.begin(),
-            basins_.end(),
-            [&](const lsdtt_junction_basin_cpu& basin)
-            {
-                return !basin.check_basin_completeness(boundary_conditions);
-            }),
-        basins_.end());
+    if (basins_.empty())
+    {
+        return *this;
+    }
 
+    // If the junction network has no s_vector, fall back to the simple
+    // per-basin check with no optimisation.
+    if (!junction_network_->has_s_vector())
+    {
+        basins_.erase(
+            std::remove_if(
+                basins_.begin(),
+                basins_.end(),
+                [&](const lsdtt_junction_basin_cpu& basin)
+                {
+                    return !basin.check_basin_completeness();
+                }),
+            basins_.end());
+
+        return *this;
+    }
+
+    const std::int32_t n_junctions = junction_network_->n_junctions();
+
+    // ---------------------------------------------------------------------
+    // Process selected basins from upstream to downstream by walking the
+    // junction-network s_vector back-to-front.
+    //
+    // The junction s_vector is preorder DFS from downstream to upstream, so
+    // descending s_vector_start means upstream basins are processed first.
+    // ---------------------------------------------------------------------
+    std::vector<std::size_t> order(basins_.size());
+    for (std::size_t i = 0; i < basins_.size(); ++i)
+    {
+        order[i] = i;
+    }
+
+    std::stable_sort(
+        order.begin(),
+        order.end(),
+        [&](std::size_t a, std::size_t b)
+        {
+            const std::int32_t ja = basins_[a].get_junction_number();
+            const std::int32_t jb = basins_[b].get_junction_number();
+
+            return junction_network_->s_vector_start(ja) >
+                   junction_network_->s_vector_start(jb);
+        });
+
+    // has_incomplete_upstream[j] == 1 means that a previously processed
+    // selected upstream basin was incomplete, so this basin must also be
+    // incomplete and can be rejected immediately.
+    std::vector<std::uint8_t> has_incomplete_upstream(
+        static_cast<std::size_t>(n_junctions),
+        std::uint8_t{0}
+    );
+
+    // junction_status:
+    //   0 = unknown
+    //   1 = complete
+    //   2 = incomplete
+    std::vector<std::uint8_t> junction_status(
+        static_cast<std::size_t>(n_junctions),
+        std::uint8_t{0}
+    );
+
+    // Keep track of already-confirmed complete selected basins. When checking a
+    // downstream basin, we can skip the flow s_vector slices of these complete
+    // upstream basins instead of re-checking those pixels.
+    std::vector<std::size_t> complete_basin_indices;
+    complete_basin_indices.reserve(basins_.size());
+
+    std::vector<bool> remove_mask(basins_.size(), false);
+
+    for (const std::size_t basin_index : order)
+    {
+        const std::int32_t junction =
+            basins_[basin_index].get_junction_number();
+
+        const std::size_t jidx = static_cast<std::size_t>(junction);
+
+        bool is_incomplete = false;
+
+        if (junction_status[jidx] == std::uint8_t{1})
+        {
+            // Duplicate basin selection for a junction already known complete.
+            is_incomplete = false;
+        }
+        else if (junction_status[jidx] == std::uint8_t{2})
+        {
+            // Duplicate basin selection for a junction already known incomplete.
+            is_incomplete = true;
+        }
+        else if (has_incomplete_upstream[jidx] != std::uint8_t{0})
+        {
+            // A selected upstream basin was already found incomplete, so this
+            // downstream basin cannot be complete.
+            is_incomplete = true;
+            junction_status[jidx] = std::uint8_t{2};
+        }
+        else
+        {
+            std::vector<lsdtt_flat_index_slice> excluded_slices;
+            excluded_slices.reserve(complete_basin_indices.size());
+
+            for (const std::size_t complete_index : complete_basin_indices)
+            {
+                const std::int32_t upstream_junction =
+                    basins_[complete_index].get_junction_number();
+
+                if (junction_network_->is_upslope_of(upstream_junction, junction))
+                {
+                    excluded_slices.push_back(
+                        basins_[complete_index].get_slice()
+                    );
+                }
+            }
+
+            is_incomplete =
+                !basins_[basin_index].check_basin_completeness_excluding_slices(
+                    excluded_slices
+                );
+
+            junction_status[jidx] = is_incomplete
+                ? std::uint8_t{2}
+                : std::uint8_t{1};
+
+            if (!is_incomplete)
+            {
+                complete_basin_indices.push_back(basin_index);
+            }
+        }
+
+        if (is_incomplete)
+        {
+            remove_mask[basin_index] = true;
+
+            // Mark all downstream junctions as having an incomplete upstream
+            // selected basin, so they can be rejected without a pixel scan.
+            std::int32_t current = junction;
+
+            while (true)
+            {
+                const std::int32_t rec =
+                    junction_network_->receiver_of_junction(current);
+
+                if (rec < 0)
+                {
+                    break;
+                }
+
+                has_incomplete_upstream[
+                    static_cast<std::size_t>(rec)
+                ] = std::uint8_t{1};
+
+                current = rec;
+            }
+        }
+    }
+
+    // Rebuild the basin list in the original stored order, minus incomplete
+    // basins.
+    std::vector<lsdtt_junction_basin_cpu> filtered;
+    filtered.reserve(basins_.size());
+
+    for (std::size_t i = 0; i < basins_.size(); ++i)
+    {
+        if (!remove_mask[i])
+        {
+            filtered.push_back(std::move(basins_[i]));
+        }
+    }
+
+    basins_ = std::move(filtered);
     return *this;
 }
+
 
 lsdtt_junction_basin_manager_cpu&
 lsdtt_junction_basin_manager_cpu::filter_by_area(
@@ -399,5 +564,57 @@ lsdtt_junction_basin_manager_cpu::get_stream_orders() const
 
     return stream_orders;
 }
+
+// -----------------------------------------------------------------------
+// Raster output
+// -----------------------------------------------------------------------
+lsdtt_raster_result
+lsdtt_junction_basin_manager_cpu::get_junction_basins_raster() const
+{
+    if (basins_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_basin_manager_cpu::get_junction_basins_raster: "
+            "no basins have been selected"
+        );
+    }
+
+    lsdtt_raster_result out;
+    out.meta = flow_->meta();
+
+    const std::size_t n_cells = flow_->full_grid_size();
+    const float ndv = static_cast<float>(out.meta.no_data_value);
+
+    out.data.assign(n_cells, ndv);
+    out.mask.assign(n_cells, 0u);
+
+    std::vector<std::size_t> order(basins_.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+
+    std::stable_sort(
+        order.begin(),
+        order.end(),
+        [this](std::size_t a, std::size_t b)
+        {
+            const std::int32_t ja = basins_[a].get_junction_number();
+            const std::int32_t jb = basins_[b].get_junction_number();
+
+            return junction_network_->s_vector_start(ja) <
+                   junction_network_->s_vector_start(jb);
+        });
+
+    for (const std::size_t basin_index : order)
+    {
+        const lsdtt_junction_basin_cpu& basin = basins_[basin_index];
+        const float junction_number =
+            static_cast<float>(basin.get_junction_number());
+
+        out = basin.get_basin_raster(std::move(out), junction_number);
+    }
+
+    return out;
+}
+
+
 
 } // namespace lsdtt
