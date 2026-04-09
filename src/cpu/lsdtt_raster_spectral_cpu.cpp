@@ -26,6 +26,9 @@
 #include "lsdtt_raster_nodata_filling_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
+#include "../utils/lsdtt_histogram.hpp"
+#include "../utils/lsdtt_regression.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
 #include <array>
@@ -791,29 +794,6 @@ static std::vector<uint8_t> build_support_valid_mask(
     }
 
     return support_valid;
-}
-
-// -----------------------------------------------------------------------------
-// resolve_thread_count
-//
-// Used only for OpenMP loops in this file.
-// FFTW itself is used in serial mode here.
-// -----------------------------------------------------------------------------
-static int resolve_thread_count(int n_threads)
-{
-    int threads = n_threads;
-
-    if (threads <= 0)
-    {
-#ifdef _OPENMP
-        threads = omp_get_max_threads();
-#else
-        threads = static_cast<int>(std::thread::hardware_concurrency());
-#endif
-    }
-
-    if (threads < 1) threads = 1;
-    return threads;
 }
 
 // =============================================================================
@@ -1879,17 +1859,6 @@ static background_spectrum_product construct_background_spectrum(
 
 
 // -----------------------------------------------------------------------------
-// linear_regression_product
-// -----------------------------------------------------------------------------
-struct linear_regression_product
-{
-    bool   ok        = false;
-    double slope     = 0.0;
-    double intercept = 0.0;
-    double r_sq      = 0.0;
-};
-
-// -----------------------------------------------------------------------------
 // rollover_fit_product
 //
 // Internal result from binned-spectrum rollover estimation.
@@ -1905,179 +1874,6 @@ struct rollover_fit_product
     std::vector<double> beta_by_bin;
     std::vector<double> r_sq_by_bin;
 };
-
-// -----------------------------------------------------------------------------
-// fit_simple_linear_regression
-//
-// Fits y = slope * x + intercept and returns coefficient of determination.
-// Returns ok=false if the fit is ill-posed.
-// -----------------------------------------------------------------------------
-static linear_regression_product fit_simple_linear_regression(
-    const std::vector<double>& x,
-    const std::vector<double>& y)
-{
-    linear_regression_product out;
-
-    if (x.size() != y.size() || x.size() < 2)
-    {
-        return out;
-    }
-
-    const std::size_t n = x.size();
-
-    double sum_x = 0.0;
-    double sum_y = 0.0;
-
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        if (!std::isfinite(x[i]) || !std::isfinite(y[i]))
-        {
-            return out;
-        }
-
-        sum_x += x[i];
-        sum_y += y[i];
-    }
-
-    const double mean_x = sum_x / static_cast<double>(n);
-    const double mean_y = sum_y / static_cast<double>(n);
-
-    double ss_xx = 0.0;
-    double ss_xy = 0.0;
-    double ss_yy = 0.0;
-
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        const double dx = x[i] - mean_x;
-        const double dy = y[i] - mean_y;
-
-        ss_xx += dx * dx;
-        ss_xy += dx * dy;
-        ss_yy += dy * dy;
-    }
-
-    if (!std::isfinite(ss_xx) || ss_xx <= 0.0)
-    {
-        return out;
-    }
-
-    out.slope = ss_xy / ss_xx;
-    out.intercept = mean_y - out.slope * mean_x;
-
-    if (ss_yy > 0.0)
-    {
-        out.r_sq = (ss_xy * ss_xy) / (ss_xx * ss_yy);
-    }
-    else
-    {
-        out.r_sq = 1.0;
-    }
-
-    out.ok = std::isfinite(out.slope) &&
-             std::isfinite(out.intercept) &&
-             std::isfinite(out.r_sq);
-
-    return out;
-}
-
-// -----------------------------------------------------------------------------
-// log_bin_mean_xy
-//
-// Log-bins paired (x, y) data by x using bins of width log_bin_width in log10
-// space. Returns the mean x and mean y in each occupied bin.
-//
-// Only pairs with:
-//   x > 0
-//   y > 0
-//   finite x and y
-// are retained.
-// -----------------------------------------------------------------------------
-static std::pair<std::vector<double>, std::vector<double>> log_bin_mean_xy(
-    const std::vector<double>& x_in,
-    const std::vector<double>& y_in,
-    double                     log_bin_width)
-{
-    if (x_in.size() != y_in.size())
-    {
-        throw std::runtime_error(
-            "lsdtt spectral analysis: x/y size mismatch in log_bin_mean_xy"
-        );
-    }
-
-    if (!std::isfinite(log_bin_width) || log_bin_width <= 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt spectral analysis: log_bin_width must be finite and > 0 "
-            "in log_bin_mean_xy"
-        );
-    }
-
-    std::vector<double> x;
-    std::vector<double> y;
-    x.reserve(x_in.size());
-    y.reserve(y_in.size());
-
-    for (std::size_t i = 0; i < x_in.size(); ++i)
-    {
-        const double xv = x_in[i];
-        const double yv = y_in[i];
-
-        if (!std::isfinite(xv) || !std::isfinite(yv)) continue;
-        if (xv <= 0.0 || yv <= 0.0) continue;
-
-        x.push_back(xv);
-        y.push_back(yv);
-    }
-
-    if (x.empty())
-    {
-        return std::make_pair(std::vector<double>{}, std::vector<double>{});
-    }
-
-    sort_xy_pairs_by_x(x, y);
-
-    std::vector<double> binned_x;
-    std::vector<double> binned_y;
-
-    std::int64_t current_bin =
-        static_cast<std::int64_t>(std::floor(std::log10(x[0]) / log_bin_width));
-
-    double sum_x = 0.0;
-    double sum_y = 0.0;
-    std::size_t count = 0;
-
-    for (std::size_t i = 0; i < x.size(); ++i)
-    {
-        const std::int64_t this_bin =
-            static_cast<std::int64_t>(std::floor(std::log10(x[i]) / log_bin_width));
-
-        if (this_bin != current_bin)
-        {
-            if (count > 0)
-            {
-                binned_x.push_back(sum_x / static_cast<double>(count));
-                binned_y.push_back(sum_y / static_cast<double>(count));
-            }
-
-            current_bin = this_bin;
-            sum_x = 0.0;
-            sum_y = 0.0;
-            count = 0;
-        }
-
-        sum_x += x[i];
-        sum_y += y[i];
-        ++count;
-    }
-
-    if (count > 0)
-    {
-        binned_x.push_back(sum_x / static_cast<double>(count));
-        binned_y.push_back(sum_y / static_cast<double>(count));
-    }
-
-    return std::make_pair(std::move(binned_x), std::move(binned_y));
-}
 
 // -----------------------------------------------------------------------------
 // estimate_rollover_from_binned_spectrum
@@ -2159,17 +1955,16 @@ static rollover_fit_product estimate_rollover_from_binned_spectrum(
         std::vector<double> x(log_f.begin() + static_cast<std::ptrdiff_t>(start), log_f.end());
         std::vector<double> y(log_p.begin() + static_cast<std::ptrdiff_t>(start), log_p.end());
 
-        const linear_regression_product fit =
-            fit_simple_linear_regression(x, y);
+        const lsdtt_linear_regression_result fit = compute_linear_regression(x, y);
 
-        if (!fit.ok) continue;
+        if (!fit.has_finite_slope) continue;
 
         any_fit = true;
 
         const double beta_here = -fit.slope;
 
         out.beta_by_bin[start] = beta_here;
-        out.r_sq_by_bin[start] = fit.r_sq;
+        out.r_sq_by_bin[start] = fit.r_squared;
 
         if (std::isfinite(beta_here) && beta_here > best_beta)
         {
@@ -2177,9 +1972,9 @@ static rollover_fit_product estimate_rollover_from_binned_spectrum(
             best_beta_index = start;
         }
 
-        if (std::isfinite(fit.r_sq) && fit.r_sq > best_rsq)
+        if (std::isfinite(fit.r_squared) && fit.r_squared > best_rsq)
         {
-            best_rsq = fit.r_sq;
+            best_rsq = fit.r_squared;
             best_rsq_index = start;
         }
     }
@@ -2238,10 +2033,9 @@ static rollover_fit_product estimate_rollover_from_binned_spectrum(
             log_p.begin() + static_cast<std::ptrdiff_t>(sub_end)
         );
 
-        const linear_regression_product fit =
-            fit_simple_linear_regression(x, y);
+        const lsdtt_linear_regression_result fit = compute_linear_regression(x, y);
 
-        if (fit.ok)
+        if (fit.has_finite_slope)
         {
             out.sub_rollover_beta = -fit.slope;
         }

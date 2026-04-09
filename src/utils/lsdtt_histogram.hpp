@@ -240,6 +240,24 @@ lsdtt_binned_data bin_values_natural_breaks(
     std::size_t n_classes
 );
 
+// -----------------------------------------------------------------------------
+// Log-binned mean
+//
+// Bins paired (x, y) data into logarithmically-spaced bins of width
+// log_bin_width (in log10 space) and returns the mean x and mean y in each
+// occupied bin.
+//
+// Only pairs with x > 0, y > 0, and both finite are included.
+// Returns empty vectors if no valid pairs remain.
+//
+// Throws if x and y have different sizes or log_bin_width <= 0.
+// -----------------------------------------------------------------------------
+std::pair<std::vector<double>, std::vector<double>> log_bin_mean_xy(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    double log_bin_width
+);
+
 // Binned descriptive statistics
 lsdtt_binned_descriptive_stats compute_binned_descriptive_stats(
     const lsdtt_binned_data& binned_data

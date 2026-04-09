@@ -8,6 +8,8 @@
 
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
+#include "../utils/lsdtt_thread_utils.hpp"
+
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -32,26 +34,6 @@ namespace lsdtt
 // Constants
 // -----------------------------------------------------------------------------
 static constexpr double k_pi = 3.14159265358979323846264338327950288;
-
-// -----------------------------------------------------------------------------
-// resolve_thread_count
-// -----------------------------------------------------------------------------
-static int resolve_thread_count(int n_threads)
-{
-    int threads = n_threads;
-
-    if (threads <= 0)
-    {
-#ifdef _OPENMP
-        threads = omp_get_max_threads();
-#else
-        threads = static_cast<int>(std::thread::hardware_concurrency());
-#endif
-    }
-
-    if (threads < 1) threads = 1;
-    return threads;
-}
 
 // -----------------------------------------------------------------------------
 // flat_index
