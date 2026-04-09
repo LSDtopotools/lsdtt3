@@ -341,12 +341,72 @@ int main(int argc, char* argv[])
     // --- Basin filtering ---
     // NOTE: filtering is applied to the selected basins in the order 
     // that these options are listed!
+    bool_default_map["filter_basins_by_stream_order"] = false;
+    help_map["filter_basins_by_stream_order"] = {"bool", "false",
+        "This will only keep basins between (and inclusive of) "
+        "basins_min_stream_order and basins_max_stream_order.",
+        "Use the -1 flag for either min/max order to not consider "
+        "min or max bound."
+    };
+
+    int_default_map["basins_min_stream_order"] = -1;
+    help_map["basins_min_stream_order"] = {"int", "-1",
+        "The min stream order (inclusive) to keep, when filtering basins "
+        "by stream order.",
+        "Defaults to -1, which means ignore minimum"
+    };
+
+    int_default_map["basins_max_stream_order"] = -1;
+    help_map["basins_max_stream_order"] = {"int", "-1",
+        "The max stream order (inclusive) to keep, when filtering basins "
+        "by stream order.",
+        "Defaults to -1, which means ignore maximum."
+    };
+
+    bool_default_map["filter_basins_by_area"] = false;
+    help_map["filter_basins_by_area"] = {"bool", "false",
+        "This will only keep basins between (and inclusive of) "
+        "basins_min_area_pixels and basins_max_area_pixels.",
+        "Use the -1 flag for either min/max order to not consider "
+        "min or max bound."
+    };
+
+    int_default_map["basins_min_area_pixels"] = -1;
+    help_map["basins_min_stream_order"] = {"int", "-1",
+        "The min basin area in pixels (inclusive) to keep, when filtering basins "
+        "by area.",
+        "Defaults to -1, which means ignore minimum"
+    };
+
+    int_default_map["basins_max_area_pixels"] = -1;
+    help_map["basins_max_stream_order"] = {"int", "-1",
+        "The max basin area in pixels (inclusive) to keep, when filtering basins "
+        "by area.",
+        "Defaults to -1, which means ignore maximum."
+    };
+
     bool_default_map["filter_incomplete_basins"] = false;
     help_map["filter_incomplete_basins"] = {"bool", "false",
         "This removes all basins that are incomplete.",
         "An incomplete basin has at least one DEM pixel that is adjacent "
         "to an invalid pixel. Off-grid neighbours are invalid, unless "
         "an n or p boundary is supplied."
+    };
+
+    bool_default_map["filter_all_but_largest_basin"] = false;
+    help_map["filter_all_but_largest_basin"] = {"bool", "false",
+        "This only keeps the largest basin.",
+        "Intentionally later on in the filtering order, because it is quite "
+        "likely you will want to pick the largest basin from the set of "
+        "basins that are complete."
+    };
+
+    bool_default_map["filter_nested_basins"] = false;
+    help_map["filter_nested_basins"] = {"bool", "false",
+        "This removes any nested basins. So effectively only keeps the largest "
+        "basins that are still in the selection.",
+        "Intentionally later on in the filtering order, because it is quite "
+        "likely you will want to do this after a completeness check."
     };
 
     // --- Basin output placeholders ---
@@ -975,9 +1035,43 @@ int main(int argc, char* argv[])
         // ---------------------------------------------------------------------
         // Step 7 — Basin filtering
         // ---------------------------------------------------------------------
+        if(bf["filter_basins_by_stream_order"]){
+            std::cout << "\n--- Filtering out basins by stream order ---\n";
+            std::cout << "min stream order is: " << ifs["basins_min_stream_order"] << "\n";
+            std::cout << "max stream order is: " << ifs["basins_max_stream_order"] << "\n";
+            basin_manager.filter_by_stream_order(
+                ifs["basins_min_stream_order"],
+                ifs["basins_max_stream_order"]
+            );
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        if(bf["filter_basins_by_area"]){
+            std::cout << "\n--- Filtering out basins by stream order ---\n";
+            std::cout << "min area pixels is: " << ifs["basins_min_area_pixels"] << "\n";
+            std::cout << "max area pixels is: " << ifs["basins_max_area_pixels"] << "\n";
+            basin_manager.filter_by_stream_order(
+                ifs["basins_min_area_pixels"],
+                ifs["basins_max_area_pixels"]
+            );
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+        
         if(bf["filter_incomplete_basins"]){
             std::cout << "\n--- Filtering out incomplete basins ---\n";
             basin_manager.filter_incomplete();
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        if(bf["filter_all_but_largest_basin"]){
+            std::cout << "\n--- Filtering out all basins, keeping the largest only ---\n";
+            basin_manager.filter_largest();
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        if(bf["filter_nested_basins"]){
+            std::cout << "\n--- Filtering out all nested basins ---\n";
+            basin_manager.filter_nested();
             std::cout << "There are now " << basin_manager.size() << " basins left.\n";
         }
 
