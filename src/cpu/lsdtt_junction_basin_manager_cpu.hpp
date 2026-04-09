@@ -77,8 +77,7 @@ public:
     // -----------------------------------------------------------------------
 
     // Removes basins that are hydrologically incomplete.
-    lsdtt_junction_basin_manager_cpu&
-        filter_incomplete(const std::string& boundary_conditions);
+    lsdtt_junction_basin_manager_cpu& filter_incomplete();
 
     // Removes basins whose pixel count is outside [min_pixels, max_pixels].
     // Pass -1 for either bound to leave that end open.

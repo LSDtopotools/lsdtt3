@@ -144,6 +144,9 @@ public:
     [[nodiscard]] virtual std::uint8_t    receiver_dir_of_unchecked(std::int64_t)   const noexcept = 0;
     [[nodiscard]] virtual std::uint8_t donor_count_of_unchecked(std::int64_t)   const noexcept = 0;
 
+    // This checks if cell is next to an invalid cell
+    [[nodiscard]] virtual bool is_influenced_by_invalid(std::int64_t flat) const = 0;
+
     // Checked variants — throw if cell is invalid or object not built
     [[nodiscard]] virtual bool             is_outlet(std::int64_t)       const = 0;
     [[nodiscard]] virtual std::int64_t  receiver_of(std::int64_t)     const = 0;

@@ -43,10 +43,9 @@ public:
     // Checks whether the basin is hydrologically complete. A basin is
     // incomplete if any of its pixels border an open (non-periodic,
     // non-baselevel) boundary or a nodata pixel.
-    // Takes the four boundary condition characters (north, east, south, west)
-    // as a four-character string, e.g. "oooo".
-    [[nodiscard]] virtual bool
-        check_basin_completeness(const std::string& boundary_conditions) const = 0;
+    // Boundary conditions are known in flow info so no need to supply
+    // with this method.
+    [[nodiscard]] virtual bool check_basin_completeness() const = 0;
 
     // Returns the number of pixels in the basin. Identical to
     // get_number_of_basin_pixels but provided for consistency with the

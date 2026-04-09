@@ -55,8 +55,7 @@ public:
 
     [[nodiscard]] std::int32_t get_number_of_basin_pixels() const noexcept override;
 
-    [[nodiscard]] bool
-        check_basin_completeness(const std::string& boundary_conditions) const override;
+    [[nodiscard]] bool check_basin_completeness() const override;
 
     [[nodiscard]] std::int32_t pixel_count() const noexcept override;
 
@@ -85,6 +84,16 @@ public:
     // the basin boundary. The lsdtt_basin_outline type is defined below.
     // TODO: lsdtt_basin_outline is not yet designed — stub returns empty vector.
     [[nodiscard]] std::vector<std::int64_t> get_basin_outline() const;
+
+    // CPU-only optimisation of check_basin_completeness()
+    // This allows excluding basin completeness checks of part of this
+    // basins svector slice, by suppling sub-slices.
+    // Used by the basin manager to avoid checking nested basin pixels multiple
+    // times.
+    [[nodiscard]] bool check_basin_completeness_excluding_slices(
+        const std::vector<lsdtt_flat_index_slice>& excluded_slices
+    ) const;
+
 
 private:
 

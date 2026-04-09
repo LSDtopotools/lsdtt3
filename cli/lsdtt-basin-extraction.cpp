@@ -338,6 +338,17 @@ int main(int argc, char* argv[])
         "junction and constructs one lsdtt_junction_basin per junction."
     };
 
+    // --- Basin filtering ---
+    // NOTE: filtering is applied to the selected basins in the order 
+    // that these options are listed!
+    bool_default_map["filter_incomplete_basins"] = false;
+    help_map["filter_incomplete_basins"] = {"bool", "false",
+        "This removes all basins that are incomplete.",
+        "An incomplete basin has at least one DEM pixel that is adjacent "
+        "to an invalid pixel. Off-grid neighbours are invalid, unless "
+        "an n or p boundary is supplied."
+    };
+
     // --- Basin output placeholders ---
     bool_default_map["write_basins_vector"] = false;
     help_map["write_basins_vector"] = {"bool","false",
@@ -962,7 +973,16 @@ int main(int argc, char* argv[])
         std::cout << "Selected basins: " << basin_manager.size() << "\n";
 
         // ---------------------------------------------------------------------
-        // Step 7 — Future basin writing hooks
+        // Step 7 — Basin filtering
+        // ---------------------------------------------------------------------
+        if(bf["filter_incomplete_basins"]){
+            std::cout << "\n--- Filtering out incomplete basins ---\n";
+            basin_manager.filter_incomplete();
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }
+
+        // ---------------------------------------------------------------------
+        // Step 8 — Basin writing
         // ---------------------------------------------------------------------
         if (bf["write_basins_vector"])
         {
