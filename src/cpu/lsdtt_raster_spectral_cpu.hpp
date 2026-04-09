@@ -339,4 +339,41 @@ lsdtt_raster_cpu fftw2D_wiener_filter(
     int                  n_threads                 = 0
 );
 
+// -----------------------------------------------------------------------------
+// fftw2D_masked_surface_recovery
+//
+// Recovers a smooth long-wavelength background surface from only the pixels
+// where mask > 0.5, by:
+//   1. OLS-detrend the DEM using all valid pixels
+//   2. Build a masked field: detrended elevation where mask > 0.5, 0 elsewhere
+//   3. Apply 2D window taper and zero-pad to next power-of-2 dimensions
+//   4. Forward FFT → lowpass filter at lambda_cutoff_metres → inverse FFT
+//   5. Restore the planar trend
+//
+// The output is valid at every pixel where the input DEM is valid, including
+// pixels not in the mask.  The lowpass filter interpolates a smooth surface
+// across the masked-out gap.
+//
+// Intended use:
+//   Recover the smooth piedmont/alluvial-fan surface from a DEM where mountain
+//   pixels have been excluded from the mask.  The gap in the masked field is
+//   filled by the spectral interpolation rather than the actual terrain, so the
+//   recovered surface continues smoothly under the mountain region.
+//
+// Note:
+//   Single-pass implementation.  An iterative Gerchberg-Papoulis refinement
+//   can be added later as a separate function.
+//
+// Throws:
+//   std::runtime_error if FFTW is not available, lambda_cutoff_metres <= 0,
+//   or the mask contains no valid pixels.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_masked_surface_recovery(
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_raster_cpu& mask,
+    double               lambda_cutoff_metres,
+    spectral_window_type window    = spectral_window_type::hann,
+    int                  n_threads = 0
+);
+
 } // namespace lsdtt

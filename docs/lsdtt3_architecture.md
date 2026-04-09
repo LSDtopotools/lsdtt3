@@ -75,9 +75,10 @@ lsdtt3/
 │   │   ├── lsdtt_raster_surface_fitting_cpu.hpp/.cpp       — plane and polynomial surface fitting to masks
 │   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp    — fill, breach, nodata
 │   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp        — interior void filling
-│   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp              — wavelet quadratic fit; home for future spectral surface fitting
+│   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp              — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
 │   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp                — OpenCV-based raster processing
 │   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp        — feature-specific raster workflows
+│   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp               — mountain front identification from DEM
 │   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp    — test surface generators including mountain range geometries
 │   └── utils/
 │       ├── lsdtt_array2d.hpp              — header-only 2D array
@@ -137,6 +138,7 @@ the utility-layer numerical functions.
 - `lsdtt_flow_snapping_cpu.cpp`
 - `lsdtt_basin_cpu.cpp`
 - `lsdtt_junction_basin_cpu.cpp`
+- `lsdtt_mountain_front_cpu.cpp`
 - `lsdtt_raster_opencv_cpu.cpp` *(when OpenCV is available)*
 
 `lsdtt3_cpu` depends on `lsdtt3_core`. All CLI executables link against
@@ -357,6 +359,16 @@ Current CLI programs are:
 
 - **`lsdtt-raster-basin-stats.cpp`**  
   Extracts basins from a junction network and computes raster statistics per basin.
+
+- **`lsdtt-mountain-front.cpp`**  
+  Identifies mountain fronts using multi-scale relief, piedmont surface fitting, and
+  residual thresholding.  Supports two input modes:
+  - Synthetic DEM (use_synthetic_dem: true) — generates a test range from one of four
+    geometries (linear, halfspace, circular, arc) and writes the ground-truth front_mask
+    alongside the detected mountain_mask for algorithm validation.
+  - Real DEM (use_synthetic_dem: false) — loads a projected DEM and runs the pipeline.
+  Outputs: low_ground_mask, fitted_surface, residual, mountain_mask, and optional
+  per-scale relief diagnostic rasters.
 
 ### CLI design rule
 
@@ -936,6 +948,39 @@ For spectral (long-wavelength) surface fitting see `lsdtt_raster_spectral_cpu`.
 - `wavelet_quadratic_fit(raster, lambda=100.0, n_threads=0)`
   — FFTW double API, Gaussian kernel
   — Returns `poly_fit_coeffs{a, b, c, d, e, f}` — six `lsdtt_raster_cpu` members
+- `fftw2D_masked_surface_recovery(dem, mask, lambda_cutoff_metres, window=hann, n_threads=0)`
+  — Recovers smooth long-wavelength surface from pixels where mask > 0.5 only
+  — Detrends using all valid pixels, zeros excluded pixels, lowpass filters, restores trend
+  — Output valid everywhere the DEM is valid (interpolates under the masked-out gap)
+  — Intended use: piedmont surface recovery for mountain front detection
+
+**`lsdtt_mountain_front_cpu`:**
+
+Three-stage pipeline for identifying mountain fronts from a DEM.
+
+```
+Stage 1 — low-ground candidate mask (multi-scale relief)
+Stage 2 — piedmont surface fitting (plane OLS/RANSAC, poly2 OLS, or spectral lowpass)
+Stage 3 — residual thresholding → mountain mask
+```
+
+Key types:
+- `relief_scale{radius_metres, max_relief_metres}` — one moving-window scale
+- `mountain_front_fit_method` enum: `plane_ols`, `plane_ransac`, `poly2_ols`, `spectral_lowpass`
+- `mountain_front_request` — all parameters; see header for full field documentation
+- `mountain_front_result{low_ground_mask, fitted_surface, residual, mountain_mask, relief_rasters}`
+
+`relief_rasters` is populated only when `request.return_diagnostics == true`; contains one raster per entry in `relief_scales`, sorted by radius (smallest first).
+
+`residual_percentile_threshold` (0.0–1.0): pixels above this percentile of the valid residual distribution are labelled mountain.  E.g. 0.80 → top 20 % → mountain.
+
+Stage 1 mask logic:
+- `require_all_scales_pass = false` (default): pixel passes if largest-scale relief < threshold
+- `require_all_scales_pass = true`: pixel must pass every scale's threshold
+
+Ground-truth validation: use `lsdtt_raster_synthetic_surfaces_cpu` test surfaces
+(`generate_linear_range_surface`, `generate_halfspace_range_surface`,
+`generate_circular_range_surface`) whose `front_mask` raster is the oracle.
 
 **`lsdtt_raster_synthetic_surfaces_cpu`:**
 - Takes `lsdtt_raster_meta` or raw dimensions (n_rows, n_cols, cell_size)

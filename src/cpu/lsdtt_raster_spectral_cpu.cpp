@@ -106,6 +106,14 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
     );
 }
 
+lsdtt_raster_cpu fftw2D_masked_surface_recovery(
+    const lsdtt_raster_cpu&, const lsdtt_raster_cpu&, double,
+    spectral_window_type, int)
+{
+    throw std::runtime_error(std::string("lsdtt::fftw2D_masked_surface_recovery: ")
+                             + k_no_fftw_msg);
+}
+
 
 
 #else
@@ -3104,6 +3112,175 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
 }
 
 
+
+
+// -----------------------------------------------------------------------------
+// fftw2D_masked_surface_recovery
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fftw2D_masked_surface_recovery(
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_raster_cpu& mask,
+    double               lambda_cutoff_metres,
+    spectral_window_type window,
+    int                  /*n_threads*/)
+{
+    if (!std::isfinite(lambda_cutoff_metres) || lambda_cutoff_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_masked_surface_recovery: lambda_cutoff_metres must be > 0"
+        );
+    }
+
+    dem.get_meta().check_projected_metres();
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int NRows    = meta.n_rows;
+    const int NCols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+    const float nodata_f   = static_cast<float>(meta.no_data_value);
+
+    const std::vector<float>&   dem_data  = dem.get_data();
+    const std::vector<uint8_t>& dem_valid = dem.get_mask();
+    const std::vector<float>&   msk_data  = mask.get_data();
+    const std::vector<uint8_t>& msk_valid = mask.get_mask();
+
+    if (mask.get_meta().n_rows != NRows || mask.get_meta().n_cols != NCols)
+    {
+        throw std::runtime_error(
+            "lsdtt::fftw2D_masked_surface_recovery: mask dimensions do not match DEM"
+        );
+    }
+
+    const std::size_t npix = static_cast<std::size_t>(NRows) * NCols;
+
+    // -------------------------------------------------------------------------
+    // 1. Detrend using ALL valid DEM pixels (not just the mask).
+    // -------------------------------------------------------------------------
+    double a_tr = 0.0, b_tr = 0.0, c_tr = 0.0;
+    fit_detrend_plane(dem_data, dem_valid, meta, a_tr, b_tr, c_tr);
+
+    std::vector<double> detrended(npix, 0.0);
+    std::vector<double> trend_vals(npix, 0.0);
+
+    for (int r = 0; r < NRows; ++r)
+    {
+        for (int c = 0; c < NCols; ++c)
+        {
+            const std::size_t i =
+                static_cast<std::size_t>(r) * NCols + c;
+            const double t = a_tr * c + b_tr * r + c_tr;
+            trend_vals[i] = t;
+
+            if (dem_valid[i] != 0 && !meta.is_nodata(dem_data[i]))
+                detrended[i] = static_cast<double>(dem_data[i]) - t;
+            // else: stays 0 — zero-fill for nodata and non-candidate pixels
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Window taper over the full DEM footprint.
+    // -------------------------------------------------------------------------
+    const std::vector<double> win_w = build_2d_window(NRows, NCols, window);
+
+    // -------------------------------------------------------------------------
+    // 3. Pad to next power-of-2.
+    // -------------------------------------------------------------------------
+    const int Ly      = next_pow2(NRows);
+    const int Lx      = next_pow2(NCols);
+    const int Lx_half = Lx / 2 + 1;
+
+    const double dfx = 1.0 / (cell_size * Lx);
+    const double dfy = 1.0 / (cell_size * Ly);
+
+    const std::size_t n_real    = static_cast<std::size_t>(Ly) * Lx;
+    const std::size_t n_complex = static_cast<std::size_t>(Ly) * Lx_half;
+
+    fftw_double_buffer      real_buf (n_real,    "real");
+    fftw_halfcomplex_buffer cplx_buf (n_complex, "spectrum");
+
+    fftw_r2c_plan_handle r2c_plan(Ly, Lx, real_buf.get(), cplx_buf.get(), "r2c");
+    fftw_c2r_plan_handle c2r_plan(Ly, Lx, cplx_buf.get(), real_buf.get(), "c2r");
+
+    // Fill real buffer: windowed detrended signal only where mask > 0.5.
+    // Pixels excluded from the mask (mountains) stay at 0 — they become the gap
+    // that the lowpass filter interpolates across.
+    std::fill(real_buf.get(), real_buf.get() + n_real, 0.0);
+    for (int r = 0; r < NRows; ++r)
+    {
+        for (int c = 0; c < NCols; ++c)
+        {
+            const std::size_t i_dem = static_cast<std::size_t>(r) * NCols + c;
+            if (dem_valid[i_dem] == 0 || meta.is_nodata(dem_data[i_dem]))
+                continue;
+            if (msk_valid[i_dem] == 0 || msk_data[i_dem] <= 0.5f)
+                continue;
+            real_buf.get()[static_cast<std::size_t>(r) * Lx + c] =
+                detrended[i_dem] * win_w[i_dem];
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Forward FFT.
+    // -------------------------------------------------------------------------
+    fftw_execute(r2c_plan.get());
+
+    // -------------------------------------------------------------------------
+    // 5. Lowpass filter: H(f) = exp( -ln(2) * (f / f_c)^2 ).
+    // -------------------------------------------------------------------------
+    {
+        const double f_c     = 1.0 / lambda_cutoff_metres;
+        const double ln2     = std::log(2.0);
+        const double inv_fc2 = 1.0 / (f_c * f_c);
+
+        for (int i = 0; i < Ly; ++i)
+        {
+            for (int j = 0; j < Lx_half; ++j)
+            {
+                const double f = radial_freq_r2c(i, j, Ly, dfx, dfy);
+                const double H = (f == 0.0)
+                    ? 1.0
+                    : std::exp(-ln2 * f * f * inv_fc2);
+
+                const std::size_t k =
+                    static_cast<std::size_t>(i) * Lx_half + j;
+                cplx_buf.get()[k][0] *= H;
+                cplx_buf.get()[k][1] *= H;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Inverse FFT, normalise, restore trend, apply DEM nodata mask.
+    //    Output is valid wherever the DEM is valid — including non-mask pixels —
+    //    so the recovered surface covers the full domain.
+    // -------------------------------------------------------------------------
+    fftw_execute(c2r_plan.get());
+
+    const double norm = 1.0 / static_cast<double>(n_real);
+
+    std::vector<float>   out_data(npix, nodata_f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (int r = 0; r < NRows; ++r)
+    {
+        for (int c = 0; c < NCols; ++c)
+        {
+            const std::size_t i_dem = static_cast<std::size_t>(r) * NCols + c;
+            if (dem_valid[i_dem] == 0 || meta.is_nodata(dem_data[i_dem]))
+                continue;
+
+            const double z =
+                real_buf.get()[static_cast<std::size_t>(r) * Lx + c]
+                * norm
+                + trend_vals[i_dem];
+
+            out_data[i_dem] = static_cast<float>(z);
+            out_mask[i_dem] = uint8_t{1};
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
 
 
 #endif  // LSDTT_HAS_FFTW
