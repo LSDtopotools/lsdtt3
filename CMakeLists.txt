@@ -142,6 +142,7 @@ set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_statistical_tests.cpp
     src/utils/lsdtt_splines.cpp
     src/utils/lsdtt_regression.cpp
+    src/utils/lsdtt_binary_array2d_tracing.cpp
 )
 
 add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
@@ -181,6 +182,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp
+    src/cpu/lsdtt_basin_outline_cpu.cpp
     src/cpu/lsdtt_flat_surface_finder.cpp
 )
 

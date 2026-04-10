@@ -170,10 +170,10 @@ lsdtt_basin_cpu::get_basin_values(const lsdtt_raster_cpu& raster) const
     return values;
 }
 
-std::vector<std::int64_t> lsdtt_basin_cpu::get_basin_outline() const
+
+lsdtt_basin_outline_cpu lsdtt_basin_cpu::get_basin_outline() const
 {
-    // TODO: implement edge-tracing algorithm to return boundary flat indices.
-    return {};
+    return lsdtt_basin_outline_cpu(*this);
 }
 
 bool lsdtt_basin_cpu::check_basin_completeness_excluding_slices(

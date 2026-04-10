@@ -17,6 +17,7 @@
 #include "../core/lsdtt_flow_base.hpp"
 #include "../core/lsdtt_types.hpp"
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_basin_outline_cpu.hpp"
 
 #include <cstdint>
 #include <string>
@@ -80,10 +81,10 @@ public:
     [[nodiscard]] std::vector<float>
         get_basin_values(const lsdtt_raster_cpu& raster) const;
 
-    // Returns the outline of the basin as a sequence of flat indices tracing
-    // the basin boundary. The lsdtt_basin_outline type is defined below.
-    // TODO: lsdtt_basin_outline is not yet designed — stub returns empty vector.
-    [[nodiscard]] std::vector<std::int64_t> get_basin_outline() const;
+    // Returns a CPU basin outline object.
+    // NOTE: lsdtt_basin_outline_cpu stores a non-owning pointer to this basin,
+    // so the returned outline must not outlive the basin object.
+    [[nodiscard]] lsdtt_basin_outline_cpu get_basin_outline() const;
 
     // CPU-only optimisation of check_basin_completeness()
     // This allows excluding basin completeness checks of part of this
@@ -93,6 +94,17 @@ public:
     [[nodiscard]] bool check_basin_completeness_excluding_slices(
         const std::vector<lsdtt_flat_index_slice>& excluded_slices
     ) const;
+
+    // CPU-only accessor: flow object must outlive basin (it does by construction)
+    [[nodiscard]] const lsdtt_flow_base& flow() const
+    {
+        if (flow_ == nullptr)
+        {
+            throw std::runtime_error("lsdtt_basin_cpu::flow(): flow pointer is null");
+        }
+        return *flow_;
+    }
+
 
 
 private:
