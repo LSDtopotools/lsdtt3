@@ -390,19 +390,27 @@ public:
     //   meta       — metadata to embed (typically from get_meta())
     //   format     — output format (default cog; see raster_output_format)
     //   n_bands    — number of bands to create (default 1)
+    //   out_type   — GDAL data type for the output band (default GDT_Float32).
+    //                Pass meta.data_type only when you explicitly want to match
+    //                the source type. Analysis results are float32 regardless
+    //                of the source type; only use a different type when the
+    //                data is genuinely of that type (e.g. GDT_UInt32 for
+    //                integer labels produced by label_binary_components_by_size).
     //
     // For cog and gtiff, out_path should end in .tif.
     // For same_as_input, out_path extension must match the input driver.
     void create_output_raster(
         const std::string&       out_path,
         const lsdtt_raster_meta& meta,
-        raster_output_format     format  = raster_output_format::cog,
-        int                      n_bands = 1
+        raster_output_format     format   = raster_output_format::cog,
+        int                      n_bands  = 1,
+        GDALDataType             out_type = GDT_Float32
     );
 
     // Write a result tile to a previously created output raster.
     // data must be float32, row-major, size = window.tile_width *
     // window.tile_height (the valid region only — do not include the halo).
+    // GDAL converts the float32 values to the band's data type at write time.
     //
     //   data       — result values for the valid tile region
     //   window     — the tile window (used for pixel offsets)
@@ -420,14 +428,23 @@ public:
     //
     // For cog format: automatically falls back to gtiff for rasters smaller
     // than k_cog_min_pixels pixels (COG overhead not worthwhile below this).
+    //
+    //   out_type   — GDAL data type for the output band (default GDT_Float32).
+    //                Use meta.data_type when the raster carries an explicit
+    //                output type (e.g. the UInt32 label raster from
+    //                label_binary_components_by_size). For all standard analysis
+    //                outputs leave this as the default.
     void write_full(
         const std::vector<float>& data,
         const lsdtt_raster_meta&  meta,
         const std::string&        out_path,
-        raster_output_format      format = raster_output_format::cog
+        raster_output_format      format   = raster_output_format::cog,
+        GDALDataType              out_type = GDT_Float32
     );
 
     // Convenience overload for raster results returned by core-layer engines.
+    // Uses meta.data_type as the output type so that typed results (e.g. the
+    // UInt32 label raster) are written correctly without an extra argument.
     void write_full(
         const lsdtt_raster_result& result,
         const std::string&         out_path,

@@ -217,28 +217,6 @@ lsdtt_raster_cpu moving_window_tpi(
     window_shape shape  = window_shape::circular
 );
 
-// -----------------------------------------------------------------------------
-// madk2_result
-//
-// Trevisani et al. (2023) MADk2 roughness outputs:
-//   - omnidirectional_roughness      (OR)
-//   - direction_maximum_continuity   (DMC, degrees on [0, 180))
-//   - roughness_anisotropy           (RA, [0, 1])
-// -----------------------------------------------------------------------------
-struct madk2_result
-{
-    lsdtt_raster_cpu omnidirectional_roughness;
-    lsdtt_raster_cpu direction_maximum_continuity;
-    lsdtt_raster_cpu roughness_anisotropy;
-};
-
-madk2_result calculate_madk2(
-    const lsdtt_raster_cpu& raster,
-    double window_radius_metres,
-    int    lag_pixels = 1,
-    int    n_threads  = 0
-);
-
 
 
 // -----------------------------------------------------------------------------

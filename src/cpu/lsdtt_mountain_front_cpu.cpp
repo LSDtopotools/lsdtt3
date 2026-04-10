@@ -9,6 +9,7 @@
 #include "lsdtt_mountain_front_cpu.hpp"
 
 #include "lsdtt_raster_algebra.hpp"
+#include "lsdtt_raster_feature_finder_cpu.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
 #include "lsdtt_raster_surface_fitting_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
@@ -334,7 +335,133 @@ mountain_front_result identify_mountain_front(
     result.mountain_mask =
         lsdtt_raster_cpu(std::move(mtn_data), std::move(mtn_mask), meta);
 
+    // -----------------------------------------------------------------
+    // Stage 4 (optional): remove small connected components
+    // -----------------------------------------------------------------
+    if (request.min_component_pixels > 0)
+    {
+        result.mountain_mask = filter_binary_components_by_size(
+            result.mountain_mask,
+            request.min_component_pixels
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Stage 5 (optional): valley infilling via morphological closing
+    // -----------------------------------------------------------------
+    if (request.infill_valley_radius_metres > 0.0)
+    {
+        result.mountain_mask = binary_morphological_closing(
+            result.mountain_mask,
+            request.infill_valley_radius_metres
+        );
+    }
+
     return result;
+}
+
+
+// =============================================================================
+// find_mountain_front_outlets
+// =============================================================================
+lsdtt_raster_cpu find_mountain_front_outlets(
+    const lsdtt_raster_cpu& mountain_mask,
+    const lsdtt_raster_cpu& n_contributing_pixels,
+    int                     min_contributing_pixels)
+{
+    const lsdtt_raster_meta& meta = mountain_mask.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::find_mountain_front_outlets: mountain_mask metadata is invalid"
+        );
+    }
+
+    {
+        const lsdtt_raster_meta& cm = n_contributing_pixels.get_meta();
+        if (cm.n_rows != meta.n_rows || cm.n_cols != meta.n_cols)
+        {
+            throw std::runtime_error(
+                "lsdtt::find_mountain_front_outlets: mountain_mask and "
+                "n_contributing_pixels have different grid dimensions"
+            );
+        }
+    }
+
+    if (min_contributing_pixels < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_mountain_front_outlets: min_contributing_pixels must be >= 1"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   mtn_data  = mountain_mask.get_data();
+    const std::vector<uint8_t>& mtn_mask  = mountain_mask.get_mask();
+    const std::vector<float>&   ca_data   = n_contributing_pixels.get_data();
+    const std::vector<uint8_t>& ca_mask   = n_contributing_pixels.get_mask();
+
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    // 8-connected neighbour offsets
+    static const int drow[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    static const int dcol[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols)
+                + static_cast<std::size_t>(col);
+
+            if (mtn_mask[idx] == 0) continue;
+            out_mask[idx] = uint8_t{1};
+
+            // Must be a mountain pixel
+            if (mtn_data[idx] <= 0.5f) continue;
+
+            // Must have at least one valid non-mountain neighbour (edge test)
+            bool is_edge = false;
+            for (int k = 0; k < 8; ++k)
+            {
+                const int rr = row + drow[k];
+                const int cc = col + dcol[k];
+
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+
+                const std::size_t nidx =
+                    static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols)
+                    + static_cast<std::size_t>(cc);
+
+                if (mtn_mask[nidx] != 0 && mtn_data[nidx] <= 0.5f)
+                {
+                    is_edge = true;
+                    break;
+                }
+            }
+            if (!is_edge) continue;
+
+            // Contributing area threshold
+            if (ca_mask[idx] == 0) continue;
+            const float ca = ca_data[idx];
+            if (!std::isfinite(ca) || n_contributing_pixels.get_meta().is_nodata(ca))
+                continue;
+
+            if (static_cast<int>(ca) >= min_contributing_pixels)
+            {
+                out_data[idx] = 1.0f;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
 } // namespace lsdtt

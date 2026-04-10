@@ -669,7 +669,8 @@ void lsdtt_data_loader::create_output_raster(
     const std::string&       out_path,
     const lsdtt_raster_meta& meta,
     raster_output_format     format,
-    int                      n_bands
+    int                      n_bands,
+    GDALDataType             out_type
 )
 {
     // Resolve effective format — COG falls back to GTiff for small rasters
@@ -729,7 +730,7 @@ void lsdtt_data_loader::create_output_raster(
         meta.n_cols,
         meta.n_rows,
         n_bands,
-        GDT_Float32,
+        out_type,
         options
     );
     CSLDestroy(options);
@@ -834,10 +835,11 @@ void lsdtt_data_loader::write_full(
     const std::vector<float>& data,
     const lsdtt_raster_meta&  meta,
     const std::string&        out_path,
-    raster_output_format      format
+    raster_output_format      format,
+    GDALDataType              out_type
 )
 {
-    create_output_raster(out_path, meta, format);
+    create_output_raster(out_path, meta, format, 1, out_type);
 
     lsdtt_tile_window win;
     win.x_off       = 0;
@@ -860,7 +862,7 @@ void lsdtt_data_loader::write_full(
     raster_output_format       format
 )
 {
-    write_full(result.data, result.meta, out_path, format);
+    write_full(result.data, result.meta, out_path, format, result.meta.data_type);
 }
 
 void lsdtt_data_loader::finalise_output(const std::string& out_path)
