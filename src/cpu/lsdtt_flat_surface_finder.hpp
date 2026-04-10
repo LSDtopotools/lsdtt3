@@ -16,34 +16,45 @@
 // Three complementary texture metrics are supported:
 //
 //   MADk2  (Trevisani et al. 2023)
-//     Median Absolute Deviation of second-order finite differences within a
-//     moving window.  Removes linear trends, so sloping smooth surfaces
-//     (fans, old terraces) register low values.  Recommended for all cases.
+//     Median Absolute Deviation of second-order finite differences in a moving
+//     window.  Removes the linear slope trend; sloping smooth surfaces (fans,
+//     old terraces) register low values.  Recommended for all cases.
 //
-//   Moving-window IQR
-//     Interquartile range of raw elevations within a moving window.
-//     Effective for nearly level flat surfaces.  On steeply sloping surfaces
-//     the IQR captures slope × window_diameter rather than roughness; use a
-//     small window radius relative to the expected flat width.
+//   Residual IQR
+//     Interquartile range of elevation residuals to a locally fitted reference
+//     surface.  Because residuals are detrended, the IQR captures roughness
+//     rather than slope × window size, making it appropriate for sloping flat
+//     surfaces.  Three fitting methods are available:
+//
+//       fftw_highpass       — residuals = fftw2D_highpass_filter(dem, lambda)
+//                             Global spectral separation; cleanest frequency
+//                             response; requires FFTW.
+//       wavelet_quadratic   — residuals = dem − wavelet_quadratic_fit(dem, lambda).f
+//                             Local polynomial detrending at each pixel;
+//                             handles spatially varying background; requires FFTW.
+//       moving_window_mean  — residuals = dem − moving_window_mean(dem, radius)
+//                             Simple local detrending; no FFTW dependency;
+//                             use as a fallback or when FFTW is unavailable.
 //
 //   NVD — Normal Vector Dispersion (s3 eigenvalue)
-//     The smallest eigenvalue of the orientation tensor built from unit
-//     surface normals within a window (derived from a wavelet quadratic fit).
-//     Low s3 ≈ all normals nearly co-planar (flat surface, possibly sloping).
-//     High s3 ≈ normals distributed in many directions (rough terrain).
+//     The smallest eigenvalue of the orientation tensor built from unit surface
+//     normals within a window (derived from a wavelet quadratic fit).
+//     Low s3 ≈ co-planar normals (flat, possibly sloping surface).
+//     High s3 ≈ normals spread in many directions (rough terrain).
 //     Requires FFTW for the wavelet quadratic fit; disabled by default.
 //
 // Thresholding strategy:
 //   Each enabled metric is thresholded at a user-specified percentile of its
-//   own value distribution.  The percentile is chosen by inspecting the
-//   quantile-quantile (QQ) plot output against a standard normal variate:
-//   flat-surface pixels form a tight lower tail that departs from normality,
-//   and the threshold is set at the break-point.
+//   own distribution.  The percentile is chosen by inspecting the QQ-plot CSV
+//   output against a standard normal variate: flat-surface pixels form a tight
+//   lower tail that departs from normality, and the threshold is set at the
+//   break-point.
 //
 //   Metrics can be combined with AND logic (all must pass → high specificity)
 //   or OR logic (any passing → high sensitivity).
 //
 // Outputs:
+//   - Reference surface and residual rasters (optional write)
 //   - Per-metric texture rasters (optional write)
 //   - Per-metric binary flat masks
 //   - Combined flat mask
@@ -72,6 +83,18 @@ struct qq_bin
 };
 
 // =============================================================================
+// iqr_fit_method
+//
+// Selects how the reference surface is computed before the residual IQR.
+// =============================================================================
+enum class iqr_fit_method
+{
+    fftw_highpass,       // residuals = fftw2D_highpass_filter(dem, iqr_fit_lambda_metres)
+    wavelet_quadratic,   // residuals = dem - wavelet_quadratic_fit(dem, iqr_fit_lambda_metres).f
+    moving_window_mean   // residuals = dem - moving_window_mean(dem, iqr_detrend_radius_metres)
+};
+
+// =============================================================================
 // flat_surface_request
 // =============================================================================
 struct flat_surface_request
@@ -84,10 +107,25 @@ struct flat_surface_request
     double       madk2_threshold_percentile = 25.0;   // below this = flat
 
     // -------------------------------------------------------------------------
-    // Moving-window IQR
+    // Residual IQR
+    //
+    // Step 1 — fit a reference surface (method selects the algorithm).
+    // Step 2 — subtract it from the DEM to produce residuals.
+    // Step 3 — compute moving-window IQR of the residuals.
+    //
+    // For fftw_highpass / wavelet_quadratic, set iqr_fit_lambda_metres to
+    // a wavelength somewhat longer than the width of the flat surfaces to be
+    // detected; the fitted surface captures the regional trend at that scale.
+    //
+    // For moving_window_mean, set iqr_detrend_radius_metres similarly.
     // -------------------------------------------------------------------------
-    bool         use_window_iqr             = true;
-    double       iqr_window_radius_metres   = 50.0;
+    bool         use_residual_iqr           = true;
+    iqr_fit_method iqr_method               = iqr_fit_method::fftw_highpass;
+
+    double       iqr_fit_lambda_metres      = 500.0;  // for fftw_highpass / wavelet_quadratic
+    double       iqr_detrend_radius_metres  = 500.0;  // for moving_window_mean
+
+    double       iqr_window_radius_metres   = 50.0;   // window for the IQR computation
     window_shape iqr_window_shape           = window_shape::circular;
     double       iqr_threshold_percentile   = 25.0;   // below this = flat
 
@@ -130,7 +168,8 @@ struct flat_surface_result
     // Only populated when the corresponding use_* flag is true.
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu madk2_roughness;   // MADk2 omnidirectional roughness
-    lsdtt_raster_cpu window_iqr;        // moving-window IQR
+    lsdtt_raster_cpu iqr_residuals;     // elevation residuals to the reference surface
+    lsdtt_raster_cpu iqr_texture;       // moving-window IQR of residuals
     lsdtt_raster_cpu nvd_s3;            // NVD smallest eigenvalue (s3)
 
     // -------------------------------------------------------------------------
@@ -169,13 +208,13 @@ struct flat_surface_result
 // Runs the requested texture metrics, computes QQ plots, thresholds each
 // metric, combines masks, and labels connected components.
 //
-// At least one of use_madk2 / use_window_iqr / use_nvd must be true.
+// At least one of use_madk2 / use_residual_iqr / use_nvd must be true.
 //
 // Throws:
 //   std::invalid_argument  — no metrics enabled, invalid percentile values,
 //                            or invalid radius/threshold values
-//   std::runtime_error     — DEM metadata invalid, FFTW unavailable when
-//                            use_nvd = true, or downstream function failure
+//   std::runtime_error     — DEM metadata invalid, FFTW unavailable when a
+//                            spectral method is requested, or downstream failure
 // =============================================================================
 flat_surface_result find_flat_surfaces(
     const lsdtt_raster_cpu&      dem,
