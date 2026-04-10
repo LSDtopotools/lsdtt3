@@ -1596,6 +1596,155 @@ channel_bottom_result find_channel_bottoms(
 
 
 // -----------------------------------------------------------------------------
+// binary_morphological_closing
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_morphological_closing(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_closing: input raster metadata is invalid"
+        );
+    }
+
+    if (!std::isfinite(radius_metres) || radius_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_closing: radius_metres must be finite and > 0"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const double cell_size = meta.cell_size;
+
+    const int pixel_radius = std::max(
+        1, static_cast<int>(std::ceil(radius_metres / cell_size))
+    );
+
+    // Pre-build circular kernel offsets
+    std::vector<std::pair<int,int>> offsets;
+    offsets.reserve(
+        static_cast<std::size_t>(2 * pixel_radius + 1) *
+        static_cast<std::size_t>(2 * pixel_radius + 1)
+    );
+    for (int dr = -pixel_radius; dr <= pixel_radius; ++dr)
+    {
+        for (int dc = -pixel_radius; dc <= pixel_radius; ++dc)
+        {
+            const double dx   = static_cast<double>(dc) * cell_size;
+            const double dy   = static_cast<double>(dr) * cell_size;
+            const double dist = std::sqrt(dx * dx + dy * dy);
+            if (dist <= radius_metres + 1e-12)
+            {
+                offsets.emplace_back(dr, dc);
+            }
+        }
+    }
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    // -------------------------------------------------------------------------
+    // Dilation pass: pixel is foreground if ANY valid kernel neighbour is
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> dilated(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols)
+                + static_cast<std::size_t>(col);
+
+            if (in_mask[idx] == 0) continue;
+
+            for (const auto& [dr, dc] : offsets)
+            {
+                const int rr = row + dr;
+                const int cc = col + dc;
+
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+
+                const std::size_t nidx =
+                    static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols)
+                    + static_cast<std::size_t>(cc);
+
+                if (in_mask[nidx] != 0 && in_data[nidx] > 0.5f)
+                {
+                    dilated[idx] = uint8_t{1};
+                    break;
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Erosion pass: pixel stays foreground only if ALL valid kernel neighbours
+    // are also foreground in the dilated result.  Nodata neighbours are skipped
+    // so that valid pixels near the DEM border are not incorrectly eroded.
+    // -------------------------------------------------------------------------
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols)
+                + static_cast<std::size_t>(col);
+
+            if (in_mask[idx] == 0) continue;
+            out_mask[idx] = uint8_t{1};
+
+            if (dilated[idx] == 0)
+            {
+                // Was background even after dilation — stays 0
+                continue;
+            }
+
+            bool all_valid_on = true;
+            for (const auto& [dr, dc] : offsets)
+            {
+                const int rr = row + dr;
+                const int cc = col + dc;
+
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+
+                const std::size_t nidx =
+                    static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols)
+                    + static_cast<std::size_t>(cc);
+
+                if (in_mask[nidx] == 0) continue;  // ignore nodata neighbours
+
+                if (dilated[nidx] == 0)
+                {
+                    all_valid_on = false;
+                    break;
+                }
+            }
+
+            if (all_valid_on)
+            {
+                out_data[idx] = 1.0f;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// -----------------------------------------------------------------------------
 // filter_binary_components_by_size
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu filter_binary_components_by_size(

@@ -142,6 +142,28 @@ struct mountain_front_request
     double residual_percentile_threshold    = 0.80;   // 0.0–1.0
 
     // -------------------------------------------------------------------------
+    // Stage 4: connected-component size filter (optional)
+    //
+    // After the mountain mask is built, any 8-connected component with fewer
+    // than min_component_pixels pixels is removed (set to 0 / piedmont).
+    // Set to 0 (default) to skip this step.
+    // -------------------------------------------------------------------------
+    int min_component_pixels = 0;
+
+    // -------------------------------------------------------------------------
+    // Stage 5: valley infilling via morphological closing (optional)
+    //
+    // Applies binary_morphological_closing to the mountain mask using a
+    // circular structuring element of this radius.  The closing seals the
+    // valley notches that incised rivers carve into the mountain front,
+    // producing a more convex mask boundary that is easier to delineate into
+    // mountain-draining basins.
+    //
+    // Set to 0.0 (default) to skip this step.
+    // -------------------------------------------------------------------------
+    double infill_valley_radius_metres = 0.0;
+
+    // -------------------------------------------------------------------------
     // Diagnostics
     //
     // When true, mountain_front_result::relief_rasters is populated with one
@@ -169,7 +191,7 @@ struct mountain_front_result
     lsdtt_raster_cpu residual;
 
     // Stage 3 output — binary mask: 1 = mountain, 0 = piedmont candidate.
-    // Valid pixels not labelled mountain are piedmont/low-ground.
+    // After optional Stage 4 (component filter) and Stage 5 (valley infill).
     lsdtt_raster_cpu mountain_mask;
 
     // Populated only when request.return_diagnostics == true.
@@ -194,6 +216,44 @@ struct mountain_front_result
 mountain_front_result identify_mountain_front(
     const lsdtt_raster_cpu&       dem,
     const mountain_front_request& request
+);
+
+// -----------------------------------------------------------------------------
+// find_mountain_front_outlets
+//
+// Identifies pixels at the boundary of the mountain mask that have a
+// contributing area above a minimum threshold.  These are the points where
+// major river valleys cross the mountain front — the natural outlet locations
+// for mountain-draining basins.
+//
+// Algorithm:
+//   1. Find all mountain edge pixels: mountain pixels (data > 0.5, mask = 1)
+//      with at least one 8-connected valid neighbour that is NOT mountain.
+//   2. Among those edge pixels, retain those where
+//      n_contributing_pixels >= min_contributing_pixels.
+//
+// Parameters:
+//   mountain_mask           — binary raster from identify_mountain_front
+//                             (or any binary raster where 1 = mountain)
+//   n_contributing_pixels   — per-pixel upstream contributing area expressed
+//                             as a pixel count.  Produced by
+//                             lsdtt_flowinfo_cpu::get_n_contributing_pixels_raster()
+//                             and saved to disk, or computed externally.
+//                             Must be compatible (same grid) as mountain_mask.
+//   min_contributing_pixels — minimum upstream pixel count for an edge pixel
+//                             to be classified as an outlet
+//
+// Output:
+//   Binary raster (data = 1.0 at outlets, 0.0 elsewhere).
+//   mask = 1 on all valid mountain_mask pixels.
+//
+// Throws:
+//   std::runtime_error if the two rasters are incompatible or metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu find_mountain_front_outlets(
+    const lsdtt_raster_cpu& mountain_mask,
+    const lsdtt_raster_cpu& n_contributing_pixels,
+    int                     min_contributing_pixels
 );
 
 } // namespace lsdtt

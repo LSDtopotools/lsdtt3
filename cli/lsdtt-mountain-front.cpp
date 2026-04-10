@@ -61,8 +61,10 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
+#include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_mountain_front_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
 static const std::string k_version  = "0.1.0";
@@ -413,6 +415,42 @@ int main(int argc, char* argv[])
         "E.g. 0.80 = top 20 % of residuals = mountain."};
 
     // -------------------------------------------------------------------------
+    // Stage 4: connected-component size filter
+    // -------------------------------------------------------------------------
+    int_default_map["min_component_pixels"] = 0;
+    help_map["min_component_pixels"] = {"int","0",
+        "Minimum 8-connected component size (pixels) for the mountain mask.",
+        "Components with fewer pixels than this threshold are removed from the "
+        "mountain mask.  0 (default) disables the filter."};
+
+    // -------------------------------------------------------------------------
+    // Stage 5: valley infilling (morphological closing)
+    // -------------------------------------------------------------------------
+    float_default_map["infill_valley_radius_metres"] = 0.0f;
+    help_map["infill_valley_radius_metres"] = {"float","0",
+        "Radius (m) of the circular structuring element for valley infilling.",
+        "Applies a morphological closing to the mountain mask to seal the valley "
+        "notches carved by incised rivers.  Set to approximately half the width "
+        "of the valleys to be filled.  0 (default) disables this step."};
+
+    // -------------------------------------------------------------------------
+    // Mountain front outlets
+    // -------------------------------------------------------------------------
+    string_default_map["contributing_pixels_fname"] = "";
+    help_map["contributing_pixels_fname"] = {"string","",
+        "Filename of a pre-computed n_contributing_pixels raster.",
+        "Required when write_mountain_front_outlets is true.  Generate this "
+        "raster with lsdtt-channel-extraction (n_contributing_pixels output). "
+        "Must be on the same grid as the input DEM."};
+
+    int_default_map["min_contributing_pixels"] = 1000;
+    help_map["min_contributing_pixels"] = {"int","1000",
+        "Minimum upstream contributing pixels for a mountain edge pixel to be "
+        "classed as an outlet.",
+        "Mountain mask edge pixels whose n_contributing_pixels value meets or "
+        "exceeds this threshold are written to the outlets raster."};
+
+    // -------------------------------------------------------------------------
     // Output
     // -------------------------------------------------------------------------
     bool_default_map["write_low_ground_mask_raster"] = true;
@@ -433,8 +471,22 @@ int main(int argc, char* argv[])
 
     bool_default_map["write_mountain_mask_raster"] = true;
     help_map["write_mountain_mask_raster"] = {"bool","true",
-        "Write the Stage 3 mountain mask.",
+        "Write the mountain mask (after optional component filter and valley infill).",
         "Binary raster: 1 = mountain, 0 = piedmont / low-ground."};
+
+    bool_default_map["write_mountain_labels_raster"] = false;
+    help_map["write_mountain_labels_raster"] = {"bool","false",
+        "Write a labelled mountain components raster (UInt32).",
+        "Each 8-connected mountain component that meets min_component_pixels "
+        "receives a unique integer label (1, 2, 3, …).  Nodata where no label "
+        "is assigned.  Useful when the DEM contains multiple mountain ranges."};
+
+    bool_default_map["write_mountain_front_outlets"] = false;
+    help_map["write_mountain_front_outlets"] = {"bool","false",
+        "Write a binary raster of mountain front outlet pixels.",
+        "Mountain mask edge pixels whose upstream contributing area meets "
+        "min_contributing_pixels are marked 1.  Requires contributing_pixels_fname "
+        "to be set."};
 
     bool_default_map["write_synthetic_dem_raster"] = true;
     help_map["write_synthetic_dem_raster"] = {"bool","true",
@@ -532,6 +584,8 @@ int main(int argc, char* argv[])
     mf_req.ransac_seed                  = ip["ransac_seed"];
     mf_req.spectral_lambda_metres       = static_cast<double>(ff["spectral_lambda_metres"]);
     mf_req.residual_percentile_threshold = static_cast<double>(ff["residual_percentile_threshold"]);
+    mf_req.min_component_pixels         = ip["min_component_pixels"];
+    mf_req.infill_valley_radius_metres  = static_cast<double>(ff["infill_valley_radius_metres"]);
     mf_req.return_diagnostics           = bf["return_diagnostics"];
     mf_req.n_threads                    = n_threads;
 
@@ -665,7 +719,14 @@ int main(int argc, char* argv[])
     std::cout << "  Stage 2: surface fitting (" << fit_method_str << ")\n";
     std::cout << "  Stage 3: residual threshold at "
               << ff["residual_percentile_threshold"] * 100.0f
-              << "th percentile\n\n";
+              << "th percentile\n";
+    if (ip["min_component_pixels"] > 0)
+        std::cout << "  Stage 4: component filter >= "
+                  << ip["min_component_pixels"] << " pixels\n";
+    if (ff["infill_valley_radius_metres"] > 0.0f)
+        std::cout << "  Stage 5: valley infill radius = "
+                  << ff["infill_valley_radius_metres"] << " m\n";
+    std::cout << "\n";
 
     lsdtt::mountain_front_result result;
     try
@@ -728,6 +789,150 @@ int main(int argc, char* argv[])
         std::cout << "Writing mountain mask: " << p << "\n";
         loader.write_full(result.mountain_mask.get_data(),
                           result.mountain_mask.get_meta(), p, out_format);
+    }
+
+    if (bf["write_mountain_labels_raster"])
+    {
+        const std::string p = stem + "_mountain_labels.tif";
+        std::cout << "Writing mountain component labels: " << p << "\n";
+        const int min_px = std::max(1, ip["min_component_pixels"]);
+        const lsdtt::lsdtt_raster_cpu labels =
+            lsdtt::label_binary_components_by_size(result.mountain_mask, min_px);
+        loader.write_full(labels.get_data(), labels.get_meta(), p, out_format,
+                          GDT_UInt32);
+    }
+
+    if (bf["write_mountain_front_outlets"])
+    {
+        const std::string ca_fname = sf["contributing_pixels_fname"];
+        if (ca_fname.empty())
+        {
+            std::cerr << "Warning: write_mountain_front_outlets is true but "
+                         "contributing_pixels_fname is not set — skipping outlets.\n";
+        }
+        else
+        {
+            const std::string ca_path = pp.get_read_path() + "/" + ca_fname;
+            std::cout << "Loading contributing pixels raster: " << ca_path << "\n";
+            try
+            {
+                lsdtt::lsdtt_data_loader ca_loader;
+                ca_loader.open_raster(ca_path);
+                const lsdtt::lsdtt_raster_cpu ca_raster(ca_loader);
+
+                const lsdtt::lsdtt_raster_cpu outlets =
+                    lsdtt::find_mountain_front_outlets(
+                        result.mountain_mask,
+                        ca_raster,
+                        ip["min_contributing_pixels"]
+                    );
+
+                const lsdtt::lsdtt_raster_meta& mta  = outlets.get_meta();
+                const std::vector<float>&        odat = outlets.get_data();
+                const std::vector<uint8_t>&      omsk = outlets.get_mask();
+                const std::vector<float>&        cdat = ca_raster.get_data();
+                const std::vector<uint8_t>&      cmsk = ca_raster.get_mask();
+
+                const int onrows = mta.n_rows;
+                const int oncols = mta.n_cols;
+
+                // ---------------------------------------------------------
+                // FlatGeobuf — projected coordinates, one point per outlet
+                // ---------------------------------------------------------
+                {
+                    const std::string fgb_path = stem + "_mountain_front_outlets.fgb";
+                    std::cout << "Writing mountain front outlets (FlatGeobuf): "
+                              << fgb_path << "\n";
+
+                    lsdtt::lsdtt_vector_schema schema;
+                    schema.field_names = { "row", "col", "contributing_pixels" };
+                    schema.field_types = {
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type
+                    };
+
+                    loader.begin_vector_write(
+                        fgb_path, "mountain_front_outlets",
+                        schema, mta.crs_wkt,
+                        lsdtt::vector_output_format::flatgeobuf,
+                        false   // no spatial index — streaming write
+                    );
+
+                    for (int row = 0; row < onrows; ++row)
+                    {
+                        for (int col = 0; col < oncols; ++col)
+                        {
+                            const std::size_t idx =
+                                static_cast<std::size_t>(row) *
+                                static_cast<std::size_t>(oncols) +
+                                static_cast<std::size_t>(col);
+
+                            if (omsk[idx] == 0 || odat[idx] <= 0.5f) continue;
+
+                            const lsdtt::lsdtt_xy xy =
+                                lsdtt::cell_center_from_row_col(mta, row, col);
+
+                            const std::int64_t ca_px =
+                                (cmsk[idx] != 0 && std::isfinite(cdat[idx]))
+                                    ? static_cast<std::int64_t>(cdat[idx])
+                                    : std::int64_t{0};
+
+                            loader.write_point(xy.x, xy.y, {
+                                static_cast<std::int64_t>(row),
+                                static_cast<std::int64_t>(col),
+                                ca_px
+                            });
+                        }
+                    }
+                    loader.finish_vector_write();
+                }
+
+                // ---------------------------------------------------------
+                // CSV — latitude, longitude (EPSG:4326)
+                // ---------------------------------------------------------
+                {
+                    const std::string csv_path = stem + "_mountain_front_outlets.csv";
+                    std::cout << "Writing mountain front outlets (CSV): "
+                              << csv_path << "\n";
+
+                    lsdtt::lsdtt_coordinate_transform to_wgs84 =
+                        lsdtt::lsdtt_coordinate_transform::from_epsg(mta.crs_wkt, 4326);
+
+                    std::vector<std::vector<std::string>> rows;
+
+                    for (int row = 0; row < onrows; ++row)
+                    {
+                        for (int col = 0; col < oncols; ++col)
+                        {
+                            const std::size_t idx =
+                                static_cast<std::size_t>(row) *
+                                static_cast<std::size_t>(oncols) +
+                                static_cast<std::size_t>(col);
+
+                            if (omsk[idx] == 0 || odat[idx] <= 0.5f) continue;
+
+                            const lsdtt::lsdtt_lonlat ll =
+                                lsdtt::cell_center_to_lonlat(mta, row, col, to_wgs84);
+
+                            rows.push_back({
+                                std::to_string(ll.latitude),
+                                std::to_string(ll.longitude)
+                            });
+                        }
+                    }
+
+                    loader.write_csv(csv_path,
+                                     {"latitude", "longitude"},
+                                     rows);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Error computing mountain front outlets: "
+                          << e.what() << "\n";
+            }
+        }
     }
 
     if (bf["return_diagnostics"] &&

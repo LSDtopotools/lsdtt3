@@ -253,6 +253,36 @@ channel_bottom_result find_channel_bottoms(
 
 
 // -----------------------------------------------------------------------------
+// binary_morphological_closing
+//
+// Applies a morphological closing (dilation followed by erosion) to a binary
+// raster using a circular structuring element of the given radius.
+//
+// Closing seals narrow gaps and indentations in foreground regions without
+// substantially changing their overall extent.  It is the appropriate
+// operation for filling the valley notches that incised rivers cut into a
+// mountain mask before extracting basin outlets.
+//
+// Input convention (same as filter_binary_components_by_size):
+//   - valid pixels (mask=1) with value > 0.5 are foreground (mountain)
+//   - valid pixels (mask=1) with value <= 0.5 are background (piedmont)
+//   - nodata pixels (mask=0) are excluded from both operations
+//
+// Boundary rule:
+//   Erosion only requires that DEM-valid neighbours within the kernel are
+//   foreground.  Nodata neighbours are ignored, so valid pixels near the
+//   DEM border are not erroneously eroded away.
+//
+// Throws:
+//   std::runtime_error if radius_metres <= 0 or input metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_morphological_closing(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres
+);
+
+
+// -----------------------------------------------------------------------------
 // filter_binary_components_by_size
 //
 // Removes 8-connected foreground components with fewer than min_component_pixels
