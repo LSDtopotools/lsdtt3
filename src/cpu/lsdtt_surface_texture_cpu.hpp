@@ -35,6 +35,12 @@
 //     included here as a dependency.
 //   - All functions take const lsdtt_raster_cpu& and return lsdtt_raster_cpu or
 //     a result struct.  Input rasters are never modified.
+//
+// Use of these metrics is based on recommendations from this paper:
+//    Trevisani, S., & Guth, P. L. (2025). Surface Roughness in Geomorphometry: 
+//     From Basic Metrics Toward a Coherent Framework. Remote Sensing, 17(23), 3864. 
+//     https://doi.org/10.3390/rs17233864
+//
 // -----------------------------------------------------------------------------
 
 #pragma once

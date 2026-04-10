@@ -5,6 +5,13 @@
 // Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+//
+// Use of these metrics is based on recommendations from this paper:
+//    Trevisani, S., & Guth, P. L. (2025). Surface Roughness in Geomorphometry: 
+//     From Basic Metrics Toward a Coherent Framework. Remote Sensing, 17(23), 3864. 
+//     https://doi.org/10.3390/rs17233864
+//
+// =============================================================================
 
 #include "lsdtt_surface_texture_cpu.hpp"
 #include "../cpu/lsdtt_raster_cpu.hpp"
