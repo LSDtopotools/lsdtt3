@@ -251,4 +251,67 @@ channel_bottom_result find_channel_bottoms(
     const channel_bottom_request& request
 );
 
+
+// -----------------------------------------------------------------------------
+// filter_binary_components_by_size
+//
+// Removes 8-connected foreground components with fewer than min_component_pixels
+// pixels from a binary raster.
+//
+// Input convention:
+//   - valid pixels with value > 0.5 are foreground
+//   - valid pixels with value <= 0.5 are background
+//   - nodata / invalid pixels are treated as background and are not visited
+//
+// Output convention:
+//   - data = 1.0 for pixels in components that pass the size threshold
+//   - data = 0.0 for background pixels and pixels in components that are too small
+//   - mask = 1 on all valid input pixels, 0 on nodata input pixels
+//   - meta copied from input
+//
+// Intended use: post-processing of binary masks (e.g. mountain front masks,
+// channel bottom masks) to remove small isolated foreground regions before
+// further analysis.
+//
+// Throws:
+//   std::runtime_error if min_component_pixels < 1 or input metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu filter_binary_components_by_size(
+    const lsdtt_raster_cpu& binary,
+    int                     min_component_pixels
+);
+
+
+// -----------------------------------------------------------------------------
+// label_binary_components_by_size
+//
+// Labels 8-connected foreground components that meet a minimum size threshold,
+// assigning each qualifying component a unique positive integer (1, 2, 3, …)
+// in the order their seed pixel is encountered scanning row-major.
+//
+// Input convention:
+//   - valid pixels with value > 0.5 are foreground
+//   - valid pixels with value <= 0.5 are background
+//   - nodata / invalid pixels are treated as background and are not visited
+//
+// Output convention:
+//   - data = float(label) (1.0, 2.0, …) for pixels in qualifying components,
+//     stored as float32 internally but written to disk as GDT_UInt32
+//   - data = 0.0 (nodata) for background, small components, and nodata pixels
+//   - mask = 1 where a label was assigned, 0 everywhere else
+//   - meta.data_type = GDT_UInt32, meta.no_data_value = 0
+//   - all other meta fields copied from input
+//
+// Use filter_binary_components_by_size when a binary output is sufficient.
+// Use this function when downstream code needs to identify or count individual
+// components (e.g. to extract per-component statistics or select by index).
+//
+// Throws:
+//   std::runtime_error if min_component_pixels < 1 or input metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu label_binary_components_by_size(
+    const lsdtt_raster_cpu& binary,
+    int                     min_component_pixels
+);
+
 } // namespace lsdtt

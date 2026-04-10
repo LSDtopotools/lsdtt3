@@ -47,6 +47,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 
 #ifdef LSDTT_HAS_OPENCV

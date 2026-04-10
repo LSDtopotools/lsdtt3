@@ -1595,5 +1595,259 @@ channel_bottom_result find_channel_bottoms(
 }
 
 
+// -----------------------------------------------------------------------------
+// filter_binary_components_by_size
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu filter_binary_components_by_size(
+    const lsdtt_raster_cpu& binary,
+    int                     min_component_pixels)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::filter_binary_components_by_size: input raster metadata is invalid"
+        );
+    }
+
+    if (min_component_pixels < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::filter_binary_components_by_size: min_component_pixels must be >= 1"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+    std::vector<uint8_t> visited(npix, uint8_t{0});
+
+    auto is_valid = [&](std::size_t idx) -> bool
+    {
+        return in_mask[idx] != 0 &&
+               !meta.is_nodata(in_data[idx]) &&
+               std::isfinite(in_data[idx]);
+    };
+
+    auto is_foreground = [&](std::size_t idx) -> bool
+    {
+        return is_valid(idx) && in_data[idx] > 0.5f;
+    };
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (is_valid(i))
+        {
+            out_mask[i] = uint8_t{1};
+        }
+    }
+
+    for (int row0 = 0; row0 < nrows; ++row0)
+    {
+        for (int col0 = 0; col0 < ncols; ++col0)
+        {
+            const std::size_t seed =
+                static_cast<std::size_t>(row0) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(col0);
+
+            if (visited[seed] != 0 || !is_foreground(seed))
+            {
+                continue;
+            }
+
+            std::vector<std::size_t> stack;
+            std::vector<std::size_t> component;
+
+            stack.push_back(seed);
+            visited[seed] = uint8_t{1};
+
+            while (!stack.empty())
+            {
+                const std::size_t idx = stack.back();
+                stack.pop_back();
+                component.push_back(idx);
+
+                const int row = static_cast<int>(idx / static_cast<std::size_t>(ncols));
+                const int col = static_cast<int>(idx % static_cast<std::size_t>(ncols));
+
+                for (int dr = -1; dr <= 1; ++dr)
+                {
+                    for (int dc = -1; dc <= 1; ++dc)
+                    {
+                        if (dr == 0 && dc == 0) continue;
+
+                        const int rr = row + dr;
+                        const int cc = col + dc;
+
+                        if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols)
+                        {
+                            continue;
+                        }
+
+                        const std::size_t nidx =
+                            static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols) +
+                            static_cast<std::size_t>(cc);
+
+                        if (visited[nidx] == 0 && is_foreground(nidx))
+                        {
+                            visited[nidx] = uint8_t{1};
+                            stack.push_back(nidx);
+                        }
+                    }
+                }
+            }
+
+            if (static_cast<int>(component.size()) >= min_component_pixels)
+            {
+                for (std::size_t idx : component)
+                {
+                    out_data[idx] = 1.0f;
+                }
+            }
+        }
+    }
+
+    return make_raster(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// -----------------------------------------------------------------------------
+// label_binary_components_by_size
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu label_binary_components_by_size(
+    const lsdtt_raster_cpu& binary,
+    int                     min_component_pixels)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::label_binary_components_by_size: input raster metadata is invalid"
+        );
+    }
+
+    if (min_component_pixels < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::label_binary_components_by_size: min_component_pixels must be >= 1"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+
+    // Output is UInt32: labels are positive integers, nodata = 0.
+    lsdtt_raster_meta out_meta   = meta;
+    out_meta.data_type           = GDT_UInt32;
+    out_meta.no_data_value       = 0.0;
+    const float nodata           = 0.0f;
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    std::vector<float>   out_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+    std::vector<uint8_t> visited(npix, uint8_t{0});
+
+    auto is_valid = [&](std::size_t idx) -> bool
+    {
+        return in_mask[idx] != 0 &&
+               !meta.is_nodata(in_data[idx]) &&
+               std::isfinite(in_data[idx]);
+    };
+
+    auto is_foreground = [&](std::size_t idx) -> bool
+    {
+        return is_valid(idx) && in_data[idx] > 0.5f;
+    };
+
+    int next_label = 1;
+
+    for (int row0 = 0; row0 < nrows; ++row0)
+    {
+        for (int col0 = 0; col0 < ncols; ++col0)
+        {
+            const std::size_t seed =
+                static_cast<std::size_t>(row0) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(col0);
+
+            if (visited[seed] != 0 || !is_foreground(seed))
+            {
+                continue;
+            }
+
+            std::vector<std::size_t> stack;
+            std::vector<std::size_t> component;
+
+            stack.push_back(seed);
+            visited[seed] = uint8_t{1};
+
+            while (!stack.empty())
+            {
+                const std::size_t idx = stack.back();
+                stack.pop_back();
+                component.push_back(idx);
+
+                const int row = static_cast<int>(idx / static_cast<std::size_t>(ncols));
+                const int col = static_cast<int>(idx % static_cast<std::size_t>(ncols));
+
+                for (int dr = -1; dr <= 1; ++dr)
+                {
+                    for (int dc = -1; dc <= 1; ++dc)
+                    {
+                        if (dr == 0 && dc == 0) continue;
+
+                        const int rr = row + dr;
+                        const int cc = col + dc;
+
+                        if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols)
+                        {
+                            continue;
+                        }
+
+                        const std::size_t nidx =
+                            static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols) +
+                            static_cast<std::size_t>(cc);
+
+                        if (visited[nidx] == 0 && is_foreground(nidx))
+                        {
+                            visited[nidx] = uint8_t{1};
+                            stack.push_back(nidx);
+                        }
+                    }
+                }
+            }
+
+            if (static_cast<int>(component.size()) >= min_component_pixels)
+            {
+                const float label = static_cast<float>(next_label);
+                ++next_label;
+
+                for (std::size_t idx : component)
+                {
+                    out_data[idx] = label;
+                    out_mask[idx] = uint8_t{1};
+                }
+            }
+        }
+    }
+
+    return make_raster(std::move(out_data), std::move(out_mask), out_meta);
+}
+
+
 
 } // namespace lsdtt
