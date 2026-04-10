@@ -181,6 +181,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp
+    src/cpu/lsdtt_basin_outline_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)

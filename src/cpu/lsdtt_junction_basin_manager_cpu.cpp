@@ -4,6 +4,7 @@
 // Copyright Simon M. Mudd, GPL-3.0
 
 #include "lsdtt_junction_basin_manager_cpu.hpp"
+#include "lsdtt_basin_outline_cpu.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -613,6 +614,73 @@ lsdtt_junction_basin_manager_cpu::get_junction_basins_raster() const
     }
 
     return out;
+}
+
+
+// -----------------------------------------------------------------------
+// Raster output
+// -----------------------------------------------------------------------
+void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines(
+    const std::string& out_path,
+    vector_output_format format,
+    const std::string& layer_name,
+    bool spatial_index
+) const
+{
+    if (basins_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines: "
+            "no basins have been selected"
+        );
+    }
+
+    // Schema: one attribute for the line feature
+    lsdtt_vector_schema schema;
+    schema.field_names = { "junction_number" };
+    schema.field_types = { lsdtt_vector_field_type::int64_type };
+
+    // Start write session
+    lsdtt_data_loader loader;
+    loader.begin_vector_write(
+        out_path,
+        layer_name,
+        schema,
+        flow_->meta().crs_wkt,
+        format,
+        spatial_index
+    );
+
+    // One polyline per basin
+    for (const lsdtt_junction_basin_cpu& basin : basins_)
+    {
+        const std::int32_t junc = basin.get_junction_number();
+
+        // Build outline (CPU object)
+        lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
+
+        // Convert to vector record (geometry + field values)
+        // Assumes outline method signature: get_outline_as_line_record(basin_id)
+        const lsdtt_vector_record rec =
+            outline.get_outline_as_line_record(junc);
+
+        if (std::holds_alternative<std::monostate>(rec.geometry))
+        {
+            continue; // empty geometry, skip
+        }
+
+        const lsdtt_line_geom& line = std::get<lsdtt_line_geom>(rec.geometry);
+
+        if (line.points.size() < 2)
+        {
+            continue;
+        }
+
+        // Write feature (field_values must match schema order)
+        loader.write_line(line.points, rec.field_values);
+    }
+
+    loader.finish_vector_write();
 }
 
 

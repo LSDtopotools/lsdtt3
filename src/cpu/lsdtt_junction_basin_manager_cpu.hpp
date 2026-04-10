@@ -12,6 +12,7 @@
 // Copyright Simon M. Mudd, GPL-3.0
 
 #include "lsdtt_junction_basin_cpu.hpp"
+#include "../core/lsdtt_data_loader.hpp"   
 
 #include <cstdint>
 #include <string>
@@ -146,6 +147,20 @@ public:
     // Painting order is downstream -> upstream using the junction-network s_vector,
     // so nested basins overwrite their parents.
     [[nodiscard]] lsdtt_raster_result get_junction_basins_raster() const;
+
+
+    // -----------------------------------------------------------------------
+    // Vector output
+    // -----------------------------------------------------------------------
+    // Write one polyline feature per basin outline.
+    // field: junction_number 
+    void write_basins_to_vector_lines(
+        const std::string& out_path,
+        vector_output_format format,
+        const std::string& layer_name = "basin_outlines",
+        bool spatial_index = true
+    ) const;
+
 
 private:
 
