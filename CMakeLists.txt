@@ -142,6 +142,7 @@ set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_statistical_tests.cpp
     src/utils/lsdtt_splines.cpp
     src/utils/lsdtt_regression.cpp
+    src/utils/lsdtt_binary_array2d_tracing.cpp
 )
 
 add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
