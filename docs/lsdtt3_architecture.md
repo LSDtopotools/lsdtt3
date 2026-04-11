@@ -79,6 +79,7 @@ lsdtt3/
 │   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp                — OpenCV-based raster processing
 │   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp        — feature-specific raster workflows
 │   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp               — mountain front identification from DEM
+│   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                  — kinematic streamline tracing (Lea 1992)
 │   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp    — test surface generators including mountain range geometries
 │   └── utils/
 │       ├── lsdtt_array2d.hpp              — header-only 2D array
@@ -139,6 +140,7 @@ the utility-layer numerical functions.
 - `lsdtt_basin_cpu.cpp`
 - `lsdtt_junction_basin_cpu.cpp`
 - `lsdtt_mountain_front_cpu.cpp`
+- `lsdtt_streamlines_cpu.cpp`
 - `lsdtt_raster_opencv_cpu.cpp` *(when OpenCV is available)*
 
 `lsdtt3_cpu` depends on `lsdtt3_core`. All CLI executables link against
@@ -953,6 +955,27 @@ For spectral (long-wavelength) surface fitting see `lsdtt_raster_spectral_cpu`.
   — Detrends using all valid pixels, zeros excluded pixels, lowpass filters, restores trend
   — Output valid everywhere the DEM is valid (interpolates under the masked-out gap)
   — Intended use: piedmont surface recovery for mountain front detection
+
+**`lsdtt_streamlines_cpu`:**
+
+Kinematic streamline tracing (steepest-descent flow paths) on raw topography.
+Implements the Lea (1992) algorithm with Tarboton (1997) improvements.
+
+Key types:
+- `streamline_outcome` enum: `reached_sink`, `hit_edge`, `loop_detected`, `no_aspect`
+- `lsdtt_streamline_node{x, y, z, distance_m}` — one sub-pixel path point
+- `lsdtt_streamline{source_row, source_col, sink_row, sink_col, length_m, relief_m, outcome, nodes}`
+- `lsdtt_streamline_options{thinning, max_steps, save_nodes, n_threads}`
+- `lsdtt_streamline_result{streamlines, n_reached_sink, n_hit_edge, n_loop_detected, n_no_aspect}`
+
+`trace_streamlines(dem, source_mask, sink_mask, opts)`:
+- Precomputes aspect (steepest-descent bearing) from DEM central differences
+- Traces from every source pixel (source_mask > 0.5) until hitting a sink pixel, raster edge, or loop
+- OMP-parallelised over source pixels; loop detection is per-thread (unordered_map)
+- `thinning` controls trace density (every Nth source pixel in row-major order)
+- `save_nodes` enables sub-pixel path storage for visualisation
+
+Intended as the foundation for `lsdtt_hilltop_flow_routing_cpu` (ridge statistics, E*, R*).
 
 **`lsdtt_mountain_front_cpu`:**
 

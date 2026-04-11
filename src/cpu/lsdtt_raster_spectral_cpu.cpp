@@ -2217,12 +2217,26 @@ poly_fit_coeffs wavelet_quadratic_fit(
 
     const int threads = resolve_thread_count(n_threads);
 
+    std::cout << "wavelet_quadratic_fit: "
+              << nrows << " x " << ncols << " raster"
+              << ", lambda = " << lambda << " m"
+              << ", support radius = " << pad_size << " px"
+              << ", padded grid = " << padded_rows << " x " << padded_cols
+              << ", threads = " << threads
+              << "\n" << std::flush;
+
+    std::cout << "  Allocating FFT buffers..." << std::flush;
+
     fftw_complex_buffer dem_in   (n_complex, "dem_in");
     fftw_complex_buffer dem_freq (n_complex, "dem_freq");
     fftw_complex_buffer ker_in   (n_complex, "ker_in");
     fftw_complex_buffer ker_freq (n_complex, "ker_freq");
     fftw_complex_buffer prod_freq(n_complex, "prod_freq");
     fftw_complex_buffer out_space(n_complex, "out_space");
+
+    std::cout << " done.\n"
+              << "  Planning FFT transforms (FFTW_MEASURE — may take a moment)..."
+              << std::flush;
 
     fftw_plan_handle plan_dem(
         padded_rows, padded_cols,
@@ -2245,6 +2259,9 @@ poly_fit_coeffs wavelet_quadratic_fit(
         "inverse transform"
     );
 
+    std::cout << " done.\n"
+              << "  DEM forward FFT..." << std::flush;
+
     std::memset(dem_in.get(), 0, dem_in.bytes());
 
     for (int r = 0; r < nrows; ++r)
@@ -2266,6 +2283,10 @@ poly_fit_coeffs wavelet_quadratic_fit(
 
     fftw_execute(plan_dem.get());
 
+    std::cout << " done.\n"
+              << "  Computing 6 basis-function convolutions:\n"
+              << std::flush;
+
     const double unset = std::numeric_limits<double>::quiet_NaN();
 
     std::array<std::vector<double>, 6> moments;
@@ -2279,6 +2300,7 @@ poly_fit_coeffs wavelet_quadratic_fit(
 
     for (int k = 0; k < 6; ++k)
     {
+        std::cout << "    basis " << (k + 1) << "/6..." << std::flush;
         std::memset(ker_in.get(), 0, ker_in.bytes());
 
         for (const auto& sample : support)
@@ -2322,6 +2344,8 @@ poly_fit_coeffs wavelet_quadratic_fit(
                 }
             }
         }
+
+        std::cout << " done.\n" << std::flush;
     }
 
     std::array<std::vector<float>, 6>   coeff_data;
@@ -2339,6 +2363,11 @@ poly_fit_coeffs wavelet_quadratic_fit(
 
     const double inv_l  = 1.0 / normalisation_length;
     const double inv_l2 = inv_l * inv_l;
+
+    std::cout << "  Solving polynomial coefficients for "
+              << n_valid_support << " pixels ("
+              << threads << " thread" << (threads > 1 ? "s" : "") << ")..."
+              << std::flush;
 
 #ifdef _OPENMP
     #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
@@ -2412,6 +2441,10 @@ poly_fit_coeffs wavelet_quadratic_fit(
             }
         }
     }
+
+    std::cout << " done.\n"
+              << "wavelet_quadratic_fit: complete.\n"
+              << std::flush;
 
     auto make_raster = [&](int k) -> lsdtt_raster_cpu
     {
