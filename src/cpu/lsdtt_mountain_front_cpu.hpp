@@ -107,7 +107,7 @@ struct mountain_front_request
     // -------------------------------------------------------------------------
     std::vector<relief_scale> relief_scales = { {500.0, 50.0}, {2000.0, 200.0} };
     bool         require_all_scales_pass    = false;
-    window_shape relief_window_shape        = window_shape::circular;
+    window_shape relief_window_shape        = window_shape::square;
 
     // Optional elevation filter.  When enabled, pixels above the specified
     // percentile of the valid DEM elevation distribution are also excluded from

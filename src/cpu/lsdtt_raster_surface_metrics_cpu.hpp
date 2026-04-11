@@ -154,7 +154,7 @@ lsdtt_raster_cpu moving_window_mean(
 lsdtt_raster_cpu moving_window_local_relief(
     const lsdtt_raster_cpu& raster,
     double       radius_metres,
-    window_shape shape  = window_shape::circular
+    window_shape shape  = window_shape::square
 );
 
 // -----------------------------------------------------------------------------

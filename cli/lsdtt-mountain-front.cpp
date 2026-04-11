@@ -59,12 +59,15 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_mountain_front_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
 static const std::string k_version  = "0.1.0";
@@ -805,10 +808,51 @@ int main(int argc, char* argv[])
     if (bf["write_mountain_front_outlets"])
     {
         const std::string ca_fname = sf["contributing_pixels_fname"];
+
+        // Build a lambda that produces ca_raster either from a file or by
+        // running fill + D8 flow routing on the current DEM.
+        lsdtt::lsdtt_raster_cpu ca_raster;
+        bool ca_raster_ok = false;
+
         if (ca_fname.empty())
         {
-            std::cerr << "Warning: write_mountain_front_outlets is true but "
-                         "contributing_pixels_fname is not set — skipping outlets.\n";
+            std::cout << "contributing_pixels_fname not set — computing "
+                         "n_contributing_pixels from the DEM via fill + D8 flow routing.\n";
+            try
+            {
+                // Step 1: pit-fill the DEM.
+                std::cout << "  Filling pits...\n";
+                const lsdtt::lsdtt_raster_cpu filled_dem =
+                    lsdtt::fill_pits(dem, 0.0001f, n_threads);
+
+                // Step 2: build D8 flow routing.
+                std::cout << "  Building D8 flow routing...\n";
+                lsdtt::lsdtt_flowinfo_options fi_opts;
+                fi_opts.interior_nodata_is_outlet = true;
+                fi_opts.require_acyclic_graph     = true;
+                fi_opts.build_topological_order   = true;
+                fi_opts.build_s_vector            = true;
+                fi_opts.n_threads                 = n_threads;
+
+                const std::unique_ptr<lsdtt::lsdtt_flow_base> flow =
+                    lsdtt::make_flow_base(
+                        filled_dem.get_data_array(),
+                        filled_dem.get_mask_array(),
+                        filled_dem.get_meta(),
+                        fi_opts
+                    );
+
+                // Step 3: extract n_contributing_pixels raster.
+                std::cout << "  Extracting contributing pixels raster...\n";
+                ca_raster   = lsdtt::lsdtt_raster_cpu(flow->get_n_contributing_pixels_raster());
+                ca_raster_ok = true;
+                std::cout << "  Done.\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: auto-compute of n_contributing_pixels failed: "
+                          << e.what() << " — skipping outlets.\n";
+            }
         }
         else
         {
@@ -818,8 +862,20 @@ int main(int argc, char* argv[])
             {
                 lsdtt::lsdtt_data_loader ca_loader;
                 ca_loader.open_raster(ca_path);
-                const lsdtt::lsdtt_raster_cpu ca_raster(ca_loader);
+                ca_raster    = lsdtt::lsdtt_raster_cpu(ca_loader);
+                ca_raster_ok = true;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: failed to load contributing pixels raster: "
+                          << e.what() << " — skipping outlets.\n";
+            }
+        }
 
+        if (ca_raster_ok)
+        {
+            try
+            {
                 const lsdtt::lsdtt_raster_cpu outlets =
                     lsdtt::find_mountain_front_outlets(
                         result.mountain_mask,

@@ -24,6 +24,8 @@
 #include <vector>
 #include <algorithm>
 #include <cctype>
+#include <iostream>
+#include <deque>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -357,6 +359,316 @@ lsdtt_raster_cpu moving_window_mean(
 
 
 // -----------------------------------------------------------------------------
+// local_relief_square_fast (internal)
+//
+// Separable O(n) local relief using two deque-based sliding min/max passes:
+//   Pass 1 — horizontal: for each row, sweep columns with a deque to get the
+//             row-wise min and max within a half-width-W window.
+//   Pass 2 — vertical:   for each column, sweep the horizontal results with a
+//             second deque to get the global min/max over the full square window.
+//
+// Nodata pixels are replaced by ±infinity sentinels so they are transparently
+// excluded from min/max without branching in the hot path.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu local_relief_square_fast(
+    const lsdtt_raster_cpu& raster,
+    int                     W)          // pixel half-width of the square window
+{
+    const lsdtt_raster_meta& meta  = raster.get_meta();
+    const int   nrows     = meta.n_rows;
+    const int   ncols     = meta.n_cols;
+    const float nodata_v  = static_cast<float>(meta.no_data_value);
+    const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
+
+    const std::vector<float>&   src = raster.get_data();
+    const std::vector<uint8_t>& msk = raster.get_mask();
+
+    const float POS_INF = std::numeric_limits<float>::infinity();
+    const float NEG_INF = -std::numeric_limits<float>::infinity();
+
+    // Intermediate arrays: h_min[r][c] = min of valid pixels in
+    // dem[r][max(0,c-W) : min(ncols-1,c+W)], or +INF if none valid.
+    // h_max is the same but for maximum.
+    std::vector<float> h_min(npix, POS_INF);
+    std::vector<float> h_max(npix, NEG_INF);
+
+    // -------------------------------------------------------------------------
+    // Pass 1 — horizontal.
+    // Each row is independent so trivially parallel.
+    // Thread-local deques and row buffers are declared inside the parallel
+    // region so each thread gets its own copy.
+    // -------------------------------------------------------------------------
+#ifdef _OPENMP
+    #pragma omp parallel
+#endif
+    {
+        std::deque<int> dq_min, dq_max;
+        std::vector<float> vmin(ncols), vmax(ncols);
+
+#ifdef _OPENMP
+        #pragma omp for schedule(static)
+#endif
+        for (int r = 0; r < nrows; ++r)
+        {
+            const int base = r * ncols;
+
+            // Build sentinel-value row buffers.
+            for (int c = 0; c < ncols; ++c)
+            {
+                const std::size_t idx = base + c;
+                const bool valid = msk[idx] != 0 && !meta.is_nodata(src[idx]);
+                vmin[c] = valid ? src[idx] : POS_INF;
+                vmax[c] = valid ? src[idx] : NEG_INF;
+            }
+
+            dq_min.clear();
+            dq_max.clear();
+
+            // Sweep in_c from 0 to ncols+W-1.
+            // Output for center out_c = in_c - W is ready once in_c is the
+            // right edge of that centre's window.
+            for (int in_c = 0; in_c < ncols + W; ++in_c)
+            {
+                if (in_c < ncols)
+                {
+                    // Maintain monotone min deque (non-decreasing, front = min).
+                    while (!dq_min.empty() && vmin[dq_min.back()] >= vmin[in_c])
+                        dq_min.pop_back();
+                    dq_min.push_back(in_c);
+
+                    // Maintain monotone max deque (non-increasing, front = max).
+                    while (!dq_max.empty() && vmax[dq_max.back()] <= vmax[in_c])
+                        dq_max.pop_back();
+                    dq_max.push_back(in_c);
+                }
+
+                const int out_c = in_c - W;
+                if (out_c >= 0 && out_c < ncols)
+                {
+                    // Evict elements outside [out_c-W, out_c+W].
+                    const int left = std::max(0, out_c - W);
+                    while (!dq_min.empty() && dq_min.front() < left) dq_min.pop_front();
+                    while (!dq_max.empty() && dq_max.front() < left) dq_max.pop_front();
+
+                    h_min[base + out_c] = dq_min.empty() ? POS_INF : vmin[dq_min.front()];
+                    h_max[base + out_c] = dq_max.empty() ? NEG_INF : vmax[dq_max.front()];
+                }
+            }
+        }
+    } // end parallel region
+
+    // -------------------------------------------------------------------------
+    // Pass 2 — vertical.
+    // Each column is independent.  We extract one column at a time from the
+    // row-major h_min / h_max arrays (stride = ncols) and sweep with a deque.
+    // -------------------------------------------------------------------------
+    std::vector<float>   out_data(npix, nodata_v);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel
+#endif
+    {
+        std::deque<int> dq_min, dq_max;
+        std::vector<float> cmin(nrows), cmax(nrows);
+
+#ifdef _OPENMP
+        #pragma omp for schedule(static)
+#endif
+        for (int c = 0; c < ncols; ++c)
+        {
+            // Copy column from row-major intermediates into contiguous buffers.
+            for (int r = 0; r < nrows; ++r)
+            {
+                cmin[r] = h_min[r * ncols + c];
+                cmax[r] = h_max[r * ncols + c];
+            }
+
+            dq_min.clear();
+            dq_max.clear();
+
+            for (int in_r = 0; in_r < nrows + W; ++in_r)
+            {
+                if (in_r < nrows)
+                {
+                    while (!dq_min.empty() && cmin[dq_min.back()] >= cmin[in_r])
+                        dq_min.pop_back();
+                    dq_min.push_back(in_r);
+
+                    while (!dq_max.empty() && cmax[dq_max.back()] <= cmax[in_r])
+                        dq_max.pop_back();
+                    dq_max.push_back(in_r);
+                }
+
+                const int out_r = in_r - W;
+                if (out_r >= 0 && out_r < nrows)
+                {
+                    const int top = std::max(0, out_r - W);
+                    while (!dq_min.empty() && dq_min.front() < top) dq_min.pop_front();
+                    while (!dq_max.empty() && dq_max.front() < top) dq_max.pop_front();
+
+                    const float fmin = dq_min.empty() ? POS_INF : cmin[dq_min.front()];
+                    const float fmax = dq_max.empty() ? NEG_INF : cmax[dq_max.front()];
+
+                    if (fmin < POS_INF)   // at least one valid pixel in window
+                    {
+                        const std::size_t idx =
+                            static_cast<std::size_t>(out_r) * ncols + c;
+                        out_data[idx] = fmax - fmin;
+                        out_mask[idx] = uint8_t{1};
+                    }
+                }
+            }
+        }
+    } // end parallel region
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// -----------------------------------------------------------------------------
+// local_relief_circular_fast (internal)
+//
+// Row-strip decomposition for circular windows: O(n × pixel_radius).
+//
+// For each row offset dr in [-pixel_radius, pixel_radius]:
+//   1. Compute dc_max(dr) = floor(sqrt(r_frac² - dr²)) — the column half-span
+//      for this horizontal strip of the circle.
+//   2. For each source row, run a 1D deque-based sliding min/max with
+//      half-width dc_max over that row.
+//   3. Accumulate the strip result into shared running min/max arrays.
+//
+// Complexity: O(nrows × ncols × pixel_radius) vs brute-force
+//             O(nrows × ncols × pixel_radius²) ≈ 100× faster at r=67 px.
+//
+// Parallelism: one omp parallel region wraps the dr loop.  The omp for on the
+// inner src_row loop distributes row work; its implicit barrier ensures all
+// threads complete each dr strip before the next one starts, which is needed
+// because different dr values write to the same output pixels.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu local_relief_circular_fast(
+    const lsdtt_raster_cpu& raster,
+    double                  radius_metres)
+{
+    const lsdtt_raster_meta& meta     = raster.get_meta();
+    const int   nrows    = meta.n_rows;
+    const int   ncols    = meta.n_cols;
+    const float nodata_v = static_cast<float>(meta.no_data_value);
+    const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
+
+    const double r_frac    = radius_metres / meta.cell_size;
+    const double r_frac_sq = r_frac * r_frac;
+    const int pixel_radius = std::max(1, static_cast<int>(std::ceil(r_frac)));
+
+    const std::vector<float>&   src = raster.get_data();
+    const std::vector<uint8_t>& msk = raster.get_mask();
+
+    const float POS_INF = std::numeric_limits<float>::infinity();
+    const float NEG_INF = -std::numeric_limits<float>::infinity();
+
+    // Shared accumulators, initialised to sentinels.
+    std::vector<float> run_min(npix, POS_INF);
+    std::vector<float> run_max(npix, NEG_INF);
+
+#ifdef _OPENMP
+    #pragma omp parallel
+#endif
+    {
+        // Thread-local work buffers — allocated once per thread.
+        std::deque<int> dq_min, dq_max;
+        std::vector<float> vmin(ncols), vmax(ncols);
+
+        for (int dr = -pixel_radius; dr <= pixel_radius; ++dr)
+        {
+            // Skip strips where the entire row is outside the circle.
+            const double dr_sq = static_cast<double>(dr) * dr;
+            if (dr_sq > r_frac_sq + 1e-9) continue;
+
+            // Column half-span for this strip.
+            const int dc_max =
+                static_cast<int>(std::sqrt(r_frac_sq - dr_sq + 1e-9));
+
+            // Distribute source rows across threads.
+            // The implicit barrier at the end of omp for serialises dr steps:
+            // all writes to run_min/run_max for this dr are visible before the
+            // next dr iteration begins.
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (int src_row = 0; src_row < nrows; ++src_row)
+            {
+                const int out_row = src_row - dr;
+                if (out_row < 0 || out_row >= nrows) continue;
+
+                const int src_base = src_row * ncols;
+                const int out_base = out_row * ncols;
+
+                // Build sentinel row buffers.
+                for (int c = 0; c < ncols; ++c)
+                {
+                    const std::size_t idx = static_cast<std::size_t>(src_base + c);
+                    const bool valid = msk[idx] != 0 && !meta.is_nodata(src[idx]);
+                    vmin[c] = valid ? src[idx] : POS_INF;
+                    vmax[c] = valid ? src[idx] : NEG_INF;
+                }
+
+                // 1D centered sliding min/max with half-width dc_max.
+                dq_min.clear();
+                dq_max.clear();
+
+                for (int in_c = 0; in_c < ncols + dc_max; ++in_c)
+                {
+                    if (in_c < ncols)
+                    {
+                        while (!dq_min.empty() && vmin[dq_min.back()] >= vmin[in_c])
+                            dq_min.pop_back();
+                        dq_min.push_back(in_c);
+
+                        while (!dq_max.empty() && vmax[dq_max.back()] <= vmax[in_c])
+                            dq_max.pop_back();
+                        dq_max.push_back(in_c);
+                    }
+
+                    const int out_c = in_c - dc_max;
+                    if (out_c >= 0 && out_c < ncols)
+                    {
+                        const int left = std::max(0, out_c - dc_max);
+                        while (!dq_min.empty() && dq_min.front() < left)
+                            dq_min.pop_front();
+                        while (!dq_max.empty() && dq_max.front() < left)
+                            dq_max.pop_front();
+
+                        const float smin = dq_min.empty() ? POS_INF : vmin[dq_min.front()];
+                        const float smax = dq_max.empty() ? NEG_INF : vmax[dq_max.front()];
+
+                        const std::size_t oidx =
+                            static_cast<std::size_t>(out_base + out_c);
+                        if (smin < run_min[oidx]) run_min[oidx] = smin;
+                        if (smax > run_max[oidx]) run_max[oidx] = smax;
+                    }
+                }
+            } // implicit omp barrier here — serialises dr iterations
+        }
+    } // end parallel region
+
+    // Assemble relief raster from accumulated min/max.
+    std::vector<float>   out_data(npix, nodata_v);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (run_min[i] < POS_INF)
+        {
+            out_data[i] = run_max[i] - run_min[i];
+            out_mask[i] = uint8_t{1};
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// -----------------------------------------------------------------------------
 // moving_window_local_relief
 // -----------------------------------------------------------------------------
 
@@ -377,61 +689,39 @@ lsdtt_raster_cpu moving_window_local_relief(
 
     meta.check_projected_metres();
 
-    const int   nrows  = meta.n_rows;
-    const int   ncols  = meta.n_cols;
-    const float nodata = static_cast<float>(meta.no_data_value);
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const int W = std::max(1, static_cast<int>(std::ceil(radius_metres / meta.cell_size)));
 
-    const window_offsets win = make_window_offsets(
-        radius_metres,
-        meta.cell_size,
-        shape
-    );
-
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
-
-    lsdtt_array2d<float>   out(nrows, ncols, nodata);
-    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
-
-#ifdef _OPENMP
-    #pragma omp parallel for collapse(2) schedule(dynamic)
-#endif
-    for (int row = 0; row < nrows; ++row)
+    // -------------------------------------------------------------------------
+    // Square window: separable O(n) deque pass — fast path.
+    // -------------------------------------------------------------------------
+    if (shape == window_shape::square)
     {
-        for (int col = 0; col < ncols; ++col)
-        {
-            double local_min =  std::numeric_limits<double>::infinity();
-            double local_max = -std::numeric_limits<double>::infinity();
-            int    count     = 0;
+        std::cout << "  moving_window_local_relief (square): "
+                  << nrows << "x" << ncols
+                  << ", radius=" << radius_metres << "m"
+                  << ", half-width=" << W << "px ..." << std::flush;
 
-            for (const auto& [dr, dc] : win.offsets)
-            {
-                const int wr = row + dr;
-                const int wc = col + dc;
+        lsdtt_raster_cpu result = local_relief_square_fast(raster, W);
 
-                if (!dem.in_bounds(wr, wc)) continue;
-                if (mask(wr, wc) == 0) continue;
-                if (meta.is_nodata(dem(wr, wc))) continue;
-
-                const double z = static_cast<double>(dem(wr, wc));
-                if (z < local_min) local_min = z;
-                if (z > local_max) local_max = z;
-                ++count;
-            }
-
-            if (count > 0)
-            {
-                out(row, col)      = static_cast<float>(local_max - local_min);
-                out_mask(row, col) = 1;
-            }
-        }
+        std::cout << " done.\n" << std::flush;
+        return result;
     }
 
-    return lsdtt_raster_cpu(
-        std::move(out.get_vector()),
-        std::move(out_mask.get_vector()),
-        meta
-    );
+    // -------------------------------------------------------------------------
+    // Circular window: row-strip O(n × pixel_radius) fast path.
+    // Note: square window is O(n) and faster still for very large radii.
+    // -------------------------------------------------------------------------
+    std::cout << "  moving_window_local_relief (circular): "
+              << nrows << "x" << ncols
+              << ", radius=" << radius_metres << "m"
+              << ", pixel_radius=" << W << "px ..." << std::flush;
+
+    lsdtt_raster_cpu result = local_relief_circular_fast(raster, radius_metres);
+
+    std::cout << " done.\n" << std::flush;
+    return result;
 }
 
 

@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
+#include <iostream>
 
 namespace lsdtt {
 
@@ -203,6 +204,7 @@ mountain_front_result identify_mountain_front(
     // -----------------------------------------------------------------
     // Stage 1: build low-ground candidate mask
     // -----------------------------------------------------------------
+    std::cout << "I am building the low-ground candidate mask." << std::endl;
     result.low_ground_mask = build_low_ground_mask(
         dem, request, scales, result.relief_rasters);
 
@@ -231,6 +233,7 @@ mountain_front_result identify_mountain_front(
     // -----------------------------------------------------------------
     // Stage 2: fit piedmont surface
     // -----------------------------------------------------------------
+    std::cout << "I am fitting the low ground surface. This might take a while." << std::endl;
     switch (request.fit_method)
     {
         case mountain_front_fit_method::plane_ols:
@@ -293,6 +296,7 @@ mountain_front_result identify_mountain_front(
     // -----------------------------------------------------------------
     // Stage 3: residual and mountain mask
     // -----------------------------------------------------------------
+    std::cout << "Stage 3, calculating residuals." << std::endl;
     result.residual = lsdtt::algebra::raster_subtract(dem, result.fitted_surface);
 
     // Collect valid residuals for percentile calculation.
@@ -338,6 +342,7 @@ mountain_front_result identify_mountain_front(
     // -----------------------------------------------------------------
     // Stage 4 (optional): remove small connected components
     // -----------------------------------------------------------------
+    std::cout << "Stage 4, removing the small pieces of mountains." << std::endl;    
     if (request.min_component_pixels > 0)
     {
         result.mountain_mask = filter_binary_components_by_size(
@@ -349,6 +354,7 @@ mountain_front_result identify_mountain_front(
     // -----------------------------------------------------------------
     // Stage 5 (optional): valley infilling via morphological closing
     // -----------------------------------------------------------------
+    std::cout << "Stage 5, filling in small crenulations." << std::endl;
     if (request.infill_valley_radius_metres > 0.0)
     {
         result.mountain_mask = binary_morphological_closing(
