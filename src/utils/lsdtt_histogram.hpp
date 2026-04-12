@@ -240,6 +240,66 @@ lsdtt_binned_data bin_values_natural_breaks(
     std::size_t n_classes
 );
 
+// =============================================================================
+// lsdtt_smoothed_pdf
+//
+// Result of compute_smoothed_pdf().
+//
+// The smoothed PDF is a box-kernel convolution of the histogram PDF over a
+// symmetric window of ±smooth_half_window bins.
+// =============================================================================
+struct lsdtt_smoothed_pdf
+{
+    std::vector<double> bin_centres;   // bin centres for the PDF
+    std::vector<double> smoothed_pdf;  // box-smoothed PDF density values
+
+    bool empty() const { return bin_centres.empty(); }
+};
+
+// Compute a box-smoothed PDF of valid_values.
+//
+// n_bins             — histogram resolution (default 100)
+// smooth_half_window — half-width of the box-smoothing kernel in bins.
+//                      Increase to suppress noise.  0 = no smoothing.
+//
+// Returns an empty struct if valid_values is empty.
+lsdtt_smoothed_pdf compute_smoothed_pdf(
+    const std::vector<double>& valid_values,
+    std::size_t n_bins             = 100,
+    std::size_t smooth_half_window = 3
+);
+
+// =============================================================================
+// lsdtt_qq_data
+//
+// Result of a quantile-quantile analysis against the standard normal.
+//
+// Columns:
+//   standard_normal_variate  — z = Φ⁻¹(p_k); the x-axis of a standard QQ plot
+//   data_quantile            — empirical quantile of the input data at p_k
+//   normal_reference         — fitted normal reference line at p_k, derived by
+//                              regressing through the IQR of the QQ cloud
+//                              (Q25 and Q75 of the empirical distribution).
+//                              A perfectly normal dataset would lie exactly on
+//                              this line; deviations reveal non-normality.
+//
+// Plotting position: p_k = (k − 0.5) / n_points,  k = 1 … n_points
+// Data quantile:     R type-7 linear interpolation on the sorted sample
+// =============================================================================
+struct lsdtt_qq_data
+{
+    std::vector<double> standard_normal_variate;
+    std::vector<double> data_quantile;
+    std::vector<double> normal_reference;
+};
+
+// Quantile-quantile analysis against the standard normal distribution.
+// Returns an empty struct if valid_values is empty or n_points < 2.
+lsdtt_qq_data compute_qq(
+    const std::vector<double>& valid_values,
+    std::size_t n_points = 100
+);
+
 // -----------------------------------------------------------------------------
 // Log-binned mean
 //

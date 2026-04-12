@@ -70,6 +70,8 @@
 
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"   // window_shape
+#include "../utils/lsdtt_distributions.hpp"        // lsdtt_distribution_fit
+#include "../utils/lsdtt_histogram.hpp"            // lsdtt_smoothed_pdf
 
 namespace lsdtt {
 
@@ -80,6 +82,8 @@ struct qq_bin
 {
     double standard_normal_quantile = 0.0;
     double data_quantile            = 0.0;
+    double normal_reference         = 0.0;  // IQR-fitted normal line; data on a normal
+                                            // distribution lies on this line
 };
 
 // =============================================================================
@@ -155,6 +159,28 @@ struct flat_surface_request
     // -------------------------------------------------------------------------
     int          qq_n_bins                  = 100;
 
+    // -------------------------------------------------------------------------
+    // Smoothed PDF (box-kernel smoothed histogram PDF for each metric)
+    // -------------------------------------------------------------------------
+    int          pdf_n_bins                 = 100;
+    int          pdf_smooth_half_window     = 3;
+
+    // -------------------------------------------------------------------------
+    // Total curvature (Laplacian = z_xx + z_yy, square window, units 1/m)
+    // window_pixels is the full window side length; must be odd and >= 3.
+    // radius = (window_pixels - 1) / 2 pixels.
+    // -------------------------------------------------------------------------
+    int          curvature_window_pixels    = 3;
+
+    // -------------------------------------------------------------------------
+    // Local relief (max - min over a square window)
+    // window_pixels is the full window side length; must be odd and >= 3.
+    // Relief is also used as a masking metric (use_relief = true by default).
+    // -------------------------------------------------------------------------
+    int          relief_window_pixels       = 5;
+    bool         use_relief                 = true;
+    double       relief_threshold_percentile = 10.0;   // below this = flat
+
     int          n_threads                  = 0;
 };
 
@@ -178,6 +204,7 @@ struct flat_surface_result
     lsdtt_raster_cpu madk2_flat_mask;
     lsdtt_raster_cpu iqr_flat_mask;
     lsdtt_raster_cpu nvd_flat_mask;
+    lsdtt_raster_cpu relief_flat_mask;
 
     // -------------------------------------------------------------------------
     // Combined flat mask (AND or OR of per-metric masks according to request)
@@ -194,12 +221,42 @@ struct flat_surface_result
     lsdtt_raster_cpu labelled_flat_mask;
 
     // -------------------------------------------------------------------------
+    // Diagnostic rasters (always computed, written when write_texture_rasters)
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu curvature;    // total curvature (Laplacian, 1/m)
+    lsdtt_raster_cpu relief;       // local relief (m)
+
+    // -------------------------------------------------------------------------
     // QQ data: standard normal quantile vs metric quantile
     // Populated for each enabled metric.
     // -------------------------------------------------------------------------
     std::vector<qq_bin> madk2_qq;
     std::vector<qq_bin> iqr_qq;
     std::vector<qq_bin> nvd_qq;
+    std::vector<qq_bin> curvature_qq;
+    std::vector<qq_bin> relief_qq;
+
+    // -------------------------------------------------------------------------
+    // Smoothed PDFs: box-kernel smoothed histogram PDF for each metric.
+    // Populated for each enabled texture metric and both diagnostic metrics.
+    // -------------------------------------------------------------------------
+    lsdtt_smoothed_pdf madk2_smoothed_pdf;
+    lsdtt_smoothed_pdf iqr_smoothed_pdf;
+    lsdtt_smoothed_pdf nvd_smoothed_pdf;
+    lsdtt_smoothed_pdf curvature_smoothed_pdf;
+    lsdtt_smoothed_pdf relief_smoothed_pdf;
+
+    // -------------------------------------------------------------------------
+    // Distribution fits: normal, exponential, Weibull, Pareto fitted to each
+    // metric.  Index order: [0]=normal [1]=exponential [2]=weibull [3]=pareto.
+    // Entries with valid=false were not fitted (domain mismatch or failure).
+    // max_divergence_x in each fit is a data-driven threshold candidate.
+    // -------------------------------------------------------------------------
+    std::vector<lsdtt_distribution_fit> madk2_dist_fits;
+    std::vector<lsdtt_distribution_fit> iqr_dist_fits;
+    std::vector<lsdtt_distribution_fit> nvd_dist_fits;
+    std::vector<lsdtt_distribution_fit> curvature_dist_fits;
+    std::vector<lsdtt_distribution_fit> relief_dist_fits;
 };
 
 // =============================================================================

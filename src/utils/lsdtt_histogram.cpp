@@ -925,4 +925,88 @@ std::pair<std::vector<double>, std::vector<double>> log_bin_mean_xy(
     return std::make_pair(std::move(binned_x), std::move(binned_y));
 }
 
+// =============================================================================
+// compute_smoothed_pdf
+// =============================================================================
+lsdtt_smoothed_pdf compute_smoothed_pdf(
+    const std::vector<double>& valid_values,
+    std::size_t                n_bins,
+    std::size_t                smooth_half_window)
+{
+    lsdtt_smoothed_pdf out;
+    if (valid_values.empty() || n_bins < 3) return out;
+
+    const lsdtt_histogram hist = compute_histogram(valid_values, n_bins);
+    if (hist.empty()) return out;
+
+    out.bin_centres = hist.bin_centres;
+
+    // Smooth the PDF with a symmetric box kernel.
+    const std::size_t nb = hist.n_bins;
+    out.smoothed_pdf.resize(nb, 0.0);
+
+    for (std::size_t i = 0; i < nb; ++i)
+    {
+        const std::size_t lo = (i >= smooth_half_window) ? i - smooth_half_window : 0;
+        const std::size_t hi = std::min(i + smooth_half_window, nb - 1);
+        double sum = 0.0;
+        for (std::size_t j = lo; j <= hi; ++j)
+            sum += hist.pdf[j];
+        out.smoothed_pdf[i] = sum / static_cast<double>(hi - lo + 1);
+    }
+
+    return out;
+}
+
+// =============================================================================
+// compute_qq
+// =============================================================================
+lsdtt_qq_data compute_qq(
+    const std::vector<double>& valid_values,
+    std::size_t                n_points)
+{
+    lsdtt_qq_data out;
+    if (valid_values.empty() || n_points < 2) return out;
+
+    std::vector<double> sorted = valid_values;
+    std::sort(sorted.begin(), sorted.end());
+    const std::size_t n = sorted.size();
+
+    out.standard_normal_variate.reserve(n_points);
+    out.data_quantile.reserve(n_points);
+
+    for (std::size_t k = 1; k <= n_points; ++k)
+    {
+        const double p    = (static_cast<double>(k) - 0.5) / static_cast<double>(n_points);
+        const double h    = static_cast<double>(n - 1) * p;
+        const std::size_t lo  = static_cast<std::size_t>(h);
+        const std::size_t hi  = std::min(lo + 1, n - 1);
+        const double frac = h - static_cast<double>(lo);
+        const double dq   = sorted[lo] * (1.0 - frac) + sorted[hi] * frac;
+
+        out.standard_normal_variate.push_back(normal_quantile(p));
+        out.data_quantile.push_back(dq);
+    }
+
+    // Fit a straight reference line through the IQR of the QQ cloud.
+    // Both vectors are already sorted, so Q25/Q75 can be read directly
+    // via linear interpolation of the sorted sequence.
+    const double z25 = compute_percentile(out.standard_normal_variate, 25.0);
+    const double z75 = compute_percentile(out.standard_normal_variate, 75.0);
+    const double q25 = compute_percentile(out.data_quantile,           25.0);
+    const double q75 = compute_percentile(out.data_quantile,           75.0);
+
+    const double dz = z75 - z25;
+    const double slope     = (dz == 0.0) ? 0.0 : (q75 - q25) / dz;
+    const double intercept = (q25 + q75) * 0.5 - slope * (z25 + z75) * 0.5;
+
+    out.normal_reference.reserve(n_points);
+    for (std::size_t i = 0; i < n_points; ++i)
+    {
+        out.normal_reference.push_back(intercept + slope * out.standard_normal_variate[i]);
+    }
+
+    return out;
+}
+
 } // namespace lsdtt

@@ -44,9 +44,11 @@
 //   lsdtt-flat-surface-finder -h
 // -----------------------------------------------------------------------------
 
+#include <cmath>
 #include <cstdlib>
 #include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -57,6 +59,8 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_flat_surface_finder.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/utils/lsdtt_distributions.hpp"
+#include "../src/utils/lsdtt_histogram.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -114,8 +118,98 @@ static void write_qq_csv(
     rows.reserve(qq.size());
     for (const auto& b : qq)
         rows.push_back({ std::to_string(b.standard_normal_quantile),
-                         std::to_string(b.data_quantile) });
-    loader.write_csv(out_path, {"standard_normal_quantile", "data_quantile"}, rows);
+                         std::to_string(b.data_quantile),
+                         std::to_string(b.normal_reference) });
+    loader.write_csv(out_path,
+                     {"standard_normal_variate", "data_quantile", "normal_reference"},
+                     rows);
+}
+
+// Write one CSV summarising all four distribution fits for a metric.
+// Columns: family, param1, param2, ks_statistic, max_divergence_x, n_values,
+//          ks_critical_value_05, valid
+//
+// ks_critical_value_05 = 1.36 / sqrt(n_values) is the Kolmogorov-Smirnov
+// critical value at the 5 % significance level for a *known-parameter* test.
+// Because parameters are estimated from the data (MLE), the actual critical
+// value is somewhat smaller (Lilliefors correction), so this column gives
+// a conservative upper bound: if ks_statistic > ks_critical_value_05 the
+// distribution is definitively rejected; if smaller, it may still be a poor
+// fit due to the MLE bias.
+static void write_dist_fits_csv(
+    lsdtt::lsdtt_data_loader&                          loader,
+    const std::string&                                 out_path,
+    const std::vector<lsdtt::lsdtt_distribution_fit>&  fits)
+{
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(fits.size());
+    for (const auto& f : fits)
+    {
+        const double ks_crit = (f.n_values > 0)
+            ? 1.36 / std::sqrt(static_cast<double>(f.n_values))
+            : std::numeric_limits<double>::quiet_NaN();
+
+        rows.push_back({
+            lsdtt::distribution_family_name(f.family),
+            std::to_string(f.param1),
+            std::to_string(f.param2),
+            std::to_string(f.ks_statistic),
+            std::to_string(f.max_divergence_x),
+            std::to_string(f.n_values),
+            std::to_string(ks_crit),
+            f.valid ? "true" : "false"
+        });
+    }
+    loader.write_csv(out_path,
+        {"family","param1","param2","ks_statistic","max_divergence_x",
+         "n_values","ks_critical_value_05","valid"},
+        rows);
+}
+
+// Write a smoothed PDF CSV with three columns:
+//   bin_centre, smoothed_pdf, fitted_pdf
+// where fitted_pdf is the best-fitting distribution's PDF evaluated at each
+// bin centre.  The best fit is the valid entry in `fits` with the lowest
+// KS statistic.
+static void write_smoothed_pdf_csv(
+    lsdtt::lsdtt_data_loader&                          loader,
+    const std::string&                                 out_path,
+    const lsdtt::lsdtt_smoothed_pdf&                   spdf,
+    const std::vector<lsdtt::lsdtt_distribution_fit>&  fits)
+{
+    if (spdf.empty()) return;
+
+    // Find the best valid fit.
+    const lsdtt::lsdtt_distribution_fit* best = nullptr;
+    for (const auto& f : fits)
+    {
+        if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
+        if (!best || f.ks_statistic < best->ks_statistic)
+            best = &f;
+    }
+
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(spdf.bin_centres.size());
+    for (std::size_t i = 0; i < spdf.bin_centres.size(); ++i)
+    {
+        const double x   = spdf.bin_centres[i];
+        const double pdf = spdf.smoothed_pdf[i];
+        const double fit_pdf = best ? lsdtt::eval_pdf(*best, x)
+                                    : std::numeric_limits<double>::quiet_NaN();
+        rows.push_back({ std::to_string(x),
+                         std::to_string(pdf),
+                         std::to_string(fit_pdf) });
+    }
+
+    // Include the best-fit family name in the header comment via the column
+    // name so the user knows which distribution is plotted.
+    const std::string fit_col = best
+        ? std::string("fitted_pdf_") + lsdtt::distribution_family_name(best->family)
+        : "fitted_pdf";
+
+    loader.write_csv(out_path,
+                     {"bin_centre", "smoothed_pdf", fit_col},
+                     rows);
 }
 
 // =============================================================================
@@ -170,8 +264,8 @@ int main(int argc, char* argv[])
         "Enable residual IQR metric (IQR of elevation residuals to a fitted surface).",
         "Slope-independent by construction.  Fitting method is set by iqr_fit_method."};
 
-    string_default_map["iqr_fit_method"] = "fftw_highpass";
-    help_map["iqr_fit_method"] = {"string","fftw_highpass",
+    string_default_map["iqr_fit_method"] = "moving_window_mean";
+    help_map["iqr_fit_method"] = {"string","moving_window_mean",
         "Method used to compute the reference surface for residual IQR.",
         "fftw_highpass     — residuals = fftw2D_highpass_filter(dem, iqr_fit_lambda_metres). "
         "  Global spectral separation; cleanest frequency response; requires FFTW. "
@@ -245,6 +339,37 @@ int main(int argc, char* argv[])
     int_default_map["qq_n_bins"] = 100;
     help_map["qq_n_bins"] = {"int","100",
         "Number of quantile bins in the QQ output CSVs.","100 = one row per percentile."};
+
+    int_default_map["pdf_n_bins"] = 100;
+    help_map["pdf_n_bins"] = {"int","100",
+        "Number of histogram bins for the smoothed PDF and peak detection.",
+        "Increase for finer resolution; decrease to suppress noise."};
+
+    int_default_map["pdf_smooth_half_window"] = 3;
+    help_map["pdf_smooth_half_window"] = {"int","3",
+        "Half-width of the box-smoothing kernel (bins) used for PDF peak detection.",
+        "Total kernel width = 2*N+1.  Increase to merge spurious peaks."};
+
+    int_default_map["curvature_window_pixels"] = 3;
+    help_map["curvature_window_pixels"] = {"int","3",
+        "Square window size (pixels) for total curvature (Laplacian) computation.",
+        "Must be odd and >= 3.  3 = 3x3 neighbourhood (standard 5-point stencil)."};
+
+    int_default_map["relief_window_pixels"] = 5;
+    help_map["relief_window_pixels"] = {"int","5",
+        "Square window size (pixels) for local relief (max - min) computation.",
+        "Must be odd and >= 3.  5 = 5x5 neighbourhood."};
+
+    bool_default_map["use_relief"] = true;
+    help_map["use_relief"] = {"bool","true",
+        "Use local relief as a flat-surface masking metric.",
+        "Pixels below relief_threshold_percentile are classed flat."};
+
+    float_default_map["relief_threshold_percentile"] = 10.0f;
+    help_map["relief_threshold_percentile"] = {"float","10",
+        "Percentile of the local relief distribution below which a pixel is classed flat.",
+        "Range: 0-100.  Lower values = stricter (only lowest-relief pixels pass)."};
+
 
     // --- Output toggles ---
     bool_default_map["write_texture_rasters"] = false;
@@ -353,7 +478,13 @@ int main(int argc, char* argv[])
     req.require_all_metrics_pass   = bf["require_all_metrics_pass"];
     req.min_component_pixels       = ip["min_component_pixels"];
     req.qq_n_bins                  = ip["qq_n_bins"];
-    req.n_threads                  = ip["n_threads"];
+    req.pdf_n_bins                 = ip["pdf_n_bins"];
+    req.pdf_smooth_half_window     = ip["pdf_smooth_half_window"];
+    req.curvature_window_pixels      = ip["curvature_window_pixels"];
+    req.relief_window_pixels         = ip["relief_window_pixels"];
+    req.use_relief                   = bf["use_relief"];
+    req.relief_threshold_percentile  = static_cast<double>(ff["relief_threshold_percentile"]);
+    req.n_threads                    = ip["n_threads"];
 
     // -------------------------------------------------------------------------
     // Run
@@ -375,6 +506,9 @@ int main(int argc, char* argv[])
     if (req.use_nvd)
         std::cout << "  NVD s3       radius=" << req.nvd_window_radius_metres
                   << " m  threshold=" << req.nvd_threshold_percentile << "th pct\n";
+    if (req.use_relief)
+        std::cout << "  Local relief  window=" << req.relief_window_pixels
+                  << " px  threshold=" << req.relief_threshold_percentile << "th pct\n";
     std::cout << "  combination: " << (req.require_all_metrics_pass ? "AND" : "OR")
               << "  min_component=" << req.min_component_pixels << " px\n\n";
 
@@ -419,6 +553,20 @@ int main(int argc, char* argv[])
             loader.write_full(result.nvd_s3.get_data(),
                               result.nvd_s3.get_meta(), p, out_format);
         }
+
+        // Diagnostic rasters — always computed, written here
+        {
+            const std::string p = stem + "_curvature.tif";
+            std::cout << "Writing total curvature: " << p << "\n";
+            loader.write_full(result.curvature.get_data(),
+                              result.curvature.get_meta(), p, out_format);
+        }
+        {
+            const std::string p = stem + "_relief.tif";
+            std::cout << "Writing local relief: " << p << "\n";
+            loader.write_full(result.relief.get_data(),
+                              result.relief.get_meta(), p, out_format);
+        }
     }
 
     if (bf["write_metric_flat_masks"])
@@ -443,6 +591,13 @@ int main(int argc, char* argv[])
             std::cout << "Writing NVD flat mask: " << p << "\n";
             loader.write_full(result.nvd_flat_mask.get_data(),
                               result.nvd_flat_mask.get_meta(), p, out_format);
+        }
+        if (req.use_relief)
+        {
+            const std::string p = stem + "_relief_flat_mask.tif";
+            std::cout << "Writing relief flat mask: " << p << "\n";
+            loader.write_full(result.relief_flat_mask.get_data(),
+                              result.relief_flat_mask.get_meta(), p, out_format);
         }
     }
 
@@ -482,6 +637,72 @@ int main(int argc, char* argv[])
         std::cout << "Writing NVD QQ: " << p << "\n";
         write_qq_csv(loader, p, result.nvd_qq);
     }
+    if (!result.curvature_qq.empty())
+    {
+        const std::string p = stem + "_curvature_qq.csv";
+        std::cout << "Writing curvature QQ: " << p << "\n";
+        write_qq_csv(loader, p, result.curvature_qq);
+    }
+    if (!result.relief_qq.empty())
+    {
+        const std::string p = stem + "_relief_qq.csv";
+        std::cout << "Writing relief QQ: " << p << "\n";
+        write_qq_csv(loader, p, result.relief_qq);
+    }
+
+    // Smoothed PDF CSVs — written for each metric
+    // Three columns: bin_centre, smoothed_pdf, fitted_pdf_<family>
+    if (req.use_madk2 && !result.madk2_smoothed_pdf.empty())
+    {
+        const std::string p = stem + "_madk2_smoothed_pdf.csv";
+        std::cout << "Writing MADk2 smoothed PDF: " << p << "\n";
+        write_smoothed_pdf_csv(loader, p,
+                               result.madk2_smoothed_pdf, result.madk2_dist_fits);
+    }
+    if (req.use_residual_iqr && !result.iqr_smoothed_pdf.empty())
+    {
+        const std::string p = stem + "_iqr_smoothed_pdf.csv";
+        std::cout << "Writing residual IQR smoothed PDF: " << p << "\n";
+        write_smoothed_pdf_csv(loader, p,
+                               result.iqr_smoothed_pdf, result.iqr_dist_fits);
+    }
+    if (req.use_nvd && !result.nvd_smoothed_pdf.empty())
+    {
+        const std::string p = stem + "_nvd_smoothed_pdf.csv";
+        std::cout << "Writing NVD smoothed PDF: " << p << "\n";
+        write_smoothed_pdf_csv(loader, p,
+                               result.nvd_smoothed_pdf, result.nvd_dist_fits);
+    }
+    if (!result.curvature_smoothed_pdf.empty())
+    {
+        const std::string p = stem + "_curvature_smoothed_pdf.csv";
+        std::cout << "Writing curvature smoothed PDF: " << p << "\n";
+        write_smoothed_pdf_csv(loader, p,
+                               result.curvature_smoothed_pdf, result.curvature_dist_fits);
+    }
+    if (!result.relief_smoothed_pdf.empty())
+    {
+        const std::string p = stem + "_relief_smoothed_pdf.csv";
+        std::cout << "Writing relief smoothed PDF: " << p << "\n";
+        write_smoothed_pdf_csv(loader, p,
+                               result.relief_smoothed_pdf, result.relief_dist_fits);
+    }
+
+    // Distribution fit CSVs — always written for each metric
+    auto write_dist = [&](const std::string& label,
+                          const std::vector<lsdtt::lsdtt_distribution_fit>& fits)
+    {
+        if (fits.empty()) return;
+        const std::string p = stem + "_" + label + "_dist_fits.csv";
+        std::cout << "Writing " << label << " distribution fits: " << p << "\n";
+        write_dist_fits_csv(loader, p, fits);
+    };
+
+    if (req.use_madk2)        write_dist("madk2",     result.madk2_dist_fits);
+    if (req.use_residual_iqr) write_dist("iqr",       result.iqr_dist_fits);
+    if (req.use_nvd)          write_dist("nvd",       result.nvd_dist_fits);
+    write_dist("curvature", result.curvature_dist_fits);
+    write_dist("relief",    result.relief_dist_fits);
 
     std::cout << "\n";
     pp.print_parameters();

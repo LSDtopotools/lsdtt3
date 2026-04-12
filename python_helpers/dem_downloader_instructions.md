@@ -215,6 +215,82 @@ python3 download_dem_tiles.py \
 
 ---
 
+## Running from a data folder
+
+The script can be called from any directory. Use `--output-dir` (or `-d`) to control where files are saved, regardless of where you are when you run the command.
+
+```bash
+# cd into your data folder first, then save there with -d .
+cd /my/data/folder
+python3 /mnt/c/LSDTopoTools/lsdtt3/python_helpers/download_dem_tiles.py \
+  "55.95, -3.21" -d .
+
+# Or stay anywhere and point -d at the target folder
+python3 /mnt/c/LSDTopoTools/lsdtt3/python_helpers/download_dem_tiles.py \
+  "55.95, -3.21" -d /my/data/folder
+```
+
+### Avoiding the full path
+
+**Option 1 — shell alias (recommended)**
+
+Add to your `~/.bashrc` (or `~/.zshrc`):
+
+```bash
+alias download_dem_tiles='python3 /mnt/c/LSDTopoTools/lsdtt3/python_helpers/download_dem_tiles.py'
+```
+
+Reload with `source ~/.bashrc`, then call it directly from any folder:
+
+```bash
+download_dem_tiles "55.95, -3.21" -d .
+```
+
+**Option 2 — add the directory to PATH**
+
+Make the script executable once, then add its directory to PATH:
+
+```bash
+chmod +x /mnt/c/LSDTopoTools/lsdtt3/python_helpers/download_dem_tiles.py
+```
+
+Add to `~/.bashrc`:
+
+```bash
+export PATH="$PATH:/mnt/c/LSDTopoTools/lsdtt3/python_helpers"
+```
+
+Then call it without `python3`:
+
+```bash
+download_dem_tiles.py "55.95, -3.21" -d .
+```
+
+**Option 3 — symlink into `~/.local/bin`**
+
+A symlink keeps your PATH clean while pointing back to the live script file:
+
+```bash
+mkdir -p ~/.local/bin
+ln -s /mnt/c/LSDTopoTools/lsdtt3/python_helpers/download_dem_tiles.py \
+      ~/.local/bin/download_dem_tiles
+chmod +x /mnt/c/LSDTopoTools/lsdtt3/python_helpers/download_dem_tiles.py
+```
+
+**Note (WSL2):** if the script was edited on Windows it may have `\r\n` line endings, causing the error `/usr/bin/env: 'python3\r': No such file or directory`. Fix once with:
+
+```bash
+sed -i 's/\r//' /mnt/c/LSDTopoTools/lsdtt3/python_helpers/download_dem_tiles.py
+```
+
+`~/.local/bin` is usually already on PATH in modern Linux/WSL2. Then:
+
+```bash
+download_dem_tiles "55.95, -3.21" -d .
+```
+
+---
+
 ## Notes
 
 - Coordinates must be quoted so the shell treats each `lat, lon` pair as one argument.

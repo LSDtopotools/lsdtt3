@@ -1938,4 +1938,141 @@ polyfit_metric_result compute_polyfit_metrics(
     return result;
 }
 
+// =============================================================================
+// moving_window_total_curvature
+// =============================================================================
+
+// Solve a 6x6 linear system Ax = b in-place using Gaussian elimination with
+// partial pivoting.  Returns false if the matrix is singular.
+static bool solve_6x6(double A[6][6], double b[6], double x[6])
+{
+    for (int col = 0; col < 6; ++col)
+    {
+        // Find pivot row.
+        int pivot = col;
+        for (int row = col + 1; row < 6; ++row)
+        {
+            if (std::abs(A[row][col]) > std::abs(A[pivot][col]))
+                pivot = row;
+        }
+
+        if (std::abs(A[pivot][col]) < 1e-14)
+            return false;
+
+        // Swap rows.
+        if (pivot != col)
+        {
+            for (int j = 0; j < 6; ++j) std::swap(A[col][j], A[pivot][j]);
+            std::swap(b[col], b[pivot]);
+        }
+
+        // Eliminate below.
+        for (int row = col + 1; row < 6; ++row)
+        {
+            const double factor = A[row][col] / A[col][col];
+            for (int j = col; j < 6; ++j)
+                A[row][j] -= factor * A[col][j];
+            b[row] -= factor * b[col];
+        }
+    }
+
+    // Back-substitution.
+    for (int row = 5; row >= 0; --row)
+    {
+        double sum = b[row];
+        for (int j = row + 1; j < 6; ++j)
+            sum -= A[row][j] * x[j];
+        x[row] = sum / A[row][row];
+    }
+
+    return true;
+}
+
+lsdtt_raster_cpu moving_window_total_curvature(
+    const lsdtt_raster_cpu& raster,
+    double                  radius_metres,
+    window_shape            shape
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::moving_window_total_curvature: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int   nrows  = meta.n_rows;
+    const int   ncols  = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+    const double L     = meta.cell_size;
+
+    const window_offsets win = make_window_offsets(radius_metres, L, shape);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            // Accumulate AᵀA (6x6) and Aᵀz (6x1).
+            // Basis: [x², y², xy, x, y, 1] evaluated at offsets from centre.
+            double AtA[6][6] = {};
+            double Atz[6]    = {};
+            int    n_valid   = 0;
+
+            for (const auto& [dr, dc] : win.offsets)
+            {
+                const int wr = row + dr;
+                const int wc = col + dc;
+                if (!dem.in_bounds(wr, wc)) continue;
+                if (mask(wr, wc) == 0) continue;
+                if (meta.is_nodata(dem(wr, wc))) continue;
+
+                const double x = static_cast<double>(dc) * L;
+                const double y = static_cast<double>(-dr) * L;  // row increases downward
+                const double z = static_cast<double>(dem(wr, wc));
+
+                const double basis[6] = { x*x, y*y, x*y, x, y, 1.0 };
+
+                for (int i = 0; i < 6; ++i)
+                {
+                    for (int j = 0; j < 6; ++j)
+                        AtA[i][j] += basis[i] * basis[j];
+                    Atz[i] += basis[i] * z;
+                }
+
+                ++n_valid;
+            }
+
+            if (n_valid < 6) continue;
+
+            double coeffs[6] = {};
+            if (!solve_6x6(AtA, Atz, coeffs)) continue;
+
+            // Laplacian = z_xx + z_yy = 2*a + 2*b = 2*c[0] + 2*c[1]
+            const double laplacian = 2.0 * (coeffs[0] + coeffs[1]);
+
+            out(row, col)      = static_cast<float>(laplacian);
+            out_mask(row, col) = 1;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
 } // namespace lsdtt

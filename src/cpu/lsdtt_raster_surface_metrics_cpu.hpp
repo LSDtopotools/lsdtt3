@@ -158,6 +158,30 @@ lsdtt_raster_cpu moving_window_local_relief(
 );
 
 // -----------------------------------------------------------------------------
+// moving_window_total_curvature
+//
+// Total curvature (Laplacian, z_xx + z_yy) derived from a local quadratic
+// surface fit over a moving window.  Units: 1/m.
+//
+// For each pixel, a biquadratic polynomial
+//   z(x,y) = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f
+// is fitted by OLS to all valid pixels in the window (minimum 6 required).
+// The Laplacian at the centre is 2a + 2b.
+//
+// For the default 1-cell-radius (3x3) square window with all 9 pixels valid
+// this reduces to the standard 5-point stencil:
+//   Laplacian = (z_E + z_W + z_N + z_S - 4*z_C) / L^2
+//
+// Signed convention: positive = concave-up (bowl), negative = concave-down
+// (dome/ridge).  Use abs() for a roughness/curvedness measure.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu moving_window_total_curvature(
+    const lsdtt_raster_cpu& raster,
+    double       radius_metres,
+    window_shape shape  = window_shape::square
+);
+
+// -----------------------------------------------------------------------------
 // moving_window_stddev
 //
 // Population standard deviation of elevation values within the moving window.

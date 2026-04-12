@@ -21,7 +21,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -190,8 +192,23 @@ madk2_result calculate_madk2(
         {-lag_pixels, lag_pixels,  3.0 * k_pi / 4.0,  2.0 * static_cast<double>(lag_sq)  }
     }};
 
+    // combined_radius: window can extend up to pixel_radius, then each lag point
+    // extends a further lag_pixels in any direction.  A single outer-edge check
+    // eliminates all per-window-pixel inner bounds checks.
+    const int combined_radius = pixel_radius + lag_pixels;
+    std::atomic<int> rows_done{0};
+    const int progress_step = std::max(1, nrows / 20);   // print every ~5 %
+
 #ifdef _OPENMP
-    #pragma omp parallel for collapse(2) schedule(dynamic) num_threads(threads)
+    #pragma omp parallel num_threads(threads)
+    {
+#endif
+    // Per-thread reusable buffer — allocated once, cleared each inner iteration.
+    std::vector<float> k2_diffs;
+    k2_diffs.reserve(win.offsets.size());
+
+#ifdef _OPENMP
+    #pragma omp for schedule(static)
 #endif
     for (int row = 0; row < nrows; ++row)
     {
@@ -204,52 +221,30 @@ madk2_result calculate_madk2(
                 continue;
             }
 
-            if (row - pixel_radius < 0 || row + pixel_radius + 1 > nrows ||
-                col - pixel_radius < 0 || col + pixel_radius + 1 > ncols)
+            // One check covers both the window extent and the lag step.
+            if (row < combined_radius || row + combined_radius >= nrows ||
+                col < combined_radius || col + combined_radius >= ncols)
             {
                 continue;
             }
-
-            bool edge_lag = false;
-            for (const auto& dir : dirs)
-            {
-                const int ri_neg = row - dir.dr;
-                const int rj_neg = col - dir.dc;
-                const int ri_pos = row + dir.dr;
-                const int rj_pos = col + dir.dc;
-
-                if (ri_neg < 0 || ri_neg >= nrows || rj_neg < 0 || rj_neg >= ncols ||
-                    ri_pos < 0 || ri_pos >= nrows || rj_pos < 0 || rj_pos >= ncols)
-                {
-                    edge_lag = true;
-                    break;
-                }
-            }
-            if (edge_lag) continue;
 
             std::array<double, 4> mad_dir{{0.0, 0.0, 0.0, 0.0}};
             bool valid = true;
 
             for (std::size_t d = 0; d < dirs.size(); ++d)
             {
-                std::vector<float> k2_diffs;
-                k2_diffs.reserve(win.offsets.size());
+                k2_diffs.clear();   // reuse allocation
 
                 for (const auto& [dr_win, dc_win] : win.offsets)
                 {
                     const int ci = row + dr_win;
                     const int cj = col + dc_win;
 
+                    // Bounds are guaranteed by combined_radius — no inner check needed.
                     const int ri_pos = ci + dirs[d].dr;
                     const int rj_pos = cj + dirs[d].dc;
                     const int ri_neg = ci - dirs[d].dr;
                     const int rj_neg = cj - dirs[d].dc;
-
-                    if (ri_pos < 0 || ri_pos >= nrows || rj_pos < 0 || rj_pos >= ncols ||
-                        ri_neg < 0 || ri_neg >= nrows || rj_neg < 0 || rj_neg >= ncols)
-                    {
-                        continue;
-                    }
 
                     const std::size_t idx_pos = linear_index(ri_pos, rj_pos, ncols);
                     const std::size_t idx_cen = linear_index(ci,     cj,     ncols);
@@ -285,7 +280,18 @@ madk2_result calculate_madk2(
                     break;
                 }
 
-                mad_dir[d] = static_cast<double>(lsdtt::compute_median<float>(k2_diffs));
+                // O(N) median via nth_element — avoids full O(N log N) sort.
+                const std::size_t mid = k2_diffs.size() / 2;
+                std::nth_element(k2_diffs.begin(), k2_diffs.begin() + mid, k2_diffs.end());
+                double med = static_cast<double>(k2_diffs[mid]);
+                if (k2_diffs.size() % 2 == 0)
+                {
+                    // Average with the largest value in the lower half.
+                    const float lo =
+                        *std::max_element(k2_diffs.begin(), k2_diffs.begin() + mid);
+                    med = (static_cast<double>(lo) + med) * 0.5;
+                }
+                mad_dir[d] = med;
             }
 
             if (!valid) continue;
@@ -318,7 +324,21 @@ madk2_result calculate_madk2(
             ra_data[idx]  = static_cast<float>(ra_val);
             ra_mask[idx]  = uint8_t{1};
         }
+
+        // Progress (one atomic increment per row, cheap compared to the work).
+        const int done = rows_done.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (done % progress_step == 0 || done == nrows)
+        {
+#ifdef _OPENMP
+            #pragma omp critical
+#endif
+            std::cout << "  MADk2: " << (100 * done / nrows) << "% ("
+                      << done << "/" << nrows << " rows)\n" << std::flush;
+        }
     }
+#ifdef _OPENMP
+    }  // end omp parallel
+#endif
 
     (void)threads;
 

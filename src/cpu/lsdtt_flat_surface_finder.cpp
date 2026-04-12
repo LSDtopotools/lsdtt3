@@ -11,10 +11,12 @@
 #include "lsdtt_raster_algebra.hpp"              // raster_subtract
 #include "lsdtt_raster_feature_finder_cpu.hpp"   // label_binary_components_by_size
 #include "lsdtt_raster_spectral_cpu.hpp"         // wavelet_quadratic_fit, fftw2D_highpass_filter
-#include "lsdtt_raster_surface_metrics_cpu.hpp"  // moving_window_mean
+#include "lsdtt_raster_surface_metrics_cpu.hpp"  // moving_window_mean, moving_window_local_relief, moving_window_total_curvature
 #include "lsdtt_surface_texture_cpu.hpp"         // calculate_madk2, moving_window_iqr, compute_nvd
 
-#include "../utils/lsdtt_statistics.hpp"         // compute_percentile, normal_quantile
+#include "../utils/lsdtt_distributions.hpp"        // fit_distributions
+#include "../utils/lsdtt_histogram.hpp"           // compute_qq, compute_smoothed_pdf
+#include "../utils/lsdtt_statistics.hpp"         // compute_percentile
 
 #include <algorithm>
 #include <cmath>
@@ -48,29 +50,56 @@ static std::vector<float> collect_valid_values(const lsdtt_raster_cpu& raster)
     return vals;
 }
 
-// Build QQ plot with n_bins bins.  Plotting positions: p_k = (k-0.5)/n_bins.
-// Data quantile uses R type-7 interpolation on sorted values.
+// Compute a smoothed PDF for a collection of float values.
+static lsdtt_smoothed_pdf build_smoothed_pdf(
+    const std::vector<float>& values,
+    int                       n_bins,
+    int                       smooth_half_window)
+{
+    if (values.empty() || n_bins < 3) return lsdtt_smoothed_pdf{};
+    const std::vector<double> dvals(values.begin(), values.end());
+    return compute_smoothed_pdf(dvals,
+                                static_cast<std::size_t>(n_bins),
+                                static_cast<std::size_t>(smooth_half_window));
+}
+
+// Fit all four distributions to a collection of float values.
+static std::vector<lsdtt_distribution_fit> build_dist_fits(
+    const std::vector<float>& values)
+{
+    if (values.empty()) return {};
+    const std::vector<double> dvals(values.begin(), values.end());
+    return fit_distributions(dvals);
+}
+
+// Convert "window size in pixels" (e.g. 3 for 3×3, 5 for 5×5) to a radius
+// in metres.  Window size must be odd and >= 3.
+static double window_pixels_to_radius_metres(int window_pixels, double cell_size)
+{
+    const int half = (window_pixels - 1) / 2;
+    return static_cast<double>(std::max(1, half)) * cell_size;
+}
+
+// Build QQ plot with n_bins quantile points.
+// Delegates to compute_qq in lsdtt_histogram for the core algorithm.
 static std::vector<qq_bin> build_qq(
-    std::vector<float> values,   // pass by value — sorted in place
-    int                n_bins)
+    const std::vector<float>& values,
+    int                       n_bins)
 {
     std::vector<qq_bin> result;
     if (values.empty() || n_bins < 2) return result;
 
-    std::sort(values.begin(), values.end());
-    const std::size_t n = values.size();
-    result.reserve(static_cast<std::size_t>(n_bins));
+    const std::vector<double> dvals(values.begin(), values.end());
+    const lsdtt_qq_data qq = compute_qq(dvals, static_cast<std::size_t>(n_bins));
 
-    for (int k = 1; k <= n_bins; ++k)
+    result.reserve(qq.standard_normal_variate.size());
+    for (std::size_t i = 0; i < qq.standard_normal_variate.size(); ++i)
     {
-        const double p  = (static_cast<double>(k) - 0.5) / static_cast<double>(n_bins);
-        const double h  = static_cast<double>(n - 1) * p;
-        const std::size_t lo  = static_cast<std::size_t>(h);
-        const std::size_t hi  = std::min(lo + 1, n - 1);
-        const double frac     = h - static_cast<double>(lo);
-        const double data_q   = static_cast<double>(values[lo]) * (1.0 - frac)
-                              + static_cast<double>(values[hi]) * frac;
-        result.push_back({ normal_quantile(p), data_q });
+        result.push_back({
+            qq.standard_normal_variate[i],
+            qq.data_quantile[i],
+            qq.normal_reference[i]
+        });
     }
     return result;
 }
@@ -155,9 +184,10 @@ flat_surface_result find_flat_surfaces(
     // -------------------------------------------------------------------------
     // Validate
     // -------------------------------------------------------------------------
-    if (!request.use_madk2 && !request.use_residual_iqr && !request.use_nvd)
+    if (!request.use_madk2 && !request.use_residual_iqr &&
+        !request.use_nvd  && !request.use_relief)
         throw std::invalid_argument(
-            "lsdtt::find_flat_surfaces: at least one metric must be enabled"
+            "lsdtt::find_flat_surfaces: at least one masking metric must be enabled"
         );
 
     const lsdtt_raster_meta& meta = dem.get_meta();
@@ -223,6 +253,23 @@ flat_surface_result find_flat_surfaces(
         throw std::invalid_argument(
             "lsdtt::find_flat_surfaces: qq_n_bins must be >= 2"
         );
+    if (request.pdf_n_bins < 3)
+        throw std::invalid_argument(
+            "lsdtt::find_flat_surfaces: pdf_n_bins must be >= 3"
+        );
+    if (request.curvature_window_pixels < 3 || request.curvature_window_pixels % 2 == 0)
+        throw std::invalid_argument(
+            "lsdtt::find_flat_surfaces: curvature_window_pixels must be odd and >= 3"
+        );
+    if (request.relief_window_pixels < 3 || request.relief_window_pixels % 2 == 0)
+        throw std::invalid_argument(
+            "lsdtt::find_flat_surfaces: relief_window_pixels must be odd and >= 3"
+        );
+
+    const double curv_radius   = window_pixels_to_radius_metres(
+        request.curvature_window_pixels, meta.cell_size);
+    const double relief_radius = window_pixels_to_radius_metres(
+        request.relief_window_pixels, meta.cell_size);
 
     flat_surface_result result;
 
@@ -238,8 +285,13 @@ flat_surface_result find_flat_surfaces(
             request.n_threads
         );
         result.madk2_roughness = std::move(mk2.omnidirectional_roughness);
-        result.madk2_qq        = build_qq(collect_valid_values(result.madk2_roughness),
-                                          request.qq_n_bins);
+        {
+            const std::vector<float> vals = collect_valid_values(result.madk2_roughness);
+            result.madk2_qq           = build_qq(vals, request.qq_n_bins);
+            result.madk2_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
+                                                           request.pdf_smooth_half_window);
+            result.madk2_dist_fits    = build_dist_fits(vals);
+        }
         result.madk2_flat_mask = threshold_at_percentile(result.madk2_roughness,
                                                          request.madk2_threshold_percentile);
     }
@@ -302,8 +354,13 @@ flat_surface_result find_flat_surfaces(
             request.n_threads
         );
 
-        result.iqr_qq        = build_qq(collect_valid_values(result.iqr_texture),
-                                        request.qq_n_bins);
+        {
+            const std::vector<float> vals = collect_valid_values(result.iqr_texture);
+            result.iqr_qq           = build_qq(vals, request.qq_n_bins);
+            result.iqr_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
+                                                         request.pdf_smooth_half_window);
+            result.iqr_dist_fits    = build_dist_fits(vals);
+        }
         result.iqr_flat_mask = threshold_at_percentile(result.iqr_texture,
                                                        request.iqr_threshold_percentile);
     }
@@ -325,11 +382,46 @@ flat_surface_result find_flat_surfaces(
             request.nvd_window_shape,
             request.n_threads
         );
-        result.nvd_s3      = std::move(nvd.s3);
-        result.nvd_qq      = build_qq(collect_valid_values(result.nvd_s3),
-                                      request.qq_n_bins);
+        result.nvd_s3 = std::move(nvd.s3);
+        {
+            const std::vector<float> vals = collect_valid_values(result.nvd_s3);
+            result.nvd_qq           = build_qq(vals, request.qq_n_bins);
+            result.nvd_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
+                                                         request.pdf_smooth_half_window);
+            result.nvd_dist_fits    = build_dist_fits(vals);
+        }
         result.nvd_flat_mask = threshold_at_percentile(result.nvd_s3,
                                                        request.nvd_threshold_percentile);
+    }
+
+    // -------------------------------------------------------------------------
+    // Diagnostic rasters: total curvature and local relief
+    // -------------------------------------------------------------------------
+    {
+        result.curvature = moving_window_total_curvature(
+            dem, curv_radius, window_shape::square);
+        const std::vector<float> vals = collect_valid_values(result.curvature);
+        result.curvature_qq           = build_qq(vals, request.qq_n_bins);
+        result.curvature_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
+                                                           request.pdf_smooth_half_window);
+        result.curvature_dist_fits    = build_dist_fits(vals);
+    }
+    {
+        result.relief = moving_window_local_relief(
+            dem, relief_radius, window_shape::square);
+        const std::vector<float> vals = collect_valid_values(result.relief);
+        result.relief_qq           = build_qq(vals, request.qq_n_bins);
+        result.relief_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
+                                                        request.pdf_smooth_half_window);
+        result.relief_dist_fits    = build_dist_fits(vals);
+
+        if (request.use_relief)
+        {
+            check_pct(request.relief_threshold_percentile,
+                      "relief_threshold_percentile");
+            result.relief_flat_mask = threshold_at_percentile(
+                result.relief, request.relief_threshold_percentile);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -347,6 +439,7 @@ flat_surface_result find_flat_surfaces(
     if (request.use_madk2)        fold_in(result.madk2_flat_mask);
     if (request.use_residual_iqr) fold_in(result.iqr_flat_mask);
     if (request.use_nvd)          fold_in(result.nvd_flat_mask);
+    if (request.use_relief)       fold_in(result.relief_flat_mask);
 
     result.combined_flat_mask = std::move(combined);
 
