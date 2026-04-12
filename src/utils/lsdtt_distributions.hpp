@@ -133,6 +133,15 @@ lsdtt_distribution_fit best_distribution_fit(
 double eval_pdf(const lsdtt_distribution_fit& fit, double x);
 
 // =============================================================================
+// eval_cdf
+//
+// Evaluate the cumulative distribution function of a fitted distribution at x.
+// Returns NaN if the fit is invalid.  Returns 0 for x below the support and
+// 1 for x above the support.
+// =============================================================================
+double eval_cdf(const lsdtt_distribution_fit& fit, double x);
+
+// =============================================================================
 // distribution_family_name
 // =============================================================================
 inline const char* distribution_family_name(lsdtt_distribution_family f)

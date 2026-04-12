@@ -959,6 +959,24 @@ lsdtt_smoothed_pdf compute_smoothed_pdf(
 }
 
 // =============================================================================
+// compute_smoothed_cdf
+// =============================================================================
+lsdtt_smoothed_cdf compute_smoothed_cdf(
+    const std::vector<double>& valid_values,
+    std::size_t                n_bins)
+{
+    lsdtt_smoothed_cdf out;
+    if (valid_values.empty() || n_bins < 3) return out;
+
+    const lsdtt_histogram hist = compute_histogram(valid_values, n_bins);
+    if (hist.empty()) return out;
+
+    out.bin_centres = hist.bin_centres;
+    out.cdf         = hist.cdf;
+    return out;
+}
+
+// =============================================================================
 // compute_qq
 // =============================================================================
 lsdtt_qq_data compute_qq(

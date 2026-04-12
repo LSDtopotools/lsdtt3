@@ -270,6 +270,37 @@ lsdtt_smoothed_pdf compute_smoothed_pdf(
 );
 
 // =============================================================================
+// lsdtt_smoothed_cdf
+//
+// Result of compute_smoothed_cdf().
+//
+// The empirical CDF is derived directly from the histogram: cdf[i] is the
+// cumulative probability up to the upper edge of bin i.  No additional
+// smoothing is applied — CDFs are monotone by construction and do not benefit
+// from box-kernel convolution.
+// =============================================================================
+struct lsdtt_smoothed_cdf
+{
+    std::vector<double> bin_centres;   // bin centres (upper edge of each bin)
+    std::vector<double> cdf;           // cumulative probability at each bin centre
+
+    bool empty() const { return bin_centres.empty(); }
+};
+
+// Compute the empirical CDF of valid_values using n_bins histogram bins.
+//
+// n_bins — histogram resolution (default 100).
+//          Increase for finer resolution.  Percentile thresholds can be read
+//          directly from the y-axis: find the x value where cdf[i] crosses
+//          threshold/100.
+//
+// Returns an empty struct if valid_values is empty or n_bins < 3.
+lsdtt_smoothed_cdf compute_smoothed_cdf(
+    const std::vector<double>& valid_values,
+    std::size_t n_bins = 100
+);
+
+// =============================================================================
 // lsdtt_qq_data
 //
 // Result of a quantile-quantile analysis against the standard normal.

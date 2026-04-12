@@ -150,6 +150,21 @@ struct flat_surface_request
     bool         require_all_metrics_pass   = true;
 
     // -------------------------------------------------------------------------
+    // Directional closing of the non-flat mask
+    //
+    // Applied to the inverted combined mask (non-flat = 1) before component
+    // labelling.  Connects small breaks in curvilinear non-flat corridors
+    // (e.g. a river channel or fault scarp that cuts across a flat surface)
+    // without merging the scattered, compact flat fragments on either side.
+    //
+    // A gap of k pixels across the non-flat corridor can be bridged by setting
+    // directional_close_line_length_pixels >= k+1.
+    // Disabled when directional_close_line_length_pixels < 3.
+    // -------------------------------------------------------------------------
+    int          directional_close_line_length_pixels = 0;   // 0 = disabled
+    int          directional_close_n_angles           = 18;  // 10° spacing
+
+    // -------------------------------------------------------------------------
     // Component filtering and labelling
     // -------------------------------------------------------------------------
     int          min_component_pixels       = 100;
@@ -160,10 +175,11 @@ struct flat_surface_request
     int          qq_n_bins                  = 100;
 
     // -------------------------------------------------------------------------
-    // Smoothed PDF (box-kernel smoothed histogram PDF for each metric)
+    // Empirical CDF (histogram-based CDF for each metric)
+    // Since thresholding is percentile-based, the CDF allows the threshold to
+    // be read directly off the y-axis.
     // -------------------------------------------------------------------------
-    int          pdf_n_bins                 = 100;
-    int          pdf_smooth_half_window     = 3;
+    int          cdf_n_bins                 = 100;
 
     // -------------------------------------------------------------------------
     // Total curvature (Laplacian = z_xx + z_yy, square window, units 1/m)
@@ -212,6 +228,18 @@ struct flat_surface_result
     lsdtt_raster_cpu combined_flat_mask;
 
     // -------------------------------------------------------------------------
+    // Healed flat mask
+    //
+    // Only populated when directional_close_line_length_pixels >= 3.
+    //
+    // The combined_flat_mask is inverted to give a non-flat mask, then
+    // binary_directional_closing is applied to reconnect small breaks in
+    // curvilinear non-flat corridors.  The result is inverted back.
+    // Labelling and component filtering are applied to this mask when present.
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu healed_flat_mask;
+
+    // -------------------------------------------------------------------------
     // Labelled flat components (UInt32)
     //
     // Components of combined_flat_mask that have >= min_component_pixels are
@@ -237,14 +265,16 @@ struct flat_surface_result
     std::vector<qq_bin> relief_qq;
 
     // -------------------------------------------------------------------------
-    // Smoothed PDFs: box-kernel smoothed histogram PDF for each metric.
+    // Empirical CDFs: histogram-based CDF for each metric.
     // Populated for each enabled texture metric and both diagnostic metrics.
+    // The percentile threshold for each metric is directly readable as the
+    // x value where the CDF crosses threshold/100.
     // -------------------------------------------------------------------------
-    lsdtt_smoothed_pdf madk2_smoothed_pdf;
-    lsdtt_smoothed_pdf iqr_smoothed_pdf;
-    lsdtt_smoothed_pdf nvd_smoothed_pdf;
-    lsdtt_smoothed_pdf curvature_smoothed_pdf;
-    lsdtt_smoothed_pdf relief_smoothed_pdf;
+    lsdtt_smoothed_cdf madk2_smoothed_cdf;
+    lsdtt_smoothed_cdf iqr_smoothed_cdf;
+    lsdtt_smoothed_cdf nvd_smoothed_cdf;
+    lsdtt_smoothed_cdf curvature_smoothed_cdf;
+    lsdtt_smoothed_cdf relief_smoothed_cdf;
 
     // -------------------------------------------------------------------------
     // Distribution fits: normal, exponential, Weibull, Pareto fitted to each

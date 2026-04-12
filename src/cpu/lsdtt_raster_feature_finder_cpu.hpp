@@ -283,6 +283,46 @@ lsdtt_raster_cpu binary_morphological_closing(
 
 
 // -----------------------------------------------------------------------------
+// binary_directional_closing
+//
+// Morphological closing using line-shaped structuring elements at n_angles
+// evenly-spaced orientations in [0°, 180°), followed by a pixel-wise OR.
+//
+// Why this beats disk closing for curvilinear features:
+//   A disk SE of the same radius connects gaps in every direction but also
+//   expands all compact foreground blobs.  A line SE at angle θ only bridges
+//   gaps aligned with θ; compact fragmented patches are largely unaffected
+//   because they are not elongated in any particular direction.  The OR over
+//   n_angles orientations recovers connectivity along arbitrary curves while
+//   leaving scattered compact pixels alone.
+//
+// Parameters:
+//   line_length_pixels — total length of the line SE.  A gap of k pixels can
+//                        be closed by a line of length k+1 or longer.  Forced
+//                        to the next odd integer if even (so the SE is centred
+//                        at the origin pixel).
+//   n_angles           — number of orientations sampled from [0°, 180°).
+//                        The worst-case angular miss is 90°/n_angles.
+//                        Default 18 gives 10° spacing (worst miss: 5°).
+//                        Increase for denser coverage; 36 gives 5° spacing.
+//
+// Input/output convention: same as binary_morphological_closing.
+//   - foreground (1): value > 0.5 and mask = 1
+//   - background (0): value <= 0.5 and mask = 1
+//   - nodata: mask = 0, excluded from dilation and erosion
+//
+// Throws:
+//   std::runtime_error    — invalid metadata
+//   std::invalid_argument — line_length_pixels < 3 or n_angles < 1
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_directional_closing(
+    const lsdtt_raster_cpu& binary,
+    int                     line_length_pixels,
+    int                     n_angles = 18
+);
+
+
+// -----------------------------------------------------------------------------
 // filter_binary_components_by_size
 //
 // Removes 8-connected foreground components with fewer than min_component_pixels

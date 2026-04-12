@@ -58,6 +58,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_flat_surface_finder.hpp"
+#include "../src/cpu/lsdtt_flat_surface_plane_analysis.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
@@ -166,18 +167,19 @@ static void write_dist_fits_csv(
         rows);
 }
 
-// Write a smoothed PDF CSV with three columns:
-//   bin_centre, smoothed_pdf, fitted_pdf
-// where fitted_pdf is the best-fitting distribution's PDF evaluated at each
+// Write an empirical CDF CSV with three columns:
+//   bin_centre, cdf, fitted_cdf_<family>
+// where fitted_cdf is the best-fitting distribution's CDF evaluated at each
 // bin centre.  The best fit is the valid entry in `fits` with the lowest
-// KS statistic.
-static void write_smoothed_pdf_csv(
+// KS statistic.  The percentile threshold for a metric is directly readable
+// as the x value where cdf crosses threshold/100.
+static void write_smoothed_cdf_csv(
     lsdtt::lsdtt_data_loader&                          loader,
     const std::string&                                 out_path,
-    const lsdtt::lsdtt_smoothed_pdf&                   spdf,
+    const lsdtt::lsdtt_smoothed_cdf&                   scdf,
     const std::vector<lsdtt::lsdtt_distribution_fit>&  fits)
 {
-    if (spdf.empty()) return;
+    if (scdf.empty()) return;
 
     // Find the best valid fit.
     const lsdtt::lsdtt_distribution_fit* best = nullptr;
@@ -189,26 +191,26 @@ static void write_smoothed_pdf_csv(
     }
 
     std::vector<std::vector<std::string>> rows;
-    rows.reserve(spdf.bin_centres.size());
-    for (std::size_t i = 0; i < spdf.bin_centres.size(); ++i)
+    rows.reserve(scdf.bin_centres.size());
+    for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
     {
-        const double x   = spdf.bin_centres[i];
-        const double pdf = spdf.smoothed_pdf[i];
-        const double fit_pdf = best ? lsdtt::eval_pdf(*best, x)
+        const double x       = scdf.bin_centres[i];
+        const double cdf_val = scdf.cdf[i];
+        const double fit_cdf = best ? lsdtt::eval_cdf(*best, x)
                                     : std::numeric_limits<double>::quiet_NaN();
         rows.push_back({ std::to_string(x),
-                         std::to_string(pdf),
-                         std::to_string(fit_pdf) });
+                         std::to_string(cdf_val),
+                         std::to_string(fit_cdf) });
     }
 
-    // Include the best-fit family name in the header comment via the column
-    // name so the user knows which distribution is plotted.
+    // Include the best-fit family name in the header so the user knows which
+    // distribution is overlaid.
     const std::string fit_col = best
-        ? std::string("fitted_pdf_") + lsdtt::distribution_family_name(best->family)
-        : "fitted_pdf";
+        ? std::string("fitted_cdf_") + lsdtt::distribution_family_name(best->family)
+        : "fitted_cdf";
 
     loader.write_csv(out_path,
-                     {"bin_centre", "smoothed_pdf", fit_col},
+                     {"bin_centre", "cdf", fit_col},
                      rows);
 }
 
@@ -259,7 +261,7 @@ int main(int argc, char* argv[])
         "Inspect the QQ CSV to identify the distribution break-point.  Range: 0–100."};
 
     // --- Residual IQR ---
-    bool_default_map["use_residual_iqr"] = true;
+    bool_default_map["use_residual_iqr"] = false;
     help_map["use_residual_iqr"] = {"bool","true",
         "Enable residual IQR metric (IQR of elevation residuals to a fitted surface).",
         "Slope-independent by construction.  Fitting method is set by iqr_fit_method."};
@@ -325,36 +327,7 @@ int main(int argc, char* argv[])
         "Percentile of the NVD s3 distribution below which a pixel is classed flat.",
         "Range: 0–100."};
 
-    // --- Combination ---
-    bool_default_map["require_all_metrics_pass"] = true;
-    help_map["require_all_metrics_pass"] = {"bool","true",
-        "Require a pixel to pass ALL enabled metric thresholds.",
-        "true (AND, conservative) or false (OR, permissive)."};
-
-    int_default_map["min_component_pixels"] = 100;
-    help_map["min_component_pixels"] = {"int","100",
-        "Minimum 8-connected component size for inclusion in the labelled flat mask.",
-        "Smaller components are excluded.  Set to 1 to include all."};
-
-    int_default_map["qq_n_bins"] = 100;
-    help_map["qq_n_bins"] = {"int","100",
-        "Number of quantile bins in the QQ output CSVs.","100 = one row per percentile."};
-
-    int_default_map["pdf_n_bins"] = 100;
-    help_map["pdf_n_bins"] = {"int","100",
-        "Number of histogram bins for the smoothed PDF and peak detection.",
-        "Increase for finer resolution; decrease to suppress noise."};
-
-    int_default_map["pdf_smooth_half_window"] = 3;
-    help_map["pdf_smooth_half_window"] = {"int","3",
-        "Half-width of the box-smoothing kernel (bins) used for PDF peak detection.",
-        "Total kernel width = 2*N+1.  Increase to merge spurious peaks."};
-
-    int_default_map["curvature_window_pixels"] = 3;
-    help_map["curvature_window_pixels"] = {"int","3",
-        "Square window size (pixels) for total curvature (Laplacian) computation.",
-        "Must be odd and >= 3.  3 = 3x3 neighbourhood (standard 5-point stencil)."};
-
+    // --- Relief ---        
     int_default_map["relief_window_pixels"] = 5;
     help_map["relief_window_pixels"] = {"int","5",
         "Square window size (pixels) for local relief (max - min) computation.",
@@ -370,6 +343,88 @@ int main(int argc, char* argv[])
         "Percentile of the local relief distribution below which a pixel is classed flat.",
         "Range: 0-100.  Lower values = stricter (only lowest-relief pixels pass)."};
 
+    // --- Combination ---
+    bool_default_map["require_all_metrics_pass"] = true;
+    help_map["require_all_metrics_pass"] = {"bool","true",
+        "Require a pixel to pass ALL enabled metric thresholds.",
+        "true (AND, conservative) or false (OR, permissive)."};
+
+    int_default_map["min_component_pixels"] = 100;
+    help_map["min_component_pixels"] = {"int","100",
+        "Minimum 8-connected component size for inclusion in the labelled flat mask.",
+        "Smaller components are excluded.  Set to 1 to include all."};
+
+    int_default_map["qq_n_bins"] = 100;
+    help_map["qq_n_bins"] = {"int","100",
+        "Number of quantile bins in the QQ output CSVs.","100 = one row per percentile."};
+
+    int_default_map["cdf_n_bins"] = 100;
+    help_map["cdf_n_bins"] = {"int","100",
+        "Number of histogram bins for the empirical CDF output.",
+        "Increase for finer resolution.  The percentile threshold is readable "
+        "directly as the x value where the CDF crosses threshold/100."};
+
+    int_default_map["curvature_window_pixels"] = 3;
+    help_map["curvature_window_pixels"] = {"int","3",
+        "Square window size (pixels) for total curvature (Laplacian) computation.",
+        "Must be odd and >= 3.  3 = 3x3 neighbourhood (standard 5-point stencil)."};
+
+
+
+
+    // --- Directional closing ---
+    int_default_map["directional_close_line_length_pixels"] = 0;
+    help_map["directional_close_line_length_pixels"] = {"int","0",
+        "Line-SE length (pixels) for directional closing of the non-flat mask. "
+        "0 = disabled.  Set to k+1 to bridge gaps of up to k pixels across a "
+        "curvilinear non-flat corridor.",
+        "Applied after mask combination, before component labelling. "
+        "Connects broken curvilinear features without merging compact flat patches."};
+
+    int_default_map["directional_close_n_angles"] = 18;
+    help_map["directional_close_n_angles"] = {"int","18",
+        "Number of line orientations sampled from [0°, 180°) for directional closing.",
+        "Worst-case angular miss = 90/n_angles degrees.  "
+        "18 → 10° spacing (5° miss).  36 → 5° spacing (2.5° miss)."};
+
+    bool_default_map["write_healed_flat_mask"] = true;
+    help_map["write_healed_flat_mask"] = {"bool","true",
+        "Write the healed flat mask (after directional closing, if enabled).",
+        "Only written when directional_close_line_length_pixels >= 3."};
+
+    // --- Plane analysis ---
+    bool_default_map["run_plane_analysis"] = false;
+    help_map["run_plane_analysis"] = {"bool","false",
+        "Fit planes to each labelled flat surface and test for splits/merges.",
+        "Runs after labelling.  Writes _plane_fits.csv and _merge_candidates.csv."};
+
+    int_default_map["plane_min_pixels"] = 10;
+    help_map["plane_min_pixels"] = {"int","10",
+        "Minimum pixel count for a label to be included in plane analysis.",
+        "Labels below this are skipped (valid=false in output CSV)."};
+
+    float_default_map["plane_merge_tolerance_rmse"] = 2.0f;
+    help_map["plane_merge_tolerance_rmse"] = {"float","2.0",
+        "Merge threshold in units of RMSE: labels flagged same_level when "
+        "max(|mean_rji|/rmse_i, |mean_rij|/rmse_j) < this value.",
+        "Increase to merge more aggressively; decrease to be more conservative."};
+
+    int_default_map["plane_split_histogram_bins"] = 25;
+    help_map["plane_split_histogram_bins"] = {"int","25",
+        "Number of histogram bins for bimodal split detection per label.",
+        "Range spans ±4*RMSE centred on 0."};
+
+    float_default_map["plane_split_bimodal_threshold"] = 0.4f;
+    help_map["plane_split_bimodal_threshold"] = {"float","0.4",
+        "Valley/peak ratio threshold for bimodal split detection. "
+        "split_confidence = 1 - valley_min/lower_peak; split flagged when "
+        "confidence > this value.",
+        "0.4 means the valley must be at least 40% deeper than the lower peak."};
+
+    bool_default_map["write_merge_candidates"] = true;
+    help_map["write_merge_candidates"] = {"bool","true",
+        "Write all pairwise merge candidate pairs (not just same_level) to CSV.",
+        "Allows post-processing with a custom tolerance."};
 
     // --- Output toggles ---
     bool_default_map["write_texture_rasters"] = false;
@@ -475,11 +530,12 @@ int main(int argc, char* argv[])
     req.nvd_window_radius_metres   = static_cast<double>(ff["nvd_window_radius_metres"]);
     req.nvd_window_shape           = resolve_window_shape(sf["nvd_window_shape"]);
     req.nvd_threshold_percentile   = static_cast<double>(ff["nvd_threshold_percentile"]);
-    req.require_all_metrics_pass   = bf["require_all_metrics_pass"];
-    req.min_component_pixels       = ip["min_component_pixels"];
+    req.require_all_metrics_pass               = bf["require_all_metrics_pass"];
+    req.directional_close_line_length_pixels   = ip["directional_close_line_length_pixels"];
+    req.directional_close_n_angles             = ip["directional_close_n_angles"];
+    req.min_component_pixels                   = ip["min_component_pixels"];
     req.qq_n_bins                  = ip["qq_n_bins"];
-    req.pdf_n_bins                 = ip["pdf_n_bins"];
-    req.pdf_smooth_half_window     = ip["pdf_smooth_half_window"];
+    req.cdf_n_bins                 = ip["cdf_n_bins"];
     req.curvature_window_pixels      = ip["curvature_window_pixels"];
     req.relief_window_pixels         = ip["relief_window_pixels"];
     req.use_relief                   = bf["use_relief"];
@@ -609,6 +665,14 @@ int main(int argc, char* argv[])
                           result.combined_flat_mask.get_meta(), p, out_format);
     }
 
+    if (bf["write_healed_flat_mask"] && !result.healed_flat_mask.get_data().empty())
+    {
+        const std::string p = stem + "_healed_flat_mask.tif";
+        std::cout << "Writing healed flat mask: " << p << "\n";
+        loader.write_full(result.healed_flat_mask.get_data(),
+                          result.healed_flat_mask.get_meta(), p, out_format);
+    }
+
     // Labelled mask — always written
     {
         const std::string p = stem + "_labelled_flat_mask.tif";
@@ -650,42 +714,42 @@ int main(int argc, char* argv[])
         write_qq_csv(loader, p, result.relief_qq);
     }
 
-    // Smoothed PDF CSVs — written for each metric
-    // Three columns: bin_centre, smoothed_pdf, fitted_pdf_<family>
-    if (req.use_madk2 && !result.madk2_smoothed_pdf.empty())
+    // Empirical CDF CSVs — written for each metric
+    // Three columns: bin_centre, cdf, fitted_cdf_<family>
+    if (req.use_madk2 && !result.madk2_smoothed_cdf.empty())
     {
-        const std::string p = stem + "_madk2_smoothed_pdf.csv";
-        std::cout << "Writing MADk2 smoothed PDF: " << p << "\n";
-        write_smoothed_pdf_csv(loader, p,
-                               result.madk2_smoothed_pdf, result.madk2_dist_fits);
+        const std::string p = stem + "_madk2_cdf.csv";
+        std::cout << "Writing MADk2 empirical CDF: " << p << "\n";
+        write_smoothed_cdf_csv(loader, p,
+                               result.madk2_smoothed_cdf, result.madk2_dist_fits);
     }
-    if (req.use_residual_iqr && !result.iqr_smoothed_pdf.empty())
+    if (req.use_residual_iqr && !result.iqr_smoothed_cdf.empty())
     {
-        const std::string p = stem + "_iqr_smoothed_pdf.csv";
-        std::cout << "Writing residual IQR smoothed PDF: " << p << "\n";
-        write_smoothed_pdf_csv(loader, p,
-                               result.iqr_smoothed_pdf, result.iqr_dist_fits);
+        const std::string p = stem + "_iqr_cdf.csv";
+        std::cout << "Writing residual IQR empirical CDF: " << p << "\n";
+        write_smoothed_cdf_csv(loader, p,
+                               result.iqr_smoothed_cdf, result.iqr_dist_fits);
     }
-    if (req.use_nvd && !result.nvd_smoothed_pdf.empty())
+    if (req.use_nvd && !result.nvd_smoothed_cdf.empty())
     {
-        const std::string p = stem + "_nvd_smoothed_pdf.csv";
-        std::cout << "Writing NVD smoothed PDF: " << p << "\n";
-        write_smoothed_pdf_csv(loader, p,
-                               result.nvd_smoothed_pdf, result.nvd_dist_fits);
+        const std::string p = stem + "_nvd_cdf.csv";
+        std::cout << "Writing NVD empirical CDF: " << p << "\n";
+        write_smoothed_cdf_csv(loader, p,
+                               result.nvd_smoothed_cdf, result.nvd_dist_fits);
     }
-    if (!result.curvature_smoothed_pdf.empty())
+    if (!result.curvature_smoothed_cdf.empty())
     {
-        const std::string p = stem + "_curvature_smoothed_pdf.csv";
-        std::cout << "Writing curvature smoothed PDF: " << p << "\n";
-        write_smoothed_pdf_csv(loader, p,
-                               result.curvature_smoothed_pdf, result.curvature_dist_fits);
+        const std::string p = stem + "_curvature_cdf.csv";
+        std::cout << "Writing curvature empirical CDF: " << p << "\n";
+        write_smoothed_cdf_csv(loader, p,
+                               result.curvature_smoothed_cdf, result.curvature_dist_fits);
     }
-    if (!result.relief_smoothed_pdf.empty())
+    if (!result.relief_smoothed_cdf.empty())
     {
-        const std::string p = stem + "_relief_smoothed_pdf.csv";
-        std::cout << "Writing relief smoothed PDF: " << p << "\n";
-        write_smoothed_pdf_csv(loader, p,
-                               result.relief_smoothed_pdf, result.relief_dist_fits);
+        const std::string p = stem + "_relief_cdf.csv";
+        std::cout << "Writing relief empirical CDF: " << p << "\n";
+        write_smoothed_cdf_csv(loader, p,
+                               result.relief_smoothed_cdf, result.relief_dist_fits);
     }
 
     // Distribution fit CSVs — always written for each metric
@@ -703,6 +767,102 @@ int main(int argc, char* argv[])
     if (req.use_nvd)          write_dist("nvd",       result.nvd_dist_fits);
     write_dist("curvature", result.curvature_dist_fits);
     write_dist("relief",    result.relief_dist_fits);
+
+    // -------------------------------------------------------------------------
+    // Optional plane analysis
+    // -------------------------------------------------------------------------
+    if (bf["run_plane_analysis"])
+    {
+        std::cout << "\nRunning plane analysis on labelled flat surfaces...\n";
+
+        lsdtt::plane_analysis_request preq;
+        preq.min_pixels_for_analysis     = ip["plane_min_pixels"];
+        preq.merge_tolerance_rmse_factor = static_cast<double>(ff["plane_merge_tolerance_rmse"]);
+        preq.split_histogram_n_bins      = ip["plane_split_histogram_bins"];
+        preq.split_bimodal_threshold     = static_cast<double>(ff["plane_split_bimodal_threshold"]);
+
+        lsdtt::plane_analysis_result pa;
+        try
+        {
+            pa = lsdtt::analyse_flat_surface_planes(
+                     dem, result.labelled_flat_mask, preq);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Plane analysis error: " << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "  " << pa.n_groups << " merge group(s) across "
+                  << (pa.plane_fits.size() - 1) << " labelled surfaces\n";
+
+        // ----- plane_fits CSV -----
+        {
+            const std::string p = stem + "_plane_fits.csv";
+            std::cout << "Writing plane fits: " << p << "\n";
+
+            std::vector<std::vector<std::string>> rows;
+            rows.reserve(pa.plane_fits.size());
+
+            for (std::size_t lbl = 1; lbl < pa.plane_fits.size(); ++lbl)
+            {
+                const auto& pf = pa.plane_fits[lbl];
+                const int grp  = (lbl < pa.merge_group.size())
+                                 ? pa.merge_group[lbl] : -1;
+                rows.push_back({
+                    std::to_string(pf.label),
+                    std::to_string(pf.n_pixels),
+                    pf.valid ? "true" : "false",
+                    std::to_string(pf.a),
+                    std::to_string(pf.b),
+                    std::to_string(pf.c),
+                    std::to_string(pf.mean_z),
+                    std::to_string(pf.rmse),
+                    std::to_string(pf.slope_magnitude),
+                    std::to_string(pf.aspect_degrees),
+                    pf.split_candidate ? "true" : "false",
+                    std::to_string(pf.split_confidence),
+                    std::to_string(grp)
+                });
+            }
+
+            loader.write_csv(p,
+                {"label","n_pixels","valid",
+                 "a","b","c","mean_z","rmse",
+                 "slope_magnitude","aspect_degrees",
+                 "split_candidate","split_confidence",
+                 "merge_group"},
+                rows);
+        }
+
+        // ----- merge_candidates CSV -----
+        if (bf["write_merge_candidates"] && !pa.merge_candidates.empty())
+        {
+            const std::string p = stem + "_merge_candidates.csv";
+            std::cout << "Writing merge candidates: " << p << "\n";
+
+            std::vector<std::vector<std::string>> rows;
+            rows.reserve(pa.merge_candidates.size());
+
+            for (const auto& mc : pa.merge_candidates)
+            {
+                rows.push_back({
+                    std::to_string(mc.label_i),
+                    std::to_string(mc.label_j),
+                    std::to_string(mc.mean_residual_ji),
+                    std::to_string(mc.mean_residual_ij),
+                    std::to_string(mc.normalised_offset),
+                    mc.same_level ? "true" : "false"
+                });
+            }
+
+            loader.write_csv(p,
+                {"label_i","label_j",
+                 "mean_residual_ji","mean_residual_ij",
+                 "normalised_offset","same_level"},
+                rows);
+        }
+    }
 
     std::cout << "\n";
     pp.print_parameters();

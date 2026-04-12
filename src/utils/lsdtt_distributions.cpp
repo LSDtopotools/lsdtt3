@@ -374,4 +374,27 @@ double eval_pdf(const lsdtt_distribution_fit& fit, double x)
     return std::numeric_limits<double>::quiet_NaN();
 }
 
+// =============================================================================
+// eval_cdf
+// =============================================================================
+double eval_cdf(const lsdtt_distribution_fit& fit, double x)
+{
+    if (!fit.valid || !std::isfinite(x))
+        return std::numeric_limits<double>::quiet_NaN();
+
+    using F = lsdtt_distribution_family;
+    switch (fit.family)
+    {
+        case F::normal:
+            return normal_cdf(x, fit.param1, fit.param2);
+        case F::exponential:
+            return exponential_cdf(x, fit.param1);
+        case F::weibull:
+            return weibull_cdf(x, fit.param1, fit.param2);
+        case F::pareto:
+            return pareto_cdf(x, fit.param1, fit.param2);
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
 } // namespace lsdtt

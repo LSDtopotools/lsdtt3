@@ -15,7 +15,7 @@
 #include "lsdtt_surface_texture_cpu.hpp"         // calculate_madk2, moving_window_iqr, compute_nvd
 
 #include "../utils/lsdtt_distributions.hpp"        // fit_distributions
-#include "../utils/lsdtt_histogram.hpp"           // compute_qq, compute_smoothed_pdf
+#include "../utils/lsdtt_histogram.hpp"           // compute_qq, compute_smoothed_cdf
 #include "../utils/lsdtt_statistics.hpp"         // compute_percentile
 
 #include <algorithm>
@@ -50,17 +50,14 @@ static std::vector<float> collect_valid_values(const lsdtt_raster_cpu& raster)
     return vals;
 }
 
-// Compute a smoothed PDF for a collection of float values.
-static lsdtt_smoothed_pdf build_smoothed_pdf(
+// Compute an empirical CDF for a collection of float values.
+static lsdtt_smoothed_cdf build_smoothed_cdf(
     const std::vector<float>& values,
-    int                       n_bins,
-    int                       smooth_half_window)
+    int                       n_bins)
 {
-    if (values.empty() || n_bins < 3) return lsdtt_smoothed_pdf{};
+    if (values.empty() || n_bins < 3) return lsdtt_smoothed_cdf{};
     const std::vector<double> dvals(values.begin(), values.end());
-    return compute_smoothed_pdf(dvals,
-                                static_cast<std::size_t>(n_bins),
-                                static_cast<std::size_t>(smooth_half_window));
+    return compute_smoothed_cdf(dvals, static_cast<std::size_t>(n_bins));
 }
 
 // Fit all four distributions to a collection of float values.
@@ -253,9 +250,9 @@ flat_surface_result find_flat_surfaces(
         throw std::invalid_argument(
             "lsdtt::find_flat_surfaces: qq_n_bins must be >= 2"
         );
-    if (request.pdf_n_bins < 3)
+    if (request.cdf_n_bins < 3)
         throw std::invalid_argument(
-            "lsdtt::find_flat_surfaces: pdf_n_bins must be >= 3"
+            "lsdtt::find_flat_surfaces: cdf_n_bins must be >= 3"
         );
     if (request.curvature_window_pixels < 3 || request.curvature_window_pixels % 2 == 0)
         throw std::invalid_argument(
@@ -288,8 +285,7 @@ flat_surface_result find_flat_surfaces(
         {
             const std::vector<float> vals = collect_valid_values(result.madk2_roughness);
             result.madk2_qq           = build_qq(vals, request.qq_n_bins);
-            result.madk2_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
-                                                           request.pdf_smooth_half_window);
+            result.madk2_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
             result.madk2_dist_fits    = build_dist_fits(vals);
         }
         result.madk2_flat_mask = threshold_at_percentile(result.madk2_roughness,
@@ -357,8 +353,7 @@ flat_surface_result find_flat_surfaces(
         {
             const std::vector<float> vals = collect_valid_values(result.iqr_texture);
             result.iqr_qq           = build_qq(vals, request.qq_n_bins);
-            result.iqr_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
-                                                         request.pdf_smooth_half_window);
+            result.iqr_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
             result.iqr_dist_fits    = build_dist_fits(vals);
         }
         result.iqr_flat_mask = threshold_at_percentile(result.iqr_texture,
@@ -386,8 +381,7 @@ flat_surface_result find_flat_surfaces(
         {
             const std::vector<float> vals = collect_valid_values(result.nvd_s3);
             result.nvd_qq           = build_qq(vals, request.qq_n_bins);
-            result.nvd_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
-                                                         request.pdf_smooth_half_window);
+            result.nvd_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
             result.nvd_dist_fits    = build_dist_fits(vals);
         }
         result.nvd_flat_mask = threshold_at_percentile(result.nvd_s3,
@@ -402,8 +396,7 @@ flat_surface_result find_flat_surfaces(
             dem, curv_radius, window_shape::square);
         const std::vector<float> vals = collect_valid_values(result.curvature);
         result.curvature_qq           = build_qq(vals, request.qq_n_bins);
-        result.curvature_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
-                                                           request.pdf_smooth_half_window);
+        result.curvature_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
         result.curvature_dist_fits    = build_dist_fits(vals);
     }
     {
@@ -411,8 +404,7 @@ flat_surface_result find_flat_surfaces(
             dem, relief_radius, window_shape::square);
         const std::vector<float> vals = collect_valid_values(result.relief);
         result.relief_qq           = build_qq(vals, request.qq_n_bins);
-        result.relief_smoothed_pdf = build_smoothed_pdf(vals, request.pdf_n_bins,
-                                                        request.pdf_smooth_half_window);
+        result.relief_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
         result.relief_dist_fits    = build_dist_fits(vals);
 
         if (request.use_relief)
@@ -444,10 +436,67 @@ flat_surface_result find_flat_surfaces(
     result.combined_flat_mask = std::move(combined);
 
     // -------------------------------------------------------------------------
+    // Optional directional closing of the non-flat mask
+    //
+    // Invert combined_flat_mask → non_flat (1 = not flat).
+    // Close gaps in curvilinear non-flat corridors with oriented line SEs.
+    // Invert back → healed_flat_mask.
+    // -------------------------------------------------------------------------
+    const lsdtt_raster_cpu* mask_for_labelling = &result.combined_flat_mask;
+
+    if (request.directional_close_line_length_pixels >= 3)
+    {
+        // Build the non-flat binary mask (invert combined_flat_mask).
+        {
+            const std::vector<float>&   cf_data = result.combined_flat_mask.get_data();
+            const std::vector<uint8_t>& cf_mask = result.combined_flat_mask.get_mask();
+            const std::size_t npix = cf_data.size();
+
+            std::vector<float>   nf_data(npix, 0.0f);
+            std::vector<uint8_t> nf_mask(npix, uint8_t{0});
+
+            for (std::size_t i = 0; i < npix; ++i)
+            {
+                if (cf_mask[i] == 0) continue;
+                nf_mask[i] = uint8_t{1};
+                nf_data[i] = (cf_data[i] > 0.5f) ? 0.0f : 1.0f;   // invert
+            }
+
+            lsdtt_raster_cpu non_flat(std::move(nf_data), std::move(nf_mask), meta);
+
+            // Close gaps in the non-flat mask.
+            const lsdtt_raster_cpu closed_non_flat = binary_directional_closing(
+                non_flat,
+                request.directional_close_line_length_pixels,
+                std::max(1, request.directional_close_n_angles)
+            );
+
+            // Invert back → healed flat mask.
+            const std::vector<float>&   cn_data = closed_non_flat.get_data();
+            const std::vector<uint8_t>& cn_mask = closed_non_flat.get_mask();
+
+            std::vector<float>   h_data(npix, 0.0f);
+            std::vector<uint8_t> h_mask(npix, uint8_t{0});
+
+            for (std::size_t i = 0; i < npix; ++i)
+            {
+                if (cn_mask[i] == 0) continue;
+                h_mask[i] = uint8_t{1};
+                h_data[i] = (cn_data[i] > 0.5f) ? 0.0f : 1.0f;    // invert
+            }
+
+            result.healed_flat_mask = lsdtt_raster_cpu(
+                std::move(h_data), std::move(h_mask), meta);
+        }
+
+        mask_for_labelling = &result.healed_flat_mask;
+    }
+
+    // -------------------------------------------------------------------------
     // Label connected components
     // -------------------------------------------------------------------------
     result.labelled_flat_mask = label_binary_components_by_size(
-        result.combined_flat_mask,
+        *mask_for_labelling,
         std::max(1, request.min_component_pixels)
     );
 

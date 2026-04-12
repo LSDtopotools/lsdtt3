@@ -1744,6 +1744,189 @@ lsdtt_raster_cpu binary_morphological_closing(
 }
 
 
+// =============================================================================
+// binary_directional_closing — internal helpers
+// =============================================================================
+
+// Build the pixel offsets for a symmetric line SE of the given half-length
+// at angle_degrees from horizontal (measured counterclockwise).
+// In raster coords row increases downward, so the vertical component is negated.
+// Duplicate offsets (produced by rounding at certain angles) are removed.
+static std::vector<std::pair<int,int>> make_line_se_offsets(
+    int half_length, double angle_degrees)
+{
+    const double theta  = angle_degrees * (M_PI / 180.0);
+    const double cos_t  = std::cos(theta);
+    const double sin_t  = std::sin(theta);
+
+    std::vector<std::pair<int,int>> offsets;
+    offsets.reserve(static_cast<std::size_t>(2 * half_length + 1));
+
+    for (int step = -half_length; step <= half_length; ++step)
+    {
+        const double t = static_cast<double>(step);
+        const int dc   = static_cast<int>(std::round( t * cos_t));
+        const int dr   = static_cast<int>(std::round(-t * sin_t));
+        offsets.emplace_back(dr, dc);
+    }
+
+    // Remove duplicates that arise from rounding (common at multiples of 45°).
+    std::sort(offsets.begin(), offsets.end());
+    offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
+
+    return offsets;
+}
+
+// Binary dilation: pixel is foreground if ANY valid SE-neighbour in in_data is.
+// Returns a uint8_t plane (1 = fg, 0 = bg/nodata).
+static std::vector<uint8_t> binary_dilate_se(
+    const std::vector<float>&              in_data,
+    const std::vector<uint8_t>&            in_mask,
+    const std::vector<std::pair<int,int>>& offsets,
+    int nrows, int ncols)
+{
+    const std::size_t npix = static_cast<std::size_t>(nrows) *
+                             static_cast<std::size_t>(ncols);
+    std::vector<uint8_t> dilated(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = static_cast<std::size_t>(row) *
+                                    static_cast<std::size_t>(ncols) +
+                                    static_cast<std::size_t>(col);
+            if (in_mask[idx] == 0) continue;
+
+            for (const auto& [dr, dc] : offsets)
+            {
+                const int rr = row + dr;
+                const int cc = col + dc;
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+                const std::size_t nidx = static_cast<std::size_t>(rr) *
+                                         static_cast<std::size_t>(ncols) +
+                                         static_cast<std::size_t>(cc);
+                if (in_mask[nidx] != 0 && in_data[nidx] > 0.5f)
+                {
+                    dilated[idx] = uint8_t{1};
+                    break;
+                }
+            }
+        }
+    }
+    return dilated;
+}
+
+// Binary erosion on a uint8_t plane produced by binary_dilate_se.
+// A pixel stays foreground only if ALL valid-mask SE-neighbours are also
+// foreground.  Nodata neighbours (in_mask==0) are skipped so that valid pixels
+// near the DEM border are not incorrectly eroded.
+static std::vector<uint8_t> binary_erode_se(
+    const std::vector<uint8_t>&            dilated,
+    const std::vector<uint8_t>&            in_mask,
+    const std::vector<std::pair<int,int>>& offsets,
+    int nrows, int ncols)
+{
+    const std::size_t npix = static_cast<std::size_t>(nrows) *
+                             static_cast<std::size_t>(ncols);
+    std::vector<uint8_t> eroded(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = static_cast<std::size_t>(row) *
+                                    static_cast<std::size_t>(ncols) +
+                                    static_cast<std::size_t>(col);
+            if (in_mask[idx] == 0 || dilated[idx] == 0) continue;
+
+            bool all_fg = true;
+            for (const auto& [dr, dc] : offsets)
+            {
+                const int rr = row + dr;
+                const int cc = col + dc;
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+                const std::size_t nidx = static_cast<std::size_t>(rr) *
+                                         static_cast<std::size_t>(ncols) +
+                                         static_cast<std::size_t>(cc);
+                if (in_mask[nidx] == 0) continue;   // ignore nodata neighbours
+                if (dilated[nidx] == 0) { all_fg = false; break; }
+            }
+
+            if (all_fg) eroded[idx] = uint8_t{1};
+        }
+    }
+    return eroded;
+}
+
+// =============================================================================
+// binary_directional_closing
+// =============================================================================
+lsdtt_raster_cpu binary_directional_closing(
+    const lsdtt_raster_cpu& binary,
+    int                     line_length_pixels,
+    int                     n_angles)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::binary_directional_closing: input raster metadata is invalid"
+        );
+    if (line_length_pixels < 3)
+        throw std::invalid_argument(
+            "lsdtt::binary_directional_closing: line_length_pixels must be >= 3"
+        );
+    if (n_angles < 1)
+        throw std::invalid_argument(
+            "lsdtt::binary_directional_closing: n_angles must be >= 1"
+        );
+
+    // Force odd length so the SE is symmetric about the origin pixel.
+    if (line_length_pixels % 2 == 0) ++line_length_pixels;
+    const int half_len = (line_length_pixels - 1) / 2;
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix = static_cast<std::size_t>(nrows) *
+                             static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    // Accumulate OR of all directional closings.
+    std::vector<uint8_t> acc(npix, uint8_t{0});
+
+    for (int ai = 0; ai < n_angles; ++ai)
+    {
+        // Evenly spaced orientations in [0°, 180°).
+        // A line at θ and θ+180° is the same, so we only need half the circle.
+        const double angle = static_cast<double>(ai) * 180.0 /
+                             static_cast<double>(n_angles);
+
+        const auto se      = make_line_se_offsets(half_len, angle);
+        const auto dilated = binary_dilate_se(in_data, in_mask, se, nrows, ncols);
+        const auto closed  = binary_erode_se (dilated,  in_mask, se, nrows, ncols);
+
+        for (std::size_t i = 0; i < npix; ++i)
+            if (closed[i] != 0) acc[i] = uint8_t{1};
+    }
+
+    // Convert accumulator to float output raster.
+    std::vector<float>   out_data(npix, 0.0f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        out_mask[i] = uint8_t{1};
+        if (acc[i] != 0) out_data[i] = 1.0f;
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
 // -----------------------------------------------------------------------------
 // filter_binary_components_by_size
 // -----------------------------------------------------------------------------
