@@ -255,7 +255,7 @@ vector_output_format resolve_vector_output_format(
     {
         return vector_output_format::flatgeobuf;
     }
-    std::cerr << "Warning: unknown vector_output_format '"
+    std::cerr << "Warning: unknown vector_output_format "
               << fmt_str << "' — defaulting to flatgeobuf.\n";
 
     return vector_output_format::flatgeobuf;

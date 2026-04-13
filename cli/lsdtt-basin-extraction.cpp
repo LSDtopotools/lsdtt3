@@ -409,12 +409,32 @@ int main(int argc, char* argv[])
         "likely you will want to do this after a completeness check."
     };
 
+    bool_default_map["filter_nested_by_stream_order"] = false;
+    help_map["filter_nested_basins"] = {"bool", "false",
+        "This filters out nested basins of the same stream order "
+        "so that in a consecutive chain of basins with the same order, "
+        "only the downstream-most is preserved.",
+        "Still allows for nested basins when they are of different orders."
+    };
+
+
     // --- Basin output placeholders ---
     bool_default_map["write_basin_outlines_lines"] = false;
     help_map["write_basins_vector"] = {"bool","false",
         "For each selected basin, this prints the basin outlines "
         "where each feature is a the outline of one basin.",
-        "Features are labelled by their junction number."
+        "Features are labelled by their junction number. Use "
+        "basin_outlines_lines_output_format to specify outpout format."
+    };
+
+    bool_default_map["write_basin_outlines_lines_per_order"] = false;
+    help_map["write_basin_outline_lines_per_order"] = {"bool", "false",
+        "The same as write_basin_outlines_lines, but this verion makes "
+        "one file with invidividual layers per stream order (in case of "
+        "geopackage) or multiple files, one per stream order (in case of "
+        "flatgeobuf).",
+        "Features are labelled by their junction number. Use "
+        "basin_outlines_lines_output_format to specify outpout format."
     };
 
     string_default_map["basin_outlines_lines_output_format"] = "flatgeobuf";
@@ -481,7 +501,7 @@ int main(int argc, char* argv[])
 
     lsdtt::vector_output_format basin_outline_lines_format =
         lsdtt::resolve_vector_output_format(
-            sf["basin_outlines_lines_vector_format"]
+            sf["basin_outlines_lines_output_format"]
         );
 
     const bool select_basins_from_outlets =
@@ -1087,6 +1107,12 @@ int main(int argc, char* argv[])
             std::cout << "There are now " << basin_manager.size() << " basins left.\n";
         }
 
+        if(bf["filter_nested_by_stream_order"]){
+            std::cout << "\n--- Filtering out all nested basins by stream order ---\n";
+            basin_manager.filter_nested_by_stream_order();
+            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+        }      
+
         // ---------------------------------------------------------------------
         // Step 8 — Basin writing
         // ---------------------------------------------------------------------
@@ -1109,6 +1135,39 @@ int main(int argc, char* argv[])
                 //   junction_number  (int64)
                 // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
                 basin_manager.write_basins_to_vector_lines(
+                    output_file,
+                    basin_outline_lines_format,
+                    "junction_basin_outlines",
+                    bf["calculate_spatial_index"]
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing basin outline vectors failed: "
+                        << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        if (bf["write_basin_outlines_lines_per_order"])
+        {
+            std::cout << "\n--- Basin outlines line writing ---\n";
+
+            const std::string extension =
+                lsdtt::output_extension(basin_outline_lines_format);
+
+            const std::string output_file =
+                out_path(pp, "_junction_basin_outlines", extension);
+
+            std::cout << "Writing: " << output_file << "\n";
+
+            try
+            {
+                // Writes one line feature per basin outline.
+                // Schema contains one field:
+                //   junction_number  (int64)
+                // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                basin_manager.write_basins_to_vector_lines_by_order(
                     output_file,
                     basin_outline_lines_format,
                     "junction_basin_outlines",

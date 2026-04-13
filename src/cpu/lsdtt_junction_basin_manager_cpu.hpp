@@ -94,6 +94,13 @@ public:
     // basin outlet, i.e. nested basins.
     lsdtt_junction_basin_manager_cpu& filter_nested();
 
+    // Similar to filter_nested, but this only removes nested basins that share
+    // the same stream order.
+    // So a second order stream with a bunch of first-order tributaries coming in
+    // will have all first-order tributary basins preserved, but only one second
+    // order basin, the one furthest downstream.
+    lsdtt_junction_basin_manager_cpu& filter_nested_by_stream_order();
+
     // Removes duplicate basins based on basin outlet flat index.
     lsdtt_junction_basin_manager_cpu& filter_duplicates();
 
@@ -159,6 +166,22 @@ public:
         vector_output_format format,
         const std::string& layer_name = "basin_outlines",
         bool spatial_index = true
+    ) const;
+
+    // This writes basins by order
+    // Geopackage: 1 file with 1 layer per order
+    // Flatgeobuf: 1 file per order
+    void write_basins_to_vector_lines_by_order(
+        const std::string& out_path,
+        vector_output_format format,
+        const std::string& layer_name_prefix = "basins",
+        bool spatial_index = false
+    ) const;
+
+    // (private) helper function for vector write by order:
+    void write_order_features_(
+        lsdtt_data_loader& loader,
+        const std::vector<const lsdtt_junction_basin_cpu*>& basin_ptrs
     ) const;
 
 
