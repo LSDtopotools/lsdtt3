@@ -399,6 +399,34 @@ int main(int argc, char* argv[])
         "Example: oooo = all four edges are open ocean (typical for a DEM tile). "
         "Example: nnnn = closed basin (no edge is ocean; requires interior pits)."};
  
+    // --- Depression polygons ---
+    bool_default_map["write_depression_polygons"] = false;
+    help_map["write_depression_polygons"] = {"bool","false",
+        "Write a vector polygon layer of topographic depressions, "
+        "based on the fill diff raster.",
+        "Each polygon carries depression_id, area_m2, and volume_m3 attributes. "
+        "Output format is controlled by write_vector_format."};
+
+    int_default_map["depression_min_pixels"] = 1;
+    help_map["depression_min_pixels"] = {"int","1",
+        "Minimum depression size in pixels.",
+        "Depressions with fewer pixels than this are removed before "
+        "polygon tracing. Useful for suppressing single-cell fill artefacts."};
+
+    float_default_map["depression_min_depth"] = 0.0f;
+    help_map["depression_min_depth"] = {"float","0.0",
+        "Minimum fill depth in metres for a cell to be considered a depression.",
+        "Cells where fill_diff <= this value are treated as background. "
+        "A small positive value (e.g. 0.01) suppresses near-zero fill artefacts."};
+
+    string_default_map["depression_polygons_output_format"] = "flatgeobuf";
+    help_map["depression_polygons_output_format"] = {"string", "flatgeobuf",
+        "Output format for depression polygons.",
+        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
+        "GeoPackage may have file I/O issues on some filesystems."
+        "CSV is not allowed for polygons."
+    };
+
 
     // --- Hillshade ---
     bool_default_map["write_hillshade_raster"] = false;
@@ -472,6 +500,12 @@ int main(int argc, char* argv[])
     if (bf["write_fsm_water_depth_raster"])
     {
         bf["write_fsm_raster"] = true;
+    }
+
+    // Depression polygons require fill_diff to have been computed in memory.
+    if (bf["write_depression_polygons"])
+    {
+        bf["write_fill_diff_raster"] = true;
     }
  
 
@@ -755,6 +789,9 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu filled_dem = working_dem;
     bool did_fill = false;
 
+    lsdtt::lsdtt_raster_cpu fill_diff_raster;
+    bool have_fill_diff = false;
+
     if (bf["write_fill_raster"] || bf["write_fill_diff_raster"])
     {
         std::cout << "\n--- Pit filling ---\n";
@@ -827,12 +864,17 @@ int main(int argc, char* argv[])
                              "(filled - original)\n";
                 try
                 {
-                    lsdtt::lsdtt_raster_cpu fill_diff =
+                    fill_diff_raster =
                         lsdtt::algebra::raster_subtract(filled_dem, working_dem);
-                    std::string o = out_path(pp, "_fill_diff.tif");
-                    std::cout << "Writing: " << o << "\n";
-                    loader.write_full(fill_diff.get_data(),
-                                      fill_diff.get_meta(), o, out_fmt);
+                    have_fill_diff = true;
+
+                    if (bf["write_fill_diff_raster"])
+                    {
+                        std::string o = out_path(pp, "_fill_diff.tif");
+                        std::cout << "Writing: " << o << "\n";
+                        loader.write_full(fill_diff_raster.get_data(),
+                                          fill_diff_raster.get_meta(), o, out_fmt);
+                    }
                 }
                 catch (const std::exception& e)
                 {
@@ -845,6 +887,67 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "Warning: pit filling failed: " << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 7 — Depression polygons
+    // -------------------------------------------------------------------------
+    if (bf["write_depression_polygons"])
+    {
+        std::cout << "\n--- Depression polygons ---\n";
+
+        if (!have_fill_diff)
+        {
+            std::cerr << "Warning: fill diff not available — "
+                         "skipping depression polygons.\n";
+        }
+        else
+        {
+            try
+            {
+                const lsdtt::vector_output_format vec_fmt =
+                    lsdtt::resolve_vector_output_format(sf["depression_polygons_output_format"]);
+
+                const std::string o =
+                    out_path(pp, "_depressions" +
+                             lsdtt::output_extension(vec_fmt));
+
+                std::cout << "Tracing depression outlines...\n";
+
+                lsdtt::depression_polygons_result dep_result =
+                    lsdtt::depressions_to_polygons(
+                        fill_diff_raster,
+                        ifs["depression_min_pixels"],
+                        ff["depression_min_depth"]
+                    );
+
+                std::cout << "Found " << dep_result.records.size()
+                          << " depression(s).\n";
+
+                loader.begin_vector_write(
+                    o,
+                    "depressions",
+                    dep_result.schema,
+                    filled_dem.get_meta().crs_wkt,
+                    vec_fmt
+                );
+
+                for (const lsdtt::lsdtt_vector_record& rec : dep_result.records)
+                {
+                    const auto& poly =
+                        std::get<lsdtt::lsdtt_polygon_geom>(rec.geometry);
+                    loader.write_polygon(poly.exterior, rec.field_values);
+                }
+
+                loader.finish_vector_write();
+                std::cout << "Writing: " << o << "\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: depression polygons failed: "
+                          << e.what() << "\n";
+            }
         }
     }
 

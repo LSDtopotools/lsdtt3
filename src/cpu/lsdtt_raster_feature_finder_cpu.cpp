@@ -11,6 +11,7 @@
 #include "lsdtt_raster_algebra.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../utils/lsdtt_binary_array2d_tracing.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -2178,6 +2179,187 @@ lsdtt_raster_cpu label_binary_components_by_size(
     }
 
     return make_raster(std::move(out_data), std::move(out_mask), out_meta);
+}
+
+// -----------------------------------------------------------------------------
+// binary_components_to_polygon_records
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_vector_record>
+binary_components_to_polygon_records(
+    const lsdtt_raster_cpu&    label_raster,
+    const lsdtt_raster_cpu*    scalar_raster,
+    const lsdtt_vector_schema& schema)
+{
+    const lsdtt_raster_meta& meta  = label_raster.get_meta();
+    const int nrows                = meta.n_rows;
+    const int ncols                = meta.n_cols;
+    const double cell_size         = meta.cell_size;
+    const double cell_area         = cell_size * cell_size;
+
+    const std::vector<float>&   lab_data = label_raster.get_data();
+    const std::vector<uint8_t>& lab_mask = label_raster.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    // Optional scalar data
+    const std::vector<float>*   sc_data = nullptr;
+    const std::vector<uint8_t>* sc_mask = nullptr;
+    if (scalar_raster != nullptr)
+    {
+        sc_data = &scalar_raster->get_data();
+        sc_mask = &scalar_raster->get_mask();
+    }
+
+    // -------------------------------------------------------------------------
+    // Pass 1 — collect pixel indices per label + bounding boxes + scalar sums
+    // -------------------------------------------------------------------------
+    struct ComponentInfo
+    {
+        std::vector<std::size_t> pixel_indices;
+        int min_r = std::numeric_limits<int>::max();
+        int max_r = std::numeric_limits<int>::min();
+        int min_c = std::numeric_limits<int>::max();
+        int max_c = std::numeric_limits<int>::min();
+        double scalar_sum = 0.0;
+    };
+
+    std::map<int, ComponentInfo> components;
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (lab_mask[i] == 0) continue;
+        const int label = static_cast<int>(lab_data[i]);
+        if (label <= 0) continue;  // 0 = background / nodata
+
+        const int row = static_cast<int>(i / static_cast<std::size_t>(ncols));
+        const int col = static_cast<int>(i % static_cast<std::size_t>(ncols));
+
+        auto& ci = components[label];
+        ci.pixel_indices.push_back(i);
+        ci.min_r = std::min(ci.min_r, row);
+        ci.max_r = std::max(ci.max_r, row);
+        ci.min_c = std::min(ci.min_c, col);
+        ci.max_c = std::max(ci.max_c, col);
+
+        if (sc_data != nullptr && (*sc_mask)[i] != 0)
+        {
+            const float sv = (*sc_data)[i];
+            if (std::isfinite(sv) && !meta.is_nodata(sv))
+                ci.scalar_sum += static_cast<double>(sv);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Divide-grid meta: same construction as lsdtt_basin_outline_cpu.
+    // Shifts origin by -0.5*cell_size and adds 1 row/col (non-periodic).
+    // -------------------------------------------------------------------------
+    lsdtt_raster_meta div_meta = meta;
+    div_meta.x_min   = meta.x_min - 0.5 * cell_size;
+    div_meta.y_min   = meta.y_min - 0.5 * cell_size;
+    div_meta.n_rows  = nrows + 1;
+    div_meta.n_cols  = ncols + 1;
+
+    // -------------------------------------------------------------------------
+    // Pass 2 — per component: stamp double-resolution grid, trace, convert
+    // -------------------------------------------------------------------------
+    // 3x3 stamp offsets — identical to lsdtt_basin_outline_cpu::stamp9
+    static constexpr int stamp9[9][2] = {
+        {-1,-1},{-1, 0},{-1, 1},
+        { 0,-1},{ 0, 0},{ 0, 1},
+        { 1,-1},{ 1, 0},{ 1, 1}
+    };
+
+    std::vector<lsdtt_vector_record> records;
+    records.reserve(components.size());
+
+    for (auto& [label, ci] : components)
+    {
+        // Expand bounding box by 1 on each side (same as basin outline)
+        const int box_min_r = ci.min_r - 1;
+        const int box_max_r = ci.max_r + 1;
+        const int box_min_c = ci.min_c - 1;
+        const int box_max_c = ci.max_c + 1;
+
+        const int nrows_double = (box_max_r - box_min_r + 1) * 2 + 1;
+        const int ncols_double = (box_max_c - box_min_c + 1) * 2 + 1;
+
+        lsdtt_array2d_u8 binary(nrows_double, ncols_double, 0u);
+
+        for (const std::size_t idx : ci.pixel_indices)
+        {
+            const int row = static_cast<int>(idx / static_cast<std::size_t>(ncols));
+            const int col = static_cast<int>(idx % static_cast<std::size_t>(ncols));
+
+            const int base_r = (row - box_min_r) * 2;
+            const int base_c = (col - box_min_c) * 2;
+
+            for (int k = 0; k < 9; ++k)
+            {
+                const int rr = base_r + stamp9[k][0];
+                const int cc = base_c + stamp9[k][1];
+                binary(rr, cc) = 1u;
+            }
+        }
+
+        // Trace boundary (4-connectivity) — same call as basin outline
+        const std::vector<lsdtt_pixel_rc> boundary =
+            trace_boundary_pixels(binary, 4);
+
+        // Keep only odd/odd corners and map back to divide-grid coordinates
+        // (identical to the filter in edge_tracing_normal_boundaries_)
+        lsdtt_polygon_geom poly;
+
+        for (const auto& p : boundary)
+        {
+            if (!((p.row & 1) && (p.col & 1))) continue;
+
+            const int div_r = ((p.row + 1) >> 1) + box_min_r;
+            const int div_c = ((p.col + 1) >> 1) + box_min_c;
+
+            const lsdtt_xy xy =
+                cell_center_from_row_col(div_meta, div_r, div_c);
+            poly.exterior.push_back(xy);
+        }
+
+        // Close the ring if the tracer did not return to the start
+        if (poly.exterior.size() >= 2)
+        {
+            const auto& first = poly.exterior.front();
+            const auto& last  = poly.exterior.back();
+            if (first.x != last.x || first.y != last.y)
+                poly.exterior.push_back(first);
+        }
+
+        // Build record
+        lsdtt_vector_record rec;
+        rec.geometry = std::move(poly);
+
+        const double area_m2 =
+            static_cast<double>(ci.pixel_indices.size()) * cell_area;
+
+        if (sc_data != nullptr)
+        {
+            // schema: label_id, area_m2, scalar_sum
+            rec.field_values = {
+                static_cast<std::int64_t>(label),
+                area_m2,
+                ci.scalar_sum * cell_area   // e.g. m³ when scalar is depth in metres
+            };
+        }
+        else
+        {
+            // schema: label_id, area_m2
+            rec.field_values = {
+                static_cast<std::int64_t>(label),
+                area_m2
+            };
+        }
+
+        records.push_back(std::move(rec));
+    }
+
+    return records;
 }
 
 
