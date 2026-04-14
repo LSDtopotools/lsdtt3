@@ -139,6 +139,8 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
     return {path, fname};
 }
 
+
+
 // -----------------------------------------------------------------------------
 // out_path
 // -----------------------------------------------------------------------------
@@ -290,10 +292,10 @@ int main(int argc, char* argv[])
     std::map<std::string, std::vector<std::string>> help_map;
 
     // --- General ---
-    string_default_map["feature_type"] = "channel_bottoms";
-    help_map["feature_type"] = {"string","channel_bottoms",
+    string_default_map["feature_type"] = "channel_candidates";
+    help_map["feature_type"] = {"string","channel_candidates",
         "Feature mode to run.",
-        "Supported values: channel_bottoms- find_drains- relief_ratio."};
+        "Supported values: channel_bottoms- channel_candidates- find_drains- relief_ratio."};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -307,6 +309,94 @@ int main(int argc, char* argv[])
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
         "same_as_input: match the input raster format."};
+
+    //  --channel candidates
+    float_default_map["channel_lambda_min_metres"] = 3.0f;
+    help_map["channel_lambda_min_metres"] = {"float","3.0",
+        "Minimum wavelength for multiscale channel-candidate curvature analysis, in metres.",
+        "Use a value near the narrowest expected natural channel width or bottom width."};
+
+    float_default_map["channel_lambda_max_metres"] = 18.0f;
+    help_map["channel_lambda_max_metres"] = {"float","18.0",
+        "Maximum wavelength for multiscale channel-candidate curvature analysis, in metres.",
+        "Use a broader value that captures larger natural channel forms."};
+
+    int_default_map["channel_n_scales"] = 5;
+    help_map["channel_n_scales"] = {"int","5",
+        "Number of scales used in the multiscale channel-candidate detector.",
+        "Scales are log-spaced between channel_lambda_min_metres and channel_lambda_max_metres."};
+
+    string_default_map["polyfit_curvature_metric"] = "plan_curvature";
+    help_map["polyfit_curvature_metric"] = {"string","plan_curvature",
+        "Polyfit curvature metric used for channel-candidate detection.",
+        "Suggested starting values: plan_curvature or tangential_curvature."};
+
+    string_default_map["polyfit_curvature_sign"] = "positive";
+    help_map["polyfit_curvature_sign"] = {"string","positive",
+        "Whether channel-like pixels correspond to positive or negative curvature.",
+        "Allowed values: positive, negative."};
+
+    float_default_map["polyfit_z_factor"] = 1.0f;
+    help_map["polyfit_z_factor"] = {"float","1.0",
+        "Vertical scaling applied before interpreting polyfit derivatives.",
+        "Usually leave at 1.0 unless experimenting."};
+
+    float_default_map["polyfit_flat_slope_tolerance"] = 1e-12f;
+    help_map["polyfit_flat_slope_tolerance"] = {"float","1e-12",
+        "Flat-slope tolerance passed to the polyfit metric engine.",
+        "Very small default."};
+
+    float_default_map["channel_depth_window_radius_metres"] = 12.0f;
+    help_map["channel_depth_window_radius_metres"] = {"float","12.0",
+        "Radius of moving-window mean used to derive local depth support, in metres.",
+        "Depth signal is positive_part(local_mean - dem)."};
+
+    string_default_map["depth_window_shape"] = "circular";
+    help_map["depth_window_shape"] = {"string","circular",
+        "Shape of moving window used for local depth support.",
+        "Allowed values: square, circular."};
+
+    float_default_map["channel_weight_persistent"] = 0.7f;
+    help_map["channel_weight_persistent"] = {"float","0.7",
+        "Weight for multiscale curvature persistence in the final score.",
+        "Usually the dominant term."};
+
+    float_default_map["channel_weight_depth"] = 0.3f;
+    help_map["channel_weight_depth"] = {"float","0.3",
+        "Weight for local depth support in the final score.",
+        "Helps favour locally low pixels."};
+
+    float_default_map["channel_weight_slope"] = 0.0f;
+    help_map["channel_weight_slope"] = {"float","0.0",
+        "Optional slope weight in the final score.",
+        "Recommended to keep small or zero at first."};
+
+    float_default_map["channel_score_threshold"] = 0.5f;
+    help_map["channel_score_threshold"] = {"float","0.5",
+        "Threshold applied to final channel-candidate score to make a binary mask.",
+        "Lower is more inclusive."};
+
+    bool_default_map["write_channel_candidate_score_raster"] = true;
+    help_map["write_channel_candidate_score_raster"] = {"bool","true",
+        "Write final channel-candidate score raster.",
+        "Continuous score in [0,1]."};
+
+    bool_default_map["write_channel_candidate_mask_raster"] = true;
+    help_map["write_channel_candidate_mask_raster"] = {"bool","true",
+        "Write thresholded binary channel-candidate mask.",
+        "1 indicates plausible channel candidate."};
+
+    bool_default_map["write_channel_best_scale_raster"] = true;
+    help_map["write_channel_best_scale_raster"] = {"bool","true",
+        "Write best persistent scale raster for channel candidates.",
+        "Useful later for cross-road matching."};
+
+    bool_default_map["write_channel_candidate_diagnostics"] = true;
+    help_map["write_channel_candidate_diagnostics"] = {"bool","true",
+        "Write diagnostics for the channel-candidate detector.",
+        "Includes per-scale raw curvature, per-scale channelness, pairwise persistence, depth, and persistent response."};
+
+
 
     // --- Channel-bottom detector ---
     float_default_map["polyfit_lambda_small"] = 4.0f;
@@ -606,13 +696,16 @@ int main(int argc, char* argv[])
 
     if (feature_type != "channel_bottoms" &&
         feature_type != "find_drains" &&
-        feature_type != "relief_ratio")
+        feature_type != "relief_ratio" &&
+        feature_type != "channel_candidates"
+    )
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
-                  << "'. Supported values are channel_bottoms, find_drains, "
+                  << "'. Supported values are channel_bottoms, channel_candidates, find_drains, "
                   << "and relief_ratio.\n";
         return 1;
     }
+
 
 
 

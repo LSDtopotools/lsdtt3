@@ -46,6 +46,60 @@
 
 namespace lsdtt {
 
+
+// -----------------------------------------------------------------------------
+// channel_candidate_request
+// -----------------------------------------------------------------------------    
+struct channel_candidate_request
+{
+    double channel_lambda_min_metres = 3.0;
+    double channel_lambda_max_metres = 20.0;
+    int    channel_n_scales          = 5;
+
+    polyfit_metric curvature_metric   = polyfit_metric::plan_curvature;
+    bool   positive_curvature_is_good = true;
+
+    double polyfit_z_factor           = 1.0;
+    double flat_slope_tolerance       = 1e-12;
+
+    double depth_window_radius_metres = 12.0;
+    window_shape depth_window_shape   = window_shape::circular;
+
+    double weight_persistent          = 0.7;
+    double weight_depth               = 0.3;
+    double weight_slope               = 0.0;
+
+    double score_threshold            = 0.5;
+    int    n_threads                  = 0;
+};
+
+// -----------------------------------------------------------------------------
+// channel_candidate_result
+// -----------------------------------------------------------------------------  
+struct channel_candidate_result
+{
+    lsdtt_raster_cpu score;
+    lsdtt_raster_cpu mask;
+
+    lsdtt_raster_cpu persistent;
+    lsdtt_raster_cpu depth_signal;
+    lsdtt_raster_cpu slope_signal;
+    lsdtt_raster_cpu best_scale_metres;
+
+    std::vector<lsdtt_raster_cpu> curvature_raw_by_scale;
+    std::vector<lsdtt_raster_cpu> curvature_signal_by_scale;
+    std::vector<lsdtt_raster_cpu> persistence_by_adjacent_scale_pair;
+    std::vector<double>           scales_metres;
+};
+
+channel_candidate_result find_channel_candidates(
+    const lsdtt_raster_cpu&        raster,
+    const channel_candidate_request& request
+);
+
+
+
+
 // -----------------------------------------------------------------------------
 // channel_bottom_request
 // -----------------------------------------------------------------------------
