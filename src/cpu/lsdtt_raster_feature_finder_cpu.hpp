@@ -411,4 +411,12 @@ binary_components_to_polygon_records(
     const lsdtt_vector_schema& schema
 );
 
+// This version allows for holes in the polygons
+[[nodiscard]] std::vector<lsdtt_vector_record>
+binary_components_to_polygon_records_with_holes(
+    const lsdtt_raster_cpu&  label_raster,
+    const lsdtt_raster_cpu*  scalar_raster,
+    const lsdtt_vector_schema& schema
+);
+
 } // namespace lsdtt

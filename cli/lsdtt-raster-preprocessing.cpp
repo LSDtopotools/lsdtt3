@@ -937,7 +937,8 @@ int main(int argc, char* argv[])
                 {
                     const auto& poly =
                         std::get<lsdtt::lsdtt_polygon_geom>(rec.geometry);
-                    loader.write_polygon(poly.exterior, rec.field_values);
+                    loader.write_polygon(poly.exterior, poly.holes,
+                                            rec.field_values);
                 }
 
                 loader.finish_vector_write();

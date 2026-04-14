@@ -1168,7 +1168,7 @@ depressions_to_polygons(
     // Step 4 — trace outlines, compute area and volume per component
     // fill_diff is passed as the scalar raster so binary_components_to_polygon_records
     // accumulates sum(depth)*cell_size² = volume_m3 for each component.
-    result.records = binary_components_to_polygon_records(
+    result.records = binary_components_to_polygon_records_with_holes(
         labelled, &fill_diff, result.schema);
 
     return result;
