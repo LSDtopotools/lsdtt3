@@ -418,26 +418,37 @@ int main(int argc, char* argv[])
     };
 
 
-    // --- Basin output placeholders ---
-    bool_default_map["write_basin_outlines_lines"] = false;
+    // --- Basin printing to vector ---
+    bool_default_map["write_basin_outlines"] = false;
     help_map["write_basins_vector"] = {"bool","false",
         "For each selected basin, this prints the basin outlines "
         "where each feature is a the outline of one basin.",
         "Features are labelled by their junction number. Use "
-        "basin_outlines_lines_output_format to specify outpout format."
+        "basin_outlines_output_format to specify outpout format."
+        "To get basin outlines as polygon rather than polyline, "
+        "use the switch write_basin_outlines_as_polygon."
+        "To write basin outlines per stream order, use switch "
+        "write_basin_outlines_per_order."
     };
 
-    bool_default_map["write_basin_outlines_lines_per_order"] = false;
+    bool_default_map["write_basin_outlines_as_polygon"] = false;
+    help_map["write_basin_outlines_as_polygon"] = {"bool", "false",
+        "When true, this writes basin outlines as polygons rather "
+        "than polylines.",
+        "Set to true when you want basins printed as areas."    
+    };
+
+    bool_default_map["write_basin_outlines_per_order"] = false;
     help_map["write_basin_outline_lines_per_order"] = {"bool", "false",
-        "The same as write_basin_outlines_lines, but this verion makes "
+        "When true, writes basin outlines per order: "
         "one file with invidividual layers per stream order (in case of "
         "geopackage) or multiple files, one per stream order (in case of "
         "flatgeobuf).",
         "Features are labelled by their junction number. Use "
-        "basin_outlines_lines_output_format to specify outpout format."
+        "basin_outlines_output_format to specify outpout format."
     };
 
-    string_default_map["basin_outlines_lines_output_format"] = "flatgeobuf";
+    string_default_map["basin_outlines_output_format"] = "flatgeobuf";
     help_map["basin_outlines_lines_output_format"] = {"string", "flatgeobuf",
         "Output format for basin outline visualisation.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
@@ -445,6 +456,8 @@ int main(int argc, char* argv[])
         "CSV is not allowed for basin outline lines."
     };
 
+    
+    // --- Basin printing to raster ---
     bool_default_map["write_basins_raster"] = false;
     help_map["write_basins_raster"] = {"bool","false",
         "Writes the basin raster, labelled by junction number since that "
@@ -501,7 +514,7 @@ int main(int argc, char* argv[])
 
     lsdtt::vector_output_format basin_outline_lines_format =
         lsdtt::resolve_vector_output_format(
-            sf["basin_outlines_lines_output_format"]
+            sf["basin_outlines_output_format"]
         );
 
     const bool select_basins_from_outlets =
@@ -615,6 +628,13 @@ int main(int argc, char* argv[])
         }
     }
 
+    if(bf["write_basin_outlines_as_polygon"]){
+        bf["write_basin_outlines"] = true;
+    };
+
+    if(bf["write_basin_outlines_per_order"]){
+        bf["write_basin_outlines"] = true;
+    }
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
@@ -1116,69 +1136,118 @@ int main(int argc, char* argv[])
         // ---------------------------------------------------------------------
         // Step 8 — Basin writing
         // ---------------------------------------------------------------------
-        if (bf["write_basin_outlines_lines"])
+        if (bf["write_basin_outlines"])
         {
-            std::cout << "\n--- Basin outlines line writing ---\n";
+            std::cout << "\n--- Basin outlines writing ---\n";
 
             const std::string extension =
                 lsdtt::output_extension(basin_outline_lines_format);
 
-            const std::string output_file =
-                out_path(pp, "_junction_basin_outlines", extension);
+ 
 
-            std::cout << "Writing: " << output_file << "\n";
-
-            try
+            // Writing of basin outlines as polylines but not per order
+            if (!bf["write_basin_outlines_as_polygon"] && !bf["write_basin_outlines_per_order"])
             {
-                // Writes one line feature per basin outline.
-                // Schema contains one field:
-                //   junction_number  (int64)
-                // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
-                basin_manager.write_basins_to_vector_lines(
-                    output_file,
-                    basin_outline_lines_format,
-                    "junction_basin_outlines",
-                    bf["calculate_spatial_index"]
-                );
+                const std::string output_file = out_path(pp, "_junction_basin_outlines", extension);
+                std::cout << "Writing: " << output_file << "\n";
+
+                try{
+                    // Writes one line feature per basin outline.
+                    // Schema contains one field:
+                    //   junction_number  (int64)
+                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                    basin_manager.write_basins_to_vector_lines(
+                        output_file,
+                        basin_outline_lines_format,
+                        "junction_basin_outlines",
+                        bf["calculate_spatial_index"]
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing basin outline vectors failed: "
+                            << e.what() << "\n";
+                    return 1;
+                }
             }
-            catch (const std::exception& e)
+
+            // Writing of basin outlines as polylines and per order
+            if (!bf["write_basin_outlines_as_polygon"] && bf["write_basin_outlines_per_order"])
             {
-                std::cerr << "FATAL: writing basin outline vectors failed: "
-                        << e.what() << "\n";
-                return 1;
+                const std::string output_file = out_path(pp, "_junction_basin_outlines", extension);
+                std::cout << "Writing: " << output_file << "\n";
+
+                try{
+                    // Writes one line feature per basin outline.
+                    // Schema contains one field:
+                    //   junction_number  (int64)
+                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                    basin_manager.write_basins_to_vector_lines_by_order(
+                        output_file,
+                        basin_outline_lines_format,
+                        "junction_basin_outlines",
+                        bf["calculate_spatial_index"]
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing basin outline vectors failed: "
+                            << e.what() << "\n";
+                    return 1;
+                }
             }
-        }
 
-        if (bf["write_basin_outlines_lines_per_order"])
-        {
-            std::cout << "\n--- Basin outlines line writing ---\n";
-
-            const std::string extension =
-                lsdtt::output_extension(basin_outline_lines_format);
-
-            const std::string output_file =
-                out_path(pp, "_junction_basin_outlines", extension);
-
-            std::cout << "Writing: " << output_file << "\n";
-
-            try
+            // Writing of basin outlines as polygon but not per order
+            if (bf["write_basin_outlines_as_polygon"] && !bf["write_basin_outlines_per_order"])
             {
-                // Writes one line feature per basin outline.
-                // Schema contains one field:
-                //   junction_number  (int64)
-                // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
-                basin_manager.write_basins_to_vector_lines_by_order(
-                    output_file,
-                    basin_outline_lines_format,
-                    "junction_basin_outlines",
-                    bf["calculate_spatial_index"]
-                );
+                const std::string output_file = out_path(pp, "_junction_basin_polygons", extension);
+                std::cout << "Writing: " << output_file << "\n";
+
+                try{
+                    // Writes one polygon feature per basin outline.
+                    // Schema contains one field:
+                    //   junction_number  (int64)
+                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                    basin_manager.write_basins_to_vector_polygons(
+                        output_file,
+                        basin_outline_lines_format,
+                        "junction_basin_polygons",
+                        bf["calculate_spatial_index"]
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing basin outline vectors failed: "
+                            << e.what() << "\n";
+                    return 1;
+                }
+
             }
-            catch (const std::exception& e)
+
+            // Writing of basin outlines as polygon and per order
+            if (bf["write_basin_outlines_as_polygon"] && bf["write_basin_outlines_per_order"])
             {
-                std::cerr << "FATAL: writing basin outline vectors failed: "
-                        << e.what() << "\n";
-                return 1;
+                const std::string output_file = out_path(pp, "_junction_basin_polygons", extension);
+                std::cout << "Writing: " << output_file << "\n";
+
+                try{
+                    // Writes one polygon feature per basin outline.
+                    // Schema contains one field:
+                    //   junction_number  (int64)
+                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                    basin_manager.write_basins_to_vector_polygons_by_order(
+                        output_file,
+                        basin_outline_lines_format,
+                        "junction_basin_polygons",
+                        bf["calculate_spatial_index"]
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing basin outline vectors failed: "
+                            << e.what() << "\n";
+                    return 1;
+                }
             }
         }
 

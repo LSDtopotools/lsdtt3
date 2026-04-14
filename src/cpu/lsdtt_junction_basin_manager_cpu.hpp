@@ -174,12 +174,33 @@ public:
     void write_basins_to_vector_lines_by_order(
         const std::string& out_path,
         vector_output_format format,
-        const std::string& layer_name_prefix = "basins",
+        const std::string& layer_name_prefix = "basin_outlines",
         bool spatial_index = false
     ) const;
 
     // (private) helper function for vector write by order:
     void write_order_features_(
+        lsdtt_data_loader& loader,
+        const std::vector<const lsdtt_junction_basin_cpu*>& basin_ptrs
+    ) const;
+
+    // This is the same as functions above but writing polygons instead of polyline
+    void write_basins_to_vector_polygons(
+        const std::string& out_path,
+        vector_output_format format,
+        const std::string& layer_name = "basins",
+        bool spatial_index = false
+    ) const;
+
+    void write_basins_to_vector_polygons_by_order(
+        const std::string& out_path,
+        vector_output_format format,
+        const std::string& layer_name_prefix = "basins",
+        bool spatial_index = false
+    ) const;
+
+    // Private:
+    void write_order_polygon_features_(
         lsdtt_data_loader& loader,
         const std::vector<const lsdtt_junction_basin_cpu*>& basin_ptrs
     ) const;

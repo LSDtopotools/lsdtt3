@@ -85,6 +85,11 @@ public:
   // This can be used to make an lsdtt_vector_layer by higher-level code.
   [[nodiscard]] lsdtt_vector_record get_outline_as_line_record(std::int32_t basin_id) const;
 
+  // This returns the basin outline as a polygon.
+  // Will have field values only for basin_id (passed on)
+  // This can be used to make an lsdtt_vector_layer by higher-level code.
+  [[nodiscard]] lsdtt_vector_record get_outline_as_polygon_record(std::int32_t basin_id) const;
+
 
 private:
   const lsdtt_basin_cpu* basin_ = nullptr;   // non-owning; caller guarantees lifetime

@@ -816,5 +816,35 @@ lsdtt_basin_outline_cpu::get_outline_as_line_record(std::int32_t basin_id) const
   return rec;
 }
 
+lsdtt_vector_record
+lsdtt_basin_outline_cpu::get_outline_as_polygon_record(std::int32_t basin_id) const
+{
+    lsdtt_vector_record rec;
+    rec.field_values = { static_cast<std::int64_t>(basin_id) };
+
+    if (outline_divide_rc_.size() < 2)
+    {
+        rec.geometry = std::monostate{};
+        return rec;
+    }
+
+    lsdtt_polygon_geom poly;
+    poly.exterior.reserve(outline_divide_rc_.size() + 1);
+
+    for (const lsdtt_pixel_rc& rc : outline_divide_rc_)
+    {
+        const lsdtt_xy xy = cell_center_from_row_col(divide_grid_meta_, rc.row, rc.col);
+        poly.exterior.push_back(xy);
+    }
+
+    // Close the ring — the outline starts at the outlet cut and ends there
+    // too after rotate_open_outline_to_outlet_cut_, but the closing point
+    // is not repeated in outline_divide_rc_ itself.
+    poly.exterior.push_back(poly.exterior.front());
+
+    rec.geometry = std::move(poly);
+    return rec;
+}
+
 
 } // namespace lsdtt
