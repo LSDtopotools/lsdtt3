@@ -243,8 +243,25 @@ int main(int argc, char* argv[])
     help_map["write_output_format"] = {"string","cog","Raster output format.",
         "cog, gtiff, or same_as_input."};
 
+    // --- Relief ---        
+    int_default_map["relief_window_pixels"] = 5;
+    help_map["relief_window_pixels"] = {"int","5",
+        "Square window size (pixels) for local relief (max - min) computation.",
+        "Must be odd and >= 3.  5 = 5x5 neighbourhood."};
+
+    bool_default_map["use_relief"] = true;
+    help_map["use_relief"] = {"bool","true",
+        "Use local relief as a flat-surface masking metric.",
+        "Pixels below relief_threshold_percentile are classed flat."};
+
+    float_default_map["relief_threshold_percentile"] = 10.0f;
+    help_map["relief_threshold_percentile"] = {"float","10",
+        "Percentile of the local relief distribution below which a pixel is classed flat.",
+        "Range: 0-100.  Lower values = stricter (only lowest-relief pixels pass)."};
+
+
     // --- MADk2 ---
-    bool_default_map["use_madk2"] = true;
+    bool_default_map["use_madk2"] = false;
     help_map["use_madk2"] = {"bool","true",
         "Enable MADk2 second-order roughness metric.",
         "Recommended for all landscape types including sloping flat surfaces. "
@@ -327,21 +344,6 @@ int main(int argc, char* argv[])
         "Percentile of the NVD s3 distribution below which a pixel is classed flat.",
         "Range: 0–100."};
 
-    // --- Relief ---        
-    int_default_map["relief_window_pixels"] = 5;
-    help_map["relief_window_pixels"] = {"int","5",
-        "Square window size (pixels) for local relief (max - min) computation.",
-        "Must be odd and >= 3.  5 = 5x5 neighbourhood."};
-
-    bool_default_map["use_relief"] = true;
-    help_map["use_relief"] = {"bool","true",
-        "Use local relief as a flat-surface masking metric.",
-        "Pixels below relief_threshold_percentile are classed flat."};
-
-    float_default_map["relief_threshold_percentile"] = 10.0f;
-    help_map["relief_threshold_percentile"] = {"float","10",
-        "Percentile of the local relief distribution below which a pixel is classed flat.",
-        "Range: 0-100.  Lower values = stricter (only lowest-relief pixels pass)."};
 
     // --- Combination ---
     bool_default_map["require_all_metrics_pass"] = true;
@@ -368,9 +370,6 @@ int main(int argc, char* argv[])
     help_map["curvature_window_pixels"] = {"int","3",
         "Square window size (pixels) for total curvature (Laplacian) computation.",
         "Must be odd and >= 3.  3 = 3x3 neighbourhood (standard 5-point stencil)."};
-
-
-
 
     // --- Directional closing ---
     int_default_map["directional_close_line_length_pixels"] = 0;
@@ -425,6 +424,16 @@ int main(int argc, char* argv[])
     help_map["write_merge_candidates"] = {"bool","true",
         "Write all pairwise merge candidate pairs (not just same_level) to CSV.",
         "Allows post-processing with a custom tolerance."};
+
+    bool_default_map["apply_plane_merges"] = false;
+    help_map["apply_plane_merges"] = {"bool","false",
+        "Apply plane-analysis merge groups to the labelled flat mask and write "
+        "a merged labelled raster.",
+        "Requires run_plane_analysis = true.  Labels with "
+        "normalised_offset < plane_merge_tolerance_rmse are merged.  "
+        "Output: <stem>_merged_labelled_flat_mask.tif"};
+
+
 
     // --- Output toggles ---
     bool_default_map["write_texture_rasters"] = false;
@@ -485,7 +494,15 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (!bf["use_madk2"] && !bf["use_residual_iqr"] && !bf["use_nvd"])
+    std::cout << "Switches for analysis are: " << std::endl;
+    std::cout << "use_madk2: " << bf["use_madk2"] <<std::endl;
+    std::cout << "use_residual_iqr: " << bf["use_residual_iqr"] << std::endl;
+    std::cout << "use_nvd: " << bf["use_nvd"] << std::endl;
+    std::cout << "use_relief: " << bf["use_relief"] << std::endl;
+
+
+    if (!bf["use_madk2"] && !bf["use_residual_iqr"] &&
+        !bf["use_nvd"] && !bf["use_relief"])
     {
         std::cerr << "Error: at least one metric must be enabled.\n";
         return 1;
@@ -796,6 +813,22 @@ int main(int argc, char* argv[])
         std::cout << "  " << pa.n_groups << " merge group(s) across "
                   << (pa.plane_fits.size() - 1) << " labelled surfaces\n";
 
+
+        // ----- merged labelled flat mask -----
+        if (bf["apply_plane_merges"])
+        {
+            const std::string p = stem + "_merged_labelled_flat_mask.tif";
+            std::cout << "Writing merged labelled flat mask (UInt32): " << p << "\n";
+
+            lsdtt::lsdtt_raster_cpu merged_labels =
+                lsdtt::merge_labelled_flat_mask_from_plane_analysis(
+                    result.labelled_flat_mask, pa);
+
+            loader.write_full(merged_labels.get_data(),
+                              merged_labels.get_meta(), p, out_format,
+                              GDT_UInt32);
+        }
+
         // ----- plane_fits CSV -----
         {
             const std::string p = stem + "_plane_fits.csv";
@@ -836,7 +869,7 @@ int main(int argc, char* argv[])
         }
 
         // ----- merge_candidates CSV -----
-        if (bf["write_merge_candidates"] && !pa.merge_candidates.empty())
+        if (bf["write_merge_candidates"])
         {
             const std::string p = stem + "_merge_candidates.csv";
             std::cout << "Writing merge candidates: " << p << "\n";
@@ -851,6 +884,8 @@ int main(int argc, char* argv[])
                     std::to_string(mc.label_j),
                     std::to_string(mc.mean_residual_ji),
                     std::to_string(mc.mean_residual_ij),
+                    std::to_string(mc.rmse_ji),
+                    std::to_string(mc.rmse_ij),
                     std::to_string(mc.normalised_offset),
                     mc.same_level ? "true" : "false"
                 });
@@ -859,7 +894,83 @@ int main(int argc, char* argv[])
             loader.write_csv(p,
                 {"label_i","label_j",
                  "mean_residual_ji","mean_residual_ij",
+                 "rmse_ji","rmse_ij",
                  "normalised_offset","same_level"},
+                rows);
+        }
+
+        // ----- dense plane-on-label RMSE matrix CSV -----
+        if (!pa.plane_on_label_rmse.empty())
+        {
+            const std::string p = stem + "_plane_on_label_rmse.csv";
+            std::cout << "Writing plane-on-label RMSE matrix: " << p << "\n";
+
+            std::vector<std::string> header;
+            header.reserve(pa.plane_on_label_rmse.size());
+
+            header.push_back("plane_label");
+            for (std::size_t lbl = 1; lbl < pa.plane_on_label_rmse.size(); ++lbl)
+            {
+                header.push_back("label_" + std::to_string(lbl));
+            }
+
+            std::vector<std::vector<std::string>> rows;
+            rows.reserve(pa.plane_on_label_rmse.size() > 0
+                         ? pa.plane_on_label_rmse.size() - 1 : 0);
+
+            for (std::size_t i = 1; i < pa.plane_on_label_rmse.size(); ++i)
+            {
+                std::vector<std::string> row;
+                row.reserve(pa.plane_on_label_rmse[i].size());
+
+                row.push_back(std::to_string(i));
+                for (std::size_t j = 1; j < pa.plane_on_label_rmse[i].size(); ++j)
+                {
+                    row.push_back(std::to_string(pa.plane_on_label_rmse[i][j]));
+                }
+
+                rows.push_back(std::move(row));
+            }
+
+            loader.write_csv(p, header, rows);
+        }
+
+        // ----- split_candidates CSV -----
+        {
+            const std::string p = stem + "_split_candidates.csv";
+            std::cout << "Writing split candidates: " << p << "\n";
+
+            std::vector<std::vector<std::string>> rows;
+
+            for (std::size_t lbl = 1; lbl < pa.plane_fits.size(); ++lbl)
+            {
+                const auto& pf = pa.plane_fits[lbl];
+                if (!pf.valid) continue;
+                if (!pf.split_candidate) continue;
+
+                const int grp = (lbl < pa.merge_group.size())
+                                ? pa.merge_group[lbl] : -1;
+
+                rows.push_back({
+                    std::to_string(pf.label),
+                    std::to_string(pf.n_pixels),
+                    std::to_string(pf.a),
+                    std::to_string(pf.b),
+                    std::to_string(pf.c),
+                    std::to_string(pf.mean_z),
+                    std::to_string(pf.rmse),
+                    std::to_string(pf.slope_magnitude),
+                    std::to_string(pf.aspect_degrees),
+                    std::to_string(pf.split_confidence),
+                    std::to_string(grp)
+                });
+            }
+
+            loader.write_csv(p,
+                {"label","n_pixels",
+                 "a","b","c","mean_z","rmse",
+                 "slope_magnitude","aspect_degrees",
+                 "split_confidence","merge_group"},
                 rows);
         }
     }
