@@ -821,15 +821,49 @@ first.
 
 ## lsdtt_flowgraph_cpu
 
-File: `src/cpu/lsdtt_flowgraph_cpu.hpp` (stub — implementation pending)
+Files: `src/cpu/lsdtt_flowgraph_cpu.hpp/.cpp`
 
-DAG-based flow routing for D-infinity and MFD. No s_vector.
+DAG-based CPU flow routing for D-infinity and MFD. No s_vector (upslope sets
+are fractional and overlapping). Use for distributed-flow analyses: sediment
+flux, TWI, specific catchment area on hillslopes.
+
+**Routing methods:**
+- `d_infinity` — Tarboton (1997). At most two receivers per cell (one cardinal,
+  one diagonal). Proportions from within-facet angle `r`. Uses `atan2(s2, s1)`
+  for numerical stability; no artificial slope perturbation.
+- `mfd` — Quinn et al. (1991) / Freeman (1991). Up to eight receivers,
+  weighted by `slope^exponent`. `mfd_exponent` defaults to 1.0 (Quinn);
+  Freeman recommends 1.1 for natural terrain.
 
 **Data model (CSR):**
 - `receiver_offsets_`, `receiver_indices_`, `receiver_weights_`
 - Cell `i`'s receivers: `[receiver_offsets_[i], receiver_offsets_[i+1])`
+- Weights sum to 1.0 per valid cell that has at least one receiver.
 
-**Routing methods:** `d_infinity` (Tarboton 1997), `mfd` (Quinn 1991)
+**Topological order:** Kahn's BFS with Anand et al. (2020) ready-queue
+extension for multi-receiver DAGs. Sources first, outlets last.
+
+**Key methods:**
+- `accumulate(cell_weights = {})` → `std::vector<double>` — forward push sweep
+- `accumulate_raster(cell_weights = {})` → `lsdtt_raster_result`
+- `dinf_slopes()` → `lsdtt_raster_result` — steepest-descent slope magnitude
+- `dinf_flow_direction()` → `lsdtt_raster_result` — compass bearing (0=N, CW)
+- `n_outlets()` — count of sink cells in topological order
+
+**Options (`lsdtt_flowgraph_options`):**
+```
+boundary_conditions       = "oooo"   # north east south west
+interior_nodata_is_outlet = true
+method                    = mfd      # d_infinity or mfd
+mfd_exponent              = 1.0f
+n_threads                 = 0        # 0 = OMP default
+```
+
+**Boundary condition codes:**
+- `o` / `n` — open / no-flux: neighbours outside bounds are skipped; edge
+  cells become sinks if no in-bounds downslope neighbours exist.
+- `p` — periodic: wraps to opposite edge (north↔south, east↔west must match).
+- `b` — forced outlet: entire edge is forced to be sinks.
 
 ---
 
