@@ -57,10 +57,10 @@
 // -----------------
 //   Kahn's BFS over the receiver graph, using the Anand et al. (2020)
 //   ready-queue extension for multi-receiver DAGs: a cell enters the queue
-//   only after all its receivers have been processed.
+//   only after all its donors have been processed.
 //   topological_order_[0] is a ridge/source cell (no donors).
 //   topological_order_.back() is an outlet cell (no receivers).
-//
+
 // Flow accumulation
 // -----------------
 //   accumulate() applies a forward push sweep over topological_order_:
@@ -75,7 +75,9 @@
 //   String of four characters (north / east / south / west):
 //     'o' — open: edge cells route among their in-bounds neighbours only;
 //           if all in-bounds neighbours are higher they become sinks.
-//     'n' — no-flux: same practical effect as 'o' for D-inf/MFD.
+//     'n' — no-flux placeholder. In the current D-infinity / MFD implementation
+//           this has the same practical effect as 'o': out-of-bounds neighbours
+//           are simply unavailable as receivers.
 //     'p' — periodic: neighbours wrap to the opposite edge.
 //     'b' — forced outlet: all cells on this edge are forced to be sinks.
 //   Periodic pairs must be symmetric (north↔south, east↔west).
@@ -115,12 +117,19 @@ enum class lsdtt_flowgraph_method
 // -----------------------------------------------------------------------------
 struct lsdtt_flowgraph_options
 {
-    std::string            boundary_conditions       = "oooo";
+    std::string            boundary_conditions = "oooo";
+
+    // If true, any valid cell that touches invalid interior nodata
+    // (8-neighbourhood, excluding outer-domain edges) is treated as a sink/outlet.
+    // This is useful when interior DEM holes should behave like local drainage exits
+    // rather than forcing flow to divert around the hole.
     bool                   interior_nodata_is_outlet = true;
-    lsdtt_flowgraph_method method                    = lsdtt_flowgraph_method::mfd;
-    float                  mfd_exponent              = 1.0f;  // slope weighting power
-    int                    n_threads                 = 0;     // 0 = OMP default
+
+    lsdtt_flowgraph_method method       = lsdtt_flowgraph_method::mfd;
+    float                  mfd_exponent = 1.0f;  // slope weighting power
+    int                    n_threads    = 0;     // 0 = OMP default
 };
+
 
 // -----------------------------------------------------------------------------
 // lsdtt_flowgraph_cpu
@@ -143,6 +152,180 @@ public:
     [[nodiscard]] std::int64_t n_valid_cells() const noexcept { return n_valid_cells_; }
     [[nodiscard]] std::int64_t n_outlets()     const noexcept;
     [[nodiscard]] const lsdtt_raster_meta& meta() const noexcept { return meta_; }
+
+    [[nodiscard]] std::int64_t flat_index(int row, int col) const noexcept
+    {
+        if (row < 0 || row >= n_rows_ || col < 0 || col >= n_cols_)
+            return -1;
+
+        return static_cast<std::int64_t>(row) * n_cols_ + col;
+    }
+
+
+    [[nodiscard]] int row_from_flat(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return -1;
+        return static_cast<int>(flat / n_cols_);
+    }
+
+    [[nodiscard]] int col_from_flat(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return -1;
+        return static_cast<int>(flat % n_cols_);
+    }
+
+
+    [[nodiscard]] bool is_valid_flat(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return false;
+        return valid_[flat] != 0;
+    }
+
+    [[nodiscard]] bool is_outlet_flat(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return false;
+        if (valid_[flat] == 0) return false;
+
+        return receiver_offsets_[flat + 1] == receiver_offsets_[flat];
+    }
+
+    [[nodiscard]] std::int64_t donor_count_flat(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return 0;
+        return static_cast<std::int64_t>(donor_count_[flat]);
+    }
+
+
+
+    [[nodiscard]] bool is_valid_cell(int row, int col) const noexcept
+    {
+        const std::int64_t flat = flat_index(row, col);
+        if (flat < 0) return false;
+        return valid_[flat] != 0;
+    }
+
+    [[nodiscard]] bool is_outlet_cell(int row, int col) const noexcept
+    {
+        const std::int64_t flat = flat_index(row, col);
+        if (flat < 0) return false;
+        if (valid_[flat] == 0) return false;
+
+        return receiver_offsets_[flat + 1] == receiver_offsets_[flat];
+    }
+
+    [[nodiscard]] std::int64_t donor_count_at(int row, int col) const noexcept
+    {
+        const std::int64_t flat = flat_index(row, col);
+        if (flat < 0) return 0;
+        return static_cast<std::int64_t>(donor_count_[flat]);
+    }
+
+    [[nodiscard]] std::int64_t n_receivers_at(int row, int col) const noexcept
+    {
+        const std::int64_t flat = flat_index(row, col);
+        if (flat < 0) return 0;
+        if (valid_[flat] == 0) return 0;
+
+        return receiver_offsets_[flat + 1] - receiver_offsets_[flat];
+    }
+
+
+
+    // Read-only access to the CSR receiver graph and traversal order
+    [[nodiscard]] const std::vector<std::uint8_t>& valid_cells() const noexcept
+    { return valid_; }
+
+    [[nodiscard]] const std::vector<std::int64_t>& receiver_offsets() const noexcept
+    { return receiver_offsets_; }
+
+    [[nodiscard]] const std::vector<std::int64_t>& receiver_indices() const noexcept
+    { return receiver_indices_; }
+
+    [[nodiscard]] const std::vector<float>& receiver_weights() const noexcept
+    { return receiver_weights_; }
+
+    [[nodiscard]] const std::vector<std::int64_t>& topological_order() const noexcept
+    { return topological_order_; }
+
+    [[nodiscard]] const std::vector<std::uint8_t>& donor_count() const noexcept
+    { return donor_count_; }
+
+    // 
+    // These lets you ask:
+    // how many receivers does this cell have?
+    // which flat indices are they?
+    // what are the weights?
+    //
+    // without manually unpacking the CSR arrays every time.
+    [[nodiscard]] std::int64_t n_receivers(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return 0;
+        return receiver_offsets_[flat + 1] - receiver_offsets_[flat];
+    }
+
+    [[nodiscard]] const std::int64_t* receiver_index_begin(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return nullptr;
+        return receiver_indices_.data() + receiver_offsets_[flat];
+    }
+
+    [[nodiscard]] const float* receiver_weight_begin(std::int64_t flat) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return nullptr;
+        return receiver_weights_.data() + receiver_offsets_[flat];
+    }
+
+    [[nodiscard]] std::int64_t receiver_index_at(
+        std::int64_t flat,
+        std::int64_t k) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return -1;
+
+        const std::int64_t begin = receiver_offsets_[flat];
+        const std::int64_t end   = receiver_offsets_[flat + 1];
+        const std::int64_t nrec  = end - begin;
+
+        if (k < 0 || k >= nrec) return -1;
+
+        return receiver_indices_[begin + k];
+    }
+
+    [[nodiscard]] float receiver_weight_at(
+        std::int64_t flat,
+        std::int64_t k) const noexcept
+    {
+        if (flat < 0 || flat >= n_cells_) return 0.0f;
+
+        const std::int64_t begin = receiver_offsets_[flat];
+        const std::int64_t end   = receiver_offsets_[flat + 1];
+        const std::int64_t nrec  = end - begin;
+
+        if (k < 0 || k >= nrec) return 0.0f;
+
+        return receiver_weights_[begin + k];
+    }
+
+    [[nodiscard]] std::int64_t receiver_index_at(
+        int row,
+        int col,
+        std::int64_t k) const noexcept
+    {
+        const std::int64_t flat = flat_index(row, col);
+        if (flat < 0) return -1;
+        return receiver_index_at(flat, k);
+    }
+
+    [[nodiscard]] float receiver_weight_at(
+        int row,
+        int col,
+        std::int64_t k) const noexcept
+    {
+        const std::int64_t flat = flat_index(row, col);
+        if (flat < 0) return 0.0f;
+        return receiver_weight_at(flat, k);
+    }
+
+
 
     // ------------------------------------------------------------------
     // Flow accumulation
@@ -178,6 +361,14 @@ public:
     // 270 = W.  Sink cells carry no_data_value.
     [[nodiscard]] lsdtt_raster_result dinf_flow_direction() const;
 
+    // Binary raster of outlet/sink cells:
+    //   1 where a valid cell has no receivers
+    //   0 where a valid cell has one or more receivers
+    // nodata elsewhere
+    [[nodiscard]] lsdtt_raster_result outlet_raster() const;
+
+    [[nodiscard]] std::vector<std::int64_t> outlet_indices() const;
+
 private:
 
     // ------------------------------------------------------------------
@@ -195,7 +386,7 @@ private:
         bool west_forced    = false;
     };
 
-    boundary_flags parse_boundary_conditions(const std::string& bc) const noexcept;
+    boundary_flags parse_boundary_conditions(const std::string& bc) const;
 
     // Returns true if the cell should be forced to a sink ('b' boundary).
     [[nodiscard]] bool is_forced_outlet(int row, int col) const noexcept;
@@ -207,12 +398,18 @@ private:
         int row, int col, int drow, int dcol
     ) const noexcept;
 
+    // Returns true if this valid cell touches at least one invalid interior
+    // neighbour (8-neighbourhood), excluding non-periodic outer-domain edges.
+    [[nodiscard]] bool touches_interior_nodata(int row, int col) const noexcept;
+
+
+
     // ------------------------------------------------------------------
     // Build pipeline
     // ------------------------------------------------------------------
-    void build_dinf(const lsdtt_array2d_f& dem, const lsdtt_array2d_u8& mask);
-    void build_mfd (const lsdtt_array2d_f& dem, const lsdtt_array2d_u8& mask,
-                    float exponent);
+    void build_dinf(const lsdtt_array2d_f& dem);
+    void build_mfd (const lsdtt_array2d_f& dem, float exponent);
+
     void build_topological_order();
 
     // ------------------------------------------------------------------
