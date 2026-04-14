@@ -682,6 +682,35 @@ lsdtt_raster_cpu raster_binary_true_above_threshold(
     );
 }
 
+lsdtt_raster_cpu raster_binary_true_above_but_excluding_threshold(
+    const lsdtt_raster_cpu& a,
+    float                   threshold)
+{
+    const lsdtt_raster_meta& meta = a.get_meta();
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int n = static_cast<int>(da.size());
+
+    std::vector<float>   out_data(n, 0.0f);
+    std::vector<uint8_t> out_mask(n, 0u);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        if (meta.is_nodata(da[i])) continue;
+        if (!std::isfinite(da[i])) continue;
+
+        out_data[i] = (da[i] > threshold) ? 1.0f : 0.0f;
+        out_mask[i] = 1u;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta
+    );
+}
+
 lsdtt_raster_cpu raster_binary_true_below_threshold(
     const lsdtt_raster_cpu& a,
     float                   threshold)

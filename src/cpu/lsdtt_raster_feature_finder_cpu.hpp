@@ -384,4 +384,39 @@ lsdtt_raster_cpu label_binary_components_by_size(
     int                     min_component_pixels
 );
 
+// -----------------------------------------------------------------------------
+// binary_components_to_polygon_records
+//
+// Converts a labelled component raster (output of label_binary_components_by_size)
+// to one polygon record per component. The exterior ring is pixel-edge-traced
+// using the double-resolution binary grid technique from lsdtt_basin_outline_cpu.
+//
+// Parameters
+//   label_raster   - UInt32 label raster; pixels with value 0 are background.
+//   scalar_raster  - optional: per-pixel float raster accumulated over each
+//                    component (e.g. fill depth). Pass nullptr to skip.
+//                    Must be spatially co-registered with label_raster when provided.
+//   schema         - caller-supplied schema; must have at least three fields in
+//                    this order: label_id (int64), area_m2 (double),
+//                    and — when scalar_raster != nullptr — scalar_sum (double).
+//
+// Returns
+//   One lsdtt_vector_record per component, with lsdtt_polygon_geom geometry.
+//   Records are ordered by ascending label value.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_vector_record>
+binary_components_to_polygon_records(
+    const lsdtt_raster_cpu&  label_raster,
+    const lsdtt_raster_cpu*  scalar_raster,
+    const lsdtt_vector_schema& schema
+);
+
+// This version allows for holes in the polygons
+[[nodiscard]] std::vector<lsdtt_vector_record>
+binary_components_to_polygon_records_with_holes(
+    const lsdtt_raster_cpu&  label_raster,
+    const lsdtt_raster_cpu*  scalar_raster,
+    const lsdtt_vector_schema& schema
+);
+
 } // namespace lsdtt

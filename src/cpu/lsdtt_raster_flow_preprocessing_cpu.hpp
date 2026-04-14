@@ -92,4 +92,45 @@ lsdtt_raster_cpu breach_depressions_least_cost(
     int   n_threads      = 0
 );
 
+// -----------------------------------------------------------------------------
+// depression_polygons_result
+// -----------------------------------------------------------------------------
+struct depression_polygons_result
+{
+    lsdtt_vector_schema              schema;
+    std::vector<lsdtt_vector_record> records;
+};
+
+// -----------------------------------------------------------------------------
+// depressions_to_polygons
+//
+// Derives a vector polygon layer from a fill-difference raster.
+// Each polygon represents one topographic depression with attributes:
+//   depression_id  — sequential integer label (int64)
+//   area_m2        — planimetric area of the depression in m²  (double)
+//   volume_m3      — total fill volume in m³, computed as
+//                    sum(fill_diff[i]) * cell_size²             (double)
+//
+// Parameters
+//   fill_diff      - filled minus original DEM; positive values are where
+//                    filling raised the surface. Typically the output of
+//                    raster_subtract(filled_dem, original_dem).
+//   min_pixels     - components with fewer pixels than this are discarded.
+//                    Must be >= 1.  Default 1 keeps everything.
+//   min_depth      - cells where fill_diff <= min_depth are treated as
+//                    background before component labelling.  Default 0.0f
+//                    keeps any cell with a positive fill value.
+//
+// Returns
+//   depression_polygons_result with schema and one record per depression.
+//   Pass directly to lsdtt_data_loader::begin_vector_write /
+//   write_polygon / finish_vector_write.
+// -----------------------------------------------------------------------------
+[[nodiscard]] depression_polygons_result
+depressions_to_polygons(
+    const lsdtt_raster_cpu& fill_diff,
+    int   min_pixels = 1,
+    float min_depth  = 0.0f
+);
+
 } // namespace lsdtt

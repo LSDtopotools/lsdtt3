@@ -20,8 +20,11 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "lsdtt_raster_feature_finder_cpu.hpp" 
+#include "lsdtt_raster_algebra.hpp"
 #include "../cpu/lsdtt_raster_cpu.hpp"
 #include "../utils/lsdtt_array2d.hpp"
+#include "../core/lsdtt_data_loader.hpp" 
 
 #include <algorithm>
 #include <cmath>
@@ -1130,6 +1133,45 @@ lsdtt_raster_cpu breach_depressions_least_cost(
         std::move(mask_arr.get_vector()),
         meta
     );
+}
+
+// -----------------------------------------------------------------------------
+// depressions_to_polygons
+// -----------------------------------------------------------------------------
+depression_polygons_result
+depressions_to_polygons(
+    const lsdtt_raster_cpu& fill_diff,
+    int   min_pixels,
+    float min_depth)
+{
+    if (min_pixels < 1)
+        throw std::runtime_error(
+            "lsdtt::depressions_to_polygons: min_pixels must be >= 1");
+
+    // Step 1 — threshold: keep only cells where fill_diff > min_depth
+    const lsdtt_raster_cpu binary =
+        lsdtt::algebra::raster_binary_true_above_but_excluding_threshold(fill_diff, min_depth);
+
+    // Step 2 — label connected components, discarding those below min_pixels
+    const lsdtt_raster_cpu labelled =
+        label_binary_components_by_size(binary, min_pixels);
+
+    // Step 3 — build schema
+    depression_polygons_result result;
+    result.schema.field_names = { "depression_id", "area_m2",  "volume_m3" };
+    result.schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type
+    };
+
+    // Step 4 — trace outlines, compute area and volume per component
+    // fill_diff is passed as the scalar raster so binary_components_to_polygon_records
+    // accumulates sum(depth)*cell_size² = volume_m3 for each component.
+    result.records = binary_components_to_polygon_records_with_holes(
+        labelled, &fill_diff, result.schema);
+
+    return result;
 }
 
 } // namespace lsdtt

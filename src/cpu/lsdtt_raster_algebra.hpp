@@ -176,6 +176,14 @@ lsdtt_raster_cpu raster_binary_true_above_threshold(
     float                   threshold
 );
 
+/// Same as above, but uses > operator instead of >=
+/// result = 1 where a > threshold, else 0.
+/// Valid input pixels remain valid in the output; nodata remains nodata.
+lsdtt_raster_cpu raster_binary_true_above_but_excluding_threshold(
+    const lsdtt_raster_cpu& a,
+    float                   threshold
+);
+
 /// Binary threshold from below:
 /// result = 1 where a <= threshold, else 0.
 /// Valid input pixels remain valid in the output; nodata remains nodata.

@@ -443,6 +443,73 @@ lsdtt_junction_basin_manager_cpu::filter_nested()
 }
 
 lsdtt_junction_basin_manager_cpu&
+lsdtt_junction_basin_manager_cpu::filter_nested_by_stream_order()
+{
+    if (basins_.size() < 2)
+    {
+        return *this;
+    }
+
+    std::vector<bool> remove_mask(basins_.size(), false);
+
+    for (std::size_t i = 0; i < basins_.size(); ++i)
+    {
+        if (remove_mask[i])
+        {
+            continue;
+        }
+
+        const std::int32_t order_i = basins_[i].get_stream_order();
+        const std::int64_t outlet_i = basins_[i].get_basin_outlet_flat_index();
+
+        for (std::size_t j = 0; j < basins_.size(); ++j)
+        {
+            if (i == j || remove_mask[j])
+            {
+                continue;
+            }
+
+            const std::int32_t order_j = basins_[j].get_stream_order();
+
+            // Only compare basins of the same stream order
+            if (order_i != order_j)
+            {
+                continue;
+            }
+
+            const std::int64_t outlet_j = basins_[j].get_basin_outlet_flat_index();
+
+            if (outlet_i == outlet_j)
+            {
+                continue;
+            }
+
+            // If i is upslope of j, they are in the same consecutive chain.
+            // Keep the larger (j), remove the smaller (i).
+            if (flow_->is_upslope_of(outlet_i, outlet_j))
+            {
+                remove_mask[i] = true;
+                break;
+            }
+        }
+    }
+
+    std::vector<lsdtt_junction_basin_cpu> filtered;
+    filtered.reserve(basins_.size());
+
+    for (std::size_t i = 0; i < basins_.size(); ++i)
+    {
+        if (!remove_mask[i])
+        {
+            filtered.push_back(std::move(basins_[i]));
+        }
+    }
+
+    basins_ = std::move(filtered);
+    return *this;
+}
+
+lsdtt_junction_basin_manager_cpu&
 lsdtt_junction_basin_manager_cpu::filter_duplicates()
 {
     std::unordered_set<std::int64_t> seen_basin_outlets;
@@ -618,8 +685,9 @@ lsdtt_junction_basin_manager_cpu::get_junction_basins_raster() const
 
 
 // -----------------------------------------------------------------------
-// Raster output
+// Vector output
 // -----------------------------------------------------------------------
+// Writes all basins to the same layer
 void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines(
     const std::string& out_path,
     vector_output_format format,
@@ -683,6 +751,309 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines(
     loader.finish_vector_write();
 }
 
+
+// Write basins grouped by Strahler stream order, one layer per order.
+// Format notes:
+//   - GeoPackage (.gpkg): supports multiple layers natively — each stream
+//     order becomes a separate layer in the same file.
+//   - FlatGeobuf (.fgb): single-layer format only. One file is written
+//     per stream order, named  <out_path>_order_<N>.fgb.
+void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines_by_order(
+    const std::string& out_path,
+    vector_output_format format,
+    const std::string& layer_name_prefix,
+    bool spatial_index
+) const
+{
+    if (basins_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines_by_order: "
+            "no basins have been selected"
+        );
+    }
+
+    // Schema: junction number and stream order per feature
+    lsdtt_vector_schema schema;
+    schema.field_names = { "junction_number", "stream_order" };
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type
+    };
+
+    // -----------------------------------------------------------------------
+    // Group basins by stream order
+    // -----------------------------------------------------------------------
+    std::map<int, std::vector<const lsdtt_junction_basin_cpu*>> by_order;
+    for (const lsdtt_junction_basin_cpu& basin : basins_)
+    {
+        by_order[basin.get_stream_order()].push_back(&basin);
+    }
+
+    // -----------------------------------------------------------------------
+    // For GeoPackage: one loader, multiple begin/finish cycles (one per layer).
+    // For FlatGeobuf: one loader per order, separate output files.
+    // -----------------------------------------------------------------------
+    const bool is_gpkg = (format == vector_output_format::gpkg);
+
+    // Strip any existing extension from out_path so we can rebuild it cleanly.
+    // e.g. "/results/basins.gpkg" -> "/results/basins"
+    const std::string ext      = output_extension(format);
+    std::string       base_path = out_path;
+    if (base_path.size() >= ext.size() &&
+        base_path.compare(base_path.size() - ext.size(), ext.size(), ext) == 0)
+    {
+        base_path.erase(base_path.size() - ext.size());
+    }
+
+    lsdtt_data_loader gpkg_loader; // only used for the gpkg path
+
+    if (is_gpkg)
+    {
+        // Single loader, single file, one begin/finish per order (layer).
+        lsdtt_data_loader loader;
+
+        for (const auto& [order, basin_ptrs] : by_order)
+        {
+            const std::string layer_name =
+                layer_name_prefix + "_order_" + std::to_string(order);
+
+            loader.begin_vector_write(
+                base_path + ext,
+                layer_name,
+                schema,
+                flow_->meta().crs_wkt,
+                format,
+                spatial_index
+            );
+
+            write_order_features_(loader, basin_ptrs);
+
+            loader.finish_vector_write();
+        }
+    }
+    else // FlatGeobuf — one file per order
+    {
+        for (const auto& [order, basin_ptrs] : by_order)
+        {
+            const std::string layer_name =
+                layer_name_prefix + "_order_" + std::to_string(order);
+
+            const std::string file_path =
+                base_path + "_order_" + std::to_string(order) + ext;
+
+            lsdtt_data_loader loader;
+
+            loader.begin_vector_write(
+                file_path,
+                layer_name,
+                schema,
+                flow_->meta().crs_wkt,
+                format,
+                spatial_index
+            );
+
+            write_order_features_(loader, basin_ptrs);
+
+            loader.finish_vector_write();
+        }
+    }
+}
+
+// Private helper for the write_basins_by_order_vector_lines method
+void lsdtt_junction_basin_manager_cpu::write_order_features_(
+    lsdtt_data_loader& loader,
+    const std::vector<const lsdtt_junction_basin_cpu*>& basin_ptrs
+) const
+{
+    for (const lsdtt_junction_basin_cpu* basin : basin_ptrs)
+    {
+        const std::int32_t junc  = basin->get_junction_number();
+        const std::int32_t order = basin->get_stream_order();
+
+        lsdtt_basin_outline_cpu outline = basin->get_basin_outline();
+        const lsdtt_vector_record rec   = outline.get_outline_as_line_record(junc);
+
+        if (std::holds_alternative<std::monostate>(rec.geometry))
+            continue;
+
+        const lsdtt_line_geom& line = std::get<lsdtt_line_geom>(rec.geometry);
+        if (line.points.size() < 2)
+            continue;
+
+        // field_values must match schema order: { junction_number, stream_order }
+        loader.write_line(
+            line.points,
+            { static_cast<std::int64_t>(junc),
+              static_cast<std::int64_t>(order) }
+        );
+    }
+}
+
+void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_polygons(
+    const std::string& out_path,
+    vector_output_format format,
+    const std::string& layer_name,
+    bool spatial_index
+) const
+{
+    if (basins_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_basin_manager_cpu::write_basins_to_vector_polygons: "
+            "no basins have been selected"
+        );
+    }
+
+    lsdtt_vector_schema schema;
+    schema.field_names = { "junction_number" };
+    schema.field_types = { lsdtt_vector_field_type::int64_type };
+
+    lsdtt_data_loader loader;
+    loader.begin_vector_write(
+        out_path,
+        layer_name,
+        schema,
+        flow_->meta().crs_wkt,
+        format,
+        spatial_index
+    );
+
+    for (const lsdtt_junction_basin_cpu& basin : basins_)
+    {
+        const std::int32_t junc = basin.get_junction_number();
+
+        lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
+        const lsdtt_vector_record rec   = outline.get_outline_as_polygon_record(junc);
+
+        if (std::holds_alternative<std::monostate>(rec.geometry))
+            continue;
+
+        const lsdtt_polygon_geom& poly = std::get<lsdtt_polygon_geom>(rec.geometry);
+        if (poly.exterior.size() < 4)  // need at least 3 unique points + closing
+            continue;
+
+        loader.write_polygon(poly.exterior, rec.field_values);
+    }
+
+    loader.finish_vector_write();
+}
+
+
+void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_polygons_by_order(
+    const std::string& out_path,
+    vector_output_format format,
+    const std::string& layer_name_prefix,
+    bool spatial_index
+) const
+{
+    if (basins_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_basin_manager_cpu::write_basins_to_vector_polygons_by_order: "
+            "no basins have been selected"
+        );
+    }
+
+    lsdtt_vector_schema schema;
+    schema.field_names = { "junction_number", "stream_order" };
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type
+    };
+
+    std::map<int, std::vector<const lsdtt_junction_basin_cpu*>> by_order;
+    for (const lsdtt_junction_basin_cpu& basin : basins_)
+        by_order[basin.get_stream_order()].push_back(&basin);
+
+    const bool        is_gpkg   = (format == vector_output_format::gpkg);
+    const std::string ext       = output_extension(format);
+    std::string       base_path = out_path;
+    if (base_path.size() >= ext.size() &&
+        base_path.compare(base_path.size() - ext.size(), ext.size(), ext) == 0)
+    {
+        base_path.erase(base_path.size() - ext.size());
+    }
+
+    if (is_gpkg)
+    {
+        lsdtt_data_loader loader;
+
+        for (const auto& [order, basin_ptrs] : by_order)
+        {
+            const std::string layer_name =
+                layer_name_prefix + "_order_" + std::to_string(order);
+
+            loader.begin_vector_write(
+                base_path + ext,
+                layer_name,
+                schema,
+                flow_->meta().crs_wkt,
+                format,
+                spatial_index
+            );
+
+            write_order_polygon_features_(loader, basin_ptrs);
+
+            loader.finish_vector_write();
+        }
+    }
+    else
+    {
+        for (const auto& [order, basin_ptrs] : by_order)
+        {
+            const std::string layer_name =
+                layer_name_prefix + "_order_" + std::to_string(order);
+
+            const std::string file_path =
+                base_path + "_order_" + std::to_string(order) + ext;
+
+            lsdtt_data_loader loader;
+
+            loader.begin_vector_write(
+                file_path,
+                layer_name,
+                schema,
+                flow_->meta().crs_wkt,
+                format,
+                spatial_index
+            );
+
+            write_order_polygon_features_(loader, basin_ptrs);
+
+            loader.finish_vector_write();
+        }
+    }
+}
+
+
+void lsdtt_junction_basin_manager_cpu::write_order_polygon_features_(
+    lsdtt_data_loader& loader,
+    const std::vector<const lsdtt_junction_basin_cpu*>& basin_ptrs
+) const
+{
+    for (const lsdtt_junction_basin_cpu* basin : basin_ptrs)
+    {
+        const std::int32_t junc  = basin->get_junction_number();
+        const std::int32_t order = basin->get_stream_order();
+
+        lsdtt_basin_outline_cpu outline = basin->get_basin_outline();
+        const lsdtt_vector_record rec   = outline.get_outline_as_polygon_record(junc);
+
+        if (std::holds_alternative<std::monostate>(rec.geometry))
+            continue;
+
+        const lsdtt_polygon_geom& poly = std::get<lsdtt_polygon_geom>(rec.geometry);
+        if (poly.exterior.size() < 4)
+            continue;
+
+        loader.write_polygon(
+            poly.exterior,
+            { static_cast<std::int64_t>(junc),
+              static_cast<std::int64_t>(order) }
+        );
+    }
+}
 
 
 } // namespace lsdtt
