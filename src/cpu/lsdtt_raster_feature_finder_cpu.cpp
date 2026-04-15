@@ -1334,11 +1334,9 @@ channel_candidate_result find_channel_candidates(
         const double lambda = scales_metres[i];
 
         poly_fit_coeffs coeffs =
-            wavelet_quadratic_fit(
-                raster,
-                lambda,
-                request.n_threads
-            );
+            request.use_direct_polyfit
+            ? direct_polyfit(raster, lambda, request.n_threads)
+            : wavelet_quadratic_fit(raster, lambda, request.n_threads);
 
         polyfit_metric_request metric_request;
         metric_request.metrics =
@@ -1715,7 +1713,7 @@ drain_result find_drains(
     frangi_result frangi = frangi_filter(raster, request.frangi);
 
     poly_fit_coeffs poly =
-        wavelet_quadratic_fit(
+        direct_polyfit(
             raster,
             request.accumulation_curvature_lambda,
             request.frangi.n_threads
@@ -1869,11 +1867,9 @@ channel_bottom_result find_channel_bottoms(
     // Small-scale polyfit
     // -------------------------------------------------------------------------
     poly_fit_coeffs poly_small =
-        wavelet_quadratic_fit(
-            raster,
-            request.polyfit_lambda_small,
-            request.n_threads
-        );
+        request.use_direct_polyfit
+        ? direct_polyfit(raster, request.polyfit_lambda_small, request.n_threads)
+        : wavelet_quadratic_fit(raster, request.polyfit_lambda_small, request.n_threads);
 
     polyfit_metric_request request_small;
     request_small.metrics =
@@ -1898,11 +1894,9 @@ channel_bottom_result find_channel_bottoms(
     // Large-scale polyfit
     // -------------------------------------------------------------------------
     poly_fit_coeffs poly_large =
-        wavelet_quadratic_fit(
-            raster,
-            request.polyfit_lambda_large,
-            request.n_threads
-        );
+        request.use_direct_polyfit
+        ? direct_polyfit(raster, request.polyfit_lambda_large, request.n_threads)
+        : wavelet_quadratic_fit(raster, request.polyfit_lambda_large, request.n_threads);
 
     polyfit_metric_request request_large;
     request_large.metrics =

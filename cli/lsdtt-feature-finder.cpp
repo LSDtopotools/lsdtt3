@@ -338,6 +338,11 @@ int main(int argc, char* argv[])
         "Positive curvature = concave = convergent (channel); "
         "negative curvature = convex = divergent (ridge)."};
 
+    string_default_map["polyfit_method"] = "direct";
+    help_map["polyfit_method"] = {"string","direct",
+        "Polyfit algorithm: direct (rolling-moment, O(n), default) or wavelet (FFT-based).",
+        "direct is faster and better at resolving fine-scale features and is the recommended choice."};
+
     float_default_map["polyfit_z_factor"] = 1.0f;
     help_map["polyfit_z_factor"] = {"float","1.0",
         "Vertical scaling applied before interpreting polyfit derivatives.",
@@ -655,6 +660,7 @@ int main(int argc, char* argv[])
         request.score_threshold =
             static_cast<double>(ff.at("channel_score_threshold"));
         request.n_threads = n_threads;
+        request.use_direct_polyfit = (sf.at("polyfit_method") != "wavelet");
 
         cc_request.channel_lambda_min_metres =
             static_cast<double>(ff.at("channel_lambda_min_metres"));
@@ -683,6 +689,7 @@ int main(int argc, char* argv[])
         cc_request.score_threshold =
             static_cast<double>(ff.at("channel_score_threshold"));
         cc_request.n_threads = n_threads;
+        cc_request.use_direct_polyfit = (sf.at("polyfit_method") != "wavelet");
 
         drain_request.frangi.sigma_min_metres =
             static_cast<double>(ff.at("frangi_sigma_min_metres"));
@@ -785,6 +792,7 @@ int main(int argc, char* argv[])
             std::cout << "Large lambda         : " << request.polyfit_lambda_large << " m\n";
             std::cout << "Curvature metric     : " << sf.at("polyfit_curvature_metric") << "\n";
             std::cout << "Curvature sign       : " << sf.at("polyfit_curvature_sign") << "\n";
+            std::cout << "Polyfit method       : " << sf.at("polyfit_method") << "\n";
             std::cout << "Depth radius         : " << request.depth_window_radius << " px\n";
             std::cout << "Depth window shape   : " << sf.at("depth_window_shape") << "\n";
             std::cout << "Weight persistent    : " << request.weight_persistent << "\n";
@@ -930,6 +938,7 @@ int main(int argc, char* argv[])
             std::cout << "N scales             : " << cc_request.channel_n_scales << "\n";
             std::cout << "Curvature metric     : " << sf.at("polyfit_curvature_metric") << "\n";
             std::cout << "Curvature sign       : " << sf.at("polyfit_curvature_sign") << "\n";
+            std::cout << "Polyfit method       : " << sf.at("polyfit_method") << "\n";
             std::cout << "Depth radius         : " << cc_request.depth_window_radius_metres << " m\n";
             std::cout << "Depth window shape   : " << sf.at("depth_window_shape") << "\n";
             std::cout << "Weight persistent    : " << cc_request.weight_persistent << "\n";

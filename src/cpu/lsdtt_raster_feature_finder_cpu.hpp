@@ -73,6 +73,10 @@ struct channel_candidate_request
 
     double score_threshold            = 0.5;
     int    n_threads                  = 0;
+
+    // Polyfit method: direct (rolling-moment, O(n), default) or wavelet (FFT).
+    // direct is faster and better at resolving fine-scale features.
+    bool   use_direct_polyfit         = true;
 };
 
 // -----------------------------------------------------------------------------
@@ -126,6 +130,10 @@ struct channel_bottom_request
 
     double score_threshold            = 0.5;
     int    n_threads                  = 0;
+
+    // Polyfit method: direct (rolling-moment, O(n), default) or wavelet (FFT).
+    // direct is faster and better at resolving fine-scale features.
+    bool   use_direct_polyfit         = true;
 };
 
 // -----------------------------------------------------------------------------

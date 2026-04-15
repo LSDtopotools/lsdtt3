@@ -372,6 +372,14 @@ Current CLI programs are:
   Outputs: low_ground_mask, fitted_surface, residual, mountain_mask, and optional
   per-scale relief diagnostic rasters.
 
+### Polyfit method rule
+
+Wherever a CLI or algorithm lets the user choose a polyfit method, the options are:
+- `direct` — rolling-moment separable fit (`direct_polyfit`); **default and preferred**; faster (O(n) per pixel) and better at resolving fine-scale features
+- `wavelet` — FFT/Gaussian-smoothed fit (`wavelet_quadratic_fit`); available as a fallback
+
+**Always default to `direct`.** Both methods return the same `poly_fit_coeffs` type and are interchangeable as input to `compute_polyfit_metrics`.
+
 ### CLI design rule
 
 Every CLI uses `lsdtt_param_parser`.
@@ -946,7 +954,9 @@ Inner loops are OpenMP-parallelised.
 - `moving_window_mad(raster, radius_metres, shape=circular)` — median absolute deviation
 - `moving_window_tpi(raster, radius_metres, shape=circular)` — Topographic Position Index (Weiss 2001)
 - `calculate_madk2(raster, window_radius_metres, lag_pixels=1, n_threads=0)` → `madk2_result` — Trevisani et al. (2023) directional roughness
-- `compute_polyfit_metrics(polycoeff, request)` → `polyfit_metric_result` — batch computation of curvature and derivative rasters from wavelet quadratic fit coefficients
+- `direct_polyfit(raster, lambda_metres=100.0, n_threads=0)` → `poly_fit_coeffs` — **default and preferred polyfit method**; separable two-pass rolling-moment, O(n) per pixel, faster than wavelet and better at resolving fine-scale features
+- `wavelet_quadratic_fit(raster, lambda=100.0, n_threads=0)` → `poly_fit_coeffs` — FFT-based alternative; available but not the default
+- `compute_polyfit_metrics(polycoeff, request)` → `polyfit_metric_result` — batch computation of curvature and derivative rasters from polyfit coefficients (works with output of either method above)
 - `window_shape` enum: `square`, `circular`
 - `polyfit_metric` enum: slope, aspect, curvatures (mean, Gaussian, max, min, profile, plan, tangential, etc.), rotor
 
@@ -1008,7 +1018,7 @@ For spectral (long-wavelength) surface fitting see `lsdtt_raster_spectral_cpu`.
 
 **`lsdtt_raster_spectral_cpu`:**
 - `wavelet_quadratic_fit(raster, lambda=100.0, n_threads=0)`
-  — FFTW double API, Gaussian kernel
+  — FFTW double API, Gaussian kernel; **not the default** — prefer `direct_polyfit` (in surface_metrics)
   — Returns `poly_fit_coeffs{a, b, c, d, e, f}` — six `lsdtt_raster_cpu` members
 - `fftw2D_masked_surface_recovery(dem, mask, lambda_cutoff_metres, window=hann, n_threads=0)`
   — Recovers smooth long-wavelength surface from pixels where mask > 0.5 only
