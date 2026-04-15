@@ -82,7 +82,21 @@ lsdtt_raster_cpu raster_divide(
 );
 
 /// Element-wise minimum: result = min(a, b)
+/// result(i) is nodata if either input is nodata (intersection semantics).
 lsdtt_raster_cpu raster_min(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b
+);
+
+/// Element-wise maximum with union validity semantics:
+///   both valid  → result = max(a, b)
+///   only a valid → result = a(i)
+///   only b valid → result = b(i)
+///   neither valid → nodata
+/// Use this to combine independent signal rasters that may have different
+/// spatial coverage (e.g. max signal across adjacent scale pairs where each
+/// pair has its own nodata pattern).
+lsdtt_raster_cpu raster_max_union(
     const lsdtt_raster_cpu& a,
     const lsdtt_raster_cpu& b
 );
@@ -160,6 +174,20 @@ lsdtt_raster_cpu raster_negative_part(
 /// If all valid pixels have the same value, all valid outputs become 0.
 /// Nodata remains nodata.
 lsdtt_raster_cpu raster_normalise_unit_interval(
+    const lsdtt_raster_cpu& a
+);
+
+/// Normalise a non-negative raster by its valid maximum: result = a / max(a).
+/// Negative values are clamped to 0 before normalisation, so the output is
+/// always in [0, 1].  If all valid values are zero (or negative), all valid
+/// output pixels become 0.  Nodata remains nodata.
+///
+/// Differs from raster_normalise_unit_interval in that it divides by the
+/// maximum rather than the range — a pixel at zero stays at zero rather than
+/// mapping to the minimum of the output interval.  This is appropriate for
+/// non-negative signals such as curvature magnitude, depth, or channelness
+/// scores where zero carries physical meaning.
+lsdtt_raster_cpu raster_normalise_nonnegative(
     const lsdtt_raster_cpu& a
 );
 

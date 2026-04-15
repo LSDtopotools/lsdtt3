@@ -261,6 +261,53 @@ lsdtt_raster_cpu raster_min(
     );
 }
 
+lsdtt_raster_cpu raster_max_union(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b)
+{
+    assert_compatible(a, b);
+
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+    const std::vector<float>&   db = b.get_data();
+    const std::vector<uint8_t>& mb = b.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(a.get_meta().no_data_value);
+
+    std::vector<float>   out_data(n);
+    std::vector<uint8_t> out_mask(n);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (ma[i] && mb[i])
+        {
+            out_data[i] = std::max(da[i], db[i]);
+            out_mask[i] = 1u;
+        }
+        else if (ma[i])
+        {
+            out_data[i] = da[i];
+            out_mask[i] = 1u;
+        }
+        else if (mb[i])
+        {
+            out_data[i] = db[i];
+            out_mask[i] = 1u;
+        }
+        else
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), a.get_meta()
+    );
+}
+
 lsdtt_raster_cpu raster_positive_difference(
     const lsdtt_raster_cpu& a,
     const lsdtt_raster_cpu& b)
@@ -639,6 +686,62 @@ lsdtt_raster_cpu raster_normalise_unit_interval(
 
         if (out < 0.0) out = 0.0;
         if (out > 1.0) out = 1.0;
+
+        out_data[i] = static_cast<float>(out);
+        out_mask[i] = 1u;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta
+    );
+}
+
+
+lsdtt_raster_cpu raster_normalise_nonnegative(
+    const lsdtt_raster_cpu& a)
+{
+    const lsdtt_raster_meta& meta = a.get_meta();
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    // Find the maximum of clamped-to-zero values over valid pixels.
+    double vmax = 0.0;
+    bool any_valid = false;
+
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        if (meta.is_nodata(da[i])) continue;
+        if (!std::isfinite(da[i])) continue;
+
+        const double v = static_cast<double>(da[i]);
+        if (v > vmax) vmax = v;
+        any_valid = true;
+    }
+
+    std::vector<float>   out_data(n, nodata);
+    std::vector<uint8_t> out_mask(n, 0u);
+
+    if (!any_valid)
+    {
+        return lsdtt_raster_cpu(
+            std::move(out_data), std::move(out_mask), meta
+        );
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        if (meta.is_nodata(da[i])) continue;
+        if (!std::isfinite(da[i])) continue;
+
+        const double v = static_cast<double>(da[i]);
+        double out = (v > 0.0) ? v : 0.0;
+        if (vmax > 0.0) out /= vmax;
 
         out_data[i] = static_cast<float>(out);
         out_mask[i] = 1u;

@@ -304,172 +304,6 @@ static lsdtt_raster_cpu curvature_to_channel_signal(
 }
 
 
-// -----------------------------------------------------------------------------
-//  Generic nonnegative raster normalisation
-//
-// Useful for depth and slope terms.
-// -----------------------------------------------------------------------------
-static lsdtt_raster_cpu normalise_nonnegative_raster_by_valid_max(
-    const lsdtt_raster_cpu& raster)
-{
-    const auto& meta = raster.get_meta();
-    const auto& src  = raster.get_data();
-    const auto& msk  = raster.get_mask();
-
-    const std::size_t npix = src.size();
-    const float nodata_v   = static_cast<float>(meta.no_data_value);
-
-    std::vector<float> out_data(npix, nodata_v);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
-
-    float max_val = 0.0f;
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (msk[i] == 0 || meta.is_nodata(src[i]) || !std::isfinite(src[i]))
-            continue;
-
-        const float v = std::max(src[i], 0.0f);
-        out_data[i] = v;
-        out_mask[i] = uint8_t{1};
-        if (v > max_val) max_val = v;
-    }
-
-    if (max_val > 0.0f)
-    {
-        const float inv = 1.0f / max_val;
-        for (std::size_t i = 0; i < npix; ++i)
-        {
-            if (out_mask[i] != 0)
-                out_data[i] *= inv;
-        }
-    }
-    else
-    {
-        for (std::size_t i = 0; i < npix; ++i)
-        {
-            if (out_mask[i] != 0)
-                out_data[i] = 0.0f;
-        }
-    }
-
-    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
-}
-
-
-static lsdtt_raster_cpu raster_min_valid_intersection(
-    const lsdtt_raster_cpu& a,
-    const lsdtt_raster_cpu& b)
-{
-    const auto& meta  = a.get_meta();
-    const auto& adata = a.get_data();
-    const auto& amask = a.get_mask();
-    const auto& bdata = b.get_data();
-    const auto& bmask = b.get_mask();
-
-    if (adata.size() != bdata.size())
-        throw std::runtime_error("raster_min_valid_intersection: raster sizes differ.");
-
-    const std::size_t npix = adata.size();
-    const float nodata_v   = static_cast<float>(meta.no_data_value);
-
-    std::vector<float> out_data(npix, nodata_v);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        const bool va = (amask[i] != 0) && !meta.is_nodata(adata[i]) && std::isfinite(adata[i]);
-        const bool vb = (bmask[i] != 0) && !meta.is_nodata(bdata[i]) && std::isfinite(bdata[i]);
-
-        if (!(va && vb))
-            continue;
-
-        out_data[i] = std::min(adata[i], bdata[i]);
-        out_mask[i] = uint8_t{1};
-    }
-
-    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
-}
-
-
-static lsdtt_raster_cpu raster_max_valid_union(
-    const lsdtt_raster_cpu& a,
-    const lsdtt_raster_cpu& b)
-{
-    const auto& meta  = a.get_meta();
-    const auto& adata = a.get_data();
-    const auto& amask = a.get_mask();
-    const auto& bdata = b.get_data();
-    const auto& bmask = b.get_mask();
-
-    if (adata.size() != bdata.size())
-        throw std::runtime_error("raster_max_valid_union: raster sizes differ.");
-
-    const std::size_t npix = adata.size();
-    const float nodata_v   = static_cast<float>(meta.no_data_value);
-
-    std::vector<float> out_data(npix, nodata_v);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        const bool va = (amask[i] != 0) && !meta.is_nodata(adata[i]) && std::isfinite(adata[i]);
-        const bool vb = (bmask[i] != 0) && !meta.is_nodata(bdata[i]) && std::isfinite(bdata[i]);
-
-        if (va && vb)
-        {
-            out_data[i] = std::max(adata[i], bdata[i]);
-            out_mask[i] = uint8_t{1};
-        }
-        else if (va)
-        {
-            out_data[i] = adata[i];
-            out_mask[i] = uint8_t{1};
-        }
-        else if (vb)
-        {
-            out_data[i] = bdata[i];
-            out_mask[i] = uint8_t{1};
-        }
-    }
-
-    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
-}
-
-static lsdtt_raster_cpu raster_positive_difference(
-    const lsdtt_raster_cpu& lhs,
-    const lsdtt_raster_cpu& rhs)
-{
-    const auto& meta  = lhs.get_meta();
-    const auto& ldata = lhs.get_data();
-    const auto& lmask = lhs.get_mask();
-    const auto& rdata = rhs.get_data();
-    const auto& rmask = rhs.get_mask();
-
-    if (ldata.size() != rdata.size())
-        throw std::runtime_error("raster_positive_difference: raster sizes differ.");
-
-    const std::size_t npix = ldata.size();
-    const float nodata_v   = static_cast<float>(meta.no_data_value);
-
-    std::vector<float> out_data(npix, nodata_v);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        const bool vl = (lmask[i] != 0) && !meta.is_nodata(ldata[i]) && std::isfinite(ldata[i]);
-        const bool vr = (rmask[i] != 0) && !meta.is_nodata(rdata[i]) && std::isfinite(rdata[i]);
-
-        if (!(vl && vr))
-            continue;
-
-        out_data[i] = std::max(ldata[i] - rdata[i], 0.0f);
-        out_mask[i] = uint8_t{1};
-    }
-
-    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
-}
-
 static lsdtt_raster_cpu weighted_channel_score(
     const lsdtt_raster_cpu& persistent,
     const lsdtt_raster_cpu& depth_signal,
@@ -521,33 +355,6 @@ static lsdtt_raster_cpu weighted_channel_score(
             out_data[i] = v;
             out_mask[i] = uint8_t{1};
         }
-    }
-
-    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
-}
-
-static lsdtt_raster_cpu threshold_binary_mask(
-    const lsdtt_raster_cpu& raster,
-    float                   threshold)
-{
-    const auto& meta = raster.get_meta();
-    const auto& src  = raster.get_data();
-    const auto& msk  = raster.get_mask();
-
-    const std::size_t npix = src.size();
-    const float nodata_v   = static_cast<float>(meta.no_data_value);
-
-    std::vector<float> out_data(npix, nodata_v);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        const bool valid = (msk[i] != 0) && !meta.is_nodata(src[i]) && std::isfinite(src[i]);
-        if (!valid)
-            continue;
-
-        out_data[i] = (src[i] >= threshold) ? 1.0f : 0.0f;
-        out_mask[i] = uint8_t{1};
     }
 
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
@@ -1558,7 +1365,7 @@ channel_candidate_result find_channel_candidates(
         if (!have_slope_signal)
         {
             smallest_scale_slope_signal =
-                normalise_nonnegative_raster_by_valid_max(
+                algebra::raster_normalise_nonnegative(
                     metrics.at(polyfit_metric::slope)
                 );
             have_slope_signal = true;
@@ -1571,7 +1378,7 @@ channel_candidate_result find_channel_candidates(
     for (std::size_t i = 0; i + 1 < curvature_signal_by_scale.size(); ++i)
     {
         persistence_by_adjacent_scale_pair.push_back(
-            raster_min_valid_intersection(
+            algebra::raster_min(
                 curvature_signal_by_scale[i],
                 curvature_signal_by_scale[i + 1]
             )
@@ -1583,7 +1390,7 @@ channel_candidate_result find_channel_candidates(
     for (std::size_t i = 1; i < persistence_by_adjacent_scale_pair.size(); ++i)
     {
         persistent =
-            raster_max_valid_union(
+            algebra::raster_max_union(
                 persistent,
                 persistence_by_adjacent_scale_pair[i]
             );
@@ -1597,10 +1404,10 @@ channel_candidate_result find_channel_candidates(
         );
 
     lsdtt_raster_cpu depth_signal_raw =
-        raster_positive_difference(local_mean, raster);
+        algebra::raster_positive_difference(local_mean, raster);
 
     lsdtt_raster_cpu depth_signal =
-        normalise_nonnegative_raster_by_valid_max(depth_signal_raw);
+        algebra::raster_normalise_nonnegative(depth_signal_raw);
 
     lsdtt_raster_cpu slope_signal = smallest_scale_slope_signal;
 
@@ -1615,7 +1422,7 @@ channel_candidate_result find_channel_candidates(
         );
 
     lsdtt_raster_cpu mask =
-        threshold_binary_mask(
+        algebra::raster_binary_true_above_threshold(
             score,
             static_cast<float>(request.score_threshold)
         );
