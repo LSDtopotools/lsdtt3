@@ -357,6 +357,49 @@ struct polyfit_metric_result
 };
 
 // -----------------------------------------------------------------------------
+// direct_polyfit
+//
+// Computes the same six quadratic coefficient rasters (a..f) as
+// wavelet_quadratic_fit() but uses a separable two-pass rolling-moment
+// algorithm instead of FFT convolution.
+//
+// Algorithm:
+//   Pass 1 — horizontal rolling sums (OpenMP over rows, O(ncols) per row):
+//     H0[r][c] = Σ_{dc=-W}^{W} z_valid(r, c+dc)   (z or 0 for nodata)
+//     H1[r][c] = Σ dc · z_valid                    (offset-weighted sum)
+//     H2[r][c] = Σ dc² · z_valid                   (squared-offset sum)
+//     Hn[r][c] = count of nodata/OOB in the horizontal window
+//
+//   Pass 2 — vertical column-prefix sums (OpenMP over columns):
+//     For each center (r0, c0) with a fully-valid window (Hn_total == 0),
+//     six OLS moments are read in O(1) from prefix arrays. The factored
+//     normal equations (symmetry kills all odd cross-terms) reduce to
+//     three scalar divisions and one 3×3 solve with a precomputed inverse.
+//
+// Window width:
+//   W = max(1, round(lambda_metres / (2 · cell_size)))
+//   Window is (2W+1) × (2W+1) pixels; diameter ≈ lambda_metres / cell_size.
+//
+// Output pixels:
+//   Valid only when the full (2W+1)² window lies inside the raster and
+//   contains no nodata — same conservatism as wavelet_quadratic_fit().
+//
+// Memory:
+//   Three double arrays of size nrows × ncols (H0, H1, H2) plus an int
+//   array of the same size (Hn). For a 5000×5000 raster with double
+//   precision this is roughly 600 MB. Very large rasters may need tiling.
+//
+// Throws:
+//   std::runtime_error on invalid metadata, lambda < cell_size, or a
+//   degenerate (singular) normal matrix.
+// -----------------------------------------------------------------------------
+poly_fit_coeffs direct_polyfit(
+    const lsdtt_raster_cpu& raster,
+    double lambda_metres = 100.0,
+    int    n_threads     = 0
+);
+
+// -----------------------------------------------------------------------------
 // compute_polyfit_metrics
 //
 // Computes one or more surface-metric rasters from a set of quadratic-fit

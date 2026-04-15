@@ -10,6 +10,7 @@
 #include "lsdtt_raster_spectral_cpu.hpp"    // need this for the polyfit struct
 #include "../cpu/lsdtt_raster_cpu.hpp"
 #include "../utils/lsdtt_array2d.hpp"
+#include "../utils/lsdtt_linear_algebra.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
 
@@ -2073,6 +2074,329 @@ lsdtt_raster_cpu moving_window_total_curvature(
         std::move(out_mask.get_vector()),
         meta
     );
+}
+
+
+// ============================================================================
+// direct_polyfit
+// ============================================================================
+poly_fit_coeffs direct_polyfit(
+    const lsdtt_raster_cpu& raster,
+    double                  lambda_metres,
+    int                     n_threads
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::direct_polyfit: invalid raster metadata");
+    meta.check_projected_metres();
+
+    const int    nrows    = meta.n_rows;
+    const int    ncols    = meta.n_cols;
+    const double d        = meta.cell_size;
+    const float  nodata_f = static_cast<float>(meta.no_data_value);
+
+    if (lambda_metres < d)
+        throw std::runtime_error(
+            "lsdtt::direct_polyfit: lambda_metres must be >= cell_size");
+
+    // Half-width of the square window in pixels.
+    // Window is (2W+1)×(2W+1); diameter ≈ lambda_metres / cell_size pixels.
+    const int W = std::max(1, static_cast<int>(std::round(lambda_metres / (2.0 * d))));
+
+    const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
+    const std::vector<float>&   src = raster.get_data();
+    const std::vector<uint8_t>& msk = raster.get_mask();
+
+    // -------------------------------------------------------------------------
+    // Precompute constant normal-matrix quantities for a (2W+1)×(2W+1) window.
+    //
+    //   sk2 = Σ_{k=-W}^{W} k²  = W·(W+1)·(2W+1) / 3
+    //   sk4 = Σ_{k=-W}^{W} k⁴  = 2·W·(W+1)·(2W+1)·(3W²+3W-1) / 30
+    //
+    //   N      = (2W+1)²             (total cells in window)
+    //   Sx2    = Sy2 = (2W+1)·d²·sk2
+    //   Sx4    = Sy4 = (2W+1)·d⁴·sk4
+    //   Sx2y2  = d⁴·sk2²
+    //
+    // Due to the symmetric centred window all odd spatial moments vanish.
+    // The 6×6 normal matrix therefore factors into:
+    //   — 3 independent scalar equations for C (xy), D (x), E (y)
+    //   — one 3×3 system for a (x²), b (y²), F (constant)
+    // -------------------------------------------------------------------------
+    const double Wd  = static_cast<double>(W);
+    const double W3d = static_cast<double>(2 * W + 1);   // 2W+1
+    const double sk2 = Wd * (Wd + 1.0) * W3d / 3.0;
+    const double sk4 = 2.0 * Wd * (Wd + 1.0) * W3d *
+                       (3.0 * Wd * Wd + 3.0 * Wd - 1.0) / 30.0;
+
+    const double N      = W3d * W3d;
+    const double d2     = d * d;
+    const double d4     = d2 * d2;
+    const double Sx2    = W3d * d2 * sk2;   // == Sy2
+    const double Sx4    = W3d * d4 * sk4;   // == Sy4
+    const double Sx2y2  = d4 * sk2 * sk2;
+
+    if (Sx2y2 < 1e-40 || Sx2 < 1e-40)
+        throw std::runtime_error(
+            "lsdtt::direct_polyfit: degenerate window (W too small)");
+
+    // 3×3 system matrix M3 for [a, b, F]:
+    //   M3 = [[Sx4, Sx2y2, Sx2],
+    //          [Sx2y2, Sx4,  Sx2],
+    //          [Sx2,  Sx2,   N  ]]
+    const double M3[3][3] = {
+        {Sx4,   Sx2y2, Sx2},
+        {Sx2y2, Sx4,   Sx2},
+        {Sx2,   Sx2,   N  }
+    };
+    double invM3[3][3] = {};
+    if (!invert3x3(M3, invM3))
+        throw std::runtime_error(
+            "lsdtt::direct_polyfit: singular normal matrix");
+
+    // -------------------------------------------------------------------------
+    // Pass 1 — Horizontal rolling sums (parallelised over rows).
+    //
+    // H0[r][c] = Σ_{dc=-W}^{W} v(r, c+dc)          (v = z if valid, 0 otherwise)
+    // H1[r][c] = Σ_{dc=-W}^{W} dc · v(r, c+dc)
+    // H2[r][c] = Σ_{dc=-W}^{W} dc² · v(r, c+dc)
+    // Hn[r][c] = count of nodata + OOB in the horizontal window [c-W, c+W]
+    //
+    // Rolling update from center c-1 to c:
+    //   j_rem = (c-1) - W   (element leaving the window)
+    //   j_add = (c-1) + W + 1 = c + W   (element entering)
+    //
+    //   H0[c] = H0[c-1] - v_rem + v_add
+    //   H1[c] = H1[c-1] - H0[c-1] + (W+1)·v_rem + W·v_add
+    //   H2[c] = H2[c-1] - 2·H1[c-1] + H0[c-1] - (W+1)²·v_rem + W²·v_add
+    // -------------------------------------------------------------------------
+    std::vector<double> H0(npix, 0.0);
+    std::vector<double> H1(npix, 0.0);
+    std::vector<double> H2(npix, 0.0);
+    std::vector<int>    Hn(npix, 0);
+
+    const int nthreads = resolve_thread_count(n_threads);
+    (void)nthreads;   // suppresses unused-variable warning when OpenMP absent
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(nthreads)
+#endif
+    for (int r = 0; r < nrows; ++r)
+    {
+        const std::size_t base = static_cast<std::size_t>(r) * ncols;
+
+        // Returns the valid elevation at (r, j) as double, or 0 if invalid/OOB.
+        auto get_v = [&](int j) -> double
+        {
+            if (j < 0 || j >= ncols) return 0.0;
+            const std::size_t idx = base + j;
+            if (msk[idx] == 0 || meta.is_nodata(src[idx])) return 0.0;
+            return static_cast<double>(src[idx]);
+        };
+        // Returns true when the pixel is invalid (nodata, OOB, mask==0).
+        auto is_nd = [&](int j) -> bool
+        {
+            if (j < 0 || j >= ncols) return true;
+            const std::size_t idx = base + j;
+            return msk[idx] == 0 || meta.is_nodata(src[idx]);
+        };
+
+        // Initialise at c=0: window covers [-W, W].
+        double h0 = 0.0, h1 = 0.0, h2 = 0.0;
+        int    hn = 0;
+        for (int j = -W; j <= W; ++j)
+        {
+            if (is_nd(j))
+            {
+                ++hn;
+            }
+            else
+            {
+                const double v  = get_v(j);
+                const double dc = static_cast<double>(j);
+                h0 += v;
+                h1 += dc * v;
+                h2 += dc * dc * v;
+            }
+        }
+        H0[base]     = h0;
+        H1[base]     = h1;
+        H2[base]     = h2;
+        Hn[base]     = hn;
+
+        // Roll from c=0 to c=ncols-1.
+        const double Wp1 = static_cast<double>(W + 1);
+        const double Wf  = static_cast<double>(W);
+
+        for (int c = 1; c < ncols; ++c)
+        {
+            const int j_rem = c - W - 1;   // element leaving
+            const int j_add = c + W;        // element entering
+
+            const double v_rem = get_v(j_rem);
+            const double v_add = get_v(j_add);
+
+            // Update H2 before H1 before H0 (each uses the previous values).
+            const double new_h2 = h2 - 2.0*h1 + h0
+                                 - Wp1*Wp1*v_rem + Wf*Wf*v_add;
+            const double new_h1 = h1 - h0 + Wp1*v_rem + Wf*v_add;
+            const double new_h0 = h0 - v_rem + v_add;
+            const int    new_hn = hn
+                                 - (is_nd(j_rem) ? 1 : 0)
+                                 + (is_nd(j_add) ? 1 : 0);
+
+            h0 = new_h0; h1 = new_h1; h2 = new_h2; hn = new_hn;
+            H0[base + c] = h0;
+            H1[base + c] = h1;
+            H2[base + c] = h2;
+            Hn[base + c] = hn;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Output arrays (initialised to nodata/invalid)
+    // -------------------------------------------------------------------------
+    std::vector<float>   out_a(npix, nodata_f);
+    std::vector<float>   out_b(npix, nodata_f);
+    std::vector<float>   out_c(npix, nodata_f);
+    std::vector<float>   out_d(npix, nodata_f);
+    std::vector<float>   out_e(npix, nodata_f);
+    std::vector<float>   out_f(npix, nodata_f);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    // -------------------------------------------------------------------------
+    // Pass 2 — Vertical prefix sums + per-pixel OLS solve (parallel over cols).
+    //
+    // For each column c0, build 1-based prefix arrays of length nrows+1:
+    //   ph0[r+1]   = ph0[r]   + H0[r][c0]
+    //   ph0r[r+1]  = ph0r[r]  + r · H0[r][c0]
+    //   ph0r2[r+1] = ph0r2[r] + r² · H0[r][c0]
+    //   ph1[r+1]   = ph1[r]   + H1[r][c0]
+    //   ph1r[r+1]  = ph1r[r]  + r · H1[r][c0]
+    //   ph2[r+1]   = ph2[r]   + H2[r][c0]
+    //   phn[r+1]   = phn[r]   + Hn[r][c0]
+    //
+    // For center (r0, c0) with ra=r0-W, rb=r0+W+1 and Hn_total==0:
+    //
+    //   raw_S_z    = ph0[rb]  - ph0[ra]
+    //   raw_S_xz   = ph1[rb]  - ph1[ra]           (Σ dc·z, in pixel units)
+    //   raw_S_x2z  = ph2[rb]  - ph2[ra]           (Σ dc²·z)
+    //   raw_S_yz   = (ph0r[rb]-ph0r[ra]) - r0·raw_S_z   (Σ (r-r0)·H0)
+    //   raw_S_y2z  = (ph0r2[rb]-ph0r2[ra])
+    //                - 2·r0·(ph0r[rb]-ph0r[ra])
+    //                + r0²·raw_S_z                 (Σ (r-r0)²·H0)
+    //   raw_S_xyz  = (ph1r[rb]-ph1r[ra]) - r0·raw_S_xz  (Σ (r-r0)·H1)
+    //
+    // Converting to projected-coordinate moments (x=dc·d, y=-(r-r0)·d):
+    //   C = -raw_S_xyz / (d²·sk2²)          (x·y cross term)
+    //   D = raw_S_xz   / (W3d·d·sk2)        (x first derivative)
+    //   E = -raw_S_yz  / (W3d·d·sk2)        (y first derivative)
+    //   [a,b,F] = invM3 · [d²·raw_S_x2z, d²·raw_S_y2z, raw_S_z]
+    // -------------------------------------------------------------------------
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(nthreads)
+#endif
+    for (int c0 = W; c0 < ncols - W; ++c0)
+    {
+        // Column-local prefix arrays (length nrows+1, 1-based).
+        std::vector<double> ph0  (nrows + 1, 0.0);
+        std::vector<double> ph0r (nrows + 1, 0.0);
+        std::vector<double> ph0r2(nrows + 1, 0.0);
+        std::vector<double> ph1  (nrows + 1, 0.0);
+        std::vector<double> ph1r (nrows + 1, 0.0);
+        std::vector<double> ph2  (nrows + 1, 0.0);
+        std::vector<double> phn  (nrows + 1, 0.0);
+
+        for (int r = 0; r < nrows; ++r)
+        {
+            const std::size_t idx = static_cast<std::size_t>(r) * ncols + c0;
+            const double h0_rc = H0[idx];
+            const double h1_rc = H1[idx];
+            const double h2_rc = H2[idx];
+            const double hn_rc = static_cast<double>(Hn[idx]);
+            const double rd    = static_cast<double>(r);
+
+            ph0  [r+1] = ph0  [r] + h0_rc;
+            ph0r [r+1] = ph0r [r] + rd * h0_rc;
+            ph0r2[r+1] = ph0r2[r] + rd * rd * h0_rc;
+            ph1  [r+1] = ph1  [r] + h1_rc;
+            ph1r [r+1] = ph1r [r] + rd * h1_rc;
+            ph2  [r+1] = ph2  [r] + h2_rc;
+            phn  [r+1] = phn  [r] + hn_rc;
+        }
+
+        for (int r0 = W; r0 < nrows - W; ++r0)
+        {
+            const int ra = r0 - W;
+            const int rb = r0 + W + 1;  // exclusive upper bound
+
+            // Skip if any nodata in the 2D window.
+            const int hn_total = static_cast<int>(phn[rb] - phn[ra]);
+            if (hn_total > 0) continue;
+
+            // --- Raw vertical moments ---
+            const double raw_S_z    = ph0[rb]  - ph0[ra];
+            const double raw_S_xz   = ph1[rb]  - ph1[ra];
+            const double raw_S_x2z  = ph2[rb]  - ph2[ra];
+
+            const double ph0r_sum   = ph0r [rb] - ph0r [ra];
+            const double ph0r2_sum  = ph0r2[rb] - ph0r2[ra];
+            const double ph1r_sum   = ph1r [rb] - ph1r [ra];
+
+            const double r0d = static_cast<double>(r0);
+            const double raw_S_yz   = ph0r_sum  - r0d * raw_S_z;
+            const double raw_S_y2z  = ph0r2_sum
+                                    - 2.0 * r0d * ph0r_sum
+                                    + r0d * r0d * raw_S_z;
+            const double raw_S_xyz  = ph1r_sum  - r0d * raw_S_xz;
+
+            // --- OLS coefficients ---
+            // C  = S_xyz / Sx2y2  where S_xyz = -d²·raw_S_xyz
+            const double coeff_C = -raw_S_xyz / (d2 * sk2 * sk2);
+
+            // D  = S_xz / Sx2   where S_xz = d·raw_S_xz
+            const double coeff_D =  raw_S_xz  / (W3d * d * sk2);
+
+            // E  = S_yz / Sx2   where S_yz = -d·raw_S_yz
+            const double coeff_E = -raw_S_yz  / (W3d * d * sk2);
+
+            // [a, b, F] = invM3 · [d²·raw_S_x2z, d²·raw_S_y2z, raw_S_z]
+            const double rhs0 = d2 * raw_S_x2z;
+            const double rhs1 = d2 * raw_S_y2z;
+            const double rhs2 = raw_S_z;
+
+            const double coeff_a =
+                invM3[0][0]*rhs0 + invM3[0][1]*rhs1 + invM3[0][2]*rhs2;
+            const double coeff_b =
+                invM3[1][0]*rhs0 + invM3[1][1]*rhs1 + invM3[1][2]*rhs2;
+            const double coeff_F =
+                invM3[2][0]*rhs0 + invM3[2][1]*rhs1 + invM3[2][2]*rhs2;
+
+            const std::size_t oidx =
+                static_cast<std::size_t>(r0) * ncols + c0;
+
+            out_a   [oidx] = static_cast<float>(coeff_a);
+            out_b   [oidx] = static_cast<float>(coeff_b);
+            out_c   [oidx] = static_cast<float>(coeff_C);
+            out_d   [oidx] = static_cast<float>(coeff_D);
+            out_e   [oidx] = static_cast<float>(coeff_E);
+            out_f   [oidx] = static_cast<float>(coeff_F);
+            out_mask[oidx] = uint8_t{1};
+        }
+    }
+
+    // The raster constructor takes vector<uint8_t>&&, so copy the mask for
+    // the first five coefficients and move it on the last.
+    poly_fit_coeffs result;
+    result.a = lsdtt_raster_cpu(std::move(out_a), std::vector<uint8_t>(out_mask), meta);
+    result.b = lsdtt_raster_cpu(std::move(out_b), std::vector<uint8_t>(out_mask), meta);
+    result.c = lsdtt_raster_cpu(std::move(out_c), std::vector<uint8_t>(out_mask), meta);
+    result.d = lsdtt_raster_cpu(std::move(out_d), std::vector<uint8_t>(out_mask), meta);
+    result.e = lsdtt_raster_cpu(std::move(out_e), std::vector<uint8_t>(out_mask), meta);
+    result.f = lsdtt_raster_cpu(std::move(out_f), std::move(out_mask),            meta);
+    return result;
 }
 
 } // namespace lsdtt

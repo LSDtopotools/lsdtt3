@@ -14,6 +14,7 @@
 //
 // Current contents:
 //   - sym3x3_eigenvalues   analytical eigenvalues of a real symmetric 3×3 matrix
+//   - invert3x3            Gauss-Jordan inversion of a general 3×3 matrix
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -101,6 +102,63 @@ inline std::array<double, 3> sym3x3_eigenvalues(
     const double ev1 = 3.0 * q - ev0 - ev2;                   // middle
 
     return { ev0, ev1, ev2 };
+}
+
+
+// -----------------------------------------------------------------------------
+// invert3x3
+//
+// Gauss-Jordan inversion of a general 3×3 matrix A[3][3] (row-major).
+// Writes the inverse into inv[3][3].
+// Returns true on success; returns false if the matrix is singular to
+// working precision (pivot magnitude < 1e-30).
+//
+// Intended use: precomputing the inverse of small constant normal matrices
+// that arise in windowed OLS polynomial fitting (e.g. direct_polyfit).
+// -----------------------------------------------------------------------------
+inline bool invert3x3(const double A[3][3], double inv[3][3])
+{
+    // Build augmented matrix [A | I]
+    double aug[3][6];
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j) aug[i][j]   = A[i][j];
+        for (int j = 0; j < 3; ++j) aug[i][3+j] = (i == j) ? 1.0 : 0.0;
+    }
+
+    for (int col = 0; col < 3; ++col)
+    {
+        // Partial pivoting
+        int pivot = col;
+        for (int row = col + 1; row < 3; ++row)
+            if (std::abs(aug[row][col]) > std::abs(aug[pivot][col]))
+                pivot = row;
+
+        if (std::abs(aug[pivot][col]) < 1e-30)
+            return false;
+
+        if (pivot != col)
+            for (int j = 0; j < 6; ++j)
+                std::swap(aug[col][j], aug[pivot][j]);
+
+        const double diag = aug[col][col];
+        for (int j = 0; j < 6; ++j)
+            aug[col][j] /= diag;
+
+        for (int row = 0; row < 3; ++row)
+        {
+            if (row == col) continue;
+            const double factor = aug[row][col];
+            for (int j = 0; j < 6; ++j)
+                aug[row][j] -= factor * aug[col][j];
+        }
+    }
+
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            inv[i][j] = aug[i][3 + j];
+
+    return true;
 }
 
 } // namespace lsdtt

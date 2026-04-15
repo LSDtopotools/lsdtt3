@@ -1311,7 +1311,7 @@ void lsdtt_flowinfo::build_topological_order()
 
     if (topological_order_.size() != static_cast<std::size_t>(n_valid_cells_))
     {
-        // Not all cells were reached — the graph contains a cycle.
+        // Not all cells were reached - the graph contains a cycle.
         topological_order_.clear();
         has_topological_order_ = false;
         is_acyclic_            = false;
@@ -1338,9 +1338,9 @@ void lsdtt_flowinfo::build_topological_order()
 //   The DFS serialises through s_vector_.push_back() because write positions
 //   are determined by traversal order. A parallel variant is possible via a
 //   two-pass approach:
-//     Pass 1 — compute subtree sizes in parallel.
-//     Pass 2 — compute start positions by exclusive prefix sum.
-//     Pass 3 — fill s_vector_ in parallel.
+//     Pass 1 - compute subtree sizes in parallel.
+//     Pass 2 - compute start positions by exclusive prefix sum.
+//     Pass 3 - fill s_vector_ in parallel.
 // =============================================================================
 void lsdtt_flowinfo::build_s_vector()
 {
@@ -1674,7 +1674,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_n_contributing_pixels_raster() const
     {
         const std::size_t idx = static_cast<std::size_t>(i);
         if (mask_.data()[idx] == 0) continue;
-        // s_vector_size_[i] includes i itself — this is the include-self convention
+        // s_vector_size_[i] includes i itself - this is the include-self convention
         r.data[idx] = static_cast<float>(s_vector_size_.data()[idx]);
         r.mask[idx] = 1u;
     }

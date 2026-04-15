@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <initializer_list>
 #include <iostream>
@@ -371,14 +372,22 @@ static std::vector<lsdtt::polyfit_metric> parse_polyfit_metrics(
 
 // -----------------------------------------------------------------------------
 // polyfit_metric_suffix
+//
+// Returns the output filename suffix for a given metric and method.
+// method must be "wavelet" or "direct".  The table stores "_polyfit_*.tif";
+// the method is prepended to give "_wavelet_polyfit_*.tif" etc.
 // -----------------------------------------------------------------------------
-static std::string polyfit_metric_suffix(lsdtt::polyfit_metric metric)
+static std::string polyfit_metric_suffix(
+    lsdtt::polyfit_metric metric,
+    const std::string&    method = "wavelet")
 {
     for (const auto& entry : polyfit_metric_table())
     {
         if (entry.metric == metric)
         {
-            return entry.suffix;
+            // entry.suffix is "_polyfit_xxx.tif"; prepend "_<method>" so
+            // the result is "_wavelet_polyfit_xxx.tif" or "_direct_polyfit_xxx.tif".
+            return std::string("_") + method + entry.suffix;
         }
     }
 
@@ -522,6 +531,16 @@ int main(int argc, char* argv[])
         "Slope tolerance below which direction-dependent polyfit metrics are nodata.",
         "Applies to aspect, plan curvature, tangential curvature, "
         "profile curvature, and rotor."};
+
+    string_default_map["polyfit_method"] = "wavelet";
+    help_map["polyfit_method"] = {"string","wavelet",
+        "Algorithm used for the quadratic polynomial fit.",
+        "wavelet: FFT-based Gaussian wavelet fit (requires FFTW). "
+        "direct: separable rolling-moment O(n) fit (no FFTW needed). "
+        "both: run both methods and write outputs from each; also prints "
+        "a timing comparison. "
+        "Outputs are prefixed _wavelet_polyfit_* or _direct_polyfit_* "
+        "so results from both methods can coexist in the same directory."};
 
     // --- MADk2 roughness ---
     bool_default_map["write_madk2_rasters"] = false;
@@ -708,10 +727,17 @@ int main(int argc, char* argv[])
 
     if (!requested_polyfit_metrics.empty())
     {
-        std::cout << "Requested polyfit metrics:";
-        for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
+        const std::string& pm = sf["polyfit_method"];
+        std::cout << "Requested polyfit metrics (" << pm << "):";
+        if (pm == "both" || pm == "wavelet")
         {
-            std::cout << " " << polyfit_metric_suffix(metric);
+            for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
+                std::cout << " " << polyfit_metric_suffix(metric, "wavelet");
+        }
+        if (pm == "both" || pm == "direct")
+        {
+            for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
+                std::cout << " " << polyfit_metric_suffix(metric, "direct");
         }
         std::cout << "\n";
     }
@@ -825,21 +851,37 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Step 3 — Polynomial surface fit and derived metrics
+    //
+    // polyfit_method controls which algorithm(s) run:
+    //   wavelet — FFT-based Gaussian wavelet fit (requires FFTW)
+    //   direct  — separable rolling-moment O(n) fit (no FFTW needed)
+    //   both    — run both and print a timing comparison
+    //
+    // Outputs are prefixed _wavelet_polyfit_* or _direct_polyfit_* so both
+    // sets can coexist in the same directory.
     // -------------------------------------------------------------------------
     if (bf["write_polyfit_rasters"] || !requested_polyfit_metrics.empty())
     {
         std::cout << "\n--- Polynomial surface fit ---\n";
         std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda_metres"] << " m\n";
+        std::cout << "Method: " << sf["polyfit_method"] << "\n";
 
-        try
+        const std::string polyfit_method = sf["polyfit_method"];
+        const bool run_wavelet = (polyfit_method == "wavelet" || polyfit_method == "both");
+        const bool run_direct  = (polyfit_method == "direct"  || polyfit_method == "both");
+
+        if (!run_wavelet && !run_direct)
         {
-            lsdtt::poly_fit_coeffs fitted =
-                lsdtt::wavelet_quadratic_fit(
-                    dem,
-                    ff["polyfit_lambda_metres"],
-                    n_threads
-                );
+            std::cerr << "Warning: unknown polyfit_method '" << polyfit_method
+                      << "'. Expected wavelet, direct, or both. Skipping.\n";
+        }
 
+        // Helper: write coefficient rasters and derived metric rasters for
+        // a completed fit.  method_str is "wavelet" or "direct".
+        auto write_fit_outputs = [&](
+            const lsdtt::poly_fit_coeffs& fitted,
+            const std::string&            method_str)
+        {
             if (bf["write_polyfit_rasters"])
             {
                 struct coeff_entry
@@ -847,17 +889,15 @@ int main(int argc, char* argv[])
                     const lsdtt::lsdtt_raster_cpu& raster;
                     std::string                    suffix;
                 };
-
                 const coeff_entry entries[] =
                 {
-                    {fitted.a, "_polyfit_a.tif"},
-                    {fitted.b, "_polyfit_b.tif"},
-                    {fitted.c, "_polyfit_c.tif"},
-                    {fitted.d, "_polyfit_d.tif"},
-                    {fitted.e, "_polyfit_e.tif"},
-                    {fitted.f, "_polyfit_f.tif"}
+                    {fitted.a, "_" + method_str + "_polyfit_a.tif"},
+                    {fitted.b, "_" + method_str + "_polyfit_b.tif"},
+                    {fitted.c, "_" + method_str + "_polyfit_c.tif"},
+                    {fitted.d, "_" + method_str + "_polyfit_d.tif"},
+                    {fitted.e, "_" + method_str + "_polyfit_e.tif"},
+                    {fitted.f, "_" + method_str + "_polyfit_f.tif"}
                 };
-
                 for (const auto& entry : entries)
                 {
                     const std::string o = out_path(pp, entry.suffix);
@@ -865,8 +905,7 @@ int main(int argc, char* argv[])
                     loader.write_full(
                         entry.raster.get_data(),
                         entry.raster.get_meta(),
-                        o,
-                        out_fmt
+                        o, out_fmt
                     );
                 }
             }
@@ -885,32 +924,85 @@ int main(int argc, char* argv[])
 
                 for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
                 {
-                    if (!metric_result.has(metric))
-                    {
-                        continue;
-                    }
-
+                    if (!metric_result.has(metric)) continue;
                     const std::string o =
-                        out_path(pp, polyfit_metric_suffix(metric));
-
+                        out_path(pp, polyfit_metric_suffix(metric, method_str));
                     std::cout << "Writing: " << o << "\n";
-
-                    const lsdtt::lsdtt_raster_cpu& out_raster =
-                        metric_result.at(metric);
-
                     loader.write_full(
-                        out_raster.get_data(),
-                        out_raster.get_meta(),
-                        o,
-                        out_fmt
+                        metric_result.at(metric).get_data(),
+                        metric_result.at(metric).get_meta(),
+                        o, out_fmt
                     );
                 }
             }
-        }
-        catch (const std::exception& e)
+        };
+
+        // --- Wavelet fit ---
+        double wavelet_seconds = 0.0;
+        if (run_wavelet)
         {
-            std::cerr << "Warning: polynomial fit failed: "
-                      << e.what() << "\n";
+            try
+            {
+                std::cout << "  Running wavelet fit..." << std::flush;
+                const auto t0 = std::chrono::steady_clock::now();
+                lsdtt::poly_fit_coeffs fitted =
+                    lsdtt::wavelet_quadratic_fit(
+                        dem,
+                        ff["polyfit_lambda_metres"],
+                        n_threads
+                    );
+                const auto t1 = std::chrono::steady_clock::now();
+                wavelet_seconds =
+                    std::chrono::duration<double>(t1 - t0).count();
+                std::cout << " done (" << wavelet_seconds << " s)\n";
+                write_fit_outputs(fitted, "wavelet");
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: wavelet polynomial fit failed: "
+                          << e.what() << "\n";
+            }
+        }
+
+        // --- Direct rolling-moment fit ---
+        double direct_seconds = 0.0;
+        if (run_direct)
+        {
+            try
+            {
+                std::cout << "  Running direct fit..." << std::flush;
+                const auto t0 = std::chrono::steady_clock::now();
+                lsdtt::poly_fit_coeffs fitted =
+                    lsdtt::direct_polyfit(
+                        dem,
+                        ff["polyfit_lambda_metres"],
+                        n_threads
+                    );
+                const auto t1 = std::chrono::steady_clock::now();
+                direct_seconds =
+                    std::chrono::duration<double>(t1 - t0).count();
+                std::cout << " done (" << direct_seconds << " s)\n";
+                write_fit_outputs(fitted, "direct");
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: direct polynomial fit failed: "
+                          << e.what() << "\n";
+            }
+        }
+
+        // --- Timing summary ---
+        if (run_wavelet && run_direct &&
+            wavelet_seconds > 0.0 && direct_seconds > 0.0)
+        {
+            std::cout << "\n  Timing comparison:\n";
+            std::cout << "    wavelet : " << wavelet_seconds << " s\n";
+            std::cout << "    direct  : " << direct_seconds  << " s\n";
+            const double ratio = wavelet_seconds / direct_seconds;
+            if (ratio >= 1.0)
+                std::cout << "    direct is " << ratio << "x faster\n";
+            else
+                std::cout << "    wavelet is " << (1.0 / ratio) << "x faster\n";
         }
     }
 
