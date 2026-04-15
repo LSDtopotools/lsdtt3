@@ -848,11 +848,21 @@ void lsdtt_flowinfo::parse_boundary_conditions(const std::string& boundary_condi
     }
 
     // Periodic boundaries must be symmetric in each axis.
-    if (boundary_conditions_[0] == 'p') boundary_conditions_[2] = 'p';
-    if (boundary_conditions_[2] == 'p') boundary_conditions_[0] = 'p';
-    if (boundary_conditions_[1] == 'p') boundary_conditions_[3] = 'p';
-    if (boundary_conditions_[3] == 'p') boundary_conditions_[1] = 'p';
+    if ((boundary_conditions_[0] == 'p') != (boundary_conditions_[2] == 'p'))
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo: north and south periodic boundary flags must match"
+        );
+    }
+
+    if ((boundary_conditions_[1] == 'p') != (boundary_conditions_[3] == 'p'))
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo: east and west periodic boundary flags must match"
+        );
+    }
 }
+
 
 void lsdtt_flowinfo::validate_inputs(
     const lsdtt_array2d_f&   dem,
@@ -864,10 +874,14 @@ void lsdtt_flowinfo::validate_inputs(
     {
         throw std::runtime_error("lsdtt_flowinfo: raster metadata is invalid");
     }
+
+    meta.check_projected_metres();
+
     if (!dem.is_valid())
     {
         throw std::runtime_error("lsdtt_flowinfo: DEM array is invalid");
     }
+
     if (!mask.is_valid())
     {
         throw std::runtime_error("lsdtt_flowinfo: mask array is invalid");
@@ -895,7 +909,31 @@ void lsdtt_flowinfo::validate_inputs(
             ") produce an invalid int64_t cell count."
         );
     }
+
+    // Every mask-valid cell must have a finite, non-nodata DEM value.
+    // lsdtt_flowinfo defines validity from the mask, so bad DEM values inside
+    // the valid mask must be rejected up front.
+    const float ndv = static_cast<float>(meta.no_data_value);
+
+    for (int row = 0; row < meta.n_rows; ++row)
+    {
+        for (int col = 0; col < meta.n_cols; ++col)
+        {
+            if (mask(row, col) == 0) continue;
+
+            const float z = dem(row, col);
+            if (!std::isfinite(z) || z == ndv)
+            {
+                throw std::runtime_error(
+                    "lsdtt_flowinfo: valid mask cell has nodata or non-finite "
+                    "DEM value at row " + std::to_string(row) +
+                    ", col " + std::to_string(col)
+                );
+            }
+        }
+    }
 }
+
 
 void lsdtt_flowinfo::initialise_storage(
     const lsdtt_array2d_u8&       mask,
@@ -922,7 +960,10 @@ void lsdtt_flowinfo::initialise_storage(
     topological_order_.reserve(static_cast<std::size_t>(n_valid_cells_));
 
     outlets_.clear();
+    outlets_.reserve(static_cast<std::size_t>(n_valid_cells_));
+
     s_vector_.clear();
+
 
     if (options.build_s_vector)
     {
@@ -944,18 +985,25 @@ void lsdtt_flowinfo::initialise_storage(
 // build_receiver_graph_d8
 //
 // Parallelism notes:
-//   Each cell reads from its own position and at most 8 neighbours in the DEM
-//   (read-only). Each cell writes only to receiver_(row,col) and
-//   receiver_dir_(row,col) — its own entries. There are no write conflicts
-//   between cells. This loop is safe to parallelise with:
+//   This loop is OpenMP-parallelised over (row, col) because each iteration:
 //
+//     - reads only DEM, mask, metadata, and boundary-condition state
+//     - writes only to receiver_(row, col) and receiver_dir_(row, col)
+//
+//   There are no write conflicts between cells, so no atomics, locks, or
+//   reductions are required.
+//
+//   Thread count:
+//     - if options.n_threads > 0, that value is used
+//     - otherwise OpenMP's maximum available thread count is used
+//
+//   Implementation:
 //     #pragma omp parallel for collapse(2) schedule(static)
-//         num_threads(options.n_threads > 0 ? options.n_threads : omp_get_max_threads())
+//         num_threads(options.n_threads > 0 ? options.n_threads
+//                                           : omp_get_max_threads())
 //
-//   before the outer for loop. No atomics, no locks, no reduction needed.
-//   Not yet applied here because n_threads is plumbed through options but
-//   OpenMP thread-count setting is currently handled at the analysis layer.
-//   Add the pragma when the threading policy is established project-wide.
+//   This makes receiver assignment embarrassingly parallel while preserving
+//   deterministic per-cell results.
 // =============================================================================
 void lsdtt_flowinfo::build_receiver_graph_d8(
     const lsdtt_array2d_f&        dem,
@@ -965,6 +1013,11 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
     const double cardinal_length = meta_.cell_size;
     const double diagonal_length = meta_.cell_size * k_sqrt_2;
 
+    int nthreads = options.n_threads;
+#ifdef _OPENMP
+    if (nthreads == 0) nthreads = omp_get_max_threads();
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(nthreads)
+#endif
     for (int row = 0; row < meta_.n_rows; ++row)
     {
         for (int col = 0; col < meta_.n_cols; ++col)
@@ -975,6 +1028,8 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
                 receiver_dir_(row, col) = no_direction;
                 continue;
             }
+            const std::int64_t flat = flat_index_unchecked(row, col);
+
 
             if (is_forced_outlet_cell(
                     row, col,
@@ -1018,8 +1073,18 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
                     continue;
                 }
 
+                const std::int64_t nb_flat =
+                    flat_index_unchecked(nb.row, nb.col);
+
+                if (nb_flat == flat)
+                {
+                    continue;  // skip self-receivers on tiny periodic grids
+                }
+
+
                 const float  z_nb = dem(nb.row, nb.col);
                 const double dz   = static_cast<double>(z) - static_cast<double>(z_nb);
+
 
                 if (dz <= 0.0) continue;
 
@@ -1060,18 +1125,24 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
 // build_donor_count_d8
 //
 // Parallelism notes:
-//   Multiple cells can share the same receiver, so incrementing
-//   donor_count_[receiver] is a write conflict. If parallelised, each
-//   increment must use an atomic operation, e.g.:
+//   This function is currently serial by design.
 //
-//     #pragma omp atomic
-//     ++donor_count_.data()[rec];
+//   Each valid cell contributes one increment to the donor count of its
+//   receiver. Multiple cells can share the same receiver, so naive parallel
+//   increments into donor_count_[receiver] would create write conflicts.
 //
-//   uint8_t atomics are supported under GCC/Clang via __atomic builtins, but
-//   std::atomic<uint8_t> would require changing the storage type. An
-//   alternative is to accumulate into a thread-local int array and reduce.
-//   Currently serial; parallelise together with build_receiver_graph_d8 once
-//   the project-wide threading policy is set.
+//   A safe parallel implementation is possible using thread-local count arrays
+//   followed by a reduction, but that approach requires additional memory
+//   proportional to:
+//
+//     n_threads * n_cells
+//
+//   which can be substantial on large DEMs. Because memory is often the
+//   limiting factor in analysis workflows, the current implementation keeps
+//   donor-count construction serial to avoid large temporary allocations.
+//
+//   donor_count_ is stored as uint8_t. For D8 routing on a regular grid, the
+//   maximum number of direct donors of a cell is 8, so uint8_t is sufficient.
 // =============================================================================
 void lsdtt_flowinfo::build_donor_count_d8()
 {
@@ -1088,11 +1159,36 @@ void lsdtt_flowinfo::build_donor_count_d8()
 
             if (rec >= 0)
             {
+                if (!is_flat_in_range(rec))
+                {
+                    throw std::runtime_error(
+                        "lsdtt_flowinfo: receiver index out of range while "
+                        "building donor counts"
+                    );
+                }
+
+                if (rec == flat)
+                {
+                    throw std::runtime_error(
+                        "lsdtt_flowinfo: self-receiver detected while "
+                        "building donor counts"
+                    );
+                }
+
+                if (donor_count_.data()[rec] == std::numeric_limits<std::uint8_t>::max())
+                {
+                    throw std::runtime_error(
+                        "lsdtt_flowinfo: donor count overflow while building donor counts"
+                    );
+                }
+
                 ++donor_count_.data()[rec];
             }
+
         }
     }
 }
+
 
 // =============================================================================
 // build_outlets
@@ -1122,10 +1218,18 @@ void lsdtt_flowinfo::build_outlets()
 // Kahn's BFS algorithm. Produces a topological ordering of all valid cells
 // from headwaters to outlets (donors before receivers).
 //
-// Parallelism: the serial BFS loop has a carried dependency (the push-on-zero
-// step). A parallel frontier approach is possible but changes the ordering
-// semantics. Currently serial.
+// If the final ordering does not cover all valid cells, the receiver graph is
+// cyclic or internally inconsistent. In that case the ordering is discarded
+// and the object is marked non-acyclic.
+//
+// Parallelism:
+//   The core BFS loop has a carried dependency: when a donor is processed it
+//   decrements the remaining-donor count of its receiver, and that receiver is
+//   enqueued only when the count reaches zero. A parallel frontier algorithm
+//   is possible, but it would change ordering semantics. The current
+//   implementation is therefore serial.
 // =============================================================================
+
 void lsdtt_flowinfo::build_topological_order()
 {
     topological_order_.clear();
@@ -1171,6 +1275,22 @@ void lsdtt_flowinfo::build_topological_order()
         const std::int64_t rec = receiver_.data()[flat];
         if (rec >= 0)
         {
+            if (!is_flat_in_range(rec))
+            {
+                throw std::runtime_error(
+                    "lsdtt_flowinfo: receiver index out of range while "
+                    "building topological order"
+                );
+            }
+
+            if (rec == flat)
+            {
+                throw std::runtime_error(
+                    "lsdtt_flowinfo: self-receiver detected while building "
+                    "topological order"
+                );
+            }
+
             if (remaining_donors[rec] == 0)
             {
                 throw std::runtime_error(
@@ -1186,6 +1306,7 @@ void lsdtt_flowinfo::build_topological_order()
                 ready_queue.push_back(rec);
             }
         }
+
     }
 
     if (topological_order_.size() != static_cast<std::size_t>(n_valid_cells_))
@@ -1397,7 +1518,7 @@ lsdtt_flowinfo::get_sources_index_threshold(int threshold) const
     if (!has_s_vector_)
     {
         throw std::logic_error(
-            "get_sources_index_threshold: s_vector not built — "
+            "get_sources_index_threshold: s_vector not built - "
             "set build_s_vector = true in lsdtt_flowinfo_options"
         );
     }
@@ -1405,10 +1526,11 @@ lsdtt_flowinfo::get_sources_index_threshold(int threshold) const
     if (!has_topological_order_)
     {
         throw std::logic_error(
-            "s: topological_order not built — "
+            "get_sources_index_threshold: topological_order not built - "
             "set build_topological_order = true in lsdtt_flowinfo_options"
         );
     }
+
 
     std::vector<std::int64_t> sources;
 
@@ -1471,10 +1593,9 @@ lsdtt_flowinfo::get_sources_index_threshold(int threshold) const
 //   6  x  2
 //   5  4  3
 //
-// Outlet pixels (cells that drain off-grid or to a boundary) carry the
-// direction code of the edge they drain to (0-7) — they have a valid
-// direction, they simply have no in-grid receiver.
-// Nodata/invalid pixels carry meta.no_data_value.
+// Non-outlet valid pixels carry the internal D8 direction code (0-7) of their
+// in-grid receiver. Outlet pixels carry no_direction. Nodata/invalid pixels
+// carry meta.no_data_value.
 // -----------------------------------------------------------------------------
 lsdtt_raster_result lsdtt_flowinfo::get_d8_flow_direction_raster() const
 {
@@ -1534,7 +1655,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_n_contributing_pixels_raster() const
     {
         throw std::runtime_error(
             "lsdtt_flowinfo::get_n_contributing_pixels_raster(): "
-            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
         );
     }
 
@@ -1585,7 +1706,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_n_contributing_pixels_exclude_outlet_ras
     {
         throw std::runtime_error(
             "lsdtt_flowinfo::get_n_contributing_pixels_exclude_outlet_raster(): "
-            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
         );
     }
 
@@ -1639,7 +1760,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster() const
     {
         throw std::runtime_error(
             "lsdtt_flowinfo::get_drainage_area_raster(): "
-            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
         );
     }
 
@@ -1692,7 +1813,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_exclude_outlet_raster() co
     {
         throw std::runtime_error(
             "lsdtt_flowinfo::get_drainage_area_exclude_outlet_raster(): "
-            "s_vector not built — set build_s_vector = true in lsdtt_flowinfo_options"
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
         );
     }
 
@@ -1733,9 +1854,23 @@ void lsdtt_flowinfo::write_drainage_area_exclude_outlet_raster(
 }
 
 // =============================================================================
-// ArcMap flow direction (legacy — uses ArcMap codes, not lsdtt codes)
+// ArcMap flow direction export
+//
+// Legacy export using ArcMap D8 codes rather than lsdtt internal direction
+// codes.
+//
+// ArcMap code mapping:
+//   E=1, SE=2, S=4, SW=8, W=16, NW=32, N=64, NE=128
+//
+// In this export:
+//   - valid non-outlet cells are written with the ArcMap code corresponding to
+//     their receiver direction
+//   - outlet cells are written as 0.0f
+//   - invalid/nodata cells are written as meta_.no_data_value
+//
+// This differs from the internal lsdtt direction raster, where outlet cells
+// carry no_direction.
 // =============================================================================
-
 void lsdtt_flowinfo::print_arcmap_d8_flowdirection(
     const std::string& out_path,
     raster_output_format format

@@ -69,6 +69,11 @@
 //   nodata_receiver — cell is nodata / invalid
 //   outlet_receiver — cell drains off-grid or to a boundary outlet
 //
+// Direction-code convention for outlets:
+//   outlet cells carry receiver_ == outlet_receiver and
+//   receiver_dir_ == no_direction.
+
+//
 // s_vector contract:
 //   s_vector_[s_vector_start_[i]] == i
 //   s_vector_[start : start + size) contains all upslope nodes of i
@@ -200,10 +205,22 @@ public:
         return outlets_.size();
     }
 
+    // Boundary-condition string in north / east / south / west order.
+    //
+    // Codes:
+    //   'o' — open: edge cells may drain out of the domain if no lower
+    //         in-grid receiver is found and an outlet path is admissible.
+    //   'n' — no-flux: stepping out of the domain is blocked.
+    //   'p' — periodic: neighbours wrap to the opposite edge.
+    //   'b' — forced baselevel outlet: all cells on this edge are outlets.
+    //
+    // Periodic pairs must be symmetric (north↔south, east↔west).
+    // Asymmetric periodic specifications are rejected during parsing.
     [[nodiscard]] std::string boundary_conditions() const
     {
         return std::string(boundary_conditions_.begin(), boundary_conditions_.end());
     }
+
 
     [[nodiscard]] bool interior_nodata_is_outlet() const noexcept
     {
