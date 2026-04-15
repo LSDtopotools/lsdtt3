@@ -427,26 +427,45 @@ poly_fit_coeffs direct_polyfit(
 //
 //   z(x,y) = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f
 //
+// Sign convention
+// ---------------
+// lsdtt3 uses the strict mathematical sign convention:
+//   concave-up terrain (channels, hollows) → positive curvature
+//   convex-up terrain  (ridges, noses)     → negative curvature
+//
+// This is NOT the Zevenbergen & Thorne (1987) convention, which applies an
+// extra leading negative sign to plan, profile, and tangential curvature,
+// making channels negative and ridges positive. The Z&T convention is common
+// in ArcGIS and many published papers; lsdtt3 deliberately does not use it.
+//
 // A few key metric definitions used by the implementation are:
 //
 //   slope = sqrt(p^2 + q^2)
 //
-//   plan_curvature
-//     = - (q^2*r - 2*p*q*s + p^2*t) / sqrt((p^2 + q^2)^3)
+//   plan_curvature                        (positive = concave = channel)
+//     = (q^2*r - 2*p*q*s + p^2*t) / sqrt((p^2 + q^2)^3)
 //
-//   tangential_curvature
-//     = - (q^2*r - 2*p*q*s + p^2*t)
+//   tangential_curvature                  (positive = concave = channel)
+//     = (q^2*r - 2*p*q*s + p^2*t)
 //       / ((p^2 + q^2) * sqrt(1 + p^2 + q^2))
 //
-//   profile_curvature
-//     = - (p^2*r + 2*p*q*s + q^2*t)
+//   profile_curvature                     (positive = concave profile = deceleration)
+//     = (p^2*r + 2*p*q*s + q^2*t)
 //       / ((p^2 + q^2) * (1 + p^2 + q^2)^(3/2))
+//
+//   mean_curvature                        (positive = net concave)
+//     = ((1 + q^2)*r - 2*p*q*s + (1 + p^2)*t) / (2*(1 + p^2 + q^2)^(3/2))
+//
+//   laplacian                             (positive = net concave)
+//     = r + t
 //
 //   rotor
 //     = ((p^2 - q^2)*s - p*q*(r - t)) / sqrt((p^2 + q^2)^3)
 //
 // The cpp file repeats the full equations immediately above each metric write
 // block so the implementation can be checked easily.
+// compute_polyfit_metrics() prints a one-line sign-convention reminder to
+// stdout each time it is called.
 //
 // Throws:
 //   std::runtime_error if the coefficient rasters are incompatible, if the

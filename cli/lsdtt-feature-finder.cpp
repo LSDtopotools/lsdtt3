@@ -334,7 +334,9 @@ int main(int argc, char* argv[])
     string_default_map["polyfit_curvature_sign"] = "positive";
     help_map["polyfit_curvature_sign"] = {"string","positive",
         "Whether channel-like pixels correspond to positive or negative curvature.",
-        "Allowed values: positive, negative."};
+        "Allowed values: positive (default), negative. "
+        "Positive curvature = concave = convergent (channel); "
+        "negative curvature = convex = divergent (ridge)."};
 
     float_default_map["polyfit_z_factor"] = 1.0f;
     help_map["polyfit_z_factor"] = {"float","1.0",
@@ -416,9 +418,10 @@ int main(int argc, char* argv[])
 
     string_default_map["polyfit_curvature_sign"] = "positive";
     help_map["polyfit_curvature_sign"] = {"string","positive",
-        "Whether channel bottoms are expressed by positive or negative curvature.",
-        "Allowed values: positive, negative. This is configurable because sign "
-        "conventions can vary between formulations and interpretations."};
+        "Whether channel bottoms correspond to positive or negative curvature.",
+        "Allowed values: positive (default), negative. "
+        "Positive curvature = concave = convergent (channel); "
+        "negative curvature = convex = divergent (ridge)."};
 
     float_default_map["polyfit_z_factor"] = 1.0f;
     help_map["polyfit_z_factor"] = {"float","1.0",
@@ -603,7 +606,6 @@ int main(int argc, char* argv[])
         bool_default_map,
         string_default_map
     );
-    std::cout << "I have parsed all the parameters for you." << std::endl;
 
     const std::map<std::string, bool>        bf  = pp.get_bool_parameters();
     const std::map<std::string, float>       ff  = pp.get_float_parameters();
@@ -621,9 +623,9 @@ int main(int argc, char* argv[])
 
     lsdtt::raster_output_format out_fmt;
     lsdtt::channel_bottom_request request;
+    lsdtt::channel_candidate_request cc_request;
     lsdtt::drain_request drain_request;
 
-    std::cout << "bug test, the feature_type is: " << feature_type << std::endl;
     try
     {
         out_fmt = resolve_output_format(sf.at("write_output_format"));
@@ -653,6 +655,35 @@ int main(int argc, char* argv[])
         request.score_threshold =
             static_cast<double>(ff.at("channel_score_threshold"));
         request.n_threads = n_threads;
+
+        cc_request.channel_lambda_min_metres =
+            static_cast<double>(ff.at("channel_lambda_min_metres"));
+        cc_request.channel_lambda_max_metres =
+            static_cast<double>(ff.at("channel_lambda_max_metres"));
+        cc_request.channel_n_scales =
+            ifs.at("channel_n_scales");
+        cc_request.curvature_metric =
+            resolve_curvature_metric(sf.at("polyfit_curvature_metric"));
+        cc_request.positive_curvature_is_good =
+            resolve_curvature_sign_positive_is_good(sf.at("polyfit_curvature_sign"));
+        cc_request.polyfit_z_factor =
+            static_cast<double>(ff.at("polyfit_z_factor"));
+        cc_request.flat_slope_tolerance =
+            static_cast<double>(ff.at("polyfit_flat_slope_tolerance"));
+        cc_request.depth_window_radius_metres =
+            static_cast<double>(ff.at("channel_depth_window_radius_metres"));
+        cc_request.depth_window_shape =
+            resolve_window_shape(sf.at("depth_window_shape"));
+        cc_request.weight_persistent =
+            static_cast<double>(ff.at("channel_weight_persistent"));
+        cc_request.weight_depth =
+            static_cast<double>(ff.at("channel_weight_depth"));
+        cc_request.weight_slope =
+            static_cast<double>(ff.at("channel_weight_slope"));
+        cc_request.score_threshold =
+            static_cast<double>(ff.at("channel_score_threshold"));
+        cc_request.n_threads = n_threads;
+
         drain_request.frangi.sigma_min_metres =
             static_cast<double>(ff.at("frangi_sigma_min_metres"));
         drain_request.frangi.sigma_max_metres =
@@ -745,7 +776,6 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Feature modes
     // -------------------------------------------------------------------------
-    std::cout << "Hey pal, your feature type is: " << feature_type << std::endl;
     try
     {
         if (feature_type == "channel_bottoms")
@@ -891,6 +921,95 @@ int main(int argc, char* argv[])
 
 
 
+        }
+        else if (feature_type == "channel_candidates")
+        {
+            std::cout << "\n--- Channel-candidate detector (multiscale) ---\n";
+            std::cout << "Lambda min           : " << cc_request.channel_lambda_min_metres << " m\n";
+            std::cout << "Lambda max           : " << cc_request.channel_lambda_max_metres << " m\n";
+            std::cout << "N scales             : " << cc_request.channel_n_scales << "\n";
+            std::cout << "Curvature metric     : " << sf.at("polyfit_curvature_metric") << "\n";
+            std::cout << "Curvature sign       : " << sf.at("polyfit_curvature_sign") << "\n";
+            std::cout << "Depth radius         : " << cc_request.depth_window_radius_metres << " m\n";
+            std::cout << "Depth window shape   : " << sf.at("depth_window_shape") << "\n";
+            std::cout << "Weight persistent    : " << cc_request.weight_persistent << "\n";
+            std::cout << "Weight depth         : " << cc_request.weight_depth << "\n";
+            std::cout << "Weight slope         : " << cc_request.weight_slope << "\n";
+            std::cout << "Score threshold      : " << cc_request.score_threshold << "\n";
+
+            lsdtt::channel_candidate_result result =
+                lsdtt::find_channel_candidates(dem, cc_request);
+
+            if (bf.at("write_channel_candidate_score_raster"))
+            {
+                const std::string o = out_path(pp, "_channel_candidate_score.tif");
+                std::cout << "Writing: " << o << "\n";
+                write_raster(loader, result.score, o, out_fmt);
+            }
+
+            if (bf.at("write_channel_candidate_mask_raster"))
+            {
+                const std::string o = out_path(pp, "_channel_candidate_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                write_raster(loader, result.mask, o, out_fmt);
+            }
+
+            if (bf.at("write_channel_best_scale_raster"))
+            {
+                const std::string o = out_path(pp, "_channel_best_scale.tif");
+                std::cout << "Writing: " << o << "\n";
+                write_raster(loader, result.best_scale_metres, o, out_fmt);
+            }
+
+            if (bf.at("write_channel_candidate_diagnostics"))
+            {
+                const std::string o_persistent =
+                    out_path(pp, "_channel_candidate_persistent.tif");
+                const std::string o_depth =
+                    out_path(pp, "_channel_candidate_depth_signal.tif");
+                const std::string o_slope =
+                    out_path(pp, "_channel_candidate_slope_signal.tif");
+
+                std::cout << "Writing: " << o_persistent << "\n";
+                write_raster(loader, result.persistent, o_persistent, out_fmt);
+
+                std::cout << "Writing: " << o_depth << "\n";
+                write_raster(loader, result.depth_signal, o_depth, out_fmt);
+
+                std::cout << "Writing: " << o_slope << "\n";
+                write_raster(loader, result.slope_signal, o_slope, out_fmt);
+
+                for (std::size_t i = 0; i < result.curvature_raw_by_scale.size(); ++i)
+                {
+                    const std::string suffix =
+                        "_channel_candidate_curv_raw_s"
+                        + std::to_string(i) + ".tif";
+                    const std::string o = out_path(pp, suffix);
+                    std::cout << "Writing: " << o << "\n";
+                    write_raster(loader, result.curvature_raw_by_scale[i], o, out_fmt);
+                }
+
+                for (std::size_t i = 0; i < result.curvature_signal_by_scale.size(); ++i)
+                {
+                    const std::string suffix =
+                        "_channel_candidate_curv_signal_s"
+                        + std::to_string(i) + ".tif";
+                    const std::string o = out_path(pp, suffix);
+                    std::cout << "Writing: " << o << "\n";
+                    write_raster(loader, result.curvature_signal_by_scale[i], o, out_fmt);
+                }
+
+                for (std::size_t i = 0; i < result.persistence_by_adjacent_scale_pair.size(); ++i)
+                {
+                    const std::string suffix =
+                        "_channel_candidate_persistence_pair"
+                        + std::to_string(i) + ".tif";
+                    const std::string o = out_path(pp, suffix);
+                    std::cout << "Writing: " << o << "\n";
+                    write_raster(loader, result.persistence_by_adjacent_scale_pair[i],
+                                 o, out_fmt);
+                }
+            }
         }
         else if (feature_type == "relief_ratio")
         {

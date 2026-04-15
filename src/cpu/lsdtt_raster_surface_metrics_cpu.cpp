@@ -1199,6 +1199,9 @@ polyfit_metric_result compute_polyfit_metrics(
     const poly_fit_coeffs&        polycoeff,
     const polyfit_metric_request& request)
 {
+    std::cout << "  [polyfit] Curvature sign convention: concave-up = positive, "
+                 "convex-up = negative (strict mathematical; NOT Zevenbergen & Thorne 1987).\n";
+
     assert_polyfit_compatible(polycoeff);
 
     if (!std::isfinite(request.z_factor) || request.z_factor <= 0.0)
@@ -1641,7 +1644,11 @@ polyfit_metric_result compute_polyfit_metrics(
             if (need_plan_curvature)
             {
                 // plan_curvature =
-                // - (q^2*r - 2*p*q*s + p^2*t) / sqrt((p^2 + q^2)^3)
+                // (q^2*r - 2*p*q*s + p^2*t) / sqrt((p^2 + q^2)^3)
+                //
+                // Sign convention (Evans 1980 / Z&T 1987):
+                //   positive = concave = convergent (channel)
+                //   negative = convex  = divergent  (ridge)
                 //
                 // Equivalent denominator used in code:
                 // (p^2 + q^2) * sqrt(p^2 + q^2)
@@ -1650,7 +1657,7 @@ polyfit_metric_result compute_polyfit_metrics(
                 if (denom > 0.0 && g2 > flat_tol_squared)
                 {
                     plan_curvature_value =
-                        - (q2 * r - 2.0 * p * q * s + p2 * t) / denom;
+                        (q2 * r - 2.0 * p * q * s + p2 * t) / denom;
                 }
             }
 
@@ -1668,14 +1675,16 @@ polyfit_metric_result compute_polyfit_metrics(
             if (need_tangential_curvature)
             {
                 // tangential_curvature =
-                // - (q^2*r - 2*p*q*s + p^2*t) /
+                // (q^2*r - 2*p*q*s + p^2*t) /
                 //   ((p^2 + q^2) * sqrt(1 + p^2 + q^2))
+                //
+                // Sign convention: positive = concave (channel), negative = convex (ridge).
                 const double denom = g2 * w;
 
                 if (denom > 0.0 && g2 > flat_tol_squared)
                 {
                     tangential_curvature_value =
-                        - (q2 * r - 2.0 * p * q * s + p2 * t) / denom;
+                        (q2 * r - 2.0 * p * q * s + p2 * t) / denom;
                 }
             }
 
@@ -1693,14 +1702,17 @@ polyfit_metric_result compute_polyfit_metrics(
             if (need_vertical_curvature)
             {
                 // profile_curvature = vertical_curvature =
-                // - (p^2*r + 2*p*q*s + q^2*t) /
+                // (p^2*r + 2*p*q*s + q^2*t) /
                 //   ((p^2 + q^2) * (1 + p^2 + q^2)^(3/2))
+                //
+                // Sign convention: positive = concave profile (decelerating flow),
+                // negative = convex profile (accelerating flow).
                 const double denom = g2 * w3;
 
                 if (denom > 0.0 && g2 > flat_tol_squared)
                 {
                     vertical_curvature_value =
-                        - (p2 * r + 2.0 * p * q * s + q2 * t) / denom;
+                        (p2 * r + 2.0 * p * q * s + q2 * t) / denom;
                 }
             }
 

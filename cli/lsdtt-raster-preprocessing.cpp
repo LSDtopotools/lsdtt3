@@ -67,6 +67,7 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
+#include "../src/cpu/lsdtt_raster_mosaic_cpu.hpp"
 #include "../src/cpu/lsdtt_depression_hierarchy_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 
@@ -445,6 +446,19 @@ int main(int argc, char* argv[])
         "Sun altitude above the horizon in degrees.",
         "45 degrees is a typical default."};
 
+    // --- Mosaic ---
+    string_default_map["mosaic_file_list"] = "";
+    help_map["mosaic_file_list"] = {"string","",
+        "Path to a text file listing rasters to mosaic (one path per line).",
+        "If set, the listed rasters are merged into a single output raster "
+        "before any other preprocessing step. Rasters with a different CRS, "
+        "cell size, or pixel-misaligned origin are skipped with a warning. "
+        "Blend semantics: last valid pixel wins (later files take priority "
+        "over earlier ones in overlap regions, matching gdal_merge.py default). "
+        "The mosaic is written to write_path/write_fname_mosaic.tif and used "
+        "as the input DEM for all subsequent pipeline steps. "
+        "Lines starting with # and blank lines are ignored in the file list."};
+
     float_default_map["hillshade_z_factor"] = 1.0f;
     help_map["hillshade_z_factor"] = {"float","1.0",
         "Vertical exaggeration factor applied before computing hillshade.",
@@ -532,11 +546,116 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Step 0 — Mosaic (optional)
+    //
+    // If mosaic_file_list is set, read the listed rasters, mosaic them into
+    // a single raster, write it, and use it as the DEM for all subsequent
+    // pipeline steps.  When not set, the normal read_fname is used.
+    //
+    // read_fname is ignored when mosaic_file_list is set — warn the user if
+    // both are present so there is no silent data-loss confusion.
+    // write_fname must be non-empty (either explicitly set or derived from
+    // read_fname) so the mosaic output path is well-defined.
+    // -------------------------------------------------------------------------
+    std::string active_path;
+
+    {
+        const std::string& list_path = sf["mosaic_file_list"];
+        if (!list_path.empty())
+        {
+            // Warn if read_fname was also set — it will be ignored.
+            if (!pp.get_read_fname().empty())
+            {
+                std::cerr << "Warning: both mosaic_file_list and read_fname are "
+                          << "set. read_fname ('" << pp.get_read_fname()
+                          << "') is ignored when mosaic_file_list is used.\n";
+            }
+
+            // write_fname must be non-empty for the output path to be usable.
+            if (pp.get_write_fname().empty())
+            {
+                std::cerr << "FATAL: mosaic_file_list is set but write_fname is "
+                          << "empty. Set write_fname in the parameter file to "
+                          << "define the output filename stem.\n";
+                return 1;
+            }
+
+            std::cout << "\n--- Mosaic ---\n";
+            std::cout << "Reading file list: " << list_path << "\n";
+
+            std::vector<std::string> mosaic_paths;
+            {
+                std::ifstream list_file(list_path);
+                if (!list_file.is_open())
+                {
+                    std::cerr << "FATAL: cannot open mosaic_file_list '"
+                              << list_path << "'.\n";
+                    return 1;
+                }
+                std::string line;
+                while (std::getline(list_file, line))
+                {
+                    const auto first = line.find_first_not_of(" \t\r\n");
+                    if (first == std::string::npos) continue;
+                    const auto last = line.find_last_not_of(" \t\r\n");
+                    line = line.substr(first, last - first + 1);
+                    if (line.empty() || line[0] == '#') continue;
+                    mosaic_paths.push_back(line);
+                }
+            }
+
+            if (mosaic_paths.empty())
+            {
+                std::cerr << "FATAL: mosaic_file_list contains no file paths.\n";
+                return 1;
+            }
+
+            std::cout << "  " << mosaic_paths.size() << " path(s) found.\n";
+
+            lsdtt::lsdtt_raster_cpu mosaic_raster;
+            try
+            {
+                mosaic_raster = lsdtt::raster_mosaic(mosaic_paths);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: mosaic failed: " << e.what() << "\n";
+                return 1;
+            }
+
+            const std::string mosaic_out =
+                pp.get_write_path() + pp.get_write_fname() + "_mosaic.tif";
+            std::cout << "Writing mosaic: " << mosaic_out << "\n";
+
+            try
+            {
+                lsdtt::lsdtt_data_loader wl;
+                wl.write_full(
+                    mosaic_raster.get_data(),
+                    mosaic_raster.get_meta(),
+                    mosaic_out,
+                    out_fmt
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing mosaic failed: " << e.what() << "\n";
+                return 1;
+            }
+
+            std::cout << "Mosaic written.\n";
+            active_path = mosaic_out;
+        }
+        else
+        {
+            active_path = pp.get_full_read_path();
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
-    std::string active_path = pp.get_full_read_path();
-
-    std::cout << "Opening DEM: " << active_path << "\n";
+    std::cout << "\nOpening DEM: " << active_path << "\n";
 
     lsdtt::lsdtt_data_loader loader;
     try

@@ -950,6 +950,32 @@ Inner loops are OpenMP-parallelised.
 - `window_shape` enum: `square`, `circular`
 - `polyfit_metric` enum: slope, aspect, curvatures (mean, Gaussian, max, min, profile, plan, tangential, etc.), rotor
 
+### Curvature sign convention
+
+lsdtt3 uses the **strict mathematical sign convention** for all curvature metrics:
+
+- **Concave-up terrain (channels, hollows, bowl-shaped) → positive curvature**
+- **Convex-up terrain (ridges, noses, dome-shaped) → negative curvature**
+
+This is the convention that follows directly from the second derivatives of the fitted surface:
+a valley bottom has positive ∂²z/∂x² (concave up), so curvature there is positive.
+
+**This is NOT the Zevenbergen & Thorne (1987) convention**, which defines plan and profile
+curvature with an extra leading negative sign, making channels negative and ridges positive.
+The Z&T convention is common in older GIS software (e.g., ArcGIS) and many geomorphology
+papers; lsdtt3 deliberately does not follow it.
+
+The strict mathematical convention means:
+- `plan_curvature > 0` at a channel (convergent flow, concave in plan)
+- `plan_curvature < 0` at a ridge (divergent flow, convex in plan)
+- `profile_curvature > 0` at a concave hillslope profile (decelerating flow)
+- `profile_curvature < 0` at a convex hillslope profile (accelerating flow)
+- `mean_curvature > 0` at net concave terrain
+- `laplacian > 0` at net concave terrain
+
+`compute_polyfit_metrics` prints a one-line reminder of this convention to stdout each
+time it is called so that the sign is never ambiguous in logged output.
+
 **`lsdtt_raster_surface_fitting_cpu`:**
 
 Plane and polynomial surface fitting to masked or labelled raster regions.

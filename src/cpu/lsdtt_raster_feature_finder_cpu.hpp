@@ -57,6 +57,8 @@ struct channel_candidate_request
     int    channel_n_scales          = 5;
 
     polyfit_metric curvature_metric   = polyfit_metric::plan_curvature;
+    // Sign convention: positive curvature = concave = channel (convergent flow);
+    // negative = convex = ridge. Keep positive values for channel detection.
     bool   positive_curvature_is_good = true;
 
     double polyfit_z_factor           = 1.0;
@@ -108,6 +110,8 @@ struct channel_bottom_request
     double polyfit_lambda_small       = 4.0;
     double polyfit_lambda_large       = 10.0;
     polyfit_metric curvature_metric   = polyfit_metric::plan_curvature;
+    // Sign convention: positive curvature = concave = channel (convergent flow);
+    // negative = convex = ridge. Keep positive values for channel detection.
     bool   positive_curvature_is_good = true;
 
     double polyfit_z_factor           = 1.0;
