@@ -11,28 +11,10 @@
 //
 // Experimental terrain-feature detection CLI for LiDAR-derived DEM analysis.
 //
-// Current first implemented feature mode:
-//   1. channel_bottoms
-//
-// Intended use case:
-//
-//   Build a raster of likely natural channel bottoms so that later workflows
-//   can preferentially reconnect those features across obstructions such as
-//   roads, tracks, and culverts, rather than being distracted by roadside
-//   ditches.
-//
-// Current channel-bottom workflow:
-//
-//   1. Compute polyfit curvature and slope at a small wavelength
-//   2. Compute polyfit curvature at a larger wavelength
-//   3. Convert curvature to a positive channelness signal using a configurable
-//      sign convention
-//   4. Normalise the small and large signals internally
-//   5. Compute multiscale persistence = pixelwise min(small, large)
-//   6. Compute local depth = moving_window_mean(dem) - dem
-//   7. Optionally include a weak slope term
-//   8. Form a weighted score raster
-//   9. Threshold to a binary channel-bottom mask
+// Feature modes:
+//   channel_candidates — multiscale curvature persistence + Hessian elongation
+//   find_drains        — Frangi ridge/valley filter for narrow drainage ditches
+//   relief_ratio       — local relief ratio at two moving-window radii
 //
 // Usage:
 //   lsdtt-feature-finder <path> <parameter_file>
@@ -295,7 +277,7 @@ int main(int argc, char* argv[])
     string_default_map["feature_type"] = "channel_candidates";
     help_map["feature_type"] = {"string","channel_candidates",
         "Feature mode to run.",
-        "Supported values: channel_bottoms- channel_candidates- find_drains- relief_ratio."};
+        "Supported values: channel_candidates, find_drains, relief_ratio."};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -400,90 +382,28 @@ int main(int argc, char* argv[])
 
     bool_default_map["write_channel_candidate_diagnostics"] = true;
     help_map["write_channel_candidate_diagnostics"] = {"bool","true",
-        "Write diagnostics for the channel-candidate detector.",
-        "Includes per-scale raw curvature, per-scale channelness, pairwise persistence, depth, and persistent response."};
+        "Write intermediate diagnostic rasters for the channel-candidate detector.",
+        "Includes persistent response, depth signal, slope signal, and Hessian elongation."};
 
+    bool_default_map["write_channel_scale_diagnostics"] = false;
+    help_map["write_channel_scale_diagnostics"] = {"bool","false",
+        "Write per-scale diagnostic rasters (verbose).",
+        "Includes raw curvature, normalised channelness signal, and pairwise "
+        "persistence for every scale. Disabled by default to reduce output volume."};
 
+    // --- Hessian elongation filter ---
+    bool_default_map["use_hessian_filter"] = true;
+    help_map["use_hessian_filter"] = {"bool","true",
+        "Apply a Hessian eigenanalysis filter to retain only line-like features.",
+        "Pixels where the dominant curvature eigenvalue does not substantially "
+        "exceed the cross-track eigenvalue are removed from the mask."};
 
-    // --- Channel-bottom detector ---
-    float_default_map["polyfit_lambda_small"] = 4.0f;
-    help_map["polyfit_lambda_small"] = {"float","4.0",
-        "Small wavelength for the local quadratic fit, in metres.",
-        "Use a scale near the width of the narrow channel bottom."};
-
-    float_default_map["polyfit_lambda_large"] = 10.0f;
-    help_map["polyfit_lambda_large"] = {"float","10.0",
-        "Larger wavelength for the local quadratic fit, in metres.",
-        "Use a broader scale that captures the surrounding hollow or valley form."};
-
-    string_default_map["polyfit_curvature_metric"] = "plan_curvature";
-    help_map["polyfit_curvature_metric"] = {"string","plan_curvature",
-        "Polyfit metric used as the main channelness curvature signal.",
-        "Suggested starting values are plan_curvature or tangential_curvature."};
-
-    string_default_map["polyfit_curvature_sign"] = "positive";
-    help_map["polyfit_curvature_sign"] = {"string","positive",
-        "Whether channel bottoms correspond to positive or negative curvature.",
-        "Allowed values: positive (default), negative. "
-        "Positive curvature = concave = convergent (channel); "
-        "negative curvature = convex = divergent (ridge)."};
-
-    float_default_map["polyfit_z_factor"] = 1.0f;
-    help_map["polyfit_z_factor"] = {"float","1.0",
-        "Vertical scaling applied before interpreting polyfit derivatives.",
-        "Useful if you want to amplify or suppress relief in the polyfit metrics."};
-
-    float_default_map["polyfit_flat_slope_tolerance"] = 1e-12f;
-    help_map["polyfit_flat_slope_tolerance"] = {"float","1e-12",
-        "Flat-slope tolerance passed to the polyfit metric engine.",
-        "Very small default so only nearly flat terrain is treated as directionless."};
-
-    int_default_map["depth_window_radius"] = 12;
-    help_map["depth_window_radius"] = {"int","12",
-        "Radius of the moving window used to estimate local depth, in pixels.",
-        "The depth signal is moving_window_mean(dem) - dem, clamped at zero."};
-
-    string_default_map["depth_window_shape"] = "circular";
-    help_map["depth_window_shape"] = {"string","circular",
-        "Shape of the moving window used for local depth.",
-        "Allowed values: square, circular."};
-
-    float_default_map["channel_weight_persistent"] = 0.7f;
-    help_map["channel_weight_persistent"] = {"float","0.7",
-        "Weight for the multiscale curvature-persistence signal.",
-        "This is usually the dominant term in the first-draft detector."};
-
-    float_default_map["channel_weight_depth"] = 0.3f;
-    help_map["channel_weight_depth"] = {"float","0.3",
-        "Weight for the local-depth signal.",
-        "Helps favour locally low, channel-bottom-like pixels."};
-
-    float_default_map["channel_weight_slope"] = 0.0f;
-    help_map["channel_weight_slope"] = {"float","0.0",
-        "Optional weight for the slope signal.",
-        "Usually kept small. Set to zero to ignore slope entirely."};
-
-    float_default_map["channel_score_threshold"] = 0.5f;
-    help_map["channel_score_threshold"] = {"float","0.5",
-        "Threshold applied to the final channel score to produce a binary mask.",
-        "Lower values produce a larger mask; higher values are more conservative."};
-
-    bool_default_map["write_channel_score_raster"] = true;
-    help_map["write_channel_score_raster"] = {"bool","true",
-        "Write the final channel-bottom score raster.",
-        "The score is a weighted combination of multiscale curvature persistence, "
-        "local depth, and optional slope."};
-
-    bool_default_map["write_channel_bottom_mask_raster"] = true;
-    help_map["write_channel_bottom_mask_raster"] = {"bool","true",
-        "Write the thresholded binary channel-bottom mask.",
-        "Output pixels are 1.0 for likely channel bottoms and 0.0 otherwise."};
-
-    bool_default_map["write_channel_diagnostics"] = true;
-    help_map["write_channel_diagnostics"] = {"bool","true",
-        "Write intermediate diagnostic rasters.",
-        "Includes raw curvature rasters, derived channelness signals, curvature "
-        "persistence, depth signal, and slope signal."};
+    float_default_map["hessian_elongation_threshold"] = 0.6f;
+    help_map["hessian_elongation_threshold"] = {"float","0.6",
+        "Minimum Hessian elongation to retain in the channel mask.",
+        "elongation = |λ_major| / (|λ_major| + |λ_minor|). "
+        "0.5 is vacuous (always true); 0.6 removes near-isotropic pits/peaks; "
+        "higher values are more selective."};
 
     // --- Relief-ratio detector ---
     bool_default_map["write_relief_ratio_raster"] = true;
@@ -627,40 +547,12 @@ int main(int argc, char* argv[])
 
 
     lsdtt::raster_output_format out_fmt;
-    lsdtt::channel_bottom_request request;
     lsdtt::channel_candidate_request cc_request;
     lsdtt::drain_request drain_request;
 
     try
     {
         out_fmt = resolve_output_format(sf.at("write_output_format"));
-
-        request.polyfit_lambda_small =
-            static_cast<double>(ff.at("polyfit_lambda_small"));
-        request.polyfit_lambda_large =
-            static_cast<double>(ff.at("polyfit_lambda_large"));
-        request.curvature_metric =
-            resolve_curvature_metric(sf.at("polyfit_curvature_metric"));
-        request.positive_curvature_is_good =
-            resolve_curvature_sign_positive_is_good(sf.at("polyfit_curvature_sign"));
-        request.polyfit_z_factor =
-            static_cast<double>(ff.at("polyfit_z_factor"));
-        request.flat_slope_tolerance =
-            static_cast<double>(ff.at("polyfit_flat_slope_tolerance"));
-        request.depth_window_radius =
-            ifs.at("depth_window_radius");
-        request.depth_window_shape =
-            resolve_window_shape(sf.at("depth_window_shape"));
-        request.weight_persistent =
-            static_cast<double>(ff.at("channel_weight_persistent"));
-        request.weight_depth =
-            static_cast<double>(ff.at("channel_weight_depth"));
-        request.weight_slope =
-            static_cast<double>(ff.at("channel_weight_slope"));
-        request.score_threshold =
-            static_cast<double>(ff.at("channel_score_threshold"));
-        request.n_threads = n_threads;
-        request.use_direct_polyfit = (sf.at("polyfit_method") != "wavelet");
 
         cc_request.channel_lambda_min_metres =
             static_cast<double>(ff.at("channel_lambda_min_metres"));
@@ -690,6 +582,10 @@ int main(int argc, char* argv[])
             static_cast<double>(ff.at("channel_score_threshold"));
         cc_request.n_threads = n_threads;
         cc_request.use_direct_polyfit = (sf.at("polyfit_method") != "wavelet");
+        cc_request.use_hessian_filter =
+            bf.at("use_hessian_filter");
+        cc_request.hessian_elongation_threshold =
+            static_cast<double>(ff.at("hessian_elongation_threshold"));
 
         drain_request.frangi.sigma_min_metres =
             static_cast<double>(ff.at("frangi_sigma_min_metres"));
@@ -732,15 +628,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (feature_type != "channel_bottoms" &&
+    if (feature_type != "channel_candidates" &&
         feature_type != "find_drains" &&
-        feature_type != "relief_ratio" &&
-        feature_type != "channel_candidates"
+        feature_type != "relief_ratio"
     )
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
-                  << "'. Supported values are channel_bottoms, channel_candidates, find_drains, "
-                  << "and relief_ratio.\n";
+                  << "'. Supported values are channel_candidates, find_drains, relief_ratio.\n";
         return 1;
     }
 
@@ -785,71 +679,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     try
     {
-        if (feature_type == "channel_bottoms")
-        {
-            std::cout << "\n--- Channel-bottom detector ---\n";
-            std::cout << "Small lambda         : " << request.polyfit_lambda_small << " m\n";
-            std::cout << "Large lambda         : " << request.polyfit_lambda_large << " m\n";
-            std::cout << "Curvature metric     : " << sf.at("polyfit_curvature_metric") << "\n";
-            std::cout << "Curvature sign       : " << sf.at("polyfit_curvature_sign") << "\n";
-            std::cout << "Polyfit method       : " << sf.at("polyfit_method") << "\n";
-            std::cout << "Depth radius         : " << request.depth_window_radius << " px\n";
-            std::cout << "Depth window shape   : " << sf.at("depth_window_shape") << "\n";
-            std::cout << "Weight persistent    : " << request.weight_persistent << "\n";
-            std::cout << "Weight depth         : " << request.weight_depth << "\n";
-            std::cout << "Weight slope         : " << request.weight_slope << "\n";
-            std::cout << "Score threshold      : " << request.score_threshold << "\n";
-
-            lsdtt::channel_bottom_result result =
-                lsdtt::find_channel_bottoms(dem, request);
-
-            if (bf.at("write_channel_score_raster"))
-            {
-                const std::string o = out_path(pp, "_channel_score.tif");
-                std::cout << "Writing: " << o << "\n";
-                write_raster(loader, result.score, o, out_fmt);
-            }
-
-            if (bf.at("write_channel_bottom_mask_raster"))
-            {
-                const std::string o = out_path(pp, "_channel_bottom_mask.tif");
-                std::cout << "Writing: " << o << "\n";
-                write_raster(loader, result.mask, o, out_fmt);
-            }
-
-            if (bf.at("write_channel_diagnostics"))
-            {
-                const std::string o1 = out_path(pp, "_channel_curvature_small.tif");
-                const std::string o2 = out_path(pp, "_channel_curvature_large.tif");
-                const std::string o3 = out_path(pp, "_channel_signal_small.tif");
-                const std::string o4 = out_path(pp, "_channel_signal_large.tif");
-                const std::string o5 = out_path(pp, "_channel_persistent.tif");
-                const std::string o6 = out_path(pp, "_channel_depth_signal.tif");
-                const std::string o7 = out_path(pp, "_channel_slope_signal.tif");
-
-                std::cout << "Writing: " << o1 << "\n";
-                write_raster(loader, result.curvature_small_raw, o1, out_fmt);
-
-                std::cout << "Writing: " << o2 << "\n";
-                write_raster(loader, result.curvature_large_raw, o2, out_fmt);
-
-                std::cout << "Writing: " << o3 << "\n";
-                write_raster(loader, result.curvature_small_signal, o3, out_fmt);
-
-                std::cout << "Writing: " << o4 << "\n";
-                write_raster(loader, result.curvature_large_signal, o4, out_fmt);
-
-                std::cout << "Writing: " << o5 << "\n";
-                write_raster(loader, result.curvature_persistent, o5, out_fmt);
-
-                std::cout << "Writing: " << o6 << "\n";
-                write_raster(loader, result.depth_signal, o6, out_fmt);
-
-                std::cout << "Writing: " << o7 << "\n";
-                write_raster(loader, result.slope_signal, o7, out_fmt);
-            }
-        }
-        else if (feature_type == "find_drains")
+        if (feature_type == "find_drains")
         {
             std::cout << "\n--- Drain finder ---\n";
             std::cout << "Frangi sigma min     : "
@@ -945,6 +775,9 @@ int main(int argc, char* argv[])
             std::cout << "Weight depth         : " << cc_request.weight_depth << "\n";
             std::cout << "Weight slope         : " << cc_request.weight_slope << "\n";
             std::cout << "Score threshold      : " << cc_request.score_threshold << "\n";
+            std::cout << "Hessian filter       : " << (cc_request.use_hessian_filter ? "on" : "off") << "\n";
+            if (cc_request.use_hessian_filter)
+                std::cout << "Elongation threshold : " << cc_request.hessian_elongation_threshold << "\n";
 
             lsdtt::channel_candidate_result result =
                 lsdtt::find_channel_candidates(dem, cc_request);
@@ -978,6 +811,8 @@ int main(int argc, char* argv[])
                     out_path(pp, "_channel_candidate_depth_signal.tif");
                 const std::string o_slope =
                     out_path(pp, "_channel_candidate_slope_signal.tif");
+                const std::string o_elong =
+                    out_path(pp, "_channel_candidate_hessian_elongation.tif");
 
                 std::cout << "Writing: " << o_persistent << "\n";
                 write_raster(loader, result.persistent, o_persistent, out_fmt);
@@ -988,6 +823,12 @@ int main(int argc, char* argv[])
                 std::cout << "Writing: " << o_slope << "\n";
                 write_raster(loader, result.slope_signal, o_slope, out_fmt);
 
+                std::cout << "Writing: " << o_elong << "\n";
+                write_raster(loader, result.hessian_elongation, o_elong, out_fmt);
+            }
+
+            if (bf.at("write_channel_scale_diagnostics"))
+            {
                 for (std::size_t i = 0; i < result.curvature_raw_by_scale.size(); ++i)
                 {
                     const std::string suffix =

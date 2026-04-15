@@ -33,6 +33,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <iostream>
 
 #include <gdal.h>
 #include <gdal_priv.h>
@@ -303,11 +304,11 @@ void map_raster_xy_to_pixel(
     const lsdtt_raster_meta& meta,
     lsdtt_input_point& point)
 {
-    const int col = col_from_x(meta, point.x);
-    const int row = row_from_y(meta, point.y);
-
-    if (row < 0 || row >= meta.n_rows ||
-        col < 0 || col >= meta.n_cols)
+    // First check whether the transformed coordinate is inside the raster
+    // bounding box. This avoids calling row/col conversion helpers on
+    // clearly out-of-bounds coordinates.
+    if (point.x < meta.x_min || point.x > meta.x_max() ||
+        point.y < meta.y_min || point.y > meta.y_max())
     {
         point.status = lsdtt_point_input_status::outside_raster_extent;
         point.row    = -1;
@@ -316,14 +317,41 @@ void map_raster_xy_to_pixel(
         return;
     }
 
-    point.status = lsdtt_point_input_status::success;
-    point.row    = row;
-    point.col    = col;
-    point.flat   =
-        static_cast<std::int64_t>(row) *
-        static_cast<std::int64_t>(meta.n_cols) +
-        static_cast<std::int64_t>(col);
+    try
+    {
+        const int col = col_from_x(meta, point.x);
+        const int row = row_from_y(meta, point.y);
+
+        if (row < 0 || row >= meta.n_rows ||
+            col < 0 || col >= meta.n_cols)
+        {
+            point.status = lsdtt_point_input_status::outside_raster_extent;
+            point.row    = -1;
+            point.col    = -1;
+            point.flat   = -1;
+            return;
+        }
+
+        point.status = lsdtt_point_input_status::success;
+        point.row    = row;
+        point.col    = col;
+        point.flat   =
+            static_cast<std::int64_t>(row) *
+            static_cast<std::int64_t>(meta.n_cols) +
+            static_cast<std::int64_t>(col);
+    }
+    catch (const std::exception&)
+    {
+        // Treat mapping failures for individual points as an out-of-bounds /
+        // unusable point rather than aborting the full CSV load.
+        point.status = lsdtt_point_input_status::outside_raster_extent;
+        point.row    = -1;
+        point.col    = -1;
+        point.flat   = -1;
+        return;
+    }
 }
+
 
 // -----------------------------------------------------------------------------
 // Record append helper
@@ -564,6 +592,8 @@ load_csv_latitude_longitude_points_in_raster_crs(
         point.x = longitude;
         point.y = latitude;
 
+        std::cout << "Got point, lat:" << point.y << " and long: " << point.x << std::endl;
+
         if (!transform_xy(transform, point.x, point.y))
         {
             point.status = lsdtt_point_input_status::coordinate_transform_failed;
@@ -574,6 +604,8 @@ load_csv_latitude_longitude_points_in_raster_crs(
             );
             continue;
         }
+
+        std::cout << "Transformed point, easting:" << point.x << " and northing: " << point.y << std::endl;        
 
         map_raster_xy_to_pixel(raster_meta, point);
 

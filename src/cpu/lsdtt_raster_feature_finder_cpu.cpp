@@ -77,121 +77,6 @@ static std::vector<double> build_channel_scales(
 }
 
 
-// -----------------------------------------------------------------------------
-// is_supported_channel_curvature_metric
-// -----------------------------------------------------------------------------
-static bool is_supported_channel_curvature_metric(polyfit_metric metric)
-{
-    return metric == polyfit_metric::plan_curvature ||
-           metric == polyfit_metric::tangential_curvature ||
-           metric == polyfit_metric::profile_curvature ||
-           metric == polyfit_metric::mean_curvature ||
-           metric == polyfit_metric::maximum_curvature ||
-           metric == polyfit_metric::minimum_curvature;
-}
-
-// -----------------------------------------------------------------------------
-// validate_request
-// -----------------------------------------------------------------------------
-static void validate_request(
-    const lsdtt_raster_cpu&      raster,
-    const channel_bottom_request& request)
-{
-    const lsdtt_raster_meta& meta = raster.get_meta();
-
-    if (!meta.is_valid())
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: input raster metadata is invalid"
-        );
-    }
-
-    meta.check_projected_metres();
-
-    if (!std::isfinite(request.polyfit_lambda_small) ||
-        request.polyfit_lambda_small <= 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: polyfit_lambda_small must be finite and > 0"
-        );
-    }
-
-    if (!std::isfinite(request.polyfit_lambda_large) ||
-        request.polyfit_lambda_large <= 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: polyfit_lambda_large must be finite and > 0"
-        );
-    }
-
-    if (!is_supported_channel_curvature_metric(request.curvature_metric))
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: unsupported curvature_metric for "
-            "channel-bottom detection"
-        );
-    }
-
-    if (!std::isfinite(request.polyfit_z_factor) ||
-        request.polyfit_z_factor <= 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: polyfit_z_factor must be finite and > 0"
-        );
-    }
-
-    if (!std::isfinite(request.flat_slope_tolerance) ||
-        request.flat_slope_tolerance <= 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: flat_slope_tolerance must be finite and > 0"
-        );
-    }
-
-    if (request.depth_window_radius < 1)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: depth_window_radius must be >= 1"
-        );
-    }
-
-    if (!std::isfinite(request.weight_persistent) ||
-        !std::isfinite(request.weight_depth) ||
-        !std::isfinite(request.weight_slope))
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: score weights must be finite"
-        );
-    }
-
-    if (request.weight_persistent < 0.0 ||
-        request.weight_depth < 0.0 ||
-        request.weight_slope < 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: score weights must be >= 0"
-        );
-    }
-
-    if (request.weight_persistent +
-        request.weight_depth +
-        request.weight_slope <= 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: at least one score weight must be > 0"
-        );
-    }
-
-    if (!std::isfinite(request.score_threshold) ||
-        request.score_threshold < 0.0 ||
-        request.score_threshold > 1.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::find_channel_bottoms: score_threshold must be in [0, 1]"
-        );
-    }
-}
-
 static void validate_channel_candidate_request(
     const channel_candidate_request& request)
 {
@@ -419,103 +304,6 @@ static lsdtt_raster_cpu best_persistent_scale_from_adjacent_pairs(
 
 
 // -----------------------------------------------------------------------------
-// weighted_score
-//
-// Forms a weighted mean of 0..1 signals. Any signal with zero weight is ignored.
-// -----------------------------------------------------------------------------
-static lsdtt_raster_cpu weighted_score(
-    const lsdtt_raster_cpu& persistent,
-    const lsdtt_raster_cpu& depth,
-    const lsdtt_raster_cpu& slope,
-    double                  weight_persistent,
-    double                  weight_depth,
-    double                  weight_slope)
-{
-    algebra::assert_compatible(persistent, depth);
-    algebra::assert_compatible(persistent, slope);
-
-    const lsdtt_raster_meta& meta = persistent.get_meta();
-
-    const std::vector<float>&   p_data = persistent.get_data();
-    const std::vector<float>&   d_data = depth.get_data();
-    const std::vector<float>&   s_data = slope.get_data();
-
-    const std::vector<uint8_t>& p_mask = persistent.get_mask();
-    const std::vector<uint8_t>& d_mask = depth.get_mask();
-    const std::vector<uint8_t>& s_mask = slope.get_mask();
-
-    const std::size_t npix =
-        static_cast<std::size_t>(meta.n_rows) *
-        static_cast<std::size_t>(meta.n_cols);
-
-    const float nodata = static_cast<float>(meta.no_data_value);
-
-    std::vector<float>   out_data(npix, nodata);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        bool valid = true;
-
-        if (weight_persistent > 0.0)
-        {
-            valid = valid &&
-                    p_mask[i] != 0 &&
-                    !meta.is_nodata(p_data[i]) &&
-                    std::isfinite(p_data[i]);
-        }
-
-        if (weight_depth > 0.0)
-        {
-            valid = valid &&
-                    d_mask[i] != 0 &&
-                    !meta.is_nodata(d_data[i]) &&
-                    std::isfinite(d_data[i]);
-        }
-
-        if (weight_slope > 0.0)
-        {
-            valid = valid &&
-                    s_mask[i] != 0 &&
-                    !meta.is_nodata(s_data[i]) &&
-                    std::isfinite(s_data[i]);
-        }
-
-        if (!valid) continue;
-
-        double sum  = 0.0;
-        double used = 0.0;
-
-        if (weight_persistent > 0.0)
-        {
-            sum  += weight_persistent * static_cast<double>(p_data[i]);
-            used += weight_persistent;
-        }
-
-        if (weight_depth > 0.0)
-        {
-            sum  += weight_depth * static_cast<double>(d_data[i]);
-            used += weight_depth;
-        }
-
-        if (weight_slope > 0.0)
-        {
-            sum  += weight_slope * static_cast<double>(s_data[i]);
-            used += weight_slope;
-        }
-
-        if (used <= 0.0) continue;
-
-        double v = sum / used;
-        if (v < 0.0) v = 0.0;
-        if (v > 1.0) v = 1.0;
-
-        out_data[i] = static_cast<float>(v);
-        out_mask[i] = uint8_t{1};
-    }
-
-    return make_raster(std::move(out_data), std::move(out_mask), meta);
-}
 
 
 
@@ -1300,6 +1088,92 @@ static void validate_drain_request(
 
 
 
+// -----------------------------------------------------------------------------
+// apply_valid_domain
+//
+// Zeros out pixels in `r` that are absent from the `domain` mask.
+// Produces a new raster; `r` is not modified.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu apply_valid_domain(
+    const lsdtt_raster_cpu&     r,
+    const std::vector<uint8_t>& domain)
+{
+    const auto& meta     = r.get_meta();
+    const float nodata   = static_cast<float>(meta.no_data_value);
+    const auto& src_data = r.get_data();
+    const auto& src_mask = r.get_mask();
+    const std::size_t n  = src_data.size();
+
+    std::vector<float>   out_data(src_data);
+    std::vector<uint8_t> out_mask(src_mask);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!domain[i])
+        {
+            out_data[i] = nodata;
+            out_mask[i] = 0u;
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+// -----------------------------------------------------------------------------
+// hessian_elongation_raster
+//
+// Per-pixel Hessian eigenanalysis from polyfit coefficients.
+//
+// For z(x,y) = a*x^2 + b*y^2 + c*x*y + ..., the Hessian is:
+//   H = [[2a, c], [c, 2b]]    (using r=2a, s=c, t=2b)
+//
+// Eigenvalues:
+//   λ1 = ((r+t) + sqrt((r-t)^2 + 4*s^2)) / 2
+//   λ2 = ((r+t) - sqrt((r-t)^2 + 4*s^2)) / 2
+//
+// Elongation = |λ_major| / (|λ_major| + |λ_minor| + ε)
+//   1.0 = perfect line-like (one dominant curvature)
+//   0.5 = perfectly isotropic (pit, peak)
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu hessian_elongation_raster(
+    const poly_fit_coeffs& coeffs)
+{
+    const auto& meta   = coeffs.a.get_meta();
+    const float nodata = static_cast<float>(meta.no_data_value);
+    const std::size_t n =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    const auto& a_data = coeffs.a.get_data();
+    const auto& b_data = coeffs.b.get_data();
+    const auto& c_data = coeffs.c.get_data();
+    const auto& a_mask = coeffs.a.get_mask();
+
+    std::vector<float>   out_data(n, nodata);
+    std::vector<uint8_t> out_mask(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!a_mask[i]) continue;
+
+        const float r    = 2.0f * a_data[i];
+        const float s    = c_data[i];
+        const float t    = 2.0f * b_data[i];
+        const float disc = std::sqrt((r - t) * (r - t) + 4.0f * s * s);
+        const float lam1 = 0.5f * (r + t + disc);
+        const float lam2 = 0.5f * (r + t - disc);
+        const float abs1 = std::abs(lam1);
+        const float abs2 = std::abs(lam2);
+        const float major = (abs1 >= abs2) ? abs1 : abs2;
+        const float minor = (abs1 >= abs2) ? abs2 : abs1;
+
+        out_data[i] = major / (major + minor + 1e-30f);
+        out_mask[i] = 1u;
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
 } // unnamed namespace
 
 
@@ -1311,12 +1185,25 @@ channel_candidate_result find_channel_candidates(
 {
     validate_channel_candidate_request(request);
 
+    const lsdtt_raster_meta& meta   = raster.get_meta();
+    const float              nodata = static_cast<float>(meta.no_data_value);
+    const std::size_t        npix   =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
     const std::vector<double> scales_metres =
         build_channel_scales(
             request.channel_lambda_min_metres,
             request.channel_lambda_max_metres,
             request.channel_n_scales
         );
+
+    // -------------------------------------------------------------------------
+    // valid_domain: intersection of DEM valid pixels across ALL scales.
+    // Any pixel that is nodata at any scale (due to edge border growing with
+    // window size) is excluded from all aggregated outputs.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> valid_domain(raster.get_mask());   // start from DEM mask
 
     std::vector<lsdtt_raster_cpu> curvature_raw_by_scale;
     std::vector<lsdtt_raster_cpu> curvature_signal_by_scale;
@@ -1325,6 +1212,10 @@ channel_candidate_result find_channel_candidates(
     curvature_raw_by_scale.reserve(scales_metres.size());
     curvature_signal_by_scale.reserve(scales_metres.size());
     persistence_by_adjacent_scale_pair.reserve(scales_metres.size() - 1);
+
+    // Per-pixel max Hessian elongation across all scales
+    std::vector<float>   hess_data(npix, 0.0f);
+    std::vector<uint8_t> hess_mask(npix, 0u);
 
     lsdtt_raster_cpu smallest_scale_slope_signal;
     bool have_slope_signal = false;
@@ -1338,6 +1229,7 @@ channel_candidate_result find_channel_candidates(
             ? direct_polyfit(raster, lambda, request.n_threads)
             : wavelet_quadratic_fit(raster, lambda, request.n_threads);
 
+        // ---- Curvature and slope metrics ----
         polyfit_metric_request metric_request;
         metric_request.metrics =
         {
@@ -1354,11 +1246,34 @@ channel_candidate_result find_channel_candidates(
         lsdtt_raster_cpu curvature_raw =
             metrics.at(request.curvature_metric);
 
+        // ---- Intersect valid domain with this scale ----
+        {
+            const auto& cm = curvature_raw.get_mask();
+            for (std::size_t k = 0; k < npix; ++k)
+                valid_domain[k] &= cm[k];
+        }
+
         lsdtt_raster_cpu curvature_signal =
             curvature_to_channel_signal(
                 curvature_raw,
                 request.positive_curvature_is_good
             );
+
+        // ---- Hessian elongation (max across scales) ----
+        {
+            lsdtt_raster_cpu elong = hessian_elongation_raster(coeffs);
+            const auto& ed = elong.get_data();
+            const auto& em = elong.get_mask();
+            for (std::size_t k = 0; k < npix; ++k)
+            {
+                if (em[k])
+                {
+                    if (!hess_mask[k] || ed[k] > hess_data[k])
+                        hess_data[k] = ed[k];
+                    hess_mask[k] = 1u;
+                }
+            }
+        }
 
         if (!have_slope_signal)
         {
@@ -1373,6 +1288,9 @@ channel_candidate_result find_channel_candidates(
         curvature_signal_by_scale.push_back(std::move(curvature_signal));
     }
 
+    // -------------------------------------------------------------------------
+    // Pairwise adjacent-scale persistence
+    // -------------------------------------------------------------------------
     for (std::size_t i = 0; i + 1 < curvature_signal_by_scale.size(); ++i)
     {
         persistence_by_adjacent_scale_pair.push_back(
@@ -1383,6 +1301,7 @@ channel_candidate_result find_channel_candidates(
         );
     }
 
+    // overall persistence = max across adjacent pairs (union semantics)
     lsdtt_raster_cpu persistent = persistence_by_adjacent_scale_pair.front();
 
     for (std::size_t i = 1; i < persistence_by_adjacent_scale_pair.size(); ++i)
@@ -1394,12 +1313,22 @@ channel_candidate_result find_channel_candidates(
             );
     }
 
+    // -------------------------------------------------------------------------
+    // Depth signal (moving window mean - DEM)
+    // -------------------------------------------------------------------------
     lsdtt_raster_cpu local_mean =
         moving_window_mean(
             raster,
             request.depth_window_radius_metres,
             request.depth_window_shape
         );
+
+    // Intersect depth-window edge with valid_domain
+    {
+        const auto& dm = local_mean.get_mask();
+        for (std::size_t k = 0; k < npix; ++k)
+            valid_domain[k] &= dm[k];
+    }
 
     lsdtt_raster_cpu depth_signal_raw =
         algebra::raster_positive_difference(local_mean, raster);
@@ -1409,6 +1338,16 @@ channel_candidate_result find_channel_candidates(
 
     lsdtt_raster_cpu slope_signal = smallest_scale_slope_signal;
 
+    // -------------------------------------------------------------------------
+    // Apply unified valid domain to all aggregated outputs
+    // -------------------------------------------------------------------------
+    persistent    = apply_valid_domain(persistent,    valid_domain);
+    depth_signal  = apply_valid_domain(depth_signal,  valid_domain);
+    slope_signal  = apply_valid_domain(slope_signal,  valid_domain);
+
+    // -------------------------------------------------------------------------
+    // Weighted score and binary mask
+    // -------------------------------------------------------------------------
     lsdtt_raster_cpu score =
         weighted_channel_score(
             persistent,
@@ -1425,10 +1364,51 @@ channel_candidate_result find_channel_candidates(
             static_cast<float>(request.score_threshold)
         );
 
+    // -------------------------------------------------------------------------
+    // Hessian elongation — apply domain, optionally filter the mask
+    // -------------------------------------------------------------------------
+    // Zero out hess_data where valid_domain is 0
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!valid_domain[k])
+        {
+            hess_data[k] = nodata;
+            hess_mask[k] = 0u;
+        }
+    }
+    lsdtt_raster_cpu hessian_elongation =
+        lsdtt_raster_cpu(std::move(hess_data), std::move(hess_mask), meta);
+
+    if (request.use_hessian_filter)
+    {
+        // AND mask with pixels where max elongation exceeds threshold
+        auto& mask_data = mask.get_data();
+        auto& mask_mask = mask.get_mask();
+        const auto& he_data = hessian_elongation.get_data();
+        const auto& he_mask = hessian_elongation.get_mask();
+        const float thresh  = static_cast<float>(request.hessian_elongation_threshold);
+
+        for (std::size_t k = 0; k < npix; ++k)
+        {
+            if (!mask_mask[k]) continue;
+            if (!he_mask[k] || he_data[k] < thresh)
+            {
+                mask_data[k] = 0.0f;
+                // leave mask_mask[k] = 1 so the pixel is still "valid but 0"
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Best persistent scale
+    // -------------------------------------------------------------------------
     lsdtt_raster_cpu best_scale_metres =
-        best_persistent_scale_from_adjacent_pairs(
-            persistence_by_adjacent_scale_pair,
-            scales_metres
+        apply_valid_domain(
+            best_persistent_scale_from_adjacent_pairs(
+                persistence_by_adjacent_scale_pair,
+                scales_metres
+            ),
+            valid_domain
         );
 
     channel_candidate_result result;
@@ -1438,6 +1418,7 @@ channel_candidate_result find_channel_candidates(
     result.depth_signal                     = std::move(depth_signal);
     result.slope_signal                     = std::move(slope_signal);
     result.best_scale_metres                = std::move(best_scale_metres);
+    result.hessian_elongation               = std::move(hessian_elongation);
     result.curvature_raw_by_scale           = std::move(curvature_raw_by_scale);
     result.curvature_signal_by_scale        = std::move(curvature_signal_by_scale);
     result.persistence_by_adjacent_scale_pair = std::move(persistence_by_adjacent_scale_pair);
@@ -1857,144 +1838,6 @@ drain_result find_drains(
 
 
 
-channel_bottom_result find_channel_bottoms(
-    const lsdtt_raster_cpu&       raster,
-    const channel_bottom_request& request)
-{
-    validate_request(raster, request);
-
-    // -------------------------------------------------------------------------
-    // Small-scale polyfit
-    // -------------------------------------------------------------------------
-    poly_fit_coeffs poly_small =
-        request.use_direct_polyfit
-        ? direct_polyfit(raster, request.polyfit_lambda_small, request.n_threads)
-        : wavelet_quadratic_fit(raster, request.polyfit_lambda_small, request.n_threads);
-
-    polyfit_metric_request request_small;
-    request_small.metrics =
-    {
-        request.curvature_metric,
-        polyfit_metric::slope
-    };
-    request_small.z_factor             = request.polyfit_z_factor;
-    request_small.n_threads            = request.n_threads;
-    request_small.flat_slope_tolerance = request.flat_slope_tolerance;
-
-    polyfit_metric_result metrics_small =
-        compute_polyfit_metrics(poly_small, request_small);
-
-    lsdtt_raster_cpu curvature_small_raw =
-        metrics_small.at(request.curvature_metric);
-
-    lsdtt_raster_cpu slope_small_raw =
-        metrics_small.at(polyfit_metric::slope);
-
-    // -------------------------------------------------------------------------
-    // Large-scale polyfit
-    // -------------------------------------------------------------------------
-    poly_fit_coeffs poly_large =
-        request.use_direct_polyfit
-        ? direct_polyfit(raster, request.polyfit_lambda_large, request.n_threads)
-        : wavelet_quadratic_fit(raster, request.polyfit_lambda_large, request.n_threads);
-
-    polyfit_metric_request request_large;
-    request_large.metrics =
-    {
-        request.curvature_metric
-    };
-    request_large.z_factor             = request.polyfit_z_factor;
-    request_large.n_threads            = request.n_threads;
-    request_large.flat_slope_tolerance = request.flat_slope_tolerance;
-
-    polyfit_metric_result metrics_large =
-        compute_polyfit_metrics(poly_large, request_large);
-
-    lsdtt_raster_cpu curvature_large_raw =
-        metrics_large.at(request.curvature_metric);
-
-    // -------------------------------------------------------------------------
-    // Curvature-derived channelness signals
-    // -------------------------------------------------------------------------
-    lsdtt_raster_cpu curvature_small_signal =
-        request.positive_curvature_is_good
-        ? algebra::raster_positive_part(curvature_small_raw)
-        : algebra::raster_negative_part(curvature_small_raw);
-
-    lsdtt_raster_cpu curvature_large_signal =
-        request.positive_curvature_is_good
-        ? algebra::raster_positive_part(curvature_large_raw)
-        : algebra::raster_negative_part(curvature_large_raw);
-
-    lsdtt_raster_cpu curvature_small_norm =
-        algebra::raster_normalise_unit_interval(curvature_small_signal);
-
-    lsdtt_raster_cpu curvature_large_norm =
-        algebra::raster_normalise_unit_interval(curvature_large_signal);
-
-    lsdtt_raster_cpu curvature_persistent =
-        algebra::raster_min(
-            curvature_small_norm,
-            curvature_large_norm
-        );
-
-    // -------------------------------------------------------------------------
-    // Local depth signal
-    // -------------------------------------------------------------------------
-    lsdtt_raster_cpu local_mean =
-        moving_window_mean(
-            raster,
-            request.depth_window_radius,
-            request.depth_window_shape
-        );
-
-    lsdtt_raster_cpu depth_signal_raw =
-        algebra::raster_positive_difference(local_mean, raster);
-
-    lsdtt_raster_cpu depth_signal =
-        algebra::raster_normalise_unit_interval(depth_signal_raw);
-
-    // -------------------------------------------------------------------------
-    // Optional slope signal
-    // -------------------------------------------------------------------------
-    lsdtt_raster_cpu slope_signal_raw =
-        algebra::raster_clamp_min(slope_small_raw, 0.0f);
-
-    lsdtt_raster_cpu slope_signal =
-        algebra::raster_normalise_unit_interval(slope_signal_raw);
-
-    // -------------------------------------------------------------------------
-    // Final weighted score and binary mask
-    // -------------------------------------------------------------------------
-    lsdtt_raster_cpu score =
-        weighted_score(
-            curvature_persistent,
-            depth_signal,
-            slope_signal,
-            request.weight_persistent,
-            request.weight_depth,
-            request.weight_slope
-        );
-
-    lsdtt_raster_cpu mask =
-        algebra::raster_binary_true_above_threshold(
-            score,
-            static_cast<float>(request.score_threshold)
-        );
-
-    return channel_bottom_result
-    {
-        std::move(score),
-        std::move(mask),
-        std::move(curvature_small_raw),
-        std::move(curvature_large_raw),
-        std::move(curvature_small_signal),
-        std::move(curvature_large_signal),
-        std::move(curvature_persistent),
-        std::move(depth_signal),
-        std::move(slope_signal)
-    };
-}
 
 
 // -----------------------------------------------------------------------------

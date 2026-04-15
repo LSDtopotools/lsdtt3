@@ -756,6 +756,14 @@ int main(int argc, char* argv[])
     float min_elev = ff["minimum_elevation"];
     float max_elev = ff["maximum_elevation"];
 
+    // Count valid pixels before masking so we can detect any change.
+    const auto count_valid = [](const lsdtt::lsdtt_raster_cpu& r) -> std::size_t {
+        std::size_t n = 0;
+        for (uint8_t b : r.get_mask()) n += b;
+        return n;
+    };
+    const std::size_t valid_before_masking = count_valid(dem);
+
     if (min_elev >= 0.0f)
     {
         std::cout << "\nMasking pixels at or below " << min_elev << " m\n";
@@ -765,6 +773,15 @@ int main(int argc, char* argv[])
     {
         std::cout << "Masking pixels above " << max_elev << " m\n";
         dem = lsdtt::mask_to_nodata_using_threshold(dem, max_elev, false);
+    }
+
+    if (count_valid(dem) < valid_before_masking)
+    {
+        const std::string o = out_path(pp, "_remove_seas.tif");
+        std::cout << "Threshold masking changed "
+                  << (valid_before_masking - count_valid(dem))
+                  << " pixel(s) — writing: " << o << "\n";
+        loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
     }
 
     // -------------------------------------------------------------------------

@@ -37,6 +37,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <variant>
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
@@ -454,6 +455,15 @@ int main(int argc, char* argv[])
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
         "GeoPackage may have file I/O issues on some filesystems."
         "CSV is not allowed for basin outline lines."
+    };
+
+    bool_default_map["write_basin_outlet_points"] = false;
+    help_map["write_basin_outlet_points"] = {"bool","false",
+        "Write requested basin outlet points to FlatGeobuf in the raster CRS.",
+        "Useful for debugging outlet locations after latitude/longitude input has "
+        "been transformed into the DEM local/projected coordinate system. "
+        "Points that fail coordinate transformation are omitted because they do "
+        "not have valid raster-CRS coordinates."
     };
 
     
@@ -894,6 +904,36 @@ int main(int argc, char* argv[])
             std::cout << "Reading basin outlet CSV: "
                       << basin_csv_path << "\n";
 
+            // -----------------------------------------------------------------
+            // Coordinate-system and bounding-box diagnostics (printed before
+            // the CSV load so they appear even if the load throws).
+            // -----------------------------------------------------------------
+            {
+                const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+
+                std::cout << "\n--- Basin outlet coordinate diagnostics ---\n";
+
+                std::cout << "Raster CRS           : ";
+                if (m.epsg_code != 0)
+                    std::cout << "EPSG:" << m.epsg_code;
+                else if (!m.crs_wkt.empty())
+                    std::cout << m.crs_wkt.substr(0, 80)
+                              << (m.crs_wkt.size() > 80 ? "..." : "");
+                else
+                    std::cout << "(undefined)";
+                std::cout << "\n";
+
+                std::cout << "Raster bounding box  : "
+                          << "x [" << m.x_min << ", " << m.x_max() << "]  "
+                          << "y [" << m.y_min << ", " << m.y_max() << "]\n";
+                std::cout << "Cell size            : " << m.cell_size << "\n";
+                std::cout << "Raster size          : "
+                          << m.n_cols << " cols x " << m.n_rows << " rows\n";
+
+                std::cout << "\nOutlet CSV was read as EPSG:4326 (lat/lon) "
+                             "and transformed to raster CRS.\n";
+            }
+
             std::vector<lsdtt::lsdtt_input_point> requested_outlets;
             try
             {
@@ -908,9 +948,124 @@ int main(int argc, char* argv[])
                 std::cerr << "FATAL: " << e.what() << "\n";
                 return 1;
             }
-
             std::cout << "Read " << requested_outlets.size()
                       << " basin outlet point(s)\n";
+
+            if (bf["write_basin_outlet_points"])
+            {
+                const std::string output_file =
+                    out_path(pp, "_basin_outlet_points", ".fgb");
+
+                std::cout << "Writing requested basin outlet points: "
+                        << output_file << "\n";
+
+                try
+                {
+                    lsdtt::lsdtt_vector_schema schema;
+                    schema.field_names = {
+                        "point_id",
+                        "status_code",
+                        "src_lon",
+                        "src_lat",
+                        "x",
+                        "y",
+                        "row",
+                        "col",
+                        "flat"
+                    };
+                    schema.field_types = {
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::double_type,
+                        lsdtt::lsdtt_vector_field_type::double_type,
+                        lsdtt::lsdtt_vector_field_type::double_type,
+                        lsdtt::lsdtt_vector_field_type::double_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type
+                    };
+
+                    lsdtt::lsdtt_data_loader outlet_writer;
+                    outlet_writer.begin_vector_write(
+                        output_file,
+                        "basin_outlet_points",
+                        schema,
+                        dem.get_meta().crs_wkt,
+                        lsdtt::vector_output_format::flatgeobuf,
+                        bf["calculate_spatial_index"]
+                    );
+
+                    for (const auto& pt : requested_outlets)
+                    {
+                        // Only write features that actually have valid raster-CRS x/y.
+                        // For coordinate_transform_failed rows, x/y are not valid local
+                        // coordinates so we omit them from the FlatGeobuf.
+                        if (pt.status ==
+                            lsdtt::lsdtt_point_input_status::coordinate_transform_failed)
+                        {
+                            continue;
+                        }
+
+                        std::vector<lsdtt::lsdtt_vector_field_value> fields;
+                        fields.reserve(9);
+
+                        fields.emplace_back(static_cast<std::int64_t>(pt.point_id));
+                        fields.emplace_back(static_cast<std::int64_t>(pt.status));
+
+                        if (pt.has_original_coordinates)
+                        {
+                            fields.emplace_back(pt.original_x);  // longitude
+                            fields.emplace_back(pt.original_y);  // latitude
+                        }
+                        else
+                        {
+                            fields.emplace_back(std::monostate{});
+                            fields.emplace_back(std::monostate{});
+                        }
+
+                        fields.emplace_back(pt.x);
+                        fields.emplace_back(pt.y);
+                        fields.emplace_back(static_cast<std::int64_t>(pt.row));
+                        fields.emplace_back(static_cast<std::int64_t>(pt.col));
+                        fields.emplace_back(pt.flat);
+
+                        outlet_writer.write_point(pt.x, pt.y, fields);
+                    }
+
+                    outlet_writer.finish_vector_write();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: failed to write requested basin outlet points: "
+                            << e.what() << "\n";
+                }
+            }
+
+
+            // Per-point projected coordinates and inside/outside status
+            {
+                const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+
+                for (const auto& pt : requested_outlets)
+                {
+                    std::cout << "  Outlet " << pt.point_id << ": "
+                              << "lat=" << pt.original_y
+                              << " lon=" << pt.original_x
+                              << "  ->  x=" << pt.x
+                              << " y=" << pt.y;
+
+                    const bool in_x = pt.x >= m.x_min && pt.x <= m.x_max();
+                    const bool in_y = pt.y >= m.y_min && pt.y <= m.y_max();
+                    if (in_x && in_y)
+                        std::cout << "  [inside raster]\n";
+                    else
+                        std::cout << "  [OUTSIDE raster"
+                                  << (!in_x ? " — x out of range" : "")
+                                  << (!in_y ? " — y out of range" : "")
+                                  << "]\n";
+                }
+                std::cout << "\n";
+            }
 
             lsdtt::lsdtt_square_snap_options square_snap_options;
             square_snap_options.contributing_pixels_threshold =

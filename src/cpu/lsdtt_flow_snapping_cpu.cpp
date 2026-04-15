@@ -128,21 +128,23 @@ lsdtt_snap_result initialise_snap_result_from_row_col(
     int col)
 {
     lsdtt_snap_result result;
-    result.status    = lsdtt_snap_status::input_out_of_bounds;
     result.input_row = row;
     result.input_col = col;
 
     if (!flow.in_bounds(row, col))
     {
+        result.status = lsdtt_snap_status::input_out_of_bounds;
         return result;
     }
 
+    // In bounds: allow snapping routines to proceed.
+    result.status    = lsdtt_snap_status::success;
     result.input_flat = flow.flat_index_unchecked(row, col);
 
     if (flow.is_valid_cell(result.input_flat))
     {
-        result.input_is_valid_flow_cell   = true;
-        result.input_contributing_pixels  =
+        result.input_is_valid_flow_cell  = true;
+        result.input_contributing_pixels =
             flow.s_vector_size_unchecked(result.input_flat);
     }
 
@@ -154,26 +156,29 @@ lsdtt_snap_result initialise_snap_result_from_flat(
     std::int64_t flat)
 {
     lsdtt_snap_result result;
-    result.status    = lsdtt_snap_status::input_out_of_bounds;
     result.input_flat = flat;
 
     if (!flow.is_flat_in_range(flat))
     {
+        result.status = lsdtt_snap_status::input_out_of_bounds;
         return result;
     }
 
+    // In range: allow snapping routines to proceed.
+    result.status    = lsdtt_snap_status::success;
     result.input_row = flow.row_from_flat_unchecked(flat);
     result.input_col = flow.col_from_flat_unchecked(flat);
 
     if (flow.is_valid_cell(flat))
     {
-        result.input_is_valid_flow_cell   = true;
-        result.input_contributing_pixels  =
+        result.input_is_valid_flow_cell  = true;
+        result.input_contributing_pixels =
             flow.s_vector_size_unchecked(flat);
     }
 
     return result;
 }
+
 
 // -----------------------------------------------------------------------------
 // Success helper
