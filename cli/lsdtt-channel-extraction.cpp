@@ -605,7 +605,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Writing channel network lines ---\n";
         const std::string extension =
-            lsdtt::output_extension(cn_points_output_format);
+            lsdtt::output_extension(cn_lines_output_format);
         std::string output_file = out_path(pp, "_channel_network_lines", extension);
         std::cout << "Writing: " << output_file << "\n";
 
