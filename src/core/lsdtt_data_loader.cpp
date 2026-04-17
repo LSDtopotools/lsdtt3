@@ -1551,7 +1551,14 @@ void lsdtt_data_loader::clip_vector_to_raster_bbox(
             OGRFeature* out_feat =
                 OGRFeature::CreateFeature(dst_layer->GetLayerDefn());
             out_feat->SetFrom(feat);
-            dst_layer->CreateFeature(out_feat);
+            if (dst_layer->CreateFeature(out_feat) != OGRERR_NONE)
+            {
+                OGRFeature::DestroyFeature(out_feat);
+                OGRFeature::DestroyFeature(feat);
+                throw std::runtime_error(
+                    "clip_vector_to_raster_bbox: failed to write feature"
+                );
+            }
             OGRFeature::DestroyFeature(out_feat);
             OGRFeature::DestroyFeature(feat);
         }
