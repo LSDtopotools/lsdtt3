@@ -183,12 +183,27 @@ struct flat_surface_request
 
     // -------------------------------------------------------------------------
     // Local relief (max - min over a square window)
+    // Relief is always used as a masking metric.
     // window_pixels is the full window side length; must be odd and >= 3.
-    // Relief is also used as a masking metric (use_relief = true by default).
     // -------------------------------------------------------------------------
-    int          relief_window_pixels       = 5;
-    bool         use_relief                 = true;
+    int          relief_window_pixels        = 5;
     double       relief_threshold_percentile = 10.0;   // below this = flat
+
+    // -------------------------------------------------------------------------
+    // Riser removal (optional secondary pass)
+    //
+    // After the initial combined flat mask is built, planes are fitted to each
+    // labelled component.  Per-pixel residuals (dem - plane) are computed, and
+    // a relief window is run on those residuals.  Pixels whose residual relief
+    // exceeds riser_residual_relief_fraction × relief_threshold_value are
+    // removed from the flat mask.  The surviving mask then goes through
+    // directional closing and final labelling.
+    // -------------------------------------------------------------------------
+    bool         remove_risers                   = false;
+    float        riser_residual_relief_fraction  = 0.5f;
+    int          riser_plane_min_pixels          = 10;
+    double       riser_window_radius_metres      = 50.0;  // window for η² bimodality test
+    double       riser_eta2_threshold            = 0.6;   // η² above this = bimodal = riser
 
     int          n_threads                  = 0;
 
@@ -224,10 +239,10 @@ struct flat_surface_result
     // -------------------------------------------------------------------------
     // Per-metric binary flat masks (1 = flat, 0 = not flat)
     // -------------------------------------------------------------------------
-    lsdtt_raster_cpu madk2_flat_mask;
-    lsdtt_raster_cpu iqr_flat_mask;
-    lsdtt_raster_cpu nvd_flat_mask;
-    lsdtt_raster_cpu relief_flat_mask;
+    lsdtt_raster_cpu madk2_flat_mask;    // only when use_madk2
+    lsdtt_raster_cpu iqr_flat_mask;     // only when use_residual_iqr
+    lsdtt_raster_cpu nvd_flat_mask;     // only when use_nvd
+    lsdtt_raster_cpu relief_flat_mask;  // always
 
     // -------------------------------------------------------------------------
     // Combined flat mask (AND or OR of per-metric masks according to request)
@@ -254,6 +269,13 @@ struct flat_surface_result
     // meta.no_data_value = 0.
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu labelled_flat_mask;
+
+    // -------------------------------------------------------------------------
+    // Riser removal rasters (only populated when remove_risers = true)
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu labelled_flat_mask_pre_riser;  // labels before riser removal
+    lsdtt_raster_cpu riser_residual_relief;         // plane-fit residual relief, flat pixels only
+    lsdtt_raster_cpu riser_eta2;                    // η² bimodality on raw DEM elevations
 
     // -------------------------------------------------------------------------
     // Diagnostic rasters (always computed, written when write_texture_rasters)

@@ -248,16 +248,11 @@ int main(int argc, char* argv[])
     help_map["write_output_format"] = {"string","cog","Raster output format.",
         "cog, gtiff, or same_as_input."};
 
-    // --- Relief ---        
+    // --- Relief (always on) ---
     int_default_map["relief_window_pixels"] = 5;
     help_map["relief_window_pixels"] = {"int","5",
         "Square window size (pixels) for local relief (max - min) computation.",
         "Must be odd and >= 3.  5 = 5x5 neighbourhood."};
-
-    bool_default_map["use_relief"] = true;
-    help_map["use_relief"] = {"bool","true",
-        "Use local relief as a flat-surface masking metric.",
-        "Pixels below relief_threshold_percentile are classed flat."};
 
     float_default_map["relief_threshold_percentile"] = 10.0f;
     help_map["relief_threshold_percentile"] = {"float","10",
@@ -370,6 +365,51 @@ int main(int argc, char* argv[])
         "Number of histogram bins for the empirical CDF output.",
         "Increase for finer resolution.  The percentile threshold is readable "
         "directly as the x value where the CDF crosses threshold/100."};
+
+    // --- Riser removal ---
+    bool_default_map["remove_risers"] = false;
+    help_map["remove_risers"] = {"bool","false",
+        "Optional secondary pass to remove riser pixels from the flat mask.",
+        "Fits a plane to each labelled component, computes residuals, runs a "
+        "relief window on the residuals, and removes pixels whose residual relief "
+        "exceeds riser_residual_relief_fraction × the relief threshold."};
+
+    float_default_map["riser_residual_relief_fraction"] = 0.5f;
+    help_map["riser_residual_relief_fraction"] = {"float","0.5",
+        "Fraction of the relief threshold used as the riser removal cut-off.",
+        "Pixels with residual relief > fraction × relief_threshold_value are removed."};
+
+    int_default_map["riser_plane_min_pixels"] = 10;
+    help_map["riser_plane_min_pixels"] = {"int","10",
+        "Minimum pixel count for a component to have a plane fitted during riser removal.",
+        "Components below this size are skipped."};
+
+    float_default_map["riser_window_radius_metres"] = 50.0f;
+    help_map["riser_window_radius_metres"] = {"float","50",
+        "Circular window radius (m) for the η² bimodality test used in riser removal.",
+        "Should span both treads either side of the riser. "
+        "Independent of relief_window_pixels."};
+
+    float_default_map["riser_eta2_threshold"] = 0.6f;
+    help_map["riser_eta2_threshold"] = {"float","0.6",
+        "η² threshold above which a window's elevation distribution is considered bimodal (riser).",
+        "Range 0–1. Pixel removed only if both residual relief AND η² exceed their thresholds."};
+
+    bool_default_map["write_riser_residual_relief"] = false;
+    help_map["write_riser_residual_relief"] = {"bool","false",
+        "Write the riser residual relief raster (plane-fit residual relief masked to original flat pixels).",
+        "Only written when remove_risers = true."};
+
+    bool_default_map["write_riser_eta2"] = false;
+    help_map["write_riser_eta2"] = {"bool","false",
+        "Write the η² bimodality raster computed during riser removal.",
+        "Only written when remove_risers = true."};
+
+    bool_default_map["write_labels_before_riser_removal"] = false;
+    help_map["write_labels_before_riser_removal"] = {"bool","false",
+        "Write the labelled flat mask computed before riser removal.",
+        "Compare with the final labelled mask to see which pixels were removed. "
+        "Only written when remove_risers = true."};
 
     // --- Directional closing ---
     int_default_map["directional_close_line_length_pixels"] = 0;
@@ -572,18 +612,11 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "Switches for analysis are: " << std::endl;
-    std::cout << "use_madk2: " << bf["use_madk2"] <<std::endl;
+    std::cout << "use_madk2: " << bf["use_madk2"] << std::endl;
     std::cout << "use_residual_iqr: " << bf["use_residual_iqr"] << std::endl;
     std::cout << "use_nvd: " << bf["use_nvd"] << std::endl;
-    std::cout << "use_relief: " << bf["use_relief"] << std::endl;
-
-
-    if (!bf["use_madk2"] && !bf["use_residual_iqr"] &&
-        !bf["use_nvd"] && !bf["use_relief"])
-    {
-        std::cerr << "Error: at least one metric must be enabled.\n";
-        return 1;
-    }
+    std::cout << "relief: always on" << std::endl;
+    std::cout << "remove_risers: " << bf["remove_risers"] << std::endl;
 
     // -------------------------------------------------------------------------
     // Load DEM
@@ -630,11 +663,15 @@ int main(int argc, char* argv[])
     req.min_component_pixels                   = ip["min_component_pixels"];
     req.qq_n_bins                  = ip["qq_n_bins"];
     req.cdf_n_bins                 = ip["cdf_n_bins"];
-    req.relief_window_pixels         = ip["relief_window_pixels"];
-    req.use_relief                   = bf["use_relief"];
-    req.relief_threshold_percentile  = static_cast<double>(ff["relief_threshold_percentile"]);
-    req.n_threads                    = ip["n_threads"];
-    req.test_surface_vector_file     = sf["test_surface_vector_file"];
+    req.relief_window_pixels          = ip["relief_window_pixels"];
+    req.relief_threshold_percentile   = static_cast<double>(ff["relief_threshold_percentile"]);
+    req.remove_risers                  = bf["remove_risers"];
+    req.riser_residual_relief_fraction = ff["riser_residual_relief_fraction"];
+    req.riser_plane_min_pixels         = ip["riser_plane_min_pixels"];
+    req.riser_window_radius_metres     = static_cast<double>(ff["riser_window_radius_metres"]);
+    req.riser_eta2_threshold           = static_cast<double>(ff["riser_eta2_threshold"]);
+    req.n_threads                      = ip["n_threads"];
+    req.test_surface_vector_file      = sf["test_surface_vector_file"];
 
     // -------------------------------------------------------------------------
     // Run
@@ -656,9 +693,8 @@ int main(int argc, char* argv[])
     if (req.use_nvd)
         std::cout << "  NVD s3       radius=" << req.nvd_window_radius_metres
                   << " m  threshold=" << req.nvd_threshold_percentile << "th pct\n";
-    if (req.use_relief)
-        std::cout << "  Local relief  window=" << req.relief_window_pixels
-                  << " px  threshold=" << req.relief_threshold_percentile << "th pct\n";
+    std::cout << "  Local relief  window=" << req.relief_window_pixels
+              << " px  threshold=" << req.relief_threshold_percentile << "th pct\n";
     std::cout << "  combination: " << (req.require_all_metrics_pass ? "AND" : "OR")
               << "  min_component=" << req.min_component_pixels << " px\n\n";
 
@@ -736,7 +772,6 @@ int main(int argc, char* argv[])
             loader.write_full(result.nvd_flat_mask.get_data(),
                               result.nvd_flat_mask.get_meta(), p, out_format);
         }
-        if (req.use_relief)
         {
             const std::string p = stem + "_relief_flat_mask.tif";
             std::cout << "Writing relief flat mask: " << p << "\n";
@@ -768,6 +803,43 @@ int main(int argc, char* argv[])
         loader.write_full(result.labelled_flat_mask.get_data(),
                           result.labelled_flat_mask.get_meta(), p, out_format,
                           GDT_UInt32);
+    }
+
+    if (req.remove_risers)
+    {
+        std::cout << "Riser rasters: residual_relief data_size="
+                  << result.riser_residual_relief.get_data().size()
+                  << "  eta2 data_size=" << result.riser_eta2.get_data().size()
+                  << "  pre_riser_labels data_size="
+                  << result.labelled_flat_mask_pre_riser.get_data().size() << "\n";
+
+        if (bf["write_labels_before_riser_removal"] &&
+            !result.labelled_flat_mask_pre_riser.get_data().empty())
+        {
+            const std::string p = stem + "_labelled_flat_mask_pre_riser.tif";
+            std::cout << "Writing pre-riser labelled flat mask (UInt32): " << p << "\n";
+            loader.write_full(result.labelled_flat_mask_pre_riser.get_data(),
+                              result.labelled_flat_mask_pre_riser.get_meta(),
+                              p, out_format, GDT_UInt32);
+        }
+
+        if (bf["write_riser_residual_relief"] &&
+            !result.riser_residual_relief.get_data().empty())
+        {
+            const std::string p = stem + "_riser_residual_relief.tif";
+            std::cout << "Writing riser residual relief: " << p << "\n";
+            loader.write_full(result.riser_residual_relief.get_data(),
+                              result.riser_residual_relief.get_meta(), p, out_format);
+        }
+
+        if (bf["write_riser_eta2"] &&
+            !result.riser_eta2.get_data().empty())
+        {
+            const std::string p = stem + "_riser_eta2.tif";
+            std::cout << "Writing riser η² bimodality: " << p << "\n";
+            loader.write_full(result.riser_eta2.get_data(),
+                              result.riser_eta2.get_meta(), p, out_format);
+        }
     }
 
     // QQ CSVs — always written for each enabled metric

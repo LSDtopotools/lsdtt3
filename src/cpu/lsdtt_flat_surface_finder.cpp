@@ -8,6 +8,7 @@
 
 #include "lsdtt_flat_surface_finder.hpp"
 
+#include "lsdtt_flat_surface_plane_analysis.hpp"  // analyse_flat_surface_planes
 #include "lsdtt_raster_algebra.hpp"              // raster_subtract
 #include "lsdtt_raster_feature_finder_cpu.hpp"   // label_binary_components_by_size
 #include "lsdtt_raster_spectral_cpu.hpp"         // wavelet_quadratic_fit, fftw2D_highpass_filter
@@ -195,6 +196,102 @@ static float max_within_mask(
     return found ? best : -std::numeric_limits<float>::max();
 }
 
+// Compute η² bimodality (Otsu 1D split) on raw DEM elevations within a
+// circular window of radius_metres.  Returns values in [0,1]: high = two
+// tight elevation clusters (riser); low = continuous/unimodal (channel, tree).
+// Pixels with fewer than 4 valid neighbours are left as nodata.
+static lsdtt_raster_cpu compute_eta2_bimodality(
+    const lsdtt_raster_cpu& dem,
+    double                  radius_metres)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int    nrows     = meta.n_rows;
+    const int    ncols     = meta.n_cols;
+    const double cs        = meta.cell_size;
+    const int    radius_px = static_cast<int>(std::ceil(radius_metres / cs));
+    const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
+
+    const std::vector<float>&   src = dem.get_data();
+    const std::vector<uint8_t>& msk = dem.get_mask();
+
+    // Precompute circular window offsets
+    std::vector<std::pair<int,int>> offsets;
+    offsets.reserve(static_cast<std::size_t>((2*radius_px+1)*(2*radius_px+1)));
+    for (int dr = -radius_px; dr <= radius_px; ++dr)
+        for (int dc = -radius_px; dc <= radius_px; ++dc)
+            if (dr*dr + dc*dc <= radius_px*radius_px)
+                offsets.push_back({dr, dc});
+
+    std::vector<float>   out(npix, static_cast<float>(meta.no_data_value));
+    std::vector<uint8_t> omsk(npix, uint8_t{0});
+
+    std::vector<float> vals;
+    vals.reserve(offsets.size());
+
+    for (int r = 0; r < nrows; ++r)
+    {
+        for (int c = 0; c < ncols; ++c)
+        {
+            const std::size_t ci =
+                static_cast<std::size_t>(r) * ncols + c;
+            if (!msk[ci]) continue;
+
+            vals.clear();
+            for (const auto& [dr, dc] : offsets)
+            {
+                const int rr = r + dr, cc = c + dc;
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+                const std::size_t ji =
+                    static_cast<std::size_t>(rr) * ncols + cc;
+                if (!msk[ji]) continue;
+                const float v = src[ji];
+                if (!std::isfinite(v) || meta.is_nodata(v)) continue;
+                vals.push_back(v);
+            }
+
+            if (vals.size() < 4) continue;
+
+            const double N = static_cast<double>(vals.size());
+            double sum = 0.0, sum2 = 0.0;
+            for (float v : vals)
+            {
+                sum  += v;
+                sum2 += static_cast<double>(v) * v;
+            }
+            const double mu_total  = sum / N;
+            const double var_total = sum2 / N - mu_total * mu_total;
+
+            if (var_total < 1e-10)
+            {
+                out[ci]  = 0.0f;
+                omsk[ci] = uint8_t{1};
+                continue;
+            }
+
+            std::sort(vals.begin(), vals.end());
+
+            double best_between = 0.0;
+            double sum1 = 0.0;
+            const std::size_t n = vals.size();
+            for (std::size_t k = 1; k < n; ++k)
+            {
+                sum1          += vals[k - 1];
+                const double w1  = static_cast<double>(k) / N;
+                const double w2  = 1.0 - w1;
+                const double mu1 = sum1 / static_cast<double>(k);
+                const double mu2 = (sum - sum1) / static_cast<double>(n - k);
+                const double bw  = w1 * w2 * (mu1 - mu2) * (mu1 - mu2);
+                if (bw > best_between) best_between = bw;
+            }
+
+            out[ci]  = static_cast<float>(best_between / var_total);
+            omsk[ci] = uint8_t{1};
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out), std::move(omsk), meta);
+}
+
 // Combine two binary flat masks with AND or OR logic.
 static lsdtt_raster_cpu combine_masks(
     const lsdtt_raster_cpu& a,
@@ -234,11 +331,9 @@ flat_surface_result find_flat_surfaces(
     // -------------------------------------------------------------------------
     // Validate
     // -------------------------------------------------------------------------
-    if (!request.use_madk2 && !request.use_residual_iqr &&
-        !request.use_nvd  && !request.use_relief)
-        throw std::invalid_argument(
-            "lsdtt::find_flat_surfaces: at least one masking metric must be enabled"
-        );
+    // Relief is always enabled; at least one of the optional metrics is not
+    // required — relief alone is sufficient.  Validate optional-metric params
+    // only when they are actually requested.
 
     const lsdtt_raster_meta& meta = dem.get_meta();
     if (!meta.is_valid())
@@ -425,8 +520,9 @@ flat_surface_result find_flat_surfaces(
     }
 
     // -------------------------------------------------------------------------
-    // Diagnostic rasters: local relief
+    // Local relief (always computed and used)
     // -------------------------------------------------------------------------
+    check_pct(request.relief_threshold_percentile, "relief_threshold_percentile");
     {
         result.relief = moving_window_local_relief(
             dem, relief_radius, window_shape::square);
@@ -477,11 +573,8 @@ flat_surface_result find_flat_surfaces(
             std::cout << "  NVD threshold:         " << test_nvd_threshold << "\n";
         }
 
-        if (request.use_relief)
-        {
-            test_relief_threshold = max_within_mask(result.relief, test_mask);
-            std::cout << "  Relief threshold:      " << test_relief_threshold << "\n";
-        }
+        test_relief_threshold = max_within_mask(result.relief, test_mask);
+        std::cout << "  Relief threshold:      " << test_relief_threshold << "\n";
     }
 
     // -------------------------------------------------------------------------
@@ -520,97 +613,259 @@ flat_surface_result find_flat_surfaces(
                 result.nvd_s3, request.nvd_threshold_percentile);
     }
 
-    if (request.use_relief)
+    // -------------------------------------------------------------------------
+    // Threshold: relief (always) + optional metrics
+    // Capture relief_threshold_value for use in riser removal.
+    // -------------------------------------------------------------------------
+    float relief_threshold_value;
     {
-        check_pct(request.relief_threshold_percentile,
-                  "relief_threshold_percentile");
         if (use_test_thresholds &&
             test_relief_threshold > -std::numeric_limits<float>::max())
-            result.relief_flat_mask = threshold_at_value(
-                result.relief, test_relief_threshold);
+        {
+            relief_threshold_value = test_relief_threshold;
+        }
         else
-            result.relief_flat_mask = threshold_at_percentile(
-                result.relief, request.relief_threshold_percentile);
+        {
+            std::vector<float> vals = collect_valid_values(result.relief);
+            relief_threshold_value = vals.empty() ? 0.0f :
+                static_cast<float>(compute_percentile<float>(
+                    vals, request.relief_threshold_percentile));
+        }
+        result.relief_flat_mask = threshold_at_value(
+            result.relief, relief_threshold_value);
+    }
+
+    if (request.use_madk2)
+    {
+        if (use_test_thresholds &&
+            test_madk2_threshold > -std::numeric_limits<float>::max())
+            result.madk2_flat_mask = threshold_at_value(
+                result.madk2_roughness, test_madk2_threshold);
+        else
+            result.madk2_flat_mask = threshold_at_percentile(
+                result.madk2_roughness, request.madk2_threshold_percentile);
+    }
+
+    if (request.use_residual_iqr)
+    {
+        if (use_test_thresholds &&
+            test_iqr_threshold > -std::numeric_limits<float>::max())
+            result.iqr_flat_mask = threshold_at_value(
+                result.iqr_texture, test_iqr_threshold);
+        else
+            result.iqr_flat_mask = threshold_at_percentile(
+                result.iqr_texture, request.iqr_threshold_percentile);
+    }
+
+    if (request.use_nvd)
+    {
+        if (use_test_thresholds &&
+            test_nvd_threshold > -std::numeric_limits<float>::max())
+            result.nvd_flat_mask = threshold_at_value(
+                result.nvd_s3, test_nvd_threshold);
+        else
+            result.nvd_flat_mask = threshold_at_percentile(
+                result.nvd_s3, request.nvd_threshold_percentile);
     }
 
     // -------------------------------------------------------------------------
-    // Combine masks
+    // Combine masks (relief always included)
     // -------------------------------------------------------------------------
-    lsdtt_raster_cpu combined;
-    bool initialised = false;
-
-    auto fold_in = [&](const lsdtt_raster_cpu& mask)
     {
-        if (!initialised) { combined = mask; initialised = true; }
-        else combined = combine_masks(combined, mask, request.require_all_metrics_pass);
-    };
-
-    if (request.use_madk2)        fold_in(result.madk2_flat_mask);
-    if (request.use_residual_iqr) fold_in(result.iqr_flat_mask);
-    if (request.use_nvd)          fold_in(result.nvd_flat_mask);
-    if (request.use_relief)       fold_in(result.relief_flat_mask);
-
-    result.combined_flat_mask = std::move(combined);
+        lsdtt_raster_cpu combined = result.relief_flat_mask;
+        if (request.use_madk2)
+            combined = combine_masks(combined, result.madk2_flat_mask,
+                                     request.require_all_metrics_pass);
+        if (request.use_residual_iqr)
+            combined = combine_masks(combined, result.iqr_flat_mask,
+                                     request.require_all_metrics_pass);
+        if (request.use_nvd)
+            combined = combine_masks(combined, result.nvd_flat_mask,
+                                     request.require_all_metrics_pass);
+        result.combined_flat_mask = std::move(combined);
+    }
 
     // -------------------------------------------------------------------------
-    // Optional directional closing of the non-flat mask
+    // Optional riser removal
     //
-    // Invert combined_flat_mask → non_flat (1 = not flat).
-    // Close gaps in curvilinear non-flat corridors with oriented line SEs.
-    // Invert back → healed_flat_mask.
+    // 1. Temporarily label the combined mask.
+    // 2. Fit a plane to each label.
+    // 3. Build a per-pixel residual raster (dem - plane).
+    // 4. Run the relief window on the residuals.
+    // 5. Remove pixels whose residual relief exceeds
+    //    riser_residual_relief_fraction × relief_threshold_value.
+    // -------------------------------------------------------------------------
+    if (request.remove_risers)
+    {
+        const int   nrows = meta.n_rows;
+        const int   ncols = meta.n_cols;
+        const double cs   = meta.cell_size;
+        const std::size_t npix =
+            static_cast<std::size_t>(nrows) * ncols;
+
+        // Label before riser removal (stored in result for output)
+        result.labelled_flat_mask_pre_riser = label_binary_components_by_size(
+            result.combined_flat_mask,
+            std::max(1, request.min_component_pixels)
+        );
+
+        // η² bimodality on raw DEM elevations (larger window, riser-scale)
+        std::cout << "  Computing η² bimodality (radius="
+                  << request.riser_window_radius_metres << " m)...\n";
+        result.riser_eta2 = compute_eta2_bimodality(
+            dem, request.riser_window_radius_metres);
+
+        // Temporary labels for plane fitting (same as pre-riser labels)
+        const lsdtt_raster_cpu& temp_labels = result.labelled_flat_mask_pre_riser;
+
+        // Plane fits
+        plane_analysis_request pa_req;
+        pa_req.min_pixels_for_analysis = request.riser_plane_min_pixels;
+        const plane_analysis_result pa =
+            analyse_flat_surface_planes(dem, temp_labels, pa_req);
+
+        // Build residual raster
+        const std::vector<float>&   dem_d  = dem.get_data();
+        const std::vector<uint8_t>& dem_m  = dem.get_mask();
+        const std::vector<float>&   lbl_d  = temp_labels.get_data();
+        const std::vector<uint8_t>& lbl_m  = temp_labels.get_mask();
+
+        std::vector<float>   resid_d(npix,
+            static_cast<float>(meta.no_data_value));
+        std::vector<uint8_t> resid_m(npix, uint8_t{0});
+
+        for (int r = 0; r < nrows; ++r)
+        {
+            for (int c = 0; c < ncols; ++c)
+            {
+                const std::size_t i =
+                    static_cast<std::size_t>(r) * ncols + c;
+                if (!dem_m[i] || !lbl_m[i]) continue;
+                const float lf = lbl_d[i];
+                if (lf < 0.5f) continue;   // background
+
+                const auto lbl = static_cast<std::size_t>(
+                    std::round(static_cast<double>(lf)));
+                if (lbl >= pa.plane_fits.size()) continue;
+                const label_plane_fit& pf = pa.plane_fits[lbl];
+                if (!pf.valid) continue;
+
+                const double x_rel = (c + 0.5) * cs;
+                const double y_rel = (nrows - r - 0.5) * cs;
+                resid_d[i] = dem_d[i] -
+                    static_cast<float>(pf.a * x_rel + pf.b * y_rel + pf.c);
+                resid_m[i] = uint8_t{1};
+            }
+        }
+
+        lsdtt_raster_cpu residuals(
+            std::move(resid_d), std::move(resid_m), meta);
+
+        // Relief on residuals (reuse relief_window_pixels)
+        const lsdtt_raster_cpu resid_relief = moving_window_local_relief(
+            residuals, relief_radius, window_shape::square);
+
+        // Store residual relief masked to original flat pixels
+        {
+            const std::vector<float>&   rr_d   = resid_relief.get_data();
+            const std::vector<uint8_t>& rr_m   = resid_relief.get_mask();
+            const std::vector<float>&   cm_d0  = result.combined_flat_mask.get_data();
+            std::vector<float>   mrd(npix, static_cast<float>(meta.no_data_value));
+            std::vector<uint8_t> mrm(npix, uint8_t{0});
+            for (std::size_t i = 0; i < npix; ++i)
+            {
+                if (!rr_m[i] || cm_d0[i] < 0.5f) continue;
+                mrd[i] = rr_d[i];
+                mrm[i] = uint8_t{1};
+            }
+            result.riser_residual_relief = lsdtt_raster_cpu(
+                std::move(mrd), std::move(mrm), meta);
+        }
+
+        // Remove riser pixels (high residual relief AND high η²)
+        const float riser_threshold =
+            request.riser_residual_relief_fraction * relief_threshold_value;
+        const float eta2_thresh = static_cast<float>(request.riser_eta2_threshold);
+
+        std::cout << "Riser removal threshold (residual relief): "
+                  << riser_threshold << " m\n";
+        std::cout << "Riser removal threshold (η²): "
+                  << eta2_thresh << "\n";
+
+        const std::vector<float>&   rr_d  = resid_relief.get_data();
+        const std::vector<uint8_t>& rr_m  = resid_relief.get_mask();
+        const std::vector<float>&   et_d  = result.riser_eta2.get_data();
+        const std::vector<uint8_t>& et_m  = result.riser_eta2.get_mask();
+
+        std::vector<float>   cm_d = result.combined_flat_mask.get_data();
+        std::vector<uint8_t> cm_m = result.combined_flat_mask.get_mask();
+
+        std::size_t n_removed = 0;
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            if (!cm_m[i] || cm_d[i] < 0.5f) continue;
+            if (!rr_m[i]) continue;  // no valid residual — keep pixel
+            // Must exceed BOTH thresholds to be flagged as a riser
+            const bool high_relief = rr_d[i] > riser_threshold;
+            const bool bimodal     = et_m[i] && et_d[i] > eta2_thresh;
+            if (high_relief && bimodal)
+            {
+                cm_d[i] = 0.0f;
+                ++n_removed;
+            }
+        }
+
+        std::cout << "  Removed " << n_removed << " riser pixel(s)\n";
+
+        result.combined_flat_mask = lsdtt_raster_cpu(
+            std::move(cm_d), std::move(cm_m), meta);
+    }
+
+    // -------------------------------------------------------------------------
+    // Optional directional closing (applied after riser removal)
     // -------------------------------------------------------------------------
     const lsdtt_raster_cpu* mask_for_labelling = &result.combined_flat_mask;
 
     if (request.directional_close_line_length_pixels >= 3)
     {
-        // Build the non-flat binary mask (invert combined_flat_mask).
+        const std::vector<float>&   cf_d = result.combined_flat_mask.get_data();
+        const std::vector<uint8_t>& cf_m = result.combined_flat_mask.get_mask();
+        const std::size_t npix = cf_d.size();
+
+        std::vector<float>   nf_d(npix, 0.0f);
+        std::vector<uint8_t> nf_m(npix, uint8_t{0});
+        for (std::size_t i = 0; i < npix; ++i)
         {
-            const std::vector<float>&   cf_data = result.combined_flat_mask.get_data();
-            const std::vector<uint8_t>& cf_mask = result.combined_flat_mask.get_mask();
-            const std::size_t npix = cf_data.size();
-
-            std::vector<float>   nf_data(npix, 0.0f);
-            std::vector<uint8_t> nf_mask(npix, uint8_t{0});
-
-            for (std::size_t i = 0; i < npix; ++i)
-            {
-                if (cf_mask[i] == 0) continue;
-                nf_mask[i] = uint8_t{1};
-                nf_data[i] = (cf_data[i] > 0.5f) ? 0.0f : 1.0f;   // invert
-            }
-
-            lsdtt_raster_cpu non_flat(std::move(nf_data), std::move(nf_mask), meta);
-
-            // Close gaps in the non-flat mask.
-            const lsdtt_raster_cpu closed_non_flat = binary_directional_closing(
-                non_flat,
-                request.directional_close_line_length_pixels,
-                std::max(1, request.directional_close_n_angles)
-            );
-
-            // Invert back → healed flat mask.
-            const std::vector<float>&   cn_data = closed_non_flat.get_data();
-            const std::vector<uint8_t>& cn_mask = closed_non_flat.get_mask();
-
-            std::vector<float>   h_data(npix, 0.0f);
-            std::vector<uint8_t> h_mask(npix, uint8_t{0});
-
-            for (std::size_t i = 0; i < npix; ++i)
-            {
-                if (cn_mask[i] == 0) continue;
-                h_mask[i] = uint8_t{1};
-                h_data[i] = (cn_data[i] > 0.5f) ? 0.0f : 1.0f;    // invert
-            }
-
-            result.healed_flat_mask = lsdtt_raster_cpu(
-                std::move(h_data), std::move(h_mask), meta);
+            if (!cf_m[i]) continue;
+            nf_m[i] = uint8_t{1};
+            nf_d[i] = (cf_d[i] > 0.5f) ? 0.0f : 1.0f;
         }
 
+        const lsdtt_raster_cpu closed_non_flat = binary_directional_closing(
+            lsdtt_raster_cpu(std::move(nf_d), std::move(nf_m), meta),
+            request.directional_close_line_length_pixels,
+            std::max(1, request.directional_close_n_angles)
+        );
+
+        const std::vector<float>&   cn_d = closed_non_flat.get_data();
+        const std::vector<uint8_t>& cn_m = closed_non_flat.get_mask();
+
+        std::vector<float>   h_d(cf_d.size(), 0.0f);
+        std::vector<uint8_t> h_m(cf_d.size(), uint8_t{0});
+        for (std::size_t i = 0; i < cf_d.size(); ++i)
+        {
+            if (!cn_m[i]) continue;
+            h_m[i] = uint8_t{1};
+            h_d[i] = (cn_d[i] > 0.5f) ? 0.0f : 1.0f;
+        }
+
+        result.healed_flat_mask = lsdtt_raster_cpu(
+            std::move(h_d), std::move(h_m), meta);
         mask_for_labelling = &result.healed_flat_mask;
     }
 
     // -------------------------------------------------------------------------
-    // Label connected components
+    // Final labelling
     // -------------------------------------------------------------------------
     result.labelled_flat_mask = label_binary_components_by_size(
         *mask_for_labelling,
