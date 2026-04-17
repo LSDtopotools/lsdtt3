@@ -39,10 +39,14 @@
 
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../core/lsdtt_flow_base.hpp"
+#include "../core/lsdtt_junction_network_base.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
+#include "../core/lsdtt_raster_result.hpp"
 #include "../core/lsdtt_types.hpp"
 
 namespace lsdtt {
@@ -122,6 +126,64 @@ swath_distances compute_swath_distances(
     const lsdtt_raster_cpu&      reference_raster,
     const std::vector<lsdtt_xy>& axis_points,
     int                          n_threads = 0
+);
+
+// =============================================================================
+// flat_channel_connection_result
+//
+// Output of connect_flat_surfaces_to_channels().
+// =============================================================================
+struct flat_channel_connection_result
+{
+    // source_id for every channel pixel (indexed by flat pixel index).
+    //   0 = the source (channel head) with the longest flow-path distance
+    //       from its outlet — i.e. the main-stem head.
+    //   1 = next longest, etc.  Ordering is global across all basins.
+    //  -1 for non-channel pixels.
+    // Size = n_rows * n_cols of the raster.
+    std::vector<std::int32_t> channel_source_id;
+
+    // For every valid pixel: source_id of the nearest channel pixel
+    // (Chebyshev distance, ties broken by lowest source_id).
+    // -1 (nodata) for pixels with no reachable channel.
+    lsdtt_raster_result nearest_source_id;
+
+    // label_source_id[label] = the source_id this flat surface connects to.
+    // label 0 = background (always -1).
+    // -1 if no channel pixel was reachable.
+    // Sized to max_label + 1.
+    std::vector<std::int32_t> label_source_id;
+
+    // Total number of ordered sources (= source_flats.size()).
+    std::int32_t n_sources = 0;
+};
+
+// =============================================================================
+// connect_flat_surfaces_to_channels
+//
+// Connects each labelled flat surface to the dominant channel source.
+//
+// Algorithm:
+//   1. Rank source_flats by flow-path distance from outlet (longest → source 0).
+//   2. Propagate source IDs downstream through channel pixels; at confluences
+//      the lower (= longer-path) source_id wins.
+//   3. Labeled 8-connected BFS from all channel pixels assigns every valid
+//      non-channel pixel to the nearest channel's source_id.  Ties at equal
+//      Chebyshev distance are broken in favour of the lower source_id.
+//   4. For each flat-surface label, take min(source_id) over all its pixels.
+//
+// Parameters:
+//   labelled_flat_mask — UInt32 raster stored as float; 0 = background
+//   jnet               — junction network built from source_flats
+//   flow               — D8 flow object for the same DEM
+//   source_flats       — channel-head flat indices (from get_sources_index_threshold)
+// =============================================================================
+flat_channel_connection_result connect_flat_surfaces_to_channels(
+    const lsdtt_raster_cpu&            labelled_flat_mask,
+    const lsdtt_junction_network_base& jnet,
+    const lsdtt_flow_base&             flow,
+    const std::vector<std::int64_t>&   source_flats,
+    int                                n_threads = 0
 );
 
 } // namespace lsdtt

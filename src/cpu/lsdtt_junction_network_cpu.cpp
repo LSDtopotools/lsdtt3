@@ -1708,7 +1708,8 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
     const std::string& out_path,
     vector_output_format format,
     const std::string& layer_name,
-    bool spatial_index
+    bool spatial_index,
+    const std::vector<std::int32_t>& channel_source_id
 ) const
 {
     require_built();
@@ -1723,6 +1724,19 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
     // We need pixel stream orders for the stream_order attribute.
     lsdtt_array2d<std::int32_t> pixel_stream_order;
     build_pixel_stream_order(pixel_stream_order);
+
+    const bool has_source_id = !channel_source_id.empty();
+
+    // Validate channel_source_id size if provided
+    if (has_source_id &&
+        channel_source_id.size() != static_cast<std::size_t>(meta_.n_rows) *
+                                    static_cast<std::size_t>(meta_.n_cols))
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu::write_channel_network_lines: "
+            "channel_source_id size does not match raster dimensions"
+        );
+    }
 
     // Define the schema
     lsdtt_vector_schema schema;
@@ -1740,6 +1754,11 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
         lsdtt_vector_field_type::double_type,
         lsdtt_vector_field_type::double_type
     };
+    if (has_source_id)
+    {
+        schema.field_names.push_back("source_id");
+        schema.field_types.push_back(lsdtt_vector_field_type::int64_type);
+    }
 
     // Set output format, get a data loader and begin the vector write
     lsdtt_data_loader loader;
@@ -1792,19 +1811,23 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
 
             const double link_length = 0.0;
 
-            loader.write_line(
-                points,
-                {
+            {
+                std::vector<lsdtt_vector_field_value> vals = {
                     static_cast<std::int64_t>(j),
                     static_cast<std::int64_t>(-1),
                     static_cast<std::int64_t>(
                         pixel_stream_order.data()[start_flat]),
                     link_length,
                     static_cast<double>(flow_->s_vector_size(start_flat)) *
-                    flow_->cell_size() *
-                    flow_->cell_size()
-                }
-            );
+                        flow_->cell_size() * flow_->cell_size()
+                };
+                if (has_source_id)
+                    vals.push_back(
+                        static_cast<std::int64_t>(channel_source_id[
+                            static_cast<std::size_t>(start_flat)])
+                    );
+                loader.write_line(points, vals);
+            }
             continue;
         }
 
@@ -1861,19 +1884,23 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
             }
         }
 
-        loader.write_line(
-            points,
-            {
+        {
+            std::vector<lsdtt_vector_field_value> vals = {
                 static_cast<std::int64_t>(j),
                 static_cast<std::int64_t>(rec_junction),
                 static_cast<std::int64_t>(
                     pixel_stream_order.data()[start_flat]),
                 link_length,
                 static_cast<double>(flow_->s_vector_size(start_flat)) *
-                    flow_->cell_size() *
-                    flow_->cell_size()
-            }
-        );
+                    flow_->cell_size() * flow_->cell_size()
+            };
+            if (has_source_id)
+                vals.push_back(
+                    static_cast<std::int64_t>(channel_source_id[
+                        static_cast<std::size_t>(start_flat)])
+                );
+            loader.write_line(points, vals);
+        }
     }
 
     loader.finish_vector_write();

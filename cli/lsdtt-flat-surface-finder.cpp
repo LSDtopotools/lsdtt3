@@ -56,10 +56,14 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_flat_surface_finder.hpp"
 #include "../src/cpu/lsdtt_flat_surface_plane_analysis.hpp"
+#include "../src/cpu/lsdtt_proximity_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 
@@ -434,6 +438,73 @@ int main(int argc, char* argv[])
         "Output: <stem>_merged_labelled_flat_mask.tif"};
 
 
+
+    // --- Channel / river network ---
+    bool_default_map["write_channel_network"] = false;
+    help_map["write_channel_network"] = {"bool","false",
+        "Build and write a D8 channel/junction network.",
+        "Fills the DEM, routes D8 flow, extracts channel heads at "
+        "channel_threshold_contributing_pixels, builds a junction network, "
+        "then writes the requested outputs."};
+
+    bool_default_map["fill_dem_for_flow_routing"] = true;
+    help_map["fill_dem_for_flow_routing"] = {"bool","true",
+        "Fill pits in the DEM before D8 flow routing.",
+        "Recommended unless the DEM is already hydrologically conditioned."};
+
+    float_default_map["fill_min_slope_for_routing"] = 0.0001f;
+    help_map["fill_min_slope_for_routing"] = {"float","0.0001",
+        "Minimum gradient imposed between filled cells during pit filling.",
+        "Only used when fill_dem_for_flow_routing is true."};
+
+    string_default_map["boundary_conditions"] = "oooo";
+    help_map["boundary_conditions"] = {"string","oooo",
+        "D8 flow boundary conditions (north east south west).",
+        "o = open (outlet), n = no-flux. "
+        "oooo = all four edges drain freely (typical DEM tile)."};
+
+    int_default_map["channel_threshold_contributing_pixels"] = 1000;
+    help_map["channel_threshold_contributing_pixels"] = {"int","1000",
+        "Minimum D8 contributing-pixel count to classify a pixel as a channel head.",
+        "Tune to DEM resolution: at 5 m a value of 1000 ~ 0.025 km² catchment."};
+
+    bool_default_map["write_channel_network_lines"] = true;
+    help_map["write_channel_network_lines"] = {"bool","true",
+        "Write channel links as a vector line layer.",
+        "Each feature is one channel link with attributes "
+        "junction_upstream, junction_downstream, stream_order, length, "
+        "drainage_area.  Only written when write_channel_network is true."};
+
+    bool_default_map["write_channel_network_points"] = false;
+    help_map["write_channel_network_points"] = {"bool","false",
+        "Write channel pixels as a vector point layer.",
+        "One point per channel pixel with flat index, row, col, "
+        "stream_order, drainage_area.  Only written when write_channel_network is true."};
+
+    bool_default_map["write_junction_network_points"] = false;
+    help_map["write_junction_network_points"] = {"bool","false",
+        "Write junction locations as a vector point layer.",
+        "One point per junction with junction_number, receiver_junction, "
+        "stream_order.  Only written when write_channel_network is true."};
+
+    string_default_map["channel_network_vector_format"] = "flatgeobuf";
+    help_map["channel_network_vector_format"] = {"string","flatgeobuf",
+        "Vector output format for channel network files.",
+        "flatgeobuf (default, recommended on WSL2) or gpkg."};
+
+    // --- Flat-surface to channel connections ---
+    bool_default_map["connect_flat_surfaces_to_channels"] = false;
+    help_map["connect_flat_surfaces_to_channels"] = {"bool","false",
+        "Connect each labelled flat surface to its dominant channel source.",
+        "Requires write_channel_network = true. "
+        "Each labelled surface is assigned to the channel source with the "
+        "longest flow path from outlet (main stem overrides tributaries). "
+        "Writes a label-to-source CSV and optionally source-id rasters."};
+
+    bool_default_map["write_nearest_source_id_raster"] = false;
+    help_map["write_nearest_source_id_raster"] = {"bool","false",
+        "Write a raster of the nearest channel source ID for every valid pixel.",
+        "Shows the source-ID Voronoi tessellation of the landscape."};
 
     // --- Output toggles ---
     bool_default_map["write_texture_rasters"] = false;
@@ -972,6 +1043,185 @@ int main(int argc, char* argv[])
                  "slope_magnitude","aspect_degrees",
                  "split_confidence","merge_group"},
                 rows);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Channel / river network  +  flat-surface → channel connections
+    //
+    // flow, source_flats, and jnet are kept in outer scope so the connection
+    // step can use them even when write_channel_network writes no files.
+    // -------------------------------------------------------------------------
+    const bool need_flow = bf["write_channel_network"] ||
+                           bf["connect_flat_surfaces_to_channels"];
+
+    std::unique_ptr<lsdtt::lsdtt_flow_base>             ch_flow;
+    std::vector<std::int64_t>                            ch_sources;
+    std::unique_ptr<lsdtt::lsdtt_junction_network_base>  ch_jnet;
+
+    if (need_flow)
+    {
+        std::cout << "\n--- D8 flow routing for channel network ---\n";
+        try
+        {
+            lsdtt::lsdtt_raster_cpu routing_dem = dem;
+            if (bf["fill_dem_for_flow_routing"])
+            {
+                std::cout << "Filling DEM for flow routing...\n";
+                routing_dem = lsdtt::fill_pits(
+                    dem, ff["fill_min_slope_for_routing"], ip["n_threads"]);
+            }
+
+            lsdtt::lsdtt_flowinfo_options fi_opts;
+            fi_opts.boundary_conditions       = sf["boundary_conditions"];
+            fi_opts.interior_nodata_is_outlet = true;
+            fi_opts.require_acyclic_graph     = true;
+            fi_opts.build_topological_order   = true;
+            fi_opts.build_s_vector            = true;
+            fi_opts.n_threads                 = ip["n_threads"];
+
+            ch_flow = lsdtt::make_flow_base(
+                routing_dem.get_data_array(),
+                routing_dem.get_mask_array(),
+                routing_dem.get_meta(),
+                fi_opts
+            );
+
+            const int thresh = ip["channel_threshold_contributing_pixels"];
+            std::cout << "Extracting channel heads (threshold = "
+                      << thresh << " pixels)...\n";
+            ch_sources = ch_flow->get_sources_index_threshold(thresh);
+            std::cout << "  " << ch_sources.size() << " channel head(s) found.\n";
+
+            if (ch_sources.empty())
+            {
+                std::cerr << "Warning: no channel heads found — "
+                             "increase channel_threshold_contributing_pixels.\n";
+            }
+            else
+            {
+                std::cout << "Building junction network...\n";
+                ch_jnet = lsdtt::make_junction_network_base(*ch_flow, ch_sources);
+                std::cout << "  " << ch_jnet->n_junctions() << " junction(s)  "
+                          << ch_jnet->n_channel_cells() << " channel cell(s)\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: channel flow routing failed: "
+                      << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Flat-surface → channel connections
+    // Computed before writing the channel network lines so that source_id can
+    // be embedded as an attribute in each line feature.
+    // -------------------------------------------------------------------------
+    lsdtt::flat_channel_connection_result conn;
+    bool conn_computed = false;
+
+    if (bf["connect_flat_surfaces_to_channels"])
+    {
+        std::cout << "\n--- Flat-surface to channel connections ---\n";
+
+        if (!ch_flow || !ch_jnet || ch_sources.empty())
+        {
+            std::cerr << "Warning: channel network not available — "
+                         "skipping flat-surface connection.\n";
+        }
+        else
+        {
+            try
+            {
+                conn = lsdtt::connect_flat_surfaces_to_channels(
+                    result.labelled_flat_mask,
+                    *ch_jnet,
+                    *ch_flow,
+                    ch_sources,
+                    ip["n_threads"]
+                );
+                conn_computed = true;
+
+                std::cout << "  " << conn.n_sources << " ordered source(s)\n";
+
+                if (bf["write_nearest_source_id_raster"])
+                {
+                    const std::string p = stem + "_nearest_source_id.tif";
+                    std::cout << "Writing nearest source ID raster: " << p << "\n";
+                    loader.write_full(conn.nearest_source_id, p, out_format);
+                }
+
+                // Label-to-source CSV
+                {
+                    const std::string p = stem + "_label_source_connections.csv";
+                    std::cout << "Writing label-source connections: " << p << "\n";
+
+                    std::vector<std::vector<std::string>> rows;
+                    rows.reserve(conn.label_source_id.size());
+                    for (std::size_t lbl = 1; lbl < conn.label_source_id.size(); ++lbl)
+                    {
+                        rows.push_back({
+                            std::to_string(lbl),
+                            std::to_string(conn.label_source_id[lbl])
+                        });
+                    }
+                    loader.write_csv(p, {"label", "source_id"}, rows);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: flat-surface connection failed: "
+                          << e.what() << "\n";
+            }
+        }
+    }
+
+    if (bf["write_channel_network"] && ch_jnet)
+    {
+        std::cout << "\n--- Writing channel network ---\n";
+        try
+        {
+            const lsdtt::vector_output_format vec_fmt =
+                lsdtt::resolve_vector_output_format(
+                    sf["channel_network_vector_format"]);
+            const std::string vec_ext = lsdtt::output_extension(vec_fmt);
+
+            if (bf["write_channel_network_lines"])
+            {
+                const std::string p = stem + "_channel_network_lines" + vec_ext;
+                std::cout << "Writing: " << p << "\n";
+                ch_jnet->write_channel_network_lines(
+                    p, vec_fmt,
+                    "channel_network_lines", true,
+                    conn_computed ? conn.channel_source_id
+                                  : std::vector<std::int32_t>{}
+                );
+            }
+
+            const lsdtt::point_output_format pt_fmt =
+                (vec_fmt == lsdtt::vector_output_format::gpkg)
+                ? lsdtt::point_output_format::gpkg
+                : lsdtt::point_output_format::flatgeobuf;
+
+            if (bf["write_channel_network_points"])
+            {
+                const std::string p = stem + "_channel_network_points" + vec_ext;
+                std::cout << "Writing: " << p << "\n";
+                ch_jnet->write_channel_network_points(p, pt_fmt);
+            }
+
+            if (bf["write_junction_network_points"])
+            {
+                const std::string p = stem + "_junction_network_points" + vec_ext;
+                std::cout << "Writing: " << p << "\n";
+                ch_jnet->write_junction_network_points(p, pt_fmt);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: writing channel network failed: "
+                      << e.what() << "\n";
         }
     }
 

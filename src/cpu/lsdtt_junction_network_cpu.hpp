@@ -251,7 +251,8 @@ public:
         const std::string& out_path,
         vector_output_format format,
         const std::string& layer_name = "channel_network_lines",
-        bool spatial_index = true
+        bool spatial_index = true,
+        const std::vector<std::int32_t>& channel_source_id = {}
     ) const override;
 
     // -------------------------------------------------------------------------
