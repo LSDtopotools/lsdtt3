@@ -340,8 +340,8 @@ lsdtt_raster_cpu mask_to_nodata_using_threshold(
 
             const float v = out(row, col);
             const bool should_mask = is_below_threshold_nodata
-                                   ? (v < threshold)
-                                   : (v >= threshold);
+                                   ? (v <= threshold)
+                                   : (v > threshold);
             if (should_mask)
             {
                 out(row, col)      = nodata;

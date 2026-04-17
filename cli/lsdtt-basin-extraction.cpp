@@ -283,8 +283,8 @@ int main(int argc, char* argv[])
         "(EPSG:4326) decimal degrees."};
 
     // --- Basin outlet snapping ---
-    string_default_map["basin_outlet_snapping_method"] = "none";
-    help_map["basin_outlet_snapping_method"] = {"string","none",
+    string_default_map["basin_outlet_snapping_method"] = "downstream";
+    help_map["basin_outlet_snapping_method"] = {"string","downstream",
         "Optional snapping of basin outlet CSV points to pixels that exceed "
         "a contributing-pixel threshold.",
         "Allowed values: none, expanding_square, downstream. "

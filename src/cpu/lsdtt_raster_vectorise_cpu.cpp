@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <stdexcept>
 #include <vector>
@@ -88,10 +89,11 @@ namespace lsdtt {
 // =============================================================================
 
 void trace_labelled_polygons(
-    const lsdtt_raster_cpu&        labelled,
-    lsdtt_data_loader&             loader,
-    const std::string&             out_path,
-    const lsdtt_vectorise_options& options
+    const lsdtt_raster_cpu&          labelled,
+    lsdtt_data_loader&               loader,
+    const std::string&               out_path,
+    const lsdtt_vectorise_options&   options,
+    const std::vector<std::int32_t>& label_source_id
 )
 {
     const lsdtt_raster_meta& meta = labelled.get_meta();
@@ -139,6 +141,8 @@ void trace_labelled_polygons(
     // -------------------------------------------------------------------------
     // Open vector output
     // -------------------------------------------------------------------------
+    const bool has_source_id = !label_source_id.empty();
+
     lsdtt_vector_schema schema;
     schema.field_names = { "label_id", "pixel_count", "area_m2" };
     schema.field_types = {
@@ -146,6 +150,11 @@ void trace_labelled_polygons(
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::double_type
     };
+    if (has_source_id)
+    {
+        schema.field_names.push_back("source_id");
+        schema.field_types.push_back(lsdtt_vector_field_type::int64_type);
+    }
 
     loader.begin_vector_write(
         out_path,
@@ -239,10 +248,18 @@ void trace_labelled_polygons(
         const auto pixel_count = static_cast<std::int64_t>(pixels.size());
         const double area_m2   = static_cast<double>(pixel_count) * cs * cs;
 
-        loader.write_polygon(
-            ring,
-            { label, pixel_count, area_m2 }
-        );
+        std::vector<lsdtt_vector_field_value> attrs = { label, pixel_count, area_m2 };
+        if (has_source_id)
+        {
+            const std::size_t lbl_idx = static_cast<std::size_t>(label);
+            const std::int64_t src_id =
+                (lbl_idx < label_source_id.size())
+                ? static_cast<std::int64_t>(label_source_id[lbl_idx])
+                : std::int64_t{-1};
+            attrs.push_back(src_id);
+        }
+
+        loader.write_polygon(ring, attrs);
     }
 
     loader.finish_vector_write();

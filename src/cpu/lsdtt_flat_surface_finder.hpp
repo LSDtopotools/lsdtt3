@@ -182,13 +182,6 @@ struct flat_surface_request
     int          cdf_n_bins                 = 100;
 
     // -------------------------------------------------------------------------
-    // Total curvature (Laplacian = z_xx + z_yy, square window, units 1/m)
-    // window_pixels is the full window side length; must be odd and >= 3.
-    // radius = (window_pixels - 1) / 2 pixels.
-    // -------------------------------------------------------------------------
-    int          curvature_window_pixels    = 3;
-
-    // -------------------------------------------------------------------------
     // Local relief (max - min over a square window)
     // window_pixels is the full window side length; must be odd and >= 3.
     // Relief is also used as a masking metric (use_relief = true by default).
@@ -198,6 +191,20 @@ struct flat_surface_request
     double       relief_threshold_percentile = 10.0;   // below this = flat
 
     int          n_threads                  = 0;
+
+    // -------------------------------------------------------------------------
+    // Test surface vector file (optional)
+    //
+    // Path to a polygon vector file (GeoPackage or FlatGeoBuf) that delineates
+    // a known flat surface (e.g. a mapped terrace or floodplain).
+    //
+    // When set, the maximum value of each enabled metric within the polygon
+    // pixels replaces the percentile threshold for that metric.  This anchors
+    // the classification to observed values on a ground-truth surface.
+    //
+    // Leave empty (default) to use the percentile thresholds.
+    // -------------------------------------------------------------------------
+    std::string  test_surface_vector_file;
 };
 
 // =============================================================================
@@ -251,7 +258,6 @@ struct flat_surface_result
     // -------------------------------------------------------------------------
     // Diagnostic rasters (always computed, written when write_texture_rasters)
     // -------------------------------------------------------------------------
-    lsdtt_raster_cpu curvature;    // total curvature (Laplacian, 1/m)
     lsdtt_raster_cpu relief;       // local relief (m)
 
     // -------------------------------------------------------------------------
@@ -261,7 +267,6 @@ struct flat_surface_result
     std::vector<qq_bin> madk2_qq;
     std::vector<qq_bin> iqr_qq;
     std::vector<qq_bin> nvd_qq;
-    std::vector<qq_bin> curvature_qq;
     std::vector<qq_bin> relief_qq;
 
     // -------------------------------------------------------------------------
@@ -273,7 +278,6 @@ struct flat_surface_result
     lsdtt_smoothed_cdf madk2_smoothed_cdf;
     lsdtt_smoothed_cdf iqr_smoothed_cdf;
     lsdtt_smoothed_cdf nvd_smoothed_cdf;
-    lsdtt_smoothed_cdf curvature_smoothed_cdf;
     lsdtt_smoothed_cdf relief_smoothed_cdf;
 
     // -------------------------------------------------------------------------
@@ -285,7 +289,6 @@ struct flat_surface_result
     std::vector<lsdtt_distribution_fit> madk2_dist_fits;
     std::vector<lsdtt_distribution_fit> iqr_dist_fits;
     std::vector<lsdtt_distribution_fit> nvd_dist_fits;
-    std::vector<lsdtt_distribution_fit> curvature_dist_fits;
     std::vector<lsdtt_distribution_fit> relief_dist_fits;
 };
 

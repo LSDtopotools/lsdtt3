@@ -186,6 +186,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_basin_outline_cpu.cpp
     src/cpu/lsdtt_flat_surface_finder.cpp
     src/cpu/lsdtt_flat_surface_plane_analysis.cpp
+    src/cpu/lsdtt_vector_rasterise_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp
     src/cpu/lsdtt_swath_cpu.cpp
     src/cpu/lsdtt_streamlines_cpu.cpp

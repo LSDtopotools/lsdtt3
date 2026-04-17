@@ -44,6 +44,8 @@
 //   label_id     int64    The integer label value
 //   pixel_count  int64    Number of raster pixels carrying this label
 //   area_m2      double   Pixel count × cell_size² in projected map units
+//   source_id    int64    (optional) channel source ID from label_source_id[label]
+//                         Written only when label_source_id is non-empty.
 //
 // Output format
 // -------------
@@ -53,7 +55,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
 #include "../core/lsdtt_data_loader.hpp"
@@ -90,11 +94,15 @@ struct lsdtt_vectorise_options
 // Throws:
 //   std::runtime_error if the raster metadata is invalid or not projected.
 // -----------------------------------------------------------------------------
+// label_source_id (optional) — if non-empty, element [L] is the channel source
+// ID for flat-surface label L.  Size must be >= max_label + 1.  Pass an empty
+// vector (default) to omit the source_id attribute.
 void trace_labelled_polygons(
-    const lsdtt_raster_cpu&        labelled,
-    lsdtt_data_loader&             loader,
-    const std::string&             out_path,
-    const lsdtt_vectorise_options& options = {}
+    const lsdtt_raster_cpu&              labelled,
+    lsdtt_data_loader&                   loader,
+    const std::string&                   out_path,
+    const lsdtt_vectorise_options&       options        = {},
+    const std::vector<std::int32_t>&     label_source_id = {}
 );
 
 } // namespace lsdtt

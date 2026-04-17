@@ -11,8 +11,9 @@
 #include "lsdtt_raster_algebra.hpp"              // raster_subtract
 #include "lsdtt_raster_feature_finder_cpu.hpp"   // label_binary_components_by_size
 #include "lsdtt_raster_spectral_cpu.hpp"         // wavelet_quadratic_fit, fftw2D_highpass_filter
-#include "lsdtt_raster_surface_metrics_cpu.hpp"  // moving_window_mean, moving_window_local_relief, moving_window_total_curvature
+#include "lsdtt_raster_surface_metrics_cpu.hpp"  // moving_window_mean, moving_window_local_relief
 #include "lsdtt_surface_texture_cpu.hpp"         // calculate_madk2, moving_window_iqr, compute_nvd
+#include "lsdtt_vector_rasterise_cpu.hpp"            // rasterise_polygons
 
 #include "../utils/lsdtt_distributions.hpp"        // fit_distributions
 #include "../utils/lsdtt_histogram.hpp"           // compute_qq, compute_smoothed_cdf
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 
@@ -142,6 +144,57 @@ static lsdtt_raster_cpu threshold_at_percentile(
     return lsdtt_raster_cpu(std::move(out), std::move(omsk), meta);
 }
 
+// Threshold a texture raster at an absolute value.
+// Returns a binary raster: data=1 where texture <= value, data=0 elsewhere.
+static lsdtt_raster_cpu threshold_at_value(
+    const lsdtt_raster_cpu& texture,
+    float                   value)
+{
+    const lsdtt_raster_meta& meta  = texture.get_meta();
+    const std::vector<float>&   td = texture.get_data();
+    const std::vector<uint8_t>& tm = texture.get_mask();
+    const std::size_t npix         = td.size();
+
+    std::vector<float>   out(npix, 0.0f);
+    std::vector<uint8_t> omsk(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (tm[i] == 0) continue;
+        omsk[i] = uint8_t{1};
+        const float v = td[i];
+        if (std::isfinite(v) && !meta.is_nodata(v) && v <= value)
+            out[i] = 1.0f;
+    }
+
+    return lsdtt_raster_cpu(std::move(out), std::move(omsk), meta);
+}
+
+// Returns the maximum valid value of `raster` within pixels where
+// `binary_mask` data == 1.  Returns -FLT_MAX if no such pixels exist.
+static float max_within_mask(
+    const lsdtt_raster_cpu& raster,
+    const lsdtt_raster_cpu& binary_mask)
+{
+    const lsdtt_raster_meta& meta  = raster.get_meta();
+    const std::vector<float>&   rd = raster.get_data();
+    const std::vector<uint8_t>& rm = raster.get_mask();
+    const std::vector<float>&   md = binary_mask.get_data();
+    const std::size_t npix = rd.size();
+
+    float best = -std::numeric_limits<float>::max();
+    bool  found = false;
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (rm[i] == 0) continue;
+        if (md[i] < 0.5f) continue;  // not inside test polygon
+        const float v = rd[i];
+        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
+        if (v > best) { best = v; found = true; }
+    }
+    return found ? best : -std::numeric_limits<float>::max();
+}
+
 // Combine two binary flat masks with AND or OR logic.
 static lsdtt_raster_cpu combine_masks(
     const lsdtt_raster_cpu& a,
@@ -254,17 +307,11 @@ flat_surface_result find_flat_surfaces(
         throw std::invalid_argument(
             "lsdtt::find_flat_surfaces: cdf_n_bins must be >= 3"
         );
-    if (request.curvature_window_pixels < 3 || request.curvature_window_pixels % 2 == 0)
-        throw std::invalid_argument(
-            "lsdtt::find_flat_surfaces: curvature_window_pixels must be odd and >= 3"
-        );
     if (request.relief_window_pixels < 3 || request.relief_window_pixels % 2 == 0)
         throw std::invalid_argument(
             "lsdtt::find_flat_surfaces: relief_window_pixels must be odd and >= 3"
         );
 
-    const double curv_radius   = window_pixels_to_radius_metres(
-        request.curvature_window_pixels, meta.cell_size);
     const double relief_radius = window_pixels_to_radius_metres(
         request.relief_window_pixels, meta.cell_size);
 
@@ -288,8 +335,6 @@ flat_surface_result find_flat_surfaces(
             result.madk2_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
             result.madk2_dist_fits    = build_dist_fits(vals);
         }
-        result.madk2_flat_mask = threshold_at_percentile(result.madk2_roughness,
-                                                         request.madk2_threshold_percentile);
     }
 
     // -------------------------------------------------------------------------
@@ -297,14 +342,12 @@ flat_surface_result find_flat_surfaces(
     // -------------------------------------------------------------------------
     if (request.use_residual_iqr)
     {
-        // Step 1: compute residuals according to the chosen fitting method
         lsdtt_raster_cpu residuals;
 
         switch (request.iqr_method)
         {
             case iqr_fit_method::fftw_highpass:
             {
-                // fftw2D_highpass_filter returns DEM - lowpass(DEM) directly
                 residuals = fftw2D_highpass_filter(
                     dem,
                     request.iqr_fit_lambda_metres,
@@ -317,8 +360,6 @@ flat_surface_result find_flat_surfaces(
 
             case iqr_fit_method::wavelet_quadratic:
             {
-                // The f coefficient of wavelet_quadratic_fit is the local fitted
-                // surface value at each pixel centre.
                 const poly_fit_coeffs coeffs = wavelet_quadratic_fit(
                     dem,
                     request.iqr_fit_lambda_metres,
@@ -342,7 +383,6 @@ flat_surface_result find_flat_surfaces(
 
         result.iqr_residuals = residuals;
 
-        // Step 2: moving-window IQR of the residuals
         result.iqr_texture = moving_window_iqr(
             residuals,
             request.iqr_window_radius_metres,
@@ -356,8 +396,6 @@ flat_surface_result find_flat_surfaces(
             result.iqr_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
             result.iqr_dist_fits    = build_dist_fits(vals);
         }
-        result.iqr_flat_mask = threshold_at_percentile(result.iqr_texture,
-                                                       request.iqr_threshold_percentile);
     }
 
     // -------------------------------------------------------------------------
@@ -384,21 +422,11 @@ flat_surface_result find_flat_surfaces(
             result.nvd_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
             result.nvd_dist_fits    = build_dist_fits(vals);
         }
-        result.nvd_flat_mask = threshold_at_percentile(result.nvd_s3,
-                                                       request.nvd_threshold_percentile);
     }
 
     // -------------------------------------------------------------------------
-    // Diagnostic rasters: total curvature and local relief
+    // Diagnostic rasters: local relief
     // -------------------------------------------------------------------------
-    {
-        result.curvature = moving_window_total_curvature(
-            dem, curv_radius, window_shape::square);
-        const std::vector<float> vals = collect_valid_values(result.curvature);
-        result.curvature_qq           = build_qq(vals, request.qq_n_bins);
-        result.curvature_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
-        result.curvature_dist_fits    = build_dist_fits(vals);
-    }
     {
         result.relief = moving_window_local_relief(
             dem, relief_radius, window_shape::square);
@@ -406,14 +434,103 @@ flat_surface_result find_flat_surfaces(
         result.relief_qq           = build_qq(vals, request.qq_n_bins);
         result.relief_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
         result.relief_dist_fits    = build_dist_fits(vals);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test surface vector: derive value-based thresholds from a known flat area
+    //
+    // If test_surface_vector_file is set, rasterise the polygon(s) and find the
+    // maximum metric value within those pixels.  This replaces the percentile
+    // threshold with an absolute value threshold so that every pixel that is at
+    // most as rough as the known flat surface is classified as flat.
+    // -------------------------------------------------------------------------
+    float test_madk2_threshold = -std::numeric_limits<float>::max();
+    float test_iqr_threshold   = -std::numeric_limits<float>::max();
+    float test_nvd_threshold   = -std::numeric_limits<float>::max();
+    float test_relief_threshold = -std::numeric_limits<float>::max();
+    bool  use_test_thresholds  = false;
+
+    if (!request.test_surface_vector_file.empty())
+    {
+        const lsdtt_raster_cpu test_mask = rasterise_polygons(
+            dem, request.test_surface_vector_file,
+            polygon_rasterise_rule::any_coverage
+        );
+        use_test_thresholds = true;
+        std::cout << "Test surface thresholds (max metric value within test polygon):\n";
+
+        if (request.use_madk2 && !result.madk2_roughness.get_data().empty())
+        {
+            test_madk2_threshold = max_within_mask(result.madk2_roughness, test_mask);
+            std::cout << "  MADk2 threshold:       " << test_madk2_threshold << "\n";
+        }
+
+        if (request.use_residual_iqr && !result.iqr_texture.get_data().empty())
+        {
+            test_iqr_threshold = max_within_mask(result.iqr_texture, test_mask);
+            std::cout << "  Residual IQR threshold: " << test_iqr_threshold << "\n";
+        }
+
+        if (request.use_nvd && !result.nvd_s3.get_data().empty())
+        {
+            test_nvd_threshold = max_within_mask(result.nvd_s3, test_mask);
+            std::cout << "  NVD threshold:         " << test_nvd_threshold << "\n";
+        }
 
         if (request.use_relief)
         {
-            check_pct(request.relief_threshold_percentile,
-                      "relief_threshold_percentile");
+            test_relief_threshold = max_within_mask(result.relief, test_mask);
+            std::cout << "  Relief threshold:      " << test_relief_threshold << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Threshold each metric
+    // -------------------------------------------------------------------------
+    if (request.use_madk2)
+    {
+        if (use_test_thresholds &&
+            test_madk2_threshold > -std::numeric_limits<float>::max())
+            result.madk2_flat_mask = threshold_at_value(
+                result.madk2_roughness, test_madk2_threshold);
+        else
+            result.madk2_flat_mask = threshold_at_percentile(
+                result.madk2_roughness, request.madk2_threshold_percentile);
+    }
+
+    if (request.use_residual_iqr)
+    {
+        if (use_test_thresholds &&
+            test_iqr_threshold > -std::numeric_limits<float>::max())
+            result.iqr_flat_mask = threshold_at_value(
+                result.iqr_texture, test_iqr_threshold);
+        else
+            result.iqr_flat_mask = threshold_at_percentile(
+                result.iqr_texture, request.iqr_threshold_percentile);
+    }
+
+    if (request.use_nvd)
+    {
+        if (use_test_thresholds &&
+            test_nvd_threshold > -std::numeric_limits<float>::max())
+            result.nvd_flat_mask = threshold_at_value(
+                result.nvd_s3, test_nvd_threshold);
+        else
+            result.nvd_flat_mask = threshold_at_percentile(
+                result.nvd_s3, request.nvd_threshold_percentile);
+    }
+
+    if (request.use_relief)
+    {
+        check_pct(request.relief_threshold_percentile,
+                  "relief_threshold_percentile");
+        if (use_test_thresholds &&
+            test_relief_threshold > -std::numeric_limits<float>::max())
+            result.relief_flat_mask = threshold_at_value(
+                result.relief, test_relief_threshold);
+        else
             result.relief_flat_mask = threshold_at_percentile(
                 result.relief, request.relief_threshold_percentile);
-        }
     }
 
     // -------------------------------------------------------------------------

@@ -64,6 +64,7 @@
 #include "../src/cpu/lsdtt_proximity_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 
@@ -370,11 +371,6 @@ int main(int argc, char* argv[])
         "Increase for finer resolution.  The percentile threshold is readable "
         "directly as the x value where the CDF crosses threshold/100."};
 
-    int_default_map["curvature_window_pixels"] = 3;
-    help_map["curvature_window_pixels"] = {"int","3",
-        "Square window size (pixels) for total curvature (Laplacian) computation.",
-        "Must be odd and >= 3.  3 = 3x3 neighbourhood (standard 5-point stencil)."};
-
     // --- Directional closing ---
     int_default_map["directional_close_line_length_pixels"] = 0;
     help_map["directional_close_line_length_pixels"] = {"int","0",
@@ -506,6 +502,16 @@ int main(int argc, char* argv[])
         "Write a raster of the nearest channel source ID for every valid pixel.",
         "Shows the source-ID Voronoi tessellation of the landscape."};
 
+    // --- Test surface vector ---
+    string_default_map["test_surface_vector_file"] = "";
+    help_map["test_surface_vector_file"] = {"string","",
+        "Path to a polygon vector file (GeoPackage or FlatGeoBuf) that delineates "
+        "a known flat surface (e.g. a mapped terrace or floodplain).",
+        "When set, the maximum value of each enabled metric within the polygon "
+        "pixels replaces the percentile threshold for that metric. "
+        "Rejected if the first layer is not a polygon layer. "
+        "Leave empty (default) to use percentile thresholds."};
+
     // --- Output toggles ---
     bool_default_map["write_texture_rasters"] = false;
     help_map["write_texture_rasters"] = {"bool","false",
@@ -624,11 +630,11 @@ int main(int argc, char* argv[])
     req.min_component_pixels                   = ip["min_component_pixels"];
     req.qq_n_bins                  = ip["qq_n_bins"];
     req.cdf_n_bins                 = ip["cdf_n_bins"];
-    req.curvature_window_pixels      = ip["curvature_window_pixels"];
     req.relief_window_pixels         = ip["relief_window_pixels"];
     req.use_relief                   = bf["use_relief"];
     req.relief_threshold_percentile  = static_cast<double>(ff["relief_threshold_percentile"]);
     req.n_threads                    = ip["n_threads"];
+    req.test_surface_vector_file     = sf["test_surface_vector_file"];
 
     // -------------------------------------------------------------------------
     // Run
@@ -699,12 +705,6 @@ int main(int argc, char* argv[])
         }
 
         // Diagnostic rasters — always computed, written here
-        {
-            const std::string p = stem + "_curvature.tif";
-            std::cout << "Writing total curvature: " << p << "\n";
-            loader.write_full(result.curvature.get_data(),
-                              result.curvature.get_meta(), p, out_format);
-        }
         {
             const std::string p = stem + "_relief.tif";
             std::cout << "Writing local relief: " << p << "\n";
@@ -789,12 +789,6 @@ int main(int argc, char* argv[])
         std::cout << "Writing NVD QQ: " << p << "\n";
         write_qq_csv(loader, p, result.nvd_qq);
     }
-    if (!result.curvature_qq.empty())
-    {
-        const std::string p = stem + "_curvature_qq.csv";
-        std::cout << "Writing curvature QQ: " << p << "\n";
-        write_qq_csv(loader, p, result.curvature_qq);
-    }
     if (!result.relief_qq.empty())
     {
         const std::string p = stem + "_relief_qq.csv";
@@ -825,13 +819,6 @@ int main(int argc, char* argv[])
         write_smoothed_cdf_csv(loader, p,
                                result.nvd_smoothed_cdf, result.nvd_dist_fits);
     }
-    if (!result.curvature_smoothed_cdf.empty())
-    {
-        const std::string p = stem + "_curvature_cdf.csv";
-        std::cout << "Writing curvature empirical CDF: " << p << "\n";
-        write_smoothed_cdf_csv(loader, p,
-                               result.curvature_smoothed_cdf, result.curvature_dist_fits);
-    }
     if (!result.relief_smoothed_cdf.empty())
     {
         const std::string p = stem + "_relief_cdf.csv";
@@ -853,7 +840,6 @@ int main(int argc, char* argv[])
     if (req.use_madk2)        write_dist("madk2",     result.madk2_dist_fits);
     if (req.use_residual_iqr) write_dist("iqr",       result.iqr_dist_fits);
     if (req.use_nvd)          write_dist("nvd",       result.nvd_dist_fits);
-    write_dist("curvature", result.curvature_dist_fits);
     write_dist("relief",    result.relief_dist_fits);
 
     // -------------------------------------------------------------------------
@@ -1167,6 +1153,28 @@ int main(int argc, char* argv[])
                         });
                     }
                     loader.write_csv(p, {"label", "source_id"}, rows);
+                }
+
+                // Flat-surface polygons with source_id attribute
+                {
+                    const lsdtt::vector_output_format vec_fmt =
+                        lsdtt::resolve_vector_output_format(
+                            sf["channel_network_vector_format"]);
+                    const std::string vec_ext = lsdtt::output_extension(vec_fmt);
+                    const std::string p = stem + "_flat_surface_polygons" + vec_ext;
+                    std::cout << "Writing flat surface polygons: " << p << "\n";
+
+                    lsdtt::lsdtt_vectorise_options vopts;
+                    vopts.layer_name = "flat_surface_polygons";
+                    vopts.format     = vec_fmt;
+
+                    lsdtt::trace_labelled_polygons(
+                        result.labelled_flat_mask,
+                        loader,
+                        p,
+                        vopts,
+                        conn.label_source_id
+                    );
                 }
             }
             catch (const std::exception& e)
