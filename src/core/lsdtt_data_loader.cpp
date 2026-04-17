@@ -1418,4 +1418,146 @@ void lsdtt_data_loader::add_cog_overviews(GDALDataset* ds)
     );
 }
 
+// =============================================================================
+// clip_vector_to_raster_bbox
+// =============================================================================
+void lsdtt_data_loader::clip_vector_to_raster_bbox(
+    const std::string&       input_path,
+    const std::string&       output_path,
+    const lsdtt_raster_meta& raster_meta,
+    vector_output_format     out_fmt
+)
+{
+    ensure_gdal_init();
+
+    const char* driver_name =
+        (out_fmt == vector_output_format::gpkg) ? "GPKG" : "FlatGeobuf";
+
+    struct ds_closer
+    {
+        void operator()(GDALDataset* d) const { if (d) GDALClose(d); }
+    };
+
+    // Open input vector
+    GDALDataset* raw_src = static_cast<GDALDataset*>(
+        GDALOpenEx(input_path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                   nullptr, nullptr, nullptr)
+    );
+    if (!raw_src)
+        throw std::runtime_error(
+            "clip_vector_to_raster_bbox: cannot open input vector: " +
+            input_path + "\nGDAL error: " + std::string(CPLGetLastErrorMsg())
+        );
+    std::unique_ptr<GDALDataset, ds_closer> src_guard(raw_src);
+
+    if (raw_src->GetLayerCount() == 0)
+        throw std::runtime_error(
+            "clip_vector_to_raster_bbox: no layers in: " + input_path
+        );
+
+    // Create output dataset
+    GDALDriver* out_driver =
+        GetGDALDriverManager()->GetDriverByName(driver_name);
+    if (!out_driver)
+        throw std::runtime_error(
+            std::string("clip_vector_to_raster_bbox: GDAL driver not available: ")
+            + driver_name
+        );
+
+    VSIStatBufL stat_buf;
+    if (VSIStatL(output_path.c_str(), &stat_buf) == 0)
+        out_driver->Delete(output_path.c_str());
+
+    GDALDataset* raw_dst = out_driver->Create(
+        output_path.c_str(), 0, 0, 0, GDT_Unknown, nullptr
+    );
+    if (!raw_dst)
+        throw std::runtime_error(
+            "clip_vector_to_raster_bbox: cannot create output: " + output_path
+        );
+    std::unique_ptr<GDALDataset, ds_closer> dst_guard(raw_dst);
+
+    const int n_layers = raw_src->GetLayerCount();
+    for (int li = 0; li < n_layers; ++li)
+    {
+        OGRLayer* src_layer = raw_src->GetLayer(li);
+        if (!src_layer) continue;
+
+        // Compute the filter bbox in the layer's CRS
+        double filter_minx = raster_meta.x_min;
+        double filter_miny = raster_meta.y_min;
+        double filter_maxx = raster_meta.x_max();
+        double filter_maxy = raster_meta.y_max();
+
+        OGRSpatialReference* layer_srs = src_layer->GetSpatialRef();
+        if (layer_srs && !raster_meta.crs_wkt.empty())
+        {
+            OGRSpatialReference raster_srs;
+            raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+            if (raster_srs.importFromWkt(raster_meta.crs_wkt.c_str()) == OGRERR_NONE)
+            {
+                OGRSpatialReference dst_srs = *layer_srs;
+                dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+                OGRCoordinateTransformation* ct =
+                    OGRCreateCoordinateTransformation(&raster_srs, &dst_srs);
+
+                if (ct)
+                {
+                    double xs[4] = {raster_meta.x_min,  raster_meta.x_max(),
+                                    raster_meta.x_min,  raster_meta.x_max()};
+                    double ys[4] = {raster_meta.y_min,  raster_meta.y_min,
+                                    raster_meta.y_max(), raster_meta.y_max()};
+
+                    if (ct->Transform(4, xs, ys))
+                    {
+                        filter_minx = *std::min_element(xs, xs + 4);
+                        filter_maxx = *std::max_element(xs, xs + 4);
+                        filter_miny = *std::min_element(ys, ys + 4);
+                        filter_maxy = *std::max_element(ys, ys + 4);
+                    }
+                    OCTDestroyCoordinateTransformation(ct);
+                }
+            }
+        }
+
+        src_layer->SetSpatialFilterRect(filter_minx, filter_miny,
+                                        filter_maxx, filter_maxy);
+
+        // Create output layer matching source schema and CRS
+        OGRLayer* dst_layer = raw_dst->CreateLayer(
+            src_layer->GetName(), layer_srs, src_layer->GetGeomType(), nullptr
+        );
+        if (!dst_layer)
+            throw std::runtime_error(
+                "clip_vector_to_raster_bbox: failed to create output layer"
+            );
+
+        OGRFeatureDefn* defn = src_layer->GetLayerDefn();
+        for (int fi = 0; fi < defn->GetFieldCount(); ++fi)
+        {
+            if (dst_layer->CreateField(defn->GetFieldDefn(fi)) != OGRERR_NONE)
+                throw std::runtime_error(
+                    "clip_vector_to_raster_bbox: failed to copy field definition"
+                );
+        }
+
+        // Stream filtered features to output
+        src_layer->ResetReading();
+        OGRFeature* feat = nullptr;
+        while ((feat = src_layer->GetNextFeature()) != nullptr)
+        {
+            OGRFeature* out_feat =
+                OGRFeature::CreateFeature(dst_layer->GetLayerDefn());
+            out_feat->SetFrom(feat);
+            dst_layer->CreateFeature(out_feat);
+            OGRFeature::DestroyFeature(out_feat);
+            OGRFeature::DestroyFeature(feat);
+        }
+
+        src_layer->SetSpatialFilter(nullptr);
+    }
+}
+
 } // namespace lsdtt

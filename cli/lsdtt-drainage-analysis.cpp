@@ -42,10 +42,13 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/cpu/lsdtt_connectivity_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
 
 static const std::string k_version  = "0.1.0";
@@ -244,16 +247,61 @@ int main(int argc, char* argv[])
         "Passed to direct_polyfit(). Larger values smooth out local "
         "roughness; smaller values capture fine-scale slope variation."};
 
-    // --- Placeholders ---
+    // --- Connectivity index (Cavalli et al. 2013) ---
     bool_default_map["write_connectivity_raster"] = false;
     help_map["write_connectivity_raster"] = {"bool","false",
-        "Write a sediment connectivity raster. (NOT YET IMPLEMENTED)",
-        "Placeholder. Implementation to be added in a future version."};
+        "Write the sediment connectivity index IC = log10(D_up / D_down).",
+        "Follows Cavalli et al. (2013). D8 routing is always used for "
+        "D_up and D_down path calculations. The area raster method is "
+        "controlled by connectivity_drainage_area_method."};
+
+    string_default_map["connectivity_drainage_area_method"] = "d8";
+    help_map["connectivity_drainage_area_method"] = {"string","d8",
+        "Flow routing method for the drainage area fed into D_up.",
+        "Allowed values: d8, dinf, mfd. D8 is the simplest; dinf and mfd "
+        "give smoother hillslope area estimates. D8 routing is always used "
+        "for the upslope mean and downstream path computations."};
+
+    float_default_map["connectivity_area_threshold_m2"] = 1.0e6f;
+    help_map["connectivity_area_threshold_m2"] = {"float","1e6",
+        "Drainage area threshold (m^2) defining channel / sink pixels.",
+        "Pixels at or above this threshold are treated as channels. "
+        "D_down accumulation stops when the flow path reaches a channel."};
+
+    float_default_map["connectivity_window_radius"] = 100.0f;
+    help_map["connectivity_window_radius"] = {"float","100.0",
+        "Moving-window radius (metres) for slope and roughness computation.",
+        "Used for the polyfit slope and for the roughness metric (MADk2 or "
+        "IQR of residuals). Square window always used."};
+
+    string_default_map["connectivity_slope_method"] = "polyfit_direct";
+    help_map["connectivity_slope_method"] = {"string","polyfit_direct",
+        "Method for computing slope used in IC.",
+        "Allowed values: polyfit_direct (fast, square window, no FFTW required), "
+        "wavelet (FFT-based, requires FFTW). Both fit a local quadratic surface; "
+        "slope magnitude = sqrt(dz/dx^2 + dz/dy^2)."};
+
+    string_default_map["connectivity_roughness_method"] = "madk2";
+    help_map["connectivity_roughness_method"] = {"string","madk2",
+        "Roughness metric used to compute the W weighting factor.",
+        "Allowed values: madk2 (Median Absolute Deviation of k2 differences, "
+        "Trevisani & Guth 2025 — default), iqr_residual (IQR of polyfit "
+        "residuals, square window). W = max(1 - R/R_max, 0.001)."};
 
     bool_default_map["write_height_above_channel_raster"] = false;
     help_map["write_height_above_channel_raster"] = {"bool","false",
-        "Write a height-above-channel raster. (NOT YET IMPLEMENTED)",
-        "Placeholder. Implementation to be added in a future version."};
+        "Write a height-above-channel raster.",
+        "For each pixel: elevation difference to the nearest downstream channel "
+        "pixel along the D8 flow path. Channel pixels are those whose D8 "
+        "contributing-pixel count >= channel_threshold_contributing_pixels."};
+
+    int_default_map["channel_threshold_contributing_pixels"] = 1000;
+    help_map["channel_threshold_contributing_pixels"] = {"int","1000",
+        "Minimum contributing-pixel count to classify a pixel as a channel.",
+        "Used by write_height_above_channel_raster. Pixels with D8 "
+        "contributing-pixel count >= this threshold are treated as channels. "
+        "Tune relative to DEM resolution: at 5 m a value of 1000 corresponds "
+        "to ~0.025 km^2; at 30 m the same count is ~0.9 km^2."};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -278,9 +326,24 @@ int main(int argc, char* argv[])
     lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
 
-    // Normalise the TWI method string to lowercase for comparison.
+    // Normalise method strings to lowercase for comparison.
     std::string twi_method = sf["twi_drainage_area_method"];
     std::transform(twi_method.begin(), twi_method.end(), twi_method.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    std::string conn_area_method = sf["connectivity_drainage_area_method"];
+    std::transform(conn_area_method.begin(), conn_area_method.end(),
+                   conn_area_method.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    std::string conn_slope_method = sf["connectivity_slope_method"];
+    std::transform(conn_slope_method.begin(), conn_slope_method.end(),
+                   conn_slope_method.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    std::string conn_roughness_method = sf["connectivity_roughness_method"];
+    std::transform(conn_roughness_method.begin(), conn_roughness_method.end(),
+                   conn_roughness_method.begin(),
                    [](unsigned char c){ return std::tolower(c); });
 
     if (bf["write_twi_raster"] && twi_method != "dinf" && twi_method != "mfd")
@@ -290,28 +353,49 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    if (bf["write_connectivity_raster"])
+    {
+        if (conn_area_method != "d8" && conn_area_method != "dinf" &&
+            conn_area_method != "mfd")
+        {
+            std::cerr << "FATAL: connectivity_drainage_area_method must be "
+                         "'d8', 'dinf', or 'mfd'. Got: "
+                      << sf["connectivity_drainage_area_method"] << "\n";
+            return 1;
+        }
+        if (conn_slope_method != "polyfit_direct" && conn_slope_method != "wavelet")
+        {
+            std::cerr << "FATAL: connectivity_slope_method must be "
+                         "'polyfit_direct' or 'wavelet'. Got: "
+                      << sf["connectivity_slope_method"] << "\n";
+            return 1;
+        }
+        if (conn_roughness_method != "madk2" && conn_roughness_method != "iqr_residual")
+        {
+            std::cerr << "FATAL: connectivity_roughness_method must be "
+                         "'madk2' or 'iqr_residual'. Got: "
+                      << sf["connectivity_roughness_method"] << "\n";
+            return 1;
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Warn about unimplemented placeholders
     // -------------------------------------------------------------------------
-    if (bf["write_connectivity_raster"])
-    {
-        std::cerr << "Warning: write_connectivity_raster is not yet implemented. "
-                  << "Skipping.\n";
-    }
-    if (bf["write_height_above_channel_raster"])
-    {
-        std::cerr << "Warning: write_height_above_channel_raster is not yet "
-                  << "implemented. Skipping.\n";
-    }
+
 
     // -------------------------------------------------------------------------
     // Determine which flow objects are needed
     // -------------------------------------------------------------------------
-    const bool need_d8   = bf["write_d8_drainage_area_raster"];
+    const bool need_d8   = bf["write_d8_drainage_area_raster"] ||
+                           bf["write_connectivity_raster"]      ||   // D8 always needed for IC routing
+                           bf["write_height_above_channel_raster"];
     const bool need_dinf = bf["write_dinf_drainage_area_raster"] ||
-                           (bf["write_twi_raster"] && twi_method == "dinf");
+                           (bf["write_twi_raster"] && twi_method == "dinf") ||
+                           (bf["write_connectivity_raster"] && conn_area_method == "dinf");
     const bool need_mfd  = bf["write_mfd_drainage_area_raster"] ||
-                           (bf["write_twi_raster"] && twi_method == "mfd");
+                           (bf["write_twi_raster"] && twi_method == "mfd") ||
+                           (bf["write_connectivity_raster"] && conn_area_method == "mfd");
     const bool need_flow = need_d8 || need_dinf || need_mfd;
 
     if (!need_flow)
@@ -695,23 +779,157 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Connectivity — placeholder
+    // Connectivity index (Cavalli et al. 2013)
+    //   IC = log10(D_up / D_down)
+    //   D_up  = mean_W_upslope * mean_S_upslope * sqrt(A)
+    //   D_down = sum d_i/(W_i*S_i) along D8 path to nearest channel
     // -------------------------------------------------------------------------
     if (bf["write_connectivity_raster"])
     {
-        // TODO: implement connectivity analysis.
-        // Connectivity is not yet implemented. The warning is printed earlier;
-        // no action is taken here.
+        std::cout << "\n--- Connectivity index (Cavalli et al. 2013) ---\n";
+        std::cout << "Area method      : " << sf["connectivity_drainage_area_method"] << "\n";
+        std::cout << "Slope method     : " << sf["connectivity_slope_method"] << "\n";
+        std::cout << "Roughness method : " << sf["connectivity_roughness_method"] << "\n";
+        std::cout << "Window radius    : " << ff["connectivity_window_radius"] << " m\n";
+        std::cout << "Area threshold   : " << ff["connectivity_area_threshold_m2"] << " m^2\n";
+
+        const double   conn_radius = static_cast<double>(ff["connectivity_window_radius"]);
+        const float    conn_thresh = ff["connectivity_area_threshold_m2"];
+
+        try
+        {
+            // -- Drainage area for IC --
+            lsdtt::lsdtt_raster_result conn_area;
+            if (conn_area_method == "d8")
+            {
+                conn_area = d8_flow->get_drainage_area_raster();
+            }
+            else if (conn_area_method == "dinf")
+            {
+                conn_area = dinf_graph->accumulate_raster();
+            }
+            else  // mfd
+            {
+                conn_area = mfd_graph->accumulate_raster();
+            }
+
+            // -- Polyfit coefficients (needed for slope and optionally residual) --
+            // Computed once and reused if both slope and roughness need it.
+            const bool need_polyfit = conn_slope_method == "polyfit_direct" ||
+                                      conn_roughness_method == "iqr_residual";
+            const bool need_wavelet = conn_slope_method == "wavelet";
+
+            lsdtt::poly_fit_coeffs conn_coeffs;
+            if (need_polyfit)
+            {
+                std::cout << "Computing direct polyfit (square window)...\n";
+                conn_coeffs = lsdtt::direct_polyfit(dem, conn_radius, ifs["n_threads"]);
+            }
+
+            lsdtt::poly_fit_coeffs conn_wav_coeffs;
+            if (need_wavelet)
+            {
+                std::cout << "Computing wavelet quadratic fit...\n";
+                conn_wav_coeffs = lsdtt::wavelet_quadratic_fit(
+                    dem, conn_radius, ifs["n_threads"]);
+            }
+
+            // -- Slope --
+            lsdtt::polyfit_metric_request slope_req;
+            slope_req.metrics   = { lsdtt::polyfit_metric::slope };
+            slope_req.n_threads = ifs["n_threads"];
+
+            lsdtt::polyfit_metric_result slope_res =
+                lsdtt::compute_polyfit_metrics(
+                    conn_slope_method == "wavelet" ? conn_wav_coeffs : conn_coeffs,
+                    slope_req);
+
+            const lsdtt::lsdtt_raster_cpu& conn_slope =
+                slope_res.at(lsdtt::polyfit_metric::slope);
+
+            // -- Roughness for W --
+            lsdtt::lsdtt_raster_cpu conn_roughness;
+            if (conn_roughness_method == "madk2")
+            {
+                std::cout << "Computing MADk2 roughness...\n";
+                lsdtt::madk2_result mk2 = lsdtt::calculate_madk2(
+                    dem, conn_radius, 1, ifs["n_threads"]);
+                conn_roughness = std::move(mk2.omnidirectional_roughness);
+            }
+            else  // iqr_residual
+            {
+                std::cout << "Computing IQR of polyfit residuals...\n";
+                lsdtt::lsdtt_raster_cpu residual =
+                    lsdtt::algebra::raster_subtract(dem, conn_coeffs.f);
+                conn_roughness = lsdtt::moving_window_iqr(
+                    residual, conn_radius,
+                    lsdtt::window_shape::square,
+                    ifs["n_threads"]);
+            }
+
+            // -- Compute IC --
+            std::cout << "Computing connectivity index...\n";
+            lsdtt::lsdtt_raster_result ic = lsdtt::compute_connectivity_index(
+                *d8_flow, conn_roughness, conn_slope, conn_area, conn_thresh);
+
+            const std::string ic_file = out_path(pp, "_connectivity_index", ".tif");
+            std::cout << "Writing: " << ic_file << "\n";
+            loader.write_full(ic, ic_file, out_fmt);
+
+            // Optionally write D_up and D_down for debugging
+            lsdtt::lsdtt_raster_result W_result =
+                lsdtt::compute_W_raster(conn_roughness);
+
+            const std::string dup_file = out_path(pp, "_connectivity_d_up", ".tif");
+            std::cout << "Writing: " << dup_file << "\n";
+            loader.write_full(
+                lsdtt::compute_D_up_raster(*d8_flow, W_result, conn_slope, conn_area),
+                dup_file, out_fmt);
+
+            const std::string ddn_file = out_path(pp, "_connectivity_d_down", ".tif");
+            std::cout << "Writing: " << ddn_file << "\n";
+            loader.write_full(
+                lsdtt::compute_D_down_raster(*d8_flow, W_result, conn_slope,
+                                             conn_area, conn_thresh),
+                ddn_file, out_fmt);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: connectivity index computation failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Height above channel — placeholder
+    // Height above channel
     // -------------------------------------------------------------------------
     if (bf["write_height_above_channel_raster"])
     {
-        // TODO: implement height-above-channel.
-        // Requires a channel network and a downslope routing from every cell
-        // to its nearest channel pixel. Simon will describe the algorithm.
+        std::cout << "\n--- Height above channel ---\n";
+        std::cout << "Channel threshold: "
+                  << ifs["channel_threshold_contributing_pixels"]
+                  << " contributing pixels\n";
+
+        try
+        {
+            lsdtt::lsdtt_raster_result hac = d8_flow->get_height_above_channel_raster(
+                routed_dem.get_data(),
+                routed_dem.get_mask(),
+                ifs["channel_threshold_contributing_pixels"]
+            );
+
+            const std::string hac_file =
+                out_path(pp, "_height_above_channel", ".tif");
+            std::cout << "Writing: " << hac_file << "\n";
+            loader.write_full(hac, hac_file, out_fmt);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: height above channel failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------

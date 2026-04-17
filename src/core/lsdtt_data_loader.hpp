@@ -545,6 +545,28 @@ public:
     // Tabular output (CSV)
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Vector clipping
+    // -------------------------------------------------------------------------
+
+    // Clip a vector file to the bounding box of a raster.
+    //
+    // The raster bbox is transformed into the vector's native CRS before the
+    // spatial filter is applied, so the two datasets need not share a CRS.
+    // All layers in the source file are processed and written to the output.
+    //
+    //   input_path   — path to any OGR-readable vector file
+    //   output_path  — path for the output file (extension must match out_fmt)
+    //   raster_meta  — metadata for the raster whose bbox is used as the clip
+    //                  rectangle; supplies both the extent and the CRS WKT
+    //   out_fmt      — output format (flatgeobuf or gpkg)
+    static void clip_vector_to_raster_bbox(
+        const std::string&       input_path,
+        const std::string&       output_path,
+        const lsdtt_raster_meta& raster_meta,
+        vector_output_format     out_fmt
+    );
+
     // Write a table to a CSV file. The first row is a header.
     //
     //   out_path   — output .csv file path

@@ -492,6 +492,38 @@ public:
         raster_output_format format = raster_output_format::cog
     ) const override;
 
+    [[nodiscard]] lsdtt_raster_result get_distance_from_outlet_raster() const override;
+
+    [[nodiscard]] lsdtt_raster_result get_height_above_channel_raster(
+        const std::vector<float>&   elev,
+        const std::vector<uint8_t>& elev_mask,
+        int threshold_contributing_pixels) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_distance_to_channel_raster(
+        int threshold_contributing_pixels) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_height_to_farthest_ridge_raster(
+        const std::vector<float>&   elev,
+        const std::vector<uint8_t>& elev_mask) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_distance_to_farthest_ridge_raster()
+        const override;
+
+    [[nodiscard]] lsdtt_raster_result get_downstream_path_sum_raster(
+        const std::vector<float>&   values,
+        const std::vector<uint8_t>& valid_mask,
+        const std::vector<uint8_t>& sink_mask) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_upslope_sum_raster(
+        const std::vector<float>&   values,
+        const std::vector<uint8_t>& valid_mask,
+        bool include_self = true) const override;
+
+    [[nodiscard]] lsdtt_raster_result get_upslope_mean_raster(
+        const std::vector<float>&   values,
+        const std::vector<uint8_t>& valid_mask,
+        bool include_self = true) const override;
+
     // -------------------------------------------------------------------------
     // Flow-routing vector outputs
     // -------------------------------------------------------------------------

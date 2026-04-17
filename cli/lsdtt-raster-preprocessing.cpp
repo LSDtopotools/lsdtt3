@@ -464,6 +464,27 @@ int main(int argc, char* argv[])
         "Vertical exaggeration factor applied before computing hillshade.",
         "Values greater than 1 emphasise relief in flat terrain."};
 
+    // --- Vector clipping ---
+    bool_default_map["clip_vector_data_to_raster"] = false;
+    help_map["clip_vector_data_to_raster"] = {"bool","false",
+        "Clip a vector file to the bounding box of the output raster.",
+        "The vector CRS need not match the raster CRS — the raster bbox is "
+        "reprojected into the vector's native CRS before clipping. "
+        "Set vector_data_fname to the path of the input vector file."};
+
+    string_default_map["vector_data_fname"] = "";
+    help_map["vector_data_fname"] = {"string","",
+        "Path to the input vector file to clip.",
+        "Any OGR-readable format is accepted (Shapefile, GeoPackage, "
+        "FlatGeobuf, GeoJSON, etc.). Required when "
+        "clip_vector_data_to_raster is true."};
+
+    string_default_map["vector_clip_output_format"] = "flatgeobuf";
+    help_map["vector_clip_output_format"] = {"string","flatgeobuf",
+        "Output format for the clipped vector file.",
+        "Allowed values: flatgeobuf, fgb, gpkg. "
+        "FlatGeobuf is preferred, especially on WSL2."};
+
     // -------------------------------------------------------------------------
     // Parse — fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
@@ -1119,6 +1140,52 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "Warning: hillshade failed: " << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 9 — Vector clipping
+    // -------------------------------------------------------------------------
+    if (bf["clip_vector_data_to_raster"])
+    {
+        std::cout << "\n--- Vector clipping ---\n";
+
+        const std::string& vec_in = sf["vector_data_fname"];
+        if (vec_in.empty())
+        {
+            std::cerr << "Warning: clip_vector_data_to_raster is true but "
+                         "vector_data_fname is empty — skipping.\n";
+        }
+        else
+        {
+            try
+            {
+                const lsdtt::vector_output_format vec_fmt =
+                    lsdtt::resolve_vector_output_format(
+                        sf["vector_clip_output_format"]
+                    );
+
+                const std::string vec_out =
+                    out_path(pp, "_clipped_vector" +
+                             lsdtt::output_extension(vec_fmt));
+
+                std::cout << "Input vector : " << vec_in  << "\n";
+                std::cout << "Output vector: " << vec_out << "\n";
+
+                lsdtt::lsdtt_data_loader::clip_vector_to_raster_bbox(
+                    vec_in,
+                    vec_out,
+                    dem.get_meta(),
+                    vec_fmt
+                );
+
+                std::cout << "Vector clipping done.\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: vector clipping failed: "
+                          << e.what() << "\n";
+            }
         }
     }
 

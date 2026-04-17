@@ -269,6 +269,113 @@ public:
     ) const = 0;
 
     // -------------------------------------------------------------------------
+    // Upslope accumulation of a secondary raster
+    //
+    // Both methods perform a single O(N) reverse-s_vector pass (headwaters →
+    // outlets).  values and valid_mask must be flat-indexed with the same
+    // length as the DEM (n_rows * n_cols).
+    //
+    // Pixels where valid_mask[i] == 0 contribute 0 to the running sum but
+    // still propagate accumulated values received from further upstream.
+    //
+    // include_self (default true):
+    //   true  — the pixel's own value is included (standard drainage-area
+    //           convention: every cell counts itself).
+    //   false — strictly upstream values only; headwaters return 0.
+    //
+    // get_upslope_sum_raster:
+    //   Output pixel = sum of values[] over its entire upslope set.
+    //
+    // get_upslope_mean_raster:
+    //   Output pixel = sum / count of valid upslope pixels.
+    //   Nodata where no valid input pixels exist in the upslope set.
+    // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Flow-path distance to outlet
+    //
+    // Each valid pixel holds the cumulative D8 flow-path length (metres) from
+    // that pixel to its basin outlet.  Outlet pixels themselves return 0.
+    // Cardinal steps = cell_size; diagonal steps = cell_size * sqrt(2).
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual lsdtt_raster_result get_distance_from_outlet_raster() const = 0;
+
+    // -------------------------------------------------------------------------
+    // Channel-relative height and distance
+    //
+    // A pixel is classified as a channel when its contributing pixel count
+    // (include-self convention) >= threshold_contributing_pixels.
+    //
+    // get_height_above_channel_raster:
+    //   For each pixel: elev[pixel] - elev[nearest_downstream_channel_pixel].
+    //   Channel pixels return 0.  Pixels that drain to the DEM edge without
+    //   passing through a channel carry nodata.
+    //   elev / elev_mask must have flat-index size == n_rows * n_cols.
+    //
+    // get_distance_to_channel_raster:
+    //   Cumulative D8 flow-path length (metres) to the nearest downstream
+    //   channel pixel.  Channel pixels return 0.  Pixels with no downstream
+    //   channel carry nodata.
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual lsdtt_raster_result get_height_above_channel_raster(
+        const std::vector<float>&   elev,
+        const std::vector<uint8_t>& elev_mask,
+        int threshold_contributing_pixels) const = 0;
+
+    [[nodiscard]] virtual lsdtt_raster_result get_distance_to_channel_raster(
+        int threshold_contributing_pixels) const = 0;
+
+    // -------------------------------------------------------------------------
+    // Ridge-relative height and distance
+    //
+    // For every pixel, find the farthest upslope headwater — the pixel in its
+    // upslope set that has the longest D8 flow path back to the current pixel.
+    //
+    // get_height_to_farthest_ridge_raster:
+    //   elev[farthest_upslope_pixel] - elev[pixel].
+    //   Positive for normal hillslopes (ridge is higher than pixel).
+    //   elev / elev_mask must have flat-index size == n_rows * n_cols.
+    //
+    // get_distance_to_farthest_ridge_raster:
+    //   D8 flow-path length (metres) from the farthest upslope headwater to
+    //   the pixel.  Headwater pixels return 0.
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual lsdtt_raster_result get_height_to_farthest_ridge_raster(
+        const std::vector<float>&   elev,
+        const std::vector<uint8_t>& elev_mask) const = 0;
+
+    [[nodiscard]] virtual lsdtt_raster_result get_distance_to_farthest_ridge_raster()
+        const = 0;
+
+    // -------------------------------------------------------------------------
+    // Downstream path sum to nearest sink
+    //
+    // Forward O(N) pass (preorder: receiver before donor).
+    // For each non-sink pixel: output = values[self] + output[receiver], stopping
+    // when the receiver is in sink_mask.  Sink pixels carry nodata in the output
+    // (the connectivity index is undefined at channel cells).
+    //
+    // If valid_mask[i] == 0 the pixel contributes 0 to the running sum but the
+    // path continues through it — callers should pre-clip nodata inputs to a safe
+    // value and set valid_mask only where the result should also be nodata.
+    //
+    // values, valid_mask and sink_mask must have flat-index size == n_rows*n_cols.
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual lsdtt_raster_result get_downstream_path_sum_raster(
+        const std::vector<float>&   values,
+        const std::vector<uint8_t>& valid_mask,
+        const std::vector<uint8_t>& sink_mask) const = 0;
+
+    [[nodiscard]] virtual lsdtt_raster_result get_upslope_sum_raster(
+        const std::vector<float>&   values,
+        const std::vector<uint8_t>& valid_mask,
+        bool include_self = true) const = 0;
+
+    [[nodiscard]] virtual lsdtt_raster_result get_upslope_mean_raster(
+        const std::vector<float>&   values,
+        const std::vector<uint8_t>& valid_mask,
+        bool include_self = true) const = 0;
+
+    // -------------------------------------------------------------------------
     // Flow-routing vector outputs
     // -------------------------------------------------------------------------
     virtual void write_flow_lines(

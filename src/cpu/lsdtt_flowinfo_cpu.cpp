@@ -1853,6 +1853,617 @@ void lsdtt_flowinfo::write_drainage_area_exclude_outlet_raster(
     loader.write_full(r, out_path, format);
 }
 
+// -----------------------------------------------------------------------------
+// get_distance_from_outlet_raster
+//
+// Forward pass through s_vector (preorder: outlet before donors).
+// Because each pixel's receiver is always visited before the pixel itself,
+// dist[pixel] = dist[receiver] + step is valid on the first visit.
+// Cardinal directions (even codes 0,2,4,6): step = cell_size.
+// Diagonal directions (odd codes 1,3,5,7):  step = cell_size * sqrt(2).
+// Outlet pixels (receiver == outlet_receiver) keep dist = 0.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_distance_from_outlet_raster() const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_distance_from_outlet_raster(): "
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n   = mask_.size();
+    const float       ndv = static_cast<float>(meta_.no_data_value);
+    const double      dx  = meta_.cell_size;
+    const double      dxy = meta_.cell_size * std::sqrt(2.0);
+
+    std::vector<double> dist(n, 0.0);
+
+    for (std::size_t i = 0; i < s_vector_.size(); ++i)
+    {
+        const std::int64_t flat = s_vector_[i];
+        const std::int64_t rec  = receiver_.data()[flat];
+        if (rec == outlet_receiver) continue;
+
+        const std::uint8_t dir  = receiver_dir_.data()[flat];
+        const double       step = (dir % 2u == 0u) ? dx : dxy;
+        dist[static_cast<std::size_t>(flat)] =
+            dist[static_cast<std::size_t>(rec)] + step;
+    }
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0) continue;
+        r.data[i] = static_cast<float>(dist[i]);
+        r.mask[i] = 1u;
+    }
+
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// get_height_above_channel_raster
+//
+// Forward s_vector pass.  A pixel is a channel when s_vector_size >= threshold.
+// For each non-channel pixel we carry the elevation of the nearest downstream
+// channel.  Pixels whose flow path exits the DEM without passing through a
+// channel carry nodata.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_raster(
+    const std::vector<float>&   elev,
+    const std::vector<uint8_t>& elev_mask,
+    int                         threshold_contributing_pixels) const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_height_above_channel_raster(): "
+            "s_vector not built"
+        );
+    }
+
+    const std::size_t n = mask_.size();
+
+    if (elev.size() != n || elev_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowinfo::get_height_above_channel_raster(): "
+            "elev and elev_mask must have the same flat-index size as the DEM"
+        );
+    }
+
+    const float       ndv    = static_cast<float>(meta_.no_data_value);
+    const std::int64_t thresh = static_cast<std::int64_t>(threshold_contributing_pixels);
+
+    auto is_channel = [&](std::int64_t flat) -> bool
+    {
+        return static_cast<std::int64_t>(s_vector_size_.data()[flat]) >= thresh;
+    };
+
+    // nearest_ch_elev[i]: elevation of the nearest downstream channel pixel.
+    // ch_valid[i]: 1 if a channel has been found on the path from i to outlet.
+    std::vector<float>   nearest_ch_elev(n, 0.0f);
+    std::vector<uint8_t> ch_valid(n, 0u);
+
+    for (std::size_t i = 0; i < s_vector_.size(); ++i)
+    {
+        const std::int64_t flat = s_vector_[i];
+        if (mask_.data()[flat] == 0 || elev_mask[flat] == 0) continue;
+
+        if (is_channel(flat))
+        {
+            nearest_ch_elev[flat] = elev[flat];
+            ch_valid[flat]        = 1u;
+        }
+        else
+        {
+            const std::int64_t rec = receiver_.data()[flat];
+            if (rec != outlet_receiver && ch_valid[static_cast<std::size_t>(rec)])
+            {
+                nearest_ch_elev[flat] = nearest_ch_elev[static_cast<std::size_t>(rec)];
+                ch_valid[flat]        = 1u;
+            }
+        }
+    }
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0 || elev_mask[i] == 0 || ch_valid[i] == 0) continue;
+        r.data[i] = elev[i] - nearest_ch_elev[i];
+        r.mask[i] = 1u;
+    }
+
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// get_distance_to_channel_raster
+//
+// Forward s_vector pass.  Channel threshold same as height_above_channel.
+// Channel pixels return 0.  Pixels with no downstream channel carry nodata.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_distance_to_channel_raster(
+    int threshold_contributing_pixels) const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_distance_to_channel_raster(): "
+            "s_vector not built"
+        );
+    }
+
+    const std::size_t  n     = mask_.size();
+    const float        ndv   = static_cast<float>(meta_.no_data_value);
+    const double       dx    = meta_.cell_size;
+    const double       dxy   = dx * std::sqrt(2.0);
+    const std::int64_t thresh = static_cast<std::int64_t>(threshold_contributing_pixels);
+    constexpr uint8_t  k_no_dir = 255u;
+
+    auto is_channel = [&](std::int64_t flat) -> bool
+    {
+        return static_cast<std::int64_t>(s_vector_size_.data()[flat]) >= thresh;
+    };
+
+    std::vector<double>  dist_to_ch(n, 0.0);
+    std::vector<uint8_t> dist_valid(n, 0u);
+
+    for (std::size_t i = 0; i < s_vector_.size(); ++i)
+    {
+        const std::int64_t flat = s_vector_[i];
+        if (mask_.data()[flat] == 0) continue;
+
+        if (is_channel(flat))
+        {
+            dist_to_ch[flat] = 0.0;
+            dist_valid[flat] = 1u;
+        }
+        else
+        {
+            const std::int64_t rec = receiver_.data()[flat];
+            if (rec == outlet_receiver) continue;  // no channel downstream
+
+            const uint8_t dir  = receiver_dir_.data()[flat];
+            const double  step = (dir == k_no_dir || dir % 2u == 0u) ? dx : dxy;
+
+            if (is_channel(rec))
+            {
+                dist_to_ch[flat] = step;
+                dist_valid[flat] = 1u;
+            }
+            else if (dist_valid[static_cast<std::size_t>(rec)])
+            {
+                dist_to_ch[flat] = step + dist_to_ch[static_cast<std::size_t>(rec)];
+                dist_valid[flat] = 1u;
+            }
+        }
+    }
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0 || dist_valid[i] == 0) continue;
+        r.data[i] = static_cast<float>(dist_to_ch[i]);
+        r.mask[i] = 1u;
+    }
+
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// get_height_to_farthest_ridge_raster  /  get_distance_to_farthest_ridge_raster
+//
+// Two-pass algorithm:
+//   Pass 1 (forward, preorder): compute dist_from_outlet for every pixel,
+//           initialise max_upslope_dist = dist_from_outlet and
+//           (for height) farthest_elev = elev.
+//   Pass 2 (reverse, headwaters first): propagate the maximum upstream
+//           distance downstream — each pixel receives the maximum of its own
+//           current max and those of all its donors.  When updated, farthest_elev
+//           is updated to track which pixel carries that maximum.
+//
+// distance_to_farthest_ridge = max_upslope_dist - dist_from_outlet
+// height_to_farthest_ridge   = farthest_elev    - elev
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_height_to_farthest_ridge_raster(
+    const std::vector<float>&   elev,
+    const std::vector<uint8_t>& elev_mask) const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_height_to_farthest_ridge_raster(): "
+            "s_vector not built"
+        );
+    }
+
+    const std::size_t n = mask_.size();
+
+    if (elev.size() != n || elev_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowinfo::get_height_to_farthest_ridge_raster(): "
+            "elev and elev_mask must have the same flat-index size as the DEM"
+        );
+    }
+
+    const float  ndv = static_cast<float>(meta_.no_data_value);
+    const double dx  = meta_.cell_size;
+    const double dxy = dx * std::sqrt(2.0);
+    constexpr uint8_t k_no_dir = 255u;
+
+    // Pass 1: dist_from_outlet (forward)
+    std::vector<double> dist_outlet(n, 0.0);
+    for (std::size_t i = 0; i < s_vector_.size(); ++i)
+    {
+        const std::int64_t flat = s_vector_[i];
+        const std::int64_t rec  = receiver_.data()[flat];
+        if (rec == outlet_receiver) continue;
+        const uint8_t dir  = receiver_dir_.data()[flat];
+        const double  step = (dir == k_no_dir || dir % 2u == 0u) ? dx : dxy;
+        dist_outlet[static_cast<std::size_t>(flat)] =
+            dist_outlet[static_cast<std::size_t>(rec)] + step;
+    }
+
+    // Initialise: each pixel is its own farthest ridge candidate.
+    std::vector<double> max_up_dist(dist_outlet);
+    std::vector<float>  farthest_elev(n, 0.0f);
+    for (std::size_t i = 0; i < n; ++i)
+        farthest_elev[i] = (mask_.data()[i] != 0 && elev_mask[i] != 0)
+            ? elev[i] : 0.0f;
+
+    // Pass 2: reverse pass — propagate max upstream distance downstream.
+    for (std::int64_t i = static_cast<std::int64_t>(s_vector_.size()) - 1;
+         i >= 0; --i)
+    {
+        const std::int64_t flat = s_vector_[static_cast<std::size_t>(i)];
+        const std::int64_t rec  = receiver_.data()[flat];
+        if (rec == outlet_receiver) continue;
+        const std::size_t f = static_cast<std::size_t>(flat);
+        const std::size_t r = static_cast<std::size_t>(rec);
+        if (max_up_dist[f] > max_up_dist[r])
+        {
+            max_up_dist[r]    = max_up_dist[f];
+            farthest_elev[r]  = farthest_elev[f];
+        }
+    }
+
+    lsdtt_raster_result result;
+    result.meta = meta_;
+    result.data.assign(n, ndv);
+    result.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0 || elev_mask[i] == 0) continue;
+        result.data[i] = farthest_elev[i] - elev[i];
+        result.mask[i] = 1u;
+    }
+
+    return result;
+}
+
+lsdtt_raster_result lsdtt_flowinfo::get_distance_to_farthest_ridge_raster() const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_distance_to_farthest_ridge_raster(): "
+            "s_vector not built"
+        );
+    }
+
+    const std::size_t n   = mask_.size();
+    const float       ndv = static_cast<float>(meta_.no_data_value);
+    const double      dx  = meta_.cell_size;
+    const double      dxy = dx * std::sqrt(2.0);
+    constexpr uint8_t k_no_dir = 255u;
+
+    // Pass 1: dist_from_outlet (forward)
+    std::vector<double> dist_outlet(n, 0.0);
+    for (std::size_t i = 0; i < s_vector_.size(); ++i)
+    {
+        const std::int64_t flat = s_vector_[i];
+        const std::int64_t rec  = receiver_.data()[flat];
+        if (rec == outlet_receiver) continue;
+        const uint8_t dir  = receiver_dir_.data()[flat];
+        const double  step = (dir == k_no_dir || dir % 2u == 0u) ? dx : dxy;
+        dist_outlet[static_cast<std::size_t>(flat)] =
+            dist_outlet[static_cast<std::size_t>(rec)] + step;
+    }
+
+    // max_up_dist: initialise to own dist_from_outlet
+    std::vector<double> max_up_dist(dist_outlet);
+
+    // Pass 2: reverse pass
+    for (std::int64_t i = static_cast<std::int64_t>(s_vector_.size()) - 1;
+         i >= 0; --i)
+    {
+        const std::int64_t flat = s_vector_[static_cast<std::size_t>(i)];
+        const std::int64_t rec  = receiver_.data()[flat];
+        if (rec == outlet_receiver) continue;
+        const std::size_t f = static_cast<std::size_t>(flat);
+        const std::size_t r = static_cast<std::size_t>(rec);
+        if (max_up_dist[f] > max_up_dist[r])
+            max_up_dist[r] = max_up_dist[f];
+    }
+
+    lsdtt_raster_result result;
+    result.meta = meta_;
+    result.data.assign(n, ndv);
+    result.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0) continue;
+        result.data[i] = static_cast<float>(max_up_dist[i] - dist_outlet[i]);
+        result.mask[i] = 1u;
+    }
+
+    return result;
+}
+
+// -----------------------------------------------------------------------------
+// get_downstream_path_sum_raster
+//
+// Forward pass through s_vector (preorder: receiver before donor).
+// D_down[pixel] = values[pixel] + D_down[receiver]   if receiver is not a sink
+// D_down[pixel] = values[pixel]                       if receiver is a sink or outlet
+// Sink pixels: output is nodata (IC undefined at channel cells).
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_downstream_path_sum_raster(
+    const std::vector<float>&   values,
+    const std::vector<uint8_t>& valid_mask,
+    const std::vector<uint8_t>& sink_mask) const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_downstream_path_sum_raster(): "
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n = mask_.size();
+
+    if (values.size() != n || valid_mask.size() != n || sink_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowinfo::get_downstream_path_sum_raster(): "
+            "values, valid_mask and sink_mask must have the same flat-index size as the DEM"
+        );
+    }
+
+    const float ndv = static_cast<float>(meta_.no_data_value);
+
+    std::vector<double> accum(n, 0.0);
+
+    // Forward pass: preorder guarantees receiver is already computed when donor is reached.
+    for (std::size_t i = 0; i < s_vector_.size(); ++i)
+    {
+        const std::int64_t flat = s_vector_[i];
+        if (mask_.data()[flat] == 0) continue;
+
+        // Sink pixels carry nodata output; zero accum so they don't contribute
+        // if their index is used as a receiver by a non-sink upstream pixel.
+        if (sink_mask[static_cast<std::size_t>(flat)] != 0)
+        {
+            accum[static_cast<std::size_t>(flat)] = 0.0;
+            continue;
+        }
+
+        const double own = (valid_mask[static_cast<std::size_t>(flat)] != 0)
+            ? static_cast<double>(values[static_cast<std::size_t>(flat)])
+            : 0.0;
+
+        const std::int64_t rec     = receiver_.data()[flat];
+        const bool rec_is_terminal = (rec == outlet_receiver) ||
+                                     (sink_mask[static_cast<std::size_t>(rec)] != 0);
+
+        accum[static_cast<std::size_t>(flat)] = rec_is_terminal
+            ? own
+            : own + accum[static_cast<std::size_t>(rec)];
+    }
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0 || sink_mask[i] != 0) continue;
+        r.data[i] = static_cast<float>(accum[i]);
+        r.mask[i] = 1u;
+    }
+
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// get_upslope_sum_raster
+//
+// Single O(N) reverse-s_vector pass (headwaters → outlets).
+// For each valid pixel: optionally seed with its own value, then propagate
+// the accumulated sum to its receiver.  Pixels with valid_mask[i]==0
+// contribute 0 but still pass accumulated values from upstream downstream.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_upslope_sum_raster(
+    const std::vector<float>&   values,
+    const std::vector<uint8_t>& valid_mask,
+    bool                        include_self) const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_upslope_sum_raster(): "
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n   = mask_.size();
+
+    if (values.size() != n || valid_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowinfo::get_upslope_sum_raster(): "
+            "values and valid_mask must have the same flat-index size as the DEM"
+        );
+    }
+
+    const float ndv = static_cast<float>(meta_.no_data_value);
+
+    // Working accumulator — double precision to avoid float drift over large basins.
+    std::vector<double> accum(n, 0.0);
+
+    // Seed each valid DEM pixel with its own input value (if include_self and input is valid).
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i)
+    {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        if (mask_.data()[idx] == 0) continue;
+        if (include_self && valid_mask[idx] != 0)
+            accum[idx] = static_cast<double>(values[idx]);
+    }
+
+    // Reverse-s_vector pass: headwaters processed before their receivers.
+    // Sequential — each pixel depends on all of its upslope donors having
+    // already propagated their sums.
+    for (std::int64_t i = static_cast<std::int64_t>(s_vector_.size()) - 1; i >= 0; --i)
+    {
+        const std::int64_t flat = s_vector_[static_cast<std::size_t>(i)];
+        const std::int64_t rec  = receiver_.data()[flat];
+        if (rec == outlet_receiver) continue;
+        accum[static_cast<std::size_t>(rec)] += accum[static_cast<std::size_t>(flat)];
+    }
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0) continue;
+        r.data[i] = static_cast<float>(accum[i]);
+        r.mask[i] = 1u;
+    }
+
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// get_upslope_mean_raster
+//
+// Same reverse-s_vector pass as get_upslope_sum_raster, but carries a
+// parallel count array so the mean = sum / count can be computed.
+// Pixels where valid_mask[i]==0 are excluded from both sum and count.
+// Output is nodata for pixels with no valid input values in their upslope set.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_upslope_mean_raster(
+    const std::vector<float>&   values,
+    const std::vector<uint8_t>& valid_mask,
+    bool                        include_self) const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_upslope_mean_raster(): "
+            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::size_t n = mask_.size();
+
+    if (values.size() != n || valid_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowinfo::get_upslope_mean_raster(): "
+            "values and valid_mask must have the same flat-index size as the DEM"
+        );
+    }
+
+    const float ndv = static_cast<float>(meta_.no_data_value);
+
+    std::vector<double>      sum(n, 0.0);
+    std::vector<std::int64_t> cnt(n, 0);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i)
+    {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        if (mask_.data()[idx] == 0) continue;
+        if (include_self && valid_mask[idx] != 0)
+        {
+            sum[idx] = static_cast<double>(values[idx]);
+            cnt[idx] = 1;
+        }
+    }
+
+    for (std::int64_t i = static_cast<std::int64_t>(s_vector_.size()) - 1; i >= 0; --i)
+    {
+        const std::int64_t  flat  = s_vector_[static_cast<std::size_t>(i)];
+        const std::int64_t  rec   = receiver_.data()[flat];
+        if (rec == outlet_receiver) continue;
+        const std::size_t f = static_cast<std::size_t>(flat);
+        const std::size_t r = static_cast<std::size_t>(rec);
+        sum[r] += sum[f];
+        cnt[r] += cnt[f];
+    }
+
+    lsdtt_raster_result result;
+    result.meta = meta_;
+    result.data.assign(n, ndv);
+    result.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0) continue;
+        if (cnt[i] > 0)
+        {
+            result.data[i] = static_cast<float>(sum[i] / static_cast<double>(cnt[i]));
+            result.mask[i] = 1u;
+        }
+    }
+
+    return result;
+}
+
 // =============================================================================
 // ArcMap flow direction export
 //
