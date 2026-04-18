@@ -196,6 +196,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_connectivity_cpu.cpp
     src/cpu/lsdtt_hydraulic_graph_cpu.cpp
     src/cpu/lsdtt_chi_extraction_cpu.cpp
+    src/cpu/lsdtt_chi_network_analysis_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
