@@ -194,6 +194,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_vectorise_cpu.cpp
     src/cpu/lsdtt_raster_mosaic_cpu.cpp
     src/cpu/lsdtt_connectivity_cpu.cpp
+    src/cpu/lsdtt_hydraulic_graph_cpu.cpp
+
 )
 
 if(LSDTT_HAS_OPENCV)
@@ -293,6 +295,7 @@ lsdtt_cli(lsdtt-mountain-front         cli/lsdtt-mountain-front.cpp)
 lsdtt_cli(lsdtt-raster-basin-stats     cli/lsdtt-raster-basin-stats.cpp)
 lsdtt_cli(lsdtt-basin-extraction       cli/lsdtt-basin-extraction.cpp)
 lsdtt_cli(lsdtt-flat-surface-finder    cli/lsdtt-flat-surface-finder.cpp)
+lsdtt_cli(lsdtt-hydraulic-routing cli/lsdtt-hydraulic-routing.cpp)
 
 
 # =============================================================================
