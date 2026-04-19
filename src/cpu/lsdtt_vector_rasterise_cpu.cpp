@@ -10,9 +10,13 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
+#include <fstream>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <gdal.h>
@@ -24,6 +28,22 @@
 
 namespace lsdtt {
 namespace {
+
+struct oct_deleter
+{
+    void operator()(OGRCoordinateTransformation* tx) const
+    {
+        if (tx) OCTDestroyCoordinateTransformation(tx);
+    }
+};
+
+using ct_ptr = std::unique_ptr<OGRCoordinateTransformation, oct_deleter>;
+
+struct macrostrat_units_field_info
+{
+    const char*            field_name = "";
+    macrostrat_field_kind  kind       = macrostrat_field_kind::integer;
+};
 
 // Returns the GDAL geotransform for a raster described by `meta`.
 // GDAL convention: GT[0] = x of left edge, GT[3] = y of top edge,
@@ -39,7 +59,7 @@ void fill_geotransform(const lsdtt_raster_meta& meta, double gt[6])
 }
 
 // Creates a single-band GDT_Byte in-memory raster of size (ncols x nrows)
-// with the given geotransform.  Initialised to all-zero.
+// with the given geotransform. Initialised to all-zero.
 // Caller owns the returned dataset (must GDALClose).
 GDALDataset* make_mem_byte_raster(int nrows, int ncols, const double gt[6])
 {
@@ -59,6 +79,7 @@ GDALDataset* make_mem_byte_raster(int nrows, int ncols, const double gt[6])
         GDALClose(ds);
         throw std::runtime_error("lsdtt_vector_rasterise: failed to initialise MEM band");
     }
+
     return ds;
 }
 
@@ -68,14 +89,18 @@ GDALDataset* make_mem_byte_raster(int nrows, int ncols, const double gt[6])
 OGRLayer* open_first_layer(const std::string& vector_path, GDALDataset*& ds_out)
 {
     GDALAllRegister();
+
     ds_out = static_cast<GDALDataset*>(
         GDALOpenEx(vector_path.c_str(),
                    GDAL_OF_VECTOR | GDAL_OF_READONLY,
                    nullptr, nullptr, nullptr)
     );
+
     if (!ds_out)
+    {
         throw std::runtime_error(
             "lsdtt_vector_rasterise: cannot open vector file: " + vector_path);
+    }
 
     OGRLayer* layer = ds_out->GetLayer(0);
     if (!layer)
@@ -85,6 +110,42 @@ OGRLayer* open_first_layer(const std::string& vector_path, GDALDataset*& ds_out)
         throw std::runtime_error(
             "lsdtt_vector_rasterise: no layers in: " + vector_path);
     }
+
+    return layer;
+}
+
+// Opens `vector_path` (read-only), returns a named layer.
+// `ds_out` receives ownership of the GDALDataset — caller must GDALClose it.
+// Throws on failure.
+OGRLayer* open_named_layer(
+    const std::string& vector_path,
+    const std::string& layer_name,
+    GDALDataset*&      ds_out)
+{
+    GDALAllRegister();
+
+    ds_out = static_cast<GDALDataset*>(
+        GDALOpenEx(vector_path.c_str(),
+                   GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                   nullptr, nullptr, nullptr)
+    );
+
+    if (!ds_out)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_rasterise: cannot open vector file: " + vector_path);
+    }
+
+    OGRLayer* layer = ds_out->GetLayerByName(layer_name.c_str());
+    if (!layer)
+    {
+        GDALClose(ds_out);
+        ds_out = nullptr;
+        throw std::runtime_error(
+            "lsdtt_vector_rasterise: layer '" + layer_name +
+            "' not found in: " + vector_path);
+    }
+
     return layer;
 }
 
@@ -109,16 +170,16 @@ bool is_line_type(OGRwkbGeometryType t)
 }
 
 // Collects all geometry pointers from `layer` (one per feature), optionally
-// transforming with `ct`.  Returns cloned OGRGeometry* objects — caller
-// owns them.  Features whose geometry is missing or of the wrong wkb class
-// are skipped.  `accept_type` is called to filter individual geometries.
+// transforming with `ct`. Returns cloned OGRGeometry* objects — caller owns
+// them. Features whose geometry is missing or of the wrong wkb class are
+// skipped. `accept_type` is called to filter individual geometries.
 std::vector<OGRGeometry*> collect_geometries(
     OGRLayer*                      layer,
     OGRCoordinateTransformation*   ct,
-    bool (*accept_type)(OGRwkbGeometryType)
-)
+    bool (*accept_type)(OGRwkbGeometryType))
 {
     std::vector<OGRGeometry*> out;
+
     layer->ResetReading();
     OGRFeature* feat;
     while ((feat = layer->GetNextFeature()) != nullptr)
@@ -140,6 +201,7 @@ std::vector<OGRGeometry*> collect_geometries(
         }
         OGRFeature::DestroyFeature(feat);
     }
+
     return out;
 }
 
@@ -159,9 +221,9 @@ OGRGeometryH to_handle(OGRGeometry* g)
 // Calls GDALRasterizeGeometries with burn value 1 into band 1 of `mem_ds`.
 // `all_touched` sets the ALL_TOUCHED option.
 void burn_geometries(
-    GDALDataset*                    mem_ds,
+    GDALDataset*                     mem_ds,
     const std::vector<OGRGeometry*>& geoms,
-    bool                            all_touched)
+    bool                             all_touched)
 {
     if (geoms.empty()) return;
 
@@ -169,14 +231,14 @@ void burn_geometries(
     handles.reserve(geoms.size());
     for (auto* g : geoms) handles.push_back(to_handle(g));
 
-    int    band_no   = 1;
-    double burn_val  = 1.0;
+    int    band_no  = 1;
+    double burn_val = 1.0;
 
     char** opts = nullptr;
     if (all_touched)
         opts = CSLSetNameValue(nullptr, "ALL_TOUCHED", "TRUE");
 
-    GDALRasterizeGeometries(
+    const CPLErr err = GDALRasterizeGeometries(
         mem_ds,
         1, &band_no,
         static_cast<int>(handles.size()), handles.data(),
@@ -187,6 +249,12 @@ void burn_geometries(
     );
 
     CSLDestroy(opts);
+
+    if (err != CE_None)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_rasterise: GDALRasterizeGeometries failed");
+    }
 }
 
 // Reads the single byte band of `mem_ds` into a vector<uint8_t> sized
@@ -194,6 +262,7 @@ void burn_geometries(
 std::vector<uint8_t> read_byte_band(GDALDataset* mem_ds, int nrows, int ncols)
 {
     std::vector<uint8_t> buf(static_cast<std::size_t>(nrows) * ncols, 0u);
+
     if (mem_ds->GetRasterBand(1)->RasterIO(
             GF_Read, 0, 0, ncols, nrows,
             buf.data(), ncols, nrows, GDT_Byte,
@@ -202,18 +271,20 @@ std::vector<uint8_t> read_byte_band(GDALDataset* mem_ds, int nrows, int ncols)
         throw std::runtime_error(
             "lsdtt_vector_rasterise: failed to read rasterised band");
     }
+
     return buf;
 }
 
 // Builds the output lsdtt_raster_cpu binary mask.
-// `raw[i]` > 0  →  output data[i] = 1.0f (if reference mask is set).
+// `raw[i]` > 0  -> output data[i] = 1.0f (if reference mask is set).
 lsdtt_raster_cpu build_output(
     const lsdtt_raster_cpu&     reference_raster,
     const std::vector<uint8_t>& raw)
 {
-    const lsdtt_raster_meta&     meta = reference_raster.get_meta();
-    const std::vector<uint8_t>&  ref_mask = reference_raster.get_mask();
-    const std::size_t npix = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    const lsdtt_raster_meta&    meta     = reference_raster.get_meta();
+    const std::vector<uint8_t>& ref_mask = reference_raster.get_mask();
+    const std::size_t           npix =
+        static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
 
     std::vector<float>   data(npix, 0.0f);
     std::vector<uint8_t> mask(npix, 0u);
@@ -229,27 +300,350 @@ lsdtt_raster_cpu build_output(
 }
 
 // Sets up OGRCoordinateTransformation from `layer_srs` to `raster_srs` if they
-// differ.  Returns nullptr when no transform is needed.
+// differ. Returns nullptr when no transform is needed.
 // Throws on failure to create the transform.
-std::unique_ptr<OGRCoordinateTransformation> make_ct_if_needed(
+ct_ptr make_ct_if_needed(
     OGRSpatialReference* layer_srs,
     const std::string&   raster_wkt)
 {
     if (!layer_srs || raster_wkt.empty()) return nullptr;
 
+    OGRSpatialReference src_srs(*layer_srs);
     OGRSpatialReference raster_srs;
-    if (raster_srs.importFromWkt(raster_wkt.c_str()) != OGRERR_NONE) return nullptr;
 
-    if (layer_srs->IsSame(&raster_srs)) return nullptr;
+    src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    if (raster_srs.importFromWkt(raster_wkt.c_str()) != OGRERR_NONE)
+        return nullptr;
+
+    if (src_srs.IsSame(&raster_srs))
+        return nullptr;
 
     OGRCoordinateTransformation* ct =
-        OGRCreateCoordinateTransformation(layer_srs, &raster_srs);
+        OGRCreateCoordinateTransformation(&src_srs, &raster_srs);
+
     if (!ct)
+    {
         throw std::runtime_error(
             "lsdtt_vector_rasterise: CRS transform failed — "
             "check that vector and raster have compatible projections");
+    }
 
-    return std::unique_ptr<OGRCoordinateTransformation>(ct);
+    return ct_ptr(ct);
+}
+
+// Applies a spatial filter to `layer` using the bbox of `meta`.
+// The raster bbox is transformed into the layer CRS when needed.
+void set_spatial_filter_from_raster_bbox(
+    OGRLayer*                  layer,
+    const lsdtt_raster_meta&   meta)
+{
+    if (!layer)
+        return;
+
+    double minx = meta.x_min;
+    double miny = meta.y_min;
+    double maxx = meta.x_max();
+    double maxy = meta.y_max();
+
+    OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+    if (layer_srs && !meta.crs_wkt.empty())
+    {
+        OGRSpatialReference raster_srs;
+        raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+        if (raster_srs.importFromWkt(meta.crs_wkt.c_str()) == OGRERR_NONE)
+        {
+            OGRSpatialReference dst_srs(*layer_srs);
+            dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+            if (!raster_srs.IsSame(&dst_srs))
+            {
+                OGRCoordinateTransformation* raw_ct =
+                    OGRCreateCoordinateTransformation(&raster_srs, &dst_srs);
+
+                if (raw_ct)
+                {
+                    ct_ptr ct(raw_ct);
+
+                    double xs[4] = {
+                        meta.x_min, meta.x_max(),
+                        meta.x_min, meta.x_max()
+                    };
+                    double ys[4] = {
+                        meta.y_min, meta.y_min,
+                        meta.y_max(), meta.y_max()
+                    };
+
+                    if (ct->Transform(4, xs, ys))
+                    {
+                        minx = *std::min_element(xs, xs + 4);
+                        maxx = *std::max_element(xs, xs + 4);
+                        miny = *std::min_element(ys, ys + 4);
+                        maxy = *std::max_element(ys, ys + 4);
+                    }
+                }
+            }
+        }
+    }
+
+    layer->SetSpatialFilterRect(minx, miny, maxx, maxy);
+}
+
+macrostrat_units_field_info get_macrostrat_units_field_info(
+    macrostrat_units_field field)
+{
+    switch (field)
+    {
+        case macrostrat_units_field::map_id:
+            return {"map_id", macrostrat_field_kind::integer};
+
+        case macrostrat_units_field::legeln_id:
+            return {"legeln_id", macrostrat_field_kind::integer};
+
+        case macrostrat_units_field::best_age_top:
+            return {"best_age_top", macrostrat_field_kind::real};
+
+        case macrostrat_units_field::best_age_bottom:
+            return {"best_age_bottom", macrostrat_field_kind::real};
+
+        case macrostrat_units_field::lith:
+            return {"lith", macrostrat_field_kind::string};
+
+        case macrostrat_units_field::t_int_id:
+            return {"t_int_id", macrostrat_field_kind::integer};
+
+        case macrostrat_units_field::t_int:
+            return {"t_int", macrostrat_field_kind::string};
+
+        case macrostrat_units_field::b_int_id:
+            return {"b_int_id", macrostrat_field_kind::integer};
+
+        case macrostrat_units_field::b_int:
+            return {"b_int", macrostrat_field_kind::string};
+    }
+
+    throw std::runtime_error("rasterise_macrostrat_geology: unknown field");
+}
+
+int find_field_index_or_throw(OGRLayer* layer, const char* field_name)
+{
+    OGRFeatureDefn* defn = layer->GetLayerDefn();
+    if (!defn)
+    {
+        throw std::runtime_error(
+            "rasterise_macrostrat_geology: layer has no valid schema");
+    }
+
+    const int idx = defn->GetFieldIndex(field_name);
+    if (idx < 0)
+    {
+        throw std::runtime_error(
+            "rasterise_macrostrat_geology: field '" +
+            std::string(field_name) + "' not found in Macrostrat units layer");
+    }
+
+    return idx;
+}
+
+float float_from_int64_checked(std::int64_t v, const std::string& field_name)
+{
+    static constexpr std::int64_t k_float_exact_int_limit = 16777216LL;
+
+    if (v < -k_float_exact_int_limit || v > k_float_exact_int_limit)
+    {
+        throw std::runtime_error(
+            "rasterise_macrostrat_geology: integer field '" + field_name +
+            "' contains a value outside the exact float32 range");
+    }
+
+    return static_cast<float>(v);
+}
+
+bool get_numeric_field_value(
+    const OGRFeature*         feat,
+    int                       field_index,
+    macrostrat_field_kind     kind,
+    const std::string&        field_name,
+    float&                    out_value)
+{
+    if (!feat->IsFieldSetAndNotNull(field_index))
+        return false;
+
+    if (kind == macrostrat_field_kind::integer)
+    {
+        const std::int64_t v =
+            static_cast<std::int64_t>(feat->GetFieldAsInteger64(field_index));
+        out_value = float_from_int64_checked(v, field_name);
+        return true;
+    }
+
+    if (kind == macrostrat_field_kind::real)
+    {
+        out_value = static_cast<float>(feat->GetFieldAsDouble(field_index));
+        return true;
+    }
+
+    return false;
+}
+
+bool get_string_field_value(
+    const OGRFeature*  feat,
+    int                field_index,
+    std::string&       out_value)
+{
+    if (!feat->IsFieldSetAndNotNull(field_index))
+        return false;
+
+    out_value = feat->GetFieldAsString(field_index);
+    return true;
+}
+
+bool raster_window_from_envelope(
+    const lsdtt_raster_meta& meta,
+    const OGREnvelope&       env,
+    int&                     row0,
+    int&                     row1,
+    int&                     col0,
+    int&                     col1)
+{
+    const double raster_minx = meta.x_min;
+    const double raster_maxx = meta.x_max();
+    const double raster_miny = meta.y_min;
+    const double raster_maxy = meta.y_max();
+    const double cs          = meta.cell_size;
+
+    const double minx = std::max(env.MinX, raster_minx);
+    const double maxx = std::min(env.MaxX, raster_maxx);
+    const double miny = std::max(env.MinY, raster_miny);
+    const double maxy = std::min(env.MaxY, raster_maxy);
+
+    if (!(minx < maxx && miny < maxy))
+        return false;
+
+    col0 = std::max(
+        0,
+        std::min(meta.n_cols - 1,
+                 static_cast<int>(std::floor((minx - raster_minx) / cs)))
+    );
+
+    col1 = std::max(
+        0,
+        std::min(meta.n_cols - 1,
+                 static_cast<int>(std::ceil((maxx - raster_minx) / cs)) - 1)
+    );
+
+    row0 = std::max(
+        0,
+        std::min(meta.n_rows - 1,
+                 static_cast<int>(std::floor((raster_maxy - maxy) / cs)))
+    );
+
+    row1 = std::max(
+        0,
+        std::min(meta.n_rows - 1,
+                 static_cast<int>(std::ceil((raster_maxy - miny) / cs)) - 1)
+    );
+
+    return row0 <= row1 && col0 <= col1;
+}
+
+void fill_window_geotransform(
+    const lsdtt_raster_meta& meta,
+    int                      row0,
+    int                      col0,
+    int                      oversample,
+    double                   gt[6])
+{
+    const double raster_top = meta.y_min + static_cast<double>(meta.n_rows) * meta.cell_size;
+
+    gt[0] = meta.x_min + static_cast<double>(col0) * meta.cell_size;
+    gt[1] = meta.cell_size / static_cast<double>(oversample);
+    gt[2] = 0.0;
+    gt[3] = raster_top - static_cast<double>(row0) * meta.cell_size;
+    gt[4] = 0.0;
+    gt[5] = -meta.cell_size / static_cast<double>(oversample);
+}
+
+std::vector<macrostrat_lookup_entry> build_lookup_table(
+    OGRLayer*          layer,
+    int                field_index)
+{
+    std::set<std::string> unique_values;
+
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr)
+    {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (!geom || !is_polygon_type(geom->getGeometryType()))
+        {
+            OGRFeature::DestroyFeature(feat);
+            continue;
+        }
+
+        std::string v;
+        if (get_string_field_value(feat, field_index, v))
+        {
+            unique_values.insert(v);
+        }
+
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    std::vector<macrostrat_lookup_entry> table;
+    table.reserve(unique_values.size());
+
+    std::uint32_t code = 1;
+    for (const std::string& v : unique_values)
+    {
+        table.push_back(macrostrat_lookup_entry{code, v});
+        ++code;
+    }
+
+    return table;
+}
+
+std::unordered_map<std::string, std::uint32_t> build_lookup_map(
+    const std::vector<macrostrat_lookup_entry>& table)
+{
+    std::unordered_map<std::string, std::uint32_t> out;
+    out.reserve(table.size());
+
+    for (const auto& entry : table)
+    {
+        out.emplace(entry.value, entry.code);
+    }
+
+    return out;
+}
+
+void csv_write_escaped(std::ofstream& ofs, const std::string& s)
+{
+    bool needs_quotes = false;
+    for (char c : s)
+    {
+        if (c == ',' || c == '"' || c == '\n' || c == '\r')
+        {
+            needs_quotes = true;
+            break;
+        }
+    }
+
+    if (!needs_quotes)
+    {
+        ofs << s;
+        return;
+    }
+
+    ofs << '"';
+    for (char c : s)
+    {
+        if (c == '"') ofs << '"';
+        ofs << c;
+    }
+    ofs << '"';
 }
 
 } // anonymous namespace
@@ -264,13 +658,14 @@ lsdtt_raster_cpu rasterise_polygons(
 {
     const lsdtt_raster_meta& meta = reference_raster.get_meta();
     if (!meta.is_valid())
-        throw std::runtime_error("rasterise_polygons: reference raster metadata is invalid");
+    {
+        throw std::runtime_error(
+            "rasterise_polygons: reference raster metadata is invalid");
+    }
 
-    // Open vector file
     GDALDataset* vec_ds = nullptr;
     OGRLayer*    layer  = open_first_layer(vector_path, vec_ds);
 
-    // Validate geometry type
     const OGRwkbGeometryType layer_type = layer->GetGeomType();
     if (!is_polygon_type(layer_type))
     {
@@ -281,27 +676,20 @@ lsdtt_raster_cpu rasterise_polygons(
             std::string(OGRGeometryTypeToName(layer_type)) + ")");
     }
 
-    // CRS transform
     auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
 
-    // Collect geometries
     auto geoms = collect_geometries(layer, ct.get(), is_polygon_type);
     GDALClose(vec_ds);
 
     if (geoms.empty())
     {
-        // No polygon features — return all-zero mask
-        const std::size_t npix = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+        const std::size_t npix =
+            static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
         std::vector<float>   data(npix, 0.0f);
         std::vector<uint8_t> mask = reference_raster.get_mask();
         return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
     }
 
-    // -------------------------------------------------------------------------
-    // For full_coverage: rasterise at 4× and require all 16 sub-pixels covered.
-    // For any_coverage:  rasterise with ALL_TOUCHED=TRUE.
-    // For majority_coverage: rasterise with centre-point rule (default).
-    // -------------------------------------------------------------------------
     std::vector<uint8_t> raw;
 
     if (rule == polygon_rasterise_rule::full_coverage)
@@ -322,15 +710,23 @@ lsdtt_raster_cpu rasterise_polygons(
 
         constexpr int sub = os * os;
         raw.resize(static_cast<std::size_t>(meta.n_rows) * meta.n_cols, 0u);
+
         for (int r = 0; r < meta.n_rows; ++r)
         {
             for (int c = 0; c < meta.n_cols; ++c)
             {
                 int count = 0;
                 for (int sr = 0; sr < os; ++sr)
+                {
                     for (int sc = 0; sc < os; ++sc)
-                        count += hi_res[static_cast<std::size_t>(r * os + sr) * burn_ncols +
-                                        (c * os + sc)];
+                    {
+                        count += hi_res[
+                            static_cast<std::size_t>(r * os + sr) * burn_ncols +
+                            (c * os + sc)
+                        ];
+                    }
+                }
+
                 raw[static_cast<std::size_t>(r) * meta.n_cols + c] =
                     (count == sub) ? 1u : 0u;
             }
@@ -361,13 +757,14 @@ lsdtt_raster_cpu rasterise_polylines(
 {
     const lsdtt_raster_meta& meta = reference_raster.get_meta();
     if (!meta.is_valid())
-        throw std::runtime_error("rasterise_polylines: reference raster metadata is invalid");
+    {
+        throw std::runtime_error(
+            "rasterise_polylines: reference raster metadata is invalid");
+    }
 
-    // Open vector file
     GDALDataset* vec_ds = nullptr;
     OGRLayer*    layer  = open_first_layer(vector_path, vec_ds);
 
-    // Validate geometry type
     const OGRwkbGeometryType layer_type = layer->GetGeomType();
     if (!is_line_type(layer_type))
     {
@@ -378,16 +775,15 @@ lsdtt_raster_cpu rasterise_polylines(
             std::string(OGRGeometryTypeToName(layer_type)) + ")");
     }
 
-    // CRS transform
     auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
 
-    // Collect geometries
     auto geoms = collect_geometries(layer, ct.get(), is_line_type);
     GDALClose(vec_ds);
 
     if (geoms.empty())
     {
-        const std::size_t npix = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+        const std::size_t npix =
+            static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
         std::vector<float>   data(npix, 0.0f);
         std::vector<uint8_t> mask = reference_raster.get_mask();
         return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
@@ -403,6 +799,244 @@ lsdtt_raster_cpu rasterise_polylines(
 
     free_geometries(geoms);
     return build_output(reference_raster, raw);
+}
+
+// =============================================================================
+// rasterise_macrostrat_geology
+// =============================================================================
+macrostrat_geology_rasterise_result rasterise_macrostrat_geology(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      mvt_path,
+    macrostrat_units_field  field,
+    int                     oversample)
+{
+    const lsdtt_raster_meta& meta = reference_raster.get_meta();
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "rasterise_macrostrat_geology: reference raster metadata is invalid");
+    }
+
+    if (oversample <= 0)
+    {
+        throw std::runtime_error(
+            "rasterise_macrostrat_geology: oversample must be > 0");
+    }
+
+    GDALDataset* vec_ds = nullptr;
+    OGRLayer*    layer  = open_named_layer(mvt_path, "units", vec_ds);
+
+    const OGRwkbGeometryType layer_type = layer->GetGeomType();
+    if (!is_polygon_type(layer_type))
+    {
+        GDALClose(vec_ds);
+        throw std::runtime_error(
+            "rasterise_macrostrat_geology: layer 'units' in '" + mvt_path +
+            "' is not a polygon layer (type=" +
+            std::string(OGRGeometryTypeToName(layer_type)) + ")");
+    }
+
+    set_spatial_filter_from_raster_bbox(layer, meta);
+
+    const macrostrat_units_field_info info = get_macrostrat_units_field_info(field);
+    const int field_index = find_field_index_or_throw(layer, info.field_name);
+
+    std::vector<macrostrat_lookup_entry> lookup_table;
+    std::unordered_map<std::string, std::uint32_t> lookup_map;
+
+    if (info.kind == macrostrat_field_kind::string)
+    {
+        lookup_table = build_lookup_table(layer, field_index);
+        lookup_map   = build_lookup_map(lookup_table);
+    }
+
+    auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+
+    std::vector<float>   data(npix, 0.0f);
+    std::vector<uint8_t> mask(npix, 0u);
+    std::vector<int>     best_count(npix, -1);
+
+    const std::vector<uint8_t>& ref_mask = reference_raster.get_mask();
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        mask[i] = ref_mask[i] ? 1u : 0u;
+    }
+
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr)
+    {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (!geom || !is_polygon_type(geom->getGeometryType()))
+        {
+            OGRFeature::DestroyFeature(feat);
+            continue;
+        }
+
+        float raster_value = 0.0f;
+
+        if (info.kind == macrostrat_field_kind::string)
+        {
+            std::string s;
+            if (!get_string_field_value(feat, field_index, s))
+            {
+                OGRFeature::DestroyFeature(feat);
+                continue;
+            }
+
+            auto it = lookup_map.find(s);
+            if (it == lookup_map.end())
+            {
+                OGRFeature::DestroyFeature(feat);
+                continue;
+            }
+
+            raster_value = static_cast<float>(it->second);
+        }
+        else
+        {
+            if (!get_numeric_field_value(
+                    feat, field_index, info.kind, info.field_name, raster_value))
+            {
+                OGRFeature::DestroyFeature(feat);
+                continue;
+            }
+        }
+
+        OGRGeometry* clone = geom->clone();
+        if (ct)
+        {
+            if (clone->transform(ct.get()) != OGRERR_NONE)
+            {
+                delete clone;
+                OGRFeature::DestroyFeature(feat);
+                continue;
+            }
+        }
+
+        OGREnvelope env;
+        clone->getEnvelope(&env);
+
+        int row0, row1, col0, col1;
+        if (!raster_window_from_envelope(meta, env, row0, row1, col0, col1))
+        {
+            delete clone;
+            OGRFeature::DestroyFeature(feat);
+            continue;
+        }
+
+        const int coarse_rows = row1 - row0 + 1;
+        const int coarse_cols = col1 - col0 + 1;
+        const int burn_rows   = coarse_rows * oversample;
+        const int burn_cols   = coarse_cols * oversample;
+
+        double gt[6];
+        fill_window_geotransform(meta, row0, col0, oversample, gt);
+
+        GDALDataset* mem_ds = make_mem_byte_raster(burn_rows, burn_cols, gt);
+
+        {
+            std::vector<OGRGeometry*> one_geom;
+            one_geom.push_back(clone);
+            burn_geometries(mem_ds, one_geom, /*all_touched=*/false);
+        }
+
+        const std::vector<uint8_t> hi_res = read_byte_band(mem_ds, burn_rows, burn_cols);
+        GDALClose(mem_ds);
+        delete clone;
+
+        for (int wr = 0; wr < coarse_rows; ++wr)
+        {
+            const int global_r = row0 + wr;
+
+            for (int wc = 0; wc < coarse_cols; ++wc)
+            {
+                const int global_c = col0 + wc;
+                const std::size_t idx =
+                    static_cast<std::size_t>(global_r) * meta.n_cols + global_c;
+
+                if (!ref_mask[idx])
+                    continue;
+
+                int count = 0;
+                for (int sr = 0; sr < oversample; ++sr)
+                {
+                    const int hi_r = wr * oversample + sr;
+                    const std::size_t row_base =
+                        static_cast<std::size_t>(hi_r) * burn_cols;
+
+                    for (int sc = 0; sc < oversample; ++sc)
+                    {
+                        const int hi_c = wc * oversample + sc;
+                        count += static_cast<int>(hi_res[row_base + hi_c]);
+                    }
+                }
+
+                if (count <= 0)
+                    continue;
+
+                if (count > best_count[idx])
+                {
+                    best_count[idx] = count;
+                    data[idx]       = raster_value;
+                }
+            }
+        }
+
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    layer->SetSpatialFilter(nullptr);
+    GDALClose(vec_ds);
+
+    macrostrat_geology_rasterise_result result;
+    result.raster       = lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+    result.field        = field;
+    result.kind         = info.kind;
+    result.lookup_table = std::move(lookup_table);
+
+    return result;
+}
+
+// =============================================================================
+// write_macrostrat_lookup_csv
+// =============================================================================
+void write_macrostrat_lookup_csv(
+    const std::vector<macrostrat_lookup_entry>& lookup_table,
+    const std::string&                          out_csv_path)
+{
+    std::ofstream ofs(out_csv_path);
+    if (!ofs.is_open())
+    {
+        throw std::runtime_error(
+            "write_macrostrat_lookup_csv: could not open CSV for writing: " +
+            out_csv_path);
+    }
+
+    ofs << "code,value\n";
+    for (const auto& entry : lookup_table)
+    {
+        ofs << entry.code << ',';
+        csv_write_escaped(ofs, entry.value);
+        ofs << '\n';
+    }
+}
+
+// =============================================================================
+// macrostrat_rasterise_faults
+// =============================================================================
+lsdtt_raster_cpu macrostrat_rasterise_faults(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      mvt_path)
+{
+    (void)reference_raster;
+    (void)mvt_path;
+
+    throw std::runtime_error(
+        "macrostrat_rasterise_faults: not yet implemented");
 }
 
 } // namespace lsdtt
