@@ -58,7 +58,11 @@ struct lsdtt_chi_network_fit_segment
 
     float downstream_elevation = 0.0f;
     float upstream_elevation   = 0.0f;
+
+    float max_abs_residual = 0.0f;
+    std::int32_t n_nodes   = 0;
 };
+
 
 struct lsdtt_chi_network_fit_result
 {
@@ -73,8 +77,19 @@ struct lsdtt_chi_network_fit_result
     // Fitted network, same nodes as the input network
     std::vector<float> fitted_elevation;
 
+    // Diagnostics
+    std::vector<float> residual_elevation;
+    std::vector<float> abs_residual_elevation;
+
+    // branch_id_of_node is the first branch that claims the node.
+    // Confluence nodes therefore remain attached to the downstream/parent branch.
+    std::vector<std::int32_t> branch_id_of_node;
+
+    std::vector<std::uint8_t> is_main_stem;
+    std::vector<std::uint8_t> is_source;
+    std::vector<std::uint8_t> is_junction;
+
     // Split-point bookkeeping
-    // is_split_point marks interior split points only, not all segment endpoints.
     std::vector<std::uint8_t> is_split_point;
     std::vector<std::int64_t> split_flats;
 
@@ -82,11 +97,99 @@ struct lsdtt_chi_network_fit_result
     std::vector<lsdtt_chi_network_fit_segment> segments;
 };
 
+
+
+struct lsdtt_chi_network_fit_collection_result
+{
+    std::vector<lsdtt_chi_network_fit_result> basins;
+};
+
+struct lsdtt_chi_network_fit_node_table
+{
+    std::vector<std::int32_t> basin_index;
+    std::vector<std::int64_t> outlet_flat;
+
+    std::vector<std::int64_t> flat;
+    std::vector<std::int64_t> receiver_flat;
+
+    std::vector<float> chi;
+    std::vector<float> observed_elevation;
+    std::vector<float> fitted_elevation;
+    std::vector<float> residual_elevation;
+    std::vector<float> abs_residual_elevation;
+
+    std::vector<std::int32_t> branch_id;
+
+    std::vector<std::uint8_t> is_main_stem;
+    std::vector<std::uint8_t> is_source;
+    std::vector<std::uint8_t> is_junction;
+    std::vector<std::uint8_t> is_split_point;
+};
+
+
+struct lsdtt_chi_network_fit_segment_table
+{
+    std::vector<std::int32_t> basin_index;
+    std::vector<std::int64_t> outlet_flat;
+
+    std::vector<std::int32_t> segment_id;
+    std::vector<std::int32_t> parent_segment_id;
+    std::vector<std::int32_t> branch_id;
+
+    std::vector<std::int64_t> downstream_flat;
+    std::vector<std::int64_t> upstream_flat;
+
+    std::vector<float> downstream_chi;
+    std::vector<float> upstream_chi;
+
+    std::vector<float> downstream_elevation;
+    std::vector<float> upstream_elevation;
+
+    std::vector<float> max_abs_residual;
+    std::vector<std::int32_t> n_nodes;
+};
+
+// Flatten one fitted chi network to a segment-wise table.
+// basin_index is set to 0 for all rows.
+[[nodiscard]] lsdtt_chi_network_fit_segment_table export_chi_network_fit_segments(
+    const lsdtt_chi_network_fit_result& fit_result
+);
+
+// Flatten a collection of fitted chi networks to one segment-wise table.
+// basin_index identifies which fitted basin each row came from.
+[[nodiscard]] lsdtt_chi_network_fit_segment_table export_chi_network_fit_segments(
+    const lsdtt_chi_network_fit_collection_result& fit_results
+);
+
+
+
+// Flatten one fitted chi network to a node-wise table.
+// basin_index is set to 0 for all rows.
+[[nodiscard]] lsdtt_chi_network_fit_node_table export_chi_network_fit_nodes(
+    const lsdtt_chi_network_fit_result& fit_result
+);
+
+// Flatten a collection of fitted chi networks to one node-wise table.
+// basin_index identifies which fitted basin each row came from.
+[[nodiscard]] lsdtt_chi_network_fit_node_table export_chi_network_fit_nodes(
+    const lsdtt_chi_network_fit_collection_result& fit_results
+);
+
+
+
 // Fit one extracted chi network using elevations sampled from the DEM.
 [[nodiscard]] lsdtt_chi_network_fit_result fit_chi_network(
     const lsdtt_chi_basin_result& chi_network,
     const lsdtt_raster_cpu& dem,
     const lsdtt_chi_network_fit_options& options = {}
 );
+
+// Fit a collection of extracted chi networks using elevations sampled from the DEM.
+[[nodiscard]] lsdtt_chi_network_fit_collection_result fit_chi_networks(
+    const lsdtt_chi_collection_result& chi_networks,
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_chi_network_fit_options& options = {}
+);
+
 
 } // namespace lsdtt

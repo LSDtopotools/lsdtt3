@@ -88,6 +88,26 @@ if(LSDTT_OPENCV)
 endif()
 
 # =============================================================================
+# Optional: Eigen3 (required by lsdtt_chi_ksn_inversion_cpu)
+# =============================================================================
+option(LSDTT_EIGEN "Build Eigen-based inversion and sparse linear-algebra routines" ON)
+set(LSDTT_HAS_EIGEN OFF)
+
+if(LSDTT_EIGEN)
+    find_package(Eigen3 QUIET NO_MODULE)
+    if(Eigen3_FOUND)
+        set(LSDTT_HAS_EIGEN ON)
+        message(STATUS "Eigen3 found — chi ksn inversion enabled")
+    else()
+        message(WARNING "Eigen3 not found — lsdtt_chi_ksn_inversion_cpu will not be built "
+                        "(install libeigen3-dev or pass -DLSDTT_EIGEN=OFF to silence)")
+    endif()
+endif()
+
+
+
+
+# =============================================================================
 # Optional: CUDA
 # =============================================================================
 if(LSDTT_GPU)
@@ -197,11 +217,19 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_hydraulic_graph_cpu.cpp
     src/cpu/lsdtt_chi_extraction_cpu.cpp
     src/cpu/lsdtt_chi_network_analysis_cpu.cpp
+    src/cpu/lsdtt_chi_disorder_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
     list(APPEND LSDTT3_CPU_SOURCES src/cpu/lsdtt_raster_opencv_cpu.cpp)
 endif()
+
+if(LSDTT_HAS_EIGEN)
+    list(APPEND LSDTT3_CPU_SOURCES
+        src/cpu/lsdtt_chi_ksn_inversion_cpu.cpp
+    )
+endif()
+
 
 add_library(lsdtt3_cpu STATIC ${LSDTT3_CPU_SOURCES})
 
@@ -235,6 +263,13 @@ if(LSDTT_HAS_OPENCV)
     target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_OPENCV=1)
     target_link_libraries(lsdtt3_cpu PUBLIC ${OpenCV_LIBS})
 endif()
+
+if(LSDTT_HAS_EIGEN)
+    target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_EIGEN=1)
+    target_link_libraries(lsdtt3_cpu PUBLIC Eigen3::Eigen)
+endif()
+
+
 
 # =============================================================================
 # lsdtt3_gpu  (static library, LSDTT_GPU=ON only)
@@ -328,5 +363,6 @@ message(STATUS "  OpenMP      : ${OpenMP_CXX_FOUND}")
 message(STATUS "  FFTW3       : ${LSDTT_HAS_FFTW}")
 message(STATUS "  OpenCV      : ${LSDTT_HAS_OPENCV}")
 message(STATUS "  GPU (CUDA)  : ${LSDTT_GPU}")
+message(STATUS "  Eigen3      : ${LSDTT_HAS_EIGEN}")
 message(STATUS "===================================")
 message(STATUS "")

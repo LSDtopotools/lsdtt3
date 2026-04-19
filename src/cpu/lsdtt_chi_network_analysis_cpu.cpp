@@ -40,6 +40,20 @@ namespace
 
 constexpr double k_sqrt_2 = 1.4142135623730950488;
 
+// forward declarations
+void append_fit_result_to_segment_table(
+    const lsdtt_chi_network_fit_result& fit_result,
+    std::int32_t basin_index,
+    lsdtt_chi_network_fit_segment_table& table
+);
+
+void append_fit_result_to_node_table(
+    const lsdtt_chi_network_fit_result& fit_result,
+    std::int32_t basin_index,
+    lsdtt_chi_network_fit_node_table& table
+);
+
+
 // -----------------------------------------------------------------------------
 // small helpers
 // -----------------------------------------------------------------------------
@@ -128,13 +142,17 @@ public:
         initialise_result();
         sample_observed_elevation();
         build_local_graph();
+        initialise_topology_diagnostics();
         compute_downstream_distances();
         compute_upstream_metrics();
+        mark_main_stem();
         fit_entire_network();
+        finalise_node_diagnostics();
         finalise_split_points();
         finalise_segment_parents();
         return result_;
     }
+
 
 private:
     // -------------------------------------------------------------------------
@@ -236,20 +254,60 @@ private:
     void initialise_result()
     {
         result_.outlet_flat        = chi_network_.outlet_flat;
-        result_.flats             = chi_network_.flats;
-        result_.receiver_flats    = chi_network_.receiver_flats;
-        result_.chi               = chi_network_.chi;
+        result_.flats              = chi_network_.flats;
+        result_.receiver_flats     = chi_network_.receiver_flats;
+        result_.chi                = chi_network_.chi;
+
         result_.observed_elevation.assign(chi_network_.flats.size(), 0.0f);
         result_.fitted_elevation.assign(
             chi_network_.flats.size(),
             std::numeric_limits<float>::quiet_NaN()
         );
+
+        result_.residual_elevation.assign(chi_network_.flats.size(), 0.0f);
+        result_.abs_residual_elevation.assign(chi_network_.flats.size(), 0.0f);
+        result_.branch_id_of_node.assign(chi_network_.flats.size(), -1);
+
+        result_.is_main_stem.assign(chi_network_.flats.size(), std::uint8_t{0});
+        result_.is_source.assign(chi_network_.flats.size(), std::uint8_t{0});
+        result_.is_junction.assign(chi_network_.flats.size(), std::uint8_t{0});
+
         result_.is_split_point.assign(chi_network_.flats.size(), std::uint8_t{0});
+
         result_.split_flats.clear();
         result_.segments.clear();
 
         fitted_assigned_.assign(chi_network_.flats.size(), std::uint8_t{0});
     }
+
+
+    void initialise_topology_diagnostics()
+    {
+        for (std::size_t i = 0; i < donors_local_.size(); ++i)
+        {
+            if (donors_local_[i].empty())
+            {
+                result_.is_source[i] = std::uint8_t{1};
+            }
+
+            if (donors_local_[i].size() > 1)
+            {
+                result_.is_junction[i] = std::uint8_t{1};
+            }
+        }
+    }
+
+    void mark_main_stem()
+    {
+        int current = root_local_index_;
+
+        while (current >= 0)
+        {
+            result_.is_main_stem[static_cast<std::size_t>(current)] = std::uint8_t{1};
+            current = choose_primary_donor(current);
+        }
+    }
+
 
     void sample_observed_elevation()
     {
@@ -587,6 +645,16 @@ private:
         const std::vector<int> path =
             build_branch_path(anchor_local_idx, first_upstream_local_idx);
 
+        for (const int node : path)
+        {
+            const std::size_t idx = static_cast<std::size_t>(node);
+            if (result_.branch_id_of_node[idx] < 0)
+            {
+                result_.branch_id_of_node[idx] = branch_id;
+            }
+        }
+
+
         if (path.size() >= 2)
         {
             fit_path_recursive(
@@ -786,6 +854,8 @@ private:
         const double chi_up =
             static_cast<double>(result_.chi[static_cast<std::size_t>(up_local)]);
 
+        float max_abs_residual = 0.0f;
+
         for (int pos = down_pos; pos <= up_pos; ++pos)
         {
             const int local_idx = path[static_cast<std::size_t>(pos)];
@@ -797,6 +867,15 @@ private:
                 z_up,
                 static_cast<double>(result_.chi[static_cast<std::size_t>(local_idx)])
             );
+
+            const float z_obs =
+                result_.observed_elevation[static_cast<std::size_t>(local_idx)];
+
+            const float abs_res = std::fabs(z_obs - z_fit);
+            if (abs_res > max_abs_residual)
+            {
+                max_abs_residual = abs_res;
+            }
 
             if (fitted_assigned_[static_cast<std::size_t>(local_idx)])
             {
@@ -834,8 +913,12 @@ private:
         segment.downstream_elevation = z_down;
         segment.upstream_elevation   = z_up;
 
+        segment.max_abs_residual = max_abs_residual;
+        segment.n_nodes = static_cast<std::int32_t>(up_pos - down_pos + 1);
+
         result_.segments.push_back(segment);
     }
+
 
     void finalise_split_points()
     {
@@ -882,6 +965,36 @@ private:
             }
         }
     }
+
+    void finalise_node_diagnostics()
+    {
+        for (std::size_t i = 0; i < result_.flats.size(); ++i)
+        {
+            if (!fitted_assigned_[i] ||
+                !std::isfinite(result_.fitted_elevation[i]))
+            {
+                throw std::runtime_error(
+                    "lsdtt_chi_network_analysis_cpu: fitted network did not "
+                    "assign elevations to all nodes."
+                );
+            }
+
+            if (result_.branch_id_of_node[i] < 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_chi_network_analysis_cpu: branch_id_of_node was not "
+                    "assigned for all nodes."
+                );
+            }
+
+            const float residual =
+                result_.observed_elevation[i] - result_.fitted_elevation[i];
+
+            result_.residual_elevation[i] = residual;
+            result_.abs_residual_elevation[i] = std::fabs(residual);
+        }
+    }
+
 };
 
 } // anonymous namespace
@@ -897,5 +1010,198 @@ lsdtt_chi_network_fit_result fit_chi_network(
     chi_network_fitter fitter(chi_network, dem, options);
     return fitter.run();
 }
+
+
+lsdtt_chi_network_fit_collection_result fit_chi_networks(
+    const lsdtt_chi_collection_result& chi_networks,
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_chi_network_fit_options& options)
+{
+    lsdtt_chi_network_fit_collection_result result;
+    result.basins.reserve(chi_networks.basins.size());
+
+    for (const auto& basin : chi_networks.basins)
+    {
+        result.basins.push_back(
+            fit_chi_network(basin, dem, options)
+        );
+    }
+
+    return result;
+}
+
+
+lsdtt_chi_network_fit_node_table export_chi_network_fit_nodes(
+    const lsdtt_chi_network_fit_result& fit_result)
+{
+    lsdtt_chi_network_fit_node_table table;
+    append_fit_result_to_node_table(fit_result, 0, table);
+    return table;
+}
+
+lsdtt_chi_network_fit_node_table export_chi_network_fit_nodes(
+    const lsdtt_chi_network_fit_collection_result& fit_results)
+{
+    lsdtt_chi_network_fit_node_table table;
+
+    for (std::size_t i = 0; i < fit_results.basins.size(); ++i)
+    {
+        append_fit_result_to_node_table(
+            fit_results.basins[i],
+            static_cast<std::int32_t>(i),
+            table
+        );
+    }
+
+    return table;
+}
+
+
+lsdtt_chi_network_fit_segment_table export_chi_network_fit_segments(
+    const lsdtt_chi_network_fit_result& fit_result)
+{
+    lsdtt_chi_network_fit_segment_table table;
+    append_fit_result_to_segment_table(fit_result, 0, table);
+    return table;
+}
+
+lsdtt_chi_network_fit_segment_table export_chi_network_fit_segments(
+    const lsdtt_chi_network_fit_collection_result& fit_results)
+{
+    lsdtt_chi_network_fit_segment_table table;
+
+    for (std::size_t i = 0; i < fit_results.basins.size(); ++i)
+    {
+        append_fit_result_to_segment_table(
+            fit_results.basins[i],
+            static_cast<std::int32_t>(i),
+            table
+        );
+    }
+
+    return table;
+}
+
+
+
+namespace
+{
+
+
+void append_fit_result_to_segment_table(
+    const lsdtt_chi_network_fit_result& fit_result,
+    std::int32_t basin_index,
+    lsdtt_chi_network_fit_segment_table& table)
+{
+    const std::size_t n = fit_result.segments.size();
+
+    table.basin_index.reserve(table.basin_index.size() + n);
+    table.outlet_flat.reserve(table.outlet_flat.size() + n);
+
+    table.segment_id.reserve(table.segment_id.size() + n);
+    table.parent_segment_id.reserve(table.parent_segment_id.size() + n);
+    table.branch_id.reserve(table.branch_id.size() + n);
+
+    table.downstream_flat.reserve(table.downstream_flat.size() + n);
+    table.upstream_flat.reserve(table.upstream_flat.size() + n);
+
+    table.downstream_chi.reserve(table.downstream_chi.size() + n);
+    table.upstream_chi.reserve(table.upstream_chi.size() + n);
+
+    table.downstream_elevation.reserve(table.downstream_elevation.size() + n);
+    table.upstream_elevation.reserve(table.upstream_elevation.size() + n);
+
+    table.max_abs_residual.reserve(table.max_abs_residual.size() + n);
+    table.n_nodes.reserve(table.n_nodes.size() + n);
+
+    for (const auto& seg : fit_result.segments)
+    {
+        table.basin_index.push_back(basin_index);
+        table.outlet_flat.push_back(fit_result.outlet_flat);
+
+        table.segment_id.push_back(seg.segment_id);
+        table.parent_segment_id.push_back(seg.parent_segment_id);
+        table.branch_id.push_back(seg.branch_id);
+
+        table.downstream_flat.push_back(seg.downstream_flat);
+        table.upstream_flat.push_back(seg.upstream_flat);
+
+        table.downstream_chi.push_back(seg.downstream_chi);
+        table.upstream_chi.push_back(seg.upstream_chi);
+
+        table.downstream_elevation.push_back(seg.downstream_elevation);
+        table.upstream_elevation.push_back(seg.upstream_elevation);
+
+        table.max_abs_residual.push_back(seg.max_abs_residual);
+        table.n_nodes.push_back(seg.n_nodes);
+    }
+}
+
+
+void append_fit_result_to_node_table(
+    const lsdtt_chi_network_fit_result& fit_result,
+    std::int32_t basin_index,
+    lsdtt_chi_network_fit_node_table& table)
+{
+    const std::size_t n = fit_result.flats.size();
+
+    if (fit_result.receiver_flats.size()        != n ||
+        fit_result.chi.size()                   != n ||
+        fit_result.observed_elevation.size()    != n ||
+        fit_result.fitted_elevation.size()      != n ||
+        fit_result.residual_elevation.size()    != n ||
+        fit_result.abs_residual_elevation.size()!= n ||
+        fit_result.branch_id_of_node.size()     != n ||
+        fit_result.is_main_stem.size()          != n ||
+        fit_result.is_source.size()             != n ||
+        fit_result.is_junction.size()           != n ||
+        fit_result.is_split_point.size()        != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt_chi_network_analysis_cpu: fitted chi network result has "
+            "inconsistent node-vector lengths during export."
+        );
+    }
+
+    table.basin_index.reserve(table.basin_index.size() + n);
+    table.outlet_flat.reserve(table.outlet_flat.size() + n);
+    table.flat.reserve(table.flat.size() + n);
+    table.receiver_flat.reserve(table.receiver_flat.size() + n);
+    table.chi.reserve(table.chi.size() + n);
+    table.observed_elevation.reserve(table.observed_elevation.size() + n);
+    table.fitted_elevation.reserve(table.fitted_elevation.size() + n);
+    table.residual_elevation.reserve(table.residual_elevation.size() + n);
+    table.abs_residual_elevation.reserve(table.abs_residual_elevation.size() + n);
+    table.branch_id.reserve(table.branch_id.size() + n);
+    table.is_main_stem.reserve(table.is_main_stem.size() + n);
+    table.is_source.reserve(table.is_source.size() + n);
+    table.is_junction.reserve(table.is_junction.size() + n);
+    table.is_split_point.reserve(table.is_split_point.size() + n);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        table.basin_index.push_back(basin_index);
+        table.outlet_flat.push_back(fit_result.outlet_flat);
+
+        table.flat.push_back(fit_result.flats[i]);
+        table.receiver_flat.push_back(fit_result.receiver_flats[i]);
+
+        table.chi.push_back(fit_result.chi[i]);
+        table.observed_elevation.push_back(fit_result.observed_elevation[i]);
+        table.fitted_elevation.push_back(fit_result.fitted_elevation[i]);
+        table.residual_elevation.push_back(fit_result.residual_elevation[i]);
+        table.abs_residual_elevation.push_back(fit_result.abs_residual_elevation[i]);
+
+        table.branch_id.push_back(fit_result.branch_id_of_node[i]);
+
+        table.is_main_stem.push_back(fit_result.is_main_stem[i]);
+        table.is_source.push_back(fit_result.is_source[i]);
+        table.is_junction.push_back(fit_result.is_junction[i]);
+        table.is_split_point.push_back(fit_result.is_split_point[i]);
+    }
+}
+
+} // anonymous namespace
+
 
 } // namespace lsdtt
