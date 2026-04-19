@@ -333,6 +333,11 @@ lsdtt_cli(lsdtt-basin-extraction       cli/lsdtt-basin-extraction.cpp)
 lsdtt_cli(lsdtt-flat-surface-finder    cli/lsdtt-flat-surface-finder.cpp)
 lsdtt_cli(lsdtt-hydraulic-routing      cli/lsdtt-hydraulic-routing.cpp)
 
+if(LSDTT_HAS_EIGEN)
+    lsdtt_cli(lsdtt-chi-analysis cli/lsdtt-chi-analysis.cpp)
+endif()
+
+
 
 # =============================================================================
 # Install libraries and headers (optional — useful for packaging)
