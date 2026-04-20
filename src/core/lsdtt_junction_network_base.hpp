@@ -94,6 +94,31 @@ public:
     [[nodiscard]] virtual std::int32_t stream_order_of_junction(std::int32_t junction) const = 0;
 
     // -------------------------------------------------------------------------
+    // direct donor-junction access
+    // -------------------------------------------------------------------------
+    // NOTE
+    // donor_junctions(j) returns direct upstream junctions
+    // donors are ordered by ascending junction id
+    // this ordering is deterministic but not geomorphically meaningful 
+    //   (that is, they are not left and right ordered) so for junction angles
+    //   
+    // -------------------------------------------------------------------------
+    [[nodiscard]] virtual std::int32_t donor_junction_size(
+        std::int32_t junction
+    ) const = 0;
+
+    [[nodiscard]] virtual lsdtt_junction_index_slice donor_junctions(
+        std::int32_t junction
+    ) const = 0;
+
+    virtual void for_each_donor_junction(
+        std::int32_t junction,
+        const std::function<void(std::int32_t)>& function
+    ) const = 0;
+
+
+
+    // -------------------------------------------------------------------------
     // outlet and topological-order indexed access
     // -------------------------------------------------------------------------
     [[nodiscard]] virtual std::int32_t outlet_junction(std::int32_t outlet_index) const = 0;

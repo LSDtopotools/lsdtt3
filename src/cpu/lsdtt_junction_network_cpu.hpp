@@ -151,6 +151,22 @@ public:
     [[nodiscard]] std::int32_t stream_order_of_junction(std::int32_t junction) const override;
 
     // -------------------------------------------------------------------------
+    // direct donor-junction access
+    // -------------------------------------------------------------------------
+    [[nodiscard]] std::int32_t donor_junction_size(
+        std::int32_t junction
+    ) const override;
+
+    [[nodiscard]] lsdtt_junction_index_slice donor_junctions(
+        std::int32_t junction
+    ) const override;
+
+    void for_each_donor_junction(
+        std::int32_t junction,
+        const std::function<void(std::int32_t)>& function
+    ) const override;
+
+    // -------------------------------------------------------------------------
     // outlet and topological-order indexed access
     // -------------------------------------------------------------------------
     [[nodiscard]] std::int32_t outlet_junction(std::int32_t outlet_index) const override;
@@ -298,6 +314,7 @@ private:
     void identify_junctions(const lsdtt_array2d<std::int32_t>& pixel_stream_order);
     void build_receiver_junctions();
     void build_donor_count_junction();
+    void build_direct_donor_lists();
     void build_outlets();
     void build_topological_order();
     void build_s_vector();
@@ -335,9 +352,15 @@ private:
     std::vector<std::uint8_t>   donor_count_junction_;
     std::vector<std::int32_t>   stream_order_junction_;
 
+    // direct donor adjacency (CSR-style)
+    std::vector<std::int32_t>   direct_donor_junctions_;
+    std::vector<std::int32_t>   direct_donor_start_;
+    std::vector<std::int32_t>   direct_donor_size_;
+
     // compact traversal products
     std::vector<std::int32_t>   topological_order_;
     std::vector<std::int32_t>   outlets_;
+
 
     std::vector<std::int32_t>   s_vector_;
     std::vector<std::int32_t>   s_vector_start_;

@@ -96,6 +96,7 @@ void lsdtt_junction_network_cpu::create(
     identify_junctions(pixel_stream_order);
     build_receiver_junctions();
     build_donor_count_junction();
+    build_direct_donor_lists();
     build_outlets();
 
     const bool need_topological_order =
@@ -142,6 +143,10 @@ void lsdtt_junction_network_cpu::clear() noexcept
     receiver_junction_.clear();
     donor_count_junction_.clear();
     stream_order_junction_.clear();
+
+    direct_donor_junctions_.clear();
+    direct_donor_start_.clear();
+    direct_donor_size_.clear();
 
     topological_order_.clear();
     outlets_.clear();
@@ -350,6 +355,130 @@ void lsdtt_junction_network_cpu::validate() const
                 "lsdtt_junction_network_cpu: donor_count_junction_ inconsistent with receiver_junction_"
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // direct donor adjacency
+    // -------------------------------------------------------------------------
+    if (direct_donor_start_.size() != static_cast<std::size_t>(n_junctions) ||
+        direct_donor_size_.size()  != static_cast<std::size_t>(n_junctions))
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu: direct donor index arrays have inconsistent sizes"
+        );
+    }
+
+    std::vector<std::uint8_t> seen_as_direct_donor(
+        static_cast<std::size_t>(n_junctions),
+        std::uint8_t{0}
+    );
+
+    std::size_t counted_direct_donors = 0;
+
+    for (std::int32_t j = 0; j < n_junctions; ++j)
+    {
+        const std::int32_t start =
+            direct_donor_start_[static_cast<std::size_t>(j)];
+
+        const std::int32_t size =
+            direct_donor_size_[static_cast<std::size_t>(j)];
+
+        if (start < 0 || size < 0)
+        {
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu: direct donor interval contains negative index or size"
+            );
+        }
+
+        const std::int32_t end = start + size;
+
+        if (end < start ||
+            end > static_cast<std::int32_t>(direct_donor_junctions_.size()))
+        {
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu: direct donor interval exceeds vector bounds"
+            );
+        }
+
+        if (static_cast<std::uint8_t>(size) !=
+            donor_count_junction_[static_cast<std::size_t>(j)])
+        {
+            throw std::runtime_error(
+                "lsdtt_junction_network_cpu: direct donor interval size does not match donor_count_junction_"
+            );
+        }
+
+        std::int32_t previous = k_nodata_junction;
+
+        for (std::int32_t i = start; i < end; ++i)
+        {
+            const std::int32_t donor =
+                direct_donor_junctions_[static_cast<std::size_t>(i)];
+
+            if (!is_valid_junction(donor))
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: direct donor list contains invalid junction"
+                );
+            }
+
+            if (receiver_junction_[static_cast<std::size_t>(donor)] != j)
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: direct donor list inconsistent with receiver_junction_"
+                );
+            }
+
+            if (seen_as_direct_donor[static_cast<std::size_t>(donor)] != 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: junction appears multiple times in direct donor adjacency"
+                );
+            }
+
+            if (previous != k_nodata_junction && donor < previous)
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: direct donor adjacency is not sorted"
+                );
+            }
+
+            seen_as_direct_donor[static_cast<std::size_t>(donor)] = 1;
+            previous = donor;
+            ++counted_direct_donors;
+        }
+    }
+
+    for (std::int32_t j = 0; j < n_junctions; ++j)
+    {
+        const std::int32_t rec =
+            receiver_junction_[static_cast<std::size_t>(j)];
+
+        if (rec >= 0)
+        {
+            if (seen_as_direct_donor[static_cast<std::size_t>(j)] == 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: non-outlet junction is missing from direct donor adjacency"
+                );
+            }
+        }
+        else if (rec == k_outlet_junction)
+        {
+            if (seen_as_direct_donor[static_cast<std::size_t>(j)] != 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: outlet junction appears in a direct donor adjacency list"
+                );
+            }
+        }
+    }
+
+    if (counted_direct_donors != direct_donor_junctions_.size())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu: direct donor adjacency length mismatch"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -741,6 +870,53 @@ std::uint8_t lsdtt_junction_network_cpu::donor_count_of_junction(std::int32_t ju
     require_valid_junction(junction);
     return donor_count_junction_[static_cast<std::size_t>(junction)];
 }
+
+
+std::int32_t lsdtt_junction_network_cpu::donor_junction_size(
+    std::int32_t junction
+) const
+{
+    require_valid_junction(junction);
+    return direct_donor_size_[static_cast<std::size_t>(junction)];
+}
+
+lsdtt_junction_index_slice lsdtt_junction_network_cpu::donor_junctions(
+    std::int32_t junction
+) const
+{
+    require_valid_junction(junction);
+
+    const std::int32_t start =
+        direct_donor_start_[static_cast<std::size_t>(junction)];
+
+    const std::int32_t size =
+        direct_donor_size_[static_cast<std::size_t>(junction)];
+
+    if (size == 0 || direct_donor_junctions_.empty())
+    {
+        return lsdtt_junction_index_slice{nullptr, 0};
+    }
+
+    return lsdtt_junction_index_slice{
+        direct_donor_junctions_.data() + static_cast<std::size_t>(start),
+        static_cast<std::size_t>(size)
+    };
+}
+
+void lsdtt_junction_network_cpu::for_each_donor_junction(
+    std::int32_t junction,
+    const std::function<void(std::int32_t)>& function
+) const
+{
+    const lsdtt_junction_index_slice slice = donor_junctions(junction);
+
+    for (const std::int32_t* it = slice.begin(); it != slice.end(); ++it)
+    {
+        function(*it);
+    }
+}
+
+
 
 std::int32_t lsdtt_junction_network_cpu::stream_order_of_junction(std::int32_t junction) const
 {
@@ -1326,6 +1502,14 @@ void lsdtt_junction_network_cpu::build_donor_count_junction()
         const std::int32_t rec = receiver_junction_[static_cast<std::size_t>(j)];
         if (rec >= 0)
         {
+            // a little defensive if statement
+            if (donor_count_junction_[static_cast<std::size_t>(rec)] ==
+                std::numeric_limits<std::uint8_t>::max())
+            {
+                throw std::runtime_error(
+                    "lsdtt_junction_network_cpu: donor_count_junction overflow"
+                );
+            }            
             ++donor_count_junction_[static_cast<std::size_t>(rec)];
         }
     }
@@ -1343,6 +1527,58 @@ void lsdtt_junction_network_cpu::build_outlets()
         }
     }
 }
+
+
+void lsdtt_junction_network_cpu::build_direct_donor_lists()
+{
+    const std::int32_t n_junctions =
+        static_cast<std::int32_t>(junction_flat_.size());
+
+    direct_donor_junctions_.clear();
+    direct_donor_start_.assign(static_cast<std::size_t>(n_junctions), 0);
+    direct_donor_size_.assign(static_cast<std::size_t>(n_junctions), 0);
+
+    if (n_junctions == 0)
+    {
+        return;
+    }
+
+    std::int32_t total_direct_donors = 0;
+
+    for (std::int32_t j = 0; j < n_junctions; ++j)
+    {
+        const std::int32_t size =
+            static_cast<std::int32_t>(
+                donor_count_junction_[static_cast<std::size_t>(j)]
+            );
+
+        direct_donor_size_[static_cast<std::size_t>(j)] = size;
+        direct_donor_start_[static_cast<std::size_t>(j)] = total_direct_donors;
+        total_direct_donors += size;
+    }
+
+    direct_donor_junctions_.assign(
+        static_cast<std::size_t>(total_direct_donors),
+        k_nodata_junction
+    );
+
+    std::vector<std::int32_t> cursor = direct_donor_start_;
+
+    for (std::int32_t donor = 0; donor < n_junctions; ++donor)
+    {
+        const std::int32_t rec =
+            receiver_junction_[static_cast<std::size_t>(donor)];
+
+        if (rec >= 0)
+        {
+            const std::int32_t write_index =
+                cursor[static_cast<std::size_t>(rec)]++;
+
+            direct_donor_junctions_[static_cast<std::size_t>(write_index)] = donor;
+        }
+    }
+}
+
 
 // =============================================================================
 // build_topological_order
@@ -2016,6 +2252,7 @@ void lsdtt_junction_network_cpu::write_junction_network_points(
         "stream_order"
     };
     schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type
     };

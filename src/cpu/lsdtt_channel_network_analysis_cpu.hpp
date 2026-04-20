@@ -1,0 +1,448 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+#include <limits>
+
+#include "../core/lsdtt_flow_base.hpp"
+#include "../core/lsdtt_junction_network_base.hpp"
+#include "../core/lsdtt_types.hpp"
+
+namespace lsdtt
+{
+
+enum class lsdtt_link_sampling_mode
+{
+    full_link,
+    fixed_length,
+    fixed_n_pixels
+};
+
+enum class lsdtt_link_sample_anchor
+{
+    upstream_end,
+    downstream_end
+};
+
+struct lsdtt_link_sampling_options
+{
+    lsdtt_link_sampling_mode mode = lsdtt_link_sampling_mode::full_link;
+
+    double fixed_length_metres = 0.0;
+    int    fixed_n_pixels = 0;
+
+    // Minimum number of sampled nodes required for later analysis.
+    // Keep this small here; bearing code can impose stricter requirements later.
+    int min_nodes = 2;
+};
+
+struct lsdtt_traced_channel_link
+{
+    std::int32_t upstream_junction   = k_nodata_junction;
+    std::int32_t downstream_junction = k_nodata_junction;
+
+    std::int64_t upstream_flat   = -1;
+    std::int64_t downstream_flat = -1;
+
+    std::vector<std::int64_t> flats;
+    std::vector<lsdtt_xy>     xy;
+    std::vector<double>       cumulative_distance_from_upstream_metres;
+
+    double total_length_metres = 0.0;
+
+    bool empty() const noexcept
+    {
+        return flats.empty();
+    }
+
+    std::size_t size() const noexcept
+    {
+        return flats.size();
+    }
+};
+
+struct lsdtt_sampled_channel_link
+{
+    std::int32_t upstream_junction   = k_nodata_junction;
+    std::int32_t downstream_junction = k_nodata_junction;
+
+    std::vector<std::int64_t> flats;
+    std::vector<lsdtt_xy>     xy;
+
+    // Distance measured along the sampled polyline, in sample order.
+    std::vector<double> cumulative_distance_metres;
+
+    double sampled_length_metres = 0.0;
+
+    bool empty() const noexcept
+    {
+        return flats.empty();
+    }
+
+    std::size_t size() const noexcept
+    {
+        return flats.size();
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Trace the compact channel link from one junction to its immediate downstream
+// receiver junction. Includes both endpoint junction pixels.
+// Throws if upstream_junction is invalid, is an outlet junction, or the traced
+// path leaves the channel network or fails to reach the declared receiver.
+// -----------------------------------------------------------------------------
+lsdtt_traced_channel_link trace_channel_link_between_junctions(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& network,
+    std::int32_t                       upstream_junction
+);
+
+// -----------------------------------------------------------------------------
+// Sample a traced link according to the chosen mode.
+//
+// full_link:
+//   returns all nodes
+//
+// fixed_n_pixels:
+//   returns a contiguous sub-chain of at most fixed_n_pixels nodes,
+//   anchored at either the upstream or downstream end
+//
+// fixed_length:
+//   returns a contiguous sub-chain whose path length is <= fixed_length_metres,
+//   anchored at either the upstream or downstream end
+//
+// The returned nodes preserve channel order.
+// -----------------------------------------------------------------------------
+lsdtt_sampled_channel_link sample_traced_channel_link(
+    const lsdtt_traced_channel_link&    traced_link,
+    const lsdtt_link_sampling_options&  options,
+    lsdtt_link_sample_anchor            anchor
+);
+
+// Convenience helper for reversing a sampled link in-place.
+void reverse_sampled_channel_link(
+    lsdtt_sampled_channel_link& sampled_link
+);
+
+
+struct lsdtt_channel_bearing_fit
+{
+    bool valid = false;
+
+    std::size_t n_nodes_used = 0;
+    double sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
+
+    double direction_x = std::numeric_limits<double>::quiet_NaN();
+    double direction_y = std::numeric_limits<double>::quiet_NaN();
+
+    double bearing_rad = std::numeric_limits<double>::quiet_NaN();
+    double bearing_deg = std::numeric_limits<double>::quiet_NaN();
+
+    double fit_linearity = std::numeric_limits<double>::quiet_NaN();
+
+    bool empty() const noexcept
+    {
+        return !valid;
+    }
+};
+
+struct lsdtt_channel_link_bearing
+{
+    std::int32_t upstream_junction   = k_nodata_junction;
+    std::int32_t downstream_junction = k_nodata_junction;
+
+    std::int64_t upstream_flat   = -1;
+    std::int64_t downstream_flat = -1;
+
+    std::int32_t stream_order = -1;
+
+    double drainage_area_m2 = std::numeric_limits<double>::quiet_NaN();
+
+    std::size_t n_nodes_total = 0;
+    std::size_t n_nodes_used  = 0;
+
+    double total_length_metres   = std::numeric_limits<double>::quiet_NaN();
+    double sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
+
+    double direction_x = std::numeric_limits<double>::quiet_NaN();
+    double direction_y = std::numeric_limits<double>::quiet_NaN();
+
+    double bearing_rad = std::numeric_limits<double>::quiet_NaN();
+    double bearing_deg = std::numeric_limits<double>::quiet_NaN();
+
+    double fit_linearity = std::numeric_limits<double>::quiet_NaN();
+
+    // Representative point used for visual bearing-vector output.
+    // This is taken from the centre sampled node of the fitted link segment.
+    std::int64_t representative_flat = -1;
+
+    double representative_x = std::numeric_limits<double>::quiet_NaN();
+    double representative_y = std::numeric_limits<double>::quiet_NaN();
+
+
+    bool empty() const noexcept
+    {
+        return upstream_junction == k_nodata_junction;
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Fit a directed channel bearing to an already-sampled link.
+//
+// The sampled link must be ordered in channel order. The fitted orthogonal
+// regression axis is oriented to match the chord from the first sampled point
+// to the last sampled point.
+// -----------------------------------------------------------------------------
+lsdtt_channel_bearing_fit fit_channel_bearing_to_sampled_link(
+    const lsdtt_sampled_channel_link& sampled_link
+);
+
+// -----------------------------------------------------------------------------
+// Calculate one bearing record per downstream compact link.
+//
+// Input junctions are interpreted as the upstream ends of the links to analyse.
+// Outlet junctions are skipped because they have no downstream receiver link.
+//
+// If upstream_junctions_to_analyse is empty, all non-outlet junctions are used.
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_channel_link_bearing> calculate_channel_link_bearings(
+    const lsdtt_flow_base&                    flow,
+    const lsdtt_junction_network_base&        network,
+    const std::vector<std::int32_t>&          upstream_junctions_to_analyse = {},
+    const lsdtt_link_sampling_options&        options = lsdtt_link_sampling_options{},
+    lsdtt_link_sample_anchor                  anchor = lsdtt_link_sample_anchor::upstream_end
+);
+
+
+
+struct lsdtt_junction_angle_record
+{
+    bool valid = false;
+
+    std::int32_t junction  = k_nodata_junction;
+    std::int32_t donor_1   = k_nodata_junction;
+    std::int32_t donor_2   = k_nodata_junction;
+    std::int32_t receiver  = k_nodata_junction;
+
+    std::int32_t junction_order = -1;
+    std::int32_t donor_1_order  = -1;
+    std::int32_t donor_2_order  = -1;
+    std::int32_t receiver_order = -1;
+
+    // Drainage areas:
+    // donor_*_area_m2 are taken at the penultimate pixel immediately upstream
+    // of the analysed junction along each donor link.
+    // junction_area_m2 is the area at the junction pixel itself.
+    double donor_1_area_m2 = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_area_m2 = std::numeric_limits<double>::quiet_NaN();
+    double junction_area_m2 = std::numeric_limits<double>::quiet_NaN();
+
+    // Bearings
+    // donor_*_bearing_* are inward-pointing, i.e. toward the junction
+    // receiver_bearing_out_* points downstream away from the junction
+    // receiver_bearing_in_* points back toward the junction
+    double donor_1_bearing_rad = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_bearing_rad = std::numeric_limits<double>::quiet_NaN();
+    double receiver_bearing_out_rad = std::numeric_limits<double>::quiet_NaN();
+    double receiver_bearing_in_rad  = std::numeric_limits<double>::quiet_NaN();
+
+    double donor_1_bearing_deg = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_bearing_deg = std::numeric_limits<double>::quiet_NaN();
+    double receiver_bearing_out_deg = std::numeric_limits<double>::quiet_NaN();
+    double receiver_bearing_in_deg  = std::numeric_limits<double>::quiet_NaN();
+
+    // Angles
+    double donor_opening_angle_rad = std::numeric_limits<double>::quiet_NaN();
+    double donor_1_receiver_angle_rad = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_receiver_angle_rad = std::numeric_limits<double>::quiet_NaN();
+
+    double donor_opening_angle_deg = std::numeric_limits<double>::quiet_NaN();
+    double donor_1_receiver_angle_deg = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_receiver_angle_deg = std::numeric_limits<double>::quiet_NaN();
+
+    // Bending angle: signed and absolute angular offset between the inward
+    // receiver direction and the bisector of the donor opening angle.
+    double bending_angle_signed_rad = std::numeric_limits<double>::quiet_NaN();
+    double bending_angle_abs_rad    = std::numeric_limits<double>::quiet_NaN();
+
+    double bending_angle_signed_deg = std::numeric_limits<double>::quiet_NaN();
+    double bending_angle_abs_deg    = std::numeric_limits<double>::quiet_NaN();
+
+    // Link-fit diagnostics
+    double donor_1_linearity = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_linearity = std::numeric_limits<double>::quiet_NaN();
+    double receiver_linearity = std::numeric_limits<double>::quiet_NaN();
+
+    std::size_t donor_1_nodes_total = 0;
+    std::size_t donor_2_nodes_total = 0;
+    std::size_t receiver_nodes_total = 0;
+
+    std::size_t donor_1_nodes_used = 0;
+    std::size_t donor_2_nodes_used = 0;
+    std::size_t receiver_nodes_used = 0;
+
+    double donor_1_total_length_metres = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_total_length_metres = std::numeric_limits<double>::quiet_NaN();
+    double receiver_total_length_metres = std::numeric_limits<double>::quiet_NaN();
+
+    double donor_1_sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
+    double donor_2_sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
+    double receiver_sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
+
+    bool empty() const noexcept
+    {
+        return !valid;
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Calculate junction angles for the selected junctions.
+//
+// Input junctions are analysed as confluences. Junctions are skipped if they:
+//   - are invalid
+//   - are outlet junctions
+//   - do not have exactly two direct donor junctions
+//   - fail donor/receiver tracing or bearing fitting
+//
+// If junctions_to_analyse is empty, all junctions in the network are considered.
+// -----------------------------------------------------------------------------
+// IMPORTANT TERMINOLOGY NOTE — JUNCTION-ANGLE NAMING
+//
+// This code uses descriptive internal names that differ from the historical
+// Strong and Mudd (PNAS, 2023) naming convention.
+//
+// Historical convention:
+//   alpha   = angle between the two donor channels
+//   beta_1  = angle between donor_1 and the receiver
+//   beta_2  = angle between donor_2 and the receiver
+//
+// In this implementation:
+//   donor_opening_angle      = alpha
+//   donor_1_receiver_angle   = beta_1
+//   donor_2_receiver_angle   = beta_2
+//
+// So what is called "junction angle" in the earlier literature is here stored
+// as donor_opening_angle.
+//
+// This code may also report:
+//   bending_angle_signed
+//   bending_angle_abs
+//
+// These are NEW derived diagnostics and are not part of the original
+// alpha / beta_1 / beta_2 set. They describe the offset between the inward
+// receiver direction and the bisector of the donor opening angle.
+//
+// donor_1 and donor_2 are stable implementation labels only; they should not
+// be interpreted as left/right tributaries unless an additional geometric
+// relabelling step is performed.
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_junction_angle_record> calculate_junction_angles(
+    const lsdtt_flow_base&                    flow,
+    const lsdtt_junction_network_base&        network,
+    const std::vector<std::int32_t>&          junctions_to_analyse = {},
+    const lsdtt_link_sampling_options&        options = lsdtt_link_sampling_options{}
+);
+
+
+
+// -----------------------------------------------------------------------------
+// Write channel-link bearing records.
+//
+// Output format behaviour:
+//   - csv         : tabular output with upstream/downstream coordinates
+//   - gpkg / fgb  : one line feature per analysed channel link
+//
+// NOTE:
+// We use point_output_format here so that csv remains available as an option.
+// For non-csv formats, gpkg/fgb are converted internally to vector output.
+// -----------------------------------------------------------------------------
+void write_channel_link_bearings(
+    const std::vector<lsdtt_channel_link_bearing>& records,
+    const lsdtt_flow_base&                         flow,
+    const lsdtt_junction_network_base&             network,
+    const std::string&                             out_path,
+    point_output_format                            format,
+    const std::string&                             layer_name = "channel_link_bearings",
+    bool                                           spatial_index = true
+);
+
+// -----------------------------------------------------------------------------
+// Write junction-angle records.
+//
+// Output format behaviour:
+//   - csv         : tabular output with junction latitude/longitude
+//   - gpkg / fgb  : one point feature per analysed junction
+// -----------------------------------------------------------------------------
+void write_junction_angle_data(
+    const std::vector<lsdtt_junction_angle_record>& records,
+    const lsdtt_flow_base&                          flow,
+    const lsdtt_junction_network_base&              network,
+    const std::string&                              out_path,
+    point_output_format                             format,
+    const std::string&                              layer_name = "junction_angles",
+    bool                                            spatial_index = true
+);
+
+
+// -----------------------------------------------------------------------------
+// write_channel_link_bearing_vectors
+//
+// Write one short visual bearing vector per analysed compact downstream link.
+//
+// Geometry:
+//   one short line feature per analysed link
+//
+// Direction:
+//   points downstream in the fitted link-bearing direction
+//
+// Origin:
+//   representative sampled pixel used by the bearing fit
+//
+// Length:
+//   min(mean_link_length / 3, link_length / 2)
+//
+// This is a visual QA layer rather than a full attribute export.
+// -----------------------------------------------------------------------------
+void write_channel_link_bearing_vectors(
+    const std::vector<lsdtt_channel_link_bearing>& records,
+    const lsdtt_flow_base&                         flow,
+    const std::string&                             out_path,
+    vector_output_format                           format,
+    const std::string&                             layer_name = "channel_link_bearing_vectors",
+    bool                                           spatial_index = true
+);
+
+
+// -----------------------------------------------------------------------------
+// write_junction_angle_bearing_vectors
+//
+// Write three short centred orientation lines per analysed junction:
+//
+//   - donor_1
+//   - donor_2
+//   - receiver
+//
+// Geometry:
+//   three short centred line features per junction
+//
+// Bearings:
+//   donor_1 and donor_2 use inward-pointing donor bearings
+//   receiver uses the outward/downstream receiver bearing
+//
+// This is a visual QA layer intended to let the user quickly inspect whether
+// junction-angle bearings are being measured correctly.
+// -----------------------------------------------------------------------------
+void write_junction_angle_bearing_vectors(
+    const std::vector<lsdtt_junction_angle_record>& records,
+    const lsdtt_flow_base&                          flow,
+    const lsdtt_junction_network_base&              network,
+    const std::string&                              out_path,
+    vector_output_format                            format,
+    const std::string&                              layer_name = "junction_angle_bearing_vectors",
+    bool                                            spatial_index = true
+);
+
+
+
+} // namespace lsdtt
