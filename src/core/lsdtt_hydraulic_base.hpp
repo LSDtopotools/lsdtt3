@@ -81,6 +81,7 @@ struct lsdtt_hydraulic_options
     double min_slope             = 1.0e-8;
     double uniform_rainfall_rate = 0.0;
     double receiver_width        = -1.0;
+    double max_dh_rate           = 1.0;
     bool   print_startup_message = true;
 };
 

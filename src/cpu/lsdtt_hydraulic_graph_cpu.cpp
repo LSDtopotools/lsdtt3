@@ -70,6 +70,14 @@ lsdtt_hydraulic_graph_cpu::lsdtt_hydraulic_graph_cpu(
     dhw_.resize(n_cells_, 0.0);
     point_inflow_.resize(n_cells_, 0.0);
 
+    source_q_.resize(n_cells_, 0.0);
+    hydraulic_slope_.resize(n_cells_, 0.0);
+    specific_discharge_.resize(n_cells_, 0.0);
+    total_discharge_.resize(n_cells_, 0.0);
+    donor_max_receiver_width_.resize(n_cells_, meta_.cell_size);
+    stationary_qin_cache_.resize(n_cells_, 0.0);
+
+
     for (int row = 0; row < n_rows_; ++row)
     {
         for (int col = 0; col < n_cols_; ++col)
@@ -188,6 +196,22 @@ double lsdtt_hydraulic_graph_cpu::min_slope() const noexcept
     return min_slope_;
 }
 
+void lsdtt_hydraulic_graph_cpu::set_max_dh_rate(double max_dh_rate)
+{
+    if (!std::isfinite(max_dh_rate) || max_dh_rate <= 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::set_max_dh_rate: max_dh_rate must be finite and > 0");
+    }
+
+    max_dh_rate_ = max_dh_rate;
+}
+
+double lsdtt_hydraulic_graph_cpu::max_dh_rate() const noexcept
+{
+    return max_dh_rate_;
+}
+
 void lsdtt_hydraulic_graph_cpu::set_uniform_rainfall_rate(
     double rainfall_rate_m_per_s)
 {
@@ -195,9 +219,12 @@ void lsdtt_hydraulic_graph_cpu::set_uniform_rainfall_rate(
     {
         throw std::invalid_argument(
             "lsdtt_hydraulic_graph_cpu::set_uniform_rainfall_rate: rainfall rate must be finite and >= 0");
+
     }
 
+
     uniform_rainfall_rate_ = rainfall_rate_m_per_s;
+    invalidate_stationary_qin_cache();
 }
 
 double lsdtt_hydraulic_graph_cpu::uniform_rainfall_rate() const noexcept
@@ -230,6 +257,8 @@ double lsdtt_hydraulic_graph_cpu::receiver_width() const noexcept
 void lsdtt_hydraulic_graph_cpu::clear_point_inflows()
 {
     std::fill(point_inflow_.begin(), point_inflow_.end(), 0.0);
+    invalidate_stationary_qin_cache();
+
 }
 
 void lsdtt_hydraulic_graph_cpu::add_point_inflow(
@@ -245,6 +274,8 @@ void lsdtt_hydraulic_graph_cpu::add_point_inflow(
     }
 
     point_inflow_[flat] += discharge_m3_per_s;
+    invalidate_stationary_qin_cache();
+
 }
 
 
@@ -308,6 +339,19 @@ void lsdtt_hydraulic_graph_cpu::reset_water_depth(double value)
 }
 
 
+// setters for runs
+void lsdtt_hydraulic_graph_cpu::set_run_mode(lsdtt_hydraulic_run_mode mode)
+{
+    run_mode_ = mode;
+}
+
+lsdtt_hydraulic_run_mode
+lsdtt_hydraulic_graph_cpu::run_mode() const noexcept
+{
+    return run_mode_;
+}
+
+
 // =============================================================================
 // Routing refresh
 // =============================================================================
@@ -331,15 +375,24 @@ void lsdtt_hydraulic_graph_cpu::refresh_routing()
 void lsdtt_hydraulic_graph_cpu::run_one_step()
 {
     print_startup_message_if_needed();
-
-    reset_flux_fields();
-    add_external_water_sources();
-    route_discharge_one_step_fixed_graph();
-    apply_water_depth_update();
-
+    perform_one_iteration_without_banner();
     current_time_ += dt_;
     ++step_count_;
 }
+
+
+void lsdtt_hydraulic_graph_cpu::perform_one_iteration_without_banner()
+{
+    if (run_mode_ == lsdtt_hydraulic_run_mode::stationary_fixed_graph)
+    {
+        perform_one_stationary_iteration_fixed_graph();
+    }
+    else
+    {
+        perform_one_transient_iteration_fixed_graph();
+    }
+}
+
 
 void lsdtt_hydraulic_graph_cpu::run_n_steps(std::int64_t n_steps)
 {
@@ -353,15 +406,28 @@ void lsdtt_hydraulic_graph_cpu::run_n_steps(std::int64_t n_steps)
 
     for (std::int64_t i = 0; i < n_steps; ++i)
     {
-        reset_flux_fields();
-        add_external_water_sources();
-        route_discharge_one_step_fixed_graph();
-        apply_water_depth_update();
-
+        perform_one_iteration_without_banner();
         current_time_ += dt_;
         ++step_count_;
     }
+
 }
+
+
+void lsdtt_hydraulic_graph_cpu::build_valid_flat_index()
+{
+    valid_flats_.clear();
+    valid_flats_.reserve(static_cast<std::size_t>(routing_.n_valid_cells));
+
+    for (std::int64_t flat = 0; flat < n_cells_; ++flat)
+    {
+        if (is_valid_flat(flat))
+        {
+            valid_flats_.push_back(flat);
+        }
+    }
+}
+
 
 
 // =============================================================================
@@ -373,11 +439,11 @@ double lsdtt_hydraulic_graph_cpu::total_water_volume() const noexcept
     const double cell_area = meta_.cell_size * meta_.cell_size;
     double total = 0.0;
 
-    for (std::int64_t flat = 0; flat < n_cells_; ++flat)
+    for (std::int64_t flat : valid_flats_)
     {
-        if (!is_valid_flat(flat)) continue;
         total += water_depth_[flat] * cell_area;
     }
+
 
     return total;
 }
@@ -445,6 +511,7 @@ void lsdtt_hydraulic_graph_cpu::set_options_from_struct(
     }
 
     receiver_width_ = options.receiver_width;
+    set_max_dh_rate(options.max_dh_rate);
     print_startup_message_ = options.print_startup_message;
 }
 
@@ -462,11 +529,19 @@ void lsdtt_hydraulic_graph_cpu::copy_routing_snapshot_from_flowgraph(
     routing_.n_valid_cells     = flowgraph.n_valid_cells();
     routing_.is_dynamic        = false;
 
+    build_valid_flat_index();
     compute_receiver_geometry_from_snapshot();
+    invalidate_stationary_qin_cache();
 }
+
 
 void lsdtt_hydraulic_graph_cpu::compute_receiver_geometry_from_snapshot()
 {
+    std::fill(donor_max_receiver_width_.begin(),
+            donor_max_receiver_width_.end(),
+            meta_.cell_size);
+
+
     if (routing_.receiver_indices.empty() || routing_.receiver_offsets.empty())
     {
         routing_.receiver_distances.clear();
@@ -482,6 +557,8 @@ void lsdtt_hydraulic_graph_cpu::compute_receiver_geometry_from_snapshot()
 
     for (std::int64_t donor = 0; donor < n_cells_; ++donor)
     {
+        double max_width = meta_.cell_size;
+
         const std::int64_t begin = routing_.receiver_offsets[donor];
         const std::int64_t end   = routing_.receiver_offsets[donor + 1];
 
@@ -511,18 +588,80 @@ void lsdtt_hydraulic_graph_cpu::compute_receiver_geometry_from_snapshot()
             routing_.receiver_distances[e] =
                 (distance > 0.0) ? distance : meta_.cell_size;
 
+            double width = meta_.cell_size;
             if (receiver_width_ > 0.0)
             {
-                routing_.receiver_widths[e] = receiver_width_;
+                width = receiver_width_;
             }
             else
             {
-                // v1 default: use cell size as a generic effective width.
-                routing_.receiver_widths[e] = meta_.cell_size;
+                width = meta_.cell_size;
             }
+
+            routing_.receiver_widths[e] = width;
+
+            if (width > max_width)
+            {
+                max_width = width;
+            }
+            
+
         }
+        donor_max_receiver_width_[donor] = max_width;
     }
 }
+
+
+lsdtt_hydraulic_graph_cpu::local_hydraulic_geometry
+lsdtt_hydraulic_graph_cpu::get_local_hydraulic_geometry(
+    std::int64_t donor_flat) const noexcept
+{
+    local_hydraulic_geometry geom;
+    geom.slope = min_slope_;
+    geom.width = meta_.cell_size;
+    geom.dx = meta_.cell_size;
+    geom.receiver = -1;
+
+    const std::int64_t begin = routing_.receiver_offsets[donor_flat];
+    const std::int64_t end   = routing_.receiver_offsets[donor_flat + 1];
+
+    if (begin == end)
+    {
+        return geom;
+    }
+
+    bool found = false;
+    double best_slope = 0.0;
+
+    for (std::int64_t e = begin; e < end; ++e)
+    {
+        const std::int64_t rec = routing_.receiver_indices[e];
+        const double dx = routing_.receiver_distances[e];
+
+        double slope = min_slope_;
+        if (dx > 0.0)
+        {
+            slope = (water_surface_[donor_flat] - water_surface_[rec]) / dx;
+            if (slope < min_slope_) slope = min_slope_;
+        }
+
+        if (!found || slope > best_slope)
+        {
+            found = true;
+            best_slope = slope;
+            geom.slope = slope;
+            geom.width = (routing_.receiver_widths[e] > 0.0)
+                ? routing_.receiver_widths[e]
+                : meta_.cell_size;
+            geom.dx = (dx > 0.0) ? dx : meta_.cell_size;
+            geom.receiver = rec;
+        }
+    }
+
+    return geom;
+}
+
+
 
 std::int64_t lsdtt_hydraulic_graph_cpu::checked_flat(std::int64_t flat) const
 {
@@ -551,95 +690,59 @@ void lsdtt_hydraulic_graph_cpu::update_surface_from_bed_and_water()
 
 void lsdtt_hydraulic_graph_cpu::reset_flux_fields()
 {
-    std::fill(qin_.begin(),  qin_.end(),  0.0);
-    std::fill(qout_.begin(), qout_.end(), 0.0);
-    std::fill(dhw_.begin(),  dhw_.end(),  0.0);
+    for (std::int64_t flat : valid_flats_)
+    {
+        qin_[flat] = 0.0;
+        qout_[flat] = 0.0;
+        dhw_[flat] = 0.0;
+        source_q_[flat] = 0.0;
+        hydraulic_slope_[flat] = 0.0;
+        specific_discharge_[flat] = 0.0;
+        total_discharge_[flat] = 0.0;
+    }
+
 }
 
-void lsdtt_hydraulic_graph_cpu::add_external_water_sources()
+void lsdtt_hydraulic_graph_cpu::build_source_q()
 {
     const double cell_area = meta_.cell_size * meta_.cell_size;
     const double rainfall_q = uniform_rainfall_rate_ * cell_area;
 
-    for (std::int64_t flat = 0; flat < n_cells_; ++flat)
+    for (std::int64_t flat : valid_flats_)
     {
-        if (!is_valid_flat(flat)) continue;
-
-        qin_[flat] += rainfall_q;
-        qin_[flat] += point_inflow_[flat];
+        source_q_[flat] = rainfall_q + point_inflow_[flat];
     }
 }
 
-double lsdtt_hydraulic_graph_cpu::local_receiver_slope(
-    std::int64_t donor_flat,
-    std::int64_t receiver_flat,
-    double receiver_distance_m) const noexcept
-{
-    if (receiver_distance_m <= 0.0) return min_slope_;
 
-    const double slope =
-        (water_surface_[donor_flat] - water_surface_[receiver_flat]) /
-        receiver_distance_m;
 
-    return std::max(min_slope_, slope);
-}
-
-double lsdtt_hydraulic_graph_cpu::local_max_hydraulic_slope(
-    std::int64_t donor_flat) const noexcept
-{
-    const std::int64_t begin = routing_.receiver_offsets[donor_flat];
-    const std::int64_t end   = routing_.receiver_offsets[donor_flat + 1];
-
-    if (begin == end) return min_slope_;
-
-    double smax = 0.0;
-
-    for (std::int64_t e = begin; e < end; ++e)
-    {
-        const std::int64_t rec = routing_.receiver_indices[e];
-        const double dist      = routing_.receiver_distances[e];
-
-        const double slope =
-            (water_surface_[donor_flat] - water_surface_[rec]) / dist;
-
-        if (slope > smax) smax = slope;
-    }
-
-    return std::max(min_slope_, smax);
-}
 
 double lsdtt_hydraulic_graph_cpu::local_outflow_capacity(
     std::int64_t donor_flat,
-    double hydraulic_slope) const noexcept
+    double hydraulic_slope,
+    double effective_width) const noexcept
 {
     if (hydraulic_slope <= 0.0) return 0.0;
 
     const std::int64_t begin = routing_.receiver_offsets[donor_flat];
     const std::int64_t end   = routing_.receiver_offsets[donor_flat + 1];
 
+    // Outlet / no receiver: allow full discharge to leave the domain.
     if (begin == end) return qin_[donor_flat];
 
     const double h = water_depth_[donor_flat];
     if (h <= 0.0) return 0.0;
 
-    // v1 effective width:
-    // use the width associated with the steepest / first receiver edge scale.
-    // For now, keep it simple and use the maximum stored receiver width.
-    double width = 0.0;
-    for (std::int64_t e = begin; e < end; ++e)
-    {
-        width = std::max(width, routing_.receiver_widths[e]);
-    }
-    if (width <= 0.0) width = meta_.cell_size;
+    const double width =
+        (effective_width > 0.0) ? effective_width : meta_.cell_size;
 
-    const double q_capacity =
-        (width / mannings_n_) * std::pow(h, 5.0 / 3.0) * std::sqrt(hydraulic_slope);
-
-    // Explicitly limit outflow by available inflow for stability in v1.
-    return std::min(q_capacity, qin_[donor_flat]);
+    return (width / mannings_n_) *
+           std::pow(h, 5.0 / 3.0) *
+           std::sqrt(hydraulic_slope);
 }
 
-void lsdtt_hydraulic_graph_cpu::route_discharge_one_step_fixed_graph()
+
+void lsdtt_hydraulic_graph_cpu::accumulate_full_qin_fixed_graph()
 {
     for (std::int64_t donor_flat : routing_.topological_order)
     {
@@ -648,50 +751,334 @@ void lsdtt_hydraulic_graph_cpu::route_discharge_one_step_fixed_graph()
         const std::int64_t begin = routing_.receiver_offsets[donor_flat];
         const std::int64_t end   = routing_.receiver_offsets[donor_flat + 1];
 
-        // Outlet / sink
-        if (begin == end)
-        {
-            qout_[donor_flat] = qin_[donor_flat];
-            continue;
-        }
-
-        const double smax = local_max_hydraulic_slope(donor_flat);
-        const double qcap = local_outflow_capacity(donor_flat, smax);
-
-        qout_[donor_flat] = qcap;
-
-        if (qcap <= 0.0) continue;
-
         for (std::int64_t e = begin; e < end; ++e)
         {
             const std::int64_t rec = routing_.receiver_indices[e];
-            const double w         = static_cast<double>(routing_.receiver_weights[e]);
+            const double w = static_cast<double>(routing_.receiver_weights[e]);
 
             if (w <= 0.0) continue;
-            qin_[rec] += qcap * w;
+            qin_[rec] += qin_[donor_flat] * w;
         }
+    }
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        total_discharge_[flat] = qin_[flat];
     }
 }
 
-void lsdtt_hydraulic_graph_cpu::apply_water_depth_update()
+
+void lsdtt_hydraulic_graph_cpu::compute_qout_from_current_surface()
 {
     const double cell_area = meta_.cell_size * meta_.cell_size;
 
-    for (std::int64_t flat = 0; flat < n_cells_; ++flat)
+    for (std::int64_t donor_flat : routing_.topological_order)
     {
-        if (!is_valid_flat(flat)) continue;
+        if (!is_valid_flat(donor_flat)) continue;
 
-        dhw_[flat] = dt_ * (qin_[flat] - qout_[flat]) / cell_area;
+        const auto geom = get_local_hydraulic_geometry(donor_flat);
+        hydraulic_slope_[donor_flat] = geom.slope;
+
+        if (geom.width <= 0.0 || water_depth_[donor_flat] <= 0.0)
+        {
+            qout_[donor_flat] = 0.0;
+            specific_discharge_[donor_flat] = 0.0;
+            continue;
+        }
+
+        const double q_capacity =
+            local_outflow_capacity(donor_flat, geom.slope, geom.width);
+
+        const double q_available =
+            qin_[donor_flat] + water_depth_[donor_flat] * cell_area / dt_;
+
+        qout_[donor_flat] = std::min(q_capacity, q_available);
+        specific_discharge_[donor_flat] = qout_[donor_flat] / geom.width;
+    }
+}
+
+
+void lsdtt_hydraulic_graph_cpu::apply_water_depth_update_from_balance()
+{
+    const double cell_area = meta_.cell_size * meta_.cell_size;
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        double dh_rate = (qin_[flat] - qout_[flat]) / cell_area;
+
+        // clamp the rate of change before multiplying by dt — prevents
+        // overshooting when large discharge imbalances exist early in the run
+        if (dh_rate > max_dh_rate_)
+            dh_rate = max_dh_rate_;
+        else if (dh_rate < -max_dh_rate_)
+            dh_rate = -max_dh_rate_;
+
+        dhw_[flat] = dt_ * dh_rate;
 
         water_depth_[flat] += dhw_[flat];
         if (water_depth_[flat] < 0.0)
-        {
             water_depth_[flat] = 0.0;
-        }
 
         water_surface_[flat] = bed_[flat] + water_depth_[flat];
     }
 }
+
+void lsdtt_hydraulic_graph_cpu::perform_one_transient_iteration_fixed_graph()
+{
+    reset_flux_fields();
+    build_source_q();
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        qin_[flat] = source_q_[flat];
+    }
+
+    accumulate_full_qin_fixed_graph();
+    compute_qout_from_current_surface();
+    apply_water_depth_update_from_balance();
+}
+
+
+void lsdtt_hydraulic_graph_cpu::invalidate_stationary_qin_cache() noexcept
+{
+    stationary_qin_cache_valid_ = false;
+}
+
+void lsdtt_hydraulic_graph_cpu::rebuild_stationary_qin_cache_if_needed()
+{
+    if (stationary_qin_cache_valid_) return;
+
+    build_source_q();
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        qin_[flat] = source_q_[flat];
+    }
+
+    accumulate_full_qin_fixed_graph();
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        stationary_qin_cache_[flat] = qin_[flat];
+    }
+
+    stationary_qin_cache_valid_ = true;
+}
+
+void lsdtt_hydraulic_graph_cpu::perform_one_stationary_iteration_fixed_graph()
+{
+    reset_flux_fields();
+    rebuild_stationary_qin_cache_if_needed();
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        qin_[flat] = stationary_qin_cache_[flat];
+        total_discharge_[flat] = qin_[flat];
+    }
+
+    compute_qout_from_current_surface();
+    apply_water_depth_update_from_balance();
+}
+
+lsdtt_raster_result
+lsdtt_hydraulic_graph_cpu::get_hydraulic_slope_raster() const
+{
+    return make_raster_result_from_double_field(hydraulic_slope_);
+}
+
+lsdtt_raster_result
+lsdtt_hydraulic_graph_cpu::get_specific_discharge_raster() const
+{
+    return make_raster_result_from_double_field(specific_discharge_);
+}
+
+lsdtt_raster_result
+lsdtt_hydraulic_graph_cpu::get_total_discharge_raster() const
+{
+    return make_raster_result_from_double_field(total_discharge_);
+}
+
+lsdtt_raster_result
+lsdtt_hydraulic_graph_cpu::get_specific_drainage_area_raster(
+    double runoff_rate_m_per_s) const
+{
+    if (!std::isfinite(runoff_rate_m_per_s) || runoff_rate_m_per_s <= 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::get_specific_drainage_area_raster: runoff rate must be finite and > 0");
+    }
+
+    std::vector<double> out(n_cells_, 0.0);
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        out[flat] = specific_discharge_[flat] / runoff_rate_m_per_s;
+    }
+
+    return make_raster_result_from_double_field(out);
+}
+
+lsdtt_raster_result
+lsdtt_hydraulic_graph_cpu::get_effective_width_raster() const
+{
+    std::vector<double> out(n_cells_, 0.0);
+    const double eps = 1.0e-12;
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        if (specific_discharge_[flat] > eps)
+        {
+            out[flat] = total_discharge_[flat] / specific_discharge_[flat];
+        }
+        else
+        {
+            out[flat] = 0.0;
+        }
+    }
+
+    return make_raster_result_from_double_field(out);
+}
+
+
+lsdtt_hydraulic_graph_cpu::convergence_stats
+lsdtt_hydraulic_graph_cpu::compute_convergence_stats() const
+{
+    convergence_stats stats;
+
+    if (valid_flats_.empty())
+    {
+        return stats;
+    }
+
+    std::vector<double> abs_vals;
+    std::vector<double> rel_vals;
+    abs_vals.reserve(valid_flats_.size());
+    rel_vals.reserve(valid_flats_.size());
+
+    const double eps = 1.0e-12;
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        const double a = std::abs(dhw_[flat]);
+        abs_vals.push_back(a);
+        rel_vals.push_back(a / std::max(water_depth_[flat], eps));
+
+        if (a > stats.max_abs_dhw)
+        {
+            stats.max_abs_dhw = a;
+        }
+    }
+
+    auto mid_abs = abs_vals.begin() + abs_vals.size() / 2;
+    std::nth_element(abs_vals.begin(), mid_abs, abs_vals.end());
+    stats.median_abs_dhw = *mid_abs;
+
+    auto mid_rel = rel_vals.begin() + rel_vals.size() / 2;
+    std::nth_element(rel_vals.begin(), mid_rel, rel_vals.end());
+    stats.median_rel_dhw = *mid_rel;
+
+    return stats;
+}
+
+
+void lsdtt_hydraulic_graph_cpu::print_progress(
+    std::int64_t iter,
+    std::int64_t max_steps,
+    const convergence_stats* stats) const
+{
+    std::cout << "iter " << iter;
+    if (max_steps > 0)
+    {
+        std::cout << " / " << max_steps;
+    }
+
+    std::cout << " | time = " << current_time_ << " s"
+              << " | volume = " << total_water_volume() << " m^3";
+
+    if (stats != nullptr)
+    {
+        std::cout << " | median|dhw| = " << stats->median_abs_dhw << " m"
+                  << " | median rel dhw = " << stats->median_rel_dhw
+                  << " | max|dhw| = " << stats->max_abs_dhw << " m";
+    }
+
+    std::cout << "\n";
+}
+
+bool lsdtt_hydraulic_graph_cpu::run_until_converged(
+    std::int64_t max_steps,
+    int report_every,
+    int convergence_check_every,
+    double tol_median_abs_dhw,
+    double tol_median_rel_dhw)
+{
+    if (max_steps < 0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::run_until_converged: max_steps must be >= 0");
+    }
+
+    if (convergence_check_every <= 0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::run_until_converged: convergence_check_every must be > 0");
+    }
+
+    if (!std::isfinite(tol_median_abs_dhw) || tol_median_abs_dhw < 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::run_until_converged: tol_median_abs_dhw must be finite and >= 0");
+    }
+
+    if (!std::isfinite(tol_median_rel_dhw) || tol_median_rel_dhw < 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::run_until_converged: tol_median_rel_dhw must be finite and >= 0");
+    }
+
+    print_startup_message_if_needed();
+
+    for (std::int64_t i = 0; i < max_steps; ++i)
+    {
+        perform_one_iteration_without_banner();
+        current_time_ += dt_;
+        ++step_count_;
+
+        const bool do_check =
+            ((i + 1) % static_cast<std::int64_t>(convergence_check_every) == 0) ||
+            (i + 1 == max_steps);
+
+        if (do_check)
+        {
+            const convergence_stats stats = compute_convergence_stats();
+
+            if (report_every > 0 &&
+                (((i + 1) % static_cast<std::int64_t>(report_every) == 0) ||
+                 (i + 1 == max_steps)))
+            {
+                print_progress(step_count_, max_steps, &stats);
+            }
+
+            if (stats.median_abs_dhw <= tol_median_abs_dhw &&
+                stats.median_rel_dhw <= tol_median_rel_dhw)
+            {
+                std::cout << "Converged after " << step_count_
+                          << " iterations.\n";
+                return true;
+            }
+        }
+        else if (report_every > 0 &&
+                 ((i + 1) % static_cast<std::int64_t>(report_every) == 0))
+        {
+            print_progress(step_count_, max_steps, nullptr);
+        }
+    }
+
+    std::cout << "Reached max_steps without convergence.\n";
+    return false;
+}
+
+
 
 void lsdtt_hydraulic_graph_cpu::print_startup_message_if_needed()
 {

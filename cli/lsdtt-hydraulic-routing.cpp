@@ -218,6 +218,12 @@ int main(int argc, char* argv[])
         "Minimum hydraulic slope used internally.",
         "Prevents zero-gradient numerical stagnation."};
 
+    float_default_map["max_dh_rate"] = 1.0f;
+    help_map["max_dh_rate"] = {"float","1.0",
+        "Maximum rate of water-depth change in m/s before applying dt.",
+        "Clamps (Qin-Qout)/A per iteration to prevent overshoot. "
+        "Reduce if the solver oscillates; increase to allow faster depth changes."};
+
     float_default_map["uniform_rainfall_rate"] = 0.0f;
     help_map["uniform_rainfall_rate"] = {"float","0.0",
         "Uniform rainfall/input rate in m/s.",
@@ -251,6 +257,35 @@ int main(int argc, char* argv[])
         "Point inflow discharge in m^3/s.",
         "Used only when use_point_inflow is true."};
 
+    string_default_map["hydraulic_run_mode"] = "stationary";
+    help_map["hydraulic_run_mode"] = {"string","stationary",
+        "Hydraulic solve mode.",
+        "Allowed values: stationary or transient."};
+
+    bool_default_map["run_until_converged"] = true;
+    help_map["run_until_converged"] = {"bool","true",
+        "Run until convergence instead of a fixed number of steps.",
+        "Used mainly for stationary mode."};
+
+    int_default_map["report_every"] = 50;
+    help_map["report_every"] = {"int","50",
+        "Iteration interval for progress reporting.",
+        "Set <= 0 to disable periodic progress output."};
+
+    int_default_map["convergence_check_every"] = 10;
+    help_map["convergence_check_every"] = {"int","10",
+        "Iteration interval for convergence checking.",
+        "Used by run_until_converged."};
+
+    float_default_map["tol_median_abs_dhw"] = 1.0e-6f;
+    help_map["tol_median_abs_dhw"] = {"float","1e-6",
+        "Absolute median dhw convergence threshold in metres.",
+        "Used by run_until_converged."};
+
+    float_default_map["tol_median_rel_dhw"] = 1.0e-4f;
+    help_map["tol_median_rel_dhw"] = {"float","1e-4",
+        "Relative median dhw convergence threshold.",
+        "Used by run_until_converged."};
 
 
     // --- Output controls ---
@@ -289,6 +324,14 @@ int main(int argc, char* argv[])
         "Output format for raster outputs.",
         "Allowed values: cog, gtiff, same_as_input."};
 
+    bool_default_map["write_hydraulic_slope_raster"] = false;
+    bool_default_map["write_specific_discharge_raster"] = false;
+    bool_default_map["write_total_discharge_raster"] = false;
+    bool_default_map["write_specific_drainage_area_raster"] = false;
+    bool_default_map["write_effective_width_raster"] = false;
+
+
+
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
@@ -299,6 +342,19 @@ int main(int argc, char* argv[])
     auto ff = pp.get_float_parameters();
     auto ii = pp.get_int_parameters();
     auto sf = pp.get_string_parameters();
+
+    std::string hydraulic_run_mode = sf["hydraulic_run_mode"];
+    std::transform(hydraulic_run_mode.begin(), hydraulic_run_mode.end(),
+                hydraulic_run_mode.begin(),
+                [](unsigned char c){ return std::tolower(c); });
+
+    if (hydraulic_run_mode != "stationary" && hydraulic_run_mode != "transient")
+    {
+        std::cerr << "FATAL: hydraulic_run_mode must be 'stationary' or 'transient'. "
+                << "Got: " << sf["hydraulic_run_mode"] << "\n";
+        return 1;
+    }
+
 
     // -------------------------------------------------------------------------
     // Cross-parameter logic
@@ -319,12 +375,18 @@ int main(int argc, char* argv[])
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
 
     const bool any_output =
-        bf["write_water_depth_raster"]   ||
-        bf["write_water_surface_raster"] ||
-        bf["write_qin_raster"]           ||
-        bf["write_qout_raster"]          ||
-        bf["write_dhw_raster"]           ||
-        bf["write_bed_raster"];
+        bf["write_water_depth_raster"]            ||
+        bf["write_water_surface_raster"]          ||
+        bf["write_qin_raster"]                    ||
+        bf["write_qout_raster"]                   ||
+        bf["write_dhw_raster"]                    ||
+        bf["write_bed_raster"]                    ||
+        bf["write_hydraulic_slope_raster"]        ||
+        bf["write_specific_discharge_raster"]     ||
+        bf["write_total_discharge_raster"]        ||
+        bf["write_specific_drainage_area_raster"] ||
+        bf["write_effective_width_raster"];
+
 
     if (!any_output)
     {
@@ -467,6 +529,7 @@ int main(int argc, char* argv[])
     hyd_opts.min_slope             = ff["hydraulic_min_slope"];
     hyd_opts.uniform_rainfall_rate = ff["uniform_rainfall_rate"];
     hyd_opts.receiver_width        = ff["receiver_width"];
+    hyd_opts.max_dh_rate           = ff["max_dh_rate"];
     hyd_opts.print_startup_message = true;
 
     lsdtt::lsdtt_hydraulic_graph_cpu hydraulic(
@@ -474,6 +537,16 @@ int main(int argc, char* argv[])
         routed_dem.get_data_array(),
         hyd_opts
     );
+
+    if (hydraulic_run_mode == "stationary")
+    {
+        hydraulic.set_run_mode(lsdtt_hydraulic_run_mode::stationary_fixed_graph);
+    }
+    else
+    {
+        hydraulic.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
+    }
+
 
     if (bf["use_point_inflow"])
     {
@@ -515,7 +588,27 @@ int main(int argc, char* argv[])
 
     try
     {
-        hydraulic.run_n_steps(ii["n_steps"]);
+
+        if (hydraulic_run_mode == "stationary" && bf["run_until_converged"])
+        {
+            const bool converged = hydraulic.run_until_converged(
+                ii["n_steps"],
+                ii["report_every"],
+                ii["convergence_check_every"],
+                ff["tol_median_abs_dhw"],
+                ff["tol_median_rel_dhw"]
+            );
+
+            if (!converged)
+            {
+                std::cout << "Warning: stationary solve reached max_steps before convergence.\n";
+            }
+        }
+        else
+        {
+            hydraulic.run_n_steps(ii["n_steps"]);
+        }
+
     }
     catch (const std::exception& e)
     {
@@ -606,6 +699,78 @@ int main(int argc, char* argv[])
                 out_fmt
             );
         }
+
+
+        if (bf["write_hydraulic_slope_raster"])
+        {
+            const std::string out_file =
+                out_path(pp, "_hydraulic_slope", ".tif");
+            std::cout << "Writing: " << out_file << "\n";
+            loader.write_full(
+                hydraulic.get_hydraulic_slope_raster(),
+                out_file,
+                out_fmt
+            );
+        }
+
+        if (bf["write_specific_discharge_raster"])
+        {
+            const std::string out_file =
+                out_path(pp, "_specific_discharge", ".tif");
+            std::cout << "Writing: " << out_file << "\n";
+            loader.write_full(
+                hydraulic.get_specific_discharge_raster(),
+                out_file,
+                out_fmt
+            );
+        }
+
+        if (bf["write_total_discharge_raster"])
+        {
+            const std::string out_file =
+                out_path(pp, "_total_discharge", ".tif");
+            std::cout << "Writing: " << out_file << "\n";
+            loader.write_full(
+                hydraulic.get_total_discharge_raster(),
+                out_file,
+                out_fmt
+            );
+        }
+
+        if (bf["write_specific_drainage_area_raster"])
+        {
+            if (ff["uniform_rainfall_rate"] <= 0.0f)
+            {
+                std::cerr << "FATAL: write_specific_drainage_area_raster requires "
+                          << "uniform_rainfall_rate > 0.\n";
+                return 1;
+            }
+
+            const std::string out_file =
+                out_path(pp, "_specific_drainage_area", ".tif");
+            std::cout << "Writing: " << out_file << "\n";
+            loader.write_full(
+                hydraulic.get_specific_drainage_area_raster(
+                    static_cast<double>(ff["uniform_rainfall_rate"])
+                ),
+                out_file,
+                out_fmt
+            );
+        }
+
+        if (bf["write_effective_width_raster"])
+        {
+            const std::string out_file =
+                out_path(pp, "_effective_width", ".tif");
+            std::cout << "Writing: " << out_file << "\n";
+            loader.write_full(
+                hydraulic.get_effective_width_raster(),
+                out_file,
+                out_fmt
+            );
+        }
+
+    
     }
     catch (const std::exception& e)
     {

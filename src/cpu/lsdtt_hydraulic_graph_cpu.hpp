@@ -36,6 +36,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,13 @@
 #include "../core/lsdtt_raster_result.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 #include "lsdtt_flowgraph_cpu.hpp"
+
+enum class lsdtt_hydraulic_run_mode
+{
+    transient_fixed_graph,
+    stationary_fixed_graph
+};
+
 
 namespace lsdtt
 {
@@ -96,6 +104,25 @@ public:
 
     [[nodiscard]] bool routing_is_dynamic() const noexcept override;
 
+    // runs to steady
+    void set_run_mode(lsdtt_hydraulic_run_mode mode);
+    [[nodiscard]] lsdtt_hydraulic_run_mode run_mode() const noexcept;
+
+    bool run_until_converged(
+        std::int64_t max_steps,
+        int report_every,
+        int convergence_check_every,
+        double tol_median_abs_dhw,
+        double tol_median_rel_dhw);
+
+    [[nodiscard]] lsdtt_raster_result get_hydraulic_slope_raster() const;
+    [[nodiscard]] lsdtt_raster_result get_specific_discharge_raster() const;
+    [[nodiscard]] lsdtt_raster_result get_total_discharge_raster() const;
+    [[nodiscard]] lsdtt_raster_result get_specific_drainage_area_raster(
+        double runoff_rate_m_per_s) const;
+    [[nodiscard]] lsdtt_raster_result get_effective_width_raster() const;
+
+
     // -------------------------------------------------------------------------
     // Hydraulic parameters
     // -------------------------------------------------------------------------
@@ -107,6 +134,9 @@ public:
 
     void set_min_slope(double min_slope) override;
     [[nodiscard]] double min_slope() const noexcept override;
+
+    void set_max_dh_rate(double max_dh_rate);
+    [[nodiscard]] double max_dh_rate() const noexcept;
 
     void set_uniform_rainfall_rate(double rainfall_rate_m_per_s) override;
     [[nodiscard]] double uniform_rainfall_rate() const noexcept override;
@@ -207,32 +237,12 @@ private:
 
     void reset_flux_fields();
 
-    void add_external_water_sources();
-
-    [[nodiscard]] double local_receiver_slope(
-        std::int64_t donor_flat,
-        std::int64_t receiver_flat,
-        double receiver_distance_m) const noexcept;
-
-    [[nodiscard]] double local_max_hydraulic_slope(
-        std::int64_t donor_flat) const noexcept;
-
-    [[nodiscard]] double local_outflow_capacity(
-        std::int64_t donor_flat,
-        double hydraulic_slope) const noexcept;
-
-    void route_discharge_one_step_fixed_graph();
-
-    void apply_water_depth_update();
-
-    void print_startup_message_if_needed();
-
     [[nodiscard]] lsdtt_raster_result make_raster_result_from_double_field(
         const std::vector<double>& field) const;
 
 private:
 
-    void perform_one_step_without_banner();
+    void perform_one_iteration_without_banner();
 
     // -------------------------------------------------------------------------
     // Immutable-ish domain metadata
@@ -250,6 +260,7 @@ private:
     double min_slope_             = 1.0e-8;
     double uniform_rainfall_rate_ = 0.0;
     double receiver_width_        = -1.0;
+    double max_dh_rate_           = 1.0;
     bool   print_startup_message_ = true;
 
     // -------------------------------------------------------------------------
@@ -281,6 +292,68 @@ private:
     std::vector<double> qout_;
     std::vector<double> dhw_;
     std::vector<double> point_inflow_;
+
+    // helpers for steady flow
+    void perform_one_transient_iteration_fixed_graph();
+    void perform_one_stationary_iteration_fixed_graph();
+
+    void build_source_q();
+    void accumulate_full_qin_fixed_graph();
+    void compute_qout_from_current_surface();
+    void apply_water_depth_update_from_balance();
+
+    void invalidate_stationary_qin_cache() noexcept;
+    void rebuild_stationary_qin_cache_if_needed();
+
+    void build_valid_flat_index();
+
+    struct local_hydraulic_geometry
+    {
+        double slope = 0.0;
+        double width = 0.0;
+        double dx = 0.0;
+        std::int64_t receiver = -1;
+    };
+
+    [[nodiscard]] local_hydraulic_geometry
+    get_local_hydraulic_geometry(std::int64_t donor_flat) const noexcept;
+
+    [[nodiscard]] double local_outflow_capacity(
+        std::int64_t donor_flat,
+        double hydraulic_slope,
+        double effective_width) const noexcept;
+
+    struct convergence_stats
+    {
+        double median_abs_dhw = 0.0;
+        double median_rel_dhw = 0.0;
+        double max_abs_dhw    = 0.0;
+    };
+
+    [[nodiscard]] convergence_stats compute_convergence_stats() const;
+    void print_progress(
+        std::int64_t iter,
+        std::int64_t max_steps,
+        const convergence_stats* stats) const;
+
+    void print_startup_message_if_needed();
+
+
+
+
+    lsdtt_hydraulic_run_mode run_mode_ =
+        lsdtt_hydraulic_run_mode::transient_fixed_graph;
+
+    std::vector<std::int64_t> valid_flats_;
+
+    std::vector<double> source_q_;
+    std::vector<double> hydraulic_slope_;
+    std::vector<double> specific_discharge_;
+    std::vector<double> total_discharge_;
+    std::vector<double> donor_max_receiver_width_;
+
+    std::vector<double> stationary_qin_cache_;
+    bool stationary_qin_cache_valid_ = false;
 };
 
 } // namespace lsdtt
