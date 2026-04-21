@@ -81,27 +81,14 @@ static double window_pixels_to_radius_metres(int window_pixels, double cell_size
 }
 
 // Build QQ plot with n_bins quantile points.
-// Delegates to compute_qq in lsdtt_histogram for the core algorithm.
-static std::vector<qq_bin> build_qq(
+// Delegates to compute_qq in lsdtt_histogram.
+static lsdtt_qq_data build_qq(
     const std::vector<float>& values,
     int                       n_bins)
 {
-    std::vector<qq_bin> result;
-    if (values.empty() || n_bins < 2) return result;
-
+    if (values.empty() || n_bins < 2) return lsdtt_qq_data{};
     const std::vector<double> dvals(values.begin(), values.end());
-    const lsdtt_qq_data qq = compute_qq(dvals, static_cast<std::size_t>(n_bins));
-
-    result.reserve(qq.standard_normal_variate.size());
-    for (std::size_t i = 0; i < qq.standard_normal_variate.size(); ++i)
-    {
-        result.push_back({
-            qq.standard_normal_variate[i],
-            qq.data_quantile[i],
-            qq.normal_reference[i]
-        });
-    }
-    return result;
+    return compute_qq(dvals, static_cast<std::size_t>(n_bins));
 }
 
 // Threshold a texture raster at a percentile of its distribution.

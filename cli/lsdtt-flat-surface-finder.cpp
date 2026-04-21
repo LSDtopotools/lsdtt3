@@ -59,11 +59,13 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/cpu/lsdtt_flat_surface_finder.hpp"
 #include "../src/cpu/lsdtt_flat_surface_plane_analysis.hpp"
 #include "../src/cpu/lsdtt_proximity_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
@@ -115,110 +117,6 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
     return {path, fname};
 }
 
-static void write_qq_csv(
-    lsdtt::lsdtt_data_loader&         loader,
-    const std::string&                out_path,
-    const std::vector<lsdtt::qq_bin>& qq)
-{
-    std::vector<std::vector<std::string>> rows;
-    rows.reserve(qq.size());
-    for (const auto& b : qq)
-        rows.push_back({ std::to_string(b.standard_normal_quantile),
-                         std::to_string(b.data_quantile),
-                         std::to_string(b.normal_reference) });
-    loader.write_csv(out_path,
-                     {"standard_normal_variate", "data_quantile", "normal_reference"},
-                     rows);
-}
-
-// Write one CSV summarising all four distribution fits for a metric.
-// Columns: family, param1, param2, ks_statistic, max_divergence_x, n_values,
-//          ks_critical_value_05, valid
-//
-// ks_critical_value_05 = 1.36 / sqrt(n_values) is the Kolmogorov-Smirnov
-// critical value at the 5 % significance level for a *known-parameter* test.
-// Because parameters are estimated from the data (MLE), the actual critical
-// value is somewhat smaller (Lilliefors correction), so this column gives
-// a conservative upper bound: if ks_statistic > ks_critical_value_05 the
-// distribution is definitively rejected; if smaller, it may still be a poor
-// fit due to the MLE bias.
-static void write_dist_fits_csv(
-    lsdtt::lsdtt_data_loader&                          loader,
-    const std::string&                                 out_path,
-    const std::vector<lsdtt::lsdtt_distribution_fit>&  fits)
-{
-    std::vector<std::vector<std::string>> rows;
-    rows.reserve(fits.size());
-    for (const auto& f : fits)
-    {
-        const double ks_crit = (f.n_values > 0)
-            ? 1.36 / std::sqrt(static_cast<double>(f.n_values))
-            : std::numeric_limits<double>::quiet_NaN();
-
-        rows.push_back({
-            lsdtt::distribution_family_name(f.family),
-            std::to_string(f.param1),
-            std::to_string(f.param2),
-            std::to_string(f.ks_statistic),
-            std::to_string(f.max_divergence_x),
-            std::to_string(f.n_values),
-            std::to_string(ks_crit),
-            f.valid ? "true" : "false"
-        });
-    }
-    loader.write_csv(out_path,
-        {"family","param1","param2","ks_statistic","max_divergence_x",
-         "n_values","ks_critical_value_05","valid"},
-        rows);
-}
-
-// Write an empirical CDF CSV with three columns:
-//   bin_centre, cdf, fitted_cdf_<family>
-// where fitted_cdf is the best-fitting distribution's CDF evaluated at each
-// bin centre.  The best fit is the valid entry in `fits` with the lowest
-// KS statistic.  The percentile threshold for a metric is directly readable
-// as the x value where cdf crosses threshold/100.
-static void write_smoothed_cdf_csv(
-    lsdtt::lsdtt_data_loader&                          loader,
-    const std::string&                                 out_path,
-    const lsdtt::lsdtt_smoothed_cdf&                   scdf,
-    const std::vector<lsdtt::lsdtt_distribution_fit>&  fits)
-{
-    if (scdf.empty()) return;
-
-    // Find the best valid fit.
-    const lsdtt::lsdtt_distribution_fit* best = nullptr;
-    for (const auto& f : fits)
-    {
-        if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
-        if (!best || f.ks_statistic < best->ks_statistic)
-            best = &f;
-    }
-
-    std::vector<std::vector<std::string>> rows;
-    rows.reserve(scdf.bin_centres.size());
-    for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
-    {
-        const double x       = scdf.bin_centres[i];
-        const double cdf_val = scdf.cdf[i];
-        const double fit_cdf = best ? lsdtt::eval_cdf(*best, x)
-                                    : std::numeric_limits<double>::quiet_NaN();
-        rows.push_back({ std::to_string(x),
-                         std::to_string(cdf_val),
-                         std::to_string(fit_cdf) });
-    }
-
-    // Include the best-fit family name in the header so the user knows which
-    // distribution is overlaid.
-    const std::string fit_col = best
-        ? std::string("fitted_cdf_") + lsdtt::distribution_family_name(best->family)
-        : "fitted_cdf";
-
-    loader.write_csv(out_path,
-                     {"bin_centre", "cdf", fit_col},
-                     rows);
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -259,6 +157,14 @@ int main(int argc, char* argv[])
         "Percentile of the local relief distribution below which a pixel is classed flat.",
         "Range: 0-100.  Lower values = stricter (only lowest-relief pixels pass)."};
 
+    bool_default_map["adaptive_relief_threshold"] = false;
+    help_map["adaptive_relief_threshold"] = {"bool","false",
+        "Automatically select the relief percentile threshold using CDF divergence.",
+        "Computes the relief CDF in 500 bins, fits the best parametric distribution, "
+        "and picks the x-value where the empirical CDF most exceeds the fitted CDF "
+        "(flat pixels inflate the empirical distribution at low relief values, causing "
+        "a positive deviation).  Prints the chosen percentile and relief value to screen "
+        "and overrides relief_threshold_percentile."};
 
     // --- MADk2 ---
     bool_default_map["use_madk2"] = false;
@@ -674,6 +580,101 @@ int main(int argc, char* argv[])
     req.test_surface_vector_file      = sf["test_surface_vector_file"];
 
     // -------------------------------------------------------------------------
+    // Adaptive relief threshold
+    // -------------------------------------------------------------------------
+    if (bf["adaptive_relief_threshold"])
+    {
+        std::cout << "Computing adaptive relief threshold...\n";
+
+        // Replicate the radius conversion used inside find_flat_surfaces.
+        const int    wpix          = ip["relief_window_pixels"];
+        const int    half          = (wpix - 1) / 2;
+        const double relief_radius = static_cast<double>(std::max(1, half))
+                                     * dem.get_meta().cell_size;
+
+        const lsdtt::lsdtt_raster_cpu relief_raster =
+            lsdtt::moving_window_local_relief(dem, relief_radius);
+
+        // Collect valid values.
+        const lsdtt::lsdtt_raster_meta& rmeta = relief_raster.get_meta();
+        const std::vector<float>&        rdata = relief_raster.get_data();
+        const std::vector<uint8_t>&      rmask = relief_raster.get_mask();
+
+        std::vector<double> dvals;
+        dvals.reserve(rdata.size() / 4);
+        for (std::size_t i = 0; i < rdata.size(); ++i)
+        {
+            if (rmask[i] == 0) continue;
+            const float v = rdata[i];
+            if (!std::isfinite(v) || rmeta.is_nodata(v)) continue;
+            dvals.push_back(static_cast<double>(v));
+        }
+
+        if (dvals.size() < 10)
+        {
+            std::cerr << "Warning: too few valid relief values for adaptive threshold — "
+                         "using relief_threshold_percentile = "
+                      << ff["relief_threshold_percentile"] << "\n";
+        }
+        else
+        {
+            // CDF at 500 bins.
+            const lsdtt::lsdtt_smoothed_cdf scdf =
+                lsdtt::compute_smoothed_cdf(dvals, 500);
+
+            // Best-fitting parametric distribution.
+            const std::vector<lsdtt::lsdtt_distribution_fit> fits =
+                lsdtt::fit_distributions(dvals);
+
+            const lsdtt::lsdtt_distribution_fit* best = nullptr;
+            for (const auto& f : fits)
+            {
+                if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
+                if (!best || f.ks_statistic < best->ks_statistic)
+                    best = &f;
+            }
+
+            if (!best)
+            {
+                std::cerr << "Warning: no valid distribution fit for relief — "
+                             "using relief_threshold_percentile = "
+                          << ff["relief_threshold_percentile"] << "\n";
+            }
+            else
+            {
+                // Find the bin where the empirical CDF most exceeds the fitted CDF.
+                // Flat areas at low relief values inflate the empirical CDF above the
+                // fitted theoretical distribution, producing a positive hump.
+                double      max_diff = -std::numeric_limits<double>::infinity();
+                std::size_t max_idx  = 0;
+
+                for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
+                {
+                    const double fitted = lsdtt::eval_cdf(*best, scdf.bin_centres[i]);
+                    if (!std::isfinite(fitted)) continue;
+                    const double diff = scdf.cdf[i] - fitted;
+                    if (diff > max_diff)
+                    {
+                        max_diff = diff;
+                        max_idx  = i;
+                    }
+                }
+
+                const double thresh_value      = scdf.bin_centres[max_idx];
+                const double thresh_percentile = scdf.cdf[max_idx] * 100.0;
+
+                std::cout << "  Distribution fit  : "
+                          << lsdtt::distribution_family_name(best->family) << "\n"
+                          << "  Max CDF divergence: " << max_diff << "\n"
+                          << "  Relief threshold  : " << thresh_value << " m"
+                          << "  (=" << thresh_percentile << "th percentile)\n\n";
+
+                req.relief_threshold_percentile = thresh_percentile;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Run
     // -------------------------------------------------------------------------
     std::cout << "Running flat surface finder...\n";
@@ -843,25 +844,25 @@ int main(int argc, char* argv[])
     }
 
     // QQ CSVs — always written for each enabled metric
-    if (req.use_madk2 && !result.madk2_qq.empty())
+    if (req.use_madk2 && !result.madk2_qq.standard_normal_variate.empty())
     {
         const std::string p = stem + "_madk2_qq.csv";
         std::cout << "Writing MADk2 QQ: " << p << "\n";
         write_qq_csv(loader, p, result.madk2_qq);
     }
-    if (req.use_residual_iqr && !result.iqr_qq.empty())
+    if (req.use_residual_iqr && !result.iqr_qq.standard_normal_variate.empty())
     {
         const std::string p = stem + "_iqr_qq.csv";
         std::cout << "Writing residual IQR QQ: " << p << "\n";
         write_qq_csv(loader, p, result.iqr_qq);
     }
-    if (req.use_nvd && !result.nvd_qq.empty())
+    if (req.use_nvd && !result.nvd_qq.standard_normal_variate.empty())
     {
         const std::string p = stem + "_nvd_qq.csv";
         std::cout << "Writing NVD QQ: " << p << "\n";
         write_qq_csv(loader, p, result.nvd_qq);
     }
-    if (!result.relief_qq.empty())
+    if (!result.relief_qq.standard_normal_variate.empty())
     {
         const std::string p = stem + "_relief_qq.csv";
         std::cout << "Writing relief QQ: " << p << "\n";

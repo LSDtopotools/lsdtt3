@@ -132,6 +132,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_vector_utils.cpp
     src/core/lsdtt_raster_warp.cpp
     src/core/lsdtt_point_input.cpp
+    src/core/lsdtt_stat_csv.cpp
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
@@ -337,6 +338,10 @@ lsdtt_cli(lsdtt-flat-surface-finder    cli/lsdtt-flat-surface-finder.cpp)
 lsdtt_cli(lsdtt-hydraulic-routing      cli/lsdtt-hydraulic-routing.cpp)
 lsdtt_cli(lsdtt-channel-network-analysis cli/lsdtt-channel-network-analysis.cpp)
 
+
+if(LSDTT_HAS_FFTW)
+    lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
+endif()
 
 if(LSDTT_HAS_EIGEN)
     lsdtt_cli(lsdtt-chi-analysis cli/lsdtt-chi-analysis.cpp)

@@ -76,17 +76,6 @@
 namespace lsdtt {
 
 // =============================================================================
-// qq_bin
-// =============================================================================
-struct qq_bin
-{
-    double standard_normal_quantile = 0.0;
-    double data_quantile            = 0.0;
-    double normal_reference         = 0.0;  // IQR-fitted normal line; data on a normal
-                                            // distribution lies on this line
-};
-
-// =============================================================================
 // iqr_fit_method
 //
 // Selects how the reference surface is computed before the residual IQR.
@@ -286,10 +275,10 @@ struct flat_surface_result
     // QQ data: standard normal quantile vs metric quantile
     // Populated for each enabled metric.
     // -------------------------------------------------------------------------
-    std::vector<qq_bin> madk2_qq;
-    std::vector<qq_bin> iqr_qq;
-    std::vector<qq_bin> nvd_qq;
-    std::vector<qq_bin> relief_qq;
+    lsdtt_qq_data madk2_qq;
+    lsdtt_qq_data iqr_qq;
+    lsdtt_qq_data nvd_qq;
+    lsdtt_qq_data relief_qq;
 
     // -------------------------------------------------------------------------
     // Empirical CDFs: histogram-based CDF for each metric.

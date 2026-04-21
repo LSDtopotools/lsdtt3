@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -1983,6 +1984,238 @@ lsdtt_raster_cpu binary_morphological_closing(
                 out_data[idx] = 1.0f;
             }
         }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// =============================================================================
+// binary_morphological_dilation
+// =============================================================================
+lsdtt_raster_cpu binary_morphological_dilation(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_dilation: input raster metadata is invalid");
+    if (!std::isfinite(radius_metres) || radius_metres <= 0.0)
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_dilation: radius_metres must be finite and > 0");
+
+    const int    nrows = meta.n_rows;
+    const int    ncols = meta.n_cols;
+    const double cs    = meta.cell_size;
+    const int    r_px  = std::max(1, static_cast<int>(std::ceil(radius_metres / cs)));
+
+    std::vector<std::pair<int,int>> offsets;
+    offsets.reserve(static_cast<std::size_t>(2*r_px+1) * static_cast<std::size_t>(2*r_px+1));
+    for (int dr = -r_px; dr <= r_px; ++dr)
+    {
+        for (int dc = -r_px; dc <= r_px; ++dc)
+        {
+            bool in_se = (shape == window_shape::square)
+                ? (std::abs(dr) <= r_px && std::abs(dc) <= r_px)
+                : (std::sqrt(static_cast<double>(dr)*dr + static_cast<double>(dc)*dc) * cs
+                   <= radius_metres + 1e-12);
+            if (in_se) offsets.emplace_back(dr, dc);
+        }
+    }
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const float nd = static_cast<float>(meta.no_data_value);
+    std::vector<float>   out_data(npix, nd);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) + col;
+            if (in_mask[idx] == 0) continue;
+            out_mask[idx] = uint8_t{1};
+            out_data[idx] = 0.0f;
+
+            for (const auto& [dr, dc] : offsets)
+            {
+                const int rr = row + dr;
+                const int cc = col + dc;
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+                const std::size_t nidx =
+                    static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols) + cc;
+                if (in_mask[nidx] != 0 && in_data[nidx] > 0.5f)
+                {
+                    out_data[idx] = 1.0f;
+                    break;
+                }
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// =============================================================================
+// binary_morphological_erosion
+// =============================================================================
+lsdtt_raster_cpu binary_morphological_erosion(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_erosion: input raster metadata is invalid");
+    if (!std::isfinite(radius_metres) || radius_metres <= 0.0)
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_erosion: radius_metres must be finite and > 0");
+
+    const int    nrows = meta.n_rows;
+    const int    ncols = meta.n_cols;
+    const double cs    = meta.cell_size;
+    const int    r_px  = std::max(1, static_cast<int>(std::ceil(radius_metres / cs)));
+
+    std::vector<std::pair<int,int>> offsets;
+    offsets.reserve(static_cast<std::size_t>(2*r_px+1) * static_cast<std::size_t>(2*r_px+1));
+    for (int dr = -r_px; dr <= r_px; ++dr)
+    {
+        for (int dc = -r_px; dc <= r_px; ++dc)
+        {
+            bool in_se = (shape == window_shape::square)
+                ? (std::abs(dr) <= r_px && std::abs(dc) <= r_px)
+                : (std::sqrt(static_cast<double>(dr)*dr + static_cast<double>(dc)*dc) * cs
+                   <= radius_metres + 1e-12);
+            if (in_se) offsets.emplace_back(dr, dc);
+        }
+    }
+
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const float nd = static_cast<float>(meta.no_data_value);
+    std::vector<float>   out_data(npix, nd);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) + col;
+            if (in_mask[idx] == 0) continue;
+            out_mask[idx] = uint8_t{1};
+            out_data[idx] = 0.0f;
+            if (in_data[idx] <= 0.5f) continue;  // background stays background
+
+            bool all_fg = true;
+            for (const auto& [dr, dc] : offsets)
+            {
+                const int rr = row + dr;
+                const int cc = col + dc;
+                if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols) continue;
+                const std::size_t nidx =
+                    static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols) + cc;
+                if (in_mask[nidx] == 0) continue;  // skip nodata neighbours
+                if (in_data[nidx] <= 0.5f) { all_fg = false; break; }
+            }
+            if (all_fg) out_data[idx] = 1.0f;
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// =============================================================================
+// binary_fill_holes
+// =============================================================================
+lsdtt_raster_cpu binary_fill_holes(
+    const lsdtt_raster_cpu& binary)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::binary_fill_holes: input raster metadata is invalid");
+
+    const int    nrows = meta.n_rows;
+    const int    ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    // Mark DEM-valid background pixels reachable from the DEM border via
+    // 4-connected flood fill.  Unreachable valid background pixels are holes.
+    std::vector<bool> reachable(npix, false);
+    std::queue<int>   q;
+
+    auto try_enqueue = [&](int r, int c)
+    {
+        if (r < 0 || r >= nrows || c < 0 || c >= ncols) return;
+        const int i = r * ncols + c;
+        if (in_mask[i] == 0 || reachable[i]) return;
+        if (in_data[i] > 0.5f) return;   // foreground — not background
+        reachable[i] = true;
+        q.push(i);
+    };
+
+    for (int c = 0; c < ncols; ++c) { try_enqueue(0, c); try_enqueue(nrows-1, c); }
+    for (int r = 0; r < nrows;  ++r) { try_enqueue(r, 0); try_enqueue(r, ncols-1); }
+
+    constexpr int DR[4] = {-1, 1,  0, 0};
+    constexpr int DC[4] = { 0, 0, -1, 1};
+
+    // Also seed valid background pixels adjacent to any nodata pixel — they sit
+    // at the effective exterior boundary of the valid DEM region and are outside
+    // any real hole even when the grid border is nodata.
+    for (int r = 0; r < nrows; ++r)
+    {
+        for (int c = 0; c < ncols; ++c)
+        {
+            const int i = r * ncols + c;
+            if (in_mask[i] == 0 || reachable[i] || in_data[i] > 0.5f) continue;
+            for (int d = 0; d < 4; ++d)
+            {
+                const int nr = r + DR[d], nc = c + DC[d];
+                if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
+                if (in_mask[nr * ncols + nc] == 0)
+                { try_enqueue(r, c); break; }
+            }
+        }
+    }
+    while (!q.empty())
+    {
+        const int i   = q.front(); q.pop();
+        const int row = i / ncols;
+        const int col = i % ncols;
+        for (int d = 0; d < 4; ++d) try_enqueue(row + DR[d], col + DC[d]);
+    }
+
+    // Unreachable valid background pixels → foreground.
+    // Nodata pixels (in_mask==0) get the nodata sentinel in the data array.
+    const float nd = static_cast<float>(meta.no_data_value);
+    std::vector<float>   out_data(npix, nd);
+    std::vector<uint8_t> out_mask = in_mask;
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (in_data[i] <= 0.5f && !reachable[i])
+            out_data[i] = 1.0f;   // hole → foreground
+        else
+            out_data[i] = in_data[i];
     }
 
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);

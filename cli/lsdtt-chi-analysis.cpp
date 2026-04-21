@@ -9,11 +9,11 @@
 // -----------------------------------------------------------------------------
 // lsdtt-chi-analysis
 //
-// End-to-end χ workflow for testing:
+// End-to-end chi workflow for testing:
 //
-//   1. χ extraction on threshold-defined channel networks
-//   2. χ-network fitting
-//   3. χ disorder metrics and uncertainty products
+//   1. chi extraction on threshold-defined channel networks
+//   2. chi-network fitting
+//   3. chi disorder metrics and uncertainty products
 //   4. spatial k_sn / u* inversion with m/n sweep
 //
 // Outlets can be supplied as a CSV of latitude/longitude points. If no outlet
@@ -952,7 +952,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // χ extraction + fitting + disorder sweep
+    // chi extraction + fitting + disorder sweep
     // -------------------------------------------------------------------------
     std::vector<disorder_sweep_row> disorder_rows;
 

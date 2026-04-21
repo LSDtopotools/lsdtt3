@@ -385,6 +385,72 @@ lsdtt_raster_cpu label_binary_components_by_size(
 );
 
 // -----------------------------------------------------------------------------
+// binary_morphological_dilation
+//
+// Dilation of a binary raster with a structuring element of radius_metres.
+//
+// window_shape::circular — Euclidean disk SE (default).
+// window_shape::square   — square (L∞) SE; use this for exact 1-pixel
+//                          8-connected dilation (radius_metres = cell_size).
+//
+// Input/output convention: same as binary_morphological_closing.
+//   foreground: value > 0.5 and mask = 1
+//   background: value <= 0.5 and mask = 1
+//   nodata: mask = 0, value unchanged
+//
+// Throws:
+//   std::runtime_error if radius_metres <= 0 or metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_morphological_dilation(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape = window_shape::circular
+);
+
+
+// -----------------------------------------------------------------------------
+// binary_morphological_erosion
+//
+// Erosion of a binary raster with a structuring element of radius_metres.
+// A foreground pixel is retained only when every DEM-valid neighbour in the
+// SE is also foreground.  Nodata neighbours are ignored (border-safe).
+//
+// window_shape::circular — Euclidean disk SE (default).
+// window_shape::square   — square (L∞) SE.
+//
+// Input/output convention: same as binary_morphological_closing.
+//
+// Throws:
+//   std::runtime_error if radius_metres <= 0 or metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_morphological_erosion(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape = window_shape::circular
+);
+
+
+// -----------------------------------------------------------------------------
+// binary_fill_holes
+//
+// Background pixels that are not 4-connected to any DEM-border background
+// pixel (i.e. enclosed holes) are set to foreground.
+//
+// Nodata pixels (mask = 0) are never modified.
+//
+// Intended use: after component filtering, fill interior holes in mountain
+// or flat masks (e.g. enclosed summit plateaus, cirques, enclosed flat
+// patches that were classified as high-relief due to window edge effects).
+//
+// Throws:
+//   std::runtime_error if metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_fill_holes(
+    const lsdtt_raster_cpu& binary
+);
+
+
+// -----------------------------------------------------------------------------
 // binary_components_to_polygon_records
 //
 // Converts a labelled component raster (output of label_binary_components_by_size)
