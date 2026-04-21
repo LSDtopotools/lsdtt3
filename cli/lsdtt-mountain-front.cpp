@@ -20,12 +20,14 @@
 //             Writes a CDF CSV.
 //   Stage 3 — Flat mask (relief <= threshold).
 //   Stage 4 — Remove small flat components (< min_flat_component_pixels).
-//   Stage 5 — Dilate flat mask by 1 pixel (8-connected square SE) to bridge
-//             riser pixels between adjacent flat patches.
-//   Stage 6 — Fill holes in flat mask: enclosed non-flat pixels become flat.
-//   Stage 7 — Invert flat mask → initial mountain mask.
-//   Stage 8 — Opening by reconstruction (erosion_radius_metres): erode to sever
-//             thin necks, then BFS-reconstruct thick bodies back to original extent.
+//   Stage 5 — Closing-by-reconstruction of flat mask (flat_closing_radius_metres):
+//             dilate to connect adjacent flat patches, then BFS-reconstruct to
+//             original flat extent.  Seals narrow background gaps between flat areas.
+//   Stage 6 — Opening-by-reconstruction of flat mask (erosion_radius_metres):
+//             erode thin flat necks, then BFS-reconstruct thick flat bodies.
+//             Removes small spurious flat peninsulas while preserving broad flats.
+//   Stage 7 — Fill holes in flat mask: enclosed non-flat pixels become flat.
+//   Stage 8 — Invert flat mask → initial mountain mask.
 //   Stage 9 — Remove small mountain components (< min_component_pixels).
 //   Stage 10 — Fill holes in mountain mask (enclosed background → mountain).
 //   Stage 11 — Valley infilling: morphological closing (infill_valley_radius_metres).
@@ -74,7 +76,7 @@
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 
-static const std::string k_version  = "0.2.0";
+static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 
 static void print_banner()
@@ -157,25 +159,24 @@ int main(int argc, char* argv[])
         "Square window size (pixels) for local relief (max - min).",
         "Must be odd and >= 3."};
 
-    // --- Stages 4-6: flat mask post-processing ---
+    // --- Stages 4-7: flat mask post-processing ---
     int_default_map["min_flat_component_pixels"] = 500;
     help_map["min_flat_component_pixels"] = {"int","500",
         "Minimum 8-connected component size (pixels) to keep in the flat mask.",
         "Small isolated flat patches (e.g. individual floodplain pixels) are "
         "removed before the flat mask is used to define mountain pixels."};
 
-    int_default_map["flat_dilation_pixels"] = 3;
-    help_map["flat_dilation_pixels"] = {"int","3",
-        "The number of pixels to dilate.",
-        "To remove little stringers and risers in the flat mask."};
+    float_default_map["flat_closing_radius_metres"] = 500.0f;
+    help_map["flat_closing_radius_metres"] = {"float","500",
+        "Radius (m) for closing-by-reconstruction of the flat mask (Stage 5).",
+        "Seals narrow background gaps between adjacent flat patches (e.g. "
+        "riser pixels between floodplain segments).  0 = skip."};
 
-    // --- Stages 8-9: mountain mask post-processing ---
     float_default_map["erosion_radius_metres"] = 500.0f;
     help_map["erosion_radius_metres"] = {"float","500",
-        "Erosion radius (m) for opening-by-reconstruction (Stage 8).",
-        "Severs necks narrower than 2x this radius; thick mountain bodies are "
-        "restored to their exact original extent.  Set to roughly half the neck "
-        "width to remove.  0 = skip."};
+        "Erosion radius (m) for opening-by-reconstruction of the flat mask (Stage 6).",
+        "Severs thin flat peninsulas narrower than 2x this radius; broad flat "
+        "bodies are restored to their exact original extent.  0 = skip."};
 
     int_default_map["min_component_pixels"] = 1000;
     help_map["min_component_pixels"] = {"int","1000",
@@ -387,19 +388,41 @@ int main(int argc, char* argv[])
     flat_mask = lsdtt::filter_binary_components_by_size(flat_mask, min_flat);
 
     // -------------------------------------------------------------------------
-    // Stage 5: dilate flat mask by 1 pixel (square SE) to bridge riser gaps
+    // Stage 5: closing-by-reconstruction of flat mask
     // -------------------------------------------------------------------------
-    std::cout << "Stage 5: dilating flat mask by "<< ip["flat_dilation_pixels"] <<" pixel(s) to bridge risers...\n";
-    const float dilation_factor = float(ip["flat_dilation_pixels"]);
-    flat_mask = lsdtt::binary_morphological_dilation(
-        flat_mask,
-        dem.get_meta().cell_size*dilation_factor,      
-        lsdtt::window_shape::square);
+    const double flat_closing_r = static_cast<double>(ff["flat_closing_radius_metres"]);
+    if (flat_closing_r > 0.0)
+    {
+        std::cout << "Stage 5: closing-by-reconstruction of flat mask (radius="
+                  << flat_closing_r << " m)...\n";
+        flat_mask = lsdtt::binary_closing_by_reconstruction(flat_mask, flat_closing_r);
+    }
+    else
+    {
+        std::cout << "Stage 5: flat mask closing-by-reconstruction skipped "
+                     "(flat_closing_radius_metres <= 0).\n";
+    }
 
     // -------------------------------------------------------------------------
-    // Stage 6: fill holes in flat mask
+    // Stage 6: opening-by-reconstruction of flat mask
     // -------------------------------------------------------------------------
-    std::cout << "Stage 6: filling holes in flat mask...\n";
+    const double flat_erosion_r = static_cast<double>(ff["erosion_radius_metres"]);
+    if (flat_erosion_r > 0.0)
+    {
+        std::cout << "Stage 6: opening-by-reconstruction of flat mask (radius="
+                  << flat_erosion_r << " m)...\n";
+        flat_mask = lsdtt::binary_opening_by_reconstruction(flat_mask, flat_erosion_r);
+    }
+    else
+    {
+        std::cout << "Stage 6: flat mask opening-by-reconstruction skipped "
+                     "(erosion_radius_metres <= 0).\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // Stage 7: fill holes in flat mask
+    // -------------------------------------------------------------------------
+    std::cout << "Stage 7: filling holes in flat mask...\n";
     flat_mask = lsdtt::binary_fill_holes(flat_mask);
 
     // Enforce DEM nodata: any pixel that is nodata in the DEM must remain
@@ -420,9 +443,9 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Stage 7: invert flat mask → mountain mask
+    // Stage 8: invert flat mask → mountain mask
     // -------------------------------------------------------------------------
-    std::cout << "Stage 7: inverting flat mask to mountain mask...\n";
+    std::cout << "Stage 8: inverting flat mask to mountain mask...\n";
     {
         const std::vector<float>&   fd = flat_mask.get_data();
         const std::vector<uint8_t>& fm = flat_mask.get_mask();
@@ -439,21 +462,6 @@ int main(int argc, char* argv[])
             std::move(mtn_data), std::move(mtn_msk), rmeta);
     }
     lsdtt::lsdtt_raster_cpu mountain_mask = std::move(flat_mask);
-
-    // -------------------------------------------------------------------------
-    // Stage 8: opening by reconstruction — sever thin necks, restore thick bodies
-    // -------------------------------------------------------------------------
-    const double erosion_r = static_cast<double>(ff["erosion_radius_metres"]);
-    if (erosion_r > 0.0)
-    {
-        std::cout << "Stage 8: opening by reconstruction (radius="
-                  << erosion_r << " m)...\n";
-        mountain_mask = lsdtt::binary_opening_by_reconstruction(mountain_mask, erosion_r);
-    }
-    else
-    {
-        std::cout << "Stage 8: opening by reconstruction skipped (erosion_radius_metres <= 0).\n";
-    }
 
     // -------------------------------------------------------------------------
     // Stage 9: remove small mountain components

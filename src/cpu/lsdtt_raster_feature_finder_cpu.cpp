@@ -21,6 +21,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <set>
+#include <map>
 
 
 namespace lsdtt
@@ -1083,6 +1085,17 @@ static void validate_drain_request(
         meta
     );
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3392,6 +3405,2242 @@ binary_components_to_polygon_records_with_holes(
     return records;
 }
 
+
+// -----------------------------------------------------------------------------
+// classify_skeleton_nodes
+// -----------------------------------------------------------------------------
+skeleton_node_result classify_skeleton_nodes(
+    const lsdtt_raster_cpu& skeleton)
+{
+    const lsdtt_raster_meta& meta = skeleton.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::classify_skeleton_nodes: input raster metadata is invalid"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = skeleton.get_data();
+    const std::vector<uint8_t>& in_mask = skeleton.get_mask();
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   degree_data(npix, nodata);
+    std::vector<uint8_t> degree_mask(npix, uint8_t{0});
+
+    std::vector<float>   endpoint_data(npix, nodata);
+    std::vector<uint8_t> endpoint_mask(npix, uint8_t{0});
+
+    std::vector<float>   junction_data(npix, nodata);
+    std::vector<uint8_t> junction_mask(npix, uint8_t{0});
+
+    std::vector<skeleton_node> endpoints;
+    std::vector<skeleton_node> junctions;
+
+    auto is_valid = [&](int row, int col) -> bool
+    {
+        if (row < 0 || row >= nrows || col < 0 || col >= ncols)
+            return false;
+
+        const std::size_t idx =
+            static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+            static_cast<std::size_t>(col);
+
+        return in_mask[idx] != 0 &&
+               !meta.is_nodata(in_data[idx]) &&
+               std::isfinite(in_data[idx]);
+    };
+
+    auto is_foreground = [&](int row, int col) -> bool
+    {
+        if (!is_valid(row, col)) return false;
+
+        const std::size_t idx =
+            static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+            static_cast<std::size_t>(col);
+
+        return in_data[idx] > 0.5f;
+    };
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(col);
+
+            if (!is_valid(row, col))
+                continue;
+
+            degree_mask[idx]   = uint8_t{1};
+            endpoint_mask[idx] = uint8_t{1};
+            junction_mask[idx] = uint8_t{1};
+
+            degree_data[idx]   = 0.0f;
+            endpoint_data[idx] = 0.0f;
+            junction_data[idx] = 0.0f;
+
+            if (!is_foreground(row, col))
+                continue;
+
+            int degree = 0;
+
+            for (int dr = -1; dr <= 1; ++dr)
+            {
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    if (dr == 0 && dc == 0) continue;
+                    if (is_foreground(row + dr, col + dc))
+                        ++degree;
+                }
+            }
+
+            degree_data[idx] = static_cast<float>(degree);
+
+            if (degree == 1)
+            {
+                endpoint_data[idx] = 1.0f;
+                endpoints.push_back({row, col, degree});
+            }
+            else if (degree >= 3)
+            {
+                junction_data[idx] = 1.0f;
+                junctions.push_back({row, col, degree});
+            }
+        }
+    }
+
+    skeleton_node_result result;
+    result.degree_raster = lsdtt_raster_cpu(
+        std::move(degree_data), std::move(degree_mask), meta);
+    result.endpoint_mask = lsdtt_raster_cpu(
+        std::move(endpoint_data), std::move(endpoint_mask), meta);
+    result.junction_mask = lsdtt_raster_cpu(
+        std::move(junction_data), std::move(junction_mask), meta);
+    result.endpoints = std::move(endpoints);
+    result.junctions = std::move(junctions);
+
+    return result;
+}
+
+// -----------------------------------------------------------------------------
+// prune_skeleton_spurs
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu prune_skeleton_spurs(
+    const lsdtt_raster_cpu& skeleton,
+    int                     max_spur_pixels,
+    int                     max_iterations)
+{
+    const lsdtt_raster_meta& meta = skeleton.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::prune_skeleton_spurs: input raster metadata is invalid"
+        );
+    }
+
+    if (max_spur_pixels < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::prune_skeleton_spurs: max_spur_pixels must be >= 1"
+        );
+    }
+
+    if (max_iterations < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::prune_skeleton_spurs: max_iterations must be >= 1"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = skeleton.get_data();
+    const std::vector<uint8_t>& in_mask = skeleton.get_mask();
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    // -------------------------------------------------------------------------
+    // Build working foreground plane over the DEM-valid domain.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> valid(npix, uint8_t{0});
+    std::vector<uint8_t> work (npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (meta.is_nodata(in_data[i])) continue;
+        if (!std::isfinite(in_data[i])) continue;
+
+        valid[i] = uint8_t{1};
+        work[i]  = (in_data[i] > 0.5f) ? uint8_t{1} : uint8_t{0};
+    }
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    auto in_bounds = [nrows, ncols](int row, int col) -> bool
+    {
+        return row >= 0 && row < nrows && col >= 0 && col < ncols;
+    };
+
+    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+    // -------------------------------------------------------------------------
+    // Iterative pruning.
+    // -------------------------------------------------------------------------
+    for (int iter = 0; iter < max_iterations; ++iter)
+    {
+        // ---------------------------------------------------------------------
+        // Recompute 8-neighbour degree on the current working skeleton.
+        // ---------------------------------------------------------------------
+        std::vector<int> degree(npix, 0);
+
+        for (int row = 0; row < nrows; ++row)
+        {
+            for (int col = 0; col < ncols; ++col)
+            {
+                const std::size_t idx = idx_of(row, col);
+                if (!valid[idx] || !work[idx]) continue;
+
+                int deg = 0;
+                for (int d = 0; d < 8; ++d)
+                {
+                    const int rr = row + DR8[d];
+                    const int cc = col + DC8[d];
+                    if (!in_bounds(rr, cc)) continue;
+
+                    const std::size_t nidx = idx_of(rr, cc);
+                    if (valid[nidx] && work[nidx]) ++deg;
+                }
+                degree[idx] = deg;
+            }
+        }
+
+        // traced marks skeleton pixels already assigned to a traced endpoint-rooted
+        // path in this iteration, preventing double-processing of endpoint-endpoint
+        // segments from both ends.
+        std::vector<uint8_t> traced(npix, uint8_t{0});
+
+        // delete_mark accumulates all pixels to be removed in this iteration.
+        std::vector<uint8_t> delete_mark(npix, uint8_t{0});
+        bool any_deleted_this_iter = false;
+
+        enum class trace_terminal
+        {
+            hit_junction,
+            hit_endpoint,
+            ambiguous,
+            dead_end
+        };
+
+        for (int row0 = 0; row0 < nrows; ++row0)
+        {
+            for (int col0 = 0; col0 < ncols; ++col0)
+            {
+                const std::size_t seed = idx_of(row0, col0);
+
+                if (!valid[seed] || !work[seed]) continue;
+                if (degree[seed] != 1) continue;
+                if (traced[seed] != 0) continue;
+
+                std::vector<std::size_t> removable_pixels;
+
+                std::size_t prev = static_cast<std::size_t>(-1);
+                std::size_t curr = seed;
+
+                trace_terminal terminal = trace_terminal::dead_end;
+
+                while (true)
+                {
+                    traced[curr] = uint8_t{1};
+                    removable_pixels.push_back(curr);
+
+                    const int crow = static_cast<int>(curr / static_cast<std::size_t>(ncols));
+                    const int ccol = static_cast<int>(curr % static_cast<std::size_t>(ncols));
+                    const int cdeg = degree[curr];
+
+                    if (curr != seed && cdeg == 1)
+                    {
+                        terminal = trace_terminal::hit_endpoint;
+                        break;
+                    }
+
+                    if (cdeg >= 3)
+                    {
+                        // Preserve the terminal junction.
+                        removable_pixels.pop_back();
+                        terminal = trace_terminal::hit_junction;
+                        break;
+                    }
+
+                    std::vector<std::size_t> next_pixels;
+                    next_pixels.reserve(8);
+
+                    for (int d = 0; d < 8; ++d)
+                    {
+                        const int rr = crow + DR8[d];
+                        const int cc = ccol + DC8[d];
+                        if (!in_bounds(rr, cc)) continue;
+
+                        const std::size_t nidx = idx_of(rr, cc);
+                        if (!valid[nidx] || !work[nidx]) continue;
+                        if (nidx == prev) continue;
+
+                        next_pixels.push_back(nidx);
+                    }
+
+                    if (next_pixels.empty())
+                    {
+                        terminal = trace_terminal::dead_end;
+                        break;
+                    }
+
+                    if (next_pixels.size() > 1)
+                    {
+                        // Unexpected branch ambiguity while tracing from an endpoint.
+                        // Be conservative and do not prune this trace.
+                        terminal = trace_terminal::ambiguous;
+                        break;
+                    }
+
+                    prev = curr;
+                    curr = next_pixels.front();
+                }
+
+                const bool eligible =
+                    terminal == trace_terminal::hit_junction ||
+                    terminal == trace_terminal::hit_endpoint;
+
+                if (!eligible)
+                {
+                    continue;
+                }
+
+                if (static_cast<int>(removable_pixels.size()) <= max_spur_pixels)
+                {
+                    any_deleted_this_iter = true;
+                    for (const std::size_t idx : removable_pixels)
+                    {
+                        delete_mark[idx] = uint8_t{1};
+                    }
+                }
+            }
+        }
+
+        if (!any_deleted_this_iter)
+        {
+            break;
+        }
+
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            if (delete_mark[i] != 0)
+            {
+                work[i] = uint8_t{0};
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Convert the working plane back to a raster with the original valid domain.
+    // -------------------------------------------------------------------------
+    std::vector<float>   out_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (!valid[i]) continue;
+
+        out_mask[i] = uint8_t{1};
+        out_data[i] = (work[i] != 0) ? 1.0f : 0.0f;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+// -----------------------------------------------------------------------------
+// extract_skeleton_segments
+// -----------------------------------------------------------------------------
+std::vector<skeleton_segment>
+extract_skeleton_segments(
+    const lsdtt_raster_cpu& skeleton)
+{
+    const lsdtt_raster_meta& meta = skeleton.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::extract_skeleton_segments: input raster metadata is invalid"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = skeleton.get_data();
+    const std::vector<uint8_t>& in_mask = skeleton.get_mask();
+
+    // -------------------------------------------------------------------------
+    // Build working foreground plane over the DEM-valid domain.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> valid(npix, uint8_t{0});
+    std::vector<uint8_t> work (npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (meta.is_nodata(in_data[i])) continue;
+        if (!std::isfinite(in_data[i])) continue;
+
+        valid[i] = uint8_t{1};
+        work[i]  = (in_data[i] > 0.5f) ? uint8_t{1} : uint8_t{0};
+    }
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    auto in_bounds = [nrows, ncols](int row, int col) -> bool
+    {
+        return row >= 0 && row < nrows && col >= 0 && col < ncols;
+    };
+
+    auto row_of = [ncols](std::size_t idx) -> int
+    {
+        return static_cast<int>(idx / static_cast<std::size_t>(ncols));
+    };
+
+    auto col_of = [ncols](std::size_t idx) -> int
+    {
+        return static_cast<int>(idx % static_cast<std::size_t>(ncols));
+    };
+
+    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+    // -------------------------------------------------------------------------
+    // Compute 8-neighbour foreground degree.
+    // -------------------------------------------------------------------------
+    std::vector<int> degree(npix, 0);
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = idx_of(row, col);
+            if (!valid[idx] || !work[idx]) continue;
+
+            int deg = 0;
+            for (int d = 0; d < 8; ++d)
+            {
+                const int rr = row + DR8[d];
+                const int cc = col + DC8[d];
+                if (!in_bounds(rr, cc)) continue;
+
+                const std::size_t nidx = idx_of(rr, cc);
+                if (valid[nidx] && work[nidx]) ++deg;
+            }
+
+            degree[idx] = deg;
+        }
+    }
+
+    auto foreground_neighbours = [&](std::size_t idx) -> std::vector<std::size_t>
+    {
+        std::vector<std::size_t> nbrs;
+        nbrs.reserve(8);
+
+        const int row = row_of(idx);
+        const int col = col_of(idx);
+
+        for (int d = 0; d < 8; ++d)
+        {
+            const int rr = row + DR8[d];
+            const int cc = col + DC8[d];
+            if (!in_bounds(rr, cc)) continue;
+
+            const std::size_t nidx = idx_of(rr, cc);
+            if (valid[nidx] && work[nidx])
+                nbrs.push_back(nidx);
+        }
+
+        return nbrs;
+    };
+
+    using edge_key = std::pair<std::size_t, std::size_t>;
+
+    auto make_edge_key = [](std::size_t a, std::size_t b) -> edge_key
+    {
+        return (a < b) ? edge_key(a, b) : edge_key(b, a);
+    };
+
+    std::set<edge_key> visited_edges;
+    std::vector<skeleton_segment> segments;
+
+    // -------------------------------------------------------------------------
+    // Step 1: degree-0 singleton pixels
+    // -------------------------------------------------------------------------
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = idx_of(row, col);
+            if (!valid[idx] || !work[idx]) continue;
+            if (degree[idx] != 0) continue;
+
+            skeleton_segment seg;
+            seg.is_loop    = false;
+            seg.start_node = {row, col, 0};
+            seg.end_node   = {row, col, 0};
+            seg.pixels.push_back({row, col});
+
+            segments.push_back(std::move(seg));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: open segments starting from node pixels (degree != 2, degree > 0)
+    // -------------------------------------------------------------------------
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t start_idx = idx_of(row, col);
+            if (!valid[start_idx] || !work[start_idx]) continue;
+            if (degree[start_idx] == 0 || degree[start_idx] == 2) continue;
+
+            const std::vector<std::size_t> nbrs =
+                foreground_neighbours(start_idx);
+
+            for (const std::size_t first_next : nbrs)
+            {
+                const edge_key first_edge =
+                    make_edge_key(start_idx, first_next);
+
+                if (visited_edges.find(first_edge) != visited_edges.end())
+                    continue;
+
+                visited_edges.insert(first_edge);
+
+                skeleton_segment seg;
+                seg.is_loop    = false;
+                seg.start_node = {row, col, degree[start_idx]};
+                seg.pixels.push_back({row, col});
+
+                std::size_t prev = start_idx;
+                std::size_t curr = first_next;
+
+                while (true)
+                {
+                    const int crow = row_of(curr);
+                    const int ccol = col_of(curr);
+
+                    seg.pixels.push_back({crow, ccol});
+
+                    if (degree[curr] != 2)
+                    {
+                        seg.end_node = {crow, ccol, degree[curr]};
+                        break;
+                    }
+
+                    const std::vector<std::size_t> curr_nbrs =
+                        foreground_neighbours(curr);
+
+                    if (curr_nbrs.size() != 2)
+                    {
+                        // Conservative fallback on malformed local topology.
+                        seg.end_node = {crow, ccol, degree[curr]};
+                        break;
+                    }
+
+                    std::size_t next = static_cast<std::size_t>(-1);
+
+                    if (curr_nbrs[0] == prev && curr_nbrs[1] != prev)
+                    {
+                        next = curr_nbrs[1];
+                    }
+                    else if (curr_nbrs[1] == prev && curr_nbrs[0] != prev)
+                    {
+                        next = curr_nbrs[0];
+                    }
+                    else
+                    {
+                        seg.end_node = {crow, ccol, degree[curr]};
+                        break;
+                    }
+
+                    const edge_key e = make_edge_key(curr, next);
+
+                    if (visited_edges.find(e) != visited_edges.end())
+                    {
+                        seg.end_node = {crow, ccol, degree[curr]};
+                        break;
+                    }
+
+                    visited_edges.insert(e);
+                    prev = curr;
+                    curr = next;
+                }
+
+                segments.push_back(std::move(seg));
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: closed loops (all remaining unvisited degree-2 foreground pixels)
+    // -------------------------------------------------------------------------
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t seed = idx_of(row, col);
+            if (!valid[seed] || !work[seed]) continue;
+            if (degree[seed] != 2) continue;
+
+            const std::vector<std::size_t> seed_nbrs =
+                foreground_neighbours(seed);
+
+            std::size_t first_next = static_cast<std::size_t>(-1);
+
+            for (const std::size_t nidx : seed_nbrs)
+            {
+                if (visited_edges.find(make_edge_key(seed, nidx)) ==
+                    visited_edges.end())
+                {
+                    first_next = nidx;
+                    break;
+                }
+            }
+
+            if (first_next == static_cast<std::size_t>(-1))
+                continue;   // this loop already traced
+
+            skeleton_segment seg;
+            seg.is_loop    = true;
+            seg.start_node = {row, col, 2};
+            seg.end_node   = {row, col, 2};
+            seg.pixels.push_back({row, col});
+
+            std::size_t prev = seed;
+            std::size_t curr = first_next;
+
+            visited_edges.insert(make_edge_key(seed, curr));
+
+            while (true)
+            {
+                const int crow = row_of(curr);
+                const int ccol = col_of(curr);
+
+                seg.pixels.push_back({crow, ccol});
+
+                const std::vector<std::size_t> curr_nbrs =
+                    foreground_neighbours(curr);
+
+                if (curr_nbrs.size() != 2)
+                {
+                    // Unexpected malformed topology; degrade gracefully.
+                    seg.is_loop  = false;
+                    seg.end_node = {crow, ccol, degree[curr]};
+                    break;
+                }
+
+                std::size_t next = static_cast<std::size_t>(-1);
+
+                if (curr_nbrs[0] != prev)
+                {
+                    next = curr_nbrs[0];
+                }
+                else if (curr_nbrs[1] != prev)
+                {
+                    next = curr_nbrs[1];
+                }
+
+                if (next == static_cast<std::size_t>(-1))
+                {
+                    seg.is_loop  = false;
+                    seg.end_node = {crow, ccol, degree[curr]};
+                    break;
+                }
+
+                if (next == seed)
+                {
+                    visited_edges.insert(make_edge_key(curr, seed));
+                    break;   // close loop without repeating the seed pixel
+                }
+
+                const edge_key e = make_edge_key(curr, next);
+
+                if (visited_edges.find(e) != visited_edges.end())
+                {
+                    seg.is_loop  = false;
+                    seg.end_node = {crow, ccol, degree[curr]};
+                    break;
+                }
+
+                visited_edges.insert(e);
+                prev = curr;
+                curr = next;
+            }
+
+            segments.push_back(std::move(seg));
+        }
+    }
+
+    return segments;
+}
+
+namespace
+{
+
+// -----------------------------------------------------------------------------
+// estimate_endpoint_tangent_one_side_
+// -----------------------------------------------------------------------------
+// Internal helper for one segment end.
+// Returns true on success and fills `out`.
+// -----------------------------------------------------------------------------
+static bool estimate_endpoint_tangent_one_side_(
+    const skeleton_segment&       seg,
+    std::size_t                   segment_index,
+    bool                          at_start,
+    double                        fit_length_pixels,
+    int                           min_support_pixels,
+    skeleton_endpoint_tangent&    out)
+{
+    if (seg.is_loop) return false;
+    if (seg.pixels.empty()) return false;
+
+    const skeleton_node& node =
+        at_start ? seg.start_node : seg.end_node;
+
+    if (node.degree != 1) return false;
+
+    const std::size_t n = seg.pixels.size();
+    if (n < 2) return false;
+
+    // -------------------------------------------------------------------------
+    // Collect support pixels from endpoint inward along the ordered segment.
+    // -------------------------------------------------------------------------
+    std::vector<skeleton_pixel> support;
+    support.reserve(n);
+
+    double acc_len = 0.0;
+
+    auto pixel_at = [&](std::size_t i) -> const skeleton_pixel&
+    {
+        return at_start ? seg.pixels[i]
+                        : seg.pixels[n - 1 - i];
+    };
+
+    support.push_back(pixel_at(0));
+
+    for (std::size_t i = 1; i < n; ++i)
+    {
+        const skeleton_pixel& p0 = pixel_at(i - 1);
+        const skeleton_pixel& p1 = pixel_at(i);
+
+        const double dr = static_cast<double>(p1.row - p0.row);
+        const double dc = static_cast<double>(p1.col - p0.col);
+        acc_len += std::sqrt(dr * dr + dc * dc);
+
+        support.push_back(p1);
+
+        if (acc_len >= fit_length_pixels)
+            break;
+    }
+
+    if (static_cast<int>(support.size()) < min_support_pixels)
+        return false;
+
+    // -------------------------------------------------------------------------
+    // Endpoint and inward chord.
+    // support[0] is the endpoint; support.back() is the deepest sampled pixel.
+    // -------------------------------------------------------------------------
+    const double er = static_cast<double>(support.front().row);
+    const double ec = static_cast<double>(support.front().col);
+
+    const double chord_r =
+        static_cast<double>(support.back().row) - er;
+    const double chord_c =
+        static_cast<double>(support.back().col) - ec;
+
+    const double chord_norm =
+        std::sqrt(chord_r * chord_r + chord_c * chord_c);
+
+    if (!(std::isfinite(chord_norm)) || chord_norm <= 0.0)
+        return false;
+
+    // -------------------------------------------------------------------------
+    // PCA / covariance orientation of support points.
+    // -------------------------------------------------------------------------
+    double mean_r = 0.0;
+    double mean_c = 0.0;
+
+    for (const auto& p : support)
+    {
+        mean_r += static_cast<double>(p.row);
+        mean_c += static_cast<double>(p.col);
+    }
+
+    mean_r /= static_cast<double>(support.size());
+    mean_c /= static_cast<double>(support.size());
+
+    double cov_rr = 0.0;
+    double cov_cc = 0.0;
+    double cov_rc = 0.0;
+
+    for (const auto& p : support)
+    {
+        const double dr = static_cast<double>(p.row) - mean_r;
+        const double dc = static_cast<double>(p.col) - mean_c;
+        cov_rr += dr * dr;
+        cov_cc += dc * dc;
+        cov_rc += dr * dc;
+    }
+
+    cov_rr /= static_cast<double>(support.size());
+    cov_cc /= static_cast<double>(support.size());
+    cov_rc /= static_cast<double>(support.size());
+
+    const double trace = cov_rr + cov_cc;
+    const double disc  = std::sqrt(
+        std::max(0.0, (cov_rr - cov_cc) * (cov_rr - cov_cc) +
+                      4.0 * cov_rc * cov_rc)
+    );
+
+    const double lambda_max = 0.5 * (trace + disc);
+
+    double vr = 0.0;
+    double vc = 0.0;
+
+    // Eigenvector for the dominant eigenvalue.
+    if (std::abs(cov_rc) > 1e-12 ||
+        std::abs(lambda_max - cov_rr) > 1e-12)
+    {
+        vr = cov_rc;
+        vc = lambda_max - cov_rr;
+    }
+    else
+    {
+        // Diagonal covariance fallback.
+        if (cov_rr >= cov_cc)
+        {
+            vr = 1.0;
+            vc = 0.0;
+        }
+        else
+        {
+            vr = 0.0;
+            vc = 1.0;
+        }
+    }
+
+    double vnorm = std::sqrt(vr * vr + vc * vc);
+
+    // Degenerate covariance fallback: use the inward chord direction.
+    if (!(std::isfinite(vnorm)) || vnorm <= 0.0)
+    {
+        vr = chord_r / chord_norm;
+        vc = chord_c / chord_norm;
+        vnorm = 1.0;
+    }
+    else
+    {
+        vr /= vnorm;
+        vc /= vnorm;
+    }
+
+    // -------------------------------------------------------------------------
+    // Orient the tangent outward from the endpoint.
+    // The chord points inward from endpoint into the segment. We want the
+    // opposite direction.
+    // -------------------------------------------------------------------------
+    const double dot_inward = vr * chord_r + vc * chord_c;
+    if (dot_inward > 0.0)
+    {
+        vr = -vr;
+        vc = -vc;
+    }
+
+    out.segment_index         = segment_index;
+    out.at_start              = at_start;
+    out.row                   = node.row;
+    out.col                   = node.col;
+    out.d_row                 = vr;
+    out.d_col                 = vc;
+    out.n_support_pixels      = static_cast<int>(support.size());
+    out.support_length_pixels = acc_len;
+
+    return true;
+}
+
+} // unnamed namespace
+
+
+// -----------------------------------------------------------------------------
+// estimate_skeleton_endpoint_tangents
+// -----------------------------------------------------------------------------
+std::vector<skeleton_endpoint_tangent>
+estimate_skeleton_endpoint_tangents(
+    const std::vector<skeleton_segment>& segments,
+    double                              fit_length_pixels,
+    int                                 min_support_pixels)
+{
+    if (!std::isfinite(fit_length_pixels) || fit_length_pixels <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::estimate_skeleton_endpoint_tangents: fit_length_pixels must be finite and > 0"
+        );
+    }
+
+    if (min_support_pixels < 2)
+    {
+        throw std::runtime_error(
+            "lsdtt::estimate_skeleton_endpoint_tangents: min_support_pixels must be >= 2"
+        );
+    }
+
+    std::vector<skeleton_endpoint_tangent> tangents;
+    tangents.reserve(segments.size() * 2);
+
+    for (std::size_t i = 0; i < segments.size(); ++i)
+    {
+        const skeleton_segment& seg = segments[i];
+
+        skeleton_endpoint_tangent t0;
+        if (estimate_endpoint_tangent_one_side_(
+                seg, i, true, fit_length_pixels, min_support_pixels, t0))
+        {
+            tangents.push_back(std::move(t0));
+        }
+
+        skeleton_endpoint_tangent t1;
+        if (estimate_endpoint_tangent_one_side_(
+                seg, i, false, fit_length_pixels, min_support_pixels, t1))
+        {
+            tangents.push_back(std::move(t1));
+        }
+    }
+
+    return tangents;
+}
+
+namespace
+{
+
+// -----------------------------------------------------------------------------
+// validate_endpoint_pair_request
+// -----------------------------------------------------------------------------
+static void validate_endpoint_pair_request(
+    const endpoint_pair_request& request)
+{
+    if (!(std::isfinite(request.max_gap_pixels) &&
+          request.max_gap_pixels > 0.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: max_gap_pixels must be finite and > 0"
+        );
+    }
+
+    if (!(std::isfinite(request.max_facing_angle_degrees) &&
+          request.max_facing_angle_degrees > 0.0 &&
+          request.max_facing_angle_degrees <= 180.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: max_facing_angle_degrees must be in (0,180]"
+        );
+    }
+
+    if (!(std::isfinite(request.max_heading_misalignment_degrees) &&
+          request.max_heading_misalignment_degrees >= 0.0 &&
+          request.max_heading_misalignment_degrees <= 180.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: max_heading_misalignment_degrees must be in [0,180]"
+        );
+    }
+
+    if (!(std::isfinite(request.weight_distance) &&
+          std::isfinite(request.weight_facing) &&
+          std::isfinite(request.weight_heading)))
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: all weights must be finite"
+        );
+    }
+
+    if (request.weight_distance < 0.0 ||
+        request.weight_facing   < 0.0 ||
+        request.weight_heading  < 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: all weights must be >= 0"
+        );
+    }
+
+    const double wsum =
+        request.weight_distance +
+        request.weight_facing +
+        request.weight_heading;
+
+    if (wsum <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: at least one weight must be > 0"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------------
+// angle_between_vectors_degrees_
+//
+// Returns the angle in degrees between two 2D vectors.
+// Throws nothing; returns +inf if either norm is non-positive or non-finite.
+// -----------------------------------------------------------------------------
+static double angle_between_vectors_degrees_(
+    double ar, double ac,
+    double br, double bc)
+{
+    const double an = std::sqrt(ar * ar + ac * ac);
+    const double bn = std::sqrt(br * br + bc * bc);
+
+    if (!(std::isfinite(an) && std::isfinite(bn)) ||
+        an <= 0.0 || bn <= 0.0)
+    {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    double c = (ar * br + ac * bc) / (an * bn);
+    if (c < -1.0) c = -1.0;
+    if (c >  1.0) c =  1.0;
+
+    return std::acos(c) * (180.0 / M_PI);
+}
+
+// -----------------------------------------------------------------------------
+// compute_skeleton_segment_component_ids_
+//
+// Infers connected-component IDs for extracted skeleton segments.
+//
+// Two segments are adjacent if they share a node coordinate
+// (start_node or end_node row/col).
+//
+// Loop segments that share no node with any other segment each form their own
+// singleton component.
+// -----------------------------------------------------------------------------
+static std::vector<int> compute_skeleton_segment_component_ids_(
+    const std::vector<skeleton_segment>& segments)
+{
+    const std::size_t nseg = segments.size();
+    std::vector<int> component_id(nseg, -1);
+
+    using node_key = std::pair<int,int>;
+    std::map<node_key, std::vector<std::size_t>> node_to_segments;
+
+    for (std::size_t i = 0; i < nseg; ++i)
+    {
+        const skeleton_segment& seg = segments[i];
+        if (seg.pixels.empty()) continue;
+
+        const node_key k0(seg.start_node.row, seg.start_node.col);
+        const node_key k1(seg.end_node.row,   seg.end_node.col);
+
+        node_to_segments[k0].push_back(i);
+        if (k1 != k0)
+            node_to_segments[k1].push_back(i);
+    }
+
+    int next_component_id = 0;
+
+    for (std::size_t seed = 0; seed < nseg; ++seed)
+    {
+        if (component_id[seed] >= 0) continue;
+
+        std::vector<std::size_t> stack;
+        stack.push_back(seed);
+        component_id[seed] = next_component_id;
+
+        while (!stack.empty())
+        {
+            const std::size_t sidx = stack.back();
+            stack.pop_back();
+
+            const skeleton_segment& seg = segments[sidx];
+
+            const node_key keys[2] =
+            {
+                node_key(seg.start_node.row, seg.start_node.col),
+                node_key(seg.end_node.row,   seg.end_node.col)
+            };
+
+            for (const node_key& key : keys)
+            {
+                const auto it = node_to_segments.find(key);
+                if (it == node_to_segments.end()) continue;
+
+                for (const std::size_t nbr : it->second)
+                {
+                    if (component_id[nbr] >= 0) continue;
+                    component_id[nbr] = next_component_id;
+                    stack.push_back(nbr);
+                }
+            }
+        }
+
+        ++next_component_id;
+    }
+
+    return component_id;
+}
+
+} // unnamed namespace
+
+
+// -----------------------------------------------------------------------------
+// find_skeleton_endpoint_pair_candidates
+// -----------------------------------------------------------------------------
+std::vector<skeleton_endpoint_pair_candidate>
+find_skeleton_endpoint_pair_candidates(
+    const std::vector<skeleton_segment>&          segments,
+    const std::vector<skeleton_endpoint_tangent>& tangents,
+    const endpoint_pair_request&                  request)
+{
+    validate_endpoint_pair_request(request);
+
+    const std::vector<int> segment_component_id =
+        compute_skeleton_segment_component_ids_(segments);
+
+    for (const auto& t : tangents)
+    {
+        if (t.segment_index >= segments.size())
+        {
+            throw std::runtime_error(
+                "lsdtt::find_skeleton_endpoint_pair_candidates: tangent segment_index out of range"
+            );
+        }
+    }
+
+    std::vector<skeleton_endpoint_pair_candidate> candidates;
+    candidates.reserve(tangents.size());
+
+    const double weight_sum =
+        request.weight_distance +
+        request.weight_facing +
+        request.weight_heading;
+
+    for (std::size_t i = 0; i < tangents.size(); ++i)
+    {
+        const auto& a = tangents[i];
+
+        for (std::size_t j = i + 1; j < tangents.size(); ++j)
+        {
+            const auto& b = tangents[j];
+
+            // -----------------------------------------------------------------
+            // Structural exclusions
+            // -----------------------------------------------------------------
+            if (a.segment_index == b.segment_index)
+                continue;
+
+            const int comp_a = segment_component_id[a.segment_index];
+            const int comp_b = segment_component_id[b.segment_index];
+
+            if (request.reject_same_component && comp_a == comp_b)
+                continue;
+
+            // -----------------------------------------------------------------
+            // Gap geometry
+            // -----------------------------------------------------------------
+            const double g_row = static_cast<double>(b.row - a.row);
+            const double g_col = static_cast<double>(b.col - a.col);
+
+            const double gap_distance =
+                std::sqrt(g_row * g_row + g_col * g_col);
+
+            if (!(std::isfinite(gap_distance)) || gap_distance <= 0.0)
+                continue;
+
+            if (gap_distance > request.max_gap_pixels)
+                continue;
+
+            // -----------------------------------------------------------------
+            // Facing tests
+            // A should point toward B; B should point toward A.
+            // -----------------------------------------------------------------
+            const double facing_a =
+                angle_between_vectors_degrees_(
+                    a.d_row, a.d_col,
+                    g_row,   g_col
+                );
+
+            const double facing_b =
+                angle_between_vectors_degrees_(
+                    b.d_row, b.d_col,
+                   -g_row,  -g_col
+                );
+
+            if (!(std::isfinite(facing_a) && std::isfinite(facing_b)))
+                continue;
+
+            if (facing_a > request.max_facing_angle_degrees ||
+                facing_b > request.max_facing_angle_degrees)
+            {
+                continue;
+            }
+
+            // -----------------------------------------------------------------
+            // Heading compatibility:
+            // outward tangent at A should align with the opposite of outward
+            // tangent at B.
+            // -----------------------------------------------------------------
+            const double heading_misalignment =
+                angle_between_vectors_degrees_(
+                    a.d_row,  a.d_col,
+                   -b.d_row, -b.d_col
+                );
+
+            if (!std::isfinite(heading_misalignment))
+                continue;
+
+            if (heading_misalignment > request.max_heading_misalignment_degrees)
+                continue;
+
+            // -----------------------------------------------------------------
+            // Normalised penalties and score (lower is better)
+            // -----------------------------------------------------------------
+            const double distance_penalty =
+                gap_distance / request.max_gap_pixels;
+
+            const double facing_penalty =
+                0.5 * (
+                    facing_a / request.max_facing_angle_degrees +
+                    facing_b / request.max_facing_angle_degrees
+                );
+
+            double heading_penalty = 0.0;
+            if (request.max_heading_misalignment_degrees > 0.0)
+            {
+                heading_penalty =
+                    heading_misalignment /
+                    request.max_heading_misalignment_degrees;
+            }
+            else
+            {
+                heading_penalty = (heading_misalignment == 0.0) ? 0.0
+                                                                : std::numeric_limits<double>::infinity();
+            }
+
+            if (!std::isfinite(heading_penalty))
+                continue;
+
+            const double score =
+                (request.weight_distance * distance_penalty +
+                 request.weight_facing   * facing_penalty   +
+                 request.weight_heading  * heading_penalty) / weight_sum;
+
+            skeleton_endpoint_pair_candidate cand;
+            cand.tangent_index_a = i;
+            cand.tangent_index_b = j;
+            cand.segment_index_a = a.segment_index;
+            cand.segment_index_b = b.segment_index;
+            cand.component_id_a  = comp_a;
+            cand.component_id_b  = comp_b;
+            cand.row_a           = a.row;
+            cand.col_a           = a.col;
+            cand.row_b           = b.row;
+            cand.col_b           = b.col;
+            cand.gap_distance_pixels          = gap_distance;
+            cand.facing_angle_a_degrees       = facing_a;
+            cand.facing_angle_b_degrees       = facing_b;
+            cand.heading_misalignment_degrees = heading_misalignment;
+            cand.score                        = score;
+
+            candidates.push_back(std::move(cand));
+        }
+    }
+
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const skeleton_endpoint_pair_candidate& lhs,
+           const skeleton_endpoint_pair_candidate& rhs)
+        {
+            if (lhs.score != rhs.score)
+                return lhs.score < rhs.score;
+
+            if (lhs.gap_distance_pixels != rhs.gap_distance_pixels)
+                return lhs.gap_distance_pixels < rhs.gap_distance_pixels;
+
+            if (lhs.tangent_index_a != rhs.tangent_index_a)
+                return lhs.tangent_index_a < rhs.tangent_index_a;
+
+            return lhs.tangent_index_b < rhs.tangent_index_b;
+        }
+    );
+
+    return candidates;
+}
+
+
+namespace
+{
+
+// -----------------------------------------------------------------------------
+// validate_endpoint_pair_selection_request
+// -----------------------------------------------------------------------------
+static void validate_endpoint_pair_selection_request(
+    const endpoint_pair_selection_request& request)
+{
+    if (!std::isfinite(request.max_score) &&
+        request.max_score != std::numeric_limits<double>::infinity())
+    {
+        throw std::runtime_error(
+            "lsdtt::select_skeleton_endpoint_pairs: max_score must be finite or +infinity"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------------
+// endpoint_pair_candidate_less_
+//
+// Deterministic total ordering for candidates.
+// Lower score is better.
+// -----------------------------------------------------------------------------
+static bool endpoint_pair_candidate_less_(
+    const skeleton_endpoint_pair_candidate& lhs,
+    const skeleton_endpoint_pair_candidate& rhs)
+{
+    if (lhs.score != rhs.score)
+        return lhs.score < rhs.score;
+
+    if (lhs.gap_distance_pixels != rhs.gap_distance_pixels)
+        return lhs.gap_distance_pixels < rhs.gap_distance_pixels;
+
+    if (lhs.tangent_index_a != rhs.tangent_index_a)
+        return lhs.tangent_index_a < rhs.tangent_index_a;
+
+    return lhs.tangent_index_b < rhs.tangent_index_b;
+}
+
+} // unnamed namespace
+
+
+// -----------------------------------------------------------------------------
+// select_skeleton_endpoint_pairs
+// -----------------------------------------------------------------------------
+std::vector<skeleton_endpoint_pair_candidate>
+select_skeleton_endpoint_pairs(
+    const std::vector<skeleton_endpoint_pair_candidate>& candidates,
+    std::size_t                                          n_tangents,
+    const endpoint_pair_selection_request&               request)
+{
+    validate_endpoint_pair_selection_request(request);
+
+    if (n_tangents == 0 || candidates.empty())
+    {
+        return {};
+    }
+
+    // -------------------------------------------------------------------------
+    // Copy and sort candidates into deterministic best-first order.
+    // -------------------------------------------------------------------------
+    std::vector<skeleton_endpoint_pair_candidate> sorted = candidates;
+
+    std::sort(
+        sorted.begin(),
+        sorted.end(),
+        endpoint_pair_candidate_less_);
+
+    // -------------------------------------------------------------------------
+    // Validate indices and mark score-surviving candidates.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> survives_score_filter(
+        sorted.size(), uint8_t{0});
+
+    for (std::size_t i = 0; i < sorted.size(); ++i)
+    {
+        const auto& c = sorted[i];
+
+        if (c.tangent_index_a >= n_tangents ||
+            c.tangent_index_b >= n_tangents)
+        {
+            throw std::runtime_error(
+                "lsdtt::select_skeleton_endpoint_pairs: candidate tangent index out of range"
+            );
+        }
+
+        if (c.tangent_index_a == c.tangent_index_b)
+        {
+            continue;
+        }
+
+        if (!std::isfinite(c.score))
+        {
+            continue;
+        }
+
+        if (c.score <= request.max_score)
+        {
+            survives_score_filter[i] = uint8_t{1};
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Best surviving candidate incident on each tangent.
+    // Because sorted[] is already in best-first order, the first surviving
+    // incident candidate is the best one.
+    // -------------------------------------------------------------------------
+    std::vector<int> best_for_tangent(
+        n_tangents, -1);
+
+    for (std::size_t i = 0; i < sorted.size(); ++i)
+    {
+        if (survives_score_filter[i] == 0) continue;
+
+        const auto& c = sorted[i];
+
+        if (best_for_tangent[c.tangent_index_a] < 0)
+            best_for_tangent[c.tangent_index_a] = static_cast<int>(i);
+
+        if (best_for_tangent[c.tangent_index_b] < 0)
+            best_for_tangent[c.tangent_index_b] = static_cast<int>(i);
+    }
+
+    // -------------------------------------------------------------------------
+    // Mutual-best filter.
+    // -------------------------------------------------------------------------
+    std::vector<std::size_t> eligible_indices;
+    eligible_indices.reserve(sorted.size());
+
+    for (std::size_t i = 0; i < sorted.size(); ++i)
+    {
+        if (survives_score_filter[i] == 0) continue;
+
+        const auto& c = sorted[i];
+
+        bool keep = true;
+
+        if (request.require_mutual_best)
+        {
+            keep =
+                best_for_tangent[c.tangent_index_a] == static_cast<int>(i) &&
+                best_for_tangent[c.tangent_index_b] == static_cast<int>(i);
+        }
+
+        if (keep)
+        {
+            eligible_indices.push_back(i);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // One-to-one greedy acceptance.
+    // Since eligible_indices follows sorted[] order, greedily taking unused
+    // endpoints yields a consistent best-first matching.
+    // -------------------------------------------------------------------------
+    std::vector<skeleton_endpoint_pair_candidate> accepted;
+    accepted.reserve(eligible_indices.size());
+
+    if (request.enforce_one_to_one)
+    {
+        std::vector<uint8_t> tangent_used(
+            n_tangents, uint8_t{0});
+
+        for (const std::size_t i : eligible_indices)
+        {
+            const auto& c = sorted[i];
+
+            if (tangent_used[c.tangent_index_a] != 0 ||
+                tangent_used[c.tangent_index_b] != 0)
+            {
+                continue;
+            }
+
+            tangent_used[c.tangent_index_a] = uint8_t{1};
+            tangent_used[c.tangent_index_b] = uint8_t{1};
+            accepted.push_back(c);
+        }
+    }
+    else
+    {
+        for (const std::size_t i : eligible_indices)
+        {
+            accepted.push_back(sorted[i]);
+        }
+    }
+
+    return accepted;
+}
+
+
+namespace
+{
+
+// -----------------------------------------------------------------------------
+// validate_skeleton_bridge_rasterise_request
+// -----------------------------------------------------------------------------
+static void validate_skeleton_bridge_rasterise_request(
+    const skeleton_bridge_rasterise_request& request)
+{
+    (void)request;
+}
+
+// -----------------------------------------------------------------------------
+// rasterise_line_bresenham_
+//
+// Returns all raster pixels on the integer line from (r0,c0) to (r1,c1),
+// including both endpoints.
+// -----------------------------------------------------------------------------
+static std::vector<std::pair<int,int>> rasterise_line_bresenham_(
+    int r0, int c0, int r1, int c1)
+{
+    std::vector<std::pair<int,int>> pixels;
+
+    int x0 = c0;
+    int y0 = r0;
+    int x1 = c1;
+    int y1 = r1;
+
+    const int dx = std::abs(x1 - x0);
+    const int sx = (x0 < x1) ? 1 : -1;
+    const int dy = -std::abs(y1 - y0);
+    const int sy = (y0 < y1) ? 1 : -1;
+    int err = dx + dy;
+
+    while (true)
+    {
+        pixels.emplace_back(y0, x0);
+
+        if (x0 == x1 && y0 == y1)
+            break;
+
+        const int e2 = 2 * err;
+
+        if (e2 >= dy)
+        {
+            err += dy;
+            x0  += sx;
+        }
+
+        if (e2 <= dx)
+        {
+            err += dx;
+            y0  += sy;
+        }
+    }
+
+    return pixels;
+}
+
+} // unnamed namespace
+
+
+// -----------------------------------------------------------------------------
+// rasterise_skeleton_endpoint_bridges
+// -----------------------------------------------------------------------------
+skeleton_bridge_rasterise_result
+rasterise_skeleton_endpoint_bridges(
+    const lsdtt_raster_cpu&                              skeleton,
+    const std::vector<skeleton_endpoint_pair_candidate>& accepted_pairs,
+    const skeleton_bridge_rasterise_request&             request)
+{
+    validate_skeleton_bridge_rasterise_request(request);
+
+    const lsdtt_raster_meta& meta = skeleton.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::rasterise_skeleton_endpoint_bridges: input raster metadata is invalid"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = skeleton.get_data();
+    const std::vector<uint8_t>& in_mask = skeleton.get_mask();
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    // -------------------------------------------------------------------------
+    // Build working valid/original-foreground planes over the DEM-valid domain.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> valid(npix, uint8_t{0});
+    std::vector<uint8_t> orig (npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (meta.is_nodata(in_data[i])) continue;
+        if (!std::isfinite(in_data[i])) continue;
+
+        valid[i] = uint8_t{1};
+        orig[i]  = (in_data[i] > 0.5f) ? uint8_t{1} : uint8_t{0};
+    }
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    auto in_bounds = [nrows, ncols](int row, int col) -> bool
+    {
+        return row >= 0 && row < nrows && col >= 0 && col < ncols;
+    };
+
+    // Newly burned bridge pixels only.
+    std::vector<uint8_t> bridge(npix, uint8_t{0});
+
+    int n_requested                     = 0;
+    int n_burned                        = 0;
+    int n_rejected_invalid_domain_cross = 0;
+
+    // -------------------------------------------------------------------------
+    // Burn accepted straight-line bridges.
+    // -------------------------------------------------------------------------
+    for (const auto& cand : accepted_pairs)
+    {
+        ++n_requested;
+
+        const std::vector<std::pair<int,int>> line_pixels =
+            rasterise_line_bresenham_(
+                cand.row_a, cand.col_a,
+                cand.row_b, cand.col_b
+            );
+
+        bool line_is_fully_valid = true;
+
+        for (const auto& rc : line_pixels)
+        {
+            const int row = rc.first;
+            const int col = rc.second;
+
+            if (!in_bounds(row, col))
+            {
+                line_is_fully_valid = false;
+                break;
+            }
+
+            const std::size_t idx = idx_of(row, col);
+            if (valid[idx] == 0)
+            {
+                line_is_fully_valid = false;
+                break;
+            }
+        }
+
+        if (request.require_all_bridge_pixels_valid && !line_is_fully_valid)
+        {
+            ++n_rejected_invalid_domain_cross;
+            continue;
+        }
+
+        bool burned_this_bridge = false;
+
+        for (const auto& rc : line_pixels)
+        {
+            const int row = rc.first;
+            const int col = rc.second;
+
+            if (!in_bounds(row, col))
+                continue;
+
+            const std::size_t idx = idx_of(row, col);
+            if (valid[idx] == 0)
+                continue;
+
+            if (orig[idx] == 0 && bridge[idx] == 0)
+            {
+                bridge[idx] = uint8_t{1};
+                burned_this_bridge = true;
+            }
+        }
+
+        if (burned_this_bridge)
+        {
+            ++n_burned;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Convert bridge/original planes back to rasters.
+    // -------------------------------------------------------------------------
+    std::vector<float>   bridge_data(npix, nodata);
+    std::vector<uint8_t> bridge_mask(npix, uint8_t{0});
+
+    std::vector<float>   connected_data(npix, nodata);
+    std::vector<uint8_t> connected_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (valid[i] == 0)
+            continue;
+
+        bridge_mask[i]    = uint8_t{1};
+        connected_mask[i] = uint8_t{1};
+
+        bridge_data[i] =
+            (bridge[i] != 0) ? 1.0f : 0.0f;
+
+        connected_data[i] =
+            (orig[i] != 0 || bridge[i] != 0) ? 1.0f : 0.0f;
+    }
+
+    skeleton_bridge_rasterise_result result;
+    result.bridge_mask = lsdtt_raster_cpu(
+        std::move(bridge_data), std::move(bridge_mask), meta);
+    result.connected_skeleton = lsdtt_raster_cpu(
+        std::move(connected_data), std::move(connected_mask), meta);
+
+    result.n_requested                     = n_requested;
+    result.n_burned                        = n_burned;
+    result.n_rejected_invalid_domain_cross = n_rejected_invalid_domain_cross;
+
+    return result;
+}
+
+
+namespace
+{
+
+// -----------------------------------------------------------------------------
+// validate_skeleton_bridge_route_request
+// -----------------------------------------------------------------------------
+static void validate_skeleton_bridge_route_request(
+    const skeleton_bridge_route_request& request)
+{
+    if (!(std::isfinite(request.corridor_half_width_pixels) &&
+          request.corridor_half_width_pixels > 0.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::route_skeleton_endpoint_bridges_least_cost: corridor_half_width_pixels must be finite and > 0"
+        );
+    }
+
+    if (!(std::isfinite(request.base_step_cost) &&
+          request.base_step_cost > 0.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::route_skeleton_endpoint_bridges_least_cost: base_step_cost must be finite and > 0"
+        );
+    }
+
+    if (!(std::isfinite(request.support_penalty_weight) &&
+          request.support_penalty_weight >= 0.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::route_skeleton_endpoint_bridges_least_cost: support_penalty_weight must be finite and >= 0"
+        );
+    }
+
+    if (!(std::isfinite(request.foreground_cost_scale) &&
+          request.foreground_cost_scale > 0.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::route_skeleton_endpoint_bridges_least_cost: foreground_cost_scale must be finite and > 0"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------------
+// rasters_are_coregistered_
+// -----------------------------------------------------------------------------
+static bool rasters_are_coregistered_(
+    const lsdtt_raster_meta& a,
+    const lsdtt_raster_meta& b)
+{
+    const double eps = 1e-9;
+
+    return
+        a.n_rows == b.n_rows &&
+        a.n_cols == b.n_cols &&
+        std::abs(a.cell_size - b.cell_size) <= eps &&
+        std::abs(a.x_min     - b.x_min)     <= eps &&
+        std::abs(a.y_min     - b.y_min)     <= eps;
+}
+
+// -----------------------------------------------------------------------------
+// point_to_segment_distance_pixels_
+//
+// Euclidean distance in raster row/col coordinates.
+// -----------------------------------------------------------------------------
+static double point_to_segment_distance_pixels_(
+    double pr, double pc,
+    double ar, double ac,
+    double br, double bc)
+{
+    const double vr = br - ar;
+    const double vc = bc - ac;
+
+    const double vv = vr * vr + vc * vc;
+    if (vv <= 0.0)
+    {
+        const double dr = pr - ar;
+        const double dc = pc - ac;
+        return std::sqrt(dr * dr + dc * dc);
+    }
+
+    double t = ((pr - ar) * vr + (pc - ac) * vc) / vv;
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+
+    const double qr = ar + t * vr;
+    const double qc = ac + t * vc;
+
+    const double dr = pr - qr;
+    const double dc = pc - qc;
+
+    return std::sqrt(dr * dr + dc * dc);
+}
+
+} // unnamed namespace
+
+
+// -----------------------------------------------------------------------------
+// route_skeleton_endpoint_bridges_least_cost
+// -----------------------------------------------------------------------------
+skeleton_bridge_route_result
+route_skeleton_endpoint_bridges_least_cost(
+    const lsdtt_raster_cpu&                              skeleton,
+    const lsdtt_raster_cpu&                              support_raster,
+    const std::vector<skeleton_endpoint_pair_candidate>& accepted_pairs,
+    const skeleton_bridge_route_request&                 request)
+{
+    validate_skeleton_bridge_route_request(request);
+
+    const lsdtt_raster_meta& meta = skeleton.get_meta();
+    const lsdtt_raster_meta& smeta = support_raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::route_skeleton_endpoint_bridges_least_cost: skeleton metadata is invalid"
+        );
+    }
+
+    if (!smeta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::route_skeleton_endpoint_bridges_least_cost: support raster metadata is invalid"
+        );
+    }
+
+    if (!rasters_are_coregistered_(meta, smeta))
+    {
+        throw std::runtime_error(
+            "lsdtt::route_skeleton_endpoint_bridges_least_cost: skeleton and support raster are not co-registered"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = skeleton.get_data();
+    const std::vector<uint8_t>& in_mask = skeleton.get_mask();
+
+    const std::vector<float>&   sup_data = support_raster.get_data();
+    const std::vector<uint8_t>& sup_mask = support_raster.get_mask();
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    // -------------------------------------------------------------------------
+    // Build valid/original-skeleton planes. The skeleton valid domain is the
+    // authoritative routing domain. Support nodata inside that domain simply
+    // receives zero support.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> valid(npix, uint8_t{0});
+    std::vector<uint8_t> orig (npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (meta.is_nodata(in_data[i])) continue;
+        if (!std::isfinite(in_data[i])) continue;
+
+        valid[i] = uint8_t{1};
+        orig[i]  = (in_data[i] > 0.5f) ? uint8_t{1} : uint8_t{0};
+    }
+
+    // -------------------------------------------------------------------------
+    // Normalise support to [0,1] over valid pixels where support is finite.
+    // Invalid support on valid skeleton pixels becomes 0 support.
+    // -------------------------------------------------------------------------
+    std::vector<double> support_norm(npix, 0.0);
+
+    bool   have_support = false;
+    double smin =  std::numeric_limits<double>::infinity();
+    double smax = -std::numeric_limits<double>::infinity();
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (valid[i] == 0) continue;
+        if (sup_mask[i] == 0) continue;
+        if (smeta.is_nodata(sup_data[i])) continue;
+        if (!std::isfinite(sup_data[i])) continue;
+
+        const double v = static_cast<double>(sup_data[i]);
+        if (v < smin) smin = v;
+        if (v > smax) smax = v;
+        have_support = true;
+    }
+
+    if (have_support)
+    {
+        if (smax > smin)
+        {
+            const double inv = 1.0 / (smax - smin);
+            for (std::size_t i = 0; i < npix; ++i)
+            {
+                if (valid[i] == 0) continue;
+                if (sup_mask[i] == 0) continue;
+                if (smeta.is_nodata(sup_data[i])) continue;
+                if (!std::isfinite(sup_data[i])) continue;
+
+                support_norm[i] =
+                    (static_cast<double>(sup_data[i]) - smin) * inv;
+            }
+        }
+        else
+        {
+            const double fill_value = (smax > 0.0) ? 1.0 : 0.0;
+
+            for (std::size_t i = 0; i < npix; ++i)
+            {
+                if (valid[i] == 0) continue;
+                if (sup_mask[i] == 0) continue;
+                if (smeta.is_nodata(sup_data[i])) continue;
+                if (!std::isfinite(sup_data[i])) continue;
+
+                support_norm[i] = fill_value;
+            }
+        }
+    }
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    auto in_bounds = [nrows, ncols](int row, int col) -> bool
+    {
+        return row >= 0 && row < nrows && col >= 0 && col < ncols;
+    };
+
+    auto row_of = [ncols](std::size_t idx) -> int
+    {
+        return static_cast<int>(idx / static_cast<std::size_t>(ncols));
+    };
+
+    auto col_of = [ncols](std::size_t idx) -> int
+    {
+        return static_cast<int>(idx % static_cast<std::size_t>(ncols));
+    };
+
+    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+    struct open_node
+    {
+        double      f   = std::numeric_limits<double>::infinity();
+        double      g   = std::numeric_limits<double>::infinity();
+        std::size_t idx = 0;
+    };
+
+    struct open_node_greater
+    {
+        bool operator()(const open_node& a, const open_node& b) const
+        {
+            if (a.f != b.f) return a.f > b.f;
+            if (a.g != b.g) return a.g > b.g;
+            return a.idx > b.idx;
+        }
+    };
+
+    std::vector<uint8_t> bridge(npix, uint8_t{0});
+
+    int n_requested               = 0;
+    int n_routed                  = 0;
+    int n_failed_invalid_endpoint = 0;
+    int n_failed_no_path          = 0;
+
+    const double min_cost_scale =
+        std::min(1.0, request.foreground_cost_scale);
+
+    const double heuristic_cost_per_pixel =
+        request.base_step_cost * min_cost_scale;
+
+    // -------------------------------------------------------------------------
+    // Route each accepted pair independently.
+    // -------------------------------------------------------------------------
+    for (const auto& cand : accepted_pairs)
+    {
+        ++n_requested;
+
+        if (!in_bounds(cand.row_a, cand.col_a) ||
+            !in_bounds(cand.row_b, cand.col_b))
+        {
+            ++n_failed_invalid_endpoint;
+            continue;
+        }
+
+        const std::size_t start = idx_of(cand.row_a, cand.col_a);
+        const std::size_t goal  = idx_of(cand.row_b, cand.col_b);
+
+        if (valid[start] == 0 || valid[goal] == 0)
+        {
+            ++n_failed_invalid_endpoint;
+            continue;
+        }
+
+        // ---------------------------------------------------------------------
+        // Build a local corridor around the straight endpoint-to-endpoint line.
+        // ---------------------------------------------------------------------
+        const int pad =
+            std::max(1, static_cast<int>(
+                std::ceil(request.corridor_half_width_pixels))) + 1;
+
+        const int rmin = std::max(0, std::min(cand.row_a, cand.row_b) - pad);
+        const int rmax = std::min(nrows - 1, std::max(cand.row_a, cand.row_b) + pad);
+        const int cmin = std::max(0, std::min(cand.col_a, cand.col_b) - pad);
+        const int cmax = std::min(ncols - 1, std::max(cand.col_a, cand.col_b) + pad);
+
+        std::vector<uint8_t> in_corridor(npix, uint8_t{0});
+
+        for (int row = rmin; row <= rmax; ++row)
+        {
+            for (int col = cmin; col <= cmax; ++col)
+            {
+                const std::size_t idx = idx_of(row, col);
+                if (valid[idx] == 0) continue;
+
+                const bool is_endpoint =
+                    (row == cand.row_a && col == cand.col_a) ||
+                    (row == cand.row_b && col == cand.col_b);
+
+                if (is_endpoint)
+                {
+                    in_corridor[idx] = uint8_t{1};
+                    continue;
+                }
+
+                const double dist =
+                    point_to_segment_distance_pixels_(
+                        static_cast<double>(row),
+                        static_cast<double>(col),
+                        static_cast<double>(cand.row_a),
+                        static_cast<double>(cand.col_a),
+                        static_cast<double>(cand.row_b),
+                        static_cast<double>(cand.col_b)
+                    );
+
+                if (dist <= request.corridor_half_width_pixels)
+                {
+                    in_corridor[idx] = uint8_t{1};
+                }
+            }
+        }
+
+        if (in_corridor[start] == 0 || in_corridor[goal] == 0)
+        {
+            ++n_failed_no_path;
+            continue;
+        }
+
+        // ---------------------------------------------------------------------
+        // A* over 8-neighbour pixels inside the corridor.
+        // ---------------------------------------------------------------------
+        std::vector<double> gscore(npix,
+            std::numeric_limits<double>::infinity());
+        std::vector<int>    parent(npix, -1);
+        std::vector<uint8_t> closed(npix, uint8_t{0});
+
+        auto heuristic = [&](std::size_t idx) -> double
+        {
+            const double dr =
+                static_cast<double>(row_of(goal) - row_of(idx));
+            const double dc =
+                static_cast<double>(col_of(goal) - col_of(idx));
+
+            return std::sqrt(dr * dr + dc * dc) * heuristic_cost_per_pixel;
+        };
+
+        auto pixel_traversal_cost = [&](std::size_t idx) -> double
+        {
+            double c =
+                request.base_step_cost +
+                request.support_penalty_weight * (1.0 - support_norm[idx]);
+
+            if (orig[idx] != 0)
+            {
+                c *= request.foreground_cost_scale;
+            }
+
+            return c;
+        };
+
+        std::priority_queue<
+            open_node,
+            std::vector<open_node>,
+            open_node_greater> open;
+
+        gscore[start] = 0.0;
+        open.push({heuristic(start), 0.0, start});
+
+        bool found = false;
+
+        while (!open.empty())
+        {
+            const open_node cur = open.top();
+            open.pop();
+
+            if (closed[cur.idx] != 0)
+                continue;
+
+            closed[cur.idx] = uint8_t{1};
+
+            if (cur.idx == goal)
+            {
+                found = true;
+                break;
+            }
+
+            const int row = row_of(cur.idx);
+            const int col = col_of(cur.idx);
+
+            for (int d = 0; d < 8; ++d)
+            {
+                const int rr = row + DR8[d];
+                const int cc = col + DC8[d];
+
+                if (!in_bounds(rr, cc)) continue;
+
+                const std::size_t nidx = idx_of(rr, cc);
+
+                if (valid[nidx] == 0)       continue;
+                if (in_corridor[nidx] == 0) continue;
+                if (closed[nidx] != 0)      continue;
+
+                const double step_len =
+                    (DR8[d] == 0 || DC8[d] == 0)
+                        ? 1.0
+                        : std::sqrt(2.0);
+
+                const double tentative_g =
+                    gscore[cur.idx] +
+                    step_len * pixel_traversal_cost(nidx);
+
+                if (tentative_g < gscore[nidx])
+                {
+                    gscore[nidx] = tentative_g;
+                    parent[nidx] = static_cast<int>(cur.idx);
+
+                    open.push({
+                        tentative_g + heuristic(nidx),
+                        tentative_g,
+                        nidx
+                    });
+                }
+            }
+        }
+
+        if (!found || !std::isfinite(gscore[goal]))
+        {
+            ++n_failed_no_path;
+            continue;
+        }
+
+        // ---------------------------------------------------------------------
+        // Reconstruct path and burn only newly inserted pixels.
+        // ---------------------------------------------------------------------
+        std::size_t cur = goal;
+        while (true)
+        {
+            if (orig[cur] == 0)
+            {
+                bridge[cur] = uint8_t{1};
+            }
+
+            if (cur == start)
+                break;
+
+            const int p = parent[cur];
+            if (p < 0)
+                break;
+
+            cur = static_cast<std::size_t>(p);
+        }
+
+        ++n_routed;
+    }
+
+    // -------------------------------------------------------------------------
+    // Convert back to rasters.
+    // -------------------------------------------------------------------------
+    std::vector<float>   bridge_data(npix, nodata);
+    std::vector<uint8_t> bridge_mask(npix, uint8_t{0});
+
+    std::vector<float>   connected_data(npix, nodata);
+    std::vector<uint8_t> connected_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (valid[i] == 0)
+            continue;
+
+        bridge_mask[i]    = uint8_t{1};
+        connected_mask[i] = uint8_t{1};
+
+        bridge_data[i] =
+            (bridge[i] != 0) ? 1.0f : 0.0f;
+
+        connected_data[i] =
+            (orig[i] != 0 || bridge[i] != 0) ? 1.0f : 0.0f;
+    }
+
+    skeleton_bridge_route_result result;
+    result.bridge_mask = lsdtt_raster_cpu(
+        std::move(bridge_data), std::move(bridge_mask), meta);
+    result.connected_skeleton = lsdtt_raster_cpu(
+        std::move(connected_data), std::move(connected_mask), meta);
+
+    result.n_requested               = n_requested;
+    result.n_routed                  = n_routed;
+    result.n_failed_invalid_endpoint = n_failed_invalid_endpoint;
+    result.n_failed_no_path          = n_failed_no_path;
+
+    return result;
+}
 
 
 

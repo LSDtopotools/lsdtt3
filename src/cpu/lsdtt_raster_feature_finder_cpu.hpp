@@ -590,4 +590,666 @@ binary_components_to_polygon_records_with_holes(
     const lsdtt_vector_schema& schema
 );
 
+
+// -----------------------------------------------------------------------------
+// skeleton_node
+//
+// Simple record for a graph node on a 1-pixel skeleton.
+// degree is the number of 8-neighbour foreground pixels.
+//
+// Conventions:
+//   degree = 0  -> isolated singleton
+//   degree = 1  -> endpoint
+//   degree = 2  -> ordinary chain pixel
+//   degree >= 3 -> junction
+// -----------------------------------------------------------------------------
+struct skeleton_node
+{
+    int row    = -1;
+    int col    = -1;
+    int degree =  0;
+};
+
+// -----------------------------------------------------------------------------
+// skeleton_node_result
+//
+// Output of classify_skeleton_nodes().
+//
+// degree_raster:
+//   - valid pixels inherit the input valid domain
+//   - foreground skeleton pixels store their 8-neighbour degree
+//   - valid background pixels store 0
+//
+// endpoint_mask:
+//   - 1.0 where a foreground skeleton pixel has degree == 1
+//   - 0.0 elsewhere in the valid domain
+//
+// junction_mask:
+//   - 1.0 where a foreground skeleton pixel has degree >= 3
+//   - 0.0 elsewhere in the valid domain
+//
+// endpoints / junctions:
+//   row/col lists for fast downstream graph processing.
+// -----------------------------------------------------------------------------
+struct skeleton_node_result
+{
+    lsdtt_raster_cpu degree_raster;
+    lsdtt_raster_cpu endpoint_mask;
+    lsdtt_raster_cpu junction_mask;
+
+    std::vector<skeleton_node> endpoints;
+    std::vector<skeleton_node> junctions;
+};
+
+// -----------------------------------------------------------------------------
+// classify_skeleton_nodes
+//
+// Classifies pixels in a binary 1-pixel skeleton by 8-neighbour foreground
+// degree.
+//
+// Input convention:
+//   - valid pixels with value > 0.5 are skeleton foreground
+//   - valid pixels with value <= 0.5 are background
+//   - nodata pixels are excluded
+//
+// Intended use:
+//   foundational graph-building step before spur pruning, segment extraction,
+//   or endpoint pairing.
+//
+// Throws:
+//   std::runtime_error if metadata is invalid.
+// -----------------------------------------------------------------------------
+skeleton_node_result classify_skeleton_nodes(
+    const lsdtt_raster_cpu& skeleton
+);
+
+// -----------------------------------------------------------------------------
+// prune_skeleton_spurs
+//
+// Iteratively removes short endpoint-rooted branches from a 1-pixel skeleton.
+//
+// Spur definition:
+//   A spur is traced from an endpoint (8-neighbour degree = 1), through
+//   successive degree-2 foreground pixels, until the trace reaches either:
+//     - a junction pixel (degree >= 3), or
+//     - an opposite endpoint (degree = 1).
+//
+// Removal rule:
+//   - endpoint -> junction branch:
+//       if the branch contains <= max_spur_pixels pixels (excluding the
+//       terminal junction), remove the branch and keep the junction.
+//   - endpoint -> endpoint segment:
+//       if the whole segment contains <= max_spur_pixels pixels, remove the
+//       entire segment.
+//
+// The pruning is applied iteratively because removing one spur can expose a
+// new, shorter spur in the next pass.
+//
+// Input convention:
+//   - valid pixels with value > 0.5 are skeleton foreground
+//   - valid pixels with value <= 0.5 are background
+//   - nodata pixels are excluded
+//
+// Output convention:
+//   - valid pixels retain the input valid domain
+//   - foreground pixels that survive pruning are set to 1.0
+//   - valid background pixels are set to 0.0
+//   - nodata pixels remain nodata
+//
+// Parameters:
+//   max_spur_pixels - maximum spur length to remove, measured in raster pixels
+//                     along the traced branch. Must be >= 1.
+//   max_iterations  - safety cap on iterative pruning passes. Must be >= 1.
+//
+// Intended use:
+//   pre-processing of Zhang-Suen or similar skeletons before segment
+//   extraction, tangent estimation, and graph-based endpoint reconnection.
+//
+// Throws:
+//   std::runtime_error if metadata is invalid or parameters are out of range.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu prune_skeleton_spurs(
+    const lsdtt_raster_cpu& skeleton,
+    int                     max_spur_pixels,
+    int                     max_iterations = 100
+);
+
+// -----------------------------------------------------------------------------
+// skeleton_pixel
+//
+// Row/column location of a pixel in a 1-pixel skeleton.
+// -----------------------------------------------------------------------------
+struct skeleton_pixel
+{
+    int row = -1;
+    int col = -1;
+};
+
+// -----------------------------------------------------------------------------
+// skeleton_segment
+//
+// Ordered pixel chain extracted from a 1-pixel skeleton.
+//
+// Open segments:
+//   - pixels.front() is the start node
+//   - pixels.back()  is the end node
+//   - start_node.degree and end_node.degree are != 2
+//
+// Loop segments:
+//   - is_loop = true
+//   - pixels follows the loop once
+//   - the first pixel is not repeated at the end
+//   - start_node and end_node are both set to the loop seed pixel with degree 2
+//
+// Singleton pixels:
+//   - degree-0 foreground pixels are returned as one-pixel non-loop segments
+//   - start_node == end_node, degree = 0
+// -----------------------------------------------------------------------------
+struct skeleton_segment
+{
+    std::vector<skeleton_pixel> pixels;
+    skeleton_node               start_node;
+    skeleton_node               end_node;
+    bool                        is_loop = false;
+};
+
+// -----------------------------------------------------------------------------
+// extract_skeleton_segments
+//
+// Splits a 1-pixel skeleton into ordered segments.
+//
+// Open-segment rule:
+//   Starting from every foreground node pixel with degree != 2, trace along
+//   each unvisited outgoing edge through degree-2 chain pixels until another
+//   node is reached. This yields endpoint-endpoint, endpoint-junction, and
+//   junction-junction segments.
+//
+// Loop rule:
+//   Remaining unvisited degree-2 foreground pixels form closed loops with no
+//   endpoints or junctions. Each loop is traced once and returned with
+//   is_loop = true.
+//
+// Singleton rule:
+//   Degree-0 foreground pixels are returned as one-pixel non-loop segments.
+//
+// Input convention:
+//   - valid pixels with value > 0.5 are skeleton foreground
+//   - valid pixels with value <= 0.5 are background
+//   - nodata pixels are excluded
+//
+// Output ordering:
+//   - deterministic row-major seed order
+//   - neighbour scan order is the fixed 8-neighbour raster order used below
+//
+// Intended use:
+//   segment extraction after spur pruning, before endpoint tangent estimation
+//   and graph-based reconnection.
+//
+// Throws:
+//   std::runtime_error if metadata is invalid.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<skeleton_segment>
+extract_skeleton_segments(
+    const lsdtt_raster_cpu& skeleton
+);
+
+
+// -----------------------------------------------------------------------------
+// skeleton_endpoint_tangent
+//
+// Local outward tangent estimate at an endpoint of an extracted skeleton
+// segment.
+//
+// Direction convention:
+//   - d_row, d_col is a unit vector in raster row/col coordinates
+//   - positive d_row points downward in the raster
+//   - positive d_col points to the right
+//   - the vector is oriented outward from the segment endpoint, i.e. away from
+//     the segment interior and into the candidate gap
+//
+// segment_index:
+//   index into the vector returned by extract_skeleton_segments().
+//
+// at_start:
+//   true  -> the tangent belongs to segments[segment_index].start_node
+//   false -> the tangent belongs to segments[segment_index].end_node
+// -----------------------------------------------------------------------------
+struct skeleton_endpoint_tangent
+{
+    std::size_t segment_index = static_cast<std::size_t>(-1);
+    bool        at_start      = true;
+
+    int         row           = -1;
+    int         col           = -1;
+
+    double      d_row         = 0.0;
+    double      d_col         = 0.0;
+
+    int         n_support_pixels   = 0;
+    double      support_length_pixels = 0.0;
+};
+
+// -----------------------------------------------------------------------------
+// estimate_skeleton_endpoint_tangents
+//
+// Estimates outward unit tangents for endpoint-terminated open skeleton
+// segments extracted by extract_skeleton_segments().
+//
+// Method:
+//   For each open segment endpoint with degree == 1, collect an ordered set of
+//   pixels from the endpoint inward along the segment until either:
+//     - the accumulated path length reaches fit_length_pixels, or
+//     - the segment runs out of pixels.
+//
+// A local line orientation is then estimated from those support pixels by
+// eigenanalysis of the 2x2 covariance matrix (PCA). The dominant eigenvector is
+// oriented so that it points outward from the endpoint, i.e. opposite to the
+// inward segment chord.
+//
+// Fallback:
+//   If the covariance is degenerate, a simple endpoint-to-last-support-pixel
+//   chord direction is used instead.
+//
+// Loop segments are ignored.
+// Junction-only ends (degree >= 3) are ignored.
+// Degree-0 singleton segments produce no tangent.
+//
+// Parameters:
+//   segments            - output of extract_skeleton_segments().
+//   fit_length_pixels   - target inward support length in pixels; must be > 0.
+//   min_support_pixels  - minimum number of sampled pixels required to attempt
+//                         a fit; must be >= 2.
+//
+// Returns:
+//   One record per valid endpoint tangent.
+//
+// Intended use:
+//   endpoint pairing and reconnection scoring in graph-based skeleton repair.
+//
+// Throws:
+//   std::runtime_error if parameters are invalid.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<skeleton_endpoint_tangent>
+estimate_skeleton_endpoint_tangents(
+    const std::vector<skeleton_segment>& segments,
+    double                              fit_length_pixels = 6.0,
+    int                                 min_support_pixels = 2
+);
+
+// -----------------------------------------------------------------------------
+// endpoint_pair_request
+//
+// Controls candidate endpoint pairing and geometric scoring.
+//
+// A candidate pair (A, B) is considered only if:
+//   - the two tangents belong to different segments
+//   - optionally, their segments belong to different connected components
+//   - the endpoint gap distance is <= max_gap_pixels
+//   - endpoint A faces endpoint B within max_facing_angle_degrees
+//   - endpoint B faces endpoint A within max_facing_angle_degrees
+//   - the two outward endpoint tangents are approximately opposite within
+//     max_heading_misalignment_degrees
+//
+// Score:
+//   score = weighted mean of normalised distance, facing, and heading penalties
+//   Lower score is better.
+//
+// Notes:
+//   - This routine only generates and ranks candidate pairs.
+//   - It does not enforce one-to-one matching or mutual-best constraints.
+// -----------------------------------------------------------------------------
+struct endpoint_pair_request
+{
+    double max_gap_pixels                    = 20.0;
+    double max_facing_angle_degrees          = 35.0;
+    double max_heading_misalignment_degrees  = 45.0;
+
+    double weight_distance                   = 1.0;
+    double weight_facing                     = 1.0;
+    double weight_heading                    = 1.0;
+
+    bool   reject_same_component             = true;
+};
+
+// -----------------------------------------------------------------------------
+// skeleton_endpoint_pair_candidate
+//
+// Ranked candidate connection between two endpoint tangents.
+//
+// Indices:
+//   tangent_index_a / tangent_index_b
+//     index into the input vector of skeleton_endpoint_tangent
+//
+//   segment_index_a / segment_index_b
+//     index into the vector returned by extract_skeleton_segments()
+//
+//   component_id_a / component_id_b
+//     connected-component IDs inferred from segment-node connectivity
+//
+// Geometry:
+//   gap_distance_pixels
+//     Euclidean endpoint-to-endpoint distance in raster pixel units
+//
+//   facing_angle_a_degrees
+//     angle between endpoint A's outward tangent and the vector A -> B
+//
+//   facing_angle_b_degrees
+//     angle between endpoint B's outward tangent and the vector B -> A
+//
+//   heading_misalignment_degrees
+//     angle between A's outward tangent and the opposite of B's outward tangent
+//
+// Score:
+//   lower is better
+// -----------------------------------------------------------------------------
+struct skeleton_endpoint_pair_candidate
+{
+    std::size_t tangent_index_a = static_cast<std::size_t>(-1);
+    std::size_t tangent_index_b = static_cast<std::size_t>(-1);
+
+    std::size_t segment_index_a = static_cast<std::size_t>(-1);
+    std::size_t segment_index_b = static_cast<std::size_t>(-1);
+
+    int component_id_a = -1;
+    int component_id_b = -1;
+
+    int row_a = -1;
+    int col_a = -1;
+    int row_b = -1;
+    int col_b = -1;
+
+    double gap_distance_pixels           = 0.0;
+    double facing_angle_a_degrees        = 0.0;
+    double facing_angle_b_degrees        = 0.0;
+    double heading_misalignment_degrees  = 0.0;
+
+    double score                         = 0.0;
+};
+
+// -----------------------------------------------------------------------------
+// find_skeleton_endpoint_pair_candidates
+//
+// Generates and scores plausible reconnection candidates between endpoint
+// tangents extracted from a pruned 1-pixel skeleton.
+//
+// Segment connected components are inferred from shared node coordinates in the
+// extracted segment graph. When reject_same_component is true, candidates are
+// only formed between endpoints whose parent segments belong to different
+// connected components.
+//
+// Output ordering:
+//   Candidates are sorted by ascending score, then ascending gap distance, then
+//   lexicographically by tangent indices.
+//
+// Intended use:
+//   produce a ranked geometric candidate list before mutual-best matching and
+//   bridge installation.
+//
+// Throws:
+//   std::runtime_error if request parameters are invalid or if tangent segment
+//   indices are out of range.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<skeleton_endpoint_pair_candidate>
+find_skeleton_endpoint_pair_candidates(
+    const std::vector<skeleton_segment>&          segments,
+    const std::vector<skeleton_endpoint_tangent>& tangents,
+    const endpoint_pair_request&                  request = endpoint_pair_request()
+);
+
+
+
+// -----------------------------------------------------------------------------
+// endpoint_pair_selection_request
+//
+// Controls acceptance of endpoint-pair candidates after geometric scoring.
+//
+// Selection stages:
+//   1. discard candidates with score > max_score (if max_score is finite)
+//   2. optionally require mutual-best matching:
+//        a candidate A-B is retained only if it is the best surviving candidate
+//        incident on A and also the best surviving candidate incident on B
+//   3. optionally enforce one-to-one usage of tangents by greedy acceptance in
+//      ascending candidate rank order
+//
+// Notes:
+//   - "best" means lowest score, then lowest gap distance, then lowest tangent
+//     indices.
+//   - The input candidate list need not be pre-sorted; this routine sorts
+//     internally using the same deterministic ordering.
+// -----------------------------------------------------------------------------
+struct endpoint_pair_selection_request
+{
+    double max_score           = std::numeric_limits<double>::infinity();
+    bool   require_mutual_best = true;
+    bool   enforce_one_to_one  = true;
+};
+
+// -----------------------------------------------------------------------------
+// select_skeleton_endpoint_pairs
+//
+// Selects accepted reconnection pairs from a set of scored candidate endpoint
+// pairs.
+//
+// Parameters:
+//   candidates  - output of find_skeleton_endpoint_pair_candidates()
+//   n_tangents  - size of the tangent vector used to generate candidates;
+//                 used to validate tangent indices and build per-endpoint best
+//                 candidate lookups
+//   request     - selection controls
+//
+// Returns:
+//   Accepted candidates, sorted by ascending score, then ascending gap distance,
+//   then lexicographically by tangent indices.
+//
+// Intended use:
+//   final geometric pair selection before bridge rasterisation.
+//
+// Throws:
+//   std::runtime_error if parameters are invalid or if candidate tangent indices
+//   are out of range.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<skeleton_endpoint_pair_candidate>
+select_skeleton_endpoint_pairs(
+    const std::vector<skeleton_endpoint_pair_candidate>& candidates,
+    std::size_t                                          n_tangents,
+    const endpoint_pair_selection_request&               request =
+        endpoint_pair_selection_request()
+);
+
+// -----------------------------------------------------------------------------
+// skeleton_bridge_rasterise_request
+//
+// Controls rasterisation of accepted endpoint bridges.
+//
+// Straight-line rasterisation uses an integer Bresenham line between endpoint
+// coordinates.
+//
+// require_all_bridge_pixels_valid:
+//   true  -> reject an entire bridge if any rasterised line pixel lies outside
+//            the DEM-valid domain
+//   false -> burn only the valid subset of line pixels
+//
+// Notes:
+//   - This is a simple baseline bridge burner for debugging and early testing.
+//   - It does not yet use a cost raster or A*/Dijkstra routing.
+// -----------------------------------------------------------------------------
+struct skeleton_bridge_rasterise_request
+{
+    bool require_all_bridge_pixels_valid = true;
+};
+
+// -----------------------------------------------------------------------------
+// skeleton_bridge_rasterise_result
+//
+// Output of rasterise_skeleton_endpoint_bridges().
+//
+// bridge_mask:
+//   binary raster containing only the newly rasterised bridge pixels
+//
+// connected_skeleton:
+//   bridge_mask OR input skeleton over the input valid domain
+//
+// Counts are for simple QA / logging.
+// -----------------------------------------------------------------------------
+struct skeleton_bridge_rasterise_result
+{
+    lsdtt_raster_cpu bridge_mask;
+    lsdtt_raster_cpu connected_skeleton;
+
+    int n_requested                     = 0;
+    int n_burned                        = 0;
+    int n_rejected_invalid_domain_cross = 0;
+};
+
+// -----------------------------------------------------------------------------
+// rasterise_skeleton_endpoint_bridges
+//
+// Burns accepted endpoint-pair links into a binary skeleton raster using
+// straight 1-pixel Bresenham lines.
+//
+// Input convention:
+//   - valid pixels with value > 0.5 are skeleton foreground
+//   - valid pixels with value <= 0.5 are background
+//   - nodata pixels are excluded
+//
+// Output convention:
+//   bridge_mask:
+//     - 1.0 on newly inserted bridge pixels
+//     - 0.0 on valid non-bridge pixels
+//     - nodata outside the input valid domain
+//
+//   connected_skeleton:
+//     - 1.0 on original skeleton pixels and accepted bridge pixels
+//     - 0.0 on valid background pixels
+//     - nodata outside the input valid domain
+//
+// Intended use:
+//   first-pass graph reconnection after pair selection, before more advanced
+//   path-guided bridging is implemented.
+//
+// Throws:
+//   std::runtime_error if metadata is invalid.
+// -----------------------------------------------------------------------------
+[[nodiscard]] skeleton_bridge_rasterise_result
+rasterise_skeleton_endpoint_bridges(
+    const lsdtt_raster_cpu&                              skeleton,
+    const std::vector<skeleton_endpoint_pair_candidate>& accepted_pairs,
+    const skeleton_bridge_rasterise_request&             request =
+        skeleton_bridge_rasterise_request()
+);
+
+
+
+// -----------------------------------------------------------------------------
+// skeleton_bridge_route_request
+//
+// Controls least-cost routing of accepted endpoint bridges.
+//
+// Routing domain:
+//   For each accepted endpoint pair, A* search is restricted to DEM-valid
+//   pixels inside a corridor around the straight endpoint-to-endpoint segment.
+//   The corridor width should be large enough to allow gentle curvature but
+//   small enough to prevent unrelated detours.
+//
+// Support raster:
+//   Higher support values are better. The support raster is normalised
+//   internally over the DEM-valid domain to [0,1] where possible.
+//
+// Traversal cost:
+//   move_cost = step_length *
+//               (base_step_cost +
+//                support_penalty_weight * (1 - support_norm))
+//   and, if the destination pixel is already foreground in the input skeleton,
+//   the move cost is multiplied by foreground_cost_scale.
+//
+// Therefore:
+//   - larger support values reduce cost
+//   - already-foreground skeleton pixels can be made cheaper to encourage the
+//     routed bridge to reuse existing linework near the endpoints
+//
+// Parameter constraints:
+//   corridor_half_width_pixels > 0
+//   base_step_cost > 0
+//   support_penalty_weight >= 0
+//   foreground_cost_scale > 0
+// -----------------------------------------------------------------------------
+struct skeleton_bridge_route_request
+{
+    double corridor_half_width_pixels = 12.0;
+    double base_step_cost             = 1.0;
+    double support_penalty_weight     = 4.0;
+    double foreground_cost_scale      = 0.25;
+};
+
+// -----------------------------------------------------------------------------
+// skeleton_bridge_route_result
+//
+// Output of route_skeleton_endpoint_bridges_least_cost().
+//
+// bridge_mask:
+//   binary raster containing only newly inserted routed bridge pixels
+//
+// connected_skeleton:
+//   bridge_mask OR input skeleton over the input valid domain
+//
+// Counts are for QA / logging.
+// -----------------------------------------------------------------------------
+struct skeleton_bridge_route_result
+{
+    lsdtt_raster_cpu bridge_mask;
+    lsdtt_raster_cpu connected_skeleton;
+
+    int n_requested               = 0;
+    int n_routed                  = 0;
+    int n_failed_invalid_endpoint = 0;
+    int n_failed_no_path          = 0;
+};
+
+// -----------------------------------------------------------------------------
+// route_skeleton_endpoint_bridges_least_cost
+//
+// Routes accepted endpoint-pair bridges through a support raster using A*
+// search inside a straight-line corridor.
+//
+// Inputs:
+//   skeleton       - binary 1-pixel skeleton to be augmented
+//   support_raster - co-registered raster where higher values indicate more
+//                    plausible connection support
+//   accepted_pairs - output of select_skeleton_endpoint_pairs()
+//
+// Corridor:
+//   Search is restricted to valid pixels within corridor_half_width_pixels of
+//   the straight endpoint-to-endpoint segment. Endpoint pixels are always
+//   included.
+//
+// Output convention:
+//   bridge_mask:
+//     - 1.0 on newly inserted routed bridge pixels
+//     - 0.0 on valid non-bridge pixels
+//     - nodata outside the input valid domain
+//
+//   connected_skeleton:
+//     - 1.0 on original skeleton pixels and accepted routed bridge pixels
+//     - 0.0 on valid background pixels
+//     - nodata outside the input valid domain
+//
+// Intended use:
+//   replace straight-line gap burning when broken curvilinear features need
+//   support-aware routing through nearby plausible pixels.
+//
+// Throws:
+//   std::runtime_error if metadata is invalid, rasters are not co-registered,
+//   or request parameters are invalid.
+// -----------------------------------------------------------------------------
+[[nodiscard]] skeleton_bridge_route_result
+route_skeleton_endpoint_bridges_least_cost(
+    const lsdtt_raster_cpu&                              skeleton,
+    const lsdtt_raster_cpu&                              support_raster,
+    const std::vector<skeleton_endpoint_pair_candidate>& accepted_pairs,
+    const skeleton_bridge_route_request&                 request =
+        skeleton_bridge_route_request()
+);
+
+
+
 } // namespace lsdtt
