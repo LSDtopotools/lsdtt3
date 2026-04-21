@@ -164,6 +164,11 @@ int main(int argc, char* argv[])
         "Small isolated flat patches (e.g. individual floodplain pixels) are "
         "removed before the flat mask is used to define mountain pixels."};
 
+    int_default_map["flat_dilation_pixels"] = 3;
+    help_map["flat_dilation_pixels"] = {"int","3",
+        "The number of pixels to dilate.",
+        "To remove little stringers and risers in the flat mask."};
+
     // --- Stages 8-9: mountain mask post-processing ---
     float_default_map["erosion_radius_metres"] = 500.0f;
     help_map["erosion_radius_metres"] = {"float","500",
@@ -384,10 +389,11 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Stage 5: dilate flat mask by 1 pixel (square SE) to bridge riser gaps
     // -------------------------------------------------------------------------
-    std::cout << "Stage 5: dilating flat mask by 1 pixel to bridge risers...\n";
+    std::cout << "Stage 5: dilating flat mask by "<< ip["flat_dilation_pixels"] <<" pixel(s) to bridge risers...\n";
+    const float dilation_factor = float(ip["flat_dilation_pixels"]);
     flat_mask = lsdtt::binary_morphological_dilation(
         flat_mask,
-        dem.get_meta().cell_size,       // radius = 1 cell → 3×3 square SE
+        dem.get_meta().cell_size*dilation_factor,      
         lsdtt::window_shape::square);
 
     // -------------------------------------------------------------------------

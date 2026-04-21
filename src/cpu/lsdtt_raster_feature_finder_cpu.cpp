@@ -1991,6 +1991,31 @@ lsdtt_raster_cpu binary_morphological_closing(
 
 
 // =============================================================================
+// binary_morphological_opening
+// =============================================================================
+lsdtt_raster_cpu binary_morphological_opening(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_opening: input raster metadata is invalid");
+    if (!std::isfinite(radius_metres) || radius_metres <= 0.0)
+        throw std::runtime_error(
+            "lsdtt::binary_morphological_opening: radius_metres must be finite and > 0");
+
+    const lsdtt_raster_cpu eroded =
+        binary_morphological_erosion(binary, radius_metres, shape);
+
+    return binary_morphological_dilation(eroded, radius_metres, shape);
+}
+
+
+
+
+// =============================================================================
 // binary_morphological_dilation
 // =============================================================================
 lsdtt_raster_cpu binary_morphological_dilation(
@@ -2209,6 +2234,73 @@ lsdtt_raster_cpu binary_opening_by_reconstruction(
 
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
+
+
+// =============================================================================
+// binary_closing_by_reconstruction
+// =============================================================================
+lsdtt_raster_cpu binary_closing_by_reconstruction(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::binary_closing_by_reconstruction: input raster metadata is invalid");
+    if (!std::isfinite(radius_metres) || radius_metres <= 0.0)
+        throw std::runtime_error(
+            "lsdtt::binary_closing_by_reconstruction: radius_metres must be finite and > 0");
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const float nd = static_cast<float>(meta.no_data_value);
+
+    // -------------------------------------------------------------------------
+    // Step 1: complement over the DEM-valid domain
+    // -------------------------------------------------------------------------
+    std::vector<float>   comp_data(npix, nd);
+    std::vector<uint8_t> comp_mask = in_mask;
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        comp_data[i] = (in_data[i] > 0.5f) ? 0.0f : 1.0f;
+    }
+
+    const lsdtt_raster_cpu complement(
+        std::move(comp_data), std::move(comp_mask), meta);
+
+    // -------------------------------------------------------------------------
+    // Step 2: opening-by-reconstruction on the complement
+    // -------------------------------------------------------------------------
+    const lsdtt_raster_cpu opened_complement =
+        binary_opening_by_reconstruction(complement, radius_metres, shape);
+
+    // -------------------------------------------------------------------------
+    // Step 3: complement back
+    // -------------------------------------------------------------------------
+    const std::vector<float>&   oc_data = opened_complement.get_data();
+    const std::vector<uint8_t>& oc_mask = opened_complement.get_mask();
+
+    std::vector<float>   out_data(npix, nd);
+    std::vector<uint8_t> out_mask = oc_mask;
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (oc_mask[i] == 0) continue;
+        out_data[i] = (oc_data[i] > 0.5f) ? 0.0f : 1.0f;
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
 
 
 // =============================================================================

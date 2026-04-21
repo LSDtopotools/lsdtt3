@@ -282,6 +282,38 @@ lsdtt_raster_cpu binary_morphological_closing(
 );
 
 
+
+
+// -----------------------------------------------------------------------------
+// binary_morphological_opening
+//
+// Applies a morphological opening (erosion followed by dilation) to a binary
+// raster using a structuring element of radius_metres.
+//
+// Opening removes narrow protrusions, thin tails, and small foreground bridges
+// while tending to preserve the broader body of thicker foreground regions.
+// Unlike opening-by-reconstruction, this is the standard fixed-SE opening, so
+// surviving foreground regions may have slightly smoothed or rounded edges.
+//
+// window_shape::circular — Euclidean disk SE (default).
+// window_shape::square   — square (L∞) SE.
+//
+// Input/output convention: same as binary_morphological_closing.
+//   - foreground: value > 0.5 and mask = 1
+//   - background: value <= 0.5 and mask = 1
+//   - nodata: mask = 0, value unchanged
+//
+// Throws:
+//   std::runtime_error if radius_metres <= 0 or metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_morphological_opening(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape = window_shape::circular
+);
+
+
+
 // -----------------------------------------------------------------------------
 // binary_directional_closing
 //
@@ -461,6 +493,46 @@ lsdtt_raster_cpu binary_opening_by_reconstruction(
     double                  radius_metres,
     window_shape            shape = window_shape::circular
 );
+
+
+// -----------------------------------------------------------------------------
+// binary_closing_by_reconstruction
+//
+// Morphological closing that preserves the exact shape of surviving foreground
+// regions more faithfully than standard fixed-SE closing.
+//
+// Binary closing-by-reconstruction is the dual of opening-by-reconstruction:
+//   1. complement the binary raster over the DEM-valid domain
+//   2. apply opening-by-reconstruction to the complement
+//   3. complement back
+//
+// Effect:
+//   - fills narrow background inlets, bays, and notches cut into foreground
+//   - seals thin background connections that are narrower than the SE
+//   - preserves the broader foreground body better than standard closing
+//
+// This differs from binary_morphological_closing(), which performs a fixed
+// dilation followed by erosion and therefore tends to round and expand/contract
+// boundaries more generally.
+//
+// window_shape::circular — Euclidean disk SE (default).
+// window_shape::square   — square (L∞) SE.
+//
+// Input/output convention: same as binary_morphological_closing.
+//   - foreground: value > 0.5 and mask = 1
+//   - background: value <= 0.5 and mask = 1
+//   - nodata: mask = 0, unchanged
+//
+// Throws:
+//   std::runtime_error if radius_metres <= 0 or metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_closing_by_reconstruction(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape = window_shape::circular
+);
+
+
 
 
 // -----------------------------------------------------------------------------
