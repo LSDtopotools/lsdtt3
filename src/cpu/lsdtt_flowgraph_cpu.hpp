@@ -152,6 +152,8 @@ public:
     [[nodiscard]] std::int64_t n_valid_cells() const noexcept { return n_valid_cells_; }
     [[nodiscard]] std::int64_t n_outlets()     const noexcept;
     [[nodiscard]] const lsdtt_raster_meta& meta() const noexcept { return meta_; }
+    [[nodiscard]] const lsdtt_flowgraph_options& options() const noexcept;
+
 
     [[nodiscard]] std::int64_t flat_index(int row, int col) const noexcept
     {

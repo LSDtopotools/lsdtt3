@@ -66,6 +66,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include <stdexcept>
 #include <string>

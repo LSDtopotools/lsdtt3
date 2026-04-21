@@ -318,6 +318,16 @@ int main(int argc, char* argv[])
         "Multiplicative factor used to decrease adaptive dt.",
         "Must be > 0 and < 1."};
 
+    // dynamic routing (i.e., graph is updated with water surface)
+    bool_default_map["dynamic_routing_enabled"] = false;
+    help_map["dynamic_routing_enabled"] = {"bool","false",
+        "Rebuild the routing graph from the evolving water surface.",
+        "If true, routing is refreshed during the hydraulic run."};
+
+    int_default_map["reroute_every"] = 1;
+    help_map["reroute_every"] = {"int","1",
+        "Number of hydraulic iterations between routing rebuilds.",
+        "Used only when dynamic_routing_enabled is true."};
 
 
     // --- Output controls ---
@@ -569,6 +579,14 @@ int main(int argc, char* argv[])
                   << ff["adaptive_dt_shrink_factor"] << "\n";
     }
 
+    std::cout << "Dynamic routing   : "
+              << (bf["dynamic_routing_enabled"] ? "true" : "false") << "\n";
+    if (bf["dynamic_routing_enabled"])
+    {
+        std::cout << "  reroute every   : " << ii["reroute_every"] << " iterations\n";
+    }
+
+
 
     lsdtt::lsdtt_hydraulic_options hyd_opts;
     hyd_opts.dt                    = ff["hydraulic_dt"];
@@ -593,14 +611,37 @@ int main(int argc, char* argv[])
         hyd_opts
     );
 
+    hydraulic.set_reroute_every(ii["reroute_every"]);
+
+
     if (hydraulic_run_mode == "stationary")
     {
-        hydraulic.set_run_mode(lsdtt_hydraulic_run_mode::stationary_fixed_graph);
+        if (bf["dynamic_routing_enabled"])
+        {
+            hydraulic.set_run_mode(
+                lsdtt_hydraulic_run_mode::stationary_dynamic_graph);
+        }
+        else
+        {
+            hydraulic.set_run_mode(
+                lsdtt_hydraulic_run_mode::stationary_fixed_graph);
+        }
     }
     else
     {
-        hydraulic.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
+        if (bf["dynamic_routing_enabled"])
+        {
+            hydraulic.set_run_mode(
+                lsdtt_hydraulic_run_mode::transient_dynamic_graph);
+        }
+        else
+        {
+            hydraulic.set_run_mode(
+                lsdtt_hydraulic_run_mode::transient_fixed_graph);
+        }
     }
+
+
 
 
     if (bf["use_point_inflow"])

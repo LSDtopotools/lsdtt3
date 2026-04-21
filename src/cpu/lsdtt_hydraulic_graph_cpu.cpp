@@ -41,6 +41,29 @@ bool lsdtt_hydraulic_graph_cpu::routing_snapshot::empty() const noexcept
     return topological_order.empty();
 }
 
+lsdtt_array2d_f
+lsdtt_hydraulic_graph_cpu::make_water_surface_array() const
+{
+    const float ndv = static_cast<float>(meta_.no_data_value);
+    lsdtt_array2d_f out(n_rows_, n_cols_, ndv);
+
+    for (int row = 0; row < n_rows_; ++row)
+    {
+        for (int col = 0; col < n_cols_; ++col)
+        {
+            const std::int64_t flat =
+                static_cast<std::int64_t>(row) * n_cols_ + col;
+
+            if (!is_valid_flat(flat)) continue;
+
+            out(row, col) = static_cast<float>(water_surface_[flat]);
+        }
+    }
+
+    return out;
+}
+
+
 
 // =============================================================================
 // Constructor
@@ -60,6 +83,8 @@ lsdtt_hydraulic_graph_cpu::lsdtt_hydraulic_graph_cpu(
     n_cells_ = static_cast<std::int64_t>(n_rows_) * n_cols_;
 
     set_options_from_struct(options);
+    flowgraph_options_ = flowgraph.options();
+
 
     bed_.resize(n_cells_, 0.0);
     water_depth_.resize(n_cells_, 0.0);
@@ -250,6 +275,24 @@ double lsdtt_hydraulic_graph_cpu::receiver_width() const noexcept
 }
 
 
+void lsdtt_hydraulic_graph_cpu::set_reroute_every(int reroute_every)
+{
+    if (reroute_every <= 0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::set_reroute_every: reroute_every must be > 0");
+    }
+
+    reroute_every_ = reroute_every;
+}
+
+int lsdtt_hydraulic_graph_cpu::reroute_every() const noexcept
+{
+    return reroute_every_;
+}
+
+
+
 // =============================================================================
 // External forcing
 // =============================================================================
@@ -367,6 +410,60 @@ void lsdtt_hydraulic_graph_cpu::refresh_routing()
     copy_routing_snapshot_from_flowgraph(*source_flowgraph_);
 }
 
+void lsdtt_hydraulic_graph_cpu::rebuild_routing_from_current_water_surface()
+{
+    const lsdtt_array2d_f ws = make_water_surface_array();
+
+    lsdtt::lsdtt_flowgraph_cpu updated_flowgraph(
+        ws,
+        routing_mask_,
+        meta_,
+        flowgraph_options_
+    );
+
+    copy_routing_snapshot_from_flowgraph(updated_flowgraph);
+}
+
+
+void lsdtt_hydraulic_graph_cpu::build_mask_array_from_snapshot()
+{
+    routing_mask_ = lsdtt_array2d<std::uint8_t>(n_rows_, n_cols_, 0);
+
+    for (int row = 0; row < n_rows_; ++row)
+    {
+        for (int col = 0; col < n_cols_; ++col)
+        {
+            const std::int64_t flat =
+                static_cast<std::int64_t>(row) * n_cols_ + col;
+
+            routing_mask_(row, col) = is_valid_flat(flat) ? 1 : 0;
+        }
+    }
+}
+
+
+void lsdtt_hydraulic_graph_cpu::perform_one_stationary_iteration_dynamic_graph()
+{
+    if (step_count_ == 0 ||
+        (step_count_ % static_cast<std::int64_t>(reroute_every_) == 0))
+    {
+        rebuild_routing_from_current_water_surface();
+    }
+
+    reset_flux_fields();
+    rebuild_stationary_qin_cache_if_needed();
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        qin_[flat] = stationary_qin_cache_[flat];
+        total_discharge_[flat] = qin_[flat];
+    }
+
+    compute_qout_from_current_surface();
+    apply_water_depth_update_from_balance();
+}
+
+
 
 // =============================================================================
 // Time stepping
@@ -383,15 +480,26 @@ void lsdtt_hydraulic_graph_cpu::run_one_step()
 
 void lsdtt_hydraulic_graph_cpu::perform_one_iteration_without_banner()
 {
-    if (run_mode_ == lsdtt_hydraulic_run_mode::stationary_fixed_graph)
+    switch (run_mode_)
     {
-        perform_one_stationary_iteration_fixed_graph();
-    }
-    else
-    {
-        perform_one_transient_iteration_fixed_graph();
+        case lsdtt_hydraulic_run_mode::stationary_fixed_graph:
+            perform_one_stationary_iteration_fixed_graph();
+            break;
+
+        case lsdtt_hydraulic_run_mode::stationary_dynamic_graph:
+            perform_one_stationary_iteration_dynamic_graph();
+            break;
+
+        case lsdtt_hydraulic_run_mode::transient_fixed_graph:
+            perform_one_transient_iteration_fixed_graph();
+            break;
+
+        case lsdtt_hydraulic_run_mode::transient_dynamic_graph:
+            perform_one_transient_iteration_fixed_graph();
+            break;
     }
 }
+
 
 
 void lsdtt_hydraulic_graph_cpu::run_n_steps(std::int64_t n_steps)
@@ -427,6 +535,7 @@ void lsdtt_hydraulic_graph_cpu::build_valid_flat_index()
         }
     }
 }
+
 
 
 
@@ -581,6 +690,7 @@ void lsdtt_hydraulic_graph_cpu::copy_routing_snapshot_from_flowgraph(
 
     build_valid_flat_index();
     compute_receiver_geometry_from_snapshot();
+    build_mask_array_from_snapshot();
     invalidate_stationary_qin_cache();
 }
 
@@ -1034,7 +1144,12 @@ void lsdtt_hydraulic_graph_cpu::update_dt_from_convergence_stats(
     const convergence_stats& stats)
 {
     if (!adaptive_dt_enabled_) return;
-    if (run_mode_ != lsdtt_hydraulic_run_mode::stationary_fixed_graph) return;
+
+    const bool stationary_mode =
+        (run_mode_ == lsdtt_hydraulic_run_mode::stationary_fixed_graph) ||
+        (run_mode_ == lsdtt_hydraulic_run_mode::stationary_dynamic_graph);
+
+    if (!stationary_mode) return;
 
     const double target = adaptive_target_median_abs_dhw_;
     const double lower_threshold = 0.3 * target;
@@ -1057,6 +1172,7 @@ void lsdtt_hydraulic_graph_cpu::update_dt_from_convergence_stats(
         dt_ = new_dt;
     }
 }
+
 
 
 

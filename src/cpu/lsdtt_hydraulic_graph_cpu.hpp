@@ -49,8 +49,11 @@
 enum class lsdtt_hydraulic_run_mode
 {
     transient_fixed_graph,
-    stationary_fixed_graph
+    stationary_fixed_graph,
+    transient_dynamic_graph,
+    stationary_dynamic_graph
 };
+
 
 
 namespace lsdtt
@@ -121,6 +124,10 @@ public:
     [[nodiscard]] lsdtt_raster_result get_specific_drainage_area_raster(
         double runoff_rate_m_per_s) const;
     [[nodiscard]] lsdtt_raster_result get_effective_width_raster() const;
+
+    // switch for rerouting due to water surface
+    void set_reroute_every(int reroute_every);
+    [[nodiscard]] int reroute_every() const noexcept;
 
 
     // -------------------------------------------------------------------------
@@ -225,8 +232,19 @@ private:
 
     void set_options_from_struct(const lsdtt_hydraulic_options& options);
 
+    // for single pass routing
     void copy_routing_snapshot_from_flowgraph(
         const lsdtt_flowgraph_cpu& flowgraph);
+
+    // for routing that responds to the water surface
+    void rebuild_routing_from_current_water_surface();
+    [[nodiscard]] lsdtt_array2d_f make_water_surface_array() const;
+    void build_mask_array_from_snapshot();
+
+    // iteration for stationary and dynamic computations
+    void perform_one_stationary_iteration_dynamic_graph();
+    void perform_one_transient_iteration_dynamic_graph();
+
 
     void compute_receiver_geometry_from_snapshot();
 
@@ -239,6 +257,13 @@ private:
 
     [[nodiscard]] lsdtt_raster_result make_raster_result_from_double_field(
         const std::vector<double>& field) const;
+
+    lsdtt::lsdtt_flowgraph_options flowgraph_options_;
+    lsdtt_array2d<std::uint8_t> routing_mask_;
+
+    int reroute_every_ = 1;
+
+
 
 private:
 
