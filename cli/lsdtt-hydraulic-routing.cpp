@@ -287,6 +287,38 @@ int main(int argc, char* argv[])
         "Relative median dhw convergence threshold.",
         "Used by run_until_converged."};
 
+    // adaptive timesteps
+    bool_default_map["adaptive_dt_enabled"] = false;
+    help_map["adaptive_dt_enabled"] = {"bool","false",
+        "Enable simple adaptive timestep control in stationary convergence runs.",
+        "Adaptive dt only acts inside run_until_converged."};
+
+    float_default_map["adaptive_dt_min"] = 1.0e-4f;
+    help_map["adaptive_dt_min"] = {"float","1e-4",
+        "Minimum adaptive timestep in seconds.",
+        "Used only when adaptive_dt_enabled is true."};
+
+    float_default_map["adaptive_dt_max"] = 1.0f;
+    help_map["adaptive_dt_max"] = {"float","1.0",
+        "Maximum adaptive timestep in seconds.",
+        "Used only when adaptive_dt_enabled is true."};
+
+    float_default_map["adaptive_target_median_abs_dhw"] = 1.0e-3f;
+    help_map["adaptive_target_median_abs_dhw"] = {"float","1e-3",
+        "Target median absolute water-depth change per checked iteration in metres.",
+        "Adaptive dt grows or shrinks to keep median |dhw| near this target."};
+
+    float_default_map["adaptive_dt_growth_factor"] = 1.5f;
+    help_map["adaptive_dt_growth_factor"] = {"float","1.5",
+        "Multiplicative factor used to increase adaptive dt.",
+        "Must be > 1."};
+
+    float_default_map["adaptive_dt_shrink_factor"] = 0.5f;
+    help_map["adaptive_dt_shrink_factor"] = {"float","0.5",
+        "Multiplicative factor used to decrease adaptive dt.",
+        "Must be > 0 and < 1."};
+
+
 
     // --- Output controls ---
     bool_default_map["write_water_depth_raster"] = true;
@@ -523,6 +555,21 @@ int main(int argc, char* argv[])
     std::cout << "Receiver width    : " << ff["receiver_width"] << " m\n";
     std::cout << "N steps           : " << ii["n_steps"] << "\n";
 
+    std::cout << "Adaptive dt       : "
+              << (bf["adaptive_dt_enabled"] ? "true" : "false") << "\n";
+    if (bf["adaptive_dt_enabled"])
+    {
+        std::cout << "  dt min          : " << ff["adaptive_dt_min"] << " s\n";
+        std::cout << "  dt max          : " << ff["adaptive_dt_max"] << " s\n";
+        std::cout << "  target med|dhw| : "
+                  << ff["adaptive_target_median_abs_dhw"] << " m\n";
+        std::cout << "  growth factor   : "
+                  << ff["adaptive_dt_growth_factor"] << "\n";
+        std::cout << "  shrink factor   : "
+                  << ff["adaptive_dt_shrink_factor"] << "\n";
+    }
+
+
     lsdtt::lsdtt_hydraulic_options hyd_opts;
     hyd_opts.dt                    = ff["hydraulic_dt"];
     hyd_opts.mannings_n            = ff["mannings_n"];
@@ -530,6 +577,14 @@ int main(int argc, char* argv[])
     hyd_opts.uniform_rainfall_rate = ff["uniform_rainfall_rate"];
     hyd_opts.receiver_width        = ff["receiver_width"];
     hyd_opts.max_dh_rate           = ff["max_dh_rate"];
+    hyd_opts.adaptive_dt_enabled            = bf["adaptive_dt_enabled"];
+    hyd_opts.adaptive_dt_min                = ff["adaptive_dt_min"];
+    hyd_opts.adaptive_dt_max                = ff["adaptive_dt_max"];
+    hyd_opts.adaptive_target_median_abs_dhw =
+        ff["adaptive_target_median_abs_dhw"];
+    hyd_opts.adaptive_dt_growth_factor      = ff["adaptive_dt_growth_factor"];
+    hyd_opts.adaptive_dt_shrink_factor      = ff["adaptive_dt_shrink_factor"];
+
     hyd_opts.print_startup_message = true;
 
     lsdtt::lsdtt_hydraulic_graph_cpu hydraulic(

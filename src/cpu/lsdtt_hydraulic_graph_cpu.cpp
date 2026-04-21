@@ -512,8 +512,58 @@ void lsdtt_hydraulic_graph_cpu::set_options_from_struct(
 
     receiver_width_ = options.receiver_width;
     set_max_dh_rate(options.max_dh_rate);
+
+    if (!std::isfinite(options.adaptive_dt_min) || options.adaptive_dt_min <= 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: adaptive_dt_min must be finite and > 0");
+    }
+
+    if (!std::isfinite(options.adaptive_dt_max) ||
+        options.adaptive_dt_max < options.adaptive_dt_min)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: adaptive_dt_max must be finite and >= adaptive_dt_min");
+    }
+
+    if (!std::isfinite(options.adaptive_target_median_abs_dhw) ||
+        options.adaptive_target_median_abs_dhw <= 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: adaptive_target_median_abs_dhw must be finite and > 0");
+    }
+
+    if (!std::isfinite(options.adaptive_dt_growth_factor) ||
+        options.adaptive_dt_growth_factor <= 1.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: adaptive_dt_growth_factor must be finite and > 1");
+    }
+
+    if (!std::isfinite(options.adaptive_dt_shrink_factor) ||
+        options.adaptive_dt_shrink_factor <= 0.0 ||
+        options.adaptive_dt_shrink_factor >= 1.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: adaptive_dt_shrink_factor must be finite and in (0,1)");
+    }
+
+    adaptive_dt_enabled_            = options.adaptive_dt_enabled;
+    adaptive_dt_min_                = options.adaptive_dt_min;
+    adaptive_dt_max_                = options.adaptive_dt_max;
+    adaptive_target_median_abs_dhw_ = options.adaptive_target_median_abs_dhw;
+    adaptive_dt_growth_factor_      = options.adaptive_dt_growth_factor;
+    adaptive_dt_shrink_factor_      = options.adaptive_dt_shrink_factor;
+
+    if (adaptive_dt_enabled_)
+    {
+        if (dt_ < adaptive_dt_min_) dt_ = adaptive_dt_min_;
+        if (dt_ > adaptive_dt_max_) dt_ = adaptive_dt_max_;
+    }
+
     print_startup_message_ = options.print_startup_message;
 }
+
 
 void lsdtt_hydraulic_graph_cpu::copy_routing_snapshot_from_flowgraph(
     const lsdtt_flowgraph_cpu& flowgraph)
@@ -980,6 +1030,36 @@ lsdtt_hydraulic_graph_cpu::compute_convergence_stats() const
     return stats;
 }
 
+void lsdtt_hydraulic_graph_cpu::update_dt_from_convergence_stats(
+    const convergence_stats& stats)
+{
+    if (!adaptive_dt_enabled_) return;
+    if (run_mode_ != lsdtt_hydraulic_run_mode::stationary_fixed_graph) return;
+
+    const double target = adaptive_target_median_abs_dhw_;
+    const double lower_threshold = 0.3 * target;
+    const double upper_threshold = 2.0 * target;
+
+    double new_dt = dt_;
+
+    if (stats.median_abs_dhw < lower_threshold)
+    {
+        new_dt = std::min(dt_ * adaptive_dt_growth_factor_, adaptive_dt_max_);
+    }
+    else if (stats.median_abs_dhw > upper_threshold)
+    {
+        new_dt = std::max(dt_ * adaptive_dt_shrink_factor_, adaptive_dt_min_);
+    }
+
+    if (new_dt != dt_)
+    {
+        std::cout << "  adaptive dt: " << dt_ << " -> " << new_dt << " s\n";
+        dt_ = new_dt;
+    }
+}
+
+
+
 
 void lsdtt_hydraulic_graph_cpu::print_progress(
     std::int64_t iter,
@@ -993,7 +1073,9 @@ void lsdtt_hydraulic_graph_cpu::print_progress(
     }
 
     std::cout << " | time = " << current_time_ << " s"
+              << " | dt = " << dt_ << " s"
               << " | volume = " << total_water_volume() << " m^3";
+
 
     if (stats != nullptr)
     {
@@ -1066,6 +1148,8 @@ bool lsdtt_hydraulic_graph_cpu::run_until_converged(
                           << " iterations.\n";
                 return true;
             }
+
+            update_dt_from_convergence_stats(stats);
         }
         else if (report_every > 0 &&
                  ((i + 1) % static_cast<std::int64_t>(report_every) == 0))

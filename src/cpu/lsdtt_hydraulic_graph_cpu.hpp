@@ -263,6 +263,15 @@ private:
     double max_dh_rate_           = 1.0;
     bool   print_startup_message_ = true;
 
+    // adaptive timesteps
+    bool   adaptive_dt_enabled_            = false;
+    double adaptive_dt_min_                = 1.0e-4;
+    double adaptive_dt_max_                = 1.0;
+    double adaptive_target_median_abs_dhw_ = 1.0e-3;
+    double adaptive_dt_growth_factor_      = 1.5;
+    double adaptive_dt_shrink_factor_      = 0.5;
+
+
     // -------------------------------------------------------------------------
     // Time bookkeeping
     // -------------------------------------------------------------------------
@@ -336,10 +345,9 @@ private:
         std::int64_t max_steps,
         const convergence_stats* stats) const;
 
+    void update_dt_from_convergence_stats(const convergence_stats& stats);
+
     void print_startup_message_if_needed();
-
-
-
 
     lsdtt_hydraulic_run_mode run_mode_ =
         lsdtt_hydraulic_run_mode::transient_fixed_graph;

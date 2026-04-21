@@ -82,8 +82,17 @@ struct lsdtt_hydraulic_options
     double uniform_rainfall_rate = 0.0;
     double receiver_width        = -1.0;
     double max_dh_rate           = 1.0;
+
+    bool   adaptive_dt_enabled            = false;
+    double adaptive_dt_min                = 1.0e-4;
+    double adaptive_dt_max                = 1.0;
+    double adaptive_target_median_abs_dhw = 1.0e-3;
+    double adaptive_dt_growth_factor      = 1.5;
+    double adaptive_dt_shrink_factor      = 0.5;
+
     bool   print_startup_message = true;
 };
+
 
 
 // -----------------------------------------------------------------------------
