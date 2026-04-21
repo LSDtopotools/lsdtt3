@@ -431,6 +431,39 @@ lsdtt_raster_cpu binary_morphological_erosion(
 
 
 // -----------------------------------------------------------------------------
+// binary_opening_by_reconstruction
+//
+// Morphological opening that preserves the exact shape of thick features.
+//
+// Algorithm:
+//   1. Erode `binary` with a SE of radius_metres → seeds.
+//   2. BFS-flood from every surviving foreground seed, expanding 8-connected
+//      through pixels that were foreground in the original `binary`.
+//   3. Any foreground component that contained no eroded seed is dropped;
+//      every component that did survive erosion is restored to its exact
+//      original shape.
+//
+// This differs from standard opening (erode → fixed dilate) in that thick
+// bodies are returned to their original extent rather than being shrunk by
+// the erosion radius.  Thin necks and filaments narrower than the SE are
+// severed and removed completely.
+//
+// window_shape::circular — Euclidean disk SE (default).
+// window_shape::square   — square (L∞) SE.
+//
+// Nodata pixels (mask = 0) are never modified.
+//
+// Throws:
+//   std::runtime_error if radius_metres <= 0 or metadata is invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu binary_opening_by_reconstruction(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape = window_shape::circular
+);
+
+
+// -----------------------------------------------------------------------------
 // binary_fill_holes
 //
 // Background pixels that are not 4-connected to any DEM-border background

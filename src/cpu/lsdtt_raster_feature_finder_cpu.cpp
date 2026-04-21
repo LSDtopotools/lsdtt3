@@ -2139,6 +2139,79 @@ lsdtt_raster_cpu binary_morphological_erosion(
 
 
 // =============================================================================
+// binary_opening_by_reconstruction
+// =============================================================================
+lsdtt_raster_cpu binary_opening_by_reconstruction(
+    const lsdtt_raster_cpu& binary,
+    double                  radius_metres,
+    window_shape            shape)
+{
+    // Step 1: erode to get seeds — pixels that survive the radius filter.
+    const lsdtt_raster_cpu eroded =
+        binary_morphological_erosion(binary, radius_metres, shape);
+
+    const lsdtt_raster_meta& meta  = binary.get_meta();
+    const int    nrows = meta.n_rows;
+    const int    ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   orig_data = binary.get_data();
+    const std::vector<uint8_t>& orig_mask = binary.get_mask();
+    const std::vector<float>&   seed_data = eroded.get_data();
+    const std::vector<uint8_t>& seed_mask = eroded.get_mask();
+
+    const float nd = static_cast<float>(meta.no_data_value);
+
+    // Output inherits the original nodata structure; valid pixels start as
+    // background (0) and are set to foreground (1) only by the BFS.
+    std::vector<float>   out_data(npix, nd);
+    std::vector<uint8_t> out_mask = orig_mask;
+    for (std::size_t i = 0; i < npix; ++i)
+        if (orig_mask[i] != 0) out_data[i] = 0.0f;
+
+    // Step 2: BFS from eroded-foreground seeds, constrained to original
+    // foreground.  Uses 8-connectivity so diagonal necks are also restored.
+    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+    std::vector<bool> visited(npix, false);
+    std::queue<int>   q;
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (seed_mask[i] == 0 || seed_data[i] <= 0.5f) continue;
+        if (orig_mask[i] == 0 || orig_data[i] <= 0.5f) continue; // guard
+        visited[i]  = true;
+        out_data[i] = 1.0f;
+        q.push(static_cast<int>(i));
+    }
+
+    while (!q.empty())
+    {
+        const int idx = q.front(); q.pop();
+        const int row = idx / ncols;
+        const int col = idx % ncols;
+        for (int d = 0; d < 8; ++d)
+        {
+            const int nr = row + DR8[d];
+            const int nc = col + DC8[d];
+            if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
+            const int nidx = nr * ncols + nc;
+            if (visited[nidx])             continue;
+            if (orig_mask[nidx] == 0)      continue; // nodata boundary
+            if (orig_data[nidx] <= 0.5f)   continue; // not in domain
+            visited[nidx]    = true;
+            out_data[nidx]   = 1.0f;
+            q.push(nidx);
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// =============================================================================
 // binary_fill_holes
 // =============================================================================
 lsdtt_raster_cpu binary_fill_holes(

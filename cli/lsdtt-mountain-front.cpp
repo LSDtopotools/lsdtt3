@@ -24,7 +24,8 @@
 //             riser pixels between adjacent flat patches.
 //   Stage 6 — Fill holes in flat mask: enclosed non-flat pixels become flat.
 //   Stage 7 — Invert flat mask → initial mountain mask.
-//   Stage 8 — Erode mountain mask (erosion_radius_metres) to sever thin necks.
+//   Stage 8 — Opening by reconstruction (erosion_radius_metres): erode to sever
+//             thin necks, then BFS-reconstruct thick bodies back to original extent.
 //   Stage 9 — Remove small mountain components (< min_component_pixels).
 //   Stage 10 — Fill holes in mountain mask (enclosed background → mountain).
 //   Stage 11 — Valley infilling: morphological closing (infill_valley_radius_metres).
@@ -166,9 +167,10 @@ int main(int argc, char* argv[])
     // --- Stages 8-9: mountain mask post-processing ---
     float_default_map["erosion_radius_metres"] = 500.0f;
     help_map["erosion_radius_metres"] = {"float","500",
-        "Radius (m) of the circular SE for mountain mask erosion.",
-        "Severs thin pixel necks between mountain patches before the component "
-        "size filter.  Set to roughly half the neck width to remove."};
+        "Erosion radius (m) for opening-by-reconstruction (Stage 8).",
+        "Severs necks narrower than 2x this radius; thick mountain bodies are "
+        "restored to their exact original extent.  Set to roughly half the neck "
+        "width to remove.  0 = skip."};
 
     int_default_map["min_component_pixels"] = 1000;
     help_map["min_component_pixels"] = {"int","1000",
@@ -433,18 +435,18 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu mountain_mask = std::move(flat_mask);
 
     // -------------------------------------------------------------------------
-    // Stage 8: erode mountain mask to sever thin necks
+    // Stage 8: opening by reconstruction — sever thin necks, restore thick bodies
     // -------------------------------------------------------------------------
     const double erosion_r = static_cast<double>(ff["erosion_radius_metres"]);
     if (erosion_r > 0.0)
     {
-        std::cout << "Stage 8: eroding mountain mask (radius="
+        std::cout << "Stage 8: opening by reconstruction (radius="
                   << erosion_r << " m)...\n";
-        mountain_mask = lsdtt::binary_morphological_erosion(mountain_mask, erosion_r);
+        mountain_mask = lsdtt::binary_opening_by_reconstruction(mountain_mask, erosion_r);
     }
     else
     {
-        std::cout << "Stage 8: erosion skipped (erosion_radius_metres <= 0).\n";
+        std::cout << "Stage 8: opening by reconstruction skipped (erosion_radius_metres <= 0).\n";
     }
 
     // -------------------------------------------------------------------------
