@@ -20,10 +20,10 @@
 //             Writes a CDF CSV.
 //   Stage 3 — Flat mask (relief <= threshold).
 //   Stage 4 — Remove small flat components (< min_flat_component_pixels).
-//   Stage 5 — Closing-by-reconstruction of flat mask (flat_closing_radius_metres):
+//   Stage 5 — morphological closing of flat mask (flat_closing_radius_metres):
 //             dilate to connect adjacent flat patches, then BFS-reconstruct to
 //             original flat extent.  Seals narrow background gaps between flat areas.
-//   Stage 6 — Opening-by-reconstruction of flat mask (erosion_radius_metres):
+//   Stage 6 — morphological opening of flat mask (erosion_radius_metres):
 //             erode thin flat necks, then BFS-reconstruct thick flat bodies.
 //             Removes small spurious flat peninsulas while preserving broad flats.
 //   Stage 7 — Fill holes in flat mask: enclosed non-flat pixels become flat.
@@ -61,6 +61,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <memory>
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
@@ -123,6 +124,96 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
     else { path = argv[1]; fname = argv[2]; }
     return {path, fname};
 }
+static lsdtt::lsdtt_raster_cpu prune_upstream_outlets(
+    const lsdtt::lsdtt_raster_cpu& outlets,
+    const lsdtt::lsdtt_flow_base&  flow)
+{
+    const lsdtt::lsdtt_raster_meta& meta = outlets.get_meta();
+    const std::vector<float>&        odat = outlets.get_data();
+    const std::vector<uint8_t>&      omsk = outlets.get_mask();
+
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) *
+        static_cast<std::size_t>(meta.n_cols);
+
+    if (flow.full_grid_size() != npix)
+    {
+        throw std::runtime_error(
+            "prune_upstream_outlets: flow grid size does not match outlet raster size.");
+    }
+
+    const float nd = static_cast<float>(meta.no_data_value);
+
+    std::vector<uint8_t> is_candidate(npix, uint8_t{0});
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (omsk[i] == 0) continue;
+        if (std::isfinite(odat[i]) && !meta.is_nodata(odat[i]) && odat[i] > 0.5f)
+            is_candidate[i] = uint8_t{1};
+    }
+
+    std::vector<float>   out_data(npix, nd);
+    std::vector<uint8_t> out_mask = omsk;
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (omsk[i] != 0)
+            out_data[i] = 0.0f;
+    }
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (is_candidate[i] == 0) continue;
+
+        bool has_downstream_outlet = false;
+
+        std::int64_t j =
+            flow.receiver_of_unchecked(static_cast<std::int64_t>(i));
+
+        int guard = 0;
+        while (guard < static_cast<int>(npix))
+        {
+            if (j == lsdtt::lsdtt_flow_base::nodata_receiver ||
+                j == lsdtt::lsdtt_flow_base::outlet_receiver)
+            {
+                break;
+            }
+
+            if (j < 0 || j >= static_cast<std::int64_t>(npix))
+            {
+                break;
+            }
+
+            const std::size_t jj = static_cast<std::size_t>(j);
+
+            if (omsk[jj] == 0)
+                break;
+
+            if (is_candidate[jj] != 0)
+            {
+                has_downstream_outlet = true;
+                break;
+            }
+
+            const std::int64_t next = flow.receiver_of_unchecked(j);
+
+            if (next == j)   // self-loop safety
+                break;
+
+            j = next;
+            ++guard;
+        }
+
+        if (!has_downstream_outlet)
+            out_data[i] = 1.0f;
+    }
+
+    return lsdtt::lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta);
+}
+
+
+
 
 // =============================================================================
 // main
@@ -168,13 +259,13 @@ int main(int argc, char* argv[])
 
     float_default_map["flat_closing_radius_metres"] = 500.0f;
     help_map["flat_closing_radius_metres"] = {"float","500",
-        "Radius (m) for closing-by-reconstruction of the flat mask (Stage 5).",
+        "Radius (m) for morphological closing of the flat mask (Stage 5).",
         "Seals narrow background gaps between adjacent flat patches (e.g. "
         "riser pixels between floodplain segments).  0 = skip."};
 
     float_default_map["erosion_radius_metres"] = 500.0f;
     help_map["erosion_radius_metres"] = {"float","500",
-        "Erosion radius (m) for opening-by-reconstruction of the flat mask (Stage 6).",
+        "Erosion radius (m) for morphological opening of the flat mask (Stage 6).",
         "Severs thin flat peninsulas narrower than 2x this radius; broad flat "
         "bodies are restored to their exact original extent.  0 = skip."};
 
@@ -388,14 +479,14 @@ int main(int argc, char* argv[])
     flat_mask = lsdtt::filter_binary_components_by_size(flat_mask, min_flat);
 
     // -------------------------------------------------------------------------
-    // Stage 5: closing-by-reconstruction of flat mask
+    // Stage 5: morphological closing of flat mask
     // -------------------------------------------------------------------------
     const double flat_closing_r = static_cast<double>(ff["flat_closing_radius_metres"]);
     if (flat_closing_r > 0.0)
     {
-        std::cout << "Stage 5: closing-by-reconstruction of flat mask (radius="
+        std::cout << "Stage 5: morphological closing of flat mask (radius="
                   << flat_closing_r << " m)...\n";
-        flat_mask = lsdtt::binary_closing_by_reconstruction(flat_mask, flat_closing_r);
+        flat_mask = lsdtt::binary_morphological_closing(flat_mask, flat_closing_r);
     }
     else
     {
@@ -403,20 +494,34 @@ int main(int argc, char* argv[])
                      "(flat_closing_radius_metres <= 0).\n";
     }
 
+    if (bf["write_flat_mask_raster"])
+    {
+        const std::string p = stem + "_flat_mask_closing.tif";
+        std::cout << "  Writing flat mask: " << p << "\n";
+        loader.write_full(flat_mask.get_data(), flat_mask.get_meta(), p, out_format);
+    }
+
     // -------------------------------------------------------------------------
-    // Stage 6: opening-by-reconstruction of flat mask
+    // Stage 6: morphological opening of flat mask
     // -------------------------------------------------------------------------
     const double flat_erosion_r = static_cast<double>(ff["erosion_radius_metres"]);
     if (flat_erosion_r > 0.0)
     {
-        std::cout << "Stage 6: opening-by-reconstruction of flat mask (radius="
+        std::cout << "Stage 6: morphological opening of flat mask (radius="
                   << flat_erosion_r << " m)...\n";
-        flat_mask = lsdtt::binary_opening_by_reconstruction(flat_mask, flat_erosion_r);
+        flat_mask = lsdtt::binary_morphological_opening(flat_mask, flat_erosion_r);
     }
     else
     {
         std::cout << "Stage 6: flat mask opening-by-reconstruction skipped "
                      "(erosion_radius_metres <= 0).\n";
+    }
+
+    if (bf["write_flat_mask_raster"])
+    {
+        const std::string p = stem + "_flat_mask_opening.tif";
+        std::cout << "  Writing flat mask: " << p << "\n";
+        loader.write_full(flat_mask.get_data(), flat_mask.get_meta(), p, out_format);
     }
 
     // -------------------------------------------------------------------------
@@ -523,36 +628,56 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Stage 12: outlets
     // -------------------------------------------------------------------------
-    if (bf["write_mountain_front_outlets"])
+if (bf["write_mountain_front_outlets"])
+{
+    std::cout << "\nStage 12: computing mountain front outlets...\n";
+
+    lsdtt::lsdtt_raster_cpu ca_raster;
+    bool ca_ok = false;
+
+    std::unique_ptr<lsdtt::lsdtt_flow_base> flow;
+    bool flow_ok = false;
+
+    auto build_flow_from_dem = [&]() -> bool
     {
-        std::cout << "\nStage 12: computing mountain front outlets...\n";
-
-        lsdtt::lsdtt_raster_cpu ca_raster;
-        bool ca_ok = false;
-
-        const std::string ca_fname = sf["contributing_pixels_fname"];
-        if (ca_fname.empty())
+        try
         {
-            std::cout << "  contributing_pixels_fname not set — computing from DEM.\n";
+            std::cout << "  Filling pits...\n";
+            const lsdtt::lsdtt_raster_cpu filled =
+                lsdtt::fill_pits(dem, 0.0001f, n_threads);
+
+            std::cout << "  Building D8 flow routing...\n";
+            lsdtt::lsdtt_flowinfo_options fi_opts;
+            fi_opts.interior_nodata_is_outlet = true;
+            fi_opts.require_acyclic_graph     = true;
+            fi_opts.build_topological_order   = true;
+            fi_opts.build_s_vector            = true;
+            fi_opts.n_threads                 = n_threads;
+
+            flow = lsdtt::make_flow_base(
+                filled.get_data_array(), filled.get_mask_array(),
+                filled.get_meta(), fi_opts);
+
+            return true;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: failed to build flow routing: "
+                      << e.what() << "\n";
+            return false;
+        }
+    };
+
+    const std::string ca_fname = sf["contributing_pixels_fname"];
+    if (ca_fname.empty())
+    {
+        std::cout << "  contributing_pixels_fname not set — computing from DEM.\n";
+        flow_ok = build_flow_from_dem();
+
+        if (flow_ok)
+        {
             try
             {
-                std::cout << "  Filling pits...\n";
-                const lsdtt::lsdtt_raster_cpu filled =
-                    lsdtt::fill_pits(dem, 0.0001f, n_threads);
-
-                std::cout << "  Building D8 flow routing...\n";
-                lsdtt::lsdtt_flowinfo_options fi_opts;
-                fi_opts.interior_nodata_is_outlet = true;
-                fi_opts.require_acyclic_graph     = true;
-                fi_opts.build_topological_order   = true;
-                fi_opts.build_s_vector            = true;
-                fi_opts.n_threads                 = n_threads;
-
-                const std::unique_ptr<lsdtt::lsdtt_flow_base> flow =
-                    lsdtt::make_flow_base(
-                        filled.get_data_array(), filled.get_mask_array(),
-                        filled.get_meta(), fi_opts);
-
                 std::cout << "  Extracting contributing pixels raster...\n";
                 ca_raster = lsdtt::lsdtt_raster_cpu(
                     flow->get_n_contributing_pixels_raster());
@@ -561,35 +686,56 @@ int main(int argc, char* argv[])
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Warning: auto-compute of n_contributing_pixels failed: "
+                std::cerr << "Warning: failed to extract n_contributing_pixels: "
                           << e.what() << " — skipping outlets.\n";
             }
         }
-        else
+    }
+    else
+    {
+        const std::string ca_path = pp.get_read_path() + "/" + ca_fname;
+        std::cout << "  Loading contributing pixels raster: " << ca_path << "\n";
+        try
         {
-            const std::string ca_path = pp.get_read_path() + "/" + ca_fname;
-            std::cout << "  Loading contributing pixels raster: " << ca_path << "\n";
-            try
-            {
-                lsdtt::lsdtt_data_loader ca_loader;
-                ca_loader.open_raster(ca_path);
-                ca_raster = lsdtt::lsdtt_raster_cpu(ca_loader);
-                ca_ok = true;
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "Warning: failed to load contributing pixels raster: "
-                          << e.what() << " — skipping outlets.\n";
-            }
+            lsdtt::lsdtt_data_loader ca_loader;
+            ca_loader.open_raster(ca_path);
+            ca_raster = lsdtt::lsdtt_raster_cpu(ca_loader);
+            ca_ok = true;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: failed to load contributing pixels raster: "
+                      << e.what() << " — skipping outlets.\n";
         }
 
+        // Still build flow from DEM so we can prune upstream duplicates.
         if (ca_ok)
         {
-            try
-            {
-                const lsdtt::lsdtt_raster_cpu outlets =
-                    lsdtt::find_mountain_front_outlets(
-                        mountain_mask, ca_raster, ip["min_contributing_pixels"]);
+            std::cout << "  Building flow routing from DEM for downstream-pruning...\n";
+            flow_ok = build_flow_from_dem();
+        }
+    }
+
+    if (ca_ok && flow_ok)
+    {
+        try
+        {
+            const lsdtt::lsdtt_raster_cpu outlet_candidates =
+                lsdtt::find_mountain_front_outlets(
+                    mountain_mask, ca_raster, ip["min_contributing_pixels"]);
+
+            // -----------------------------------------------------------------
+            // Prune outlet candidates that have another outlet downstream.
+            //
+            // Replace get_receiver_index_vector() with your actual accessor if
+            // the flow object uses a different method name.
+            // -----------------------------------------------------------------
+            const lsdtt::lsdtt_raster_cpu outlets =
+                prune_upstream_outlets(
+                    outlet_candidates, *flow);
+
+
+
 
                 const lsdtt::lsdtt_raster_meta& mta  = outlets.get_meta();
                 const std::vector<float>&        odat = outlets.get_data();
@@ -667,6 +813,11 @@ int main(int argc, char* argv[])
                           << e.what() << "\n";
             }
         }
+    }
+    else
+    {
+        std::cerr << "Warning: could not compute both contributing area and flow topology "
+                     "required for outlet pruning — skipping outlets.\n";
     }
 
     std::cout << "\n";
