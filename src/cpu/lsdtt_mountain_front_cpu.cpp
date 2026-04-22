@@ -9,7 +9,7 @@
 #include "lsdtt_mountain_front_cpu.hpp"
 
 #include "lsdtt_raster_algebra.hpp"
-#include "lsdtt_raster_feature_finder_cpu.hpp"
+#include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
 #include "lsdtt_raster_surface_fitting_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"

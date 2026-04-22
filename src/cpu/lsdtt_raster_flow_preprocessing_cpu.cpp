@@ -20,7 +20,8 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
-#include "lsdtt_raster_feature_finder_cpu.hpp" 
+#include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "lsdtt_raster_binary_mask_vectorise_cpu.hpp"
 #include "lsdtt_raster_algebra.hpp"
 #include "../cpu/lsdtt_raster_cpu.hpp"
 #include "../utils/lsdtt_array2d.hpp"

@@ -266,11 +266,11 @@ int main(int argc, char* argv[])
     help_map["qq_n_bins"] = {"int","100",
         "Number of quantile bins in the QQ output CSVs.","100 = one row per percentile."};
 
-    int_default_map["cdf_n_bins"] = 100;
-    help_map["cdf_n_bins"] = {"int","100",
+    int_default_map["cdf_n_bins"] = 500;
+    help_map["cdf_n_bins"] = {"int","500",
         "Number of histogram bins for the empirical CDF output.",
-        "Increase for finer resolution.  The percentile threshold is readable "
-        "directly as the x value where the CDF crosses threshold/100."};
+        "The percentile threshold is readable directly as the x value where "
+        "the CDF crosses threshold/100."};
 
     // --- Riser removal ---
     bool_default_map["remove_risers"] = false;
@@ -668,6 +668,12 @@ int main(int argc, char* argv[])
                           << "  Max CDF divergence: " << max_diff << "\n"
                           << "  Relief threshold  : " << thresh_value << " m"
                           << "  (=" << thresh_percentile << "th percentile)\n\n";
+
+                {
+                    const std::string p = pp.get_full_write_path() + "_relief_adaptive_cdf.csv";
+                    std::cout << "Writing adaptive relief CDF: " << p << "\n";
+                    write_smoothed_cdf_csv(loader, p, scdf, fits);
+                }
 
                 req.relief_threshold_percentile = thresh_percentile;
             }

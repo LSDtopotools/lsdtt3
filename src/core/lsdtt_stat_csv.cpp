@@ -54,23 +54,26 @@ void write_smoothed_cdf_csv(
         if (!best || f.ks_statistic < best->ks_statistic) best = &f;
     }
 
-    std::vector<std::vector<std::string>> rows;
-    rows.reserve(scdf.bin_centres.size());
-    for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
-    {
-        const double x   = scdf.bin_centres[i];
-        const double fit = best ? eval_cdf(*best, x)
-                                : std::numeric_limits<double>::quiet_NaN();
-        rows.push_back({ std::to_string(x),
-                         std::to_string(scdf.cdf[i]),
-                         std::to_string(fit) });
-    }
-
     const std::string fit_col = best
         ? std::string("fitted_cdf_") + distribution_family_name(best->family)
         : "fitted_cdf";
 
-    loader.write_csv(out_path, {"bin_centre", "cdf", fit_col}, rows);
+    const double nan_val = std::numeric_limits<double>::quiet_NaN();
+
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(scdf.bin_centres.size());
+    for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
+    {
+        const double x    = scdf.bin_centres[i];
+        const double fit  = best ? eval_cdf(*best, x) : nan_val;
+        const double diff = std::isfinite(fit) ? scdf.cdf[i] - fit : nan_val;
+        rows.push_back({ std::to_string(x),
+                         std::to_string(scdf.cdf[i]),
+                         std::to_string(fit),
+                         std::to_string(diff) });
+    }
+
+    loader.write_csv(out_path, {"bin_centre", "cdf", fit_col, "cdf_minus_fitted"}, rows);
 }
 
 // -----------------------------------------------------------------------------

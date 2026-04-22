@@ -10,7 +10,7 @@
 
 #include "lsdtt_flat_surface_plane_analysis.hpp"  // analyse_flat_surface_planes
 #include "lsdtt_raster_algebra.hpp"              // raster_subtract
-#include "lsdtt_raster_feature_finder_cpu.hpp"   // label_binary_components_by_size
+#include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"         // wavelet_quadratic_fit, fftw2D_highpass_filter
 #include "lsdtt_raster_surface_metrics_cpu.hpp"  // moving_window_mean, moving_window_local_relief
 #include "lsdtt_surface_texture_cpu.hpp"         // calculate_madk2, moving_window_iqr, compute_nvd

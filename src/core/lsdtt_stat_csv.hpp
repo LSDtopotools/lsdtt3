@@ -53,9 +53,10 @@ void write_qq_csv(
 //   cdf                      — empirical cumulative probability
 //   fitted_cdf_<family>      — parametric CDF of the best valid fit at x
 //                              (column header includes the family name)
+//   cdf_minus_fitted         — empirical CDF minus fitted CDF (divergence)
 //
 // The best fit is the valid entry in `fits` with the lowest KS statistic.
-// If no valid fit exists the third column is written as NaN.
+// If no valid fit exists the third and fourth columns are written as NaN.
 // -----------------------------------------------------------------------------
 void write_smoothed_cdf_csv(
     lsdtt_data_loader&                         loader,

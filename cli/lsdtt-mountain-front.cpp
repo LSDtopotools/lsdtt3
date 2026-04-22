@@ -71,7 +71,7 @@
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_mountain_front_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
-#include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
@@ -250,6 +250,19 @@ int main(int argc, char* argv[])
         "Square window size (pixels) for local relief (max - min).",
         "Must be odd and >= 3."};
 
+    // --- Stage 2: relief threshold ---
+    bool_default_map["adaptive_relief_threshold"] = true;
+    help_map["adaptive_relief_threshold"] = {"bool","true",
+        "Automatically select the relief threshold using CDF divergence.",
+        "Computes a 500-bin empirical CDF, fits the best parametric distribution, "
+        "and picks the x-value where the empirical CDF most exceeds the fitted CDF. "
+        "Set to false to use relief_threshold_percentile instead."};
+
+    float_default_map["relief_threshold_percentile"] = 10.0f;
+    help_map["relief_threshold_percentile"] = {"float","10",
+        "Percentile of the relief distribution used as the flat/mountain threshold.",
+        "Only used when adaptive_relief_threshold = false.  Range: 0–100."};
+
     // --- Stages 4-7: flat mask post-processing ---
     int_default_map["min_flat_component_pixels"] = 500;
     help_map["min_flat_component_pixels"] = {"int","500",
@@ -382,9 +395,12 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Stage 2: adaptive relief threshold via 500-bin CDF divergence
+    // Stage 2: relief threshold (adaptive CDF divergence or fixed percentile)
     // -------------------------------------------------------------------------
-    std::cout << "Stage 2: computing adaptive relief threshold...\n";
+    const bool use_adaptive = bf["adaptive_relief_threshold"];
+    std::cout << "Stage 2: computing relief threshold ("
+              << (use_adaptive ? "adaptive CDF divergence" : "fixed percentile")
+              << ")...\n";
 
     const lsdtt::lsdtt_raster_meta& rmeta = relief.get_meta();
     const std::vector<float>&        rdata = relief.get_data();
@@ -401,7 +417,7 @@ int main(int argc, char* argv[])
     }
 
     if (relief_vals.size() < 10)
-    { std::cerr << "Error: too few valid relief values to compute adaptive threshold.\n"; return 1; }
+    { std::cerr << "Error: too few valid relief values to compute threshold.\n"; return 1; }
 
     const lsdtt::lsdtt_smoothed_cdf               scdf = lsdtt::compute_smoothed_cdf(relief_vals, 500);
     const std::vector<lsdtt::lsdtt_distribution_fit> fits = lsdtt::fit_distributions(relief_vals);
@@ -412,12 +428,15 @@ int main(int argc, char* argv[])
         if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
         if (!best_fit || f.ks_statistic < best_fit->ks_statistic) best_fit = &f;
     }
-    if (!best_fit)
-    { std::cerr << "Error: no valid distribution fit for relief CDF.\n"; return 1; }
 
     double relief_threshold  = std::numeric_limits<double>::quiet_NaN();
     double relief_percentile = std::numeric_limits<double>::quiet_NaN();
+
+    if (use_adaptive)
     {
+        if (!best_fit)
+        { std::cerr << "Error: no valid distribution fit for relief CDF.\n"; return 1; }
+
         double      max_diff = -std::numeric_limits<double>::infinity();
         std::size_t max_idx  = 0;
         for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
@@ -429,11 +448,27 @@ int main(int argc, char* argv[])
         }
         relief_threshold  = scdf.bin_centres[max_idx];
         relief_percentile = scdf.cdf[max_idx] * 100.0;
+
+        std::cout << "  Distribution fit  : "
+                  << lsdtt::distribution_family_name(best_fit->family) << "\n"
+                  << "  Max CDF divergence: " << max_diff << "\n";
+    }
+    else
+    {
+        const double target_pct = static_cast<double>(ff["relief_threshold_percentile"]);
+        const double target_p   = target_pct / 100.0;
+        std::size_t idx = 0;
+        for (std::size_t i = 0; i < scdf.cdf.size(); ++i)
+        {
+            if (scdf.cdf[i] >= target_p) { idx = i; break; }
+            idx = i;
+        }
+        relief_threshold  = scdf.bin_centres[idx];
+        relief_percentile = scdf.cdf[idx] * 100.0;
+        std::cout << "  Using fixed percentile: " << target_pct << "\n";
     }
 
-    std::cout << "  Distribution fit  : "
-              << lsdtt::distribution_family_name(best_fit->family) << "\n"
-              << "  Relief threshold  : " << relief_threshold << " m"
+    std::cout << "  Relief threshold  : " << relief_threshold << " m"
               << "  (=" << relief_percentile << "th percentile)\n\n";
 
     {

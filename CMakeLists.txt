@@ -221,7 +221,9 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_disorder_cpu.cpp
     src/cpu/lsdtt_channel_network_analysis_cpu.cpp
     src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.cpp
-
+    src/cpu/lsdtt_raster_skeleton_graph_cpu.cpp
+    src/cpu/lsdtt_raster_binary_mask_vectorise_cpu.cpp
+    src/cpu/lsdtt_raster_binary_mask_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)

@@ -13,8 +13,10 @@
 // Dependencies: <array>, <algorithm>, <cmath> only.
 //
 // Current contents:
-//   - sym3x3_eigenvalues   analytical eigenvalues of a real symmetric 3×3 matrix
-//   - invert3x3            Gauss-Jordan inversion of a general 3×3 matrix
+//   - sym3x3_eigenvalues              analytical eigenvalues of a real symmetric 3×3 matrix
+//   - invert3x3                       Gauss-Jordan inversion of a general 3×3 matrix
+//   - angle_between_vectors_degrees   angle between two 2D vectors, in degrees
+//   - point_to_segment_distance       point-to-segment distance in 2D
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -22,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace lsdtt {
 
@@ -159,6 +162,64 @@ inline bool invert3x3(const double A[3][3], double inv[3][3])
             inv[i][j] = aug[i][3 + j];
 
     return true;
+}
+
+// -----------------------------------------------------------------------------
+// angle_between_vectors_degrees
+//
+// Returns the angle in degrees between two 2D vectors (ar, ac) and (br, bc).
+// Returns +infinity if either vector has zero or non-finite length.
+// -----------------------------------------------------------------------------
+inline double angle_between_vectors_degrees(
+    double ar, double ac,
+    double br, double bc)
+{
+    const double an = std::sqrt(ar * ar + ac * ac);
+    const double bn = std::sqrt(br * br + bc * bc);
+
+    if (!(std::isfinite(an) && std::isfinite(bn)) || an <= 0.0 || bn <= 0.0)
+        return std::numeric_limits<double>::infinity();
+
+    double c = (ar * br + ac * bc) / (an * bn);
+    if (c < -1.0) c = -1.0;
+    if (c >  1.0) c =  1.0;
+
+    return std::acos(c) * (180.0 / M_PI);
+}
+
+
+// -----------------------------------------------------------------------------
+// point_to_segment_distance
+//
+// Euclidean distance from point (pr, pc) to the line segment from (ar, ac) to
+// (br, bc), in whatever units the coordinates are given in.
+// -----------------------------------------------------------------------------
+inline double point_to_segment_distance(
+    double pr, double pc,
+    double ar, double ac,
+    double br, double bc)
+{
+    const double vr = br - ar;
+    const double vc = bc - ac;
+    const double vv = vr * vr + vc * vc;
+
+    if (vv <= 0.0)
+    {
+        const double dr = pr - ar;
+        const double dc = pc - ac;
+        return std::sqrt(dr * dr + dc * dc);
+    }
+
+    double t = ((pr - ar) * vr + (pc - ac) * vc) / vv;
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+
+    const double qr = ar + t * vr;
+    const double qc = ac + t * vc;
+    const double dr = pr - qr;
+    const double dc = pc - qc;
+
+    return std::sqrt(dr * dr + dc * dc);
 }
 
 } // namespace lsdtt
