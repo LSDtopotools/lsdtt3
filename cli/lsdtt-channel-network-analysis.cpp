@@ -227,17 +227,22 @@ int main(int argc, char* argv[])
 
     bool_default_map["analyse_upstream_of_outlet_csv"] = false;
     help_map["analyse_upstream_of_outlet_csv"] = {"bool","false",
-        "Analyse all junctions upstream of outlet points supplied in a CSV.",
-        "The CSV is read in latitude/longitude, optionally snapped to the "
-        "channel network, converted to junctions, and expanded to their full "
-        "upstream junction subnetworks."};
+        "Analyse all junctions upstream of outlet points supplied in a file.",
+        "The file (CSV, FlatGeobuf, or GeoPackage) is loaded, optionally snapped "
+        "to the channel network, converted to junctions, and expanded to their "
+        "full upstream junction subnetworks. "
+        "Set basin_outlet_file to the path of the file."};
 
-    // --- Basin outlet input / snapping for selection from CSV ---
-    string_default_map["basin_outlet_csv"] = "NULL";
-    help_map["basin_outlet_csv"] = {"string","NULL",
-        "CSV file of requested outlet points.",
-        "Required when analyse_upstream_of_outlet_csv is true. CSV must contain "
-        "columns named latitude and longitude in WGS84 decimal degrees."};
+    // --- Basin outlet input / snapping ---
+    string_default_map["basin_outlet_file"] = "NULL";
+    help_map["basin_outlet_file"] = {"string","NULL",
+        "File of requested outlet points (CSV, FlatGeobuf, or GeoPackage).",
+        "Required when analyse_upstream_of_outlet_csv is true. "
+        "Format is auto-detected from the file extension: "
+        "*.csv is read as latitude and longitude columns (EPSG:4326); "
+        "*.fgb or *.gpkg is read as a point vector layer. "
+        "For CSV inputs columns must be named 'latitude' and 'longitude'. "
+        "For vector inputs all features must be point geometry."};
 
     string_default_map["basin_outlet_snapping_method"] = "downstream";
     help_map["basin_outlet_snapping_method"] = {"string","downstream",
@@ -590,9 +595,9 @@ int main(int argc, char* argv[])
     }
 
     if (bf["analyse_upstream_of_outlet_csv"] &&
-        (sf["basin_outlet_csv"] == "NULL" || sf["basin_outlet_csv"].empty()))
+        (sf["basin_outlet_file"] == "NULL" || sf["basin_outlet_file"].empty()))
     {
-        std::cerr << "FATAL: basin_outlet_csv is required when "
+        std::cerr << "FATAL: basin_outlet_file is required when "
                   << "analyse_upstream_of_outlet_csv is true.\n";
         return 1;
     }
@@ -860,17 +865,32 @@ int main(int argc, char* argv[])
         }
         else
         {
-            const std::string basin_csv_path =
-                pp.add_read_path_if_needed(sf["basin_outlet_csv"]);
+            const std::string basin_outlet_file_path =
+                pp.add_read_path_if_needed(sf["basin_outlet_file"]);
 
-            std::cout << "Reading outlet CSV: " << basin_csv_path << "\n";
+            std::cout << "Reading outlet file: " << basin_outlet_file_path << "\n";
+
+            {
+                const auto& p = basin_outlet_file_path;
+                const bool looks_like_csv =
+                    p.size() >= 4 &&
+                    to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                if (looks_like_csv)
+                    std::cout << "Outlet file is CSV: latitude and longitude "
+                                 "columns (EPSG:4326) will be transformed to "
+                                 "raster CRS.\n";
+                else
+                    std::cout << "Outlet file is a vector layer: coordinates "
+                                 "will be transformed from layer CRS to raster "
+                                 "CRS.\n";
+            }
 
             std::vector<lsdtt::lsdtt_input_point> requested_outlets;
             try
             {
                 requested_outlets =
-                    lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
-                        basin_csv_path,
+                    lsdtt::load_points_in_raster_crs(
+                        basin_outlet_file_path,
                         dem.get_meta()
                     );
             }
@@ -878,6 +898,59 @@ int main(int argc, char* argv[])
             {
                 std::cerr << "FATAL: " << e.what() << "\n";
                 return 1;
+            }
+
+            // Per-point status warnings
+            {
+                int n_transform_failed = 0;
+                int n_unsupported_geom = 0;
+                int n_outside          = 0;
+                int n_empty_geom       = 0;
+                int n_missing_crs      = 0;
+                for (const auto& pt : requested_outlets)
+                {
+                    switch (pt.status)
+                    {
+                        case lsdtt::lsdtt_point_input_status::coordinate_transform_failed:
+                            ++n_transform_failed; break;
+                        case lsdtt::lsdtt_point_input_status::unsupported_geometry_type:
+                            ++n_unsupported_geom; break;
+                        case lsdtt::lsdtt_point_input_status::outside_raster_extent:
+                            ++n_outside; break;
+                        case lsdtt::lsdtt_point_input_status::empty_geometry:
+                            ++n_empty_geom; break;
+                        case lsdtt::lsdtt_point_input_status::missing_source_crs:
+                            ++n_missing_crs; break;
+                        default: break;
+                    }
+                }
+                if (n_transform_failed > 0)
+                {
+                    std::cerr << "Warning: " << n_transform_failed
+                              << " point(s) failed coordinate transformation.\n";
+                    const auto& p = basin_outlet_file_path;
+                    const bool looks_like_csv =
+                        p.size() >= 4 &&
+                        to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                    if (looks_like_csv)
+                        std::cerr << "  -> CSV files must have columns named "
+                                     "'latitude' and 'longitude'.\n";
+                }
+                if (n_unsupported_geom > 0)
+                    std::cerr << "Warning: " << n_unsupported_geom
+                              << " feature(s) skipped — not point geometry.\n";
+                if (n_missing_crs > 0)
+                    std::cerr << "Warning: " << n_missing_crs
+                              << " feature(s) had no source CRS and could not "
+                                 "be transformed.\n";
+                if (n_empty_geom > 0)
+                    std::cerr << "Warning: " << n_empty_geom
+                              << " feature(s) had empty geometry and were "
+                                 "skipped.\n";
+                if (n_outside > 0)
+                    std::cout << "Note: " << n_outside
+                              << " point(s) fall outside the raster extent "
+                                 "and will be skipped.\n";
             }
 
             lsdtt::lsdtt_square_snap_options square_snap_options;

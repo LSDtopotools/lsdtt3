@@ -152,19 +152,20 @@ int main(int argc, char* argv[])
         "Square window size (pixels) for local relief (max - min) computation.",
         "Must be odd and >= 3.  5 = 5x5 neighbourhood."};
 
-    float_default_map["relief_threshold_percentile"] = 10.0f;
-    help_map["relief_threshold_percentile"] = {"float","10",
-        "Percentile of the local relief distribution below which a pixel is classed flat.",
-        "Range: 0-100.  Lower values = stricter (only lowest-relief pixels pass)."};
+    float_default_map["relief_threshold_metres"] = 1.0f;
+    help_map["relief_threshold_metres"] = {"float","1.0",
+        "Local relief value (m) below which a pixel is classed flat.",
+        "Read the threshold directly off the _relief_cdf.csv output.  "
+        "Only used when adaptive_relief_threshold = false."};
 
     bool_default_map["adaptive_relief_threshold"] = false;
     help_map["adaptive_relief_threshold"] = {"bool","false",
-        "Automatically select the relief percentile threshold using CDF divergence.",
+        "Automatically select the relief threshold using CDF divergence.",
         "Computes the relief CDF in 500 bins, fits the best parametric distribution, "
         "and picks the x-value where the empirical CDF most exceeds the fitted CDF "
         "(flat pixels inflate the empirical distribution at low relief values, causing "
-        "a positive deviation).  Prints the chosen percentile and relief value to screen "
-        "and overrides relief_threshold_percentile."};
+        "a positive deviation).  Prints the chosen threshold and writes the CDF to file. "
+        "Overrides relief_threshold_metres."};
 
     // --- MADk2 ---
     bool_default_map["use_madk2"] = false;
@@ -570,7 +571,7 @@ int main(int argc, char* argv[])
     req.qq_n_bins                  = ip["qq_n_bins"];
     req.cdf_n_bins                 = ip["cdf_n_bins"];
     req.relief_window_pixels          = ip["relief_window_pixels"];
-    req.relief_threshold_percentile   = static_cast<double>(ff["relief_threshold_percentile"]);
+    req.relief_threshold_metres        = static_cast<double>(ff["relief_threshold_metres"]);
     req.remove_risers                  = bf["remove_risers"];
     req.riser_residual_relief_fraction = ff["riser_residual_relief_fraction"];
     req.riser_plane_min_pixels         = ip["riser_plane_min_pixels"];
@@ -613,8 +614,8 @@ int main(int argc, char* argv[])
         if (dvals.size() < 10)
         {
             std::cerr << "Warning: too few valid relief values for adaptive threshold — "
-                         "using relief_threshold_percentile = "
-                      << ff["relief_threshold_percentile"] << "\n";
+                         "using relief_threshold_metres = "
+                      << ff["relief_threshold_metres"] << "\n";
         }
         else
         {
@@ -637,8 +638,8 @@ int main(int argc, char* argv[])
             if (!best)
             {
                 std::cerr << "Warning: no valid distribution fit for relief — "
-                             "using relief_threshold_percentile = "
-                          << ff["relief_threshold_percentile"] << "\n";
+                             "using relief_threshold_metres = "
+                          << ff["relief_threshold_metres"] << "\n";
             }
             else
             {
@@ -675,7 +676,7 @@ int main(int argc, char* argv[])
                     write_smoothed_cdf_csv(loader, p, scdf, fits);
                 }
 
-                req.relief_threshold_percentile = thresh_percentile;
+                req.relief_threshold_metres = thresh_value;
             }
         }
     }
@@ -701,7 +702,7 @@ int main(int argc, char* argv[])
         std::cout << "  NVD s3       radius=" << req.nvd_window_radius_metres
                   << " m  threshold=" << req.nvd_threshold_percentile << "th pct\n";
     std::cout << "  Local relief  window=" << req.relief_window_pixels
-              << " px  threshold=" << req.relief_threshold_percentile << "th pct\n";
+              << " px  threshold=" << req.relief_threshold_metres << " m\n";
     std::cout << "  combination: " << (req.require_all_metrics_pass ? "AND" : "OR")
               << "  min_component=" << req.min_component_pixels << " px\n\n";
 

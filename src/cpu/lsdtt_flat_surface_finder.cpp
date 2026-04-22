@@ -509,7 +509,10 @@ flat_surface_result find_flat_surfaces(
     // -------------------------------------------------------------------------
     // Local relief (always computed and used)
     // -------------------------------------------------------------------------
-    check_pct(request.relief_threshold_percentile, "relief_threshold_percentile");
+    if (!(request.relief_threshold_metres > 0.0))
+        throw std::invalid_argument(
+            "lsdtt::find_flat_surfaces: relief_threshold_metres must be > 0"
+        );
     {
         result.relief = moving_window_local_relief(
             dem, relief_radius, window_shape::square);
@@ -613,10 +616,7 @@ flat_surface_result find_flat_surfaces(
         }
         else
         {
-            std::vector<float> vals = collect_valid_values(result.relief);
-            relief_threshold_value = vals.empty() ? 0.0f :
-                static_cast<float>(compute_percentile<float>(
-                    vals, request.relief_threshold_percentile));
+            relief_threshold_value = static_cast<float>(request.relief_threshold_metres);
         }
         result.relief_flat_mask = threshold_at_value(
             result.relief, relief_threshold_value);

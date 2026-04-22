@@ -241,33 +241,100 @@ static std::vector<std::int64_t> resolve_outlet_flats(
     const lsdtt::lsdtt_param_parser& pp,
     const lsdtt::lsdtt_raster_cpu& dem,
     const lsdtt::lsdtt_flow_base& flow,
-    const std::string& outlet_csv,
+    const std::string& outlet_file,
     const std::string& snapping_method,
     int snap_threshold_pixels,
     int min_search_radius_pixels,
     int max_search_radius_pixels)
 {
-    if (outlet_csv == "NULL" || outlet_csv.empty())
+    if (outlet_file == "NULL" || outlet_file.empty())
     {
         const std::int64_t flat = largest_basin_outlet_flat(flow);
-        std::cout << "No outlet CSV supplied; using largest basin outlet flat: "
+        std::cout << "No outlet file supplied; using largest basin outlet flat: "
                   << flat << "\n";
         return {flat};
     }
 
-    const std::string csv_path = pp.add_read_path_if_needed(outlet_csv);
+    const std::string outlet_file_path = pp.add_read_path_if_needed(outlet_file);
 
-    std::cout << "Reading outlet CSV: " << csv_path << "\n";
+    std::cout << "Reading outlet file: " << outlet_file_path << "\n";
+
+    {
+        const auto& p = outlet_file_path;
+        const bool looks_like_csv =
+            p.size() >= 4 &&
+            to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+        if (looks_like_csv)
+            std::cout << "Outlet file is CSV: latitude and longitude "
+                         "columns (EPSG:4326) will be transformed to "
+                         "raster CRS.\n";
+        else
+            std::cout << "Outlet file is a vector layer: coordinates "
+                         "will be transformed from layer CRS to raster "
+                         "CRS.\n";
+    }
 
     std::vector<lsdtt::lsdtt_input_point> requested_outlets =
-        lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
-            csv_path,
+        lsdtt::load_points_in_raster_crs(
+            outlet_file_path,
             dem.get_meta()
         );
 
     if (requested_outlets.empty())
     {
-        throw std::runtime_error("Outlet CSV contained no usable points.");
+        throw std::runtime_error("Outlet file contained no usable points.");
+    }
+
+    // Per-point status warnings
+    {
+        int n_transform_failed = 0;
+        int n_unsupported_geom = 0;
+        int n_outside          = 0;
+        int n_empty_geom       = 0;
+        int n_missing_crs      = 0;
+        for (const auto& pt : requested_outlets)
+        {
+            switch (pt.status)
+            {
+                case lsdtt::lsdtt_point_input_status::coordinate_transform_failed:
+                    ++n_transform_failed; break;
+                case lsdtt::lsdtt_point_input_status::unsupported_geometry_type:
+                    ++n_unsupported_geom; break;
+                case lsdtt::lsdtt_point_input_status::outside_raster_extent:
+                    ++n_outside; break;
+                case lsdtt::lsdtt_point_input_status::empty_geometry:
+                    ++n_empty_geom; break;
+                case lsdtt::lsdtt_point_input_status::missing_source_crs:
+                    ++n_missing_crs; break;
+                default: break;
+            }
+        }
+        if (n_transform_failed > 0)
+        {
+            std::cerr << "Warning: " << n_transform_failed
+                      << " point(s) failed coordinate transformation.\n";
+            const auto& p = outlet_file_path;
+            const bool looks_like_csv =
+                p.size() >= 4 &&
+                to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+            if (looks_like_csv)
+                std::cerr << "  -> CSV files must have columns named "
+                             "'latitude' and 'longitude'.\n";
+        }
+        if (n_unsupported_geom > 0)
+            std::cerr << "Warning: " << n_unsupported_geom
+                      << " feature(s) skipped — not point geometry.\n";
+        if (n_missing_crs > 0)
+            std::cerr << "Warning: " << n_missing_crs
+                      << " feature(s) had no source CRS and could not "
+                         "be transformed.\n";
+        if (n_empty_geom > 0)
+            std::cerr << "Warning: " << n_empty_geom
+                      << " feature(s) had empty geometry and were skipped.\n";
+        if (n_outside > 0)
+            std::cout << "Note: " << n_outside
+                      << " point(s) fall outside the raster extent "
+                         "and will be skipped.\n";
     }
 
     lsdtt::lsdtt_square_snap_options square_snap_options;
@@ -709,7 +776,7 @@ int main(int argc, char* argv[])
     float_default_map["fill_min_slope"] = 0.0001f;
 
     // Outlet selection
-    string_default_map["outlet_csv"] = "NULL";
+    string_default_map["outlet_file"] = "NULL";
     string_default_map["outlet_snapping_method"] = "downstream";
     int_default_map["outlet_threshold_contributing_pixels"] = 1000;
     int_default_map["outlet_min_search_radius_pixels"] = 0;
@@ -893,7 +960,7 @@ int main(int argc, char* argv[])
             pp,
             dem,
             *flow,
-            sf["outlet_csv"],
+            sf["outlet_file"],
             snapping_method,
             ifs["outlet_threshold_contributing_pixels"],
             ifs["outlet_min_search_radius_pixels"],

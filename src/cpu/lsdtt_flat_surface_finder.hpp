@@ -176,7 +176,7 @@ struct flat_surface_request
     // window_pixels is the full window side length; must be odd and >= 3.
     // -------------------------------------------------------------------------
     int          relief_window_pixels        = 5;
-    double       relief_threshold_percentile = 10.0;   // below this = flat
+    double       relief_threshold_metres     = 1.0;    // below this = flat
 
     // -------------------------------------------------------------------------
     // Riser removal (optional secondary pass)

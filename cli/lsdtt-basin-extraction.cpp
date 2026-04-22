@@ -274,13 +274,19 @@ int main(int argc, char* argv[])
 
 
     // --- Basin outlet input ---
-    string_default_map["basin_outlet_csv"] = "NULL";
-    help_map["basin_outlet_csv"] = {"string","NULL",
-        "CSV file of requested basin outlet points.",
+    string_default_map["basin_outlet_file"] = "NULL";
+    help_map["basin_outlet_file"] = {"string","NULL",
+        "File of requested basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "Required when select_basins_from_outlets or "
-        "select_basins_from_outlets_nested is true. CSV must contain columns "
-        "named latitude and longitude. Coordinates are interpreted as WGS84 "
-        "(EPSG:4326) decimal degrees."};
+        "select_basins_from_outlets_nested is true. "
+        "Format is auto-detected from the file extension: "
+        "*.csv is read as a text file with latitude and longitude columns "
+        "(WGS84 / EPSG:4326 decimal degrees); "
+        "*.fgb or *.gpkg is read as a point vector layer in its own CRS, "
+        "which is then transformed to the raster CRS. "
+        "For CSV inputs the file must contain columns named exactly "
+        "'latitude' and 'longitude'. "
+        "For vector inputs all features must be point geometry."};
 
     // --- Basin outlet snapping ---
     string_default_map["basin_outlet_snapping_method"] = "downstream";
@@ -319,14 +325,14 @@ int main(int argc, char* argv[])
     bool_default_map["select_basins_from_outlets"] = false;
     help_map["select_basins_from_outlets"] = {"bool","false",
         "Select basins from supplied basin outlet points.",
-        "Reads basin_outlet_csv, optionally snaps the mapped pixels, and then "
+        "Reads basin_outlet_file, optionally snaps the mapped pixels, and then "
         "constructs one lsdtt_junction_basin per supplied basin outlet."
     };
 
     bool_default_map["select_basins_from_outlets_nested"] = false;
     help_map["select_basins_from_outlets_nested"] = {"bool","false",
         "Select supplied basin outlets and all nested upstream basins.",
-        "Reads basin_outlet_csv, optionally snaps the mapped pixels, constructs "
+        "Reads basin_outlet_file, optionally snaps the mapped pixels, constructs "
         "one lsdtt_junction_basin per supplied basin outlet, and then expands "
         "selection to include all upstream nested basins from the junction-network "
         "s_vector."
@@ -583,9 +589,9 @@ int main(int argc, char* argv[])
     }
 
     if ((select_basins_from_outlets || select_basins_from_outlets_nested) &&
-        (sf["basin_outlet_csv"] == "NULL" || sf["basin_outlet_csv"].empty()))
+        (sf["basin_outlet_file"] == "NULL" || sf["basin_outlet_file"].empty()))
     {
-        std::cerr << "FATAL: basin_outlet_csv is required when selecting "
+        std::cerr << "FATAL: basin_outlet_file is required when selecting "
                   << "basins from supplied outlet points.\n";
         return 1;
     }
@@ -618,8 +624,8 @@ int main(int argc, char* argv[])
 
     if (select_basins_from_outlets || select_basins_from_outlets_nested)
     {
-        std::cout << "Basin outlet CSV             : "
-                  << sf["basin_outlet_csv"] << "\n";
+        std::cout << "Basin outlet file            : "
+                  << sf["basin_outlet_file"] << "\n";
         std::cout << "Basin outlet snapping method : "
                   << basin_outlet_snapping_method << "\n";
 
@@ -898,15 +904,15 @@ int main(int argc, char* argv[])
         }
         else
         {
-            const std::string basin_csv_path =
-                pp.add_read_path_if_needed(sf["basin_outlet_csv"]);
+            const std::string basin_outlet_file_path =
+                pp.add_read_path_if_needed(sf["basin_outlet_file"]);
 
-            std::cout << "Reading basin outlet CSV: "
-                      << basin_csv_path << "\n";
+            std::cout << "Reading basin outlet file: "
+                      << basin_outlet_file_path << "\n";
 
             // -----------------------------------------------------------------
             // Coordinate-system and bounding-box diagnostics (printed before
-            // the CSV load so they appear even if the load throws).
+            // the load so they appear even if the load throws).
             // -----------------------------------------------------------------
             {
                 const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
@@ -930,16 +936,26 @@ int main(int argc, char* argv[])
                 std::cout << "Raster size          : "
                           << m.n_cols << " cols x " << m.n_rows << " rows\n";
 
-                std::cout << "\nOutlet CSV was read as EPSG:4326 (lat/lon) "
-                             "and transformed to raster CRS.\n";
+                const auto& p = basin_outlet_file_path;
+                const bool looks_like_csv =
+                    p.size() >= 4 &&
+                    to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                if (looks_like_csv)
+                    std::cout << "\nOutlet file is CSV: latitude and longitude "
+                                 "columns (EPSG:4326) will be transformed to "
+                                 "raster CRS.\n";
+                else
+                    std::cout << "\nOutlet file is a vector layer: coordinates "
+                                 "will be transformed from layer CRS to raster "
+                                 "CRS.\n";
             }
 
             std::vector<lsdtt::lsdtt_input_point> requested_outlets;
             try
             {
                 requested_outlets =
-                    lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
-                        basin_csv_path,
+                    lsdtt::load_points_in_raster_crs(
+                        basin_outlet_file_path,
                         dem.get_meta()
                     );
             }
@@ -950,6 +966,59 @@ int main(int argc, char* argv[])
             }
             std::cout << "Read " << requested_outlets.size()
                       << " basin outlet point(s)\n";
+
+            // Per-point status warnings
+            {
+                int n_transform_failed = 0;
+                int n_unsupported_geom = 0;
+                int n_outside          = 0;
+                int n_empty_geom       = 0;
+                int n_missing_crs      = 0;
+                for (const auto& pt : requested_outlets)
+                {
+                    switch (pt.status)
+                    {
+                        case lsdtt::lsdtt_point_input_status::coordinate_transform_failed:
+                            ++n_transform_failed; break;
+                        case lsdtt::lsdtt_point_input_status::unsupported_geometry_type:
+                            ++n_unsupported_geom; break;
+                        case lsdtt::lsdtt_point_input_status::outside_raster_extent:
+                            ++n_outside; break;
+                        case lsdtt::lsdtt_point_input_status::empty_geometry:
+                            ++n_empty_geom; break;
+                        case lsdtt::lsdtt_point_input_status::missing_source_crs:
+                            ++n_missing_crs; break;
+                        default: break;
+                    }
+                }
+                if (n_transform_failed > 0)
+                {
+                    std::cerr << "Warning: " << n_transform_failed
+                              << " point(s) failed coordinate transformation.\n";
+                    const auto& p = basin_outlet_file_path;
+                    const bool looks_like_csv =
+                        p.size() >= 4 &&
+                        to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                    if (looks_like_csv)
+                        std::cerr << "  -> CSV files must have columns named "
+                                     "'latitude' and 'longitude'.\n";
+                }
+                if (n_unsupported_geom > 0)
+                    std::cerr << "Warning: " << n_unsupported_geom
+                              << " feature(s) skipped — not point geometry.\n";
+                if (n_missing_crs > 0)
+                    std::cerr << "Warning: " << n_missing_crs
+                              << " feature(s) had no source CRS and could not "
+                                 "be transformed.\n";
+                if (n_empty_geom > 0)
+                    std::cerr << "Warning: " << n_empty_geom
+                              << " feature(s) had empty geometry and were "
+                                 "skipped.\n";
+                if (n_outside > 0)
+                    std::cout << "Note: " << n_outside
+                              << " point(s) fall outside the raster extent "
+                                 "and will be skipped.\n";
+            }
 
             if (bf["write_basin_outlet_points"])
             {
@@ -1048,11 +1117,18 @@ int main(int argc, char* argv[])
 
                 for (const auto& pt : requested_outlets)
                 {
-                    std::cout << "  Outlet " << pt.point_id << ": "
-                              << "lat=" << pt.original_y
-                              << " lon=" << pt.original_x
-                              << "  ->  x=" << pt.x
-                              << " y=" << pt.y;
+                    std::cout << "  Outlet " << pt.point_id << ": ";
+                    if (pt.has_original_coordinates)
+                    {
+                        if (pt.original_coordinates_are_longitude_latitude)
+                            std::cout << "lat=" << pt.original_y
+                                      << " lon=" << pt.original_x;
+                        else
+                            std::cout << "src_x=" << pt.original_x
+                                      << " src_y=" << pt.original_y;
+                        std::cout << "  ->  ";
+                    }
+                    std::cout << "x=" << pt.x << " y=" << pt.y;
 
                     const bool in_x = pt.x >= m.x_min && pt.x <= m.x_max();
                     const bool in_y = pt.y >= m.y_min && pt.y <= m.y_max();
@@ -1111,12 +1187,17 @@ int main(int argc, char* argv[])
 
             for (const auto& outlet : requested_outlets)
             {
-                const double latitude  = outlet.original_y;
-                const double longitude = outlet.original_x;
-
-                std::cout << "\nRequested basin outlet " << outlet.point_id
-                          << "  lat=" << latitude
-                          << " lon=" << longitude << "\n";
+                std::cout << "\nRequested basin outlet " << outlet.point_id;
+                if (outlet.has_original_coordinates)
+                {
+                    if (outlet.original_coordinates_are_longitude_latitude)
+                        std::cout << "  lat=" << outlet.original_y
+                                  << " lon=" << outlet.original_x;
+                    else
+                        std::cout << "  src_x=" << outlet.original_x
+                                  << " src_y=" << outlet.original_y;
+                }
+                std::cout << "\n";
 
                 try
                 {
