@@ -35,11 +35,9 @@
 
 #pragma once
 
-
-
-
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "../core/lsdtt_flow_base.hpp"
@@ -230,6 +228,22 @@ struct lsdtt_chi_ksn_inversion_collection_result
     const lsdtt_raster_cpu& denominator_raster,
     const std::vector<double>& tested_m_over_n,
     const lsdtt_chi_ksn_inversion_options& options = {}
+);
+
+// =============================================================================
+// CSV writers for inversion results
+// =============================================================================
+
+// Write a per-trial inversion summary (one row per basin × m/n).
+void write_chi_ksn_inversion_trials_csv(
+    const std::string& filename,
+    const lsdtt_chi_ksn_inversion_collection_result& results
+);
+
+// Write a per-basin best-trial summary (one row per basin).
+void write_chi_ksn_inversion_best_summary_csv(
+    const std::string& filename,
+    const lsdtt_chi_ksn_inversion_collection_result& results
 );
 
 } // namespace lsdtt

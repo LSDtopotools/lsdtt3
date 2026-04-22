@@ -61,6 +61,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -1203,6 +1204,80 @@ lsdtt_chi_ksn_inversion_collection_result invert_chi_ksn(
     }
 
     return result;
+}
+
+void write_chi_ksn_inversion_trials_csv(
+    const std::string& filename,
+    const lsdtt_chi_ksn_inversion_collection_result& results)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_ksn_inversion_trials_csv: cannot open " + filename);
+
+    out << "basin_index,outlet_flat,trial_index,m_over_n,mean_absolute_error,"
+           "root_mean_square_error,n_nodes,n_parameters,n_constrained_parameters\n";
+
+    for (std::size_t b = 0; b < results.basins.size(); ++b)
+    {
+        const auto& basin = results.basins[b];
+        for (std::size_t t = 0; t < basin.trials.size(); ++t)
+        {
+            const auto& tr = basin.trials[t];
+            out << static_cast<std::int32_t>(b) << ','
+                << basin.network.outlet_flat << ','
+                << static_cast<std::int32_t>(t) << ','
+                << tr.m_over_n << ','
+                << tr.mean_absolute_error << ','
+                << tr.root_mean_square_error << ','
+                << tr.n_nodes << ','
+                << tr.n_parameters << ','
+                << tr.n_constrained_parameters << '\n';
+        }
+    }
+}
+
+void write_chi_ksn_inversion_best_summary_csv(
+    const std::string& filename,
+    const lsdtt_chi_ksn_inversion_collection_result& results)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_ksn_inversion_best_summary_csv: cannot open " + filename);
+
+    out << "basin_index,outlet_flat,best_trial_index,best_m_over_n,"
+           "best_mean_absolute_error,best_root_mean_square_error,"
+           "n_nodes_best,n_parameters_best,n_constrained_parameters_best\n";
+
+    for (std::size_t b = 0; b < results.basins.size(); ++b)
+    {
+        const auto& basin = results.basins[b];
+
+        std::int32_t n_nodes_best  = 0;
+        std::int32_t n_params_best = 0;
+        std::int32_t n_const_best  = 0;
+
+        if (basin.best_trial_index >= 0 &&
+            static_cast<std::size_t>(basin.best_trial_index) < basin.trials.size())
+        {
+            const auto& tr =
+                basin.trials[static_cast<std::size_t>(basin.best_trial_index)];
+            n_nodes_best  = tr.n_nodes;
+            n_params_best = tr.n_parameters;
+            n_const_best  = tr.n_constrained_parameters;
+        }
+
+        out << static_cast<std::int32_t>(b) << ','
+            << basin.network.outlet_flat << ','
+            << basin.best_trial_index << ','
+            << basin.best_m_over_n << ','
+            << basin.best_mean_absolute_error << ','
+            << basin.best_root_mean_square_error << ','
+            << n_nodes_best << ','
+            << n_params_best << ','
+            << n_const_best << '\n';
+    }
 }
 
 } // namespace lsdtt

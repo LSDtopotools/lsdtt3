@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -512,12 +513,19 @@ private:
                     step_to_receiver_[static_cast<std::size_t>(donor)] +
                     max_upstream_length_[static_cast<std::size_t>(donor)];
 
-                if (candidate > best_length)
+                if (!std::isfinite(candidate))
+                {
+                    throw std::runtime_error(
+                        "lsdtt_chi_network_analysis_cpu: non-finite upstream length metric."
+                    );
+                }
+
+                if (best_donor_length < 0 || candidate > best_length)
                 {
                     best_length       = candidate;
                     best_donor_length = donor;
                 }
-                else if (nearly_equal(candidate, best_length))
+                else if (best_donor_length >= 0 && nearly_equal(candidate, best_length))
                 {
                     // Tie-break on larger source chi.
                     if (max_upstream_source_chi_[static_cast<std::size_t>(donor)] >
@@ -528,8 +536,16 @@ private:
                 }
             }
 
+            if (best_donor_length < 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_chi_network_analysis_cpu: failed to choose best donor by length."
+                );
+            }
+
             max_upstream_length_[idx]  = best_length;
             best_donor_by_length_[idx] = best_donor_length;
+
 
             // ---- max chi ----
             float best_source_chi = -std::numeric_limits<float>::infinity();
@@ -540,12 +556,19 @@ private:
                 const float candidate =
                     max_upstream_source_chi_[static_cast<std::size_t>(donor)];
 
-                if (candidate > best_source_chi)
+                if (!std::isfinite(candidate))
+                {
+                    throw std::runtime_error(
+                        "lsdtt_chi_network_analysis_cpu: non-finite upstream source chi."
+                    );
+                }
+
+                if (best_donor_chi < 0 || candidate > best_source_chi)
                 {
                     best_source_chi = candidate;
                     best_donor_chi  = donor;
                 }
-                else if (candidate == best_source_chi)
+                else if (best_donor_chi >= 0 && candidate == best_source_chi)
                 {
                     // Tie-break on longer flow path.
                     if (max_upstream_length_[static_cast<std::size_t>(donor)] >
@@ -556,8 +579,16 @@ private:
                 }
             }
 
+            if (best_donor_chi < 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_chi_network_analysis_cpu: failed to choose best donor by chi."
+                );
+            }
+
             max_upstream_source_chi_[idx] = best_source_chi;
             best_donor_by_chi_[idx]       = best_donor_chi;
+
         }
     }
 
@@ -1203,5 +1234,70 @@ void append_fit_result_to_node_table(
 
 } // anonymous namespace
 
+
+void write_chi_network_fit_nodes_csv(
+    const std::string& filename,
+    const lsdtt_chi_network_fit_node_table& table)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_network_fit_nodes_csv: cannot open " + filename);
+
+    out << "basin_index,outlet_flat,flat,receiver_flat,chi,observed_elevation,"
+           "fitted_elevation,residual_elevation,abs_residual_elevation,branch_id,"
+           "is_main_stem,is_source,is_junction,is_split_point\n";
+
+    const std::size_t n = table.flat.size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        out << table.basin_index[i] << ','
+            << table.outlet_flat[i] << ','
+            << table.flat[i] << ','
+            << table.receiver_flat[i] << ','
+            << table.chi[i] << ','
+            << table.observed_elevation[i] << ','
+            << table.fitted_elevation[i] << ','
+            << table.residual_elevation[i] << ','
+            << table.abs_residual_elevation[i] << ','
+            << table.branch_id[i] << ','
+            << static_cast<int>(table.is_main_stem[i]) << ','
+            << static_cast<int>(table.is_source[i]) << ','
+            << static_cast<int>(table.is_junction[i]) << ','
+            << static_cast<int>(table.is_split_point[i]) << '\n';
+    }
+}
+
+void write_chi_network_fit_segments_csv(
+    const std::string& filename,
+    const lsdtt_chi_network_fit_segment_table& table)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_network_fit_segments_csv: cannot open " + filename);
+
+    out << "basin_index,outlet_flat,segment_id,parent_segment_id,branch_id,"
+           "downstream_flat,upstream_flat,downstream_chi,upstream_chi,"
+           "downstream_elevation,upstream_elevation,max_abs_residual,n_nodes\n";
+
+    const std::size_t n = table.segment_id.size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        out << table.basin_index[i] << ','
+            << table.outlet_flat[i] << ','
+            << table.segment_id[i] << ','
+            << table.parent_segment_id[i] << ','
+            << table.branch_id[i] << ','
+            << table.downstream_flat[i] << ','
+            << table.upstream_flat[i] << ','
+            << table.downstream_chi[i] << ','
+            << table.upstream_chi[i] << ','
+            << table.downstream_elevation[i] << ','
+            << table.upstream_elevation[i] << ','
+            << table.max_abs_residual[i] << ','
+            << table.n_nodes[i] << '\n';
+    }
+}
 
 } // namespace lsdtt

@@ -36,6 +36,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "lsdtt_chi_network_analysis_cpu.hpp"
@@ -411,6 +412,64 @@ get_chi_disorder_bootstrap(
 get_chi_disorder_bootstrap(
     const lsdtt_chi_network_fit_collection_result& fit_results,
     const lsdtt_chi_disorder_bootstrap_options& options = {}
+);
+
+// =============================================================================
+// CSV writers for disorder tables
+// =============================================================================
+
+// Write a branch-subset sensitivity sample table to CSV.
+void write_chi_disorder_subset_samples_csv(
+    const std::string& filename,
+    const lsdtt_chi_branch_subset_sensitivity_sample_table& table
+);
+
+// Write a jackknife table to CSV.
+void write_chi_disorder_jackknife_csv(
+    const std::string& filename,
+    const lsdtt_chi_disorder_jackknife_table& table
+);
+
+// Write a bootstrap table to CSV.
+void write_chi_disorder_bootstrap_csv(
+    const std::string& filename,
+    const lsdtt_chi_disorder_bootstrap_table& table
+);
+
+// =============================================================================
+// Disorder sweep table
+//
+// One row per basin per tested m/n value, summarising fit topology and all
+// disorder uncertainty products computed for that m/n step.
+// =============================================================================
+
+struct lsdtt_chi_disorder_sweep_row
+{
+    double       mn                            = std::numeric_limits<double>::quiet_NaN();
+    std::int32_t basin_index                   = -1;
+    std::int64_t outlet_flat                   = k_nodata_receiver;
+
+    std::int32_t n_nodes                       = 0;
+    std::int32_t n_main_stem_nodes             = 0;
+    std::int32_t n_branches                    = 0;
+    std::int32_t n_side_branches               = 0;
+
+    float        full_network_disorder         = std::numeric_limits<float>::quiet_NaN();
+    std::int32_t n_subset_sensitivity_samples  = 0;
+
+    float        jackknife_mean                = std::numeric_limits<float>::quiet_NaN();
+    float        jackknife_standard_error      = std::numeric_limits<float>::quiet_NaN();
+
+    float        bootstrap_mean                = std::numeric_limits<float>::quiet_NaN();
+    float        bootstrap_standard_deviation  = std::numeric_limits<float>::quiet_NaN();
+    float        bootstrap_percentile_2p5      = std::numeric_limits<float>::quiet_NaN();
+    float        bootstrap_percentile_97p5     = std::numeric_limits<float>::quiet_NaN();
+};
+
+// Write the full m/n-sweep disorder summary to CSV.
+void write_chi_disorder_sweep_csv(
+    const std::string& filename,
+    const std::vector<lsdtt_chi_disorder_sweep_row>& rows
 );
 
 } // namespace lsdtt

@@ -49,9 +49,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <limits>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1336,5 +1338,138 @@ export_chi_disorder_basin_summary(
     return table;
 }
 
+
+// =============================================================================
+// CSV writers
+// =============================================================================
+
+namespace {
+
+std::string join_branch_ids(const std::vector<std::int32_t>& ids)
+{
+    std::ostringstream ss;
+    for (std::size_t i = 0; i < ids.size(); ++i)
+    {
+        if (i > 0) ss << ';';
+        ss << ids[i];
+    }
+    return ss.str();
+}
+
+} // anonymous namespace
+
+void write_chi_disorder_subset_samples_csv(
+    const std::string& filename,
+    const lsdtt_chi_branch_subset_sensitivity_sample_table& table)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_disorder_subset_samples_csv: cannot open " + filename);
+
+    out << "basin_index,full_network_disorder,sample_index,disorder,n_nodes,"
+           "included_branch_ids\n";
+
+    const std::size_t n = table.sample_index.size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        out << table.basin_index[i] << ','
+            << table.full_network_disorder[i] << ','
+            << table.sample_index[i] << ','
+            << table.disorder[i] << ','
+            << table.n_nodes[i] << ",\""
+            << join_branch_ids(table.included_branch_ids[i]) << "\"\n";
+    }
+}
+
+void write_chi_disorder_jackknife_csv(
+    const std::string& filename,
+    const lsdtt_chi_disorder_jackknife_table& table)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_disorder_jackknife_csv: cannot open " + filename);
+
+    out << "basin_index,full_network_disorder,replicate_index,removed_branch_id,"
+           "leave_one_out_disorder,leave_one_out_n_nodes,jackknife_mean,"
+           "jackknife_standard_error\n";
+
+    const std::size_t n = table.replicate_index.size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        out << table.basin_index[i] << ','
+            << table.full_network_disorder[i] << ','
+            << table.replicate_index[i] << ','
+            << table.removed_branch_id[i] << ','
+            << table.leave_one_out_disorder[i] << ','
+            << table.leave_one_out_n_nodes[i] << ','
+            << table.jackknife_mean[i] << ','
+            << table.jackknife_standard_error[i] << '\n';
+    }
+}
+
+void write_chi_disorder_bootstrap_csv(
+    const std::string& filename,
+    const lsdtt_chi_disorder_bootstrap_table& table)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_disorder_bootstrap_csv: cannot open " + filename);
+
+    out << "basin_index,full_network_disorder,replicate_index,bootstrap_disorder,"
+           "bootstrap_n_nodes,bootstrap_mean,bootstrap_standard_deviation,"
+           "percentile_2p5,percentile_97p5\n";
+
+    const std::size_t n = table.replicate_index.size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        out << table.basin_index[i] << ','
+            << table.full_network_disorder[i] << ','
+            << table.replicate_index[i] << ','
+            << table.bootstrap_disorder[i] << ','
+            << table.bootstrap_n_nodes[i] << ','
+            << table.bootstrap_mean[i] << ','
+            << table.bootstrap_standard_deviation[i] << ','
+            << table.percentile_2p5[i] << ','
+            << table.percentile_97p5[i] << '\n';
+    }
+}
+
+void write_chi_disorder_sweep_csv(
+    const std::string& filename,
+    const std::vector<lsdtt_chi_disorder_sweep_row>& rows)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_disorder_sweep_csv: cannot open " + filename);
+
+    out << "m_over_n,basin_index,outlet_flat,n_nodes,n_main_stem_nodes,n_branches,"
+           "n_side_branches,full_network_disorder,n_subset_sensitivity_samples,"
+           "jackknife_mean,jackknife_standard_error,bootstrap_mean,"
+           "bootstrap_standard_deviation,bootstrap_percentile_2p5,"
+           "bootstrap_percentile_97p5\n";
+
+    for (const auto& r : rows)
+    {
+        out << r.mn << ','
+            << r.basin_index << ','
+            << r.outlet_flat << ','
+            << r.n_nodes << ','
+            << r.n_main_stem_nodes << ','
+            << r.n_branches << ','
+            << r.n_side_branches << ','
+            << r.full_network_disorder << ','
+            << r.n_subset_sensitivity_samples << ','
+            << r.jackknife_mean << ','
+            << r.jackknife_standard_error << ','
+            << r.bootstrap_mean << ','
+            << r.bootstrap_standard_deviation << ','
+            << r.bootstrap_percentile_2p5 << ','
+            << r.bootstrap_percentile_97p5 << '\n';
+    }
+}
 
 } // namespace lsdtt

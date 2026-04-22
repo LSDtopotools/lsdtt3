@@ -32,9 +32,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
-#include <iomanip>
 #include <initializer_list>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -42,7 +41,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
@@ -50,6 +48,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/cpu/lsdtt_chi_data_maps_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_disorder_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_ksn_inversion_cpu.hpp"
@@ -138,25 +137,12 @@ static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
 }
 
 // -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
-}
-
-// -----------------------------------------------------------------------------
-// helpers
+// Helpers
 // -----------------------------------------------------------------------------
 static std::string to_lower_copy(std::string s)
 {
     for (char& ch : s)
-    {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
     return s;
 }
 
@@ -173,70 +159,54 @@ static std::string mn_suffix(double mn)
     return s;
 }
 
+static std::string out_path(
+    const lsdtt::lsdtt_param_parser& pp,
+    const std::string& suffix,
+    const std::string& extension)
+{
+    return pp.get_full_write_path() + suffix + extension;
+}
+
 static std::vector<double> build_mn_vector(double mn_min, double mn_max, double mn_step)
 {
     if (!(std::isfinite(mn_min) && std::isfinite(mn_max) && std::isfinite(mn_step)))
-    {
         throw std::invalid_argument("m/n sweep parameters must be finite.");
-    }
     if (mn_step <= 0.0)
-    {
         throw std::invalid_argument("mn_step must be > 0.");
-    }
     if (mn_max < mn_min)
-    {
         throw std::invalid_argument("mn_max must be >= mn_min.");
-    }
 
     std::vector<double> tested;
     for (double mn = mn_min; mn <= mn_max + 0.5 * mn_step; mn += mn_step)
-    {
         tested.push_back(mn);
-    }
     return tested;
 }
 
-static std::int64_t largest_basin_outlet_flat(const lsdtt::lsdtt_flow_base& flow)
+// Counts used only within the disorder sweep.
+static std::int32_t count_unique_branch_ids(
+    const lsdtt::lsdtt_chi_network_fit_result& fit_result)
 {
-    std::int64_t best_flat = lsdtt::k_nodata_receiver;
-    std::int64_t best_size = -1;
-
-    for (int row = 0; row < flow.n_rows(); ++row)
-    {
-        for (int col = 0; col < flow.n_cols(); ++col)
-        {
-            if (!flow.is_valid_cell(row, col))
-            {
-                continue;
-            }
-
-            const std::int64_t flat = flow.flat_index_unchecked(row, col);
-            if (flow.receiver_of_unchecked(flat) != lsdtt::k_outlet_receiver)
-            {
-                continue;
-            }
-
-            const std::int64_t n_up =
-                static_cast<std::int64_t>(flow.s_vector_size_unchecked(flat));
-
-            if (n_up > best_size)
-            {
-                best_size = n_up;
-                best_flat = flat;
-            }
-        }
-    }
-
-    if (best_flat == lsdtt::k_nodata_receiver)
-    {
-        throw std::runtime_error(
-            "Could not identify a largest basin outlet in the flow object."
-        );
-    }
-
-    return best_flat;
+    std::vector<std::int32_t> ids = fit_result.branch_id_of_node;
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    return static_cast<std::int32_t>(ids.size());
 }
 
+static std::int32_t count_main_stem_nodes(
+    const lsdtt::lsdtt_chi_network_fit_result& fit_result)
+{
+    std::int32_t count = 0;
+    for (std::uint8_t f : fit_result.is_main_stem)
+        if (f != 0u) ++count;
+    return count;
+}
+
+// -----------------------------------------------------------------------------
+// resolve_outlet_flats
+//
+// Returns a vector of flat indices representing basin outlets, either loaded
+// from a file (and snapped) or auto-detected as the largest basin.
+// -----------------------------------------------------------------------------
 static std::vector<std::int64_t> resolve_outlet_flats(
     const lsdtt::lsdtt_param_parser& pp,
     const lsdtt::lsdtt_raster_cpu& dem,
@@ -249,14 +219,13 @@ static std::vector<std::int64_t> resolve_outlet_flats(
 {
     if (outlet_file == "NULL" || outlet_file.empty())
     {
-        const std::int64_t flat = largest_basin_outlet_flat(flow);
+        const std::int64_t flat = lsdtt::get_largest_basin_outlet_flat(flow);
         std::cout << "No outlet file supplied; using largest basin outlet flat: "
                   << flat << "\n";
         return {flat};
     }
 
     const std::string outlet_file_path = pp.add_read_path_if_needed(outlet_file);
-
     std::cout << "Reading outlet file: " << outlet_file_path << "\n";
 
     {
@@ -265,33 +234,22 @@ static std::vector<std::int64_t> resolve_outlet_flats(
             p.size() >= 4 &&
             to_lower_copy(p.substr(p.size() - 4)) == ".csv";
         if (looks_like_csv)
-            std::cout << "Outlet file is CSV: latitude and longitude "
-                         "columns (EPSG:4326) will be transformed to "
-                         "raster CRS.\n";
+            std::cout << "Outlet file is CSV: latitude and longitude columns "
+                         "(EPSG:4326) will be transformed to raster CRS.\n";
         else
-            std::cout << "Outlet file is a vector layer: coordinates "
-                         "will be transformed from layer CRS to raster "
-                         "CRS.\n";
+            std::cout << "Outlet file is a vector layer: coordinates will be "
+                         "transformed from layer CRS to raster CRS.\n";
     }
 
     std::vector<lsdtt::lsdtt_input_point> requested_outlets =
-        lsdtt::load_points_in_raster_crs(
-            outlet_file_path,
-            dem.get_meta()
-        );
+        lsdtt::load_points_in_raster_crs(outlet_file_path, dem.get_meta());
 
     if (requested_outlets.empty())
-    {
         throw std::runtime_error("Outlet file contained no usable points.");
-    }
 
-    // Per-point status warnings
     {
-        int n_transform_failed = 0;
-        int n_unsupported_geom = 0;
-        int n_outside          = 0;
-        int n_empty_geom       = 0;
-        int n_missing_crs      = 0;
+        int n_transform_failed = 0, n_unsupported_geom = 0;
+        int n_outside = 0, n_empty_geom = 0, n_missing_crs = 0;
         for (const auto& pt : requested_outlets)
         {
             switch (pt.status)
@@ -314,10 +272,8 @@ static std::vector<std::int64_t> resolve_outlet_flats(
             std::cerr << "Warning: " << n_transform_failed
                       << " point(s) failed coordinate transformation.\n";
             const auto& p = outlet_file_path;
-            const bool looks_like_csv =
-                p.size() >= 4 &&
-                to_lower_copy(p.substr(p.size() - 4)) == ".csv";
-            if (looks_like_csv)
+            if (p.size() >= 4 &&
+                to_lower_copy(p.substr(p.size() - 4)) == ".csv")
                 std::cerr << "  -> CSV files must have columns named "
                              "'latitude' and 'longitude'.\n";
         }
@@ -326,8 +282,7 @@ static std::vector<std::int64_t> resolve_outlet_flats(
                       << " feature(s) skipped — not point geometry.\n";
         if (n_missing_crs > 0)
             std::cerr << "Warning: " << n_missing_crs
-                      << " feature(s) had no source CRS and could not "
-                         "be transformed.\n";
+                      << " feature(s) had no source CRS.\n";
         if (n_empty_geom > 0)
             std::cerr << "Warning: " << n_empty_geom
                       << " feature(s) had empty geometry and were skipped.\n";
@@ -367,11 +322,7 @@ static std::vector<std::int64_t> resolve_outlet_flats(
         {
             const lsdtt::lsdtt_snap_result snapped =
                 lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                    flow,
-                    row,
-                    col,
-                    square_snap_options
-                );
+                    flow, row, col, square_snap_options);
 
             if (snapped.status != lsdtt::lsdtt_snap_status::success)
             {
@@ -379,18 +330,13 @@ static std::vector<std::int64_t> resolve_outlet_flats(
                           << " could not be snapped with expanding_square; skipping.\n";
                 continue;
             }
-
             flat = snapped.snapped_flat;
         }
         else if (snapping_method == "downstream")
         {
             const lsdtt::lsdtt_snap_result snapped =
                 lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                    flow,
-                    row,
-                    col,
-                    downstream_snap_options
-                );
+                    flow, row, col, downstream_snap_options);
 
             if (snapped.status != lsdtt::lsdtt_snap_status::success)
             {
@@ -398,7 +344,6 @@ static std::vector<std::int64_t> resolve_outlet_flats(
                           << " could not be snapped downstream; skipping.\n";
                 continue;
             }
-
             flat = snapped.snapped_flat;
         }
         else
@@ -415,329 +360,9 @@ static std::vector<std::int64_t> resolve_outlet_flats(
     }
 
     if (outlet_flats.empty())
-    {
         throw std::runtime_error("No valid outlet flats were produced from the CSV.");
-    }
 
     return outlet_flats;
-}
-
-static std::int32_t count_unique_branch_ids(
-    const lsdtt::lsdtt_chi_network_fit_result& fit_result)
-{
-    std::vector<std::int32_t> ids = fit_result.branch_id_of_node;
-    std::sort(ids.begin(), ids.end());
-    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-    return static_cast<std::int32_t>(ids.size());
-}
-
-static std::int32_t count_main_stem_nodes(
-    const lsdtt::lsdtt_chi_network_fit_result& fit_result)
-{
-    std::int32_t count = 0;
-    for (std::uint8_t f : fit_result.is_main_stem)
-    {
-        if (f != 0u) ++count;
-    }
-    return count;
-}
-
-static std::string join_branch_ids(const std::vector<std::int32_t>& ids)
-{
-    std::ostringstream ss;
-    for (std::size_t i = 0; i < ids.size(); ++i)
-    {
-        if (i > 0) ss << ';';
-        ss << ids[i];
-    }
-    return ss.str();
-}
-
-// -----------------------------------------------------------------------------
-// CSV writers
-// -----------------------------------------------------------------------------
-static void write_fit_node_table_csv(
-    const std::string& filename,
-    const lsdtt::lsdtt_chi_network_fit_node_table& table)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "basin_index,outlet_flat,flat,receiver_flat,chi,observed_elevation,"
-           "fitted_elevation,residual_elevation,abs_residual_elevation,branch_id,"
-           "is_main_stem,is_source,is_junction,is_split_point\n";
-
-    const std::size_t n = table.flat.size();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        out << table.basin_index[i] << ','
-            << table.outlet_flat[i] << ','
-            << table.flat[i] << ','
-            << table.receiver_flat[i] << ','
-            << table.chi[i] << ','
-            << table.observed_elevation[i] << ','
-            << table.fitted_elevation[i] << ','
-            << table.residual_elevation[i] << ','
-            << table.abs_residual_elevation[i] << ','
-            << table.branch_id[i] << ','
-            << static_cast<int>(table.is_main_stem[i]) << ','
-            << static_cast<int>(table.is_source[i]) << ','
-            << static_cast<int>(table.is_junction[i]) << ','
-            << static_cast<int>(table.is_split_point[i]) << '\n';
-    }
-}
-
-static void write_fit_segment_table_csv(
-    const std::string& filename,
-    const lsdtt::lsdtt_chi_network_fit_segment_table& table)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "basin_index,outlet_flat,segment_id,parent_segment_id,branch_id,"
-           "downstream_flat,upstream_flat,downstream_chi,upstream_chi,"
-           "downstream_elevation,upstream_elevation,max_abs_residual,n_nodes\n";
-
-    const std::size_t n = table.segment_id.size();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        out << table.basin_index[i] << ','
-            << table.outlet_flat[i] << ','
-            << table.segment_id[i] << ','
-            << table.parent_segment_id[i] << ','
-            << table.branch_id[i] << ','
-            << table.downstream_flat[i] << ','
-            << table.upstream_flat[i] << ','
-            << table.downstream_chi[i] << ','
-            << table.upstream_chi[i] << ','
-            << table.downstream_elevation[i] << ','
-            << table.upstream_elevation[i] << ','
-            << table.max_abs_residual[i] << ','
-            << table.n_nodes[i] << '\n';
-    }
-}
-
-static void write_subset_table_csv(
-    const std::string& filename,
-    const lsdtt::lsdtt_chi_branch_subset_sensitivity_sample_table& table)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "basin_index,full_network_disorder,sample_index,disorder,n_nodes,"
-           "included_branch_ids\n";
-
-    const std::size_t n = table.sample_index.size();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        out << table.basin_index[i] << ','
-            << table.full_network_disorder[i] << ','
-            << table.sample_index[i] << ','
-            << table.disorder[i] << ','
-            << table.n_nodes[i] << ",\""
-            << join_branch_ids(table.included_branch_ids[i]) << "\"\n";
-    }
-}
-
-static void write_jackknife_table_csv(
-    const std::string& filename,
-    const lsdtt::lsdtt_chi_disorder_jackknife_table& table)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "basin_index,full_network_disorder,replicate_index,removed_branch_id,"
-           "leave_one_out_disorder,leave_one_out_n_nodes,jackknife_mean,"
-           "jackknife_standard_error\n";
-
-    const std::size_t n = table.replicate_index.size();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        out << table.basin_index[i] << ','
-            << table.full_network_disorder[i] << ','
-            << table.replicate_index[i] << ','
-            << table.removed_branch_id[i] << ','
-            << table.leave_one_out_disorder[i] << ','
-            << table.leave_one_out_n_nodes[i] << ','
-            << table.jackknife_mean[i] << ','
-            << table.jackknife_standard_error[i] << '\n';
-    }
-}
-
-static void write_bootstrap_table_csv(
-    const std::string& filename,
-    const lsdtt::lsdtt_chi_disorder_bootstrap_table& table)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "basin_index,full_network_disorder,replicate_index,bootstrap_disorder,"
-           "bootstrap_n_nodes,bootstrap_mean,bootstrap_standard_deviation,"
-           "percentile_2p5,percentile_97p5\n";
-
-    const std::size_t n = table.replicate_index.size();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        out << table.basin_index[i] << ','
-            << table.full_network_disorder[i] << ','
-            << table.replicate_index[i] << ','
-            << table.bootstrap_disorder[i] << ','
-            << table.bootstrap_n_nodes[i] << ','
-            << table.bootstrap_mean[i] << ','
-            << table.bootstrap_standard_deviation[i] << ','
-            << table.percentile_2p5[i] << ','
-            << table.percentile_97p5[i] << '\n';
-    }
-}
-
-struct disorder_sweep_row
-{
-    double mn = std::numeric_limits<double>::quiet_NaN();
-    std::int32_t basin_index = -1;
-    std::int64_t outlet_flat = lsdtt::k_nodata_receiver;
-
-    std::int32_t n_nodes = 0;
-    std::int32_t n_main_stem_nodes = 0;
-    std::int32_t n_branches = 0;
-    std::int32_t n_side_branches = 0;
-
-    float full_network_disorder = std::numeric_limits<float>::quiet_NaN();
-
-    std::int32_t n_subset_sensitivity_samples = 0;
-
-    float jackknife_mean = std::numeric_limits<float>::quiet_NaN();
-    float jackknife_standard_error = std::numeric_limits<float>::quiet_NaN();
-
-    float bootstrap_mean = std::numeric_limits<float>::quiet_NaN();
-    float bootstrap_standard_deviation = std::numeric_limits<float>::quiet_NaN();
-    float bootstrap_percentile_2p5 = std::numeric_limits<float>::quiet_NaN();
-    float bootstrap_percentile_97p5 = std::numeric_limits<float>::quiet_NaN();
-};
-
-static void write_disorder_sweep_csv(
-    const std::string& filename,
-    const std::vector<disorder_sweep_row>& rows)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "m_over_n,basin_index,outlet_flat,n_nodes,n_main_stem_nodes,n_branches,"
-           "n_side_branches,full_network_disorder,n_subset_sensitivity_samples,"
-           "jackknife_mean,jackknife_standard_error,bootstrap_mean,"
-           "bootstrap_standard_deviation,bootstrap_percentile_2p5,"
-           "bootstrap_percentile_97p5\n";
-
-    for (const auto& r : rows)
-    {
-        out << r.mn << ','
-            << r.basin_index << ','
-            << r.outlet_flat << ','
-            << r.n_nodes << ','
-            << r.n_main_stem_nodes << ','
-            << r.n_branches << ','
-            << r.n_side_branches << ','
-            << r.full_network_disorder << ','
-            << r.n_subset_sensitivity_samples << ','
-            << r.jackknife_mean << ','
-            << r.jackknife_standard_error << ','
-            << r.bootstrap_mean << ','
-            << r.bootstrap_standard_deviation << ','
-            << r.bootstrap_percentile_2p5 << ','
-            << r.bootstrap_percentile_97p5 << '\n';
-    }
-}
-
-static void write_inversion_trial_csv(
-    const std::string& filename,
-    const lsdtt::lsdtt_chi_ksn_inversion_collection_result& results)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "basin_index,outlet_flat,trial_index,m_over_n,mean_absolute_error,"
-           "root_mean_square_error,n_nodes,n_parameters,n_constrained_parameters\n";
-
-    for (std::size_t b = 0; b < results.basins.size(); ++b)
-    {
-        const auto& basin = results.basins[b];
-        for (std::size_t t = 0; t < basin.trials.size(); ++t)
-        {
-            const auto& tr = basin.trials[t];
-            out << static_cast<std::int32_t>(b) << ','
-                << basin.network.outlet_flat << ','
-                << static_cast<std::int32_t>(t) << ','
-                << tr.m_over_n << ','
-                << tr.mean_absolute_error << ','
-                << tr.root_mean_square_error << ','
-                << tr.n_nodes << ','
-                << tr.n_parameters << ','
-                << tr.n_constrained_parameters << '\n';
-        }
-    }
-}
-
-static void write_inversion_best_summary_csv(
-    const std::string& filename,
-    const lsdtt::lsdtt_chi_ksn_inversion_collection_result& results)
-{
-    std::ofstream out(filename);
-    if (!out)
-    {
-        throw std::runtime_error("Could not open file for writing: " + filename);
-    }
-
-    out << "basin_index,outlet_flat,best_trial_index,best_m_over_n,"
-           "best_mean_absolute_error,best_root_mean_square_error,"
-           "n_nodes_best,n_parameters_best,n_constrained_parameters_best\n";
-
-    for (std::size_t b = 0; b < results.basins.size(); ++b)
-    {
-        const auto& basin = results.basins[b];
-
-        std::int32_t n_nodes_best = 0;
-        std::int32_t n_params_best = 0;
-        std::int32_t n_const_best = 0;
-
-        if (basin.best_trial_index >= 0 &&
-            static_cast<std::size_t>(basin.best_trial_index) < basin.trials.size())
-        {
-            const auto& tr = basin.trials[static_cast<std::size_t>(basin.best_trial_index)];
-            n_nodes_best = tr.n_nodes;
-            n_params_best = tr.n_parameters;
-            n_const_best = tr.n_constrained_parameters;
-        }
-
-        out << static_cast<std::int32_t>(b) << ','
-            << basin.network.outlet_flat << ','
-            << basin.best_trial_index << ','
-            << basin.best_m_over_n << ','
-            << basin.best_mean_absolute_error << ','
-            << basin.best_root_mean_square_error << ','
-            << n_nodes_best << ','
-            << n_params_best << ','
-            << n_const_best << '\n';
-    }
 }
 
 // =============================================================================
@@ -763,81 +388,208 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::map<std::string, bool>                        bool_default_map;
-    std::map<std::string, float>                       float_default_map;
-    std::map<std::string, int>                         int_default_map;
-    std::map<std::string, std::string>                 string_default_map;
-    std::map<std::string, std::vector<std::string>>    help_map;
+    std::map<std::string, bool>                     bool_default_map;
+    std::map<std::string, float>                    float_default_map;
+    std::map<std::string, int>                      int_default_map;
+    std::map<std::string, std::string>              string_default_map;
+    std::map<std::string, std::vector<std::string>> help_map;
 
-    // Flow / DEM prep
+    // --- Threading / routing ---
     int_default_map["n_threads"] = 0;
+    help_map["n_threads"] = {"int","0",
+        "Number of OpenMP threads.",
+        "0 = use all available hardware threads."};
+
     string_default_map["boundary_conditions"] = "oooo";
+    help_map["boundary_conditions"] = {"string","oooo",
+        "Boundary conditions for flow routing.",
+        "Four-character string: north, east, south, west. "
+        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+
+    // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
+    help_map["raster_is_filled"] = {"bool","false",
+        "Whether the input raster is already pit-filled.",
+        "If false (default), fill_pits() is called before routing."};
+
     float_default_map["fill_min_slope"] = 0.0001f;
+    help_map["fill_min_slope"] = {"float","0.0001",
+        "Minimum slope imposed by pit filling.",
+        "Used only when raster_is_filled is false."};
 
-    // Outlet selection
-    string_default_map["outlet_file"] = "NULL";
-    string_default_map["outlet_snapping_method"] = "downstream";
-    int_default_map["outlet_threshold_contributing_pixels"] = 1000;
-    int_default_map["outlet_min_search_radius_pixels"] = 0;
-    int_default_map["outlet_max_search_radius_pixels"] = 25;
+    // --- Basin outlet input ---
+    string_default_map["basin_outlet_file"] = "NULL";
+    help_map["basin_outlet_file"] = {"string","NULL",
+        "File of basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
+        "If NULL (default), the largest basin outlet in the DEM is used. "
+        "CSV files must have 'latitude' and 'longitude' columns (EPSG:4326)."};
 
-    // Chi extraction / fitting
-    int_default_map["channel_threshold_contributing_pixels"] = 1000;
+    string_default_map["basin_outlet_snapping_method"] = "downstream";
+    help_map["basin_outlet_snapping_method"] = {"string","downstream",
+        "Optional snapping of supplied outlet points to qualifying channel pixels.",
+        "Allowed values: none, expanding_square, downstream."};
+
+    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
+        "Contributing-pixel threshold used for optional outlet snapping.",
+        "Total upslope contributing pixels required at the snapped cell."};
+
+    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+        "Minimum expanding-square snapping search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square."};
+
+    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+        "Maximum expanding-square snapping search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square."};
+
+    // --- Diagnostic data maps ---
+    bool_default_map["print_chi_data_maps"] = false;
+    help_map["print_chi_data_maps"] = {"bool","false",
+        "Extract chi networks and print per-node data maps for diagnostic purposes.",
+        "Writes nodes (chi, drainage_area, flow_distance, elevation, source_key, "
+        "basin_key), valid basin outlets, source-head points, and basin polygons. "
+        "Basin keys are 0-based; source keys increment globally across all basins. "
+        "Runs before fit_chi_networks so extraction can be verified independently."};
+
+    string_default_map["chi_data_maps_output_format"] = "csv";
+    help_map["chi_data_maps_output_format"] = {"string","csv",
+        "Output format for chi data map point files.",
+        "csv: latitude/longitude in EPSG:4326 (requires raster CRS). "
+        "gpkg: GeoPackage in raster CRS. flatgeobuf/fgb: FlatGeobuf in raster CRS. "
+        "Basin polygons are always vector (flatgeobuf fallback when csv requested)."};
+
+    // --- Source extraction ---
+    int_default_map["source_pixels_threshold"] = 1000;
+    help_map["source_pixels_threshold"] = {"int","1000",
+        "Contributing-pixel threshold used to define channel heads.",
+        "Chi is computed only on pixels upstream of channel heads."};
+
+    // --- Chi extraction / fitting ---
+    bool_default_map["fit_chi_networks"] = false;
+    help_map["fit_chi_networks"] = {"bool","false",
+        "Run the piecewise-linear chi-network fitting and disorder sweep.",
+        "When false (default) only print_chi_data_maps (if enabled) and the "
+        "inversion (if enabled) run. Set to true for the full m/n sweep."};
+
     float_default_map["chi_A0"] = 1.0f;
+    help_map["chi_A0"] = {"float","1.0",
+        "Reference drainage area A0 for chi integration (m2).",
+        "Chi = integral of (A0/A)^(m/n) ds from the outlet. Default is 1.0."};
+
     float_default_map["mn_min"] = 0.3f;
+    help_map["mn_min"] = {"float","0.3",
+        "Minimum m/n ratio for the disorder sweep.", ""};
+
     float_default_map["mn_max"] = 0.6f;
+    help_map["mn_max"] = {"float","0.6",
+        "Maximum m/n ratio for the disorder sweep.", ""};
+
     float_default_map["mn_step"] = 0.02f;
+    help_map["mn_step"] = {"float","0.02",
+        "Step size for the m/n disorder sweep.", "Must be > 0."};
+
     float_default_map["fit_critical_divergence_m"] = 5.0f;
+    help_map["fit_critical_divergence_m"] = {"float","5.0",
+        "Critical elevation divergence (m) used to split chi-elevation branches.", ""};
 
-    // Disorder
-    bool_default_map["run_subset_sensitivity"] = true;
+    // --- Disorder ---
+    bool_default_map["run_subset_sensitivity"] = false;
+    help_map["run_subset_sensitivity"] = {"bool","false",
+        "Run subset sensitivity analysis on chi disorder.", ""};
+
     int_default_map["subset_n_side_branches_per_sample"] = 3;
+    help_map["subset_n_side_branches_per_sample"] = {"int","3",
+        "Number of side branches selected per subset sensitivity sample.", ""};
 
-    bool_default_map["run_jackknife"] = true;
+    bool_default_map["run_jackknife"] = false;
+    help_map["run_jackknife"] = {"bool","false",
+        "Run jackknife (leave-one-out) analysis on chi disorder.", ""};
 
-    bool_default_map["run_bootstrap"] = true;
+    bool_default_map["run_bootstrap"] = false;
+    help_map["run_bootstrap"] = {"bool","false",
+        "Run bootstrap analysis on chi disorder.", ""};
+
     int_default_map["bootstrap_replicates"] = 1000;
+    help_map["bootstrap_replicates"] = {"int","1000",
+        "Number of bootstrap replicates for disorder uncertainty estimation.", ""};
+
     bool_default_map["bootstrap_sample_full_tributary_count"] = true;
+    help_map["bootstrap_sample_full_tributary_count"] = {"bool","true",
+        "Whether each bootstrap replicate samples the full number of side branches.",
+        ""};
+
     int_default_map["bootstrap_n_side_branches_per_replicate"] = 3;
+    help_map["bootstrap_n_side_branches_per_replicate"] = {"int","3",
+        "Number of side branches per bootstrap replicate.", ""};
+
     bool_default_map["bootstrap_with_replacement"] = true;
+    help_map["bootstrap_with_replacement"] = {"bool","true",
+        "Whether bootstrap resampling is done with replacement.", ""};
+
     int_default_map["bootstrap_random_seed"] = 5489;
+    help_map["bootstrap_random_seed"] = {"int","5489",
+        "Random seed for bootstrap resampling.", ""};
 
-    // Inversion
-    bool_default_map["run_inversion"] = true;
+    // --- Inversion ---
+    bool_default_map["run_inversion"] = false;
+    help_map["run_inversion"] = {"bool","false",
+        "Run spatial chi k_sn / u* inversion over the m/n sweep.", ""};
+
     float_default_map["inversion_coarse_cell_size"] = 2000.0f;
-    float_default_map["inversion_roughness_weight"] = 1.0e4f;
-    float_default_map["inversion_diagonal_jitter"] = 1.0e-8f;
-    bool_default_map["inversion_use_mae_for_model_selection"] = true;
-    bool_default_map["write_inversion_rasters"] = true;
+    help_map["inversion_coarse_cell_size"] = {"float","2000.0",
+        "Cell size (m) of the coarse grid used in chi k_sn inversion.", ""};
 
-    // Outputs
-    bool_default_map["write_fit_tables"] = false;
+    float_default_map["inversion_roughness_weight"] = 1.0e4f;
+    help_map["inversion_roughness_weight"] = {"float","10000.0",
+        "Tikhonov regularisation weight for spatial smoothness.", ""};
+
+    float_default_map["inversion_diagonal_jitter"] = 1.0e-8f;
+    help_map["inversion_diagonal_jitter"] = {"float","1e-8",
+        "Small diagonal perturbation added to the normal equations.", ""};
+
+    bool_default_map["inversion_use_mae_for_model_selection"] = true;
+    help_map["inversion_use_mae_for_model_selection"] = {"bool","true",
+        "Use MAE (true) or RMSE (false) for m/n model selection.", ""};
+
+    bool_default_map["write_inversion_rasters"] = false;
+    help_map["write_inversion_rasters"] = {"bool","false",
+        "Write u* and support-count rasters for each basin.", ""};
+
+    // --- Outputs ---
+    bool_default_map["write_fit_tables"] = true;
+    help_map["write_fit_tables"] = {"bool","true",
+        "Write chi network fit node and segment tables to CSV.", ""};
+
     bool_default_map["write_disorder_sample_tables"] = false;
+    help_map["write_disorder_sample_tables"] = {"bool","false",
+        "Write detailed disorder sample tables for each m/n value.", ""};
+
     string_default_map["write_output_format"] = "cog";
+    help_map["write_output_format"] = {"string","cog",
+        "Raster output format for inversion rasters.",
+        "Allowed values: cog, gtiff, same_as_input."};
 
     pp.parse_all_parameters(
-        float_default_map,
-        int_default_map,
-        bool_default_map,
-        string_default_map
-    );
+        float_default_map, int_default_map, bool_default_map, string_default_map);
 
-    auto bf = pp.get_bool_parameters();
-    auto ff = pp.get_float_parameters();
+    auto bf  = pp.get_bool_parameters();
+    auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
-    auto sf = pp.get_string_parameters();
+    auto sf  = pp.get_string_parameters();
 
-    const std::string snapping_method = to_lower_copy(sf["outlet_snapping_method"]);
+    const std::string snapping_method =
+        to_lower_copy(sf["basin_outlet_snapping_method"]);
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
 
     // -------------------------------------------------------------------------
     // Validate params
     // -------------------------------------------------------------------------
-    if (ifs["channel_threshold_contributing_pixels"] <= 0)
+    if (ifs["source_pixels_threshold"] <= 0)
     {
-        std::cerr << "FATAL: channel_threshold_contributing_pixels must be > 0.\n";
+        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
         return 1;
     }
 
@@ -845,7 +597,8 @@ int main(int argc, char* argv[])
         snapping_method != "expanding_square" &&
         snapping_method != "downstream")
     {
-        std::cerr << "FATAL: outlet_snapping_method must be one of: none, expanding_square, downstream.\n";
+        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
+                     "none, expanding_square, downstream.\n";
         return 1;
     }
 
@@ -905,10 +658,7 @@ int main(int argc, char* argv[])
         try
         {
             routed_dem = lsdtt::fill_pits(
-                dem,
-                ff["fill_min_slope"],
-                ifs["n_threads"]
-            );
+                dem, ff["fill_min_slope"], ifs["n_threads"]);
         }
         catch (const std::exception& e)
         {
@@ -957,14 +707,12 @@ int main(int argc, char* argv[])
     try
     {
         outlet_flats = resolve_outlet_flats(
-            pp,
-            dem,
-            *flow,
-            sf["outlet_file"],
+            pp, dem, *flow,
+            sf["basin_outlet_file"],
             snapping_method,
-            ifs["outlet_threshold_contributing_pixels"],
-            ifs["outlet_min_search_radius_pixels"],
-            ifs["outlet_max_search_radius_pixels"]
+            ifs["basin_outlet_contributing_pixels_threshold"],
+            ifs["basin_outlet_min_search_radius_pixels"],
+            ifs["basin_outlet_max_search_radius_pixels"]
         );
     }
     catch (const std::exception& e)
@@ -974,14 +722,58 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "Number of outlet seeds: " << outlet_flats.size() << "\n";
+    for (std::size_t i = 0; i < outlet_flats.size(); ++i)
+    {
+        const std::int64_t f = outlet_flats[i];
+        const bool valid = flow->is_valid_cell(f);
+        std::cout << "  outlet[" << i << "] flat=" << f
+                  << (valid ? "  [valid]" : "  [INVALID — will be skipped]")
+                  << "\n";
+    }
+    std::cout.flush();
 
     // -------------------------------------------------------------------------
-    // Build inversion network support once.
-    //
-    // The inversion uses a fixed network geometry/topology, so we extract the
-    // threshold channel network once using the first tested m/n. Chi itself is
-    // recomputed internally during inversion, so only flats/receiver topology
-    // and elevations matter here.
+    // Chi data maps (diagnostic — verify chi extraction before fitting)
+    // -------------------------------------------------------------------------
+    if (bf["print_chi_data_maps"])
+    {
+        std::cout << "\n--- Chi data maps ---\n";
+
+        const lsdtt::point_output_format dm_fmt =
+            lsdtt::resolve_point_output_format(sf["chi_data_maps_output_format"]);
+
+        lsdtt::lsdtt_chi_options chi_opts_dm;
+        chi_opts_dm.m_over_n = tested_mn.front();
+        chi_opts_dm.A_0      = static_cast<double>(ff["chi_A0"]);
+
+        std::cout << "  Extracting chi networks (m/n = " << chi_opts_dm.m_over_n
+                  << ")...\n";
+        std::cout.flush();
+
+        lsdtt::lsdtt_chi_collection_result chi_dm;
+        try
+        {
+            chi_dm = lsdtt::get_chi_from_outlets_zero_base_threshold(
+                *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts_dm);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: chi data map extraction failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "  Extracted " << chi_dm.basins.size() << " basin(s).\n";
+        std::cout.flush();
+
+        lsdtt::write_chi_data_maps(
+            chi_dm, *flow, dem,
+            pp.get_full_write_path(),
+            dm_fmt
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Build inversion networks once (fixed network, chi recomputed per m/n).
     // -------------------------------------------------------------------------
     std::vector<lsdtt::lsdtt_chi_ksn_inversion_network> inversion_networks;
 
@@ -994,21 +786,14 @@ int main(int argc, char* argv[])
             chi_opts.m_over_n = tested_mn.front();
             chi_opts.A_0 = static_cast<double>(ff["chi_A0"]);
 
-            lsdtt::lsdtt_chi_collection_result chi_networks =
+            const lsdtt::lsdtt_chi_collection_result chi_networks =
                 lsdtt::get_chi_from_outlets_zero_base_threshold(
-                    *flow,
-                    outlet_flats,
-                    ifs["channel_threshold_contributing_pixels"],
-                    chi_opts
-                );
+                    *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
 
             inversion_networks.reserve(chi_networks.basins.size());
             for (const auto& basin : chi_networks.basins)
-            {
                 inversion_networks.push_back(
-                    lsdtt::make_chi_ksn_inversion_network(basin, dem)
-                );
-            }
+                    lsdtt::make_chi_ksn_inversion_network(basin, dem));
         }
         catch (const std::exception& e)
         {
@@ -1021,210 +806,256 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // chi extraction + fitting + disorder sweep
     // -------------------------------------------------------------------------
-    std::vector<disorder_sweep_row> disorder_rows;
-
-    for (double mn : tested_mn)
+    if (bf["fit_chi_networks"])
     {
-        std::cout << "\n=====================================================\n";
-        std::cout << "Testing m/n = " << mn << "\n";
-        std::cout << "=====================================================\n";
+        std::vector<lsdtt::lsdtt_chi_disorder_sweep_row> disorder_rows;
 
-        lsdtt::lsdtt_chi_options chi_opts;
-        chi_opts.m_over_n = mn;
-        chi_opts.A_0 = static_cast<double>(ff["chi_A0"]);
-
-        lsdtt::lsdtt_chi_collection_result chi_networks;
-        lsdtt::lsdtt_chi_network_fit_collection_result fit_results;
-
-        try
+        for (double mn : tested_mn)
         {
-            chi_networks = lsdtt::get_chi_from_outlets_zero_base_threshold(
-                *flow,
-                outlet_flats,
-                ifs["channel_threshold_contributing_pixels"],
-                chi_opts
-            );
+            std::cout << "\n=====================================================\n";
+            std::cout << "Testing m/n = " << mn << "\n";
+            std::cout << "=====================================================\n";
 
-            lsdtt::lsdtt_chi_network_fit_options fit_opts;
-            fit_opts.critical_divergence_m = ff["fit_critical_divergence_m"];
-            fit_opts.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_flow_length;
+            lsdtt::lsdtt_chi_options chi_opts;
+            chi_opts.m_over_n = mn;
+            chi_opts.A_0 = static_cast<double>(ff["chi_A0"]);
 
-            fit_results = lsdtt::fit_chi_networks(
-                chi_networks,
-                dem,
-                fit_opts
-            );
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: chi extraction/fitting failed for m/n = "
-                      << mn << ": " << e.what() << "\n";
-            return 1;
-        }
+            lsdtt::lsdtt_chi_collection_result chi_networks;
+            lsdtt::lsdtt_chi_network_fit_collection_result fit_results;
 
-        if (bf["write_fit_tables"])
-        {
             try
             {
-                const auto node_table = lsdtt::export_chi_network_fit_nodes(fit_results);
-                const auto seg_table  = lsdtt::export_chi_network_fit_segments(fit_results);
+                std::cout << "  Extracting chi networks...\n";
+                std::cout.flush();
 
-                write_fit_node_table_csv(
-                    out_path(pp, "_chi_fit_nodes_mn_" + mn_suffix(mn), ".csv"),
-                    node_table
-                );
-                write_fit_segment_table_csv(
-                    out_path(pp, "_chi_fit_segments_mn_" + mn_suffix(mn), ".csv"),
-                    seg_table
-                );
+                chi_networks = lsdtt::get_chi_from_outlets_zero_base_threshold(
+                    *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
+
+                std::cout << "  Chi networks extracted: "
+                          << chi_networks.basins.size() << " basin(s)\n";
+                for (std::size_t i = 0; i < chi_networks.basins.size(); ++i)
+                {
+                    std::cout << "    basin[" << i << "] outlet_flat="
+                              << chi_networks.basins[i].outlet_flat
+                              << "  n_nodes="
+                              << chi_networks.basins[i].flats.size() << "\n";
+                }
+                std::cout.flush();
+
+                lsdtt::lsdtt_chi_network_fit_options fit_opts;
+                fit_opts.critical_divergence_m = ff["fit_critical_divergence_m"];
+                fit_opts.mainstem_choice =
+                    lsdtt::lsdtt_chi_mainstem_choice::max_flow_length;
+
+                std::cout << "  Fitting chi networks one-by-one...\n";
+                std::cout.flush();
+
+                for (std::size_t bi = 0; bi < chi_networks.basins.size(); ++bi)
+                {
+                    std::cout << "    Fitting basin[" << bi << "] outlet_flat="
+                              << chi_networks.basins[bi].outlet_flat
+                              << " n_nodes="
+                              << chi_networks.basins[bi].flats.size() << "...\n";
+                    std::cout.flush();
+                    lsdtt::lsdtt_chi_network_fit_result r =
+                        lsdtt::fit_chi_network(
+                            chi_networks.basins[bi], dem, fit_opts);
+                    std::cout << "    basin[" << bi << "] fit OK  n_segments="
+                              << r.segments.size() << "\n";
+                    std::cout.flush();
+                    fit_results.basins.push_back(std::move(r));
+                }
+
+                std::cout << "  Fit complete: "
+                          << fit_results.basins.size() << " basin(s)\n";
+                std::cout.flush();
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Warning: writing fit tables failed for m/n = "
+                std::cerr << "FATAL: chi extraction/fitting failed for m/n = "
                           << mn << ": " << e.what() << "\n";
+                return 1;
             }
-        }
 
-        lsdtt::lsdtt_chi_disorder_collection_result disorder_results;
-        lsdtt::lsdtt_chi_branch_subset_sensitivity_collection_result subset_results;
-        lsdtt::lsdtt_chi_disorder_jackknife_collection_result jackknife_results;
-        lsdtt::lsdtt_chi_disorder_bootstrap_collection_result bootstrap_results;
-
-        try
-        {
-            disorder_results = lsdtt::get_chi_disorder(fit_results);
-
-            if (bf["run_subset_sensitivity"])
+            if (bf["write_fit_tables"])
             {
-                lsdtt::lsdtt_chi_branch_subset_sensitivity_options opts;
-                opts.n_side_branches_per_sample =
-                    ifs["subset_n_side_branches_per_sample"];
-                subset_results = lsdtt::get_chi_branch_subset_sensitivity(
-                    fit_results, opts
-                );
+                std::cout << "  Writing fit tables...\n";
+                std::cout.flush();
+                try
+                {
+                    const auto node_table =
+                        lsdtt::export_chi_network_fit_nodes(fit_results);
+                    const auto seg_table  =
+                        lsdtt::export_chi_network_fit_segments(fit_results);
+
+                    const std::string node_file =
+                        out_path(pp, "_chi_fit_nodes_mn_" + mn_suffix(mn), ".csv");
+                    lsdtt::write_chi_network_fit_nodes_csv(node_file, node_table);
+
+                    const std::string seg_file =
+                        out_path(pp, "_chi_fit_segments_mn_" + mn_suffix(mn), ".csv");
+                    lsdtt::write_chi_network_fit_segments_csv(seg_file, seg_table);
+
+                    std::cout << "  Fit tables written.\n";
+                    std::cout.flush();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: writing fit tables failed for m/n = "
+                              << mn << ": " << e.what() << "\n";
+                }
             }
 
-            if (bf["run_jackknife"])
-            {
-                jackknife_results = lsdtt::get_chi_disorder_jackknife(fit_results);
-            }
+            lsdtt::lsdtt_chi_disorder_collection_result disorder_results;
+            lsdtt::lsdtt_chi_branch_subset_sensitivity_collection_result subset_results;
+            lsdtt::lsdtt_chi_disorder_jackknife_collection_result jackknife_results;
+            lsdtt::lsdtt_chi_disorder_bootstrap_collection_result bootstrap_results;
 
-            if (bf["run_bootstrap"])
-            {
-                lsdtt::lsdtt_chi_disorder_bootstrap_options opts;
-                opts.n_replicates = ifs["bootstrap_replicates"];
-                opts.sample_full_tributary_count =
-                    bf["bootstrap_sample_full_tributary_count"];
-                opts.n_side_branches_per_replicate =
-                    ifs["bootstrap_n_side_branches_per_replicate"];
-                opts.sample_with_replacement =
-                    bf["bootstrap_with_replacement"];
-                opts.random_seed =
-                    static_cast<std::uint64_t>(ifs["bootstrap_random_seed"]);
+            const bool run_any_disorder =
+                bf["run_subset_sensitivity"] ||
+                bf["run_jackknife"]          ||
+                bf["run_bootstrap"];
 
-                bootstrap_results = lsdtt::get_chi_disorder_bootstrap(
-                    fit_results, opts
-                );
-            }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: disorder analysis failed for m/n = "
-                      << mn << ": " << e.what() << "\n";
-            return 1;
-        }
-
-        // Optionally write sample tables for this m/n
-        if (bf["write_disorder_sample_tables"])
-        {
             try
             {
+                if (run_any_disorder)
+                {
+                    std::cout << "  Computing chi disorder...\n";
+                    std::cout.flush();
+                    disorder_results = lsdtt::get_chi_disorder(fit_results);
+                    std::cout << "  Disorder computed.\n";
+                    std::cout.flush();
+                }
+
                 if (bf["run_subset_sensitivity"])
                 {
-                    write_subset_table_csv(
-                        out_path(pp, "_chi_disorder_subset_samples_mn_" + mn_suffix(mn), ".csv"),
-                        lsdtt::export_chi_branch_subset_sensitivity_samples(subset_results)
-                    );
+                    lsdtt::lsdtt_chi_branch_subset_sensitivity_options opts;
+                    opts.n_side_branches_per_sample =
+                        ifs["subset_n_side_branches_per_sample"];
+                    subset_results =
+                        lsdtt::get_chi_branch_subset_sensitivity(fit_results, opts);
                 }
 
                 if (bf["run_jackknife"])
+                    jackknife_results =
+                        lsdtt::get_chi_disorder_jackknife(fit_results);
+
+                if (bf["run_bootstrap"])
                 {
-                    write_jackknife_table_csv(
-                        out_path(pp, "_chi_disorder_jackknife_mn_" + mn_suffix(mn), ".csv"),
-                        lsdtt::export_chi_disorder_jackknife(jackknife_results)
-                    );
+                    lsdtt::lsdtt_chi_disorder_bootstrap_options opts;
+                    opts.n_replicates = ifs["bootstrap_replicates"];
+                    opts.sample_full_tributary_count =
+                        bf["bootstrap_sample_full_tributary_count"];
+                    opts.n_side_branches_per_replicate =
+                        ifs["bootstrap_n_side_branches_per_replicate"];
+                    opts.sample_with_replacement =
+                        bf["bootstrap_with_replacement"];
+                    opts.random_seed =
+                        static_cast<std::uint64_t>(ifs["bootstrap_random_seed"]);
+                    bootstrap_results =
+                        lsdtt::get_chi_disorder_bootstrap(fit_results, opts);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: disorder analysis failed for m/n = "
+                          << mn << ": " << e.what() << "\n";
+                return 1;
+            }
+
+            if (bf["write_disorder_sample_tables"])
+            {
+                try
+                {
+                    if (bf["run_subset_sensitivity"])
+                        lsdtt::write_chi_disorder_subset_samples_csv(
+                            out_path(pp,
+                                "_chi_disorder_subset_samples_mn_" + mn_suffix(mn),
+                                ".csv"),
+                            lsdtt::export_chi_branch_subset_sensitivity_samples(
+                                subset_results));
+
+                    if (bf["run_jackknife"])
+                        lsdtt::write_chi_disorder_jackknife_csv(
+                            out_path(pp,
+                                "_chi_disorder_jackknife_mn_" + mn_suffix(mn),
+                                ".csv"),
+                            lsdtt::export_chi_disorder_jackknife(jackknife_results));
+
+                    if (bf["run_bootstrap"])
+                        lsdtt::write_chi_disorder_bootstrap_csv(
+                            out_path(pp,
+                                "_chi_disorder_bootstrap_mn_" + mn_suffix(mn),
+                                ".csv"),
+                            lsdtt::export_chi_disorder_bootstrap(bootstrap_results));
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: writing disorder sample tables failed "
+                                 "for m/n = " << mn << ": " << e.what() << "\n";
+                }
+            }
+
+            // Build basin-level sweep rows for this m/n.
+            for (std::size_t i = 0; i < fit_results.basins.size(); ++i)
+            {
+                lsdtt::lsdtt_chi_disorder_sweep_row row;
+                row.mn          = mn;
+                row.basin_index = static_cast<std::int32_t>(i);
+                row.outlet_flat = fit_results.basins[i].outlet_flat;
+
+                row.n_nodes =
+                    static_cast<std::int32_t>(fit_results.basins[i].flats.size());
+                row.n_main_stem_nodes = count_main_stem_nodes(fit_results.basins[i]);
+                row.n_branches        = count_unique_branch_ids(fit_results.basins[i]);
+                row.n_side_branches   =
+                    std::max<std::int32_t>(0, row.n_branches - 1);
+
+                if (run_any_disorder && i < disorder_results.disorder.size())
+                    row.full_network_disorder = disorder_results.disorder[i];
+
+                if (bf["run_subset_sensitivity"])
+                    row.n_subset_sensitivity_samples =
+                        static_cast<std::int32_t>(
+                            subset_results.basins[i].samples.size());
+
+                if (bf["run_jackknife"])
+                {
+                    row.jackknife_mean =
+                        jackknife_results.basins[i].jackknife_mean;
+                    row.jackknife_standard_error =
+                        jackknife_results.basins[i].jackknife_standard_error;
                 }
 
                 if (bf["run_bootstrap"])
                 {
-                    write_bootstrap_table_csv(
-                        out_path(pp, "_chi_disorder_bootstrap_mn_" + mn_suffix(mn), ".csv"),
-                        lsdtt::export_chi_disorder_bootstrap(bootstrap_results)
-                    );
+                    row.bootstrap_mean =
+                        bootstrap_results.basins[i].bootstrap_mean;
+                    row.bootstrap_standard_deviation =
+                        bootstrap_results.basins[i].bootstrap_standard_deviation;
+                    row.bootstrap_percentile_2p5 =
+                        bootstrap_results.basins[i].percentile_2p5;
+                    row.bootstrap_percentile_97p5 =
+                        bootstrap_results.basins[i].percentile_97p5;
                 }
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "Warning: writing disorder sample tables failed for m/n = "
-                          << mn << ": " << e.what() << "\n";
+
+                disorder_rows.push_back(row);
             }
         }
 
-        // Build basin-level sweep rows
-        for (std::size_t i = 0; i < fit_results.basins.size(); ++i)
+        try
         {
-            disorder_sweep_row row;
-            row.mn = mn;
-            row.basin_index = static_cast<std::int32_t>(i);
-            row.outlet_flat = fit_results.basins[i].outlet_flat;
-
-            row.n_nodes = static_cast<std::int32_t>(fit_results.basins[i].flats.size());
-            row.n_main_stem_nodes = count_main_stem_nodes(fit_results.basins[i]);
-            row.n_branches = count_unique_branch_ids(fit_results.basins[i]);
-            row.n_side_branches = std::max<std::int32_t>(0, row.n_branches - 1);
-
-            row.full_network_disorder = disorder_results.disorder[i];
-
-            if (bf["run_subset_sensitivity"])
-            {
-                row.n_subset_sensitivity_samples =
-                    static_cast<std::int32_t>(subset_results.basins[i].samples.size());
-            }
-
-            if (bf["run_jackknife"])
-            {
-                row.jackknife_mean = jackknife_results.basins[i].jackknife_mean;
-                row.jackknife_standard_error =
-                    jackknife_results.basins[i].jackknife_standard_error;
-            }
-
-            if (bf["run_bootstrap"])
-            {
-                row.bootstrap_mean = bootstrap_results.basins[i].bootstrap_mean;
-                row.bootstrap_standard_deviation =
-                    bootstrap_results.basins[i].bootstrap_standard_deviation;
-                row.bootstrap_percentile_2p5 =
-                    bootstrap_results.basins[i].percentile_2p5;
-                row.bootstrap_percentile_97p5 =
-                    bootstrap_results.basins[i].percentile_97p5;
-            }
-
-            disorder_rows.push_back(row);
+            lsdtt::write_chi_disorder_sweep_csv(
+                out_path(pp, "_chi_disorder_sweep", ".csv"),
+                disorder_rows);
         }
-    }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: writing disorder sweep summary failed: "
+                      << e.what() << "\n";
+        }
 
-    try
-    {
-        write_disorder_sweep_csv(
-            out_path(pp, "_chi_disorder_sweep", ".csv"),
-            disorder_rows
-        );
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Warning: writing disorder sweep summary failed: "
-                  << e.what() << "\n";
-    }
+    } // if (bf["fit_chi_networks"])
 
     // -------------------------------------------------------------------------
     // Spatial k_sn / u* inversion
@@ -1248,30 +1079,23 @@ int main(int argc, char* argv[])
         try
         {
             inversion_results = lsdtt::invert_chi_ksn(
-                *flow,
-                inversion_networks,
-                tested_mn,
-                inv_opts
-            );
+                *flow, inversion_networks, tested_mn, inv_opts);
         }
         catch (const std::exception& e)
         {
-            std::cerr << "FATAL: chi ksn inversion failed: "
-                      << e.what() << "\n";
+            std::cerr << "FATAL: chi ksn inversion failed: " << e.what() << "\n";
             return 1;
         }
 
         try
         {
-            write_inversion_trial_csv(
+            lsdtt::write_chi_ksn_inversion_trials_csv(
                 out_path(pp, "_chi_ksn_inversion_trials", ".csv"),
-                inversion_results
-            );
+                inversion_results);
 
-            write_inversion_best_summary_csv(
+            lsdtt::write_chi_ksn_inversion_best_summary_csv(
                 out_path(pp, "_chi_ksn_inversion_best", ".csv"),
-                inversion_results
-            );
+                inversion_results);
         }
         catch (const std::exception& e)
         {
@@ -1284,35 +1108,27 @@ int main(int argc, char* argv[])
             for (std::size_t i = 0; i < inversion_results.basins.size(); ++i)
             {
                 const auto& basin = inversion_results.basins[i];
-
                 try
                 {
-                    const std::string u_file =
-                        out_path(pp,
-                                 "_chi_ksn_u_star_basin_" + std::to_string(i),
-                                 ".tif");
                     loader.write_full(
                         basin.u_star_field.get_data(),
                         basin.u_star_field.get_meta(),
-                        u_file,
-                        out_fmt
-                    );
-
-                    const std::string s_file =
                         out_path(pp,
-                                 "_chi_ksn_support_count_basin_" + std::to_string(i),
-                                 ".tif");
+                            "_chi_ksn_u_star_basin_" + std::to_string(i), ".tif"),
+                        out_fmt);
+
                     loader.write_full(
                         basin.support_count_field.get_data(),
                         basin.support_count_field.get_meta(),
-                        s_file,
-                        out_fmt
-                    );
+                        out_path(pp,
+                            "_chi_ksn_support_count_basin_" + std::to_string(i),
+                            ".tif"),
+                        out_fmt);
                 }
                 catch (const std::exception& e)
                 {
-                    std::cerr << "Warning: writing inversion rasters failed for basin "
-                              << i << ": " << e.what() << "\n";
+                    std::cerr << "Warning: writing inversion rasters failed for "
+                                 "basin " << i << ": " << e.what() << "\n";
                 }
             }
         }

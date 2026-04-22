@@ -219,6 +219,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_extraction_cpu.cpp
     src/cpu/lsdtt_chi_network_analysis_cpu.cpp
     src/cpu/lsdtt_chi_disorder_cpu.cpp
+    src/cpu/lsdtt_chi_data_maps_cpu.cpp
     src/cpu/lsdtt_channel_network_analysis_cpu.cpp
     src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.cpp
     src/cpu/lsdtt_raster_skeleton_graph_cpu.cpp

@@ -23,6 +23,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "lsdtt_chi_extraction_cpu.hpp"
@@ -191,5 +192,16 @@ struct lsdtt_chi_network_fit_segment_table
     const lsdtt_chi_network_fit_options& options = {}
 );
 
+// Write a node-level fit table to CSV.
+void write_chi_network_fit_nodes_csv(
+    const std::string& filename,
+    const lsdtt_chi_network_fit_node_table& table
+);
+
+// Write a segment-level fit table to CSV.
+void write_chi_network_fit_segments_csv(
+    const std::string& filename,
+    const lsdtt_chi_network_fit_segment_table& table
+);
 
 } // namespace lsdtt

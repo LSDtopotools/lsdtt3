@@ -57,6 +57,8 @@
 
 #pragma once
 
+#include <cmath>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -416,6 +418,38 @@ std::unique_ptr<lsdtt_flow_base> make_flow_base(
     const lsdtt_array2d_u8&       mask,
     const lsdtt_raster_meta&      meta,
     const lsdtt_flowinfo_options& options = lsdtt_flowinfo_options{}
+);
+
+// -----------------------------------------------------------------------------
+// d8_step_length
+//
+// Flow-path step length (metres) between two adjacent flat indices.
+// Cardinal neighbours return cell_size; diagonal neighbours cell_size*sqrt(2).
+// Callable without including lsdtt_flowinfo_cpu.hpp.
+// -----------------------------------------------------------------------------
+inline double d8_step_length(
+    std::int64_t flat_up,
+    std::int64_t flat_dn,
+    int          n_cols,
+    double       cell_size)
+{
+    const int r_up = static_cast<int>(flat_up / static_cast<std::int64_t>(n_cols));
+    const int c_up = static_cast<int>(flat_up % static_cast<std::int64_t>(n_cols));
+    const int r_dn = static_cast<int>(flat_dn / static_cast<std::int64_t>(n_cols));
+    const int c_dn = static_cast<int>(flat_dn % static_cast<std::int64_t>(n_cols));
+    const int dr   = std::abs(r_up - r_dn);
+    const int dc   = std::abs(c_up - c_dn);
+    return (dr == 1 && dc == 1) ? cell_size * 1.41421356237309504880 : cell_size;
+}
+
+// -----------------------------------------------------------------------------
+// get_largest_basin_outlet_flat
+//
+// Scans all outlet cells in the flow object and returns the flat index of the
+// one with the largest upslope pixel count.  Throws if no outlet is found.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::int64_t get_largest_basin_outlet_flat(
+    const lsdtt_flow_base& flow
 );
 
 } // namespace lsdtt
