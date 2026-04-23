@@ -34,6 +34,8 @@
 #include <utility>
 #include <vector>
 
+#include "../core/lsdtt_data_loader.hpp"
+
 namespace lsdtt
 {
 namespace
@@ -698,7 +700,16 @@ private:
 
         // Now process all side tributaries off this fitted path, walking
         // downstream to upstream so the parent path is already available.
-        for (std::size_t pos = 0; pos < path.size(); ++pos)
+        //
+        // path[0] is the anchor junction borrowed from the parent branch.
+        // The parent already dispatched all side tributaries of that anchor,
+        // so we must skip pos=0 in recursive (side-tributary) calls.
+        // In the root call (first_upstream_local_idx < 0) the anchor IS the
+        // root and nothing above it has been dispatched yet, so pos=0 is safe.
+        const std::size_t start_pos =
+            (first_upstream_local_idx >= 0) ? std::size_t{1} : std::size_t{0};
+
+        for (std::size_t pos = start_pos; pos < path.size(); ++pos)
         {
             const int node = path[pos];
 
@@ -759,10 +770,13 @@ private:
         const float z_down =
             result_.fitted_elevation[static_cast<std::size_t>(down_local)];
 
-        const float z_up =
+        float z_up =
             fitted_assigned_[static_cast<std::size_t>(up_local)]
                 ? result_.fitted_elevation[static_cast<std::size_t>(up_local)]
                 : result_.observed_elevation[static_cast<std::size_t>(up_local)];
+
+        // Enforce positive slope: elevation must be non-decreasing upstream.
+        if (z_up < z_down) z_up = z_down;
 
         const double chi_down =
             static_cast<double>(result_.chi[static_cast<std::size_t>(down_local)]);
@@ -1298,6 +1312,106 @@ void write_chi_network_fit_segments_csv(
             << table.max_abs_residual[i] << ','
             << table.n_nodes[i] << '\n';
     }
+}
+
+void write_chi_network_fit_segments_vector(
+    const lsdtt_chi_network_fit_collection_result& fit_results,
+    const lsdtt_raster_meta&   meta,
+    const std::string&         filename,
+    vector_output_format       fmt,
+    bool                       spatial_index)
+{
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "basin_index", "outlet_flat", "segment_id", "branch_id",
+        "k_sn", "downstream_chi", "upstream_chi",
+        "downstream_elevation", "upstream_elevation", "n_nodes"
+    };
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type
+    };
+
+    const int    n_cols    = meta.n_cols;
+    const int    n_rows    = meta.n_rows;
+    const double x_min     = meta.x_min;
+    const double y_min     = meta.y_min;
+    const double cell_size = meta.cell_size;
+
+    auto flat_to_xy = [&](std::int64_t flat) -> lsdtt_xy
+    {
+        const int row = static_cast<int>(flat / static_cast<std::int64_t>(n_cols));
+        const int col = static_cast<int>(flat % static_cast<std::int64_t>(n_cols));
+        return {x_min + (col + 0.5) * cell_size,
+                y_min + (n_rows - row - 0.5) * cell_size};
+    };
+
+    lsdtt_data_loader writer;
+    writer.begin_vector_write(
+        filename, "chi_fit_segments", schema, meta.crs_wkt, fmt, spatial_index);
+
+    for (std::size_t bi = 0; bi < fit_results.basins.size(); ++bi)
+    {
+        const auto& basin = fit_results.basins[bi];
+
+        std::unordered_map<std::int64_t, std::size_t> local_idx;
+        local_idx.reserve(basin.flats.size());
+        for (std::size_t i = 0; i < basin.flats.size(); ++i)
+            local_idx[basin.flats[i]] = i;
+
+        for (const auto& seg : basin.segments)
+        {
+            // Trace node-by-node from upstream end to downstream end.
+            std::vector<lsdtt_xy> pts;
+            pts.reserve(static_cast<std::size_t>(seg.n_nodes));
+
+            std::int64_t cur = seg.upstream_flat;
+            for (int guard = 0; guard <= seg.n_nodes + 1; ++guard)
+            {
+                pts.push_back(flat_to_xy(cur));
+                if (cur == seg.downstream_flat) break;
+                const auto it = local_idx.find(cur);
+                if (it == local_idx.end()) break;
+                const std::int64_t rec = basin.receiver_flats[it->second];
+                if (rec == k_outlet_receiver) break;
+                cur = rec;
+            }
+
+            if (pts.size() < 2) continue;
+
+            const double dchi =
+                static_cast<double>(seg.upstream_chi) -
+                static_cast<double>(seg.downstream_chi);
+            const double k_sn =
+                (dchi > 0.0)
+                    ? (static_cast<double>(seg.upstream_elevation) -
+                       static_cast<double>(seg.downstream_elevation)) / dchi
+                    : 0.0;
+
+            writer.write_line(pts, {
+                static_cast<std::int64_t>(bi),
+                basin.outlet_flat,
+                static_cast<std::int64_t>(seg.segment_id),
+                static_cast<std::int64_t>(seg.branch_id),
+                k_sn,
+                static_cast<double>(seg.downstream_chi),
+                static_cast<double>(seg.upstream_chi),
+                static_cast<double>(seg.downstream_elevation),
+                static_cast<double>(seg.upstream_elevation),
+                static_cast<std::int64_t>(seg.n_nodes)
+            });
+        }
+    }
+
+    writer.finish_vector_write();
 }
 
 } // namespace lsdtt

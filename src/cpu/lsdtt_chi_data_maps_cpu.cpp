@@ -530,4 +530,142 @@ void write_chi_data_maps(
     std::cout.flush();
 }
 
+
+void write_chi_data_map_lines(
+    const lsdtt_chi_collection_result& chi_networks,
+    const lsdtt_flow_base&             flow,
+    const lsdtt_raster_cpu&            dem,
+    const std::string&                 output_prefix,
+    vector_output_format               fmt,
+    bool                               spatial_index)
+{
+    const lsdtt_raster_meta& meta      = dem.get_meta();
+    const int                n_cols    = meta.n_cols;
+    const int                n_rows    = meta.n_rows;
+    const double             x_min     = meta.x_min;
+    const double             y_min     = meta.y_min;
+    const double             cell_size = meta.cell_size;
+
+    auto flat_to_xy = [&](std::int64_t flat) -> lsdtt_xy
+    {
+        const int row = static_cast<int>(flat / static_cast<std::int64_t>(n_cols));
+        const int col = static_cast<int>(flat % static_cast<std::int64_t>(n_cols));
+        return {x_min + (col + 0.5) * cell_size,
+                y_min + (n_rows - row - 0.5) * cell_size};
+    };
+
+    lsdtt_vector_schema schema;
+    schema.field_names = {"source_key", "basin_key"};
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type
+    };
+
+    const std::string ext   = output_extension(fmt);
+    const std::string fname = output_prefix + "_chi_data_map_lines" + ext;
+
+    std::cout << "  Writing chi data map lines: " << fname << "\n";
+    std::cout.flush();
+
+    lsdtt_data_loader writer;
+    writer.begin_vector_write(
+        fname, "chi_data_map_lines", schema, meta.crs_wkt, fmt, spatial_index);
+
+    std::int32_t next_basin_key  = 0;
+    std::int32_t next_source_key = 0;
+
+    for (std::size_t bi = 0; bi < chi_networks.basins.size(); ++bi)
+    {
+        const auto& basin = chi_networks.basins[bi];
+
+        if (basin.flats.empty()) continue;
+
+        lsdtt_basin_cpu basin_obj(basin.outlet_flat, flow);
+        if (!basin_obj.check_basin_completeness()) continue;
+
+        const std::int32_t basin_key = next_basin_key++;
+        const std::size_t  n         = basin.flats.size();
+
+        // Build local index map and donor lists (same as write_chi_data_maps).
+        std::unordered_map<std::int64_t, std::size_t> local_idx;
+        local_idx.reserve(n);
+        for (std::size_t i = 0; i < n; ++i)
+            local_idx[basin.flats[i]] = i;
+
+        std::vector<std::vector<std::size_t>> donors(n);
+        for (std::size_t i = 1; i < n; ++i)
+        {
+            const std::size_t rec_idx = local_idx.at(basin.receiver_flats[i]);
+            donors[rec_idx].push_back(i);
+        }
+
+        // Primary donor (longest upstream path).
+        constexpr std::size_t k_no_donor = std::numeric_limits<std::size_t>::max();
+        std::vector<double>      max_path_up(n, 0.0);
+        std::vector<std::size_t> primary_donor(n, k_no_donor);
+
+        for (std::size_t ii = n; ii-- > 0; )
+        {
+            if (donors[ii].empty()) continue;
+
+            double best = -1.0;
+            std::size_t best_d = k_no_donor;
+
+            for (std::size_t d : donors[ii])
+            {
+                const double step =
+                    d8_step_length(basin.flats[d], basin.flats[ii], n_cols, cell_size);
+                const double candidate = step + max_path_up[d];
+                if (best_d == k_no_donor || candidate > best)
+                {
+                    best   = candidate;
+                    best_d = d;
+                }
+            }
+            max_path_up[ii]   = best;
+            primary_donor[ii] = best_d;
+        }
+
+        // Source-key assignment (same convention as write_chi_data_maps).
+        std::vector<std::int32_t> src_key_of(n, -1);
+        for (std::size_t ii = n; ii-- > 0; )
+        {
+            if (donors[ii].empty())
+                src_key_of[ii] = next_source_key++;
+            else
+                src_key_of[ii] = src_key_of[primary_donor[ii]];
+        }
+
+        // Collect node indices per source_key in natural (outlet-to-source) order.
+        std::unordered_map<std::int32_t, std::vector<std::size_t>> nodes_by_key;
+        nodes_by_key.reserve(n / 4 + 1);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (src_key_of[i] >= 0)
+                nodes_by_key[src_key_of[i]].push_back(i);
+        }
+
+        // Write one polyline per source_key.
+        for (const auto& [sk, indices] : nodes_by_key)
+        {
+            if (indices.size() < 2) continue;
+
+            std::vector<lsdtt_xy> pts;
+            pts.reserve(indices.size());
+            for (std::size_t idx : indices)
+                pts.push_back(flat_to_xy(basin.flats[idx]));
+
+            writer.write_line(pts, {
+                static_cast<std::int64_t>(sk),
+                static_cast<std::int64_t>(basin_key)
+            });
+        }
+    }
+
+    writer.finish_vector_write();
+
+    std::cout << "  Chi data map lines done.\n";
+    std::cout.flush();
+}
+
 } // namespace lsdtt

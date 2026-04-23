@@ -460,6 +460,19 @@ int main(int argc, char* argv[])
         "gpkg: GeoPackage in raster CRS. flatgeobuf/fgb: FlatGeobuf in raster CRS. "
         "Basin polygons are always vector (flatgeobuf fallback when csv requested)."};
 
+    bool_default_map["write_chi_data_map_lines"] = false;
+    help_map["write_chi_data_map_lines"] = {"bool","false",
+        "Write chi channels as polylines, one feature per source_key.",
+        "Each source_key represents the continuous channel from a headwater source "
+        "to the basin outlet following the primary-donor (longest-path) convention. "
+        "Attributes: source_key, basin_key. Only complete basins are written. "
+        "Keys match those in the chi data map point output."};
+
+    string_default_map["chi_data_map_lines_output_format"] = "flatgeobuf";
+    help_map["chi_data_map_lines_output_format"] = {"string","flatgeobuf",
+        "Output format for chi data map polylines.",
+        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines."};
+
     // --- Source extraction ---
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int","1000",
@@ -562,6 +575,25 @@ int main(int argc, char* argv[])
     help_map["write_fit_tables"] = {"bool","true",
         "Write chi network fit node and segment tables to CSV.", ""};
 
+    bool_default_map["write_chi_fit_segment_lines"] = false;
+    help_map["write_chi_fit_segment_lines"] = {"bool","false",
+        "Write fitted chi segments as a vector polyline file.",
+        "One polyline feature per piecewise-linear segment. Attributes: "
+        "basin_index, outlet_flat, segment_id, branch_id, k_sn (dz/dchi), "
+        "downstream_chi, upstream_chi, downstream_elevation, upstream_elevation, "
+        "n_nodes. Written once per m/n value tested."};
+
+    string_default_map["chi_fit_segment_lines_output_format"] = "flatgeobuf";
+    help_map["chi_fit_segment_lines_output_format"] = {"string","flatgeobuf",
+        "Output format for fitted chi segment polylines.",
+        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines."};
+
+    bool_default_map["calculate_spatial_index"] = false;
+    help_map["calculate_spatial_index"] = {"bool","false",
+        "Calculate a spatial index for vector outputs.",
+        "A spatial index speeds up GIS spatial queries but requires buffering "
+        "all features in memory before writing. Disable for large datasets."};
+
     bool_default_map["write_disorder_sample_tables"] = false;
     help_map["write_disorder_sample_tables"] = {"bool","false",
         "Write detailed disorder sample tables for each m/n value.", ""};
@@ -583,6 +615,10 @@ int main(int argc, char* argv[])
         to_lower_copy(sf["basin_outlet_snapping_method"]);
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
+    const lsdtt::vector_output_format chi_dm_lines_fmt =
+        lsdtt::resolve_vector_output_format(sf["chi_data_map_lines_output_format"]);
+    const lsdtt::vector_output_format chi_fit_lines_fmt =
+        lsdtt::resolve_vector_output_format(sf["chi_fit_segment_lines_output_format"]);
 
     // -------------------------------------------------------------------------
     // Validate params
@@ -766,10 +802,28 @@ int main(int argc, char* argv[])
         std::cout.flush();
 
         lsdtt::write_chi_data_maps(
-            chi_dm, *flow, dem,
+            chi_dm, *flow, routed_dem,
             pp.get_full_write_path(),
             dm_fmt
         );
+
+        if (bf["write_chi_data_map_lines"])
+        {
+            try
+            {
+                lsdtt::write_chi_data_map_lines(
+                    chi_dm, *flow, routed_dem,
+                    pp.get_full_write_path(),
+                    chi_dm_lines_fmt,
+                    bf["calculate_spatial_index"]
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: writing chi data map lines failed: "
+                          << e.what() << "\n";
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -859,7 +913,7 @@ int main(int argc, char* argv[])
                     std::cout.flush();
                     lsdtt::lsdtt_chi_network_fit_result r =
                         lsdtt::fit_chi_network(
-                            chi_networks.basins[bi], dem, fit_opts);
+                            chi_networks.basins[bi], routed_dem, fit_opts);
                     std::cout << "    basin[" << bi << "] fit OK  n_segments="
                               << r.segments.size() << "\n";
                     std::cout.flush();
@@ -902,6 +956,30 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "Warning: writing fit tables failed for m/n = "
+                              << mn << ": " << e.what() << "\n";
+                }
+            }
+
+            if (bf["write_chi_fit_segment_lines"])
+            {
+                try
+                {
+                    const std::string seg_lines_file =
+                        out_path(pp, "_chi_fit_segment_lines_mn_" + mn_suffix(mn),
+                                 lsdtt::output_extension(chi_fit_lines_fmt));
+                    std::cout << "  Writing fit segment lines: " << seg_lines_file << "\n";
+                    std::cout.flush();
+                    lsdtt::write_chi_network_fit_segments_vector(
+                        fit_results,
+                        routed_dem.get_meta(),
+                        seg_lines_file,
+                        chi_fit_lines_fmt,
+                        bf["calculate_spatial_index"]
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: writing fit segment lines failed for m/n = "
                               << mn << ": " << e.what() << "\n";
                 }
             }

@@ -204,4 +204,21 @@ void write_chi_network_fit_segments_csv(
     const lsdtt_chi_network_fit_segment_table& table
 );
 
+// Write fitted chi segments as a vector polyline file.
+//
+// Each segment becomes one polyline feature, traced node-by-node from its
+// upstream end to its downstream end.  Attributes written per feature:
+//   basin_index, outlet_flat, segment_id, branch_id, k_sn (dz/dchi),
+//   downstream_chi, upstream_chi, downstream_elevation, upstream_elevation,
+//   n_nodes
+//
+// fmt must be a binary vector format (flatgeobuf or gpkg; not csv).
+void write_chi_network_fit_segments_vector(
+    const lsdtt_chi_network_fit_collection_result& fit_results,
+    const lsdtt_raster_meta&   meta,
+    const std::string&         filename,
+    vector_output_format       fmt,
+    bool                       spatial_index = false
+);
+
 } // namespace lsdtt

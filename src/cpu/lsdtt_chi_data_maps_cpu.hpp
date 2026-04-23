@@ -67,4 +67,23 @@ void write_chi_data_maps(
     point_output_format                fmt
 );
 
+// Write chi channels as polylines, one feature per source_key.
+//
+// Each source_key represents a continuous channel from a headwater source to
+// the basin outlet, following the primary-donor (longest-path) convention.
+// Attributes per feature: source_key, basin_key.
+//
+// Only complete basins are written.  Basin keys and source keys are assigned
+// using the same rules as write_chi_data_maps, so the two outputs share keys.
+//
+// fmt must be a binary vector format (flatgeobuf or gpkg; not csv).
+void write_chi_data_map_lines(
+    const lsdtt_chi_collection_result& chi_networks,
+    const lsdtt_flow_base&             flow,
+    const lsdtt_raster_cpu&            dem,
+    const std::string&                 output_prefix,
+    vector_output_format               fmt,
+    bool                               spatial_index = false
+);
+
 } // namespace lsdtt
