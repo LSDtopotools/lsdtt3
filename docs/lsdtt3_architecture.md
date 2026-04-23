@@ -24,13 +24,20 @@ lsdtt3/
 ├── apptainer_def/
 │   └── apptainer_setup.md
 ├── cli/
+│   ├── lsdtt-basin-extraction.cpp
 │   ├── lsdtt-channel-extraction.cpp
+│   ├── lsdtt-channel-network-analysis.cpp
+│   ├── lsdtt-chi-analysis.cpp             *(requires Eigen3)*
+│   ├── lsdtt-drainage-analysis.cpp
 │   ├── lsdtt-feature-finder.cpp
+│   ├── lsdtt-flat-surface-finder.cpp
+│   ├── lsdtt-hydraulic-routing.cpp
+│   ├── lsdtt-mountain-front.cpp
 │   ├── lsdtt-raster-basin-stats.cpp
 │   ├── lsdtt-raster-preprocessing.cpp
 │   ├── lsdtt-raster-synthetic-tests.cpp
-│   ├── lsdtt-surface-metrics.cpp
-│   └── lsdtt-test-flowinfo.cpp
+│   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
+│   └── lsdtt-surface-metrics.cpp
 ├── docs/
 │   ├── basin_extraction_guide.md
 │   ├── debian_packaging.md
@@ -38,6 +45,13 @@ lsdtt3/
 │   ├── lsdtt3_architecture.md
 │   ├── lsdtt_utils_guide.md
 │   └── using_lsdtt_flowinfo.md
+├── graphflood/                             — third-party graph-based flood routing (Gailleton et al.)
+│   ├── graphflood.hpp
+│   ├── graphflood_v2.hpp
+│   ├── fastflood.hpp
+│   ├── fastflood_recorder.hpp
+│   ├── graphflood_enums.hpp
+│   └── graphflood_parts.hpp
 ├── python_helpers/
 │   ├── dem_downloader_instructions.md
 │   └── download_dem_tiles.py
@@ -53,42 +67,70 @@ lsdtt3/
 │   │   ├── lsdtt_basin_base.hpp             — abstract basin interface
 │   │   ├── lsdtt_junction_network_base.hpp  — abstract channel network interface + lsdtt_junction_network_options
 │   │   ├── lsdtt_flow_base.hpp              — abstract D8 flow interface + lsdtt_flowinfo_options
+│   │   ├── lsdtt_hydraulic_base.hpp         — abstract graph-based hydraulic routing interface + lsdtt_hydraulic_options
 │   │   ├── lsdtt_crs_suggest.hpp/.cpp       — CRS inspection and projection recommendation
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
 │   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
+│   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
 │   ├── cpu/
-│   │   ├── lsdtt_raster_cpu.hpp/.cpp                       — concrete CPU raster class
-│   │   ├── lsdtt_flow_base.cpp                             — factory impl for make_flow_base()
-│   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                     — D8 CPU flow routing
-│   │   ├── lsdtt_flowgraph_cpu.hpp                         — D-inf/MFD DAG routing (stub)
-│   │   ├── lsdtt_depression_hierarchy_cpu.hpp/.cpp         — depression hierarchy construction
-│   │   ├── lsdtt_fill_spill_merge_cpu.hpp/.cpp             — fill-spill-merge depression routing
-│   │   ├── lsdtt_flow_snapping_cpu.hpp/.cpp                — snapping points to channel network
-│   │   ├── lsdtt_junction_network_cpu.hpp/.cpp             — CPU channel junction network
-│   │   ├── lsdtt_basin_cpu.hpp/.cpp                        — CPU basin objects
-│   │   ├── lsdtt_junction_basin_cpu.hpp/.cpp               — junction-based basin extraction
-│   │   ├── lsdtt_junction_basin_selection_cpu.hpp/.cpp     — basin selection helpers
-│   │   ├── lsdtt_raster_algebra.hpp/.cpp                   — element-wise raster algebra
-│   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp       — hillshade, moving window, polyfit metrics
-│   │   ├── lsdtt_raster_surface_fitting_cpu.hpp/.cpp       — plane and polynomial surface fitting to masks
-│   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp    — fill, breach, nodata
-│   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp        — interior void filling
-│   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp              — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
-│   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp                — OpenCV-based raster processing
-│   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp        — feature-specific raster workflows
-│   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp               — mountain front identification from DEM
-│   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                  — kinematic streamline tracing (Lea 1992)
-│   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp    — test surface generators including mountain range geometries
+│   │   ├── lsdtt_raster_cpu.hpp/.cpp                         — concrete CPU raster class
+│   │   ├── lsdtt_flow_base.cpp                               — factory impl for make_flow_base()
+│   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                       — D8 CPU flow routing
+│   │   ├── lsdtt_flowgraph_cpu.hpp/.cpp                      — D-inf/MFD DAG routing (CSR layout, Kahn BFS)
+│   │   ├── lsdtt_depression_hierarchy_cpu.hpp/.cpp           — depression hierarchy construction
+│   │   ├── lsdtt_fill_spill_merge_cpu.hpp/.cpp               — fill-spill-merge depression routing
+│   │   ├── lsdtt_flow_snapping_cpu.hpp/.cpp                  — snapping points to channel network
+│   │   ├── lsdtt_junction_network_cpu.hpp/.cpp               — CPU channel junction network
+│   │   ├── lsdtt_basin_cpu.hpp/.cpp                          — CPU basin objects
+│   │   ├── lsdtt_junction_basin_cpu.hpp/.cpp                 — junction-based basin extraction
+│   │   ├── lsdtt_junction_basin_manager_cpu.hpp/.cpp         — basin selection and management
+│   │   ├── lsdtt_basin_outline_cpu.hpp/.cpp                  — basin outline/polygon extraction
+│   │   ├── lsdtt_raster_algebra.hpp/.cpp                     — element-wise raster algebra
+│   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp         — hillshade, moving window, polyfit metrics
+│   │   ├── lsdtt_surface_texture_cpu.hpp/.cpp                — MADk2, moving_window_iqr, NVD roughness metrics
+│   │   ├── lsdtt_raster_surface_fitting_cpu.hpp/.cpp         — plane and polynomial surface fitting to masks
+│   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp      — fill, breach, nodata
+│   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp          — interior void filling
+│   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp                — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
+│   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp                  — OpenCV-based raster processing
+│   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp          — feature-specific raster workflows
+│   │   ├── lsdtt_raster_binary_mask_cpu.hpp/.cpp             — binary mask morphology (dilation, erosion, opening, closing, labelling)
+│   │   ├── lsdtt_raster_binary_mask_vectorise_cpu.hpp/.cpp   — binary mask to vector polygon conversion
+│   │   ├── lsdtt_raster_skeleton_graph_cpu.hpp/.cpp          — 1-pixel skeleton graph analysis, pruning, reconnection
+│   │   ├── lsdtt_raster_vectorise_cpu.hpp/.cpp               — raster to vector conversion
+│   │   ├── lsdtt_raster_mosaic_cpu.hpp/.cpp                  — raster mosaicking
+│   │   ├── lsdtt_vector_rasterise_cpu.hpp/.cpp               — vector to raster rasterisation
+│   │   ├── lsdtt_connectivity_cpu.hpp/.cpp                   — raster connectivity analysis
+│   │   ├── lsdtt_proximity_cpu.hpp/.cpp                      — proximity / distance-to-feature rasters
+│   │   ├── lsdtt_swath_cpu.hpp/.cpp                          — swath profile extraction
+│   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp                 — mountain front identification from DEM
+│   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
+│   │   ├── lsdtt_flat_surface_finder.hpp/.cpp                — flat surface identification (MADk2, residual IQR, NVD)
+│   │   ├── lsdtt_flat_surface_plane_analysis.hpp/.cpp        — plane analysis on detected flat surfaces
+│   │   ├── lsdtt_hydraulic_graph_cpu.hpp/.cpp                — CPU hydraulic routing (lsdtt_hydraulic_base impl, Gailleton et al. 2024)
+│   │   ├── lsdtt_chi_extraction_cpu.hpp/.cpp                 — chi coordinate extraction (full raster, outlet-seeded, inherited-base)
+│   │   ├── lsdtt_chi_network_analysis_cpu.hpp/.cpp           — piecewise-linear fitting of chi channel networks
+│   │   ├── lsdtt_chi_disorder_cpu.hpp/.cpp                   — chi disorder metric, jackknife, bootstrap, m/n sweep
+│   │   ├── lsdtt_chi_data_maps_cpu.hpp/.cpp                  — chi data-map output (per-node points, basin outlines, polylines)
+│   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
+│   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
+│   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity
+│   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
+│   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
 │   └── utils/
-│       ├── lsdtt_array2d.hpp              — header-only 2D array
-│       ├── lsdtt_raster_geometry.hpp      — header-only raster geometry helpers
-│       ├── lsdtt_statistics.hpp/.cpp      — descriptive statistics (median, MAD, stddev, etc.)
-│       ├── lsdtt_histogram.hpp/.cpp       — histogram, PDF, CDF
+│       ├── lsdtt_array2d.hpp                — header-only 2D array
+│       ├── lsdtt_raster_geometry.hpp        — header-only raster geometry helpers
+│       ├── lsdtt_linear_algebra.hpp         — header-only: sym3x3 eigenvalues, 3×3 inversion, 2D geometry helpers
+│       ├── lsdtt_thread_utils.hpp           — header-only: resolve_thread_count() (OpenMP / hardware fallback)
+│       ├── lsdtt_binary_array2d_tracing.hpp/.cpp — binary array tracing utilities
+│       ├── lsdtt_distributions.hpp/.cpp     — parametric distribution fitting: normal, exponential, Weibull, Pareto (MLE + KS)
+│       ├── lsdtt_statistics.hpp/.cpp        — descriptive statistics (median, MAD, stddev, etc.)
+│       ├── lsdtt_histogram.hpp/.cpp         — histogram, PDF, CDF
 │       ├── lsdtt_statistical_tests.hpp/.cpp — nonparametric tests, KS, circular statistics
-│       ├── lsdtt_splines.hpp/.cpp         — 1D spline interpolation
-│       └── lsdtt_regression.hpp/.cpp      — linear and polynomial regression helpers
+│       ├── lsdtt_splines.hpp/.cpp           — 1D spline interpolation
+│       └── lsdtt_regression.hpp/.cpp        — linear and polynomial regression helpers
 ├── CMakeLists.txt
 ├── diagnose_fftw.sh
 └── README.md
@@ -120,11 +162,22 @@ the utility-layer numerical functions.
 - `lsdtt_raster_warp.cpp`
 - `lsdtt_vector_utils.cpp`
 - `lsdtt_point_input.cpp`
+- `lsdtt_stat_csv.cpp`
+
+**`lsdtt3_utils` sources** (`src/utils/`):
+- `lsdtt_statistics.cpp`
+- `lsdtt_histogram.cpp`
+- `lsdtt_statistical_tests.cpp`
+- `lsdtt_distributions.cpp`
+- `lsdtt_splines.cpp`
+- `lsdtt_regression.cpp`
+- `lsdtt_binary_array2d_tracing.cpp`
 
 **`lsdtt3_cpu` sources** (`src/cpu/`):
 - `lsdtt_raster_cpu.cpp`
 - `lsdtt_raster_algebra.cpp`
 - `lsdtt_raster_surface_metrics_cpu.cpp`
+- `lsdtt_surface_texture_cpu.cpp`
 - `lsdtt_raster_surface_fitting_cpu.cpp`
 - `lsdtt_raster_flow_preprocessing_cpu.cpp`
 - `lsdtt_raster_nodata_filling_cpu.cpp`
@@ -134,23 +187,49 @@ the utility-layer numerical functions.
 - `lsdtt_flowinfo_cpu.cpp`
 - `lsdtt_flow_base.cpp`
 - `lsdtt_junction_network_cpu.cpp`
+- `lsdtt_junction_network_base.cpp`
 - `lsdtt_depression_hierarchy_cpu.cpp`
 - `lsdtt_fill_spill_merge_cpu.cpp`
 - `lsdtt_flow_snapping_cpu.cpp`
 - `lsdtt_basin_cpu.cpp`
 - `lsdtt_junction_basin_cpu.cpp`
-- `lsdtt_mountain_front_cpu.cpp`
+- `lsdtt_junction_basin_manager_cpu.cpp`
+- `lsdtt_basin_outline_cpu.cpp`
+- `lsdtt_flat_surface_finder.cpp`
+- `lsdtt_flat_surface_plane_analysis.cpp`
+- `lsdtt_vector_rasterise_cpu.cpp`
+- `lsdtt_proximity_cpu.cpp`
+- `lsdtt_swath_cpu.cpp`
 - `lsdtt_streamlines_cpu.cpp`
+- `lsdtt_flowgraph_cpu.cpp`
+- `lsdtt_raster_vectorise_cpu.cpp`
+- `lsdtt_raster_mosaic_cpu.cpp`
+- `lsdtt_connectivity_cpu.cpp`
+- `lsdtt_hydraulic_graph_cpu.cpp`
+- `lsdtt_chi_extraction_cpu.cpp`
+- `lsdtt_chi_network_analysis_cpu.cpp`
+- `lsdtt_chi_disorder_cpu.cpp`
+- `lsdtt_chi_data_maps_cpu.cpp`
+- `lsdtt_channel_network_analysis_cpu.cpp`
+- `lsdtt_strahler_tokunaga_analysis_cpu.cpp`
+- `lsdtt_raster_skeleton_graph_cpu.cpp`
+- `lsdtt_raster_binary_mask_vectorise_cpu.cpp`
+- `lsdtt_raster_binary_mask_cpu.cpp`
+- `lsdtt_burn_streams_cpu.cpp`
+- `lsdtt_mountain_front_cpu.cpp`
 - `lsdtt_raster_opencv_cpu.cpp` *(when OpenCV is available)*
+- `lsdtt_chi_ksn_inversion_cpu.cpp` *(when Eigen3 is available)*
 
-`lsdtt3_cpu` depends on `lsdtt3_core`. All CLI executables link against
-`lsdtt3_cpu` and `lsdtt3_core`. OpenMP, FFTW, and OpenCV link to `lsdtt3_cpu`.
+`lsdtt3_cpu` depends on `lsdtt3_core` and `lsdtt3_utils`. All CLI executables
+link against `lsdtt3_cpu` and `lsdtt3_core`. OpenMP, FFTW, OpenCV, and Eigen3
+link to `lsdtt3_cpu`.
 
 **Dependencies:**
 - GDAL — required
 - OpenMP — optional
-- FFTW3 — optional
+- FFTW3 — optional (enables `lsdtt-spectral-analysis`)
 - OpenCV — optional
+- Eigen3 — optional (enables `lsdtt-chi-analysis` and `lsdtt_chi_ksn_inversion_cpu`)
 - CUDA — optional
 
 
@@ -347,20 +426,29 @@ Current CLI programs are:
 - **`lsdtt-raster-synthetic-tests.cpp`**  
   Synthetic raster generation and testing utilities.
 
-- **`lsdtt-test-flowinfo.cpp`**  
-  Builds D8 flow routing and writes diagnostic flow-routing rasters.
-
 - **`lsdtt-surface-metrics.cpp`**  
   Surface-analysis workflow that does not require flow routing: hillshade,
   polynomial surface fit, Otsu segmentation, Hough line extraction.
+
+- **`lsdtt-drainage-analysis.cpp`**  
+  Computes drainage-related rasters: optionally fills pits, then computes drainage
+  area using D8 (`lsdtt_flowinfo`), D-infinity, or MFD (`lsdtt_flowgraph_cpu`),
+  and derives the Topographic Wetness Index (TWI).
 
 - **`lsdtt-channel-extraction.cpp`**  
   Builds or reuses a pit-filled DEM, constructs D8 flow routing, extracts source
   pixels from a contributing-pixel threshold, builds the junction/channel
   network, and writes channel-network output to CSV, GeoPackage, or FlatGeobuf.
 
+- **`lsdtt-basin-extraction.cpp`**  
+  Builds D8 flow routing, extracts a channel/junction network, and optionally
+  selects and writes junction-aware basins (outlines, raster labels, statistics).
+
 - **`lsdtt-raster-basin-stats.cpp`**  
   Extracts basins from a junction network and computes raster statistics per basin.
+
+- **`lsdtt-feature-finder.cpp`**  
+  Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope morphology).
 
 - **`lsdtt-mountain-front.cpp`**  
   Identifies mountain fronts using multi-scale relief, piedmont surface fitting, and
@@ -371,6 +459,31 @@ Current CLI programs are:
   - Real DEM (use_synthetic_dem: false) — loads a projected DEM and runs the pipeline.
   Outputs: low_ground_mask, fitted_surface, residual, mountain_mask, and optional
   per-scale relief diagnostic rasters.
+
+- **`lsdtt-flat-surface-finder.cpp`**  
+  Identifies flat (low-texture) surfaces using MADk2, residual IQR, and/or NVD
+  metrics. Outputs per-metric texture rasters, binary masks, and a combined mask.
+  Thresholds are set by percentile; masks can be combined with AND or OR logic.
+
+- **`lsdtt-hydraulic-routing.cpp`**  
+  Graph-based hydraulic routing on a fixed D-inf or MFD flow graph. Constructs
+  `lsdtt_hydraulic_graph_cpu`, runs N timesteps, and writes water-depth,
+  water-surface, and flux rasters (Gailleton et al. 2024).
+
+- **`lsdtt-channel-network-analysis.cpp`**  
+  Builds a channel/junction network and runs one or more network analyses:
+  channel-link bearing fitting (orthogonal regression), junction-angle calculation
+  (donor opening angle, donor–receiver angles, bending angle), and
+  Strahler/Tokunaga self-similarity analysis. Writes CSV, GeoPackage, or FlatGeobuf.
+
+- **`lsdtt-chi-analysis.cpp`** *(requires Eigen3)*  
+  End-to-end chi workflow: chi extraction on threshold-defined channel networks,
+  piecewise-linear chi-network fitting, disorder metrics with jackknife/bootstrap
+  uncertainty, and spatial k_sn/u* inversion with m/n model selection.
+  Outlets can be supplied as a CSV of lat/lon points; otherwise the largest basin is used.
+
+- **`lsdtt-spectral-analysis.cpp`** *(requires FFTW3)*  
+  Spectral surface analysis workflows using the FFTW double API.
 
 ### Polyfit method rule
 
@@ -695,7 +808,7 @@ There are several flow-routing files. This table explains which one you need.
 |---|---|---|
 | Writing analysis code (chi, steepness, drainage area, etc.) | `lsdtt_flowinfo_cpu.hpp` | Only file you need. Construct `lsdtt_flowinfo`, call its methods directly. |
 | Writing a CLI that builds a flow object | `lsdtt_flow_base.hpp` | Call `make_flow_base()`. Returns `unique_ptr<lsdtt_flow_base>`. GPU-compatible. |
-| Writing D-inf / MFD distributed-flow analysis | `lsdtt_flowgraph_cpu.hpp` | Stub — implementation pending. |
+| Writing D-inf / MFD distributed-flow analysis | `lsdtt_flowgraph_cpu.hpp` | Fully implemented (CSR layout, Kahn BFS). |
 | Adding a GPU flow routing backend | `lsdtt_flow_base.hpp` + new `lsdtt_flowinfo_gpu.hpp` | Implement `lsdtt_flow_base`, add branch in `src/cpu/lsdtt_flow_base.cpp`. |
 | Understanding cell-index types | `lsdtt_types.hpp` | Flow-routing cell indices use `std::int64_t` directly throughout; there is no `flat_index_type` typedef. |
 
@@ -832,8 +945,9 @@ first.
 Files: `src/cpu/lsdtt_flowgraph_cpu.hpp/.cpp`
 
 DAG-based CPU flow routing for D-infinity and MFD. No s_vector (upslope sets
-are fractional and overlapping). Use for distributed-flow analyses: sediment
-flux, TWI, specific catchment area on hillslopes.
+are fractional and overlapping). Use for distributed-flow analyses: drainage
+area (D-inf/MFD variant), TWI, sediment flux, specific catchment area on
+hillslopes. Also provides the routing snapshot consumed by `lsdtt_hydraulic_graph_cpu`.
 
 **Routing methods:**
 - `d_infinity` — Tarboton (1997). At most two receivers per cell (one cardinal,
@@ -953,7 +1067,7 @@ Inner loops are OpenMP-parallelised.
 - `moving_window_median(raster, radius_metres, shape=circular)`
 - `moving_window_mad(raster, radius_metres, shape=circular)` — median absolute deviation
 - `moving_window_tpi(raster, radius_metres, shape=circular)` — Topographic Position Index (Weiss 2001)
-- `calculate_madk2(raster, window_radius_metres, lag_pixels=1, n_threads=0)` → `madk2_result` — Trevisani et al. (2023) directional roughness
+- `calculate_madk2(...)` — **moved to `lsdtt_surface_texture_cpu`**
 - `direct_polyfit(raster, lambda_metres=100.0, n_threads=0)` → `poly_fit_coeffs` — **default and preferred polyfit method**; separable two-pass rolling-moment, O(n) per pixel, faster than wavelet and better at resolving fine-scale features
 - `wavelet_quadratic_fit(raster, lambda=100.0, n_threads=0)` → `poly_fit_coeffs` — FFT-based alternative; available but not the default
 - `compute_polyfit_metrics(polycoeff, request)` → `polyfit_metric_result` — batch computation of curvature and derivative rasters from polyfit coefficients (works with output of either method above)
@@ -1188,39 +1302,341 @@ n_threads, nodata_fill_max_iter
 
 ---
 
-## lsdtt-test-flowinfo CLI
+## lsdtt-drainage-analysis CLI
 
-File: `cli/lsdtt-test-flowinfo.cpp`
+File: `cli/lsdtt-drainage-analysis.cpp`
 
-Builds D8 flow routing from a DEM and writes diagnostic rasters. Uses
-`make_flow_base()` — compatible with future GPU backend without modification.
-
-**Includes** `lsdtt_flow_base.hpp`, NOT `lsdtt_flowinfo_cpu.hpp`.
-
-**Construction pattern:**
-```cpp
-std::unique_ptr<lsdtt::lsdtt_flow_base> flow =
-    lsdtt::make_flow_base(dem_data, dem_mask, meta, fi_opts);
-flow->n_valid_cells();
-flow->upslope_nodes(flat);
-```
+Computes drainage-related rasters. Uses `make_flow_base()` for D8 or
+`lsdtt_flowgraph_cpu` for D-infinity / MFD.
 
 **Key parameters:**
 ```
 read_fname, write_fname, read_path, write_path
+flow_algorithm_choice: d8 / d_infinity / mfd   (default: d8)
+mfd_exponent: 1.0
 boundary_conditions: oooo
-breach_before_fill, fill_remainder_after_breach, fill_before_routing
-fill_algorithm_choice, breach_algorithm_choice
+fill_before_routing, fill_algorithm_choice, breach_algorithm_choice
 fill_min_slope, minimum_elevation, maximum_elevation
 write_n_contributing_pixels_raster, write_flow_direction_raster
-write_donor_count_raster, write_outlet_raster
+write_twi_raster
 write_fill_raster, write_breached_raster
 write_output_format: cog
 n_threads: 0
 ```
 
-**Flow direction codes:**
+**Flow direction codes (D8):**
 `0`=N `1`=NE `2`=E `3`=SE `4`=S `5`=SW `6`=W `7`=NW; outlets = `-2`
+
+---
+
+## lsdtt_stat_csv
+
+File: `src/core/lsdtt_stat_csv.hpp/.cpp`
+
+Shared CSV writers for statistical outputs. Used by multiple CLIs to avoid
+repeating boilerplate. All functions take a `lsdtt_data_loader&` for I/O.
+
+- `write_qq_csv(loader, path, qq)` — QQ-plot table (standard normal variate, data quantile, normal reference line)
+- `write_smoothed_cdf_csv(loader, path, scdf, fits)` — empirical CDF + best-fitting parametric CDF + divergence column
+- `write_dist_fits_csv(loader, path, fits)` — one row per fitted distribution family with KS statistic and validity flag
+
+---
+
+## lsdtt_hydraulic_base / lsdtt_hydraulic_graph_cpu
+
+### lsdtt_hydraulic_base
+
+File: `src/core/lsdtt_hydraulic_base.hpp` (header-only)
+
+Narrow abstract interface for graph-based hydraulic routing engines, analogous
+to `lsdtt_flow_base`. Conceptually inspired by Gailleton et al. (2024).
+
+**`lsdtt_hydraulic_options` fields:**
+```
+dt                          = 1.0e-3   # fixed timestep (s)
+mannings_n                  = 0.033
+min_slope                   = 1.0e-8
+uniform_rainfall_rate       = 0.0      # m/s
+receiver_width              = -1.0     # ≤ 0 = auto (cell_size)
+adaptive_dt_enabled         = false
+print_startup_message       = true
+```
+
+**Key virtual methods:**
+- `run_one_step()`, `run_n_steps(n)`
+- `set_uniform_rainfall_rate()`, `add_point_inflow(flat, m3/s)`
+- `get_water_depth_raster()`, `get_water_surface_raster()`, `get_qin_raster()`, `get_qout_raster()`, `get_dhw_raster()`
+- `refresh_routing()` — no-op for fixed-routing impls; intended extension point for dynamic routing
+
+### lsdtt_hydraulic_graph_cpu
+
+File: `src/cpu/lsdtt_hydraulic_graph_cpu.hpp/.cpp`
+
+CPU implementation of `lsdtt_hydraulic_base`. Routing graph is copied from an
+`lsdtt_flowgraph_cpu` at construction; the hydraulic solver evolves water depth
+while routing remains fixed. Prints a startup message crediting Gailleton et al. (2024).
+
+**Run modes:**
+```cpp
+enum class lsdtt_hydraulic_run_mode {
+    transient_fixed_graph,
+    stationary_fixed_graph,
+    transient_dynamic_graph,    // future
+    stationary_dynamic_graph    // future
+};
+```
+
+---
+
+## lsdtt_surface_texture_cpu
+
+File: `src/cpu/lsdtt_surface_texture_cpu.hpp/.cpp`
+
+Surface texture and roughness metrics. MADk2 was moved here from
+`lsdtt_raster_surface_metrics_cpu`; `moving_window_iqr` and `compute_nvd` are new.
+
+**`madk2_result`** — Trevisani, Teza & Guth (2023):
+- `omnidirectional_roughness` — second-order directional MAD; slope-invariant
+- `direction_maximum_continuity` — compass bearing of maximum continuity (°, [0, 180))
+- `roughness_anisotropy` — directional anisotropy index [0, 1]
+
+`calculate_madk2(raster, window_radius_metres, lag_pixels=1, n_threads=0)` → `madk2_result`
+
+**`moving_window_iqr(raster, radius_metres, shape=circular, n_threads=0)`** → `lsdtt_raster_cpu`  
+IQR (Q3 − Q1) of valid pixel values within a moving window. Pass a residual
+raster from `lsdtt_raster_surface_fitting_cpu` for detrended roughness.
+
+**`nvd_result`** — Normal Vector Dispersion (Woodcock 1977):
+- `s1`, `s2`, `s3` — normalised eigenvalues of the 3×3 orientation tensor (sum to 1)
+- Low `s3` → co-planar normals (flat or sloping smooth surface)
+- High `s3` → scattered normals (rough terrain)
+
+`compute_nvd(d_coeffs, e_coeffs, radius_metres, shape=circular, n_threads=0)` → `nvd_result`  
+Input `d` and `e` are ∂z/∂x and ∂z/∂y rasters from any polyfit workflow.
+
+---
+
+## Chi analysis stack (`src/cpu/lsdtt_chi_*`)
+
+Four files implement the full chi workflow in a pipeline:
+
+```
+lsdtt_chi_extraction_cpu      — extract chi values
+       ↓
+lsdtt_chi_network_analysis_cpu — piecewise-linear fit
+       ↓
+lsdtt_chi_disorder_cpu         — disorder metrics & uncertainty
+lsdtt_chi_data_maps_cpu        — output: per-node points, polylines, basin polygons
+lsdtt_chi_ksn_inversion_cpu    — spatial k_sn / u* inversion (requires Eigen3)
+```
+
+### lsdtt_chi_extraction_cpu
+
+**`lsdtt_chi_options`** — `m_over_n = 0.45`, `A_0 = 1.0`
+
+Three extraction modes:
+1. **Full raster** — whole-raster chi from all baselevel outlets at chi = 0
+2. **Outlet-seeded, zero base** — upslope domain of supplied outlets; each starts at chi = 0
+3. **Outlet-seeded, inherited base** — outlets inherit chi values from a precomputed chi raster (for nested analyses)
+
+Each mode has three domain variants: full upslope raster / threshold-defined channel / supplied junction network.
+
+**Key result types:**
+- `lsdtt_chi_basin_result` — outlet flat, per-node `flats`, `chi`, `receiver_flats`
+- `lsdtt_chi_collection_result` — vector of `lsdtt_chi_basin_result`
+
+Custom-denominator overloads accept a `denominator_raster` in place of drainage area (e.g. discharge).
+
+### lsdtt_chi_network_analysis_cpu
+
+Recursive piecewise-linear fitting of chi-elevation profiles basin by basin.
+
+**`lsdtt_chi_network_fit_options`:**
+- `critical_divergence_m` — maximum residual (m) before a segment is split (default 5.0 m)
+- `mainstem_choice` — `max_flow_length` (default) or `max_chi`
+
+**Key result types:**
+- `lsdtt_chi_network_fit_result` — per-node: `chi`, `observed_elevation`, `fitted_elevation`, `residual_elevation`, `branch_id_of_node`, `is_main_stem`, `is_split_point`, plus segment list
+- `lsdtt_chi_network_fit_segment` — segment endpoints in chi/elevation space, slope (k_sn = dz/dchi), `max_abs_residual`
+
+**Key functions:**
+- `fit_chi_network(chi_network, dem, options)` → `lsdtt_chi_network_fit_result`
+- `export_chi_network_fit_nodes(...)` → `lsdtt_chi_network_fit_node_table`
+- `export_chi_network_fit_segments(...)` → `lsdtt_chi_network_fit_segment_table`
+- `write_chi_network_fit_segments_vector(...)` — writes polylines with k_sn attributes
+
+### lsdtt_chi_disorder_cpu
+
+Disorder metric (non-collinearity of chi-elevation branches).
+
+**Analysis tools:**
+- `get_chi_disorder(fit_result, options)` → `float` — full-network disorder
+- `get_chi_branch_subset_sensitivity(fit_result, options)` — main stem + N side-branch combinations
+- `get_chi_disorder_jackknife(fit_result, options)` — leave-one-branch-out jackknife
+- `get_chi_disorder_bootstrap(fit_result, options)` — bootstrap over non-mainstem branches
+
+**`lsdtt_chi_disorder_sweep_row`** — one row per basin × m/n for a sweep table written to CSV.
+
+All result types have collection overloads (`_collection_result`) that operate basin-by-basin.
+
+### lsdtt_chi_data_maps_cpu
+
+High-level output for chi analysis.
+
+- `write_chi_data_maps(chi_networks, flow, dem, output_prefix, fmt)` — writes per-node points, basin outlets, channel heads, and basin polygons. Incomplete basins (upslope area touches nodata) are automatically excluded.
+- `write_chi_data_map_lines(...)` — writes channels as polylines keyed by `source_key` / `basin_key`
+
+**Source-key convention:** the longest channel in each basin retains its headwater key to the outlet; shorter tributaries keep their own keys.
+
+### lsdtt_chi_ksn_inversion_cpu *(requires Eigen3)*
+
+Spatial k_sn / u* inversion with m/n model selection via regularised sparse least squares.
+
+For each trial m/n:
+1. recompute chi on the fixed channel network
+2. assemble sparse design matrix from downstream chi increments
+3. solve regularised least squares for a coarse spatial u* field
+4. compute predicted elevations and MAE/RMSE misfit
+
+**`lsdtt_chi_ksn_inversion_options`:** `A_0=1.0`, `coarse_cell_size=2000 m`, `roughness_weight=1e4`, `diagonal_jitter=1e-8`, `use_mean_absolute_error_for_model_selection=true`
+
+**Key functions:**
+- `make_chi_ksn_inversion_network(chi_basin, dem)` — build fixed network input
+- `invert_chi_ksn(flow, network, tested_m_over_n, options)` → `lsdtt_chi_ksn_inversion_result`
+
+Result includes per-trial `MAE`/`RMSE`, best-fit m/n, node-wise `chi`, `predicted_elevation`, `node_u_star`, and raster outputs `u_star_field` + `support_count_field`.
+
+---
+
+## lsdtt_channel_network_analysis_cpu
+
+File: `src/cpu/lsdtt_channel_network_analysis_cpu.hpp/.cpp`
+
+Channel link bearing analysis and junction angle analysis.
+
+### Link sampling
+
+`lsdtt_link_sampling_options` — controls how much of a link is used for bearing fitting:
+- `full_link` — all nodes
+- `fixed_n_pixels` — up to N pixels from the anchor end
+- `fixed_length` — up to L metres from the anchor end
+
+`trace_channel_link_between_junctions(flow, network, upstream_junction)` → `lsdtt_traced_channel_link`
+
+### Channel link bearings
+
+`calculate_channel_link_bearings(flow, network, junctions=all, sampling_options, anchor=upstream_end)` → `std::vector<lsdtt_channel_link_bearing>`
+
+Each record includes: upstream/downstream junctions and flats, stream order, drainage area, bearing (rad and deg), `fit_linearity`, and a `representative_flat` for visual output.
+
+Writers: `write_channel_link_bearings(...)`, `write_channel_link_bearing_vectors(...)` (visual QA lines)
+
+### Junction angles
+
+`calculate_junction_angles(flow, network, junctions=all, sampling_options)` → `std::vector<lsdtt_junction_angle_record>`
+
+Each record includes (using descriptive names that map to Strong & Mudd 2023):
+- `donor_opening_angle` = α (angle between two donor channels)
+- `donor_1_receiver_angle` = β₁, `donor_2_receiver_angle` = β₂
+- `bending_angle_signed/abs` — offset between inward receiver and bisector of donor opening (new diagnostic)
+
+Writer: `write_junction_angle_data(...)`, `write_junction_angle_bearing_vectors(...)` (visual QA)
+
+---
+
+## lsdtt_strahler_tokunaga_analysis_cpu
+
+File: `src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp`
+
+**Terminology:** A *Strahler channel* is a maximal downstream chain of compact
+links sharing the same Strahler order. It differs from a compact link.
+
+**Key types:**
+- `lsdtt_strahler_channel` — geometry (flats, xy, cumulative distance), metrics (length, elevation drop, mean slope), and Tokunaga receiver info
+- `lsdtt_strahler_channel_network` — container with `channel_id_of_upstream_junction` lookup
+
+**Pipeline:**
+1. `build_strahler_channel_network(flow, network, elevation)` — aggregates compact links, computes longitudinal metrics
+2. `assign_tokunaga_receiver_channels(strahler_network)` — populates `receiver_channel_id`, `receiver_order`, `tokunaga_offset`
+3. `analyse_tokunaga_self_similarity(strahler_network)` → `lsdtt_tokunaga_self_similarity_test`
+   - pair counts → offset statistics → fit of T_k = a · c^(k−1)
+
+**Writers:**
+- `write_strahler_channels(...)` — Strahler-focused attribute schema (order, length, slope)
+- `write_tokunaga_channels(...)` — Tokunaga-focused attribute schema (donor order, receiver order, offset); same geometry
+- `write_tokunaga_summary_data(...)` — pair counts, offset statistics, and fit results to CSV
+
+---
+
+## lsdtt_burn_streams_cpu
+
+File: `src/cpu/lsdtt_burn_streams_cpu.hpp/.cpp`
+
+Burns a user-supplied polyline vector into a DEM by extracting the DEM elevation
+profile beneath each polyline and enforcing a monotone-decreasing (downhill)
+elevation constraint along the profile.
+
+**`stream_burn_mode`:** `burn_in_place` (implemented) | `snap_to_network` (not yet implemented)
+
+`burn_streams_in_place(dem, vector_path, n_threads=0)` → `std::vector<burned_stream_profile>`
+
+Each `burned_stream_profile` contains `burned_stream_node` records ordered outlet-first by `flow_distance`, with fields: `flow_distance`, `dem_elevation`, `burned_elevation`, `x`, `y`.
+
+**Writers:** `write_burned_stream_profiles_csv(...)`, `write_burned_stream_profiles_points(...)` (gpkg / flatgeobuf)
+
+---
+
+## lsdtt_flat_surface_finder
+
+File: `src/cpu/lsdtt_flat_surface_finder.hpp/.cpp`
+
+Identifies flat (low surface texture / roughness) surfaces from a DEM. "Flat"
+means low texture — not necessarily level. Alluvial fans, terraces, and piedmont
+surfaces qualify.
+
+**Three complementary texture metrics:**
+- **MADk2** — second-order directional differences; slope-invariant; recommended for all cases
+- **Residual IQR** — IQR of residuals to a locally fitted reference surface; three detrending methods: `fftw_highpass`, `wavelet_quadratic`, `moving_window_mean` (FFTW-free fallback)
+- **NVD s3** — smallest eigenvalue of the surface-normal orientation tensor; requires FFTW for the wavelet quadratic fit; disabled by default
+
+**Thresholding:** each metric is thresholded at a user-specified percentile of its own distribution. The QQ-plot CSV output helps identify the break-point between flat and rough terrain in the lower tail. Metrics are combined with AND or OR logic.
+
+---
+
+## lsdtt_raster_binary_mask_cpu / lsdtt_raster_skeleton_graph_cpu
+
+**`lsdtt_raster_binary_mask_cpu`** (`src/cpu/lsdtt_raster_binary_mask_cpu.hpp/.cpp`)  
+Generic binary mask operations (foreground = value > 0.5):
+- `binary_morphological_dilation`, `erosion`, `opening`, `closing` (structuring element radius in metres)
+- Reconstruction-based morphology, directional line-based closing
+- Hole filling, size-based component filtering and labelling
+
+Does NOT perform DEM feature scoring, polygon conversion, or skeleton analysis — those are in the three separate files below.
+
+**`lsdtt_raster_binary_mask_vectorise_cpu`** — binary mask to vector polygon conversion  
+**`lsdtt_raster_skeleton_graph_cpu`** — 1-pixel skeleton graph: degree classification, spur pruning, segment splitting, endpoint tangent estimation, endpoint pairing, bridge rasterisation
+
+---
+
+## Utility-layer additions (`src/utils/`)
+
+**`lsdtt_distributions.hpp/.cpp`** — parametric distribution fitting on valid flat samples (no nodata filtering). Supported families: `normal`, `exponential`, `weibull`, `pareto`. All use MLE. KS goodness-of-fit test computed for each. `max_divergence_x` marks where the empirical CDF departs most from the fitted CDF — useful as a threshold candidate for roughness distributions.
+
+**`lsdtt_linear_algebra.hpp`** — header-only lightweight linear algebra (no GDAL, no lsdtt3 headers):
+- `sym3x3_eigenvalues(M)` — analytical Cardano eigenvalues of a real symmetric 3×3 matrix
+- `invert3x3(M)` — Gauss–Jordan inversion
+- `angle_between_vectors_degrees(a, b)`
+- `point_to_segment_distance(p, a, b)`
+
+**`lsdtt_thread_utils.hpp`** — header-only: `resolve_thread_count(n_threads)` returns `n_threads` if > 0, otherwise the OpenMP or hardware maximum.
+
+**`lsdtt_binary_array2d_tracing.hpp/.cpp`** — binary array tracing utilities (used by skeleton graph and related morphology code).
+
+---
+
+## graphflood/ (third-party)
+
+The `graphflood/` directory contains third-party header-only graph-based flood routing code by Gailleton et al. It is not a CMake library target — it is included directly by `lsdtt_hydraulic_graph_cpu.cpp`. Do not add it as a CMake target or include it from other lsdtt3 modules.
 
 ---
 
@@ -1271,4 +1687,10 @@ n_threads: 0
     and projection helpers belong in `src/core/`
 22. Vector outputs should prefer typed attributes and single-file binary formats
     such as FlatGeobuf
+23. `lsdtt_chi_ksn_inversion_cpu` requires Eigen3 and is compiled only when
+    `LSDTT_HAS_EIGEN=1`. Do not include it in code that does not need inversion.
+24. `graphflood/` headers are consumed only by `lsdtt_hydraulic_graph_cpu.cpp`.
+    Do not include them from other lsdtt3 sources.
+25. `src/utils/lsdtt_linear_algebra.hpp` and `lsdtt_thread_utils.hpp` are header-only
+    with no lsdtt3 or GDAL dependencies — safe to include anywhere in the project.
 

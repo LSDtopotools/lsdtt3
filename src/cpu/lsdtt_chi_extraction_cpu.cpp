@@ -70,41 +70,6 @@ void validate_flow_for_chi(const lsdtt_flow_base& flow)
     flow.meta().check_projected_metres();
 }
 
-void validate_channel_network_for_chi(
-    const lsdtt_flow_base& flow,
-    const lsdtt_junction_network_base& channel_network)
-{
-    if (channel_network.empty())
-    {
-        throw std::runtime_error(
-            "lsdtt_chi_extraction_cpu: supplied junction network is empty."
-        );
-    }
-
-    const lsdtt_raster_meta& fm = flow.meta();
-    const lsdtt_raster_meta& cm = channel_network.meta();
-
-    if (fm.n_rows != cm.n_rows || fm.n_cols != cm.n_cols)
-    {
-        throw std::invalid_argument(
-            "lsdtt_chi_extraction_cpu: junction network dimensions do not "
-            "match the flow grid."
-        );
-    }
-
-    if (!nearly_equal(fm.cell_size, cm.cell_size) ||
-        !nearly_equal(fm.x_min,     cm.x_min)     ||
-        !nearly_equal(fm.y_min,     cm.y_min))
-    {
-        throw std::invalid_argument(
-            "lsdtt_chi_extraction_cpu: junction network georeferencing does "
-            "not match the flow grid."
-        );
-    }
-}
-
-
-
 void validate_chi_options(const lsdtt_chi_options& options)
 {
     if (!std::isfinite(options.m_over_n))

@@ -122,34 +122,6 @@ std::vector<lsdtt_xy> downstream_vector_geometry(
     return points;
 }
 
-std::vector<lsdtt_xy> centred_vector_geometry_from_bearing(
-    double centre_x,
-    double centre_y,
-    double bearing_rad,
-    double full_length_metres
-)
-{
-    const double dx = std::sin(bearing_rad);
-    const double dy = std::cos(bearing_rad);
-
-    const double half_length = 0.5 * full_length_metres;
-
-    std::vector<lsdtt_xy> points(2);
-
-    points[0] = lsdtt_xy{
-        centre_x - half_length * dx,
-        centre_y - half_length * dy
-    };
-
-    points[1] = lsdtt_xy{
-        centre_x + half_length * dx,
-        centre_y + half_length * dy
-    };
-
-    return points;
-}
-
-
 std::vector<lsdtt_xy> donor_arm_geometry_from_inward_bearing(
     double junction_x,
     double junction_y,

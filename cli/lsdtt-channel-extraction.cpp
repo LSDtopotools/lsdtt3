@@ -40,6 +40,7 @@
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -292,6 +293,43 @@ int main(int argc, char* argv[])
         "Output format for the ArcMap D8 flow-direction raster.",
         "Allowed values: cog, gtiff, same_as_input."};
 
+    // --- Output --- burned stream profiles from vector input
+    bool_default_map["write_burned_stream_profiles"] = false;
+    help_map["write_burned_stream_profiles"] = {"bool", "false",
+        "Burn a user-supplied vector polyline into the DEM and write an "
+        "elevation profile showing original and burned elevations.",
+        "Requires stream_vector_path to be set. The routine finds pixels "
+        "beneath each polyline feature, builds a flow-distance/elevation "
+        "profile, and enforces a downhill-flow constraint on the burned "
+        "elevation. Output columns: feature_id, flow_distance, x, y, "
+        "dem_elevation, burned_elevation."
+    };
+
+    string_default_map["stream_vector_path"] = "";
+    help_map["stream_vector_path"] = {"string", "",
+        "Path to the input vector file containing polyline channel features.",
+        "Required when write_burned_stream_profiles is true. The file must "
+        "contain polyline or multilinestring geometries in the same CRS as "
+        "the DEM. Supported formats: GeoPackage (.gpkg), FlatGeobuf (.fgb), "
+        "Shapefile (.shp), and any other GDAL/OGR-supported format."
+    };
+
+    string_default_map["stream_burn_mode"] = "burn_in_place";
+    help_map["stream_burn_mode"] = {"string", "burn_in_place",
+        "Method used to construct the burned channel profile.",
+        "burn_in_place: pixels directly beneath the input polyline are "
+        "sampled from the DEM and a monotone-decreasing burned elevation is "
+        "computed by linking low-lying points along the profile. "
+        "snap_to_network: not yet implemented."
+    };
+
+    string_default_map["burned_stream_profiles_output_format"] = "csv";
+    help_map["burned_stream_profiles_output_format"] = {"string", "csv",
+        "Output format for the burned stream profile table.",
+        "csv: writes a plain CSV table with one row per channel pixel. "
+        "gpkg: writes a GeoPackage point layer in the raster CRS. "
+        "flatgeobuf or fgb: writes a FlatGeobuf point layer in the raster CRS."
+    };
 
     // -------------------------------------------------------------------------
     // Parse
@@ -328,6 +366,14 @@ int main(int argc, char* argv[])
     lsdtt::point_output_format cn_junctions_output_format =
         lsdtt::resolve_point_output_format(
             sf["channel_network_junctions_output_format"]
+        );
+
+    lsdtt::stream_burn_mode burn_mode =
+        lsdtt::resolve_stream_burn_mode(sf["stream_burn_mode"]);
+
+    lsdtt::point_output_format burned_profiles_fmt =
+        lsdtt::resolve_point_output_format(
+            sf["burned_stream_profiles_output_format"]
         );
 
     if (bf["write_flow_lines"])
@@ -650,6 +696,90 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: writing channel network points failed: "
                       << e.what() << "\n";
             return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 6 — Burn vector streams into DEM and write elevation profiles
+    // -------------------------------------------------------------------------
+    if (bf["write_burned_stream_profiles"])
+    {
+        std::cout << "\n--- Burning vector streams to DEM ---\n";
+
+        if (sf["stream_vector_path"].empty())
+        {
+            std::cerr << "FATAL: write_burned_stream_profiles is true but "
+                      << "stream_vector_path is not set.\n";
+            return 1;
+        }
+
+        if (burn_mode == lsdtt::stream_burn_mode::snap_to_network)
+        {
+            std::cerr << "FATAL: stream_burn_mode = snap_to_network is not "
+                      << "yet implemented.\n";
+            return 1;
+        }
+
+        std::cout << "Stream vector : " << sf["stream_vector_path"] << "\n";
+        std::cout << "Burn mode     : " << sf["stream_burn_mode"] << "\n";
+        std::cout << "Output format : "
+                  << sf["burned_stream_profiles_output_format"] << "\n";
+
+        std::vector<lsdtt::burned_stream_profile> profiles;
+        try
+        {
+            profiles = lsdtt::burn_streams_in_place(
+                routed_dem,
+                sf["stream_vector_path"],
+                ifs["n_threads"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: stream burning failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        if (profiles.empty())
+        {
+            std::cerr << "Warning: no valid profiles produced; "
+                      << "check stream_vector_path and DEM overlap.\n";
+        }
+        else
+        {
+            std::cout << "Profiles produced: " << profiles.size() << "\n";
+
+            const std::string ext =
+                lsdtt::output_extension(burned_profiles_fmt);
+            const std::string output_file =
+                out_path(pp, "_burned_stream_profiles", ext);
+            std::cout << "Writing: " << output_file << "\n";
+
+            try
+            {
+                if (burned_profiles_fmt == lsdtt::point_output_format::csv)
+                {
+                    lsdtt::write_burned_stream_profiles_csv(
+                        profiles, output_file
+                    );
+                }
+                else
+                {
+                    lsdtt::write_burned_stream_profiles_points(
+                        profiles,
+                        routed_dem.get_meta(),
+                        output_file,
+                        burned_profiles_fmt,
+                        bf["calculate_spatial_index"]
+                    );
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing burned stream profiles failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
         }
     }
 
