@@ -12,6 +12,7 @@
 // Raster preprocessing pipeline:
 //   1. Projection check and reprojection (if needed)
 //   2. Threshold masking
+//   2b. Binary mask application (optional)
 //   3. Interior nodata filling
 //   4. Clip to maximum valid rectangle
 //   5. Depression breaching
@@ -283,6 +284,26 @@ int main(int argc, char* argv[])
         "Pixels above this elevation (metres) are set to nodata.",
         "Default covers the full range of terrestrial elevations. "
         "Reduce to remove artefacts in low-relief study areas."};
+
+    // --- Binary mask application ---
+    bool_default_map["apply_binary_mask"] = false;
+    help_map["apply_binary_mask"] = {"bool","false",
+        "Apply an external binary mask raster to the DEM.",
+        "Loads the raster at binary_mask_fname and calls "
+        "raster_mask_by_binary_keep: pixels where the mask > 0.5 are kept; "
+        "all others are set to nodata. "
+        "The mask must cover the same spatial extent and have the same "
+        "cell size and origin as the (possibly reprojected) DEM. "
+        "Runs after threshold masking. "
+        "Output suffix: _binary_masked.tif"};
+
+    string_default_map["binary_mask_fname"] = "";
+    help_map["binary_mask_fname"] = {"string","",
+        "Full path to the binary mask raster.",
+        "Any GDAL-readable single-band raster is accepted. "
+        "Pixels > 0.5 are treated as keep (foreground); "
+        "all others set the DEM pixel to nodata. "
+        "Required when apply_binary_mask = true."};
 
     // --- Interior nodata filling ---
     bool_default_map["write_filled_nodata_raster"] = false;
@@ -803,6 +824,45 @@ int main(int argc, char* argv[])
                   << (valid_before_masking - count_valid(dem))
                   << " pixel(s) — writing: " << o << "\n";
         loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2b — Binary mask application
+    // -------------------------------------------------------------------------
+    if (bf["apply_binary_mask"])
+    {
+        std::cout << "\n--- Binary mask ---\n";
+
+        const std::string& mask_path = sf["binary_mask_fname"];
+        if (mask_path.empty())
+        {
+            std::cerr << "Warning: apply_binary_mask is true but "
+                         "binary_mask_fname is empty — skipping.\n";
+        }
+        else
+        {
+            std::cout << "Mask file: " << mask_path << "\n";
+            try
+            {
+                lsdtt::lsdtt_data_loader mask_loader;
+                mask_loader.open_raster(mask_path);
+                const lsdtt::lsdtt_raster_cpu mask_raster(mask_loader);
+
+                dem = lsdtt::algebra::raster_mask_by_binary_keep(dem, mask_raster);
+
+                const std::size_t valid_after = count_valid(dem);
+                std::cout << "  Valid pixels after masking: " << valid_after << "\n";
+
+                const std::string o = out_path(pp, "_binary_masked.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: binary mask application failed: "
+                          << e.what() << "\n";
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

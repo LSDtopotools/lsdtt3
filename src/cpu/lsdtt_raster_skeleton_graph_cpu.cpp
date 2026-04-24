@@ -266,6 +266,14 @@ static void validate_endpoint_pair_request(
         );
     }
 
+    if (!(std::isfinite(request.min_segment_mean_strength) &&
+          request.min_segment_mean_strength >= 0.0))
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: min_segment_mean_strength must be finite and >= 0"
+        );
+    }
+
     const double wsum =
         request.weight_distance +
         request.weight_facing +
@@ -1430,6 +1438,86 @@ extract_skeleton_segments(
 }
 
 
+// -----------------------------------------------------------------------------
+// compute_skeleton_segment_strength
+// -----------------------------------------------------------------------------
+std::vector<skeleton_segment_strength>
+compute_skeleton_segment_strength(
+    const std::vector<skeleton_segment>& segments,
+    const lsdtt_raster_cpu&             strength_raster)
+{
+    const lsdtt_raster_meta& meta = strength_raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_skeleton_segment_strength: strength raster metadata is invalid"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+
+    const std::vector<float>&   data = strength_raster.get_data();
+    const std::vector<uint8_t>& mask = strength_raster.get_mask();
+
+    auto in_bounds = [nrows, ncols](int row, int col) -> bool
+    {
+        return row >= 0 && row < nrows && col >= 0 && col < ncols;
+    };
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    std::vector<skeleton_segment_strength> out;
+    out.reserve(segments.size());
+
+    for (std::size_t s = 0; s < segments.size(); ++s)
+    {
+        skeleton_segment_strength ss;
+        ss.segment_index = s;
+        ss.n_segment_pixels = static_cast<int>(segments[s].pixels.size());
+
+        double sum = 0.0;
+        double vmax = 0.0;
+        int nvalid = 0;
+
+        for (const auto& px : segments[s].pixels)
+        {
+            if (!in_bounds(px.row, px.col))
+            {
+                throw std::runtime_error(
+                    "lsdtt::compute_skeleton_segment_strength: segment pixel lies outside raster bounds"
+                );
+            }
+
+            const std::size_t idx = idx_of(px.row, px.col);
+
+            if (mask[idx] == 0) continue;
+            if (meta.is_nodata(data[idx])) continue;
+            if (!std::isfinite(data[idx])) continue;
+
+            const double v = static_cast<double>(data[idx]);
+            sum += v;
+            if (v > vmax) vmax = v;
+            ++nvalid;
+        }
+
+        ss.n_valid_strength_pixels = nvalid;
+        if (nvalid > 0)
+        {
+            ss.mean_strength = sum / static_cast<double>(nvalid);
+            ss.max_strength  = vmax;
+        }
+
+        out.push_back(ss);
+    }
+
+    return out;
+}
 
 
 
@@ -1487,11 +1575,34 @@ estimate_skeleton_endpoint_tangents(
 // -----------------------------------------------------------------------------
 std::vector<skeleton_endpoint_pair_candidate>
 find_skeleton_endpoint_pair_candidates(
-    const std::vector<skeleton_segment>&          segments,
-    const std::vector<skeleton_endpoint_tangent>& tangents,
-    const endpoint_pair_request&                  request)
+    const std::vector<skeleton_segment>&                   segments,
+    const std::vector<skeleton_endpoint_tangent>&          tangents,
+    const endpoint_pair_request&                           request,
+    const std::vector<skeleton_segment_strength>&          segment_strengths)
 {
     validate_endpoint_pair_request(request);
+
+    if (!segment_strengths.empty() &&
+        segment_strengths.size() != segments.size())
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: segment_strengths size must match segments size"
+        );
+    }
+
+    if (request.require_strong_segments && segment_strengths.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt::find_skeleton_endpoint_pair_candidates: strong-segment filtering requested but no segment strengths were supplied"
+        );
+    }
+
+    auto get_segment_mean_strength = [&](std::size_t segment_index) -> double
+    {
+        if (segment_strengths.empty()) return 0.0;
+        return segment_strengths[segment_index].mean_strength;
+    };
+
 
     const std::vector<int> segment_component_id =
         compute_skeleton_segment_component_ids_(segments);
@@ -1534,11 +1645,26 @@ find_skeleton_endpoint_pair_candidates(
             if (request.reject_same_component && comp_a == comp_b)
                 continue;
 
+            const double seg_strength_a =
+                get_segment_mean_strength(a.segment_index);
+            const double seg_strength_b =
+                get_segment_mean_strength(b.segment_index);
+
+            if (request.require_strong_segments)
+            {
+                if (seg_strength_a < request.min_segment_mean_strength ||
+                    seg_strength_b < request.min_segment_mean_strength)
+                {
+                    continue;
+                }
+            }
+
             // -----------------------------------------------------------------
             // Gap geometry
             // -----------------------------------------------------------------
             const double g_row = static_cast<double>(b.row - a.row);
             const double g_col = static_cast<double>(b.col - a.col);
+
 
             const double gap_distance =
                 std::sqrt(g_row * g_row + g_col * g_col);
@@ -1639,7 +1765,12 @@ find_skeleton_endpoint_pair_candidates(
             cand.facing_angle_a_degrees       = facing_a;
             cand.facing_angle_b_degrees       = facing_b;
             cand.heading_misalignment_degrees = heading_misalignment;
+            cand.segment_mean_strength_a      = seg_strength_a;
+            cand.segment_mean_strength_b      = seg_strength_b;
+            cand.pair_min_segment_strength    =
+                std::min(seg_strength_a, seg_strength_b);
             cand.score                        = score;
+
 
             candidates.push_back(std::move(cand));
         }

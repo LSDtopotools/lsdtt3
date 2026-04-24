@@ -50,6 +50,9 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_break_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 
 #ifdef LSDTT_HAS_OPENCV
 #include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
@@ -672,6 +675,107 @@ int main(int argc, char* argv[])
         "Sigma for the Gaussian blur applied before Canny edge detection.",
         "0.0 = no blur. Increase (e.g. 1.5-3.0) for noisy or coarse DEMs."};
 
+    // --- Curvature skeleton (VEC + plan curvature relief) ---
+    bool_default_map["write_curvature_skeletons"] = false;
+    help_map["write_curvature_skeletons"] = {"bool","false",
+        "Extract slope-break skeletons directly from curvature rasters.",
+        "Computes vertical_excess_curvature and plan_curvature via direct polyfit "
+        "(curvature_skeleton_lambda_metres), then: "
+        "(1) thresholds VEC at vec_skeleton_threshold (or CDF divergence auto-threshold) "
+        "and skeletonises; "
+        "(2) computes local relief of plan_curvature over plan_relief_window_metres, "
+        "thresholds at plan_relief_threshold, and skeletonises. "
+        "Outputs: _vec_skeleton_curvature.tif, _vec_skeleton_binary.tif, "
+        "_vec_skeleton.tif, _profile_curvature.tif, _profile_curvature_relief.tif, "
+        "_profile_skeleton_binary.tif, _profile_skeleton.tif."};
+
+    float_default_map["curvature_skeleton_lambda_metres"] = 100.0f;
+    help_map["curvature_skeleton_lambda_metres"] = {"float","100.0",
+        "Polyfit half-wavelength (m) for the direct fit used by curvature skeleton.",
+        "Controls the smoothing scale of the fitted surface. "
+        "Larger values suppress noise; smaller values resolve finer features."};
+
+    float_default_map["vec_skeleton_threshold"] = 0.0f;
+    help_map["vec_skeleton_threshold"] = {"float","0.0",
+        "VEC threshold for binarising vertical_excess_curvature.",
+        "Pixels with VEC >= this value are classified as slope-break candidates. "
+        "Run once with write_curvature_skeletons=true and read the printed CDF "
+        "divergence threshold to choose an appropriate value. "
+        "Ignored when vec_skeleton_use_cdf_threshold=true."};
+
+    bool_default_map["vec_skeleton_use_cdf_threshold"] = false;
+    help_map["vec_skeleton_use_cdf_threshold"] = {"bool","false",
+        "Auto-select the VEC threshold using CDF divergence.",
+        "Overrides vec_skeleton_threshold when true."};
+
+    bool_default_map["vec_skeleton_write_cdf"] = false;
+    help_map["vec_skeleton_write_cdf"] = {"bool","false",
+        "Write the VEC CDF to a CSV file alongside the skeleton outputs.",
+        "Output suffix: _vec_skeleton_cdf.csv."};
+
+    float_default_map["profile_relief_window_metres"] = 50.0f;
+    help_map["profile_relief_window_metres"] = {"float","50.0",
+        "Circular moving-window radius (m) for the profile curvature local relief.",
+        "Larger windows smooth sign-change boundaries but blur fine features."};
+
+    float_default_map["profile_relief_threshold"] = 0.1f;
+    help_map["profile_relief_threshold"] = {"float","0.1",
+        "Threshold on profile curvature local relief for binarisation.",
+        "Pixels whose within-window profile curvature range >= this value are "
+        "classified as slope-break candidates."};
+
+    int_default_map["curvature_skeleton_spur_max_pixels"] = 10;
+    help_map["curvature_skeleton_spur_max_pixels"] = {"int","10",
+        "Maximum endpoint-rooted spur length (pixels) pruned from curvature skeletons.",
+        "0 = skip spur pruning."};
+
+    int_default_map["curvature_skeleton_min_component_pixels"] = 1;
+    help_map["curvature_skeleton_min_component_pixels"] = {"int","1",
+        "Minimum component size (pixels) retained in curvature skeletons.",
+        "Applied after thinning and spur pruning."};
+
+    // --- VEC adaptive thresholding (requires OpenCV) ---
+    bool_default_map["write_vec_adaptive_threshold"] = false;
+    help_map["write_vec_adaptive_threshold"] = {"bool","false",
+        "Apply adaptive mean and Gaussian thresholding to vertical_excess_curvature.",
+        "Requires OpenCV (LSDTT_HAS_OPENCV). Uses curvature_skeleton_lambda_metres "
+        "for the polyfit scale. Each pixel is compared to the mean (or Gaussian-weighted "
+        "mean) of its local neighbourhood minus the constant vec_adaptive_C: a pixel is "
+        "foreground if its normalised 8-bit value > local_mean - vec_adaptive_C. "
+        "Negative C is stricter (retains only locally brightest pixels). "
+        "Outputs: _vec_adaptive_mean.tif, _vec_adaptive_gaussian.tif, "
+        "and optionally their Zhang-Suen skeletons."};
+
+    int_default_map["vec_adaptive_block_size_pixels"] = 51;
+    help_map["vec_adaptive_block_size_pixels"] = {"int","51",
+        "Neighbourhood block size (pixels) for adaptive VEC thresholding.",
+        "Must be odd and >= 3. Should be larger than the typical feature width "
+        "but smaller than the between-feature spacing. "
+        "Larger values make the threshold surface smoother and less sensitive to "
+        "local intensity variation."};
+
+    float_default_map["vec_adaptive_C"] = 0.0f;
+    help_map["vec_adaptive_C"] = {"float","0.0",
+        "Constant subtracted from the local neighbourhood mean before VEC thresholding.",
+        "Threshold = local_mean - C. "
+        "0 = threshold at the local mean (foreground = above-average pixels). "
+        "Negative (e.g. -5) = stricter, retains only pixels well above the local mean. "
+        "Positive = looser."};
+
+    float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;
+    help_map["vec_adaptive_gaussian_sigma"] = {"float","0.0",
+        "Sigma for optional Gaussian pre-blur before adaptive VEC thresholding.",
+        "0 = no blur. A small value (e.g. 1.0) smooths pixel-scale noise "
+        "before the local threshold is applied."};
+
+    bool_default_map["write_vec_adaptive_skeletons"] = false;
+    help_map["write_vec_adaptive_skeletons"] = {"bool","false",
+        "Thin the adaptive-threshold VEC binary masks to 1-pixel skeletons.",
+        "Applies Zhang-Suen thinning (and curvature_skeleton_spur_max_pixels pruning) "
+        "to both the mean and Gaussian adaptive outputs. "
+        "Outputs: _vec_adaptive_mean_skeleton.tif, _vec_adaptive_gaussian_skeleton.tif."
+        "Only active when write_vec_adaptive_threshold = true."};
+
     // -------------------------------------------------------------------------
     // Parse — fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
@@ -1205,6 +1309,193 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: Hough line extraction failed: "
                       << e.what() << "\n";
         }
+    }
+#endif
+
+    // -------------------------------------------------------------------------
+    // Step 8 — Curvature skeleton (VEC threshold + plan curvature relief)
+    // -------------------------------------------------------------------------
+    if (bf["write_curvature_skeletons"])
+    {
+        std::cout << "\n--- Curvature skeletons ---\n";
+        std::cout << "Lambda             : " << ff["curvature_skeleton_lambda_metres"] << " m\n";
+        std::cout << "VEC threshold      : " << ff["vec_skeleton_threshold"] << "\n";
+        std::cout << "VEC auto CDF       : " << (bf["vec_skeleton_use_cdf_threshold"] ? "yes" : "no") << "\n";
+        std::cout << "Profile relief win : " << ff["profile_relief_window_metres"] << " m\n";
+        std::cout << "Profile threshold  : " << ff["profile_relief_threshold"] << "\n";
+
+        try
+        {
+            // Polyfit to get VEC and profile_curvature
+            lsdtt::poly_fit_coeffs fitted =
+                lsdtt::direct_polyfit(
+                    dem,
+                    ff["curvature_skeleton_lambda_metres"],
+                    n_threads);
+
+            lsdtt::polyfit_metric_request pmr;
+            pmr.metrics   = { lsdtt::polyfit_metric::vertical_excess_curvature,
+                              lsdtt::polyfit_metric::profile_curvature };
+            pmr.n_threads = n_threads;
+
+            lsdtt::polyfit_metric_result pmres =
+                lsdtt::compute_polyfit_metrics(fitted, pmr);
+
+            const lsdtt::lsdtt_raster_cpu& vec_raster =
+                pmres.at(lsdtt::polyfit_metric::vertical_excess_curvature);
+            const lsdtt::lsdtt_raster_cpu& profile_raster =
+                pmres.at(lsdtt::polyfit_metric::profile_curvature);
+
+            // Write the curvature rasters so the user can inspect them
+            {
+                const std::string o = out_path(pp, "_vec_skeleton_curvature.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(vec_raster.get_data(),
+                                  vec_raster.get_meta(), o, out_fmt);
+            }
+            {
+                const std::string o = out_path(pp, "_profile_curvature.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(profile_raster.get_data(),
+                                  profile_raster.get_meta(), o, out_fmt);
+            }
+
+            // Build request
+            lsdtt::curvature_skeleton_request csr;
+            csr.vec_threshold               = static_cast<double>(ff["vec_skeleton_threshold"]);
+            csr.vec_use_cdf_threshold       = bf["vec_skeleton_use_cdf_threshold"];
+            csr.vec_write_cdf               = bf["vec_skeleton_write_cdf"];
+            csr.vec_cdf_path                = out_path(pp, "_vec_skeleton_cdf.csv");
+            csr.profile_relief_window_metres = static_cast<double>(ff["profile_relief_window_metres"]);
+            csr.profile_relief_threshold     = static_cast<double>(ff["profile_relief_threshold"]);
+            csr.spur_max_pixels             = ifs["curvature_skeleton_spur_max_pixels"];
+            csr.min_component_pixels        = ifs["curvature_skeleton_min_component_pixels"];
+            csr.n_threads                   = n_threads;
+
+            lsdtt::curvature_skeleton_result cskres =
+                lsdtt::extract_curvature_skeletons(
+                    vec_raster, profile_raster, csr, &loader);
+
+            // Write outputs
+            auto write_r = [&](const lsdtt::lsdtt_raster_cpu& r,
+                               const std::string& suffix)
+            {
+                if (r.get_data().empty()) return;
+                const std::string o = out_path(pp, suffix);
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(r.get_data(), r.get_meta(), o, out_fmt);
+            };
+
+            write_r(cskres.vec_binary,       "_vec_skeleton_binary.tif");
+            write_r(cskres.vec_skeleton,     "_vec_skeleton.tif");
+            write_r(cskres.profile_relief,   "_profile_curvature_relief.tif");
+            write_r(cskres.profile_binary,   "_profile_skeleton_binary.tif");
+            write_r(cskres.profile_skeleton, "_profile_skeleton.tif");
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: curvature skeleton failed: " << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 9 — VEC adaptive thresholding (requires OpenCV)
+    // -------------------------------------------------------------------------
+#ifdef LSDTT_HAS_OPENCV
+    if (bf["write_vec_adaptive_threshold"])
+    {
+        std::cout << "\n--- VEC adaptive thresholding ---\n";
+        std::cout << "Lambda     : " << ff["curvature_skeleton_lambda_metres"] << " m\n";
+        std::cout << "Block size : " << ifs["vec_adaptive_block_size_pixels"] << " px\n";
+        std::cout << "C          : " << ff["vec_adaptive_C"] << "\n";
+        std::cout << "Pre-blur σ : " << ff["vec_adaptive_gaussian_sigma"] << "\n";
+
+        try
+        {
+            lsdtt::poly_fit_coeffs fitted =
+                lsdtt::direct_polyfit(
+                    dem,
+                    ff["curvature_skeleton_lambda_metres"],
+                    n_threads);
+
+            lsdtt::polyfit_metric_request pmr;
+            pmr.metrics   = { lsdtt::polyfit_metric::vertical_excess_curvature };
+            pmr.n_threads = n_threads;
+
+            lsdtt::polyfit_metric_result pmres =
+                lsdtt::compute_polyfit_metrics(fitted, pmr);
+
+            const lsdtt::lsdtt_raster_cpu& vec_raster =
+                pmres.at(lsdtt::polyfit_metric::vertical_excess_curvature);
+
+            // Write the VEC raster for inspection
+            {
+                const std::string o = out_path(pp, "_vec_adaptive_curvature.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(vec_raster.get_data(),
+                                  vec_raster.get_meta(), o, out_fmt);
+            }
+
+            const int    block_size = ifs["vec_adaptive_block_size_pixels"];
+            const double C_val      = static_cast<double>(ff["vec_adaptive_C"]);
+            const double sigma      = static_cast<double>(ff["vec_adaptive_gaussian_sigma"]);
+
+            // Adaptive mean threshold
+            lsdtt::lsdtt_raster_cpu mean_binary =
+                lsdtt::opencv_cpu::threshold_adaptive_mean(
+                    vec_raster, block_size, C_val, sigma, n_threads);
+            {
+                const std::string o = out_path(pp, "_vec_adaptive_mean.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(mean_binary.get_data(),
+                                  mean_binary.get_meta(), o, out_fmt);
+            }
+
+            // Adaptive Gaussian threshold
+            lsdtt::lsdtt_raster_cpu gauss_binary =
+                lsdtt::opencv_cpu::threshold_adaptive_gaussian(
+                    vec_raster, block_size, C_val, sigma, n_threads);
+            {
+                const std::string o = out_path(pp, "_vec_adaptive_gaussian.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(gauss_binary.get_data(),
+                                  gauss_binary.get_meta(), o, out_fmt);
+            }
+
+            // Optional skeleton extraction
+            if (bf["write_vec_adaptive_skeletons"])
+            {
+                const int spur_px  = ifs["curvature_skeleton_spur_max_pixels"];
+                const int min_comp = ifs["curvature_skeleton_min_component_pixels"];
+
+                auto make_skeleton = [&](const lsdtt::lsdtt_raster_cpu& binary,
+                                         const std::string& suffix)
+                {
+                    lsdtt::lsdtt_raster_cpu skel = lsdtt::thin_zhang_suen(binary);
+                    if (spur_px > 0)
+                        skel = lsdtt::prune_skeleton_spurs(skel, spur_px);
+                    if (min_comp > 1)
+                        skel = lsdtt::filter_binary_components_by_size(skel, min_comp);
+                    const std::string o = out_path(pp, suffix);
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(skel.get_data(), skel.get_meta(), o, out_fmt);
+                };
+
+                make_skeleton(mean_binary,  "_vec_adaptive_mean_skeleton.tif");
+                make_skeleton(gauss_binary, "_vec_adaptive_gaussian_skeleton.tif");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: VEC adaptive thresholding failed: "
+                      << e.what() << "\n";
+        }
+    }
+#else
+    if (bf["write_vec_adaptive_threshold"])
+    {
+        std::cerr << "Warning: write_vec_adaptive_threshold requested but this "
+                     "build does not include OpenCV. Skipping.\n";
     }
 #endif
 

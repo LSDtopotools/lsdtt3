@@ -204,6 +204,68 @@ struct mat8u_params
 
 
 // -----------------------------------------------------------------------------
+// threshold_adaptive_mean
+//
+// Binarise the raster using OpenCV's adaptive mean threshold
+// (cv::adaptiveThreshold with cv::ADAPTIVE_THRESH_MEAN_C).
+//
+// Each pixel is compared against the mean of its block_size × block_size
+// neighbourhood minus the constant C:
+//
+//   foreground (1.0)  if pixel_8u  >  local_mean - C
+//   background (0.0)  otherwise
+//
+// High-valued features (e.g. high VEC at slope breaks) survive after
+// normalisation to 8-bit because they sit above their local neighbourhood
+// mean.  Reducing C (making it more negative) raises the effective threshold
+// and retains only the locally brightest pixels.
+//
+// Parameters:
+//   raster         — input raster (unmodified)
+//   block_size     — neighbourhood side length in pixels; must be odd >= 3
+//   C              — constant subtracted from the local mean before comparison;
+//                    0 = threshold at local mean; negative = stricter
+//   gaussian_sigma — sigma for optional pre-smoothing Gaussian blur; 0 = none
+//   n_threads      — OpenMP thread count; 0 = omp_get_max_threads()
+//   opencv_threads — cv::setNumThreads value; -1 = leave unchanged
+//
+// Returns:
+//   lsdtt_raster_cpu where data = 1.0 (foreground) / 0.0, mask from input
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu threshold_adaptive_mean(
+    const lsdtt_raster_cpu& raster,
+    int                     block_size     = 51,
+    double                  C              = 0.0,
+    double                  gaussian_sigma = 0.0,
+    int                     n_threads      = 0,
+    int                     opencv_threads = -1
+);
+
+
+// -----------------------------------------------------------------------------
+// threshold_adaptive_gaussian
+//
+// Binarise the raster using OpenCV's adaptive Gaussian threshold
+// (cv::adaptiveThreshold with cv::ADAPTIVE_THRESH_GAUSSIAN_C).
+//
+// Each pixel is compared against the Gaussian-weighted mean of its
+// block_size × block_size neighbourhood minus the constant C.  The Gaussian
+// weighting down-weights pixels near the block edge, giving a smoother
+// threshold surface than the plain mean variant.
+//
+// Parameters and return value are identical to threshold_adaptive_mean.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu threshold_adaptive_gaussian(
+    const lsdtt_raster_cpu& raster,
+    int                     block_size     = 51,
+    double                  C              = 0.0,
+    double                  gaussian_sigma = 0.0,
+    int                     n_threads      = 0,
+    int                     opencv_threads = -1
+);
+
+
+// -----------------------------------------------------------------------------
 // detect_edges_canny
 //
 // Detect edges using the Canny algorithm (cv::Canny).

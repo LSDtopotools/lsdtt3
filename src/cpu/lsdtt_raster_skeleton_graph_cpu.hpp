@@ -176,6 +176,24 @@ struct skeleton_segment
 };
 
 // -----------------------------------------------------------------------------
+// skeleton_segment_strength
+//
+// Strength summary for one extracted skeleton segment, sampled from a
+// non-negative support raster (for example normalised curvature magnitude).
+// -----------------------------------------------------------------------------
+struct skeleton_segment_strength
+{
+    std::size_t segment_index = static_cast<std::size_t>(-1);
+
+    int    n_segment_pixels         = 0;
+    int    n_valid_strength_pixels  = 0;
+
+    double mean_strength            = 0.0;
+    double max_strength             = 0.0;
+};
+
+
+// -----------------------------------------------------------------------------
 // extract_skeleton_segments
 //
 // Splits a 1-pixel skeleton into ordered open segments and loops.
@@ -187,6 +205,24 @@ struct skeleton_segment
 extract_skeleton_segments(
     const lsdtt_raster_cpu& skeleton
 );
+
+// -----------------------------------------------------------------------------
+// compute_skeleton_segment_strength
+//
+// Samples a non-negative strength raster along the ordered pixels of each
+// skeleton segment and returns mean/max strength per segment.
+//
+// Throws:
+//   std::runtime_error if metadata is invalid or a segment pixel lies outside
+//   the raster bounds.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<skeleton_segment_strength>
+compute_skeleton_segment_strength(
+    const std::vector<skeleton_segment>& segments,
+    const lsdtt_raster_cpu&             strength_raster
+);
+
+
 
 // -----------------------------------------------------------------------------
 // skeleton_endpoint_tangent
@@ -260,8 +296,15 @@ struct endpoint_pair_request
     double weight_facing                    = 1.0;
     double weight_heading                   = 1.0;
 
+    // Optional strength gate:
+    // if enabled, both incident segments must have
+    // mean_strength >= min_segment_mean_strength
+    bool   require_strong_segments          = false;
+    double min_segment_mean_strength        = 0.0;
+
     bool   reject_same_component            = true;
 };
+
 
 // -----------------------------------------------------------------------------
 // skeleton_endpoint_pair_candidate
@@ -289,8 +332,14 @@ struct skeleton_endpoint_pair_candidate
     double facing_angle_b_degrees       = 0.0;
     double heading_misalignment_degrees = 0.0;
 
+    // Optional segment-strength diagnostics copied into candidate records.
+    double segment_mean_strength_a      = 0.0;
+    double segment_mean_strength_b      = 0.0;
+    double pair_min_segment_strength    = 0.0;
+
     double score                        = 0.0;
 };
+
 
 // -----------------------------------------------------------------------------
 // find_skeleton_endpoint_pair_candidates
@@ -307,10 +356,12 @@ struct skeleton_endpoint_pair_candidate
 // -----------------------------------------------------------------------------
 [[nodiscard]] std::vector<skeleton_endpoint_pair_candidate>
 find_skeleton_endpoint_pair_candidates(
-    const std::vector<skeleton_segment>&          segments,
-    const std::vector<skeleton_endpoint_tangent>& tangents,
-    const endpoint_pair_request&                  request = endpoint_pair_request()
+    const std::vector<skeleton_segment>&                   segments,
+    const std::vector<skeleton_endpoint_tangent>&          tangents,
+    const endpoint_pair_request&                           request = endpoint_pair_request(),
+    const std::vector<skeleton_segment_strength>&          segment_strengths = {}
 );
+
 
 // -----------------------------------------------------------------------------
 // endpoint_pair_selection_request

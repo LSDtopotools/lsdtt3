@@ -26,6 +26,8 @@
 
 #include "lsdtt_raster_cpu.hpp"
 
+namespace lsdtt { class lsdtt_data_loader; } // forward declaration
+
 namespace lsdtt {
 
 // =============================================================================
@@ -76,7 +78,22 @@ struct slope_break_request
     int  centreline_max_spur_pixels = 10;
     int  centreline_min_component_pixels = 1;
 
+    // -------------------------------------------------------------------------
+    // Strength-gated connection of centreline segments
+    // -------------------------------------------------------------------------
+    bool   connect_centreline_segments = false;
 
+    double connect_tangent_fit_length_pixels = 6.0;
+    int    connect_tangent_min_support_pixels = 2;
+
+    double connect_max_gap_pixels = 20.0;
+    double connect_max_facing_angle_degrees = 35.0;
+    double connect_max_heading_misalignment_degrees = 45.0;
+    double connect_max_candidate_score = 1.0;
+
+    double connect_min_segment_mean_strength = 0.25;
+
+    double connect_route_corridor_half_width_pixels = 12.0;
 
     int n_threads = 0;
 };
@@ -125,6 +142,14 @@ struct slope_break_result
     // Skeleton centreline extracted from break_belt.
     lsdtt_raster_cpu break_centreline;
 
+    // Non-negative support raster used for strength-gated linking.
+    lsdtt_raster_cpu break_connection_strength;
+
+    // Newly inserted bridge pixels from strength-gated centreline reconnection.
+    lsdtt_raster_cpu break_bridge_mask;
+
+    // Centreline after accepted bridges have been routed.
+    lsdtt_raster_cpu break_centreline_connected;
 
 };
 
@@ -144,6 +169,77 @@ slope_break_result find_slope_breaks(
     const lsdtt_raster_cpu&      dem,
     const lsdtt_raster_cpu&      mask,
     const slope_break_request&   request
+);
+
+
+// =============================================================================
+// curvature_skeleton_request / curvature_skeleton_result
+//
+// Direct skeleton extraction from curvature rasters, bypassing Canny annealing.
+//
+// Two independent approaches:
+//
+//   (1) vertical_excess_curvature (VEC) skeleton
+//       High VEC values mark slope-break ridges.  A user-defined threshold
+//       (or an auto-selected CDF-divergence threshold) binarises the raster;
+//       the result is thinned to a 1-pixel skeleton.  The CDF of the VEC
+//       raster is always printed to stdout to aid threshold selection; it can
+//       optionally be written to a CSV file.
+//
+//   (2) profile_curvature relief skeleton
+//       Slope breaks appear where profile curvature changes sign.  A moving-
+//       window local relief (max–min) of the profile_curvature raster captures
+//       this sign-change signal as a scalar magnitude.  The relief raster is
+//       thresholded and thinned to a 1-pixel skeleton.
+// =============================================================================
+struct curvature_skeleton_request
+{
+    // --- VEC approach ---
+    double      vec_threshold         = 0.0;    // threshold on VEC values
+    bool        vec_use_cdf_threshold = false;  // auto-select via CDF divergence
+    bool        vec_write_cdf         = false;  // write CDF CSV to vec_cdf_path
+    std::string vec_cdf_path          = "";
+
+    // --- Profile curvature relief approach ---
+    double profile_relief_window_metres = 50.0;
+    double profile_relief_threshold     = 0.1;
+
+    // --- Shared skeleton post-processing ---
+    int spur_max_pixels       = 10;
+    int min_component_pixels  = 1;
+
+    int n_threads = 0;
+};
+
+struct curvature_skeleton_result
+{
+    // VEC outputs
+    lsdtt_raster_cpu vec_binary;    // binary mask: 1 where VEC >= vec_threshold
+    lsdtt_raster_cpu vec_skeleton;  // Zhang–Suen skeleton of vec_binary
+
+    // Profile curvature relief outputs
+    lsdtt_raster_cpu profile_relief;   // local relief of profile_curvature raster
+    lsdtt_raster_cpu profile_binary;   // binary mask: 1 where profile_relief >= threshold
+    lsdtt_raster_cpu profile_skeleton; // Zhang–Suen skeleton of profile_binary
+};
+
+// =============================================================================
+// extract_curvature_skeletons
+//
+// Parameters:
+//   vertical_excess_curvature — VEC raster (from compute_polyfit_metrics)
+//   profile_curvature         — profile curvature raster
+//   request                   — tuning parameters
+//   loader                    — required only when request.vec_write_cdf = true
+//
+// Throws:
+//   std::runtime_error  — empty raster inputs
+// =============================================================================
+curvature_skeleton_result extract_curvature_skeletons(
+    const lsdtt_raster_cpu&           vertical_excess_curvature,
+    const lsdtt_raster_cpu&           profile_curvature,
+    const curvature_skeleton_request& request,
+    lsdtt_data_loader*                loader = nullptr
 );
 
 } // namespace lsdtt

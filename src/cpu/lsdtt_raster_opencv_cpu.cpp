@@ -296,6 +296,94 @@ lsdtt_raster_cpu threshold_otsu(
 
 
 // -----------------------------------------------------------------------------
+// threshold_adaptive_impl  (internal shared helper)
+// -----------------------------------------------------------------------------
+namespace
+{
+
+lsdtt_raster_cpu threshold_adaptive_impl(
+    const lsdtt_raster_cpu& raster,
+    int                     adaptive_method,
+    int                     block_size,
+    double                  C,
+    double                  gaussian_sigma,
+    int                     n_threads,
+    int                     opencv_threads
+)
+{
+    if (block_size < 3 || block_size % 2 == 0)
+        throw std::invalid_argument(
+            "threshold_adaptive: block_size must be odd and >= 3");
+
+    mat8u_params params;
+    cv::Mat mat8u = raster_to_mat8u(raster, params, n_threads);
+
+    if (params.scale == 0.0f)
+    {
+        // Degenerate raster — return all-background
+        return mat8u_to_binary_raster(mat8u, raster, n_threads);
+    }
+
+    set_opencv_threads(opencv_threads);
+
+    apply_gaussian_blur(mat8u, gaussian_sigma);
+
+    cv::Mat binary;
+    cv::adaptiveThreshold(
+        mat8u,
+        binary,
+        255,
+        adaptive_method,
+        cv::THRESH_BINARY,
+        block_size,
+        C
+    );
+
+    restore_opencv_threads(opencv_threads);
+
+    return mat8u_to_binary_raster(binary, raster, n_threads);
+}
+
+} // anonymous namespace
+
+
+// -----------------------------------------------------------------------------
+// threshold_adaptive_mean
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu threshold_adaptive_mean(
+    const lsdtt_raster_cpu& raster,
+    int                     block_size,
+    double                  C,
+    double                  gaussian_sigma,
+    int                     n_threads,
+    int                     opencv_threads
+)
+{
+    return threshold_adaptive_impl(
+        raster, cv::ADAPTIVE_THRESH_MEAN_C,
+        block_size, C, gaussian_sigma, n_threads, opencv_threads);
+}
+
+
+// -----------------------------------------------------------------------------
+// threshold_adaptive_gaussian
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu threshold_adaptive_gaussian(
+    const lsdtt_raster_cpu& raster,
+    int                     block_size,
+    double                  C,
+    double                  gaussian_sigma,
+    int                     n_threads,
+    int                     opencv_threads
+)
+{
+    return threshold_adaptive_impl(
+        raster, cv::ADAPTIVE_THRESH_GAUSSIAN_C,
+        block_size, C, gaussian_sigma, n_threads, opencv_threads);
+}
+
+
+// -----------------------------------------------------------------------------
 // detect_edges_canny
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu detect_edges_canny(

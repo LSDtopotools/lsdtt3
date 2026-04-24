@@ -15,7 +15,10 @@
 // Pipeline:
 //   1. Local relief threshold → raw relief mask
 //   2. Optional morphological closing  (flat_closing_radius_metres; 0 = skip)
-//   3. Optional morphological dilation (flat_dilation_radius_metres; 0 = skip)
+//      Seals small holes and narrow gaps inside flat blobs.
+//   3. Optional morphological opening  (flat_opening_radius_metres; 0 = skip)
+//      Removes thin connections between blobs that should be separate.
+//      Order of steps 2 and 3 is controlled by open_then_close.
 //   4. Remove components < min_component_pixels → working flat mask
 //   5. Progressive Canny annealing for slope break detection (requires OpenCV)
 //        vertical_excess_curvature and profile_curvature at thresholds {50, 25, 15}
@@ -180,12 +183,22 @@ int main(int argc, char* argv[])
     float_default_map["flat_closing_radius_metres"] = 0.0f;
     help_map["flat_closing_radius_metres"] = {"float","0",
         "Radius (m) for morphological closing of the relief flat mask.",
-        "Seals narrow gaps in the flat mask.  0 = disabled."};
+        "Closing (dilation then erosion) seals small holes and narrow gaps "
+        "inside flat blobs without expanding their outer boundary.  0 = disabled."};
 
-    float_default_map["flat_dilation_radius_metres"] = 0.0f;
-    help_map["flat_dilation_radius_metres"] = {"float","0",
-        "Radius (m) for morphological dilation of the flat mask after closing.",
-        "Expands flat regions outward.  0 = disabled."};
+    float_default_map["flat_opening_radius_metres"] = 0.0f;
+    help_map["flat_opening_radius_metres"] = {"float","0",
+        "Radius (m) for morphological opening of the relief flat mask.",
+        "Opening (erosion then dilation) removes thin connections between blobs "
+        "that should be separate flat surfaces, while restoring the size of the "
+        "surviving blobs.  0 or negative = disabled."};
+
+    bool_default_map["open_then_close"] = false;
+    help_map["open_then_close"] = {"bool","false",
+        "Apply opening before closing instead of closing before opening.",
+        "false (default): closing first, then opening. "
+        "true: opening first, then closing. "
+        "Has no effect when either radius is 0."};
 
     // --- Slope break finder (progressive Canny, requires OpenCV) ---
     float_default_map["polyfit_lambda_metres"] = 100.0f;
@@ -233,6 +246,65 @@ int main(int argc, char* argv[])
         "Minimum component size (pixels) retained in the centreline raster.",
         "Applied after thinning and spur pruning."};
 
+    bool_default_map["connect_slope_break_centreline_segments"] = false;
+    help_map["connect_slope_break_centreline_segments"] = {"bool","false",
+        "Attempt to reconnect centreline segments using the skeleton graph.",
+        "Only accepts a candidate link if both incident segments have mean support >= slope_break_connect_min_segment_mean_strength."};
+
+    float_default_map["slope_break_connect_tangent_fit_length_pixels"] = 6.0f;
+    help_map["slope_break_connect_tangent_fit_length_pixels"] = {"float","6",
+        "Support length (pixels) used for endpoint tangent estimation before centreline reconnection.",
+        ""};
+
+    int_default_map["slope_break_connect_tangent_min_support_pixels"] = 2;
+    help_map["slope_break_connect_tangent_min_support_pixels"] = {"int","2",
+        "Minimum support pixels for endpoint tangent estimation before centreline reconnection.",
+        ""};
+
+    float_default_map["slope_break_connect_max_gap_pixels"] = 20.0f;
+    help_map["slope_break_connect_max_gap_pixels"] = {"float","20",
+        "Maximum endpoint-to-endpoint gap (pixels) considered for centreline reconnection.",
+        ""};
+
+    float_default_map["slope_break_connect_max_facing_angle_degrees"] = 35.0f;
+    help_map["slope_break_connect_max_facing_angle_degrees"] = {"float","35",
+        "Maximum facing angle (degrees) for each endpoint in a reconnection candidate.",
+        ""};
+
+    float_default_map["slope_break_connect_max_heading_misalignment_degrees"] = 45.0f;
+    help_map["slope_break_connect_max_heading_misalignment_degrees"] = {"float","45",
+        "Maximum heading misalignment (degrees) between the two endpoint tangents.",
+        ""};
+
+    float_default_map["slope_break_connect_max_candidate_score"] = 1.0f;
+    help_map["slope_break_connect_max_candidate_score"] = {"float","1.0",
+        "Maximum candidate score retained after geometric filtering.",
+        "Lower is stricter."};
+
+    float_default_map["slope_break_connect_min_segment_mean_strength"] = 0.25f;
+    help_map["slope_break_connect_min_segment_mean_strength"] = {"float","0.25",
+        "Minimum mean segment strength required on BOTH sides of a proposed reconnection.",
+        "Strength is computed from the combined non-negative curvature-support raster."};
+
+    float_default_map["slope_break_connect_route_corridor_half_width_pixels"] = 12.0f;
+    help_map["slope_break_connect_route_corridor_half_width_pixels"] = {"float","12",
+        "Half-width (pixels) of the least-cost routing corridor used for accepted centreline reconnections.",
+        ""};
+
+    bool_default_map["write_slope_break_connection_strength"] = false;
+    help_map["write_slope_break_connection_strength"] = {"bool","false",
+        "Write the non-negative support raster used for strength-gated centreline reconnection.",
+        "Output suffix: _slope_break_connection_strength.tif"};
+
+    bool_default_map["write_slope_break_bridge_mask"] = true;
+    help_map["write_slope_break_bridge_mask"] = {"bool","true",
+        "Write the raster of newly inserted bridge pixels from centreline reconnection.",
+        "Output suffix: _slope_break_bridge_mask.tif"};
+
+    bool_default_map["write_slope_break_centreline_connected"] = true;
+    help_map["write_slope_break_centreline_connected"] = {"bool","true",
+        "Write the connected centreline after accepted bridge routing.",
+        "Output suffix: _slope_break_centreline_connected.tif"};
 
     int_default_map["canny_min_isolated_pixels"] = 25;
     help_map["canny_min_isolated_pixels"] = {"int","25",
@@ -497,23 +569,39 @@ int main(int argc, char* argv[])
 
     {
         const double closing_r = static_cast<double>(ff["flat_closing_radius_metres"]);
-        if (closing_r > 0.0)
+        const double opening_r = static_cast<double>(ff["flat_opening_radius_metres"]);
+        const bool   do_close  = closing_r > 0.0;
+        const bool   do_open   = opening_r > 0.0;
+
+        auto run_closing = [&]()
         {
+            if (!do_close) return;
             std::cout << "Morphological closing of flat mask (radius="
                       << closing_r << " m)...\n";
             try { flat_mask = lsdtt::binary_morphological_closing(flat_mask, closing_r); }
             catch (const std::exception& e)
             { std::cerr << "Warning: closing failed: " << e.what() << "\n"; }
-        }
+        };
 
-        const double dilation_r = static_cast<double>(ff["flat_dilation_radius_metres"]);
-        if (dilation_r > 0.0)
+        auto run_opening = [&]()
         {
-            std::cout << "Morphological dilation of flat mask (radius="
-                      << dilation_r << " m)...\n";
-            try { flat_mask = lsdtt::binary_morphological_dilation(flat_mask, dilation_r); }
+            if (!do_open) return;
+            std::cout << "Morphological opening of flat mask (radius="
+                      << opening_r << " m)...\n";
+            try { flat_mask = lsdtt::binary_morphological_opening(flat_mask, opening_r); }
             catch (const std::exception& e)
-            { std::cerr << "Warning: dilation failed: " << e.what() << "\n"; }
+            { std::cerr << "Warning: opening failed: " << e.what() << "\n"; }
+        };
+
+        if (bf["open_then_close"])
+        {
+            run_opening();
+            run_closing();
+        }
+        else
+        {
+            run_closing();
+            run_opening();
         }
 
         const int min_comp = ip["min_component_pixels"];
@@ -601,6 +689,25 @@ int main(int argc, char* argv[])
             ip["slope_break_centreline_max_spur_pixels"];
         sbr.centreline_min_component_pixels =
             ip["slope_break_centreline_min_component_pixels"];
+        sbr.connect_centreline_segments =
+            bf["connect_slope_break_centreline_segments"];
+        sbr.connect_tangent_fit_length_pixels =
+            static_cast<double>(ff["slope_break_connect_tangent_fit_length_pixels"]);
+        sbr.connect_tangent_min_support_pixels =
+            ip["slope_break_connect_tangent_min_support_pixels"];
+        sbr.connect_max_gap_pixels =
+            static_cast<double>(ff["slope_break_connect_max_gap_pixels"]);
+        sbr.connect_max_facing_angle_degrees =
+            static_cast<double>(ff["slope_break_connect_max_facing_angle_degrees"]);
+        sbr.connect_max_heading_misalignment_degrees =
+            static_cast<double>(ff["slope_break_connect_max_heading_misalignment_degrees"]);
+        sbr.connect_max_candidate_score =
+            static_cast<double>(ff["slope_break_connect_max_candidate_score"]);
+        sbr.connect_min_segment_mean_strength =
+            static_cast<double>(ff["slope_break_connect_min_segment_mean_strength"]);
+        sbr.connect_route_corridor_half_width_pixels =
+            static_cast<double>(ff["slope_break_connect_route_corridor_half_width_pixels"]);
+
         sbr.min_isolated_pixels    = ip["canny_min_isolated_pixels"];
         sbr.canny_ratio            = static_cast<double>(ff["canny_ratio"]);
         sbr.canny_aperture_size    = ip["canny_aperture_size"];
@@ -680,7 +787,7 @@ int main(int argc, char* argv[])
                                   sbres.break_belt.get_meta(),
                                   p, out_format);
             }
-            
+
             if (bf["write_slope_break_centreline"] &&
                 !sbres.break_centreline.get_data().empty())
             {
@@ -690,6 +797,37 @@ int main(int argc, char* argv[])
                                   sbres.break_centreline.get_meta(),
                                   p, out_format);
             }
+
+            if (bf["write_slope_break_connection_strength"] &&
+                !sbres.break_connection_strength.get_data().empty())
+            {
+                const std::string p = stem + "_slope_break_connection_strength.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.break_connection_strength.get_data(),
+                                  sbres.break_connection_strength.get_meta(),
+                                  p, out_format);
+            }
+
+            if (bf["write_slope_break_bridge_mask"] &&
+                !sbres.break_bridge_mask.get_data().empty())
+            {
+                const std::string p = stem + "_slope_break_bridge_mask.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.break_bridge_mask.get_data(),
+                                  sbres.break_bridge_mask.get_meta(),
+                                  p, out_format);
+            }
+
+            if (bf["write_slope_break_centreline_connected"] &&
+                !sbres.break_centreline_connected.get_data().empty())
+            {
+                const std::string p = stem + "_slope_break_centreline_connected.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.break_centreline_connected.get_data(),
+                                  sbres.break_centreline_connected.get_meta(),
+                                  p, out_format);
+            }
+
 
         }
         catch (const std::exception& e)

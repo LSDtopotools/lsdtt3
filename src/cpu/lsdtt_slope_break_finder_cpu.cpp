@@ -19,6 +19,8 @@
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
+#include "lsdtt_raster_algebra.hpp"
+#include "../core/lsdtt_data_loader.hpp"
 
 
 
@@ -475,11 +477,260 @@ slope_break_result find_slope_breaks(
                   << count_foreground(result.break_centreline) << "\n";
     }
 
+    // ------------------------------------------------------------------
+    // 7. Strength-gated connection of centreline segments
+    // ------------------------------------------------------------------
+    if (request.connect_centreline_segments &&
+        !result.break_centreline.get_data().empty())
+    {
+        std::cout << "\n--- Strength-gated centreline reconnection ---\n";
+
+        // Build a non-negative connection-support raster from the two
+        // curvature rasters.  Use the minimum of the two normalised magnitudes
+        // so that support is strong only where both metrics are strong.
+        lsdtt_raster_cpu vert_strength =
+            algebra::raster_normalise_nonnegative(
+                algebra::raster_abs(result.vertical_excess_curvature));
+
+        lsdtt_raster_cpu prof_strength =
+            algebra::raster_normalise_nonnegative(
+                algebra::raster_abs(result.profile_curvature));
+
+        result.break_connection_strength =
+            algebra::raster_min(vert_strength, prof_strength);
+
+        std::vector<skeleton_segment> segments =
+            extract_skeleton_segments(result.break_centreline);
+
+        std::vector<skeleton_segment_strength> segment_strengths =
+            compute_skeleton_segment_strength(
+                segments,
+                result.break_connection_strength);
+
+        std::vector<skeleton_endpoint_tangent> tangents =
+            estimate_skeleton_endpoint_tangents(
+                segments,
+                request.connect_tangent_fit_length_pixels,
+                request.connect_tangent_min_support_pixels);
+
+        std::cout << "    segments: " << segments.size() << "\n";
+        std::cout << "    tangents: " << tangents.size() << "\n";
+
+        endpoint_pair_request epr;
+        epr.max_gap_pixels                   = request.connect_max_gap_pixels;
+        epr.max_facing_angle_degrees         = request.connect_max_facing_angle_degrees;
+        epr.max_heading_misalignment_degrees = request.connect_max_heading_misalignment_degrees;
+        epr.require_strong_segments          = true;
+        epr.min_segment_mean_strength        = request.connect_min_segment_mean_strength;
+        epr.reject_same_component            = true;
+
+        std::vector<skeleton_endpoint_pair_candidate> candidates =
+            find_skeleton_endpoint_pair_candidates(
+                segments,
+                tangents,
+                epr,
+                segment_strengths);
+
+        std::cout << "    strength-gated candidates: "
+                  << candidates.size() << "\n";
+
+        endpoint_pair_selection_request epsr;
+        epsr.max_score           = request.connect_max_candidate_score;
+        epsr.require_mutual_best = false;
+        epsr.enforce_one_to_one  = true;
+
+        std::vector<skeleton_endpoint_pair_candidate> accepted =
+            select_skeleton_endpoint_pairs(
+                candidates,
+                tangents.size(),
+                epsr);
+
+        std::cout << "    accepted pairs: "
+                  << accepted.size() << "\n";
+
+        skeleton_bridge_route_request brr;
+        brr.corridor_half_width_pixels = request.connect_route_corridor_half_width_pixels;
+        brr.base_step_cost             = 1.0;
+        brr.support_penalty_weight     = 4.0;
+        brr.foreground_cost_scale      = 0.25;
+
+        skeleton_bridge_route_result routed =
+            route_skeleton_endpoint_bridges_least_cost(
+                result.break_centreline,
+                result.break_connection_strength,
+                accepted,
+                brr);
+
+        result.break_bridge_mask = routed.bridge_mask;
+        result.break_centreline_connected = routed.connected_skeleton;
+
+        std::cout << "    routed bridges: "
+                  << routed.n_routed << "\n";
+    }
 
 
     return result;
 
 #endif // LSDTT_HAS_OPENCV
+}
+
+
+// =============================================================================
+// extract_curvature_skeletons
+// =============================================================================
+curvature_skeleton_result extract_curvature_skeletons(
+    const lsdtt_raster_cpu&           vec_raster,
+    const lsdtt_raster_cpu&           profile_raster,
+    const curvature_skeleton_request& request,
+    lsdtt_data_loader*                loader)
+{
+    if (vec_raster.get_data().empty())
+        throw std::runtime_error(
+            "extract_curvature_skeletons: vertical_excess_curvature raster is empty");
+    if (profile_raster.get_data().empty())
+        throw std::runtime_error(
+            "extract_curvature_skeletons: profile_curvature raster is empty");
+
+    curvature_skeleton_result result;
+    const lsdtt_raster_meta& meta = vec_raster.get_meta();
+    const float ndv  = static_cast<float>(meta.no_data_value);
+    const int npix   = meta.n_rows * meta.n_cols;
+
+    // ------------------------------------------------------------------
+    // 1. VEC skeleton
+    // ------------------------------------------------------------------
+    std::cout << "\n--- VEC skeleton ---\n";
+
+    // Always print the CDF divergence threshold for threshold guidance
+    double vec_thr = request.vec_threshold;
+    try
+    {
+        const double cdf_thr = algebra::raster_cdf_divergence_threshold(
+            vec_raster,
+            /*verbose=*/true,
+            request.vec_write_cdf && loader != nullptr,
+            loader,
+            request.vec_cdf_path);
+
+        if (request.vec_use_cdf_threshold)
+        {
+            std::cout << "  Using CDF divergence threshold: " << cdf_thr << "\n";
+            vec_thr = cdf_thr;
+        }
+        else
+        {
+            std::cout << "  CDF divergence threshold (reference): " << cdf_thr
+                      << "  user threshold: " << vec_thr << "\n";
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "  Warning: CDF threshold computation failed: "
+                  << e.what() << " — using vec_threshold=" << vec_thr << "\n";
+    }
+
+    // Threshold: 1 where VEC >= vec_thr
+    {
+        const auto& vd = vec_raster.get_data();
+        const auto& vm = vec_raster.get_mask();
+        std::vector<float>   bd(npix, ndv);
+        std::vector<uint8_t> bm(npix, 0);
+
+        for (int i = 0; i < npix; ++i)
+        {
+            if (vm[i] == 0) continue;
+            bm[i] = 1;
+            bd[i] = (vd[i] >= static_cast<float>(vec_thr)) ? 1.0f : 0.0f;
+        }
+
+        result.vec_binary = lsdtt_raster_cpu(std::move(bd), std::move(bm), meta);
+        std::cout << "  vec_binary foreground pixels: "
+                  << count_foreground(result.vec_binary) << "\n";
+    }
+
+    // Skeletonise
+    result.vec_skeleton = thin_zhang_suen(result.vec_binary);
+    std::cout << "  vec_skeleton raw pixels: "
+              << count_foreground(result.vec_skeleton) << "\n";
+
+    if (request.spur_max_pixels > 0)
+    {
+        result.vec_skeleton = prune_skeleton_spurs(
+            result.vec_skeleton, request.spur_max_pixels);
+        std::cout << "  vec_skeleton after spur pruning: "
+                  << count_foreground(result.vec_skeleton) << "\n";
+    }
+
+    if (request.min_component_pixels > 1)
+    {
+        result.vec_skeleton = filter_binary_components_by_size(
+            result.vec_skeleton, request.min_component_pixels);
+        std::cout << "  vec_skeleton after component filter: "
+                  << count_foreground(result.vec_skeleton) << "\n";
+    }
+
+    // ------------------------------------------------------------------
+    // 2. Profile curvature relief skeleton
+    // ------------------------------------------------------------------
+    std::cout << "\n--- Profile curvature relief skeleton ---\n";
+    std::cout << "  Relief window: " << request.profile_relief_window_metres << " m\n";
+    std::cout << "  Relief threshold: " << request.profile_relief_threshold << "\n";
+
+    // Local relief of profile_curvature captures sign-change magnitude at
+    // slope breaks (positive and negative curvature adjacent to each other
+    // means a large within-window range).
+    result.profile_relief = moving_window_local_relief(
+        profile_raster,
+        request.profile_relief_window_metres,
+        window_shape::circular);
+
+    std::cout << "  profile_relief computed: "
+              << count_foreground(result.profile_relief) << " valid pixels\n";
+
+    // Threshold
+    {
+        const auto& rd = result.profile_relief.get_data();
+        const auto& rm = result.profile_relief.get_mask();
+        const int rn   = static_cast<int>(rd.size());
+        std::vector<float>   bd(rn, ndv);
+        std::vector<uint8_t> bm(rn, 0);
+
+        const float thr_f = static_cast<float>(request.profile_relief_threshold);
+        for (int i = 0; i < rn; ++i)
+        {
+            if (rm[i] == 0) continue;
+            bm[i] = 1;
+            bd[i] = (rd[i] >= thr_f) ? 1.0f : 0.0f;
+        }
+
+        result.profile_binary = lsdtt_raster_cpu(
+            std::move(bd), std::move(bm), result.profile_relief.get_meta());
+        std::cout << "  profile_binary foreground pixels: "
+                  << count_foreground(result.profile_binary) << "\n";
+    }
+
+    // Skeletonise
+    result.profile_skeleton = thin_zhang_suen(result.profile_binary);
+    std::cout << "  profile_skeleton raw pixels: "
+              << count_foreground(result.profile_skeleton) << "\n";
+
+    if (request.spur_max_pixels > 0)
+    {
+        result.profile_skeleton = prune_skeleton_spurs(
+            result.profile_skeleton, request.spur_max_pixels);
+        std::cout << "  profile_skeleton after spur pruning: "
+                  << count_foreground(result.profile_skeleton) << "\n";
+    }
+
+    if (request.min_component_pixels > 1)
+    {
+        result.profile_skeleton = filter_binary_components_by_size(
+            result.profile_skeleton, request.min_component_pixels);
+        std::cout << "  profile_skeleton after component filter: "
+                  << count_foreground(result.profile_skeleton) << "\n";
+    }
+
+    return result;
 }
 
 } // namespace lsdtt
