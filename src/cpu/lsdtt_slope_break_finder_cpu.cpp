@@ -8,8 +8,12 @@
 
 #include "lsdtt_slope_break_finder_cpu.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
+#include <queue>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #ifdef LSDTT_HAS_OPENCV
@@ -576,6 +580,143 @@ slope_break_result find_slope_breaks(
 
 
 // =============================================================================
+// find_vec_skeleton
+// =============================================================================
+vec_skeleton_result find_vec_skeleton(
+    const lsdtt_raster_cpu&     dem,
+    const lsdtt_raster_cpu&     mask,
+    const vec_skeleton_request& request)
+{
+#ifndef LSDTT_HAS_OPENCV
+    throw std::runtime_error(
+        "find_vec_skeleton: OpenCV is required for adaptive thresholding "
+        "but was not compiled in (LSDTT_HAS_OPENCV not defined)");
+#else
+    vec_skeleton_result result;
+
+    // ------------------------------------------------------------------
+    // 1. Direct polyfit → VEC masked to flat pixels
+    // ------------------------------------------------------------------
+    std::cout << "\n--- VEC skeleton: polyfit (lambda="
+              << request.polyfit_lambda_metres << " m) ---\n";
+
+    poly_fit_coeffs coeffs = direct_polyfit(
+        dem, request.polyfit_lambda_metres, request.n_threads);
+
+    polyfit_metric_request pmr;
+    pmr.metrics   = { polyfit_metric::vertical_excess_curvature };
+    pmr.n_threads = request.n_threads;
+
+    polyfit_metric_result pmres = compute_polyfit_metrics(coeffs, pmr);
+
+    result.vertical_excess_curvature = mask_to_flat(
+        pmres.at(polyfit_metric::vertical_excess_curvature), mask);
+
+    std::cout << "  VEC valid flat pixels: "
+              << count_foreground(result.vertical_excess_curvature) << "\n";
+
+    // ------------------------------------------------------------------
+    // 2. Adaptive threshold → binary mask
+    // ------------------------------------------------------------------
+    std::cout << "\n--- Adaptive thresholding ---\n";
+    std::cout << "  method     : " << request.adaptive_method << "\n";
+    std::cout << "  block size : " << request.adaptive_block_size << " px\n";
+    std::cout << "  C          : " << request.adaptive_C << "\n";
+    std::cout << "  pre-blur σ : " << request.adaptive_gaussian_sigma << "\n";
+
+    if (request.adaptive_method == "mean")
+    {
+        result.adaptive_binary = opencv_cpu::threshold_adaptive_mean(
+            result.vertical_excess_curvature,
+            request.adaptive_block_size,
+            request.adaptive_C,
+            request.adaptive_gaussian_sigma,
+            request.n_threads);
+    }
+    else
+    {
+        result.adaptive_binary = opencv_cpu::threshold_adaptive_gaussian(
+            result.vertical_excess_curvature,
+            request.adaptive_block_size,
+            request.adaptive_C,
+            request.adaptive_gaussian_sigma,
+            request.n_threads);
+    }
+
+    std::cout << "  adaptive_binary foreground pixels: "
+              << count_foreground(result.adaptive_binary) << "\n";
+
+    // ------------------------------------------------------------------
+    // 3. Optional closing to seal small gaps before skeletonisation
+    // ------------------------------------------------------------------
+    if (request.closing_radius_metres > 0.0)
+    {
+        std::cout << "  Closing binary mask (radius="
+                  << request.closing_radius_metres << " m)...\n";
+        result.adaptive_binary = binary_morphological_closing(
+            result.adaptive_binary, request.closing_radius_metres);
+        std::cout << "  after closing: "
+                  << count_foreground(result.adaptive_binary) << "\n";
+    }
+
+    // ------------------------------------------------------------------
+    // 3b. Connected-component filter on the binary mask
+    // ------------------------------------------------------------------
+    if (request.binary_min_component_pixels > 1)
+    {
+        std::cout << "  Filtering binary components (min="
+                  << request.binary_min_component_pixels << " px)...\n";
+        result.adaptive_binary = filter_binary_components_by_size(
+            result.adaptive_binary, request.binary_min_component_pixels);
+        std::cout << "  after binary component filter: "
+                  << count_foreground(result.adaptive_binary) << "\n";
+    }
+
+    // ------------------------------------------------------------------
+    // 4. Zhang–Suen thinning → spur pruning → component filtering
+    // ------------------------------------------------------------------
+    std::cout << "\n--- Skeletonisation ---\n";
+
+    result.skeleton = thin_zhang_suen(result.adaptive_binary);
+    std::cout << "  raw skeleton pixels: "
+              << count_foreground(result.skeleton) << "\n";
+
+    if (request.spur_max_pixels > 0)
+    {
+        result.skeleton = prune_skeleton_spurs(
+            result.skeleton, request.spur_max_pixels);
+        std::cout << "  after spur pruning: "
+                  << count_foreground(result.skeleton) << "\n";
+    }
+
+    if (request.min_component_pixels > 1)
+    {
+        result.skeleton = filter_binary_components_by_size(
+            result.skeleton, request.min_component_pixels);
+        std::cout << "  after component filter: "
+                  << count_foreground(result.skeleton) << "\n";
+    }
+
+    // ------------------------------------------------------------------
+    // 5. Elevation-based contour connection of skeleton endpoints
+    // ------------------------------------------------------------------
+    if (request.elevation_connect.search_radius_metres > 0.0 &&
+        !result.skeleton.get_data().empty())
+    {
+        elevation_connect_result ecres =
+            connect_skeleton_by_elevation(result.skeleton, dem,
+                                          request.elevation_connect);
+        result.break_bridge_mask  = std::move(ecres.bridge_mask);
+        result.skeleton_connected = std::move(ecres.skeleton_connected);
+    }
+
+    return result;
+
+#endif // LSDTT_HAS_OPENCV
+}
+
+
+// =============================================================================
 // extract_curvature_skeletons
 // =============================================================================
 curvature_skeleton_result extract_curvature_skeletons(
@@ -730,6 +871,274 @@ curvature_skeleton_result extract_curvature_skeletons(
                   << count_foreground(result.profile_skeleton) << "\n";
     }
 
+    return result;
+}
+
+
+// =============================================================================
+// connect_skeleton_by_elevation
+// =============================================================================
+
+namespace {
+
+// BFS connected-component labelling on a binary raster.
+// Returns label image (0 = background, 1..n = components).
+std::vector<int> label_components(const std::vector<float>& data,
+                                   int nrows, int ncols)
+{
+    std::vector<int> labels(nrows * ncols, 0);
+    int next_label = 1;
+    for (int r = 0; r < nrows; ++r)
+    for (int c = 0; c < ncols; ++c)
+    {
+        int idx = r * ncols + c;
+        if (data[idx] <= 0.5f || labels[idx] != 0) continue;
+        std::queue<std::pair<int,int>> q;
+        q.push({r, c});
+        labels[idx] = next_label;
+        while (!q.empty())
+        {
+            auto [cr, cc] = q.front(); q.pop();
+            for (int dr = -1; dr <= 1; ++dr)
+            for (int dc = -1; dc <= 1; ++dc)
+            {
+                if (!dr && !dc) continue;
+                int nr = cr + dr, nc = cc + dc;
+                if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
+                int ni = nr * ncols + nc;
+                if (data[ni] <= 0.5f || labels[ni] != 0) continue;
+                labels[ni] = next_label;
+                q.push({nr, nc});
+            }
+        }
+        ++next_label;
+    }
+    return labels;
+}
+
+} // anonymous namespace
+
+elevation_connect_result connect_skeleton_by_elevation(
+    const lsdtt_raster_cpu&          skeleton,
+    const lsdtt_raster_cpu&          dem,
+    const elevation_connect_request& request)
+{
+    const lsdtt_raster_meta& meta = skeleton.get_meta();
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+
+    if (dem.get_meta().n_rows != nrows || dem.get_meta().n_cols != ncols)
+        throw std::invalid_argument(
+            "connect_skeleton_by_elevation: skeleton and DEM dimensions must match");
+
+    const double cell = meta.cell_size;
+    const int search_px = static_cast<int>(std::ceil(
+        request.search_radius_metres / cell));
+    const float dem_nd = static_cast<float>(dem.get_meta().no_data_value);
+
+    const std::vector<float>& skel_data = skeleton.get_data();
+    const std::vector<float>& dem_data  = dem.get_data();
+
+    // ------------------------------------------------------------------
+    // 1. Label connected components and compute per-component pixel counts
+    // ------------------------------------------------------------------
+    std::vector<int> comp_labels;
+    std::unordered_map<int,int> comp_size;
+
+    if (!request.connect_same_component)
+    {
+        comp_labels = label_components(skel_data, nrows, ncols);
+        for (int lbl : comp_labels)
+            if (lbl > 0) ++comp_size[lbl];
+    }
+
+    // ------------------------------------------------------------------
+    // 2. Extract endpoints: skeleton pixels with exactly one 8-neighbour
+    // ------------------------------------------------------------------
+    // 2. Extract endpoints using crossing-number classification.
+    //    classify_skeleton_nodes uses CN=1 (not raw degree=1) so corner
+    //    endpoints — e.g. south + southeast neighbours — are not missed.
+    // ------------------------------------------------------------------
+    struct Endpoint { int r, c; double elev; int label; int seg_size; };
+    std::vector<Endpoint> eps;
+
+    {
+        const skeleton_node_result snr = classify_skeleton_nodes(skeleton);
+        const std::vector<skeleton_node>& ep_nodes = snr.endpoints;
+        for (const skeleton_node& nd : ep_nodes)
+        {
+            float elev = dem_data[nd.row * ncols + nd.col];
+            if (elev == dem_nd) continue;
+            int lbl = request.connect_same_component ? 0
+                                                     : comp_labels[nd.row * ncols + nd.col];
+            int sz  = request.connect_same_component ? 0 : comp_size[lbl];
+            eps.push_back({nd.row, nd.col, static_cast<double>(elev), lbl, sz});
+        }
+    }
+
+    std::cout << "\n--- Elevation-based skeleton connection ---\n";
+    std::cout << "  endpoints found : " << eps.size() << "\n";
+    std::cout << "  search radius   : " << request.search_radius_metres << " m ("
+              << search_px << " px)\n";
+    std::cout << "  elev tolerance  : " << request.elevation_tolerance_metres << " m\n";
+
+    // ------------------------------------------------------------------
+    // 3. Build candidate pairs
+    //    Sort: largest segment in the pair first (descending), then by
+    //    elevation difference (ascending).  This ensures the longest —
+    //    i.e., clearest — terrace-edge traces get first pick of matches.
+    // ------------------------------------------------------------------
+    struct Candidate { int i, j; double elev_diff; int max_seg_size; };
+    std::vector<Candidate> candidates;
+    const int n = static_cast<int>(eps.size());
+    const double search_px2 = static_cast<double>(search_px) * search_px;
+
+    for (int i = 0; i < n; ++i)
+    for (int j = i + 1; j < n; ++j)
+    {
+        if (!request.connect_same_component && eps[i].label == eps[j].label)
+            continue;
+        double dr = eps[i].r - eps[j].r;
+        double dc = eps[i].c - eps[j].c;
+        if (dr*dr + dc*dc > search_px2) continue;
+        double de = std::abs(eps[i].elev - eps[j].elev);
+        if (de > request.elevation_tolerance_metres) continue;
+        int msz = std::max(eps[i].seg_size, eps[j].seg_size);
+        candidates.push_back({i, j, de, msz});
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b)
+              {
+                  if (a.max_seg_size != b.max_seg_size)
+                      return a.max_seg_size > b.max_seg_size; // longer first
+                  return a.elev_diff < b.elev_diff;           // then closer elevation
+              });
+
+    std::cout << "  candidates      : " << candidates.size() << "\n";
+
+    // ------------------------------------------------------------------
+    // 4. Greedy matching (each endpoint at most one bridge)
+    // ------------------------------------------------------------------
+    struct Bridge { int i, j; double z_target; };
+    std::vector<bool>   used(n, false);
+    std::vector<Bridge> bridges;
+    for (const auto& cand : candidates)
+    {
+        if (used[cand.i] || used[cand.j]) continue;
+        used[cand.i] = used[cand.j] = true;
+        bridges.push_back({cand.i, cand.j,
+                           (eps[cand.i].elev + eps[cand.j].elev) * 0.5});
+    }
+
+    std::cout << "  bridges accepted: " << bridges.size() << "\n";
+
+    // ------------------------------------------------------------------
+    // 5. Route each bridge along the target contour via A* least-cost path.
+    //
+    //    Per-bridge support raster:
+    //      support(r,c) = max(0, 1 - |DEM(r,c) - z_target| / tolerance)
+    //    → 1.0 exactly on the target contour, 0.0 at ±tolerance from it.
+    //    The A* router minimises  base_cost + support_penalty * (1 - support),
+    //    so it naturally threads along the target elevation.
+    // ------------------------------------------------------------------
+    elevation_connect_result result;
+
+    // Initialise the cumulative bridge mask (all zeros, same geometry)
+    {
+        std::vector<float>   bd(nrows * ncols, 0.0f);
+        std::vector<uint8_t> bm = skeleton.get_mask();
+        result.bridge_mask = lsdtt_raster_cpu(std::move(bd), std::move(bm), meta);
+    }
+
+    // working_skeleton accumulates routed bridges so successive pairs see
+    // each other's pixels as already-foreground (lower traversal cost)
+    lsdtt_raster_cpu working_skeleton = skeleton;
+
+    const double tol = request.elevation_tolerance_metres;
+    const float  dem_nd_f = static_cast<float>(dem.get_meta().no_data_value);
+
+    skeleton_bridge_route_request route_req;
+    route_req.corridor_half_width_pixels = request.corridor_half_width_pixels;
+    route_req.base_step_cost             = request.base_step_cost;
+    route_req.support_penalty_weight     = request.support_penalty_weight;
+    route_req.foreground_cost_scale      = request.foreground_cost_scale;
+
+    // Pre-allocate ONE support raster (zeros everywhere).  Per bridge we fill
+    // only the corridor bounding box, route, then reset those pixels.  This
+    // avoids allocating + zeroing a full nrows×ncols array 646 times.
+    lsdtt_raster_cpu support_raster(
+        std::vector<float>(nrows * ncols, 0.0f),
+        std::vector<uint8_t>(skeleton.get_mask()),
+        meta);
+    std::vector<float>& sup_data = support_raster.get_data();
+
+    const int corridor_pad =
+        static_cast<int>(std::ceil(request.corridor_half_width_pixels)) + 1;
+
+    const int n_bridges = static_cast<int>(bridges.size());
+    int n_routed = 0, n_failed = 0;
+    for (int bi = 0; bi < n_bridges; ++bi)
+    {
+        const Bridge& br = bridges[bi];
+        if (bi % 10 == 0)
+        {
+            std::cout << "  routing bridge " << (bi + 1) << " / " << n_bridges
+                      << "  (routed=" << n_routed
+                      << " failed=" << n_failed << ")\r" << std::flush;
+        }
+
+        const double z_target = br.z_target;
+
+        // Bounding box of the A* corridor (same extent the router will search)
+        const int r_lo = std::max(0,        std::min(eps[br.i].r, eps[br.j].r) - corridor_pad);
+        const int r_hi = std::min(nrows - 1, std::max(eps[br.i].r, eps[br.j].r) + corridor_pad);
+        const int c_lo = std::max(0,        std::min(eps[br.i].c, eps[br.j].c) - corridor_pad);
+        const int c_hi = std::min(ncols - 1, std::max(eps[br.i].c, eps[br.j].c) + corridor_pad);
+
+        // Fill support within the corridor bounding box only
+        for (int r = r_lo; r <= r_hi; ++r)
+        for (int c = c_lo; c <= c_hi; ++c)
+        {
+            int k = r * ncols + c;
+            if (dem_data[k] == dem_nd_f) { sup_data[k] = 0.0f; continue; }
+            double dev = std::abs(static_cast<double>(dem_data[k]) - z_target) / tol;
+            sup_data[k] = static_cast<float>(std::max(0.0, 1.0 - dev));
+        }
+
+        skeleton_endpoint_pair_candidate pair{};
+        pair.row_a = eps[br.i].r;
+        pair.col_a = eps[br.i].c;
+        pair.row_b = eps[br.j].r;
+        pair.col_b = eps[br.j].c;
+
+        skeleton_bridge_route_result rr =
+            route_skeleton_endpoint_bridges_least_cost(
+                working_skeleton, support_raster, {pair}, route_req);
+
+        // Reset the corridor bounding box to zero before the next bridge
+        for (int r = r_lo; r <= r_hi; ++r)
+        for (int c = c_lo; c <= c_hi; ++c)
+            sup_data[r * ncols + c] = 0.0f;
+
+        if (rr.n_routed > 0)
+        {
+            ++n_routed;
+            const auto& new_b = rr.bridge_mask.get_data();
+            auto& bdata = result.bridge_mask.get_data();
+            auto& wdata = working_skeleton.get_data();
+            for (int k = 0; k < nrows * ncols; ++k)
+                if (new_b[k] > 0.5f) { bdata[k] = 1.0f; wdata[k] = 1.0f; }
+        }
+        else
+        {
+            ++n_failed;
+        }
+    }
+
+    std::cout << "\n  routed OK : " << n_routed << "  failed: " << n_failed << "\n";
+
+    result.skeleton_connected = working_skeleton;
     return result;
 }
 

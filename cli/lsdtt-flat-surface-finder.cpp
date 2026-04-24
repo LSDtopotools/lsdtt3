@@ -46,8 +46,10 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <queue>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -70,9 +72,11 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_break_finder_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
+#include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -200,129 +204,93 @@ int main(int argc, char* argv[])
         "true: opening first, then closing. "
         "Has no effect when either radius is 0."};
 
-    // --- Slope break finder (progressive Canny, requires OpenCV) ---
+    // --- Slope break finder (VEC adaptive threshold skeleton, requires OpenCV) ---
     float_default_map["polyfit_lambda_metres"] = 100.0f;
     help_map["polyfit_lambda_metres"] = {"float","100",
         "Window half-wavelength (m) for the direct polyfit curvature computation.",
         "Controls the scale of the fitted surface.  Larger values smooth more."};
 
-    float_default_map["slope_break_closing_radius_metres"] = 50.0f;
-    help_map["slope_break_closing_radius_metres"] = {"float","50",
-        "Closing radius (m) applied to the combined slope break mask to seal narrow gaps.",
-        "Uses closing-by-reconstruction, which preserves feature shapes.  0 = disabled."};
+    string_default_map["vec_adaptive_method"] = "gaussian";
+    help_map["vec_adaptive_method"] = {"string","gaussian",
+        "Adaptive thresholding method applied to vertical_excess_curvature.",
+        "gaussian: Gaussian-weighted local mean (smoother threshold surface). "
+        "mean: unweighted local mean."};
 
-    float_default_map["slope_break_belt_closing_radius_metres"] = 0.0f;
-    help_map["slope_break_belt_closing_radius_metres"] = {"float","0",
-        "Closing radius (m) used to merge paired slope-break rails into a belt.",
-        "Applied after the existing combined/closed slope-break mask is built.  0 = disabled."};
+    int_default_map["vec_adaptive_block_size_pixels"] = 51;
+    help_map["vec_adaptive_block_size_pixels"] = {"int","51",
+        "Neighbourhood block size (pixels) for adaptive VEC thresholding.",
+        "Must be odd and >= 3.  Should be larger than a typical slope-break "
+        "feature width but smaller than the between-feature spacing."};
 
-    float_default_map["slope_break_belt_dilation_radius_metres"] = 0.0f;
-    help_map["slope_break_belt_dilation_radius_metres"] = {"float","0",
-        "Dilation radius (m) applied after belt closing.",
-        "Use sparingly; this thickens the belt.  0 = disabled."};
+    float_default_map["vec_adaptive_C"] = 0.0f;
+    help_map["vec_adaptive_C"] = {"float","0.0",
+        "Constant subtracted from the local neighbourhood mean before thresholding.",
+        "Threshold = local_mean - C.  "
+        "0 = foreground where VEC is above the local mean.  "
+        "Negative (e.g. -5) = stricter, retains only pixels well above the local mean."};
 
-    int_default_map["slope_break_belt_min_component_pixels"] = 1;
-    help_map["slope_break_belt_min_component_pixels"] = {"int","1",
-        "Minimum component size (pixels) retained in the slope-break belt mask.",
-        "Applied after belt closing/dilation."};
+    float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;
+    help_map["vec_adaptive_gaussian_sigma"] = {"float","0.0",
+        "Sigma for an optional Gaussian pre-blur before adaptive thresholding.",
+        "0 = no blur.  A small value (e.g. 1.0) suppresses pixel-scale noise."};
 
-    bool_default_map["write_slope_break_belt"] = true;
-    help_map["write_slope_break_belt"] = {"bool","true",
-        "Write the post-processed slope-break belt mask.",
-        "Output suffix: _slope_break_belt.tif"};
+    float_default_map["slope_break_closing_radius_metres"] = 0.0f;
+    help_map["slope_break_closing_radius_metres"] = {"float","0",
+        "Closing radius (m) applied to the adaptive binary mask before skeletonisation.",
+        "Seals small gaps in the detected slope-break regions.  0 = disabled."};
+
+    int_default_map["slope_break_binary_min_component_pixels"] = 1;
+    help_map["slope_break_binary_min_component_pixels"] = {"int","1",
+        "Minimum connected-component size (pixels) retained in the adaptive binary mask.",
+        "Applied before skeletonisation.  1 = keep all components."};
 
     bool_default_map["write_slope_break_centreline"] = true;
     help_map["write_slope_break_centreline"] = {"bool","true",
-        "Write a 1-pixel skeleton centreline extracted from the slope-break belt.",
+        "Write the 1-pixel slope-break skeleton.",
         "Output suffix: _slope_break_centreline.tif"};
 
     int_default_map["slope_break_centreline_max_spur_pixels"] = 10;
     help_map["slope_break_centreline_max_spur_pixels"] = {"int","10",
-        "Maximum endpoint-rooted spur length (pixels) removed from the centreline skeleton.",
+        "Maximum endpoint-rooted spur length (pixels) removed from the skeleton.",
         "0 = skip spur pruning."};
 
     int_default_map["slope_break_centreline_min_component_pixels"] = 1;
     help_map["slope_break_centreline_min_component_pixels"] = {"int","1",
-        "Minimum component size (pixels) retained in the centreline raster.",
+        "Minimum component size (pixels) retained in the skeleton.",
         "Applied after thinning and spur pruning."};
 
-    bool_default_map["connect_slope_break_centreline_segments"] = false;
-    help_map["connect_slope_break_centreline_segments"] = {"bool","false",
-        "Attempt to reconnect centreline segments using the skeleton graph.",
-        "Only accepts a candidate link if both incident segments have mean support >= slope_break_connect_min_segment_mean_strength."};
+    float_default_map["slope_break_connect_search_radius_metres"] = 0.0f;
+    help_map["slope_break_connect_search_radius_metres"] = {"float","0",
+        "Search radius (m) for elevation-based skeleton endpoint connection.",
+        "Bridges nearby endpoints on the same contour.  0 = disabled."};
 
-    float_default_map["slope_break_connect_tangent_fit_length_pixels"] = 6.0f;
-    help_map["slope_break_connect_tangent_fit_length_pixels"] = {"float","6",
-        "Support length (pixels) used for endpoint tangent estimation before centreline reconnection.",
-        ""};
+    float_default_map["slope_break_connect_elevation_tolerance_metres"] = 2.0f;
+    help_map["slope_break_connect_elevation_tolerance_metres"] = {"float","2",
+        "Maximum elevation difference (m) allowed between two bridged endpoints.",""};
 
-    int_default_map["slope_break_connect_tangent_min_support_pixels"] = 2;
-    help_map["slope_break_connect_tangent_min_support_pixels"] = {"int","2",
-        "Minimum support pixels for endpoint tangent estimation before centreline reconnection.",
-        ""};
+    float_default_map["slope_break_connect_corridor_half_width_pixels"] = 12.0f;
+    help_map["slope_break_connect_corridor_half_width_pixels"] = {"float","12",
+        "Half-width (pixels) of the A* corridor for contour-routed bridges.",""};
 
-    float_default_map["slope_break_connect_max_gap_pixels"] = 20.0f;
-    help_map["slope_break_connect_max_gap_pixels"] = {"float","20",
-        "Maximum endpoint-to-endpoint gap (pixels) considered for centreline reconnection.",
-        ""};
+    bool_default_map["slope_break_connect_same_component"] = false;
+    help_map["slope_break_connect_same_component"] = {"bool","false",
+        "Allow bridging between endpoints on the same skeleton component.",
+        "Default false: only bridge endpoints from different components."};
 
-    float_default_map["slope_break_connect_max_facing_angle_degrees"] = 35.0f;
-    help_map["slope_break_connect_max_facing_angle_degrees"] = {"float","35",
-        "Maximum facing angle (degrees) for each endpoint in a reconnection candidate.",
-        ""};
-
-    float_default_map["slope_break_connect_max_heading_misalignment_degrees"] = 45.0f;
-    help_map["slope_break_connect_max_heading_misalignment_degrees"] = {"float","45",
-        "Maximum heading misalignment (degrees) between the two endpoint tangents.",
-        ""};
-
-    float_default_map["slope_break_connect_max_candidate_score"] = 1.0f;
-    help_map["slope_break_connect_max_candidate_score"] = {"float","1.0",
-        "Maximum candidate score retained after geometric filtering.",
-        "Lower is stricter."};
-
-    float_default_map["slope_break_connect_min_segment_mean_strength"] = 0.25f;
-    help_map["slope_break_connect_min_segment_mean_strength"] = {"float","0.25",
-        "Minimum mean segment strength required on BOTH sides of a proposed reconnection.",
-        "Strength is computed from the combined non-negative curvature-support raster."};
-
-    float_default_map["slope_break_connect_route_corridor_half_width_pixels"] = 12.0f;
-    help_map["slope_break_connect_route_corridor_half_width_pixels"] = {"float","12",
-        "Half-width (pixels) of the least-cost routing corridor used for accepted centreline reconnections.",
-        ""};
-
-    bool_default_map["write_slope_break_connection_strength"] = false;
-    help_map["write_slope_break_connection_strength"] = {"bool","false",
-        "Write the non-negative support raster used for strength-gated centreline reconnection.",
-        "Output suffix: _slope_break_connection_strength.tif"};
+    bool_default_map["write_slope_break_endpoints"] = false;
+    help_map["write_slope_break_endpoints"] = {"bool","false",
+        "Write skeleton endpoints and their DEM elevations to a FlatGeobuf point layer.",
+        "Output suffix: _slope_break_endpoints.fgb  Fields: row, col, elev_m, comp_size."};
 
     bool_default_map["write_slope_break_bridge_mask"] = true;
     help_map["write_slope_break_bridge_mask"] = {"bool","true",
-        "Write the raster of newly inserted bridge pixels from centreline reconnection.",
+        "Write the raster of newly inserted bridge pixels from skeleton reconnection.",
         "Output suffix: _slope_break_bridge_mask.tif"};
 
     bool_default_map["write_slope_break_centreline_connected"] = true;
     help_map["write_slope_break_centreline_connected"] = {"bool","true",
-        "Write the connected centreline after accepted bridge routing.",
+        "Write the connected skeleton after accepted bridge routing.",
         "Output suffix: _slope_break_centreline_connected.tif"};
-
-    int_default_map["canny_min_isolated_pixels"] = 25;
-    help_map["canny_min_isolated_pixels"] = {"int","25",
-        "Minimum connected-component size (pixels) to retain at progressive Canny steps 2+,",
-        "regardless of adjacency to the previous step.  Bridges small gaps in long curvilinear features."};
-
-    float_default_map["canny_ratio"] = 2.0f;
-    help_map["canny_ratio"] = {"float","2",
-        "Canny high/low threshold ratio.  high = threshold * canny_ratio.",
-        "Canny recommends 2.0–3.0."};
-
-    int_default_map["canny_aperture_size"] = 3;
-    help_map["canny_aperture_size"] = {"int","3",
-        "Sobel kernel size for Canny; must be 3, 5, or 7.",""};
-
-    float_default_map["canny_gaussian_sigma"] = 1.0f;
-    help_map["canny_gaussian_sigma"] = {"float","1",
-        "Sigma for the pre-Canny Gaussian blur.  0 = no blur.",""};
 
     // --- Component filtering ---
     int_default_map["min_component_pixels"] = 100;
@@ -671,164 +639,149 @@ int main(int argc, char* argv[])
     write_dist("relief", result.relief_dist_fits);
 
     // -------------------------------------------------------------------------
-    // Slope break detection (progressive Canny annealing)
+    // Slope break detection (VEC adaptive threshold skeleton)
     // -------------------------------------------------------------------------
     {
-        lsdtt::slope_break_request sbr;
-        sbr.polyfit_lambda_metres  = static_cast<double>(ff["polyfit_lambda_metres"]);
-        sbr.closing_radius_metres  = static_cast<double>(ff["slope_break_closing_radius_metres"]);
-        sbr.belt_closing_radius_metres =
-            static_cast<double>(ff["slope_break_belt_closing_radius_metres"]);
-        sbr.belt_dilation_radius_metres =
-            static_cast<double>(ff["slope_break_belt_dilation_radius_metres"]);
-        sbr.belt_min_component_pixels =
-            ip["slope_break_belt_min_component_pixels"];
-        sbr.extract_belt_centreline =
-            bf["write_slope_break_centreline"];
-        sbr.centreline_max_spur_pixels =
-            ip["slope_break_centreline_max_spur_pixels"];
-        sbr.centreline_min_component_pixels =
-            ip["slope_break_centreline_min_component_pixels"];
-        sbr.connect_centreline_segments =
-            bf["connect_slope_break_centreline_segments"];
-        sbr.connect_tangent_fit_length_pixels =
-            static_cast<double>(ff["slope_break_connect_tangent_fit_length_pixels"]);
-        sbr.connect_tangent_min_support_pixels =
-            ip["slope_break_connect_tangent_min_support_pixels"];
-        sbr.connect_max_gap_pixels =
-            static_cast<double>(ff["slope_break_connect_max_gap_pixels"]);
-        sbr.connect_max_facing_angle_degrees =
-            static_cast<double>(ff["slope_break_connect_max_facing_angle_degrees"]);
-        sbr.connect_max_heading_misalignment_degrees =
-            static_cast<double>(ff["slope_break_connect_max_heading_misalignment_degrees"]);
-        sbr.connect_max_candidate_score =
-            static_cast<double>(ff["slope_break_connect_max_candidate_score"]);
-        sbr.connect_min_segment_mean_strength =
-            static_cast<double>(ff["slope_break_connect_min_segment_mean_strength"]);
-        sbr.connect_route_corridor_half_width_pixels =
-            static_cast<double>(ff["slope_break_connect_route_corridor_half_width_pixels"]);
-
-        sbr.min_isolated_pixels    = ip["canny_min_isolated_pixels"];
-        sbr.canny_ratio            = static_cast<double>(ff["canny_ratio"]);
-        sbr.canny_aperture_size    = ip["canny_aperture_size"];
-        sbr.canny_gaussian_sigma   = static_cast<double>(ff["canny_gaussian_sigma"]);
-        sbr.n_threads              = ip["n_threads"];
-
-        // default thresholds {50, 25, 15}
+        lsdtt::vec_skeleton_request vsr;
+        vsr.polyfit_lambda_metres           = static_cast<double>(ff["polyfit_lambda_metres"]);
+        vsr.adaptive_method                 = sf["vec_adaptive_method"];
+        vsr.adaptive_block_size             = ip["vec_adaptive_block_size_pixels"];
+        vsr.adaptive_C                      = static_cast<double>(ff["vec_adaptive_C"]);
+        vsr.adaptive_gaussian_sigma         = static_cast<double>(ff["vec_adaptive_gaussian_sigma"]);
+        vsr.closing_radius_metres           = static_cast<double>(ff["slope_break_closing_radius_metres"]);
+        vsr.binary_min_component_pixels     = ip["slope_break_binary_min_component_pixels"];
+        vsr.spur_max_pixels                 = ip["slope_break_centreline_max_spur_pixels"];
+        vsr.min_component_pixels            = ip["slope_break_centreline_min_component_pixels"];
+        vsr.elevation_connect.search_radius_metres       =
+            static_cast<double>(ff["slope_break_connect_search_radius_metres"]);
+        vsr.elevation_connect.elevation_tolerance_metres =
+            static_cast<double>(ff["slope_break_connect_elevation_tolerance_metres"]);
+        vsr.elevation_connect.corridor_half_width_pixels =
+            static_cast<double>(ff["slope_break_connect_corridor_half_width_pixels"]);
+        vsr.elevation_connect.connect_same_component     =
+            bf["slope_break_connect_same_component"];
+        vsr.n_threads = ip["n_threads"];
 
         try
         {
-            lsdtt::slope_break_result sbres =
-                lsdtt::find_slope_breaks(dem, flat_mask, sbr);
+            lsdtt::vec_skeleton_result vsres =
+                lsdtt::find_vec_skeleton(dem, flat_mask, vsr);
 
-            // Write curvature rasters
+            auto write_r = [&](const lsdtt::lsdtt_raster_cpu& r,
+                               const std::string& p)
             {
-                const std::string p = stem + "_flat_vertical_excess_curvature.tif";
+                if (r.get_data().empty()) return;
                 std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.vertical_excess_curvature.get_data(),
-                                  sbres.vertical_excess_curvature.get_meta(),
-                                  p, out_format);
-            }
-            {
-                const std::string p = stem + "_flat_profile_curvature.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.profile_curvature.get_data(),
-                                  sbres.profile_curvature.get_meta(),
-                                  p, out_format);
-            }
+                loader.write_full(r.get_data(), r.get_meta(), p, out_format);
+            };
 
-            // Write per-step diagnostics
-            for (std::size_t s = 0; s < sbres.steps.size(); ++s)
-            {
-                const lsdtt::slope_break_step& step = sbres.steps[s];
-                const std::string sn = std::to_string(s + 1);
+            write_r(vsres.vertical_excess_curvature,
+                    stem + "_flat_vertical_excess_curvature.tif");
+            write_r(vsres.adaptive_binary,
+                    stem + "_slope_break_adaptive_binary.tif");
 
-                auto write_r = [&](const lsdtt::lsdtt_raster_cpu& r,
-                                   const std::string& suffix)
+            if (bf["write_slope_break_centreline"])
+                write_r(vsres.skeleton,
+                        stem + "_slope_break_centreline.tif");
+
+            // -----------------------------------------------------------------
+            // Write skeleton endpoints as a FlatGeobuf point layer
+            // -----------------------------------------------------------------
+            if (bf["write_slope_break_endpoints"] &&
+                !vsres.skeleton.get_data().empty())
+            {
+                const lsdtt::lsdtt_raster_meta& smeta = vsres.skeleton.get_meta();
+                const int snrows = smeta.n_rows;
+                const int sncols = smeta.n_cols;
+                const std::vector<float>& dem_d  = dem.get_data();
+                const float dem_nd = static_cast<float>(dem.get_meta().no_data_value);
+
+                // Use crossing-number classifier (CN=1) — finds corner endpoints
+                // that the raw degree==1 test misses.
+                lsdtt::skeleton_node_result snr =
+                    lsdtt::classify_skeleton_nodes(vsres.skeleton);
+
+                // BFS component labelling to get comp_size per endpoint
+                const std::vector<float>& skel_d = vsres.skeleton.get_data();
+                std::vector<int> clabels(snrows * sncols, 0);
+                std::unordered_map<int,int> csizes;
                 {
-                    if (r.get_data().empty()) return;
-                    const std::string p = stem + "_slope_break_step" + sn + "_" + suffix + ".tif";
-                    std::cout << "Writing: " << p << "\n";
-                    loader.write_full(r.get_data(), r.get_meta(), p, out_format);
-                };
+                    int next = 1;
+                    for (int r = 0; r < snrows; ++r)
+                    for (int c = 0; c < sncols; ++c)
+                    {
+                        int idx = r * sncols + c;
+                        if (skel_d[idx] <= 0.5f || clabels[idx]) continue;
+                        std::queue<std::pair<int,int>> q;
+                        q.push({r, c});
+                        clabels[idx] = next;
+                        while (!q.empty())
+                        {
+                            auto [cr, cc] = q.front(); q.pop();
+                            ++csizes[next];
+                            for (int dr = -1; dr <= 1; ++dr)
+                            for (int dc = -1; dc <= 1; ++dc)
+                            {
+                                if (!dr && !dc) continue;
+                                int nr = cr+dr, nc = cc+dc;
+                                if (nr<0||nr>=snrows||nc<0||nc>=sncols) continue;
+                                int ni = nr*sncols+nc;
+                                if (skel_d[ni]<=0.5f||clabels[ni]) continue;
+                                clabels[ni] = next;
+                                q.push({nr,nc});
+                            }
+                        }
+                        ++next;
+                    }
+                }
 
-                write_r(step.canny_vert,      "canny_vert");
-                write_r(step.canny_prof,      "canny_prof");
-                write_r(step.break_mask_vert, "break_mask_vert");
-                write_r(step.break_mask_prof, "break_mask_prof");
+                struct EP { int r, c; float elev; int comp_size; };
+                std::vector<EP> ep_list;
+                for (const lsdtt::skeleton_node& nd : snr.endpoints)
+                {
+                    float elev = dem_d[nd.row * sncols + nd.col];
+                    if (elev == dem_nd) continue;
+                    int lbl = clabels[nd.row * sncols + nd.col];
+                    ep_list.push_back({nd.row, nd.col, elev, csizes[lbl]});
+                }
+
+                const std::string ep_path = stem + "_slope_break_endpoints.fgb";
+                std::cout << "Writing " << ep_list.size()
+                          << " skeleton endpoints: " << ep_path << "\n";
+
+                lsdtt::lsdtt_vector_schema ep_schema;
+                ep_schema.field_names = {"row","col","elev_m","comp_size"};
+                ep_schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type };
+
+                loader.begin_vector_write(
+                    ep_path, "slope_break_endpoints",
+                    ep_schema, smeta.crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, false);
+
+                for (const EP& ep : ep_list)
+                {
+                    lsdtt::lsdtt_xy xy =
+                        lsdtt::cell_center_from_row_col(smeta, ep.r, ep.c);
+                    loader.write_point(xy.x, xy.y, {
+                        static_cast<std::int64_t>(ep.r),
+                        static_cast<std::int64_t>(ep.c),
+                        static_cast<double>(ep.elev),
+                        static_cast<std::int64_t>(ep.comp_size) });
+                }
+                loader.finish_vector_write();
             }
 
-            // Write combined (intersection) mask
-            if (!sbres.combined_break_mask.get_data().empty())
-            {
-                const std::string p = stem + "_slope_break_combined.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.combined_break_mask.get_data(),
-                                  sbres.combined_break_mask.get_meta(),
-                                  p, out_format);
-            }
+            if (bf["write_slope_break_bridge_mask"])
+                write_r(vsres.break_bridge_mask,
+                        stem + "_slope_break_bridge_mask.tif");
 
-            // Write closed combined mask
-            if (!sbres.combined_closed.get_data().empty())
-            {
-                const std::string p = stem + "_slope_break_combined_closed.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.combined_closed.get_data(),
-                                  sbres.combined_closed.get_meta(),
-                                  p, out_format);
-            }
-
-            if (bf["write_slope_break_belt"] &&
-                !sbres.break_belt.get_data().empty())
-            {
-                const std::string p = stem + "_slope_break_belt.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.break_belt.get_data(),
-                                  sbres.break_belt.get_meta(),
-                                  p, out_format);
-            }
-
-            if (bf["write_slope_break_centreline"] &&
-                !sbres.break_centreline.get_data().empty())
-            {
-                const std::string p = stem + "_slope_break_centreline.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.break_centreline.get_data(),
-                                  sbres.break_centreline.get_meta(),
-                                  p, out_format);
-            }
-
-            if (bf["write_slope_break_connection_strength"] &&
-                !sbres.break_connection_strength.get_data().empty())
-            {
-                const std::string p = stem + "_slope_break_connection_strength.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.break_connection_strength.get_data(),
-                                  sbres.break_connection_strength.get_meta(),
-                                  p, out_format);
-            }
-
-            if (bf["write_slope_break_bridge_mask"] &&
-                !sbres.break_bridge_mask.get_data().empty())
-            {
-                const std::string p = stem + "_slope_break_bridge_mask.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.break_bridge_mask.get_data(),
-                                  sbres.break_bridge_mask.get_meta(),
-                                  p, out_format);
-            }
-
-            if (bf["write_slope_break_centreline_connected"] &&
-                !sbres.break_centreline_connected.get_data().empty())
-            {
-                const std::string p = stem + "_slope_break_centreline_connected.tif";
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(sbres.break_centreline_connected.get_data(),
-                                  sbres.break_centreline_connected.get_meta(),
-                                  p, out_format);
-            }
-
-
+            if (bf["write_slope_break_centreline_connected"])
+                write_r(vsres.skeleton_connected,
+                        stem + "_slope_break_centreline_connected.tif");
         }
         catch (const std::exception& e)
         {

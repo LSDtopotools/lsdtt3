@@ -27,6 +27,33 @@ namespace lsdtt
 namespace
 {
 
+// Crossing number for pixel (row, col) in a binary skeleton.
+//
+// Counts the number of 0→1 transitions in the clockwise-ordered 8-neighbourhood.
+// This is the standard digital-topology endpoint test:
+//   CN = 1  →  endpoint  (one branch leaving the pixel)
+//   CN = 2  →  chain pixel
+//   CN >= 3 →  junction
+//
+// Unlike the raw 8-neighbour degree count, CN correctly handles corner pixels
+// where two adjacent diagonal neighbours are present (e.g. south + southeast):
+// those count as ONE transition, not two branches.
+template<typename IsForeground>
+inline int crossing_number(int row, int col, IsForeground is_fg)
+{
+    // Clockwise from east: E, NE, N, NW, W, SW, S, SE
+    static constexpr int dr[8] = { 0, -1, -1, -1,  0,  1,  1,  1};
+    static constexpr int dc[8] = { 1,  1,  0, -1, -1, -1,  0,  1};
+
+    int cn = 0;
+    for (int i = 0; i < 8; ++i)
+    {
+        int v0 = is_fg(row + dr[i],       col + dc[i])       ? 1 : 0;
+        int v1 = is_fg(row + dr[(i+1)%8], col + dc[(i+1)%8]) ? 1 : 0;
+        if (v0 == 0 && v1 == 1) ++cn;
+    }
+    return cn;
+}
 
 
 
@@ -827,12 +854,14 @@ skeleton_node_result classify_skeleton_nodes(
 
             degree_data[idx] = static_cast<float>(degree);
 
-            if (degree == 1)
+            const int cn = crossing_number(row, col, is_foreground);
+
+            if (cn == 1)
             {
                 endpoint_data[idx] = 1.0f;
                 endpoints.push_back({row, col, degree});
             }
-            else if (degree >= 3)
+            else if (cn >= 3)
             {
                 junction_data[idx] = 1.0f;
                 junctions.push_back({row, col, degree});
