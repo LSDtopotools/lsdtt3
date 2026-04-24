@@ -10,27 +10,26 @@
 // lsdtt-flat-surface-finder
 //
 // Identifies broadly flat surfaces (floodplains, alluvial fans, fluvial and
-// agricultural terraces) in a DEM using local relief and optional residual IQR.
+// agricultural terraces) in a DEM using local relief.
 //
 // Pipeline:
-//   1. Local relief threshold (always on)
-//   2. Optional residual IQR metric
-//   3. Maximum curvature (direct polyfit) analysis on the flat pixels:
-//        - mask curvature to flat pixels
-//        - fit distribution to positive curvature values
-//        - threshold at curvature_threshold
-//        - skeletonise → prune → connect
+//   1. Local relief threshold → raw relief mask
+//   2. Optional morphological closing  (flat_closing_radius_metres; 0 = skip)
+//   3. Optional morphological dilation (flat_dilation_radius_metres; 0 = skip)
+//   4. Remove components < min_component_pixels → working flat mask
+//   5. Progressive Canny annealing for slope break detection (requires OpenCV)
+//        vertical_excess_curvature and profile_curvature at thresholds {50, 25, 15}
 //
 // Outputs (always written):
 //   <stem>_labelled_flat_mask.tif
-//   <stem>_relief_qq.csv
 //   <stem>_relief_cdf.csv
 //   <stem>_relief_dist_fits.csv
-//   <stem>_flat_max_curvature_positive_cdf.csv
-//   <stem>_flat_max_curvature_positive_dist_fits.csv
-//   <stem>_curvature_skeleton.tif
-//   <stem>_curvature_skeleton_pruned.tif
-//   <stem>_curvature_skeleton_connected.tif
+//   <stem>_flat_vertical_excess_curvature.tif
+//   <stem>_flat_profile_curvature.tif
+//   <stem>_slope_break_step<N>_canny_vert.tif
+//   <stem>_slope_break_step<N>_canny_prof.tif
+//   <stem>_slope_break_step<N>_break_mask_vert.tif
+//   <stem>_slope_break_step<N>_break_mask_prof.tif
 //
 // Usage:
 //   lsdtt-flat-surface-finder <path> <parameter_file>
@@ -49,19 +48,26 @@
 #include <utility>
 #include <vector>
 
+// opencv must precede any header that transitively includes lsdtt_array2d.hpp
+#ifdef LSDTT_HAS_OPENCV
+#include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
+#endif
+
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/cpu/lsdtt_flat_surface_finder.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_flat_surface_plane_analysis.hpp"
 #include "../src/cpu/lsdtt_proximity_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
-#include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_break_finder_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 
@@ -170,156 +176,91 @@ int main(int argc, char* argv[])
         "values < 1 tighten it.  "
         "Only used when adaptive_relief_threshold = true."};
 
-    // --- Residual IQR ---
-    bool_default_map["use_residual_iqr"] = false;
-    help_map["use_residual_iqr"] = {"bool","false",
-        "Enable residual IQR metric (IQR of elevation residuals to a fitted surface).",
-        "Slope-independent by construction.  Fitting method is set by iqr_fit_method."};
+    // --- Morphological post-processing of relief mask ---
+    float_default_map["flat_closing_radius_metres"] = 0.0f;
+    help_map["flat_closing_radius_metres"] = {"float","0",
+        "Radius (m) for morphological closing of the relief flat mask.",
+        "Seals narrow gaps in the flat mask.  0 = disabled."};
 
-    string_default_map["iqr_fit_method"] = "moving_window_mean";
-    help_map["iqr_fit_method"] = {"string","moving_window_mean",
-        "Method used to compute the reference surface for residual IQR.",
-        "fftw_highpass     — residuals = fftw2D_highpass_filter(dem, iqr_fit_lambda_metres). "
-        "wavelet_quadratic — residuals = dem − wavelet_quadratic_fit(dem, iqr_fit_lambda_metres).f. "
-        "moving_window_mean — residuals = dem − moving_window_mean(dem, iqr_detrend_radius_metres). "
-        "  No FFTW dependency; simpler but less frequency-selective."};
+    float_default_map["flat_dilation_radius_metres"] = 0.0f;
+    help_map["flat_dilation_radius_metres"] = {"float","0",
+        "Radius (m) for morphological dilation of the flat mask after closing.",
+        "Expands flat regions outward.  0 = disabled."};
 
-    float_default_map["iqr_fit_lambda_metres"] = 500.0f;
-    help_map["iqr_fit_lambda_metres"] = {"float","500",
-        "Reference-surface wavelength (m) for fftw_highpass and wavelet_quadratic methods.",
-        "Ignored for moving_window_mean."};
-
-    float_default_map["iqr_detrend_radius_metres"] = 500.0f;
-    help_map["iqr_detrend_radius_metres"] = {"float","500",
-        "Moving-window mean radius (m) for the moving_window_mean detrending method.",
-        "Ignored for fftw_highpass and wavelet_quadratic."};
-
-    float_default_map["iqr_window_radius_metres"] = 50.0f;
-    help_map["iqr_window_radius_metres"] = {"float","50",
-        "Moving-window radius (m) for computing IQR of residuals.",
-        "Should be smaller than the width of the flat surfaces to be detected."};
-
-    string_default_map["iqr_window_shape"] = "circular";
-    help_map["iqr_window_shape"] = {"string","circular",
-        "Window shape for the residual IQR computation.","circular or square."};
-
-    float_default_map["iqr_threshold_percentile"] = 25.0f;
-    help_map["iqr_threshold_percentile"] = {"float","25",
-        "Percentile of the residual IQR distribution below which a pixel is classed flat.",
-        "Range: 0–100."};
-
-    // --- Curvature analysis ---
+    // --- Slope break finder (progressive Canny, requires OpenCV) ---
     float_default_map["polyfit_lambda_metres"] = 100.0f;
     help_map["polyfit_lambda_metres"] = {"float","100",
-        "Window half-wavelength (m) for the direct polyfit used to compute maximum curvature.",
+        "Window half-wavelength (m) for the direct polyfit curvature computation.",
         "Controls the scale of the fitted surface.  Larger values smooth more."};
 
-    float_default_map["curvature_threshold"] = 0.001f;
-    help_map["curvature_threshold"] = {"float","0.001",
-        "Maximum curvature threshold (1/m).  Flat pixels with curvature > this are kept.",
-        "Only positive curvature values (concave up) are retained before thresholding."};
+    float_default_map["slope_break_closing_radius_metres"] = 50.0f;
+    help_map["slope_break_closing_radius_metres"] = {"float","50",
+        "Closing radius (m) applied to the combined slope break mask to seal narrow gaps.",
+        "Uses closing-by-reconstruction, which preserves feature shapes.  0 = disabled."};
 
-    bool_default_map["write_curvature_raster"] = false;
-    help_map["write_curvature_raster"] = {"bool","false",
-        "Write the maximum curvature raster masked to flat pixels.",
-        "Useful for inspecting the curvature distribution before thresholding."};
+    float_default_map["slope_break_belt_closing_radius_metres"] = 0.0f;
+    help_map["slope_break_belt_closing_radius_metres"] = {"float","0",
+        "Closing radius (m) used to merge paired slope-break rails into a belt.",
+        "Applied after the existing combined/closed slope-break mask is built.  0 = disabled."};
 
-    int_default_map["curvature_cdf_n_bins"] = 500;
-    help_map["curvature_cdf_n_bins"] = {"int","500",
-        "Number of histogram bins for the positive curvature CDF.",""};
+    float_default_map["slope_break_belt_dilation_radius_metres"] = 0.0f;
+    help_map["slope_break_belt_dilation_radius_metres"] = {"float","0",
+        "Dilation radius (m) applied after belt closing.",
+        "Use sparingly; this thickens the belt.  0 = disabled."};
 
-    // --- Skeleton ---
-    bool_default_map["write_skeleton_raster"] = true;
-    help_map["write_skeleton_raster"] = {"bool","true",
-        "Write the raw Zhang-Suen skeleton of the thresholded curvature binary.",""};
+    int_default_map["slope_break_belt_min_component_pixels"] = 1;
+    help_map["slope_break_belt_min_component_pixels"] = {"int","1",
+        "Minimum component size (pixels) retained in the slope-break belt mask.",
+        "Applied after belt closing/dilation."};
 
-    int_default_map["skeleton_prune_max_spur_pixels"] = 5;
-    help_map["skeleton_prune_max_spur_pixels"] = {"int","5",
-        "Maximum traced spur length (pixels) removed during skeleton pruning.",
-        "Larger values remove more short dead-ends."};
+    bool_default_map["write_slope_break_belt"] = true;
+    help_map["write_slope_break_belt"] = {"bool","true",
+        "Write the post-processed slope-break belt mask.",
+        "Output suffix: _slope_break_belt.tif"};
 
-    bool_default_map["write_pruned_skeleton_raster"] = true;
-    help_map["write_pruned_skeleton_raster"] = {"bool","true",
-        "Write the skeleton after spur pruning.",""};
+    bool_default_map["write_slope_break_centreline"] = true;
+    help_map["write_slope_break_centreline"] = {"bool","true",
+        "Write a 1-pixel skeleton centreline extracted from the slope-break belt.",
+        "Output suffix: _slope_break_centreline.tif"};
 
-    float_default_map["skeleton_max_gap_pixels"] = 20.0f;
-    help_map["skeleton_max_gap_pixels"] = {"float","20",
-        "Maximum gap (pixels) between skeleton endpoints to consider for connection.",""};
+    int_default_map["slope_break_centreline_max_spur_pixels"] = 10;
+    help_map["slope_break_centreline_max_spur_pixels"] = {"int","10",
+        "Maximum endpoint-rooted spur length (pixels) removed from the centreline skeleton.",
+        "0 = skip spur pruning."};
 
-    float_default_map["skeleton_max_facing_angle_degrees"] = 35.0f;
-    help_map["skeleton_max_facing_angle_degrees"] = {"float","35",
-        "Maximum angle (degrees) between an endpoint tangent and the direction toward "
-        "the candidate partner endpoint.",""};
+    int_default_map["slope_break_centreline_min_component_pixels"] = 1;
+    help_map["slope_break_centreline_min_component_pixels"] = {"int","1",
+        "Minimum component size (pixels) retained in the centreline raster.",
+        "Applied after thinning and spur pruning."};
 
-    float_default_map["skeleton_max_heading_misalignment_degrees"] = 45.0f;
-    help_map["skeleton_max_heading_misalignment_degrees"] = {"float","45",
-        "Maximum angular difference (degrees) between the two outward endpoint tangents "
-        "for a candidate bridge to be accepted.",""};
 
-    bool_default_map["write_connected_skeleton_raster"] = true;
-    help_map["write_connected_skeleton_raster"] = {"bool","true",
-        "Write the skeleton after endpoint bridge reconnection.",""};
+    int_default_map["canny_min_isolated_pixels"] = 25;
+    help_map["canny_min_isolated_pixels"] = {"int","25",
+        "Minimum connected-component size (pixels) to retain at progressive Canny steps 2+,",
+        "regardless of adjacency to the previous step.  Bridges small gaps in long curvilinear features."};
 
-    // --- Combination ---
-    bool_default_map["require_all_metrics_pass"] = true;
-    help_map["require_all_metrics_pass"] = {"bool","true",
-        "Require a pixel to pass ALL enabled metric thresholds.",
-        "true (AND, conservative) or false (OR, permissive)."};
+    float_default_map["canny_ratio"] = 2.0f;
+    help_map["canny_ratio"] = {"float","2",
+        "Canny high/low threshold ratio.  high = threshold * canny_ratio.",
+        "Canny recommends 2.0–3.0."};
 
+    int_default_map["canny_aperture_size"] = 3;
+    help_map["canny_aperture_size"] = {"int","3",
+        "Sobel kernel size for Canny; must be 3, 5, or 7.",""};
+
+    float_default_map["canny_gaussian_sigma"] = 1.0f;
+    help_map["canny_gaussian_sigma"] = {"float","1",
+        "Sigma for the pre-Canny Gaussian blur.  0 = no blur.",""};
+
+    // --- Component filtering ---
     int_default_map["min_component_pixels"] = 100;
     help_map["min_component_pixels"] = {"int","100",
         "Minimum 8-connected component size for inclusion in the labelled flat mask.",
         "Smaller components are excluded.  Set to 1 to include all."};
 
-    int_default_map["qq_n_bins"] = 100;
-    help_map["qq_n_bins"] = {"int","100",
-        "Number of quantile bins in the QQ output CSVs.","100 = one row per percentile."};
-
     int_default_map["cdf_n_bins"] = 500;
     help_map["cdf_n_bins"] = {"int","500",
         "Number of histogram bins for the empirical CDF output.",""};
-
-    // --- Riser removal ---
-    bool_default_map["remove_risers"] = false;
-    help_map["remove_risers"] = {"bool","false",
-        "Optional secondary pass to remove riser pixels from the flat mask.",
-        "Fits a plane to each labelled component, computes residuals, runs a "
-        "relief window on the residuals, and removes pixels whose residual relief "
-        "exceeds riser_residual_relief_fraction × the relief threshold."};
-
-    float_default_map["riser_residual_relief_fraction"] = 0.5f;
-    help_map["riser_residual_relief_fraction"] = {"float","0.5",
-        "Fraction of the relief threshold used as the riser removal cut-off.",
-        "Pixels with residual relief > fraction × relief_threshold_value are removed."};
-
-    int_default_map["riser_plane_min_pixels"] = 10;
-    help_map["riser_plane_min_pixels"] = {"int","10",
-        "Minimum pixel count for a component to have a plane fitted during riser removal.",
-        "Components below this size are skipped."};
-
-    float_default_map["riser_window_radius_metres"] = 50.0f;
-    help_map["riser_window_radius_metres"] = {"float","50",
-        "Circular window radius (m) for the η² bimodality test used in riser removal.",""};
-
-    float_default_map["riser_eta2_threshold"] = 0.6f;
-    help_map["riser_eta2_threshold"] = {"float","0.6",
-        "η² threshold above which a window's elevation distribution is considered bimodal (riser).",
-        "Range 0–1."};
-
-    bool_default_map["write_riser_residual_relief"] = false;
-    help_map["write_riser_residual_relief"] = {"bool","false",
-        "Write the riser residual relief raster.",
-        "Only written when remove_risers = true."};
-
-    bool_default_map["write_riser_eta2"] = false;
-    help_map["write_riser_eta2"] = {"bool","false",
-        "Write the η² bimodality raster.",
-        "Only written when remove_risers = true."};
-
-    bool_default_map["write_labels_before_riser_removal"] = false;
-    help_map["write_labels_before_riser_removal"] = {"bool","false",
-        "Write the labelled flat mask computed before riser removal.",
-        "Only written when remove_risers = true."};
 
     // --- Directional closing ---
     int_default_map["directional_close_line_length_pixels"] = 0;
@@ -461,30 +402,9 @@ int main(int argc, char* argv[])
             out_format = lsdtt::raster_output_format::same_as_input;
     }
 
-    auto resolve_window_shape = [](const std::string& s)
-    {
-        return (s == "square") ? lsdtt::window_shape::square
-                               : lsdtt::window_shape::circular;
-    };
-
-    lsdtt::iqr_fit_method iqr_method = lsdtt::iqr_fit_method::fftw_highpass;
-    {
-        const std::string& m = sf["iqr_fit_method"];
-        if      (m == "wavelet_quadratic")  iqr_method = lsdtt::iqr_fit_method::wavelet_quadratic;
-        else if (m == "moving_window_mean") iqr_method = lsdtt::iqr_fit_method::moving_window_mean;
-        else if (m == "fftw_highpass")      iqr_method = lsdtt::iqr_fit_method::fftw_highpass;
-        else
-        {
-            std::cerr << "Error: unknown iqr_fit_method '" << m
-                      << "'. Allowed: fftw_highpass, wavelet_quadratic, moving_window_mean\n";
-            return 1;
-        }
-    }
-
     std::cout << "Switches for analysis are:\n";
-    std::cout << "  use_residual_iqr: " << bf["use_residual_iqr"] << "\n";
     std::cout << "  relief: always on\n";
-    std::cout << "  remove_risers: " << bf["remove_risers"] << "\n";
+    std::cout << "  slope break finder (progressive Canny): always on\n";
 
     // -------------------------------------------------------------------------
     // Load DEM
@@ -510,30 +430,17 @@ int main(int argc, char* argv[])
     // Build request
     // -------------------------------------------------------------------------
     lsdtt::flat_surface_request req;
-    req.use_madk2                  = false;   // removed from UI
-    req.use_nvd                    = false;   // removed from UI
-    req.use_residual_iqr           = bf["use_residual_iqr"];
-    req.iqr_method                 = iqr_method;
-    req.iqr_fit_lambda_metres      = static_cast<double>(ff["iqr_fit_lambda_metres"]);
-    req.iqr_detrend_radius_metres  = static_cast<double>(ff["iqr_detrend_radius_metres"]);
-    req.iqr_window_radius_metres   = static_cast<double>(ff["iqr_window_radius_metres"]);
-    req.iqr_window_shape           = resolve_window_shape(sf["iqr_window_shape"]);
-    req.iqr_threshold_percentile   = static_cast<double>(ff["iqr_threshold_percentile"]);
-    req.require_all_metrics_pass               = bf["require_all_metrics_pass"];
-    req.directional_close_line_length_pixels   = ip["directional_close_line_length_pixels"];
-    req.directional_close_n_angles             = ip["directional_close_n_angles"];
-    req.min_component_pixels                   = ip["min_component_pixels"];
-    req.qq_n_bins                  = ip["qq_n_bins"];
+    req.use_madk2                  = false;
+    req.use_nvd                    = false;
+    req.use_residual_iqr           = false;
+    // closing/dilation/component filtering are handled in the CLI below
+    req.directional_close_line_length_pixels = 0;
+    req.min_component_pixels       = 1;  // all components kept; CLI does its own filtering
     req.cdf_n_bins                 = ip["cdf_n_bins"];
     req.relief_window_pixels       = ip["relief_window_pixels"];
     req.relief_threshold_metres    = static_cast<double>(ff["relief_threshold_metres"]);
-    req.remove_risers                  = bf["remove_risers"];
-    req.riser_residual_relief_fraction = ff["riser_residual_relief_fraction"];
-    req.riser_plane_min_pixels         = ip["riser_plane_min_pixels"];
-    req.riser_window_radius_metres     = static_cast<double>(ff["riser_window_radius_metres"]);
-    req.riser_eta2_threshold           = static_cast<double>(ff["riser_eta2_threshold"]);
-    req.n_threads                      = ip["n_threads"];
-    req.test_surface_vector_file       = sf["test_surface_vector_file"];
+    req.n_threads                  = ip["n_threads"];
+    req.test_surface_vector_file   = sf["test_surface_vector_file"];
 
     // -------------------------------------------------------------------------
     // Adaptive relief threshold
@@ -550,81 +457,21 @@ int main(int argc, char* argv[])
         const lsdtt::lsdtt_raster_cpu relief_raster =
             lsdtt::moving_window_local_relief(dem, relief_radius);
 
-        const lsdtt::lsdtt_raster_meta& rmeta = relief_raster.get_meta();
-        const std::vector<float>&        rdata = relief_raster.get_data();
-        const std::vector<uint8_t>&      rmask = relief_raster.get_mask();
-
-        std::vector<double> dvals;
-        dvals.reserve(rdata.size() / 4);
-        for (std::size_t i = 0; i < rdata.size(); ++i)
+        try
         {
-            if (rmask[i] == 0) continue;
-            const float v = rdata[i];
-            if (!std::isfinite(v) || rmeta.is_nodata(v)) continue;
-            dvals.push_back(static_cast<double>(v));
+            const std::string p = pp.get_full_write_path() + "_relief_adaptive_cdf.csv";
+            const double thresh_value = lsdtt::algebra::raster_cdf_divergence_threshold(
+                relief_raster, /*verbose=*/true, /*write_cdf=*/true, &loader, p);
+            const double multiplier = static_cast<double>(ff["relief_threshold_multiplier"]);
+            std::cout << "  Multiplier        : " << multiplier << "\n"
+                      << "  Final threshold   : " << thresh_value * multiplier << " m\n\n";
+            req.relief_threshold_metres = thresh_value * multiplier;
         }
-
-        if (dvals.size() < 10)
+        catch (const std::exception& e)
         {
-            std::cerr << "Warning: too few valid relief values for adaptive threshold — "
-                         "using relief_threshold_metres = "
+            std::cerr << "Warning: adaptive threshold failed (" << e.what()
+                      << ") — using relief_threshold_metres = "
                       << ff["relief_threshold_metres"] << "\n";
-        }
-        else
-        {
-            const lsdtt::lsdtt_smoothed_cdf scdf =
-                lsdtt::compute_smoothed_cdf(dvals, 500);
-
-            const std::vector<lsdtt::lsdtt_distribution_fit> fits =
-                lsdtt::fit_distributions(dvals);
-
-            const lsdtt::lsdtt_distribution_fit* best = nullptr;
-            for (const auto& f : fits)
-            {
-                if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
-                if (!best || f.ks_statistic < best->ks_statistic)
-                    best = &f;
-            }
-
-            if (!best)
-            {
-                std::cerr << "Warning: no valid distribution fit for relief — "
-                             "using relief_threshold_metres = "
-                          << ff["relief_threshold_metres"] << "\n";
-            }
-            else
-            {
-                double      max_diff = -std::numeric_limits<double>::infinity();
-                std::size_t max_idx  = 0;
-
-                for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
-                {
-                    const double fitted = lsdtt::eval_cdf(*best, scdf.bin_centres[i]);
-                    if (!std::isfinite(fitted)) continue;
-                    const double diff = scdf.cdf[i] - fitted;
-                    if (diff > max_diff) { max_diff = diff; max_idx = i; }
-                }
-
-                const double thresh_value      = scdf.bin_centres[max_idx];
-                const double thresh_percentile = scdf.cdf[max_idx] * 100.0;
-                const double multiplier        = static_cast<double>(ff["relief_threshold_multiplier"]);
-
-                std::cout << "  Distribution fit  : "
-                          << lsdtt::distribution_family_name(best->family) << "\n"
-                          << "  Max CDF divergence: " << max_diff << "\n"
-                          << "  Base threshold    : " << thresh_value << " m"
-                          << "  (=" << thresh_percentile << "th percentile)\n"
-                          << "  Multiplier        : " << multiplier << "\n"
-                          << "  Final threshold   : " << thresh_value * multiplier << " m\n\n";
-
-                {
-                    const std::string p = pp.get_full_write_path() + "_relief_adaptive_cdf.csv";
-                    std::cout << "Writing adaptive relief CDF: " << p << "\n";
-                    write_smoothed_cdf_csv(loader, p, scdf, fits);
-                }
-
-                req.relief_threshold_metres = thresh_value * multiplier;
-            }
         }
     }
 
@@ -632,25 +479,47 @@ int main(int argc, char* argv[])
     // Run
     // -------------------------------------------------------------------------
     std::cout << "Running flat surface finder...\n";
-    if (req.use_residual_iqr)
-    {
-        std::cout << "  Residual IQR method=" << sf["iqr_fit_method"];
-        if (iqr_method == lsdtt::iqr_fit_method::moving_window_mean)
-            std::cout << "  detrend_radius=" << req.iqr_detrend_radius_metres << " m";
-        else
-            std::cout << "  fit_lambda=" << req.iqr_fit_lambda_metres << " m";
-        std::cout << "  iqr_radius=" << req.iqr_window_radius_metres
-                  << " m  threshold=" << req.iqr_threshold_percentile << "th pct\n";
-    }
     std::cout << "  Local relief  window=" << req.relief_window_pixels
-              << " px  threshold=" << req.relief_threshold_metres << " m\n";
-    std::cout << "  combination: " << (req.require_all_metrics_pass ? "AND" : "OR")
-              << "  min_component=" << req.min_component_pixels << " px\n\n";
+              << " px  threshold=" << req.relief_threshold_metres << " m\n\n";
 
     lsdtt::flat_surface_result result;
     try { result = lsdtt::find_flat_surfaces(dem, req); }
     catch (const std::exception& e)
     { std::cerr << "Error: " << e.what() << "\n"; return 1; }
+
+    // -------------------------------------------------------------------------
+    // Post-process the relief flat mask:
+    //   1. optional morphological closing
+    //   2. optional morphological dilation
+    //   3. remove components below min_component_pixels
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_raster_cpu flat_mask = result.relief_flat_mask;
+
+    {
+        const double closing_r = static_cast<double>(ff["flat_closing_radius_metres"]);
+        if (closing_r > 0.0)
+        {
+            std::cout << "Morphological closing of flat mask (radius="
+                      << closing_r << " m)...\n";
+            try { flat_mask = lsdtt::binary_morphological_closing(flat_mask, closing_r); }
+            catch (const std::exception& e)
+            { std::cerr << "Warning: closing failed: " << e.what() << "\n"; }
+        }
+
+        const double dilation_r = static_cast<double>(ff["flat_dilation_radius_metres"]);
+        if (dilation_r > 0.0)
+        {
+            std::cout << "Morphological dilation of flat mask (radius="
+                      << dilation_r << " m)...\n";
+            try { flat_mask = lsdtt::binary_morphological_dilation(flat_mask, dilation_r); }
+            catch (const std::exception& e)
+            { std::cerr << "Warning: dilation failed: " << e.what() << "\n"; }
+        }
+
+        const int min_comp = ip["min_component_pixels"];
+        std::cout << "Removing flat components < " << min_comp << " pixels...\n";
+        flat_mask = lsdtt::filter_binary_components_by_size(flat_mask, min_comp);
+    }
 
     // -------------------------------------------------------------------------
     // Write outputs
@@ -659,21 +528,6 @@ int main(int argc, char* argv[])
 
     if (bf["write_texture_rasters"])
     {
-        if (req.use_residual_iqr)
-        {
-            {
-                const std::string p = stem + "_iqr_residuals.tif";
-                std::cout << "Writing IQR residuals: " << p << "\n";
-                loader.write_full(result.iqr_residuals.get_data(),
-                                  result.iqr_residuals.get_meta(), p, out_format);
-            }
-            {
-                const std::string p = stem + "_iqr_texture.tif";
-                std::cout << "Writing IQR texture: " << p << "\n";
-                loader.write_full(result.iqr_texture.get_data(),
-                                  result.iqr_texture.get_meta(), p, out_format);
-            }
-        }
         {
             const std::string p = stem + "_relief.tif";
             std::cout << "Writing local relief: " << p << "\n";
@@ -684,100 +538,37 @@ int main(int argc, char* argv[])
 
     if (bf["write_metric_flat_masks"])
     {
-        if (req.use_residual_iqr)
-        {
-            const std::string p = stem + "_iqr_flat_mask.tif";
-            std::cout << "Writing residual IQR flat mask: " << p << "\n";
-            loader.write_full(result.iqr_flat_mask.get_data(),
-                              result.iqr_flat_mask.get_meta(), p, out_format);
-        }
-        {
-            const std::string p = stem + "_relief_flat_mask.tif";
-            std::cout << "Writing relief flat mask: " << p << "\n";
-            loader.write_full(result.relief_flat_mask.get_data(),
-                              result.relief_flat_mask.get_meta(), p, out_format);
-        }
+        const std::string p = stem + "_relief_flat_mask.tif";
+        std::cout << "Writing raw relief flat mask: " << p << "\n";
+        loader.write_full(result.relief_flat_mask.get_data(),
+                          result.relief_flat_mask.get_meta(), p, out_format);
     }
 
     if (bf["write_combined_flat_mask"])
     {
         const std::string p = stem + "_combined_flat_mask.tif";
-        std::cout << "Writing combined flat mask: " << p << "\n";
-        loader.write_full(result.combined_flat_mask.get_data(),
-                          result.combined_flat_mask.get_meta(), p, out_format);
+        std::cout << "Writing flat mask (post closing/dilation/filtering): " << p << "\n";
+        loader.write_full(flat_mask.get_data(), flat_mask.get_meta(), p, out_format);
     }
 
-    if (bf["write_healed_flat_mask"] && !result.healed_flat_mask.get_data().empty())
-    {
-        const std::string p = stem + "_healed_flat_mask.tif";
-        std::cout << "Writing healed flat mask: " << p << "\n";
-        loader.write_full(result.healed_flat_mask.get_data(),
-                          result.healed_flat_mask.get_meta(), p, out_format);
-    }
-
-    // Labelled mask — always written
+    // Labelled mask — always written (labelled from the post-processed flat_mask)
+    lsdtt::lsdtt_raster_cpu labelled_flat_mask =
+        lsdtt::label_binary_components_by_size(flat_mask, 1);
     {
         const std::string p = stem + "_labelled_flat_mask.tif";
         std::cout << "Writing labelled flat mask (UInt32): " << p << "\n";
-        loader.write_full(result.labelled_flat_mask.get_data(),
-                          result.labelled_flat_mask.get_meta(), p, out_format,
+        loader.write_full(labelled_flat_mask.get_data(),
+                          labelled_flat_mask.get_meta(), p, out_format,
                           GDT_UInt32);
     }
 
-    if (req.remove_risers)
-    {
-        if (bf["write_labels_before_riser_removal"] &&
-            !result.labelled_flat_mask_pre_riser.get_data().empty())
-        {
-            const std::string p = stem + "_labelled_flat_mask_pre_riser.tif";
-            std::cout << "Writing pre-riser labelled flat mask (UInt32): " << p << "\n";
-            loader.write_full(result.labelled_flat_mask_pre_riser.get_data(),
-                              result.labelled_flat_mask_pre_riser.get_meta(),
-                              p, out_format, GDT_UInt32);
-        }
-
-        if (bf["write_riser_residual_relief"] &&
-            !result.riser_residual_relief.get_data().empty())
-        {
-            const std::string p = stem + "_riser_residual_relief.tif";
-            std::cout << "Writing riser residual relief: " << p << "\n";
-            loader.write_full(result.riser_residual_relief.get_data(),
-                              result.riser_residual_relief.get_meta(), p, out_format);
-        }
-
-        if (bf["write_riser_eta2"] && !result.riser_eta2.get_data().empty())
-        {
-            const std::string p = stem + "_riser_eta2.tif";
-            std::cout << "Writing riser η² bimodality: " << p << "\n";
-            loader.write_full(result.riser_eta2.get_data(),
-                              result.riser_eta2.get_meta(), p, out_format);
-        }
-    }
-
-    // QQ and CDF CSVs for enabled metrics
-    if (req.use_residual_iqr && !result.iqr_qq.standard_normal_variate.empty())
-    {
-        const std::string p = stem + "_iqr_qq.csv";
-        std::cout << "Writing residual IQR QQ: " << p << "\n";
-        write_qq_csv(loader, p, result.iqr_qq);
-    }
-    if (!result.relief_qq.standard_normal_variate.empty())
-    {
-        const std::string p = stem + "_relief_qq.csv";
-        std::cout << "Writing relief QQ: " << p << "\n";
-        write_qq_csv(loader, p, result.relief_qq);
-    }
-    if (req.use_residual_iqr && !result.iqr_smoothed_cdf.empty())
-    {
-        const std::string p = stem + "_iqr_cdf.csv";
-        std::cout << "Writing residual IQR empirical CDF: " << p << "\n";
-        write_smoothed_cdf_csv(loader, p, result.iqr_smoothed_cdf, result.iqr_dist_fits);
-    }
+    // CDF CSV for relief
     if (!result.relief_smoothed_cdf.empty())
     {
         const std::string p = stem + "_relief_cdf.csv";
         std::cout << "Writing relief empirical CDF: " << p << "\n";
-        write_smoothed_cdf_csv(loader, p, result.relief_smoothed_cdf, result.relief_dist_fits);
+        write_smoothed_cdf_csv(loader, p, result.relief_smoothed_cdf,
+                               result.relief_dist_fits);
     }
 
     auto write_dist = [&](const std::string& label,
@@ -789,258 +580,121 @@ int main(int argc, char* argv[])
         write_dist_fits_csv(loader, p, fits);
     };
 
-    if (req.use_residual_iqr) write_dist("iqr",    result.iqr_dist_fits);
     write_dist("relief", result.relief_dist_fits);
 
     // -------------------------------------------------------------------------
-    // Maximum curvature analysis on flat pixels
+    // Slope break detection (progressive Canny annealing)
     // -------------------------------------------------------------------------
     {
-        std::cout << "\n--- Maximum curvature analysis on flat pixels ---\n";
-        std::cout << "  Computing direct polyfit (lambda="
-                  << ff["polyfit_lambda_metres"] << " m)...\n";
+        lsdtt::slope_break_request sbr;
+        sbr.polyfit_lambda_metres  = static_cast<double>(ff["polyfit_lambda_metres"]);
+        sbr.closing_radius_metres  = static_cast<double>(ff["slope_break_closing_radius_metres"]);
+        sbr.belt_closing_radius_metres =
+            static_cast<double>(ff["slope_break_belt_closing_radius_metres"]);
+        sbr.belt_dilation_radius_metres =
+            static_cast<double>(ff["slope_break_belt_dilation_radius_metres"]);
+        sbr.belt_min_component_pixels =
+            ip["slope_break_belt_min_component_pixels"];
+        sbr.extract_belt_centreline =
+            bf["write_slope_break_centreline"];
+        sbr.centreline_max_spur_pixels =
+            ip["slope_break_centreline_max_spur_pixels"];
+        sbr.centreline_min_component_pixels =
+            ip["slope_break_centreline_min_component_pixels"];
+        sbr.min_isolated_pixels    = ip["canny_min_isolated_pixels"];
+        sbr.canny_ratio            = static_cast<double>(ff["canny_ratio"]);
+        sbr.canny_aperture_size    = ip["canny_aperture_size"];
+        sbr.canny_gaussian_sigma   = static_cast<double>(ff["canny_gaussian_sigma"]);
+        sbr.n_threads              = ip["n_threads"];
 
-        bool curvature_ok = false;
-        lsdtt::lsdtt_raster_cpu masked_curv;
+        // default thresholds {50, 25, 15}
 
         try
         {
-            lsdtt::poly_fit_coeffs coeffs = lsdtt::direct_polyfit(
-                dem,
-                static_cast<double>(ff["polyfit_lambda_metres"]),
-                ip["n_threads"]
-            );
+            lsdtt::slope_break_result sbres =
+                lsdtt::find_slope_breaks(dem, flat_mask, sbr);
 
-            lsdtt::polyfit_metric_request pmr;
-            pmr.metrics   = { lsdtt::polyfit_metric::maximum_curvature };
-            pmr.n_threads = ip["n_threads"];
-            lsdtt::polyfit_metric_result pmres = lsdtt::compute_polyfit_metrics(coeffs, pmr);
-            const lsdtt::lsdtt_raster_cpu& curv_full =
-                pmres.at(lsdtt::polyfit_metric::maximum_curvature);
-
-            // Mask curvature to relief flat mask
-            const auto& curv_data  = curv_full.get_data();
-            const auto& curv_mask  = curv_full.get_mask();
-            const auto& flat_data  = result.relief_flat_mask.get_data();
-            const auto& flat_mask  = result.relief_flat_mask.get_mask();
-            const float ndv        = static_cast<float>(curv_full.get_meta().no_data_value);
-
-            std::vector<float>   mc_data(curv_data.size(), ndv);
-            std::vector<uint8_t> mc_mask(curv_mask.size(), 0);
-            for (std::size_t i = 0; i < curv_data.size(); ++i)
+            // Write curvature rasters
             {
-                if (curv_mask[i] == 0) continue;
-                if (flat_mask[i] == 0 || flat_data[i] <= 0.5f) continue;
-                mc_data[i] = curv_data[i];
-                mc_mask[i] = 1;
+                const std::string p = stem + "_flat_vertical_excess_curvature.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.vertical_excess_curvature.get_data(),
+                                  sbres.vertical_excess_curvature.get_meta(),
+                                  p, out_format);
             }
-            masked_curv = lsdtt::lsdtt_raster_cpu(
-                std::move(mc_data), std::move(mc_mask), curv_full.get_meta());
-            curvature_ok = true;
+            {
+                const std::string p = stem + "_flat_profile_curvature.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.profile_curvature.get_data(),
+                                  sbres.profile_curvature.get_meta(),
+                                  p, out_format);
+            }
+
+            // Write per-step diagnostics
+            for (std::size_t s = 0; s < sbres.steps.size(); ++s)
+            {
+                const lsdtt::slope_break_step& step = sbres.steps[s];
+                const std::string sn = std::to_string(s + 1);
+
+                auto write_r = [&](const lsdtt::lsdtt_raster_cpu& r,
+                                   const std::string& suffix)
+                {
+                    if (r.get_data().empty()) return;
+                    const std::string p = stem + "_slope_break_step" + sn + "_" + suffix + ".tif";
+                    std::cout << "Writing: " << p << "\n";
+                    loader.write_full(r.get_data(), r.get_meta(), p, out_format);
+                };
+
+                write_r(step.canny_vert,      "canny_vert");
+                write_r(step.canny_prof,      "canny_prof");
+                write_r(step.break_mask_vert, "break_mask_vert");
+                write_r(step.break_mask_prof, "break_mask_prof");
+            }
+
+            // Write combined (intersection) mask
+            if (!sbres.combined_break_mask.get_data().empty())
+            {
+                const std::string p = stem + "_slope_break_combined.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.combined_break_mask.get_data(),
+                                  sbres.combined_break_mask.get_meta(),
+                                  p, out_format);
+            }
+
+            // Write closed combined mask
+            if (!sbres.combined_closed.get_data().empty())
+            {
+                const std::string p = stem + "_slope_break_combined_closed.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.combined_closed.get_data(),
+                                  sbres.combined_closed.get_meta(),
+                                  p, out_format);
+            }
+
+            if (bf["write_slope_break_belt"] &&
+                !sbres.break_belt.get_data().empty())
+            {
+                const std::string p = stem + "_slope_break_belt.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.break_belt.get_data(),
+                                  sbres.break_belt.get_meta(),
+                                  p, out_format);
+            }
+            
+            if (bf["write_slope_break_centreline"] &&
+                !sbres.break_centreline.get_data().empty())
+            {
+                const std::string p = stem + "_slope_break_centreline.tif";
+                std::cout << "Writing: " << p << "\n";
+                loader.write_full(sbres.break_centreline.get_data(),
+                                  sbres.break_centreline.get_meta(),
+                                  p, out_format);
+            }
+
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: curvature computation failed: " << e.what() << "\n";
-        }
-
-        if (curvature_ok)
-        {
-            if (bf["write_curvature_raster"])
-            {
-                const std::string p = stem + "_flat_max_curvature.tif";
-                std::cout << "Writing flat maximum curvature: " << p << "\n";
-                loader.write_full(masked_curv.get_data(),
-                                  masked_curv.get_meta(), p, out_format);
-            }
-
-            // Collect positive values only for distribution fitting
-            const auto& mc_d = masked_curv.get_data();
-            const auto& mc_m = masked_curv.get_mask();
-            const lsdtt::lsdtt_raster_meta& mc_meta = masked_curv.get_meta();
-            std::vector<double> pos_vals;
-            pos_vals.reserve(mc_d.size() / 8);
-            for (std::size_t i = 0; i < mc_d.size(); ++i)
-            {
-                if (mc_m[i] == 0) continue;
-                const float v = mc_d[i];
-                if (!std::isfinite(v) || mc_meta.is_nodata(v)) continue;
-                if (v > 0.0f) pos_vals.push_back(static_cast<double>(v));
-            }
-            std::cout << "  " << pos_vals.size()
-                      << " positive curvature values in flat pixels\n";
-
-            if (pos_vals.size() >= 10)
-            {
-                const lsdtt::lsdtt_smoothed_cdf curv_cdf =
-                    lsdtt::compute_smoothed_cdf(pos_vals, ip["curvature_cdf_n_bins"]);
-                const auto curv_fits = lsdtt::fit_distributions(pos_vals);
-
-                const lsdtt::lsdtt_distribution_fit* best_fit = nullptr;
-                for (const auto& f : curv_fits)
-                {
-                    if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
-                    if (!best_fit || f.ks_statistic < best_fit->ks_statistic) best_fit = &f;
-                }
-                if (best_fit)
-                {
-                    std::cout << "  Best distribution fit: "
-                              << lsdtt::distribution_family_name(best_fit->family)
-                              << "  KS=" << best_fit->ks_statistic << "\n";
-                }
-
-                {
-                    const std::string p = stem + "_flat_max_curvature_positive_cdf.csv";
-                    std::cout << "Writing positive curvature CDF: " << p << "\n";
-                    lsdtt::write_smoothed_cdf_csv(loader, p, curv_cdf, curv_fits);
-                }
-                {
-                    const std::string p = stem + "_flat_max_curvature_positive_dist_fits.csv";
-                    std::cout << "Writing positive curvature dist fits: " << p << "\n";
-                    lsdtt::write_dist_fits_csv(loader, p, curv_fits);
-                }
-            }
-            else
-            {
-                std::cerr << "Warning: too few positive curvature values for "
-                             "distribution fitting.\n";
-            }
-
-            // Threshold at > curvature_threshold → binary raster
-            const float curv_thresh = ff["curvature_threshold"];
-            std::cout << "  Thresholding curvature at > " << curv_thresh << " m⁻¹...\n";
-
-            const auto& mc_d2 = masked_curv.get_data();
-            const auto& mc_m2 = masked_curv.get_mask();
-            const float ndv2  = static_cast<float>(masked_curv.get_meta().no_data_value);
-
-            std::vector<float>   bin_data(mc_d2.size(), ndv2);
-            std::vector<uint8_t> bin_mask(mc_m2.size(), 0);
-            int n_curv_pixels = 0;
-            for (std::size_t i = 0; i < mc_d2.size(); ++i)
-            {
-                if (mc_m2[i] == 0) continue;
-                bin_mask[i] = 1;
-                if (mc_d2[i] > curv_thresh) { bin_data[i] = 1.0f; ++n_curv_pixels; }
-                else                          bin_data[i] = 0.0f;
-            }
-            lsdtt::lsdtt_raster_cpu curv_binary(
-                std::move(bin_data), std::move(bin_mask), masked_curv.get_meta());
-
-            std::cout << "  " << n_curv_pixels << " pixels above curvature threshold\n";
-
-            // -----------------------------------------------------------------
-            // Skeleton analysis
-            // -----------------------------------------------------------------
-            if (n_curv_pixels > 0)
-            {
-                std::cout << "\n--- Skeleton analysis ---\n";
-
-                // 1. Zhang-Suen thinning
-                lsdtt::lsdtt_raster_cpu skeleton;
-                bool skeleton_ok = false;
-                try
-                {
-                    std::cout << "  Thinning to 1-pixel skeleton (Zhang-Suen)...\n";
-                    skeleton    = lsdtt::thin_zhang_suen(curv_binary);
-                    skeleton_ok = true;
-                }
-                catch (const std::exception& e)
-                {
-                    std::cerr << "Warning: skeletonization failed: " << e.what() << "\n";
-                }
-
-                if (skeleton_ok)
-                {
-                    if (bf["write_skeleton_raster"])
-                    {
-                        const std::string p = stem + "_curvature_skeleton.tif";
-                        std::cout << "  Writing skeleton: " << p << "\n";
-                        loader.write_full(skeleton.get_data(),
-                                          skeleton.get_meta(), p, out_format);
-                    }
-
-                    // 2. Prune spurs
-                    const int max_spur = ip["skeleton_prune_max_spur_pixels"];
-                    lsdtt::lsdtt_raster_cpu pruned;
-                    bool pruned_ok = false;
-                    try
-                    {
-                        std::cout << "  Pruning spurs (max_spur_pixels=" << max_spur << ")...\n";
-                        pruned    = lsdtt::prune_skeleton_spurs(skeleton, max_spur);
-                        pruned_ok = true;
-                    }
-                    catch (const std::exception& e)
-                    {
-                        std::cerr << "Warning: spur pruning failed: " << e.what() << "\n";
-                        pruned    = skeleton;
-                        pruned_ok = true;
-                    }
-
-                    if (pruned_ok && bf["write_pruned_skeleton_raster"])
-                    {
-                        const std::string p = stem + "_curvature_skeleton_pruned.tif";
-                        std::cout << "  Writing pruned skeleton: " << p << "\n";
-                        loader.write_full(pruned.get_data(),
-                                          pruned.get_meta(), p, out_format);
-                    }
-
-                    // 3. Endpoint connection
-                    if (pruned_ok)
-                    {
-                        try
-                        {
-                            std::cout << "  Connecting segments...\n";
-                            auto segments = lsdtt::extract_skeleton_segments(pruned);
-                            std::cout << "    " << segments.size() << " segment(s)\n";
-
-                            auto tangents =
-                                lsdtt::estimate_skeleton_endpoint_tangents(segments);
-
-                            lsdtt::endpoint_pair_request epr;
-                            epr.max_gap_pixels =
-                                static_cast<double>(ff["skeleton_max_gap_pixels"]);
-                            epr.max_facing_angle_degrees =
-                                static_cast<double>(ff["skeleton_max_facing_angle_degrees"]);
-                            epr.max_heading_misalignment_degrees =
-                                static_cast<double>(ff["skeleton_max_heading_misalignment_degrees"]);
-
-                            auto candidates =
-                                lsdtt::find_skeleton_endpoint_pair_candidates(
-                                    segments, tangents, epr);
-                            auto accepted =
-                                lsdtt::select_skeleton_endpoint_pairs(
-                                    candidates, tangents.size());
-                            std::cout << "    " << accepted.size() << " bridge(s) accepted\n";
-
-                            auto bridge_result =
-                                lsdtt::rasterise_skeleton_endpoint_bridges(pruned, accepted);
-                            std::cout << "    " << bridge_result.n_burned
-                                      << " bridge pixel(s) burned\n";
-
-                            if (bf["write_connected_skeleton_raster"])
-                            {
-                                const std::string p =
-                                    stem + "_curvature_skeleton_connected.tif";
-                                std::cout << "  Writing connected skeleton: " << p << "\n";
-                                loader.write_full(
-                                    bridge_result.connected_skeleton.get_data(),
-                                    bridge_result.connected_skeleton.get_meta(),
-                                    p, out_format);
-                            }
-                        }
-                        catch (const std::exception& e)
-                        {
-                            std::cerr << "Warning: skeleton connection failed: "
-                                      << e.what() << "\n";
-                        }
-                    }
-                }
-            }
-            else
-            {
-                std::cout << "  No pixels above curvature threshold — "
-                             "skipping skeleton analysis.\n";
-            }
+            std::cerr << "Warning: slope break finder failed: " << e.what() << "\n";
         }
     }
 
@@ -1061,7 +715,7 @@ int main(int argc, char* argv[])
         try
         {
             pa = lsdtt::analyse_flat_surface_planes(
-                     dem, result.labelled_flat_mask, preq);
+                     dem, labelled_flat_mask, preq);
         }
         catch (const std::exception& e)
         {
@@ -1078,7 +732,7 @@ int main(int argc, char* argv[])
             std::cout << "Writing merged labelled flat mask (UInt32): " << p << "\n";
             lsdtt::lsdtt_raster_cpu merged_labels =
                 lsdtt::merge_labelled_flat_mask_from_plane_analysis(
-                    result.labelled_flat_mask, pa);
+                    labelled_flat_mask, pa);
             loader.write_full(merged_labels.get_data(),
                               merged_labels.get_meta(), p, out_format, GDT_UInt32);
         }
@@ -1259,7 +913,7 @@ int main(int argc, char* argv[])
             try
             {
                 conn = lsdtt::connect_flat_surfaces_to_channels(
-                    result.labelled_flat_mask, *ch_jnet, *ch_flow,
+                    labelled_flat_mask, *ch_jnet, *ch_flow,
                     ch_sources, ip["n_threads"]);
                 conn_computed = true;
                 std::cout << "  " << conn.n_sources << " ordered source(s)\n";
@@ -1293,7 +947,7 @@ int main(int argc, char* argv[])
                     vopts.layer_name = "flat_surface_polygons";
                     vopts.format     = vec_fmt;
                     lsdtt::trace_labelled_polygons(
-                        result.labelled_flat_mask, loader, p, vopts,
+                        labelled_flat_mask, loader, p, vopts,
                         conn.label_source_id);
                 }
             }

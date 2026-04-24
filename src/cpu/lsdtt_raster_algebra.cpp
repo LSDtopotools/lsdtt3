@@ -8,13 +8,20 @@
 
 #include "lsdtt_raster_algebra.hpp"
 
+#include "../core/lsdtt_data_loader.hpp"
+#include "../core/lsdtt_stat_csv.hpp"
+#include "../utils/lsdtt_distributions.hpp"
+#include "../utils/lsdtt_histogram.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
+#include <iostream>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -846,6 +853,32 @@ lsdtt_raster_cpu raster_binary_true_below_threshold(
     );
 }
 
+lsdtt_raster_cpu invert_binary_mask(
+    const lsdtt_raster_cpu& a)
+{
+    const lsdtt_raster_meta& meta = a.get_meta();
+    const std::vector<float>&   da = a.get_data();
+    const std::vector<uint8_t>& ma = a.get_mask();
+
+    const int   n      = static_cast<int>(da.size());
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   out_data(n, nodata);
+    std::vector<uint8_t> out_mask(n, 0u);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i)
+    {
+        if (!ma[i]) continue;
+        out_data[i] = (da[i] > 0.5f) ? 0.0f : 1.0f;
+        out_mask[i] = 1u;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta
+    );
+}
+
 
 
 // keep the values raster only where keep_mask is true; set everything else to nodata.
@@ -1406,6 +1439,90 @@ float raster_range_value(const lsdtt_raster_cpu& a)
     }
 
     return static_cast<float>(max_val - min_val);
+}
+
+// =============================================================================
+// raster_cdf_divergence_threshold
+// =============================================================================
+double raster_cdf_divergence_threshold(
+    const lsdtt_raster_cpu& raster,
+    bool                    verbose,
+    bool                    write_cdf,
+    lsdtt_data_loader*      loader,
+    const std::string&      cdf_path)
+{
+    const lsdtt_raster_meta&     meta = raster.get_meta();
+    const std::vector<float>&   da   = raster.get_data();
+    const std::vector<uint8_t>& ma   = raster.get_mask();
+
+    std::vector<double> vals;
+    vals.reserve(da.size() / 4);
+    for (std::size_t i = 0; i < da.size(); ++i)
+    {
+        if (!ma[i]) continue;
+        const float v = da[i];
+        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
+        vals.push_back(static_cast<double>(v));
+    }
+
+    if (vals.size() < 10)
+        throw std::runtime_error(
+            "lsdtt::algebra::raster_cdf_divergence_threshold: too few valid pixels");
+
+    const lsdtt_smoothed_cdf                  scdf = compute_smoothed_cdf(vals, 500);
+    const std::vector<lsdtt_distribution_fit> fits = fit_distributions(vals);
+
+    const lsdtt_distribution_fit* best_fit = nullptr;
+    for (const auto& f : fits)
+    {
+        if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
+        if (!best_fit || f.ks_statistic < best_fit->ks_statistic) best_fit = &f;
+    }
+
+    if (!best_fit)
+        throw std::runtime_error(
+            "lsdtt::algebra::raster_cdf_divergence_threshold: no valid distribution fit");
+
+    double      max_diff = -std::numeric_limits<double>::infinity();
+    std::size_t max_idx  = 0;
+    for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
+    {
+        const double fitted = eval_cdf(*best_fit, scdf.bin_centres[i]);
+        if (!std::isfinite(fitted)) continue;
+        const double diff = scdf.cdf[i] - fitted;
+        if (diff > max_diff) { max_diff = diff; max_idx = i; }
+    }
+
+    const double threshold  = scdf.bin_centres[max_idx];
+    const double percentile = scdf.cdf[max_idx] * 100.0;
+
+    if (verbose)
+    {
+        std::cout << "  Best-fit distribution: "
+                  << distribution_family_name(best_fit->family) << "\n"
+                  << "  Max CDF divergence   : " << max_diff << "\n"
+                  << "  Threshold percentile : " << percentile << "th\n";
+    }
+
+    if (write_cdf && loader && !cdf_path.empty())
+        write_smoothed_cdf_csv(*loader, cdf_path, scdf, fits);
+
+    return threshold;
+}
+
+// =============================================================================
+// raster_adaptive_relief_threshold
+// =============================================================================
+lsdtt_raster_cpu raster_adaptive_relief_threshold(
+    const lsdtt_raster_cpu& raster,
+    bool                    verbose,
+    bool                    write_cdf,
+    lsdtt_data_loader*      loader,
+    const std::string&      cdf_path)
+{
+    const double threshold = raster_cdf_divergence_threshold(
+        raster, verbose, write_cdf, loader, cdf_path);
+    return raster_binary_true_below_threshold(raster, static_cast<float>(threshold));
 }
 
 } // namespace algebra

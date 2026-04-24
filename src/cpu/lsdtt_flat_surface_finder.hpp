@@ -45,10 +45,8 @@
 //
 // Thresholding strategy:
 //   Each enabled metric is thresholded at a user-specified percentile of its
-//   own distribution.  The percentile is chosen by inspecting the QQ-plot CSV
-//   output against a standard normal variate: flat-surface pixels form a tight
-//   lower tail that departs from normality, and the threshold is set at the
-//   break-point.
+//   own distribution.  The percentile is chosen by inspecting the empirical CDF
+//   and fitted parametric CDF output.
 //
 //   Metrics can be combined with AND logic (all must pass → high specificity)
 //   or OR logic (any passing → high sensitivity).
@@ -59,7 +57,7 @@
 //   - Per-metric binary flat masks
 //   - Combined flat mask
 //   - Labelled flat mask (UInt32, components >= min_component_pixels)
-//   - QQ data for each enabled metric (100 bins by default)
+//   - Empirical CDF and distribution fits for each enabled metric
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -71,7 +69,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"   // window_shape
 #include "../utils/lsdtt_distributions.hpp"        // lsdtt_distribution_fit
-#include "../utils/lsdtt_histogram.hpp"            // lsdtt_smoothed_pdf
+#include "../utils/lsdtt_histogram.hpp"            // lsdtt_smoothed_cdf
 
 namespace lsdtt {
 
@@ -157,11 +155,6 @@ struct flat_surface_request
     // Component filtering and labelling
     // -------------------------------------------------------------------------
     int          min_component_pixels       = 100;
-
-    // -------------------------------------------------------------------------
-    // QQ output
-    // -------------------------------------------------------------------------
-    int          qq_n_bins                  = 100;
 
     // -------------------------------------------------------------------------
     // Empirical CDF (histogram-based CDF for each metric)
@@ -270,15 +263,6 @@ struct flat_surface_result
     // Diagnostic rasters (always computed, written when write_texture_rasters)
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu relief;       // local relief (m)
-
-    // -------------------------------------------------------------------------
-    // QQ data: standard normal quantile vs metric quantile
-    // Populated for each enabled metric.
-    // -------------------------------------------------------------------------
-    lsdtt_qq_data madk2_qq;
-    lsdtt_qq_data iqr_qq;
-    lsdtt_qq_data nvd_qq;
-    lsdtt_qq_data relief_qq;
 
     // -------------------------------------------------------------------------
     // Empirical CDFs: histogram-based CDF for each metric.

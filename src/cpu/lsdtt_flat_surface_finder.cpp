@@ -17,8 +17,7 @@
 #include "lsdtt_vector_rasterise_cpu.hpp"            // rasterise_polygons
 
 #include "../utils/lsdtt_distributions.hpp"        // fit_distributions
-#include "../utils/lsdtt_histogram.hpp"           // compute_qq, compute_smoothed_cdf
-#include "../utils/lsdtt_statistics.hpp"         // compute_percentile
+#include "../utils/lsdtt_histogram.hpp"           // compute_smoothed_cdf
 
 #include <algorithm>
 #include <cmath>
@@ -33,43 +32,23 @@ namespace lsdtt {
 // Internal helpers
 // =============================================================================
 
-static std::vector<float> collect_valid_values(const lsdtt_raster_cpu& raster)
+// Collect all valid pixel values as doubles for CDF / distribution fitting.
+static std::vector<double> collect_valid_values_d(const lsdtt_raster_cpu& raster)
 {
-    const lsdtt_raster_meta& meta = raster.get_meta();
+    const lsdtt_raster_meta&     meta = raster.get_meta();
     const std::vector<float>&   data = raster.get_data();
     const std::vector<uint8_t>& mask = raster.get_mask();
-    const std::size_t npix = data.size();
 
-    std::vector<float> vals;
-    vals.reserve(npix / 4);
-
-    for (std::size_t i = 0; i < npix; ++i)
+    std::vector<double> vals;
+    vals.reserve(data.size() / 4);
+    for (std::size_t i = 0; i < data.size(); ++i)
     {
-        if (mask[i] == 0) continue;
+        if (!mask[i]) continue;
         const float v = data[i];
         if (!std::isfinite(v) || meta.is_nodata(v)) continue;
-        vals.push_back(v);
+        vals.push_back(static_cast<double>(v));
     }
     return vals;
-}
-
-// Compute an empirical CDF for a collection of float values.
-static lsdtt_smoothed_cdf build_smoothed_cdf(
-    const std::vector<float>& values,
-    int                       n_bins)
-{
-    if (values.empty() || n_bins < 3) return lsdtt_smoothed_cdf{};
-    const std::vector<double> dvals(values.begin(), values.end());
-    return compute_smoothed_cdf(dvals, static_cast<std::size_t>(n_bins));
-}
-
-// Fit all four distributions to a collection of float values.
-static std::vector<lsdtt_distribution_fit> build_dist_fits(
-    const std::vector<float>& values)
-{
-    if (values.empty()) return {};
-    const std::vector<double> dvals(values.begin(), values.end());
-    return fit_distributions(dvals);
 }
 
 // Convert "window size in pixels" (e.g. 3 for 3×3, 5 for 5×5) to a radius
@@ -78,84 +57,6 @@ static double window_pixels_to_radius_metres(int window_pixels, double cell_size
 {
     const int half = (window_pixels - 1) / 2;
     return static_cast<double>(std::max(1, half)) * cell_size;
-}
-
-// Build QQ plot with n_bins quantile points.
-// Delegates to compute_qq in lsdtt_histogram.
-static lsdtt_qq_data build_qq(
-    const std::vector<float>& values,
-    int                       n_bins)
-{
-    if (values.empty() || n_bins < 2) return lsdtt_qq_data{};
-    const std::vector<double> dvals(values.begin(), values.end());
-    return compute_qq(dvals, static_cast<std::size_t>(n_bins));
-}
-
-// Threshold a texture raster at a percentile of its distribution.
-// Returns a binary raster: data=1 where texture <= threshold, data=0 elsewhere.
-static lsdtt_raster_cpu threshold_at_percentile(
-    const lsdtt_raster_cpu& texture,
-    double                  percentile)
-{
-    std::vector<float> vals = collect_valid_values(texture);
-
-    const lsdtt_raster_meta& meta  = texture.get_meta();
-    const std::vector<float>&   td = texture.get_data();
-    const std::vector<uint8_t>& tm = texture.get_mask();
-    const std::size_t npix         = td.size();
-
-    std::vector<float>   out(npix, 0.0f);
-    std::vector<uint8_t> omsk(npix, uint8_t{0});
-
-    if (!vals.empty())
-    {
-        const float threshold = static_cast<float>(
-            compute_percentile<float>(vals, percentile)
-        );
-        for (std::size_t i = 0; i < npix; ++i)
-        {
-            if (tm[i] == 0) continue;
-            omsk[i] = uint8_t{1};
-            const float v = td[i];
-            if (std::isfinite(v) && !meta.is_nodata(v) && v <= threshold)
-                out[i] = 1.0f;
-        }
-    }
-    else
-    {
-        for (std::size_t i = 0; i < npix; ++i)
-        {
-            if (tm[i] != 0) omsk[i] = uint8_t{1};
-        }
-    }
-
-    return lsdtt_raster_cpu(std::move(out), std::move(omsk), meta);
-}
-
-// Threshold a texture raster at an absolute value.
-// Returns a binary raster: data=1 where texture <= value, data=0 elsewhere.
-static lsdtt_raster_cpu threshold_at_value(
-    const lsdtt_raster_cpu& texture,
-    float                   value)
-{
-    const lsdtt_raster_meta& meta  = texture.get_meta();
-    const std::vector<float>&   td = texture.get_data();
-    const std::vector<uint8_t>& tm = texture.get_mask();
-    const std::size_t npix         = td.size();
-
-    std::vector<float>   out(npix, 0.0f);
-    std::vector<uint8_t> omsk(npix, uint8_t{0});
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (tm[i] == 0) continue;
-        omsk[i] = uint8_t{1};
-        const float v = td[i];
-        if (std::isfinite(v) && !meta.is_nodata(v) && v <= value)
-            out[i] = 1.0f;
-    }
-
-    return lsdtt_raster_cpu(std::move(out), std::move(omsk), meta);
 }
 
 // Returns the maximum valid value of `raster` within pixels where
@@ -381,10 +282,6 @@ flat_surface_result find_flat_surfaces(
                 "lsdtt::find_flat_surfaces: nvd_polyfit_lambda must be > 0"
             );
     }
-    if (request.qq_n_bins < 2)
-        throw std::invalid_argument(
-            "lsdtt::find_flat_surfaces: qq_n_bins must be >= 2"
-        );
     if (request.cdf_n_bins < 3)
         throw std::invalid_argument(
             "lsdtt::find_flat_surfaces: cdf_n_bins must be >= 3"
@@ -412,10 +309,9 @@ flat_surface_result find_flat_surfaces(
         );
         result.madk2_roughness = std::move(mk2.omnidirectional_roughness);
         {
-            const std::vector<float> vals = collect_valid_values(result.madk2_roughness);
-            result.madk2_qq           = build_qq(vals, request.qq_n_bins);
-            result.madk2_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
-            result.madk2_dist_fits    = build_dist_fits(vals);
+            const std::vector<double> vals = collect_valid_values_d(result.madk2_roughness);
+            result.madk2_smoothed_cdf = compute_smoothed_cdf(vals, static_cast<std::size_t>(request.cdf_n_bins));
+            result.madk2_dist_fits    = fit_distributions(vals);
         }
     }
 
@@ -473,10 +369,9 @@ flat_surface_result find_flat_surfaces(
         );
 
         {
-            const std::vector<float> vals = collect_valid_values(result.iqr_texture);
-            result.iqr_qq           = build_qq(vals, request.qq_n_bins);
-            result.iqr_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
-            result.iqr_dist_fits    = build_dist_fits(vals);
+            const std::vector<double> vals = collect_valid_values_d(result.iqr_texture);
+            result.iqr_smoothed_cdf = compute_smoothed_cdf(vals, static_cast<std::size_t>(request.cdf_n_bins));
+            result.iqr_dist_fits    = fit_distributions(vals);
         }
     }
 
@@ -499,10 +394,9 @@ flat_surface_result find_flat_surfaces(
         );
         result.nvd_s3 = std::move(nvd.s3);
         {
-            const std::vector<float> vals = collect_valid_values(result.nvd_s3);
-            result.nvd_qq           = build_qq(vals, request.qq_n_bins);
-            result.nvd_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
-            result.nvd_dist_fits    = build_dist_fits(vals);
+            const std::vector<double> vals = collect_valid_values_d(result.nvd_s3);
+            result.nvd_smoothed_cdf = compute_smoothed_cdf(vals, static_cast<std::size_t>(request.cdf_n_bins));
+            result.nvd_dist_fits    = fit_distributions(vals);
         }
     }
 
@@ -516,10 +410,9 @@ flat_surface_result find_flat_surfaces(
     {
         result.relief = moving_window_local_relief(
             dem, relief_radius, window_shape::square);
-        const std::vector<float> vals = collect_valid_values(result.relief);
-        result.relief_qq           = build_qq(vals, request.qq_n_bins);
-        result.relief_smoothed_cdf = build_smoothed_cdf(vals, request.cdf_n_bins);
-        result.relief_dist_fits    = build_dist_fits(vals);
+        const std::vector<double> relief_vals = collect_valid_values_d(result.relief);
+        result.relief_smoothed_cdf = compute_smoothed_cdf(relief_vals, static_cast<std::size_t>(request.cdf_n_bins));
+        result.relief_dist_fits    = fit_distributions(relief_vals);
     }
 
     // -------------------------------------------------------------------------
@@ -568,91 +461,48 @@ flat_surface_result find_flat_surfaces(
     }
 
     // -------------------------------------------------------------------------
-    // Threshold each metric
+    // Threshold each metric; capture relief_threshold_value for riser removal.
     // -------------------------------------------------------------------------
+    const float relief_threshold_value =
+        (use_test_thresholds &&
+         test_relief_threshold > -std::numeric_limits<float>::max())
+        ? test_relief_threshold
+        : static_cast<float>(request.relief_threshold_metres);
+
+    result.relief_flat_mask = algebra::raster_binary_true_below_threshold(
+        result.relief, relief_threshold_value);
+
     if (request.use_madk2)
     {
-        if (use_test_thresholds &&
-            test_madk2_threshold > -std::numeric_limits<float>::max())
-            result.madk2_flat_mask = threshold_at_value(
-                result.madk2_roughness, test_madk2_threshold);
-        else
-            result.madk2_flat_mask = threshold_at_percentile(
-                result.madk2_roughness, request.madk2_threshold_percentile);
+        const float thr = (use_test_thresholds &&
+                           test_madk2_threshold > -std::numeric_limits<float>::max())
+            ? test_madk2_threshold
+            : algebra::raster_percentile(result.madk2_roughness,
+                                         request.madk2_threshold_percentile);
+        result.madk2_flat_mask = algebra::raster_binary_true_below_threshold(
+            result.madk2_roughness, thr);
     }
 
     if (request.use_residual_iqr)
     {
-        if (use_test_thresholds &&
-            test_iqr_threshold > -std::numeric_limits<float>::max())
-            result.iqr_flat_mask = threshold_at_value(
-                result.iqr_texture, test_iqr_threshold);
-        else
-            result.iqr_flat_mask = threshold_at_percentile(
-                result.iqr_texture, request.iqr_threshold_percentile);
+        const float thr = (use_test_thresholds &&
+                           test_iqr_threshold > -std::numeric_limits<float>::max())
+            ? test_iqr_threshold
+            : algebra::raster_percentile(result.iqr_texture,
+                                         request.iqr_threshold_percentile);
+        result.iqr_flat_mask = algebra::raster_binary_true_below_threshold(
+            result.iqr_texture, thr);
     }
 
     if (request.use_nvd)
     {
-        if (use_test_thresholds &&
-            test_nvd_threshold > -std::numeric_limits<float>::max())
-            result.nvd_flat_mask = threshold_at_value(
-                result.nvd_s3, test_nvd_threshold);
-        else
-            result.nvd_flat_mask = threshold_at_percentile(
-                result.nvd_s3, request.nvd_threshold_percentile);
-    }
-
-    // -------------------------------------------------------------------------
-    // Threshold: relief (always) + optional metrics
-    // Capture relief_threshold_value for use in riser removal.
-    // -------------------------------------------------------------------------
-    float relief_threshold_value;
-    {
-        if (use_test_thresholds &&
-            test_relief_threshold > -std::numeric_limits<float>::max())
-        {
-            relief_threshold_value = test_relief_threshold;
-        }
-        else
-        {
-            relief_threshold_value = static_cast<float>(request.relief_threshold_metres);
-        }
-        result.relief_flat_mask = threshold_at_value(
-            result.relief, relief_threshold_value);
-    }
-
-    if (request.use_madk2)
-    {
-        if (use_test_thresholds &&
-            test_madk2_threshold > -std::numeric_limits<float>::max())
-            result.madk2_flat_mask = threshold_at_value(
-                result.madk2_roughness, test_madk2_threshold);
-        else
-            result.madk2_flat_mask = threshold_at_percentile(
-                result.madk2_roughness, request.madk2_threshold_percentile);
-    }
-
-    if (request.use_residual_iqr)
-    {
-        if (use_test_thresholds &&
-            test_iqr_threshold > -std::numeric_limits<float>::max())
-            result.iqr_flat_mask = threshold_at_value(
-                result.iqr_texture, test_iqr_threshold);
-        else
-            result.iqr_flat_mask = threshold_at_percentile(
-                result.iqr_texture, request.iqr_threshold_percentile);
-    }
-
-    if (request.use_nvd)
-    {
-        if (use_test_thresholds &&
-            test_nvd_threshold > -std::numeric_limits<float>::max())
-            result.nvd_flat_mask = threshold_at_value(
-                result.nvd_s3, test_nvd_threshold);
-        else
-            result.nvd_flat_mask = threshold_at_percentile(
-                result.nvd_s3, request.nvd_threshold_percentile);
+        const float thr = (use_test_thresholds &&
+                           test_nvd_threshold > -std::numeric_limits<float>::max())
+            ? test_nvd_threshold
+            : algebra::raster_percentile(result.nvd_s3,
+                                         request.nvd_threshold_percentile);
+        result.nvd_flat_mask = algebra::raster_binary_true_below_threshold(
+            result.nvd_s3, thr);
     }
 
     // -------------------------------------------------------------------------
@@ -815,39 +665,12 @@ flat_surface_result find_flat_surfaces(
 
     if (request.directional_close_line_length_pixels >= 3)
     {
-        const std::vector<float>&   cf_d = result.combined_flat_mask.get_data();
-        const std::vector<uint8_t>& cf_m = result.combined_flat_mask.get_mask();
-        const std::size_t npix = cf_d.size();
-
-        std::vector<float>   nf_d(npix, 0.0f);
-        std::vector<uint8_t> nf_m(npix, uint8_t{0});
-        for (std::size_t i = 0; i < npix; ++i)
-        {
-            if (!cf_m[i]) continue;
-            nf_m[i] = uint8_t{1};
-            nf_d[i] = (cf_d[i] > 0.5f) ? 0.0f : 1.0f;
-        }
-
         const lsdtt_raster_cpu closed_non_flat = binary_directional_closing(
-            lsdtt_raster_cpu(std::move(nf_d), std::move(nf_m), meta),
+            algebra::invert_binary_mask(result.combined_flat_mask),
             request.directional_close_line_length_pixels,
             std::max(1, request.directional_close_n_angles)
         );
-
-        const std::vector<float>&   cn_d = closed_non_flat.get_data();
-        const std::vector<uint8_t>& cn_m = closed_non_flat.get_mask();
-
-        std::vector<float>   h_d(cf_d.size(), 0.0f);
-        std::vector<uint8_t> h_m(cf_d.size(), uint8_t{0});
-        for (std::size_t i = 0; i < cf_d.size(); ++i)
-        {
-            if (!cn_m[i]) continue;
-            h_m[i] = uint8_t{1};
-            h_d[i] = (cn_d[i] > 0.5f) ? 0.0f : 1.0f;
-        }
-
-        result.healed_flat_mask = lsdtt_raster_cpu(
-            std::move(h_d), std::move(h_m), meta);
+        result.healed_flat_mask = algebra::invert_binary_mask(closed_non_flat);
         mask_for_labelling = &result.healed_flat_mask;
     }
 

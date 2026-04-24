@@ -214,6 +214,26 @@ convert_to_utf8() {
     return 1
 }
 
+prepend_ignore_comment_if_needed() {
+    local f="$1"
+    local first_line stripped tmp
+
+    IFS= read -r first_line < "$f" || first_line=""
+
+    stripped="$first_line"
+    # Strip a UTF-8 BOM if present
+    stripped="${stripped#﻿}"
+
+    if printf '%s\n' "$stripped" | grep -Eq '^(#include|#pragma|from|import)([[:space:]]|$)'; then
+        tmp="$(mktemp "$TMP_DIR/prepend.XXXXXX")"
+        {
+            printf '%s\n' '// ignore this comment'
+            cat "$f"
+        } > "$tmp"
+        mv "$tmp" "$f"
+    fi
+}
+
 append_skip() {
     printf '%s: %s\n' "$1" "$2" >> "$SKIP_LIST"
 }
@@ -267,6 +287,7 @@ while IFS= read -r rel; do
     dest="$OUT_DIR/$flat.txt"
 
     if convert_to_utf8 "$src" "$dest"; then
+        prepend_ignore_comment_if_needed "$dest"
         printf '%s\t%s.txt\n' "$rel" "$flat" >> "$MAP_LIST"
     else
         rm -f "$dest"

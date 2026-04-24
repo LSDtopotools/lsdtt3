@@ -13,25 +13,23 @@
 //
 // Pipeline:
 //   Stage 1 — Local relief (square window, relief_window_pixels)
-//   Stage 2 — Adaptive threshold: 500-bin empirical CDF vs best-fit parametric
-//             distribution; the x-value of maximum positive divergence (where
-//             flat pixels inflate the CDF above the fitted model) defines the
-//             relief threshold.  Prints chosen percentile and relief value.
-//             Writes a CDF CSV.
-//   Stage 3 — Flat mask (relief <= threshold).
-//   Stage 4 — Remove small flat components (< min_flat_component_pixels).
-//   Stage 5 — morphological closing of flat mask (flat_closing_radius_metres):
+//   Stage 2 — Flat mask: adaptive (CDF divergence threshold) or fixed value.
+//             Adaptive: 500-bin empirical CDF vs best-fit parametric distribution;
+//             threshold at x of maximum positive divergence.  Writes CDF CSV.
+//             Fixed: relief_threshold_metres applied directly.
+//   Stage 3 — Remove small flat components (< min_flat_component_pixels).
+//   Stage 4 — morphological closing of flat mask (flat_closing_radius_metres):
 //             dilate to connect adjacent flat patches, then BFS-reconstruct to
 //             original flat extent.  Seals narrow background gaps between flat areas.
-//   Stage 6 — morphological opening of flat mask (erosion_radius_metres):
+//   Stage 5 — morphological opening of flat mask (erosion_radius_metres):
 //             erode thin flat necks, then BFS-reconstruct thick flat bodies.
 //             Removes small spurious flat peninsulas while preserving broad flats.
-//   Stage 7 — Invert flat mask → initial mountain mask.
-//   Stage 8 — Fill holes in flat mask: enclosed non-flat pixels become flat.
-//   Stage 9 — Remove small mountain components (< min_component_pixels).
-//   Stage 10 — Valley infilling: morphological closing (infill_valley_radius_metres).
-//              Disabled when infill_valley_radius_metres <= 0.
-//   Stage 11 — Outlets: mountain edge pixels with upstream area >= min_contributing_pixels.
+//   Stage 6 — Invert flat mask → initial mountain mask.
+//   Stage 7 — Fill holes in mountain mask: enclosed non-mountain pixels become mountain.
+//   Stage 8 — Remove small mountain components (< min_component_pixels).
+//   Stage 9 — Valley infilling: morphological closing (infill_valley_radius_metres).
+//             Disabled when infill_valley_radius_metres <= 0.
+//   Stage 10 — Outlets: mountain edge pixels with upstream area >= min_contributing_pixels.
 //
 // Nodata semantics:
 //   Pixels that are nodata in the original DEM are nodata in all output rasters.
@@ -65,16 +63,14 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
-#include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_mountain_front_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
-#include "../src/utils/lsdtt_distributions.hpp"
-#include "../src/utils/lsdtt_histogram.hpp"
 
 static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -272,13 +268,13 @@ int main(int argc, char* argv[])
 
     float_default_map["flat_closing_radius_metres"] = 500.0f;
     help_map["flat_closing_radius_metres"] = {"float","500",
-        "Radius (m) for morphological closing of the flat mask (Stage 5).",
+        "Radius (m) for morphological closing of the flat mask (Stage 4).",
         "Seals narrow background gaps between adjacent flat patches (e.g. "
         "riser pixels between floodplain segments).  0 = skip."};
 
     float_default_map["erosion_radius_metres"] = 500.0f;
     help_map["erosion_radius_metres"] = {"float","500",
-        "Erosion radius (m) for morphological opening of the flat mask (Stage 6).",
+        "Erosion radius (m) for morphological opening of the flat mask (Stage 5).",
         "Severs thin flat peninsulas narrower than 2x this radius; broad flat "
         "bodies are restored to their exact original extent.  0 = skip."};
 
@@ -287,14 +283,14 @@ int main(int argc, char* argv[])
         "Minimum 8-connected component size (pixels) to keep in the mountain mask.",
         "Applied to the eroded mountain mask after neck severing."};
 
-    // --- Stage 11: valley infilling ---
+    // --- Stage 9: valley infilling ---
     float_default_map["infill_valley_radius_metres"] = 0.0f;
     help_map["infill_valley_radius_metres"] = {"float","0",
         "Radius (m) of the circular SE for morphological closing (valley infilling).",
         "Seals valley notches cut by incised rivers into the mountain front. "
         "Set to ~half the valley width to be filled.  0 = disabled."};
 
-    // --- Stage 12: outlets ---
+    // --- Stage 10: outlets ---
     string_default_map["contributing_pixels_fname"] = "";
     help_map["contributing_pixels_fname"] = {"string","",
         "Filename of a pre-computed n_contributing_pixels raster.",
@@ -395,135 +391,52 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Stage 2: relief threshold (adaptive CDF divergence or fixed percentile)
+    // Stage 2: build flat mask
     // -------------------------------------------------------------------------
     const bool use_adaptive = bf["adaptive_relief_threshold"];
-    std::cout << "Stage 2: computing relief threshold ("
-              << (use_adaptive ? "adaptive CDF divergence" : "fixed percentile")
-              << ")...\n";
 
-    const lsdtt::lsdtt_raster_meta& rmeta = relief.get_meta();
-    const std::vector<float>&        rdata = relief.get_data();
-    const std::vector<uint8_t>&      rmask = relief.get_mask();
-
-    std::vector<double> relief_vals;
-    relief_vals.reserve(rdata.size() / 4);
-    for (std::size_t i = 0; i < rdata.size(); ++i)
-    {
-        if (rmask[i] == 0) continue;
-        const float v = rdata[i];
-        if (!std::isfinite(v) || rmeta.is_nodata(v)) continue;
-        relief_vals.push_back(static_cast<double>(v));
-    }
-
-    if (relief_vals.size() < 10)
-    { std::cerr << "Error: too few valid relief values to compute threshold.\n"; return 1; }
-
-    const lsdtt::lsdtt_smoothed_cdf               scdf = lsdtt::compute_smoothed_cdf(relief_vals, 500);
-    const std::vector<lsdtt::lsdtt_distribution_fit> fits = lsdtt::fit_distributions(relief_vals);
-
-    const lsdtt::lsdtt_distribution_fit* best_fit = nullptr;
-    for (const auto& f : fits)
-    {
-        if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
-        if (!best_fit || f.ks_statistic < best_fit->ks_statistic) best_fit = &f;
-    }
-
-    double relief_threshold  = std::numeric_limits<double>::quiet_NaN();
-    double relief_percentile = std::numeric_limits<double>::quiet_NaN();
-
+    lsdtt::lsdtt_raster_cpu flat_mask;
     if (use_adaptive)
     {
-        if (!best_fit)
-        { std::cerr << "Error: no valid distribution fit for relief CDF.\n"; return 1; }
-
-        double      max_diff = -std::numeric_limits<double>::infinity();
-        std::size_t max_idx  = 0;
-        for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
-        {
-            const double fitted = lsdtt::eval_cdf(*best_fit, scdf.bin_centres[i]);
-            if (!std::isfinite(fitted)) continue;
-            const double diff = scdf.cdf[i] - fitted;
-            if (diff > max_diff) { max_diff = diff; max_idx = i; }
+        std::cout << "Stage 2: building flat mask (adaptive CDF divergence)...\n";
+        try {
+            flat_mask = lsdtt::algebra::raster_adaptive_relief_threshold(
+                relief, /*verbose=*/true, /*write_cdf=*/true,
+                &loader, stem + "_relief_cdf.csv");
+        } catch (const std::exception& e) {
+            std::cerr << "Error in Stage 2: " << e.what() << "\n";
+            return 1;
         }
-        relief_threshold  = scdf.bin_centres[max_idx];
-        relief_percentile = scdf.cdf[max_idx] * 100.0;
-
-        std::cout << "  Distribution fit  : "
-                  << lsdtt::distribution_family_name(best_fit->family) << "\n"
-                  << "  Max CDF divergence: " << max_diff << "\n";
     }
     else
     {
-        relief_threshold = static_cast<double>(ff["relief_threshold_metres"]);
-        // Find where the empirical CDF crosses the threshold for the print.
-        relief_percentile = 0.0;
-        for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
-        {
-            if (scdf.bin_centres[i] <= relief_threshold)
-                relief_percentile = scdf.cdf[i] * 100.0;
-        }
-        std::cout << "  Using fixed threshold: " << relief_threshold << " m\n";
-    }
-
-    std::cout << "  Relief threshold  : " << relief_threshold << " m"
-              << "  (=" << relief_percentile << "th percentile)\n\n";
-
-    {
-        const std::string p = stem + "_relief_cdf.csv";
-        std::cout << "Writing relief CDF: " << p << "\n";
-        write_smoothed_cdf_csv(loader, p, scdf, fits);
+        const double fixed = static_cast<double>(ff["relief_threshold_metres"]);
+        std::cout << "Stage 2: building flat mask (fixed threshold = "
+                  << fixed << " m)...\n";
+        flat_mask = lsdtt::algebra::raster_binary_true_below_threshold(
+            relief, static_cast<float>(fixed));
     }
 
     // -------------------------------------------------------------------------
-    // Stage 3: build initial flat mask
-    //
-    // Nodata semantics: pixels nodata in the DEM are nodata in all masks.
-    // We use the DEM mask as the authoritative nodata source.
-    // -------------------------------------------------------------------------
-    std::cout << "Stage 3: building flat mask (relief <= "
-              << relief_threshold << " m)...\n";
-
-    const std::vector<uint8_t>& dem_mask = dem.get_mask();
-    const std::size_t npix =
-        static_cast<std::size_t>(rmeta.n_rows) * static_cast<std::size_t>(rmeta.n_cols);
-
-    const float nd_val = static_cast<float>(rmeta.no_data_value);
-    std::vector<float>   flat_data(npix, nd_val);
-    std::vector<uint8_t> flat_msk(npix, uint8_t{0});
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (dem_mask[i] == 0) continue;          // DEM nodata → nodata in output
-        const float v = rdata[i];
-        if (rmask[i] == 0 || !std::isfinite(v) || rmeta.is_nodata(v)) continue;
-        flat_msk[i]  = uint8_t{1};
-        flat_data[i] = (static_cast<double>(v) <= relief_threshold) ? 1.0f : 0.0f;
-    }
-
-    lsdtt::lsdtt_raster_cpu flat_mask(
-        std::move(flat_data), std::move(flat_msk), rmeta);
-
-    // -------------------------------------------------------------------------
-    // Stage 4: remove small flat components
+    // Stage 3: remove small flat components
     // -------------------------------------------------------------------------
     const int min_flat = ip["min_flat_component_pixels"];
-    std::cout << "Stage 4: removing flat components < " << min_flat << " pixels...\n";
+    std::cout << "Stage 3: removing flat components < " << min_flat << " pixels...\n";
     flat_mask = lsdtt::filter_binary_components_by_size(flat_mask, min_flat);
 
     // -------------------------------------------------------------------------
-    // Stage 5: morphological closing of flat mask
+    // Stage 4: morphological closing of flat mask
     // -------------------------------------------------------------------------
     const double flat_closing_r = static_cast<double>(ff["flat_closing_radius_metres"]);
     if (flat_closing_r > 0.0)
     {
-        std::cout << "Stage 5: morphological closing of flat mask (radius="
+        std::cout << "Stage 4: morphological closing of flat mask (radius="
                   << flat_closing_r << " m)...\n";
         flat_mask = lsdtt::binary_morphological_closing(flat_mask, flat_closing_r);
     }
     else
     {
-        std::cout << "Stage 5: flat mask closing-by-reconstruction skipped "
+        std::cout << "Stage 4: flat mask closing-by-reconstruction skipped "
                      "(flat_closing_radius_metres <= 0).\n";
     }
 
@@ -535,18 +448,18 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Stage 6: morphological opening of flat mask
+    // Stage 5: morphological opening of flat mask
     // -------------------------------------------------------------------------
     const double flat_erosion_r = static_cast<double>(ff["erosion_radius_metres"]);
     if (flat_erosion_r > 0.0)
     {
-        std::cout << "Stage 6: morphological opening of flat mask (radius="
+        std::cout << "Stage 5: morphological opening of flat mask (radius="
                   << flat_erosion_r << " m)...\n";
         flat_mask = lsdtt::binary_morphological_opening(flat_mask, flat_erosion_r);
     }
     else
     {
-        std::cout << "Stage 6: flat mask opening-by-reconstruction skipped "
+        std::cout << "Stage 5: flat mask opening-by-reconstruction skipped "
                      "(erosion_radius_metres <= 0).\n";
     }
 
@@ -560,74 +473,40 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Stage 7: invert flat mask → mountain mask
+    // Stage 6: invert flat mask → mountain mask
     // -------------------------------------------------------------------------
-    std::cout << "Stage 7: inverting flat mask to mountain mask...\n";
-    {
-        const std::vector<float>&   fd = flat_mask.get_data();
-        const std::vector<uint8_t>& fm = flat_mask.get_mask();
-
-        std::vector<float>   mtn_data(npix, 0.0f);
-        std::vector<uint8_t> mtn_msk(npix, uint8_t{0});
-        for (std::size_t i = 0; i < npix; ++i)
-        {
-            if (fm[i] == 0) continue;
-            mtn_msk[i]  = uint8_t{1};
-            mtn_data[i] = (fd[i] > 0.5f) ? 0.0f : 1.0f;
-        }
-        flat_mask = lsdtt::lsdtt_raster_cpu(
-            std::move(mtn_data), std::move(mtn_msk), rmeta);
-    }
-    lsdtt::lsdtt_raster_cpu mountain_mask = std::move(flat_mask);
+    std::cout << "Stage 6: inverting flat mask to mountain mask...\n";
+    lsdtt::lsdtt_raster_cpu mountain_mask = lsdtt::algebra::invert_binary_mask(flat_mask);
 
 
     // -------------------------------------------------------------------------
-    // Stage 8: fill holes in mountain mask
+    // Stage 7: fill holes in mountain mask
     // -------------------------------------------------------------------------
-    std::cout << "Stage 8: filling holes in mountain mask...\n";
+    std::cout << "Stage 7: filling holes in mountain mask...\n";
     std::cout << "WARNING: if any of your flats are completely surrounded by mountains they will be filled!...\n";
     mountain_mask = lsdtt::binary_fill_holes(mountain_mask);
 
-    // Enforce DEM nodata: any pixel that is nodata in the DEM must remain
-    // nodata in the flat mask regardless of what intermediate stages produced.
-    {
-        std::vector<float>   fd = mountain_mask.get_data();
-        std::vector<uint8_t> fm = mountain_mask.get_mask();
-        for (std::size_t i = 0; i < npix; ++i)
-            if (dem_mask[i] == 0) { fm[i] = uint8_t{0}; fd[i] = nd_val; }
-        mountain_mask = lsdtt::lsdtt_raster_cpu(std::move(fd), std::move(fm), rmeta);
-    }
-
     // -------------------------------------------------------------------------
-    // Stage 9: remove small mountain components
+    // Stage 8: remove small mountain components
     // -------------------------------------------------------------------------
     const int min_comp = ip["min_component_pixels"];
-    std::cout << "Stage 9: removing mountain components < " << min_comp << " pixels...\n";
+    std::cout << "Stage 8: removing mountain components < " << min_comp << " pixels...\n";
     mountain_mask = lsdtt::filter_binary_components_by_size(mountain_mask, min_comp);
 
 
     // -------------------------------------------------------------------------
-    // Stage 10: valley infilling (morphological closing)
+    // Stage 9: valley infilling (morphological closing)
     // -------------------------------------------------------------------------
     const double infill_r = static_cast<double>(ff["infill_valley_radius_metres"]);
     if (infill_r > 0.0)
     {
-        std::cout << "Stage 10: valley infilling (closing radius="
+        std::cout << "Stage 9: valley infilling (closing radius="
                   << infill_r << " m)...\n";
         mountain_mask = lsdtt::binary_morphological_closing(mountain_mask, infill_r);
     }
     else
     {
-        std::cout << "Stage 10: valley infilling skipped.\n";
-    }
-
-    // Enforce DEM nodata on final mountain mask.
-    {
-        std::vector<float>   md = mountain_mask.get_data();
-        std::vector<uint8_t> mm = mountain_mask.get_mask();
-        for (std::size_t i = 0; i < npix; ++i)
-            if (dem_mask[i] == 0) { mm[i] = uint8_t{0}; md[i] = nd_val; }
-        mountain_mask = lsdtt::lsdtt_raster_cpu(std::move(md), std::move(mm), rmeta);
+        std::cout << "Stage 9: valley infilling skipped.\n";
     }
 
     // -------------------------------------------------------------------------
@@ -651,11 +530,11 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Stage 11: outlets
+    // Stage 10: outlets
     // -------------------------------------------------------------------------
 if (bf["write_mountain_front_outlets"])
 {
-    std::cout << "\nStage 11: computing mountain front outlets...\n";
+    std::cout << "\nStage 10: computing mountain front outlets...\n";
 
     lsdtt::lsdtt_raster_cpu ca_raster;
     bool ca_ok = false;

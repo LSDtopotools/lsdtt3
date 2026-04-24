@@ -77,13 +77,19 @@ endif()
 option(LSDTT_OPENCV "Build OpenCV image-analysis routines" ON)
 set(LSDTT_HAS_OPENCV OFF)
 if(LSDTT_OPENCV)
-    find_package(OpenCV QUIET COMPONENTS core imgproc)
+    # Search /usr/local first (locally-built OpenCV), then system paths.
+    # Not QUIET so cmake prints the reason when it cannot find OpenCV.
+    find_package(OpenCV
+        COMPONENTS core imgproc
+        HINTS /usr/local/lib/cmake/opencv4
+              /usr/lib/x86_64-linux-gnu/cmake/opencv4
+    )
     if(OpenCV_FOUND)
         set(LSDTT_HAS_OPENCV ON)
         message(STATUS "OpenCV found (${OpenCV_VERSION}) — image analysis enabled")
     else()
-        message(WARNING "OpenCV not found — lsdtt_raster_opencv_cpu will not be built "
-                        "(install libopencv-dev or pass -DLSDTT_OPENCV=OFF to silence)")
+        message(STATUS "OpenCV not found — lsdtt_raster_opencv_cpu will not be built "
+                       "(install libopencv-dev or pass -DLSDTT_OPENCV=OFF to silence)")
     endif()
 endif()
 
@@ -206,6 +212,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp
     src/cpu/lsdtt_basin_outline_cpu.cpp
     src/cpu/lsdtt_flat_surface_finder.cpp
+    src/cpu/lsdtt_slope_break_finder_cpu.cpp
     src/cpu/lsdtt_flat_surface_plane_analysis.cpp
     src/cpu/lsdtt_vector_rasterise_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp

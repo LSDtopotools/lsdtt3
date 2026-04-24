@@ -32,6 +32,10 @@
 
 #include "lsdtt_raster_cpu.hpp"
 
+#include <string>
+
+namespace lsdtt { class lsdtt_data_loader; } // forward declaration
+
 namespace lsdtt {
 namespace algebra {
 
@@ -220,6 +224,12 @@ lsdtt_raster_cpu raster_binary_true_below_threshold(
     float                   threshold
 );
 
+/// Invert a binary raster: 1 → 0, 0 → 1.
+/// Nodata pixels remain nodata.
+lsdtt_raster_cpu invert_binary_mask(
+    const lsdtt_raster_cpu& a
+);
+
 
 
 /// Keep the values raster where keep_mask > 0.5; set nodata elsewhere.
@@ -309,6 +319,37 @@ float raster_stddev_value(const lsdtt_raster_cpu& a);
 
 /// Range (max − min) over all valid pixels.
 float raster_range_value(const lsdtt_raster_cpu& a);
+
+
+// -----------------------------------------------------------------------------
+// Adaptive relief threshold
+// -----------------------------------------------------------------------------
+
+/// Find the threshold at the point of maximum divergence between the empirical
+/// CDF and the best-fitting parametric CDF.  Returns the threshold value.
+///
+/// If verbose is true, prints the best-fit distribution family, max CDF
+/// divergence, and the threshold percentile to stdout.
+/// If write_cdf is true, loader and cdf_path must be non-null / non-empty;
+/// the smoothed CDF and fits are written to that path.
+double raster_cdf_divergence_threshold(
+    const lsdtt_raster_cpu& raster,
+    bool                    verbose,
+    bool                    write_cdf,
+    lsdtt_data_loader*      loader,
+    const std::string&      cdf_path
+);
+
+/// Convenience wrapper: computes the CDF divergence threshold then applies it.
+/// Returns a binary raster: 1 where value <= threshold, 0 elsewhere.
+/// Nodata is preserved.
+lsdtt_raster_cpu raster_adaptive_relief_threshold(
+    const lsdtt_raster_cpu& raster,
+    bool                    verbose,
+    bool                    write_cdf,
+    lsdtt_data_loader*      loader,
+    const std::string&      cdf_path
+);
 
 } // namespace algebra
 } // namespace lsdtt
