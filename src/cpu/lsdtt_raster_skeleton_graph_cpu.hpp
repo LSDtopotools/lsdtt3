@@ -51,22 +51,25 @@ namespace lsdtt {
 
 // -----------------------------------------------------------------------------
 // skeleton_node
-//
-// Simple node record on a binary 1-pixel skeleton.
-// degree is the number of 8-neighbour foreground pixels.
+// degree is the raw number of 8-neighbour foreground pixels.
+// crossing_number is the digital-topology node class:
+//   CN = 0  -> isolated singleton
+//   CN = 1  -> endpoint
+//   CN = 2  -> ordinary chain pixel
+//   CN >= 3 -> junction
 //
 // Conventions:
-//   degree = 0  -> isolated singleton
-//   degree = 1  -> endpoint
-//   degree = 2  -> ordinary chain pixel
-//   degree >= 3 -> junction
+//   degree may differ from crossing_number at corners / diagonal contacts,
+//   so endpoint and junction logic should key off crossing_number, not degree.
 // -----------------------------------------------------------------------------
 struct skeleton_node
 {
-    int row    = -1;
-    int col    = -1;
-    int degree =  0;
+    int row             = -1;
+    int col             = -1;
+    int degree          =  0;
+    int crossing_number =  0;
 };
+
 
 // -----------------------------------------------------------------------------
 // skeleton_node_result
@@ -140,6 +143,48 @@ lsdtt_raster_cpu prune_skeleton_spurs(
     int                     max_spur_pixels,
     int                     max_iterations = 100
 );
+
+
+// -----------------------------------------------------------------------------
+// prune_terminal_loops
+//
+// Removes short self-returning loop segments attached to exactly one other
+// segment at a shared node. Intended for "lollipop" artefacts where a long
+// open segment ends in a small closed ring, which suppresses endpoint
+// detection.
+//
+// Behaviour:
+//   - extracts ordered skeleton segments
+//   - finds self-returning non-loop segments (start_node == end_node)
+//   - keeps only those with <= max_loop_pixels pixels
+//   - prunes one only when its attachment node is incident to exactly one
+//     other non-self-returning segment
+//   - preserves the attachment node pixel itself
+//
+// Throws:
+//   std::runtime_error if metadata is invalid or max_loop_pixels < 1.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu prune_terminal_loops(
+    const lsdtt_raster_cpu& skeleton,
+    int                     max_loop_pixels
+);
+
+// -----------------------------------------------------------------------------
+// fill_dense_false_pixels_3x3
+//
+// Local 3x3 repair on a binary skeleton/binary mask.
+//
+// For each valid background pixel, count the number of foreground pixels in its
+// 8-neighbourhood. If that count is >= min_true_neighbours, the centre pixel is
+// turned on. This is useful for filling tiny holes / ring artefacts before
+// re-skeletonisation.
+//
+// The operation is applied iteratively n_iterations times.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_dense_false_pixels_3x3(
+    const lsdtt_raster_cpu& binary,
+    int                     min_true_neighbours,
+    int                     n_iterations);
 
 // -----------------------------------------------------------------------------
 // skeleton_pixel

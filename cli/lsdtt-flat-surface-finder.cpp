@@ -254,6 +254,11 @@ int main(int argc, char* argv[])
         "Maximum endpoint-rooted spur length (pixels) removed from the skeleton.",
         "0 = skip spur pruning."};
 
+    int_default_map["slope_break_centreline_max_terminal_loop_pixels"] = 10;
+    help_map["slope_break_centreline_max_terminal_loop_pixels"] = {"int","10",
+        "Maximum endpoint-rooted terminal loop length (pixels) removed from the skeleton.",
+        "0 = skip terminal loop pruning."};
+
     int_default_map["slope_break_centreline_min_component_pixels"] = 1;
     help_map["slope_break_centreline_min_component_pixels"] = {"int","1",
         "Minimum component size (pixels) retained in the skeleton.",
@@ -651,6 +656,7 @@ int main(int argc, char* argv[])
         vsr.closing_radius_metres           = static_cast<double>(ff["slope_break_closing_radius_metres"]);
         vsr.binary_min_component_pixels     = ip["slope_break_binary_min_component_pixels"];
         vsr.spur_max_pixels                 = ip["slope_break_centreline_max_spur_pixels"];
+        vsr.terminal_loop_max_pixels        = ip["slope_break_centreline_max_terminal_loop_pixels"];
         vsr.min_component_pixels            = ip["slope_break_centreline_min_component_pixels"];
         vsr.elevation_connect.search_radius_metres       =
             static_cast<double>(ff["slope_break_connect_search_radius_metres"]);

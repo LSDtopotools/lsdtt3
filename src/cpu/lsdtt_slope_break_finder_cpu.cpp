@@ -465,6 +465,17 @@ slope_break_result find_slope_breaks(
                 request.centreline_max_spur_pixels);
         }
 
+        if (request.centreline_max_terminal_loop_pixels > 0)
+        {
+            std::cout << "    pruning spurs <= "
+                      << request.centreline_max_terminal_loop_pixels
+                      << " px\n";
+            centreline = prune_terminal_loops(
+                centreline,
+                request.centreline_max_terminal_loop_pixels);
+        }
+
+
         if (request.centreline_min_component_pixels > 1)
         {
             std::cout << "    centreline min component size: "
@@ -681,6 +692,28 @@ vec_skeleton_result find_vec_skeleton(
     std::cout << "  raw skeleton pixels: "
               << count_foreground(result.skeleton) << "\n";
 
+    // Fill tiny false holes / loop interiors in the 1-pixel centreline, then
+    // re-skeletonise.
+    result.skeleton = fill_dense_false_pixels_3x3(
+        result.skeleton,
+        5,   // min_true_neighbours
+        1    // n_iterations
+    );
+    std::cout << "  after 3x3 dense-false fill: "
+              << count_foreground(result.skeleton) << "\n";
+
+    result.skeleton = thin_zhang_suen(result.skeleton);
+    std::cout << "  after re-thinning: "
+              << count_foreground(result.skeleton) << "\n";
+
+    if (request.terminal_loop_max_pixels > 0)
+    {
+        result.skeleton = prune_terminal_loops(
+            result.skeleton, request.terminal_loop_max_pixels);
+        std::cout << "  after terminal loop pruning: "
+                  << count_foreground(result.skeleton) << "\n";
+    }
+
     if (request.spur_max_pixels > 0)
     {
         result.skeleton = prune_skeleton_spurs(
@@ -688,6 +721,8 @@ vec_skeleton_result find_vec_skeleton(
         std::cout << "  after spur pruning: "
                   << count_foreground(result.skeleton) << "\n";
     }
+
+
 
     if (request.min_component_pixels > 1)
     {
@@ -802,6 +837,14 @@ curvature_skeleton_result extract_curvature_skeletons(
                   << count_foreground(result.vec_skeleton) << "\n";
     }
 
+    if (request.terminal_loop_max_pixels > 0)
+    {
+        result.vec_skeleton = prune_terminal_loops(
+            result.vec_skeleton, request.terminal_loop_max_pixels);
+        std::cout << "  after terminal loop pruning: "
+                  << count_foreground(result.vec_skeleton) << "\n";
+    }
+
     if (request.min_component_pixels > 1)
     {
         result.vec_skeleton = filter_binary_components_by_size(
@@ -862,6 +905,15 @@ curvature_skeleton_result extract_curvature_skeletons(
         std::cout << "  profile_skeleton after spur pruning: "
                   << count_foreground(result.profile_skeleton) << "\n";
     }
+
+    if (request.terminal_loop_max_pixels > 0)
+    {
+        result.profile_skeleton = prune_terminal_loops(
+            result.profile_skeleton, request.terminal_loop_max_pixels);
+        std::cout << "  after terminal loop pruning: "
+                  << count_foreground(result.profile_skeleton) << "\n";
+    }
+
 
     if (request.min_component_pixels > 1)
     {

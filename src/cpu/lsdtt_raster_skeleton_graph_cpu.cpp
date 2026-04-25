@@ -77,7 +77,8 @@ static bool estimate_endpoint_tangent_one_side_(
     const skeleton_node& node =
         at_start ? seg.start_node : seg.end_node;
 
-    if (node.degree != 1) return false;
+    if (node.crossing_number != 1) return false;
+
 
     const std::size_t n = seg.pixels.size();
     if (n < 2) return false;
@@ -859,12 +860,12 @@ skeleton_node_result classify_skeleton_nodes(
             if (cn == 1)
             {
                 endpoint_data[idx] = 1.0f;
-                endpoints.push_back({row, col, degree});
+                endpoints.push_back({row, col, degree, cn});
             }
             else if (cn >= 3)
             {
                 junction_data[idx] = 1.0f;
-                junctions.push_back({row, col, degree});
+                junctions.push_back({row, col, degree, cn});
             }
         }
     }
@@ -881,6 +882,27 @@ skeleton_node_result classify_skeleton_nodes(
 
     return result;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // -----------------------------------------------------------------------------
 // prune_skeleton_spurs
@@ -950,6 +972,35 @@ lsdtt_raster_cpu prune_skeleton_spurs(
         return row >= 0 && row < nrows && col >= 0 && col < ncols;
     };
 
+    auto is_foreground = [&](int row, int col) -> bool
+    {
+        if (!in_bounds(row, col))
+            return false;
+
+        const std::size_t idx = idx_of(row, col);
+        return valid[idx] != 0 && work[idx] != 0;
+    };
+
+    auto cn_of = [&](std::size_t idx) -> int
+    {
+        const int row = static_cast<int>(idx / static_cast<std::size_t>(ncols));
+        const int col = static_cast<int>(idx % static_cast<std::size_t>(ncols));
+        return crossing_number(row, col, is_foreground);
+    };
+
+    auto are_8_neighbours = [&](std::size_t a, std::size_t b) -> bool
+    {
+        const int ar = static_cast<int>(a / static_cast<std::size_t>(ncols));
+        const int ac = static_cast<int>(a % static_cast<std::size_t>(ncols));
+        const int br = static_cast<int>(b / static_cast<std::size_t>(ncols));
+        const int bc = static_cast<int>(b % static_cast<std::size_t>(ncols));
+
+        return std::max(std::abs(ar - br), std::abs(ac - bc)) == 1;
+    };
+
+
+
+
     constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
     constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
 
@@ -1008,7 +1059,7 @@ lsdtt_raster_cpu prune_skeleton_spurs(
                 const std::size_t seed = idx_of(row0, col0);
 
                 if (!valid[seed] || !work[seed]) continue;
-                if (degree[seed] != 1) continue;
+                if (cn_of(seed) != 1) continue;
                 if (traced[seed] != 0) continue;
 
                 std::vector<std::size_t> removable_pixels;
@@ -1025,17 +1076,17 @@ lsdtt_raster_cpu prune_skeleton_spurs(
 
                     const int crow = static_cast<int>(curr / static_cast<std::size_t>(ncols));
                     const int ccol = static_cast<int>(curr % static_cast<std::size_t>(ncols));
-                    const int cdeg = degree[curr];
+                    const int ccn  = cn_of(curr);
 
-                    if (curr != seed && cdeg == 1)
+                    if (curr != seed && ccn == 1)
                     {
                         terminal = trace_terminal::hit_endpoint;
                         break;
                     }
 
-                    if (cdeg >= 3)
+                    if (ccn >= 3)
                     {
-                        // Preserve the terminal junction.
+                        // True topological junction.
                         removable_pixels.pop_back();
                         terminal = trace_terminal::hit_junction;
                         break;
@@ -1063,16 +1114,72 @@ lsdtt_raster_cpu prune_skeleton_spurs(
                         break;
                     }
 
-                    if (next_pixels.size() > 1)
+                    // Group forward candidates into 8-connected clusters.
+                    // Multiple clusters means we have reached a true branch
+                    // attachment / junction from the perspective of this trace.
+                    std::vector<int> group(next_pixels.size(), -1);
+                    int n_groups = 0;
+
+                    for (std::size_t i = 0; i < next_pixels.size(); ++i)
                     {
-                        // Unexpected branch ambiguity while tracing from an endpoint.
-                        // Be conservative and do not prune this trace.
-                        terminal = trace_terminal::ambiguous;
+                        if (group[i] >= 0) continue;
+
+                        group[i] = n_groups;
+                        std::vector<std::size_t> stack;
+                        stack.push_back(i);
+
+                        while (!stack.empty())
+                        {
+                            const std::size_t k = stack.back();
+                            stack.pop_back();
+
+                            for (std::size_t j = 0; j < next_pixels.size(); ++j)
+                            {
+                                if (group[j] >= 0) continue;
+                                if (!are_8_neighbours(next_pixels[k], next_pixels[j])) continue;
+
+                                group[j] = n_groups;
+                                stack.push_back(j);
+                            }
+                        }
+
+                        ++n_groups;
+                    }
+
+                    if (n_groups > 1)
+                    {
+                        // Preserve the current attachment pixel and prune only
+                        // the endpoint-rooted prefix leading into it.
+                        removable_pixels.pop_back();
+                        terminal = trace_terminal::hit_junction;
                         break;
                     }
 
+                    // Single forward cluster: continue through the nearest
+                    // candidate pixel. This suppresses diagonal look-ahead on
+                    // staircase lines.
+                    std::size_t next = next_pixels.front();
+                    int best_step2 = std::numeric_limits<int>::max();
+
+                    for (const std::size_t cand : next_pixels)
+                    {
+                        const int nr = static_cast<int>(cand / static_cast<std::size_t>(ncols));
+                        const int nc = static_cast<int>(cand % static_cast<std::size_t>(ncols));
+
+                        const int dr = nr - crow;
+                        const int dc = nc - ccol;
+                        const int step2 = dr * dr + dc * dc;
+
+                        if (step2 < best_step2 ||
+                            (step2 == best_step2 && cand < next))
+                        {
+                            best_step2 = step2;
+                            next = cand;
+                        }
+                    }
+
                     prev = curr;
-                    curr = next_pixels.front();
+                    curr = next;
                 }
 
                 const bool eligible =
@@ -1129,6 +1236,501 @@ lsdtt_raster_cpu prune_skeleton_spurs(
         meta
     );
 }
+
+
+
+// -----------------------------------------------------------------------------
+// prune_terminal_loops
+//
+// Segment-graph version.
+//
+// Removes small cycle-containing clusters of extracted skeleton segments when
+// those clusters are attached to the rest of the skeleton through at most one
+// OUTSIDE SEGMENT COMPONENT.
+//
+// This is intended to catch:
+//   - isolated small loops
+//   - spur-with-loop artefacts
+//   - small loop clusters attached to the end of a long line
+//
+// Strategy:
+//   1. extract ordered skeleton segments
+//   2. build a segment adjacency graph from shared endpoint node coordinates
+//   3. find connected components of "short" segments
+//   4. keep only those short-segment components that:
+//        - contain a cycle
+//        - have <= max_loop_pixels unique foreground pixels total
+//        - touch <= 1 external segment component
+//   5. delete all pixels in those components except attachment-node pixels
+//      that touch the outside skeleton
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu prune_terminal_loops(
+    const lsdtt_raster_cpu& skeleton,
+    int                     max_loop_pixels)
+{
+    const lsdtt_raster_meta& meta = skeleton.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::prune_terminal_loops: input raster metadata is invalid"
+        );
+    }
+
+    if (max_loop_pixels < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::prune_terminal_loops: max_loop_pixels must be >= 1"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = skeleton.get_data();
+    const std::vector<uint8_t>& in_mask = skeleton.get_mask();
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    // -------------------------------------------------------------------------
+    // Build valid/original foreground planes.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> valid(npix, uint8_t{0});
+    std::vector<uint8_t> orig (npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (meta.is_nodata(in_data[i])) continue;
+        if (!std::isfinite(in_data[i])) continue;
+
+        valid[i] = uint8_t{1};
+        orig[i]  = (in_data[i] > 0.5f) ? uint8_t{1} : uint8_t{0};
+    }
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    // -------------------------------------------------------------------------
+    // Extract ordered segments from the current skeleton.
+    // -------------------------------------------------------------------------
+    const std::vector<skeleton_segment> segments =
+        extract_skeleton_segments(skeleton);
+
+    if (segments.empty())
+    {
+        return skeleton;
+    }
+
+    using node_key = std::pair<int,int>;
+
+    // -------------------------------------------------------------------------
+    // Build node -> incident segments map.
+    // -------------------------------------------------------------------------
+    std::map<node_key, std::vector<std::size_t>> node_to_segments;
+
+    for (std::size_t i = 0; i < segments.size(); ++i)
+    {
+        const skeleton_segment& seg = segments[i];
+        if (seg.pixels.empty()) continue;
+
+        const node_key k0(seg.start_node.row, seg.start_node.col);
+        const node_key k1(seg.end_node.row,   seg.end_node.col);
+
+        node_to_segments[k0].push_back(i);
+        if (k1 != k0)
+            node_to_segments[k1].push_back(i);
+    }
+
+    // -------------------------------------------------------------------------
+    // Build segment adjacency from shared endpoint nodes.
+    // -------------------------------------------------------------------------
+    std::vector<std::vector<std::size_t>> adj(segments.size());
+
+    for (const auto& kv : node_to_segments)
+    {
+        const std::vector<std::size_t>& inc = kv.second;
+        for (std::size_t a = 0; a < inc.size(); ++a)
+        {
+            for (std::size_t b = a + 1; b < inc.size(); ++b)
+            {
+                const std::size_t i = inc[a];
+                const std::size_t j = inc[b];
+                if (i == j) continue;
+
+                adj[i].push_back(j);
+                adj[j].push_back(i);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Define "short" segments as those no longer than max_loop_pixels.
+    //
+    // We later ALSO require the total unique pixel count of the whole candidate
+    // cluster to be <= max_loop_pixels.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> short_seg(segments.size(), uint8_t{0});
+
+    for (std::size_t i = 0; i < segments.size(); ++i)
+    {
+        if (!segments[i].pixels.empty() &&
+            static_cast<int>(segments[i].pixels.size()) <= max_loop_pixels)
+        {
+            short_seg[i] = uint8_t{1};
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Mark pixels to delete.
+    // -------------------------------------------------------------------------
+    std::vector<uint8_t> delete_mark(npix, uint8_t{0});
+    std::vector<uint8_t> visited_short(segments.size(), uint8_t{0});
+
+    // -------------------------------------------------------------------------
+    // Connected components of SHORT segments only.
+    // -------------------------------------------------------------------------
+    for (std::size_t seed = 0; seed < segments.size(); ++seed)
+    {
+        if (!short_seg[seed]) continue;
+        if (visited_short[seed]) continue;
+
+        std::vector<std::size_t> comp_segments;
+        std::queue<std::size_t> q;
+
+        q.push(seed);
+        visited_short[seed] = uint8_t{1};
+
+        while (!q.empty())
+        {
+            const std::size_t s = q.front();
+            q.pop();
+            comp_segments.push_back(s);
+
+            for (const std::size_t nbr : adj[s])
+            {
+                if (!short_seg[nbr]) continue;
+                if (visited_short[nbr]) continue;
+
+                visited_short[nbr] = uint8_t{1};
+                q.push(nbr);
+            }
+        }
+
+        if (comp_segments.empty())
+            continue;
+
+        // ---------------------------------------------------------------------
+        // Collect unique endpoint nodes and unique pixels in the component.
+        // ---------------------------------------------------------------------
+        std::set<node_key> comp_nodes;
+        std::vector<std::size_t> comp_pixels;
+        comp_pixels.reserve(comp_segments.size() * 8);
+
+        bool contains_cycle = false;
+
+        for (const std::size_t sidx : comp_segments)
+        {
+            const skeleton_segment& seg = segments[sidx];
+            if (seg.pixels.empty()) continue;
+
+            comp_nodes.insert(node_key(seg.start_node.row, seg.start_node.col));
+            comp_nodes.insert(node_key(seg.end_node.row,   seg.end_node.col));
+
+            const bool self_returning =
+                seg.start_node.row == seg.end_node.row &&
+                seg.start_node.col == seg.end_node.col;
+
+            if (seg.is_loop || self_returning)
+                contains_cycle = true;
+
+            for (const auto& px : seg.pixels)
+                comp_pixels.push_back(idx_of(px.row, px.col));
+        }
+
+        std::sort(comp_pixels.begin(), comp_pixels.end());
+        comp_pixels.erase(std::unique(comp_pixels.begin(), comp_pixels.end()),
+                          comp_pixels.end());
+
+        const int E = static_cast<int>(comp_segments.size());
+        const int V = static_cast<int>(comp_nodes.size());
+
+        // Connected undirected segment-node graph has a cycle if E >= V.
+        if (!contains_cycle && E >= V)
+            contains_cycle = true;
+
+        if (!contains_cycle)
+            continue;
+
+        if (static_cast<int>(comp_pixels.size()) > max_loop_pixels)
+            continue;
+
+        // ---------------------------------------------------------------------
+        // Build fast membership mask for this candidate component.
+        // ---------------------------------------------------------------------
+        std::vector<uint8_t> in_comp(segments.size(), uint8_t{0});
+        for (const std::size_t sidx : comp_segments)
+            in_comp[sidx] = uint8_t{1};
+
+        // ---------------------------------------------------------------------
+        // Find outside segments adjacent to this candidate component.
+        // Also record which candidate nodes touch the outside.
+        // ---------------------------------------------------------------------
+        std::set<std::size_t> outside_segments_set;
+        std::set<node_key>    keep_nodes;   // attachment nodes to preserve
+
+        for (const node_key& nk : comp_nodes)
+        {
+            const auto it = node_to_segments.find(nk);
+            if (it == node_to_segments.end()) continue;
+
+            bool touches_outside = false;
+
+            for (const std::size_t sidx : it->second)
+            {
+                if (!in_comp[sidx])
+                {
+                    outside_segments_set.insert(sidx);
+                    touches_outside = true;
+                }
+            }
+
+            if (touches_outside)
+                keep_nodes.insert(nk);
+        }
+
+        // ---------------------------------------------------------------------
+        // Count connected components in the OUTSIDE segment graph, with the
+        // candidate component removed.
+        //
+        // We prune when there are 0 or 1 outside segment components:
+        //   0 -> isolated small loop
+        //   1 -> terminal loop cluster at line end
+        //   2+ -> internal / bridging / non-terminal cycle, keep it
+        // ---------------------------------------------------------------------
+        int n_outside_components = 0;
+
+        if (!outside_segments_set.empty())
+        {
+            std::vector<uint8_t> outside_seen(segments.size(), uint8_t{0});
+
+            for (const std::size_t s0 : outside_segments_set)
+            {
+                if (outside_seen[s0]) continue;
+
+                ++n_outside_components;
+                if (n_outside_components > 1)
+                    break;
+
+                std::queue<std::size_t> oq;
+                oq.push(s0);
+                outside_seen[s0] = uint8_t{1};
+
+                while (!oq.empty())
+                {
+                    const std::size_t s = oq.front();
+                    oq.pop();
+
+                    for (const std::size_t nbr : adj[s])
+                    {
+                        if (in_comp[nbr]) continue;
+                        if (outside_seen[nbr]) continue;
+
+                        outside_seen[nbr] = uint8_t{1};
+                        oq.push(nbr);
+                    }
+                }
+            }
+        }
+
+        if (n_outside_components > 1)
+            continue;
+
+        // ---------------------------------------------------------------------
+        // Prune this terminal loop cluster.
+        //
+        // Keep only attachment-node pixels where the cluster touches the
+        // outside skeleton. Delete all other pixels in the candidate cluster.
+        // ---------------------------------------------------------------------
+        for (const std::size_t sidx : comp_segments)
+        {
+            const skeleton_segment& seg = segments[sidx];
+
+            for (const auto& px : seg.pixels)
+            {
+                const node_key pk(px.row, px.col);
+                if (keep_nodes.find(pk) != keep_nodes.end())
+                    continue;
+
+                const std::size_t idx = idx_of(px.row, px.col);
+                if (valid[idx] != 0)
+                    delete_mark[idx] = uint8_t{1};
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Convert back to raster.
+    // -------------------------------------------------------------------------
+    std::vector<float>   out_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (!valid[i]) continue;
+
+        out_mask[i] = uint8_t{1};
+        out_data[i] = (orig[i] != 0 && delete_mark[i] == 0) ? 1.0f : 0.0f;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+
+// -----------------------------------------------------------------------------
+// fill_dense_false_pixels_3x3
+//
+// Local 3x3 repair on a binary skeleton/binary mask.
+//
+// For each valid background pixel, count the number of foreground pixels in its
+// 8-neighbourhood. If that count is >= min_true_neighbours, the centre pixel is
+// turned on. This is useful for filling tiny holes / ring artefacts before
+// re-skeletonisation.
+//
+// The operation is applied iteratively n_iterations times.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_dense_false_pixels_3x3(
+    const lsdtt_raster_cpu& binary,
+    int                     min_true_neighbours,
+    int                     n_iterations)
+{
+    const lsdtt_raster_meta& meta = binary.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::fill_dense_false_pixels_3x3: input raster metadata is invalid"
+        );
+    }
+
+    if (min_true_neighbours < 1 || min_true_neighbours > 8)
+    {
+        throw std::runtime_error(
+            "lsdtt::fill_dense_false_pixels_3x3: min_true_neighbours must be in [1,8]"
+        );
+    }
+
+    if (n_iterations < 1)
+    {
+        throw std::runtime_error(
+            "lsdtt::fill_dense_false_pixels_3x3: n_iterations must be >= 1"
+        );
+    }
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    const std::vector<float>&   in_data = binary.get_data();
+    const std::vector<uint8_t>& in_mask = binary.get_mask();
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<uint8_t> valid(npix, uint8_t{0});
+    std::vector<uint8_t> work (npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (in_mask[i] == 0) continue;
+        if (meta.is_nodata(in_data[i])) continue;
+        if (!std::isfinite(in_data[i])) continue;
+
+        valid[i] = uint8_t{1};
+        work[i]  = (in_data[i] > 0.5f) ? uint8_t{1} : uint8_t{0};
+    }
+
+    auto idx_of = [ncols](int row, int col) -> std::size_t
+    {
+        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
+               static_cast<std::size_t>(col);
+    };
+
+    auto in_bounds = [nrows, ncols](int row, int col) -> bool
+    {
+        return row >= 0 && row < nrows && col >= 0 && col < ncols;
+    };
+
+    for (int iter = 0; iter < n_iterations; ++iter)
+    {
+        std::vector<uint8_t> next = work;
+
+        for (int row = 0; row < nrows; ++row)
+        {
+            for (int col = 0; col < ncols; ++col)
+            {
+                const std::size_t idx = idx_of(row, col);
+                if (!valid[idx]) continue;
+
+                // Only fill background pixels.
+                if (work[idx] != 0) continue;
+
+                int n_true = 0;
+
+                for (int dr = -1; dr <= 1; ++dr)
+                {
+                    for (int dc = -1; dc <= 1; ++dc)
+                    {
+                        if (dr == 0 && dc == 0) continue;
+
+                        const int rr = row + dr;
+                        const int cc = col + dc;
+                        if (!in_bounds(rr, cc)) continue;
+
+                        const std::size_t nidx = idx_of(rr, cc);
+                        if (!valid[nidx]) continue;
+                        if (work[nidx] != 0) ++n_true;
+                    }
+                }
+
+                if (n_true >= min_true_neighbours)
+                    next[idx] = uint8_t{1};
+            }
+        }
+
+        work.swap(next);
+    }
+
+    std::vector<float>   out_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (!valid[i]) continue;
+
+        out_mask[i] = uint8_t{1};
+        out_data[i] = (work[i] != 0) ? 1.0f : 0.0f;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data),
+        std::move(out_mask),
+        meta
+    );
+}
+
+
+
+
 
 // -----------------------------------------------------------------------------
 // extract_skeleton_segments
@@ -1191,6 +1793,16 @@ extract_skeleton_segments(
         return static_cast<int>(idx % static_cast<std::size_t>(ncols));
     };
 
+    auto is_foreground = [&](int row, int col) -> bool
+    {
+        if (!in_bounds(row, col))
+            return false;
+
+        const std::size_t idx = idx_of(row, col);
+        return valid[idx] != 0 && work[idx] != 0;
+    };
+
+
     constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
     constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
 
@@ -1221,6 +1833,23 @@ extract_skeleton_segments(
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Compute crossing number for topological node classification.
+    // Use this for endpoint / chain / junction logic; raw degree is retained
+    // only as a neighbour-count diagnostic.
+    // -------------------------------------------------------------------------
+    std::vector<int> cn(npix, 0);
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = idx_of(row, col);
+            if (!valid[idx] || !work[idx]) continue;
+            cn[idx] = crossing_number(row, col, is_foreground);
+        }
+    }
+
     auto foreground_neighbours = [&](std::size_t idx) -> std::vector<std::size_t>
     {
         std::vector<std::size_t> nbrs;
@@ -1242,6 +1871,10 @@ extract_skeleton_segments(
 
         return nbrs;
     };
+
+
+
+
 
     using edge_key = std::pair<std::size_t, std::size_t>;
 
@@ -1266,8 +1899,8 @@ extract_skeleton_segments(
 
             skeleton_segment seg;
             seg.is_loop    = false;
-            seg.start_node = {row, col, 0};
-            seg.end_node   = {row, col, 0};
+            seg.start_node = {row, col, 0, 0};
+            seg.end_node   = {row, col, 0, 0};
             seg.pixels.push_back({row, col});
 
             segments.push_back(std::move(seg));
@@ -1283,7 +1916,9 @@ extract_skeleton_segments(
         {
             const std::size_t start_idx = idx_of(row, col);
             if (!valid[start_idx] || !work[start_idx]) continue;
-            if (degree[start_idx] == 0 || degree[start_idx] == 2) continue;
+            if (degree[start_idx] == 0) continue;
+            if (cn[start_idx] == 2) continue;
+
 
             const std::vector<std::size_t> nbrs =
                 foreground_neighbours(start_idx);
@@ -1300,7 +1935,7 @@ extract_skeleton_segments(
 
                 skeleton_segment seg;
                 seg.is_loop    = false;
-                seg.start_node = {row, col, degree[start_idx]};
+                seg.start_node = {row, col, degree[start_idx], cn[start_idx]};
                 seg.pixels.push_back({row, col});
 
                 std::size_t prev = start_idx;
@@ -1313,11 +1948,12 @@ extract_skeleton_segments(
 
                     seg.pixels.push_back({crow, ccol});
 
-                    if (degree[curr] != 2)
+                    if (cn[curr] != 2)
                     {
-                        seg.end_node = {crow, ccol, degree[curr]};
+                        seg.end_node = {crow, ccol, degree[curr], cn[curr]};
                         break;
                     }
+
 
                     const std::vector<std::size_t> curr_nbrs =
                         foreground_neighbours(curr);
@@ -1325,7 +1961,7 @@ extract_skeleton_segments(
                     if (curr_nbrs.size() != 2)
                     {
                         // Conservative fallback on malformed local topology.
-                        seg.end_node = {crow, ccol, degree[curr]};
+                        seg.end_node = {crow, ccol, degree[curr], cn[curr]};
                         break;
                     }
 
@@ -1341,7 +1977,7 @@ extract_skeleton_segments(
                     }
                     else
                     {
-                        seg.end_node = {crow, ccol, degree[curr]};
+                        seg.end_node = {crow, ccol, degree[curr], cn[curr]};
                         break;
                     }
 
@@ -1349,7 +1985,7 @@ extract_skeleton_segments(
 
                     if (visited_edges.find(e) != visited_edges.end())
                     {
-                        seg.end_node = {crow, ccol, degree[curr]};
+                        seg.end_node = {crow, ccol, degree[curr], cn[curr]};
                         break;
                     }
 
@@ -1372,7 +2008,8 @@ extract_skeleton_segments(
         {
             const std::size_t seed = idx_of(row, col);
             if (!valid[seed] || !work[seed]) continue;
-            if (degree[seed] != 2) continue;
+            if (cn[seed] != 2) continue;
+
 
             const std::vector<std::size_t> seed_nbrs =
                 foreground_neighbours(seed);
@@ -1394,8 +2031,9 @@ extract_skeleton_segments(
 
             skeleton_segment seg;
             seg.is_loop    = true;
-            seg.start_node = {row, col, 2};
-            seg.end_node   = {row, col, 2};
+            seg.start_node = {row, col, degree[seed], cn[seed]};
+            seg.end_node   = {row, col, degree[seed], cn[seed]};
+
             seg.pixels.push_back({row, col});
 
             std::size_t prev = seed;
@@ -1417,7 +2055,7 @@ extract_skeleton_segments(
                 {
                     // Unexpected malformed topology; degrade gracefully.
                     seg.is_loop  = false;
-                    seg.end_node = {crow, ccol, degree[curr]};
+                    seg.end_node = {crow, ccol, degree[curr], cn[curr]};
                     break;
                 }
 
@@ -1435,7 +2073,7 @@ extract_skeleton_segments(
                 if (next == static_cast<std::size_t>(-1))
                 {
                     seg.is_loop  = false;
-                    seg.end_node = {crow, ccol, degree[curr]};
+                    seg.end_node = {crow, ccol, degree[curr], cn[curr]};
                     break;
                 }
 
@@ -1450,7 +2088,7 @@ extract_skeleton_segments(
                 if (visited_edges.find(e) != visited_edges.end())
                 {
                     seg.is_loop  = false;
-                    seg.end_node = {crow, ccol, degree[curr]};
+                    seg.end_node = {crow, ccol, degree[curr], cn[curr]};
                     break;
                 }
 

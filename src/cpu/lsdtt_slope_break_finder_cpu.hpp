@@ -76,6 +76,7 @@ struct slope_break_request
     // -------------------------------------------------------------------------
     bool extract_belt_centreline = false;
     int  centreline_max_spur_pixels = 10;
+    int  centreline_max_terminal_loop_pixels = 10;
     int  centreline_min_component_pixels = 1;
 
     // -------------------------------------------------------------------------
@@ -260,6 +261,7 @@ struct vec_skeleton_request
 
     // Skeleton post-processing
     int spur_max_pixels      = 10;
+    int terminal_loop_max_pixels = 10;    
     int min_component_pixels = 1;
 
     // Elevation-based contour connection of skeleton endpoints.
@@ -332,8 +334,9 @@ struct curvature_skeleton_request
     double profile_relief_threshold     = 0.1;
 
     // --- Shared skeleton post-processing ---
-    int spur_max_pixels       = 10;
-    int min_component_pixels  = 1;
+    int spur_max_pixels          = 10;
+    int terminal_loop_max_pixels = 10;
+    int min_component_pixels     = 1;
 
     int n_threads = 0;
 };
