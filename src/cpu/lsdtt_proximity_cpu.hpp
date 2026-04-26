@@ -91,6 +91,29 @@ lsdtt_raster_cpu distance_to_point_set(
 );
 
 // =============================================================================
+// difference_to_nearest_true_mask_value
+//
+// For each valid pixel, finds the nearest valid pixel where `binary_mask > 0.5`
+// and returns:
+//
+//   output(pixel) = values(pixel) - values(nearest_true_mask_pixel)
+//
+// Pixels that are themselves true in the mask get 0.
+// Output nodata is assigned where either input raster is nodata/invalid.
+//
+// The rasters must be co-registered and in a projected CRS with metre units.
+//
+// If the mask contains no valid true pixels, the output is nodata everywhere.
+// =============================================================================
+lsdtt_raster_cpu difference_to_nearest_true_mask_value(
+    const lsdtt_raster_cpu& binary_mask,
+    const lsdtt_raster_cpu& values,
+    int                     n_threads = 0
+);
+
+
+
+// =============================================================================
 // swath_distances
 // =============================================================================
 struct swath_distances

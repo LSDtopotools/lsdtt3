@@ -149,6 +149,162 @@ static void dt2d(
     }
 }
 
+
+// =============================================================================
+// Internal: 1-D Felzenszwalb-Huttenlocher lower-envelope EDT with argmin
+//
+// Input  : f[0..n-1]
+// Output : d[0..n-1]    — squared EDT
+//          arg[0..n-1]  — index of the parabola/source chosen for each output
+// =============================================================================
+static void dt1d_with_argmin(
+    const std::vector<double>& f,
+    std::vector<double>&       d,
+    std::vector<int>&          arg,
+    std::size_t                n)
+{
+    std::vector<int>    v(n);
+    std::vector<double> z(n + 1);
+
+    int k = 0;
+    v[0]  = 0;
+    z[0]  = -std::numeric_limits<double>::infinity();
+    z[1]  =  std::numeric_limits<double>::infinity();
+
+    for (std::size_t q = 1; q < n; ++q)
+    {
+        double s;
+        while (true)
+        {
+            const int vk = v[k];
+            s = ((f[q] + static_cast<double>(q * q)) -
+                 (f[static_cast<std::size_t>(vk)] + static_cast<double>(vk * vk))) /
+                (2.0 * (static_cast<double>(q) - static_cast<double>(vk)));
+            if (s > z[static_cast<std::size_t>(k)])
+                break;
+            --k;
+        }
+        ++k;
+        v[static_cast<std::size_t>(k)] = static_cast<int>(q);
+        z[static_cast<std::size_t>(k)] = s;
+        z[static_cast<std::size_t>(k) + 1] = std::numeric_limits<double>::infinity();
+    }
+
+    k = 0;
+    for (std::size_t q = 0; q < n; ++q)
+    {
+        while (z[static_cast<std::size_t>(k) + 1] < static_cast<double>(q))
+            ++k;
+        const int vk = v[static_cast<std::size_t>(k)];
+        const double dq = static_cast<double>(q) - static_cast<double>(vk);
+        d[q]   = dq * dq + f[static_cast<std::size_t>(vk)];
+        arg[q] = vk;
+    }
+}
+
+// =============================================================================
+// Internal: 2-D separable EDT with nearest-source tracking
+//
+// On return:
+//   sq_dist[i]             = squared Euclidean distance in pixel units
+//   nearest_source_flat[i] = flat index of the nearest source pixel
+//
+// Any nodata masking is handled by the caller afterwards.
+// =============================================================================
+static void dt2d_with_nearest_source(
+    std::vector<double>&          sq_dist,
+    std::vector<std::int64_t>&    nearest_source_flat,
+    int                           n_rows,
+    int                           n_cols,
+    int                           n_threads)
+{
+    const std::size_t nr = static_cast<std::size_t>(n_rows);
+    const std::size_t nc = static_cast<std::size_t>(n_cols);
+    const std::size_t npix = nr * nc;
+
+    // For each pixel after the column pass, store the source row selected
+    // within that pixel's column.
+    std::vector<int> col_source_row(npix, -1);
+
+    // Clamp "infinite" values to something safely larger than any real squared
+    // distance in the grid.
+    const double large =
+        static_cast<double>(n_rows + n_cols) * static_cast<double>(n_rows + n_cols);
+
+    // -------------------------------------------------------------------------
+    // Pass 1: transform columns, tracking nearest source row in each column.
+    // -------------------------------------------------------------------------
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+    for (int c = 0; c < n_cols; ++c)
+    {
+        std::vector<double> f(nr), d(nr);
+        std::vector<int>    arg(nr);
+
+        for (std::size_t r = 0; r < nr; ++r)
+        {
+            double v = sq_dist[r * nc + static_cast<std::size_t>(c)];
+            if (v > large) v = large;
+            f[r] = v;
+        }
+
+        dt1d_with_argmin(f, d, arg, nr);
+
+        for (std::size_t r = 0; r < nr; ++r)
+        {
+            const std::size_t idx = r * nc + static_cast<std::size_t>(c);
+            sq_dist[idx] = d[r];
+            col_source_row[idx] = arg[r];
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pass 2: transform rows, tracking best source column, then recover the
+    // full source pixel as (source_row_from_pass1, selected_column).
+    // -------------------------------------------------------------------------
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+    for (int r = 0; r < n_rows; ++r)
+    {
+        std::vector<double> f(nc), d(nc);
+        std::vector<int>    arg(nc);
+
+        const std::size_t row_off = static_cast<std::size_t>(r) * nc;
+
+        for (std::size_t c = 0; c < nc; ++c)
+        {
+            double v = sq_dist[row_off + c];
+            if (v > large) v = large;
+            f[c] = v;
+        }
+
+        dt1d_with_argmin(f, d, arg, nc);
+
+        for (std::size_t c = 0; c < nc; ++c)
+        {
+            sq_dist[row_off + c] = d[c];
+
+            const int src_col = arg[c];
+            const int src_row = col_source_row[row_off + static_cast<std::size_t>(src_col)];
+
+            if (src_row >= 0)
+            {
+                nearest_source_flat[row_off + c] =
+                    static_cast<std::int64_t>(src_row) * static_cast<std::int64_t>(n_cols) +
+                    static_cast<std::int64_t>(src_col);
+            }
+            else
+            {
+                nearest_source_flat[row_off + c] = -1;
+            }
+        }
+    }
+}
+
+
+
 // =============================================================================
 // euclidean_distance_transform
 // =============================================================================
@@ -232,6 +388,117 @@ lsdtt_raster_cpu distance_to_point_set(
     lsdtt_raster_cpu binary(std::move(src_data), std::move(src_mask), meta);
     return euclidean_distance_transform(binary, n_threads);
 }
+
+
+// =============================================================================
+// difference_to_nearest_true_mask_value
+// =============================================================================
+lsdtt_raster_cpu difference_to_nearest_true_mask_value(
+    const lsdtt_raster_cpu& binary_mask,
+    const lsdtt_raster_cpu& values,
+    int                     n_threads)
+{
+    const lsdtt_raster_meta& mmeta = binary_mask.get_meta();
+    const lsdtt_raster_meta& vmeta = values.get_meta();
+
+    if (!mmeta.is_valid() || !vmeta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::difference_to_nearest_true_mask_value: invalid raster metadata");
+
+    mmeta.check_projected_metres();
+    vmeta.check_projected_metres();
+
+    if (mmeta.n_rows != vmeta.n_rows ||
+        mmeta.n_cols != vmeta.n_cols ||
+        mmeta.cell_size != vmeta.cell_size ||
+        mmeta.x_min != vmeta.x_min ||
+        mmeta.y_max() != vmeta.y_max())
+    {
+        throw std::runtime_error(
+            "lsdtt::difference_to_nearest_true_mask_value: rasters are not co-registered");
+    }
+
+    const int threads = resolve_thread_count(n_threads);
+    const int nr      = vmeta.n_rows;
+    const int nc      = vmeta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
+
+    const std::vector<float>&   mask_data = binary_mask.get_data();
+    const std::vector<uint8_t>& mask_mask = binary_mask.get_mask();
+
+    const std::vector<float>&   val_data  = values.get_data();
+    const std::vector<uint8_t>& val_mask  = values.get_mask();
+
+    const double INF = std::numeric_limits<double>::infinity();
+    const float  ndv = static_cast<float>(vmeta.no_data_value);
+
+    // Valid output domain = pixels valid in both rasters.
+    // Seeds = valid pixels where binary_mask > 0.5.
+    std::vector<double>       sq_dist(npix, INF);
+    std::vector<std::int64_t> nearest_source_flat(npix, -1);
+
+    bool have_seed = false;
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const bool valid_mask_pixel =
+            mask_mask[i] != 0 &&
+            std::isfinite(mask_data[i]) &&
+            !mmeta.is_nodata(mask_data[i]);
+
+        const bool valid_value_pixel =
+            val_mask[i] != 0 &&
+            std::isfinite(val_data[i]) &&
+            !vmeta.is_nodata(val_data[i]);
+
+        if (!(valid_mask_pixel && valid_value_pixel))
+            continue;
+
+        if (mask_data[i] > 0.5f)
+        {
+            sq_dist[i] = 0.0;
+            have_seed = true;
+        }
+    }
+
+    std::vector<float>   out(npix, ndv);
+    std::vector<uint8_t> omsk(npix, uint8_t{0});
+
+    // No true pixels in the mask -> undefined everywhere.
+    if (!have_seed)
+        return lsdtt_raster_cpu(std::move(out), std::move(omsk), vmeta);
+
+    dt2d_with_nearest_source(sq_dist, nearest_source_flat, nr, nc, threads);
+
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const bool valid_mask_pixel =
+            mask_mask[i] != 0 &&
+            std::isfinite(mask_data[i]) &&
+            !mmeta.is_nodata(mask_data[i]);
+
+        const bool valid_value_pixel =
+            val_mask[i] != 0 &&
+            std::isfinite(val_data[i]) &&
+            !vmeta.is_nodata(val_data[i]);
+
+        if (!(valid_mask_pixel && valid_value_pixel))
+            continue;
+
+        const std::int64_t src = nearest_source_flat[i];
+        if (src < 0 || static_cast<std::size_t>(src) >= npix)
+            continue;
+
+        // The nearest source must also be valid in the value raster because
+        // seeds were only created where both rasters were valid.
+        out[i]  = val_data[i] - val_data[static_cast<std::size_t>(src)];
+        omsk[i] = uint8_t{1};
+    }
+
+    return lsdtt_raster_cpu(std::move(out), std::move(omsk), vmeta);
+}
+
+
 
 // =============================================================================
 // compute_swath_distances
@@ -364,6 +631,7 @@ swath_distances compute_swath_distances(
 
     return result;
 }
+
 
 // =============================================================================
 // connect_flat_surfaces_to_channels — internal helpers
