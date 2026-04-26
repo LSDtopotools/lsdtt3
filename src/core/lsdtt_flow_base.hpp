@@ -261,6 +261,19 @@ public:
         raster_output_format format = raster_output_format::cog
     ) const = 0;
 
+    // Drainage area with upstream injection from a point vector file.
+    // Each successfully mapped point adds its drainage_area_field attribute
+    // (in raster map units squared) to that pixel's initial weight before
+    // accumulation, allowing upstream area entering from outside the tile to
+    // be injected at edge-crossing river pixels.
+    // Requires build_topological_order = true.
+    // Default implementation throws std::runtime_error; concrete subclasses
+    // override this where supported.
+    [[nodiscard]] virtual lsdtt_raster_result get_drainage_area_raster_with_injection(
+        const std::string& vector_path,
+        const std::string& drainage_area_field = "drainage_area"
+    ) const;
+
     // Drainage area — exclude self convention.
     // Value = (n_contributing_pixels - 1) * cell_size^2  (square map units).
     // Headwater pixels return 0.0.

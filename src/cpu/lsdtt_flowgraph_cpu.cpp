@@ -28,11 +28,15 @@
 
 #include "lsdtt_flowgraph_cpu.hpp"
 
+#include "../core/lsdtt_data_loader.hpp"
+#include "../core/lsdtt_point_input.hpp"
+
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <queue>
 #include <stdexcept>
+#include <string>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -973,6 +977,39 @@ lsdtt_raster_result lsdtt_flowgraph_cpu::accumulate_raster(
     }
 
     return result;
+}
+
+// =============================================================================
+// get_drainage_area_raster_with_injection
+// =============================================================================
+
+lsdtt_raster_result lsdtt_flowgraph_cpu::get_drainage_area_raster_with_injection(
+    const std::string& vector_path,
+    const std::string& drainage_area_field) const
+{
+    const std::vector<lsdtt_drainage_injection_record> injections =
+        load_drainage_injection_points(vector_path, meta_, drainage_area_field);
+
+    const double pixel_area = meta_.cell_size * meta_.cell_size;
+
+    std::vector<double> weights(static_cast<std::size_t>(n_cells_), pixel_area);
+
+    for (const auto& rec : injections)
+        weights[static_cast<std::size_t>(rec.flat)] += rec.drainage_area_m2;
+
+    return accumulate_raster(weights);
+}
+
+void lsdtt_flowgraph_cpu::write_drainage_area_raster_with_injection(
+    const std::string& vector_path,
+    const std::string& out_path,
+    raster_output_format format,
+    const std::string& drainage_area_field) const
+{
+    lsdtt_raster_result r =
+        get_drainage_area_raster_with_injection(vector_path, drainage_area_field);
+    lsdtt_data_loader loader;
+    loader.write_full(r, out_path, format);
 }
 
 // =============================================================================

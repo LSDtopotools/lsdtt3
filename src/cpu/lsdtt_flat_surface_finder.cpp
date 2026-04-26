@@ -540,10 +540,13 @@ flat_surface_result find_flat_surfaces(
         const std::size_t npix =
             static_cast<std::size_t>(nrows) * ncols;
 
-        // Label before riser removal (stored in result for output)
+        // Label before riser removal (stored in result for output).
+        // D4 connectivity: flat polygons that only touch diagonally are
+        // distinct surfaces and should not be merged into one label.
         result.labelled_flat_mask_pre_riser = label_binary_components_by_size(
             result.combined_flat_mask,
-            std::max(1, request.min_component_pixels)
+            std::max(1, request.min_component_pixels),
+            pixel_connectivity::d4
         );
 
         // η² bimodality on raw DEM elevations (larger window, riser-scale)
@@ -675,11 +678,13 @@ flat_surface_result find_flat_surfaces(
     }
 
     // -------------------------------------------------------------------------
-    // Final labelling
+    // Final labelling — D4 so flat polygons touching only diagonally are
+    // kept as distinct labelled components.
     // -------------------------------------------------------------------------
     result.labelled_flat_mask = label_binary_components_by_size(
         *mask_for_labelling,
-        std::max(1, request.min_component_pixels)
+        std::max(1, request.min_component_pixels),
+        pixel_connectivity::d4
     );
 
     return result;

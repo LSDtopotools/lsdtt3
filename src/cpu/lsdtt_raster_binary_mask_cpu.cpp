@@ -975,7 +975,8 @@ lsdtt_raster_cpu binary_directional_closing(
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu filter_binary_components_by_size(
     const lsdtt_raster_cpu& binary,
-    int                     min_component_pixels)
+    int                     min_component_pixels,
+    pixel_connectivity      connectivity)
 {
     const lsdtt_raster_meta& meta = binary.get_meta();
 
@@ -1059,6 +1060,8 @@ lsdtt_raster_cpu filter_binary_components_by_size(
                     for (int dc = -1; dc <= 1; ++dc)
                     {
                         if (dr == 0 && dc == 0) continue;
+                        if (connectivity == pixel_connectivity::d4 &&
+                            dr != 0 && dc != 0) continue;
 
                         const int rr = row + dr;
                         const int cc = col + dc;
@@ -1100,7 +1103,8 @@ lsdtt_raster_cpu filter_binary_components_by_size(
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu label_binary_components_by_size(
     const lsdtt_raster_cpu& binary,
-    int                     min_component_pixels)
+    int                     min_component_pixels,
+    pixel_connectivity      connectivity)
 {
     const lsdtt_raster_meta& meta = binary.get_meta();
 
@@ -1184,6 +1188,8 @@ lsdtt_raster_cpu label_binary_components_by_size(
                     for (int dc = -1; dc <= 1; ++dc)
                     {
                         if (dr == 0 && dc == 0) continue;
+                        if (connectivity == pixel_connectivity::d4 &&
+                            dr != 0 && dc != 0) continue;
 
                         const int rr = row + dr;
                         const int cc = col + dc;

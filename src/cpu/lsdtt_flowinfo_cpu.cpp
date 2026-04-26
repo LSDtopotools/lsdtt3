@@ -8,6 +8,7 @@
 
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "../core/lsdtt_data_loader.hpp"
+#include "../core/lsdtt_point_input.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -1744,6 +1745,95 @@ void lsdtt_flowinfo::write_n_contributing_pixels_exclude_outlet_raster(
     loader.write_full(r, out_path, format);
 }
 
+// =============================================================================
+// accumulate
+// =============================================================================
+
+std::vector<double> lsdtt_flowinfo::accumulate(
+    const std::vector<double>& cell_weights) const
+{
+    require_built();
+
+    if (!has_topological_order_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::accumulate: topological_order not built - "
+            "set build_topological_order = true in lsdtt_flowinfo_options"
+        );
+    }
+
+    const std::int64_t n_cells    = static_cast<std::int64_t>(mask_.size());
+    const double       default_w  = meta_.cell_size * meta_.cell_size;
+    const bool         use_default = cell_weights.empty();
+
+    if (!use_default && static_cast<std::int64_t>(cell_weights.size()) != n_cells)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowinfo::accumulate: cell_weights size must equal "
+            "n_rows * n_cols"
+        );
+    }
+
+    if (!use_default)
+    {
+        for (std::int64_t flat = 0; flat < n_cells; ++flat)
+        {
+            if (mask_.data()[flat] == 0) continue;
+            if (!std::isfinite(cell_weights[flat]))
+            {
+                throw std::invalid_argument(
+                    "lsdtt_flowinfo::accumulate: cell_weights must be finite "
+                    "for all valid cells"
+                );
+            }
+        }
+    }
+
+    std::vector<double> accum(static_cast<std::size_t>(n_cells), 0.0);
+
+    for (std::int64_t flat : topological_order_)
+        accum[static_cast<std::size_t>(flat)] = use_default ? default_w : cell_weights[static_cast<std::size_t>(flat)];
+
+    // Forward push: each cell propagates its accumulated value to its receiver.
+    // receiver_ holds outlet_receiver (-2) for outlets and nodata_receiver (-1)
+    // for nodata cells; both are negative so the rec >= 0 guard is sufficient.
+    for (std::int64_t flat : topological_order_)
+    {
+        const std::int64_t rec = receiver_.data()[static_cast<std::size_t>(flat)];
+        if (rec >= 0)
+            accum[static_cast<std::size_t>(rec)] += accum[static_cast<std::size_t>(flat)];
+    }
+
+    return accum;
+}
+
+
+// =============================================================================
+// accumulate_raster
+// =============================================================================
+
+lsdtt_raster_result lsdtt_flowinfo::accumulate_raster(
+    const std::vector<double>& cell_weights) const
+{
+    const std::vector<double> accum = accumulate(cell_weights);
+    const float               ndv   = static_cast<float>(meta_.no_data_value);
+    const std::size_t         n     = mask_.size();
+
+    lsdtt_raster_result result;
+    result.meta = meta_;
+    result.data.resize(n, ndv);
+    result.mask.resize(n, 0);
+
+    for (std::int64_t flat : topological_order_)
+    {
+        result.data[static_cast<std::size_t>(flat)] = static_cast<float>(accum[static_cast<std::size_t>(flat)]);
+        result.mask[static_cast<std::size_t>(flat)] = 1;
+    }
+
+    return result;
+}
+
+
 // -----------------------------------------------------------------------------
 // get_drainage_area_raster  (include-self convention)
 //
@@ -1849,6 +1939,42 @@ void lsdtt_flowinfo::write_drainage_area_exclude_outlet_raster(
 ) const
 {
     lsdtt_raster_result r = get_drainage_area_exclude_outlet_raster();
+    lsdtt_data_loader loader;
+    loader.write_full(r, out_path, format);
+}
+
+// =============================================================================
+// get_drainage_area_raster_with_injection
+// =============================================================================
+
+lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster_with_injection(
+    const std::string& vector_path,
+    const std::string& drainage_area_field) const
+{
+    require_built();
+
+    const std::vector<lsdtt_drainage_injection_record> injections =
+        load_drainage_injection_points(vector_path, meta_, drainage_area_field);
+
+    const std::int64_t n_cells    = static_cast<std::int64_t>(mask_.size());
+    const double       pixel_area = meta_.cell_size * meta_.cell_size;
+
+    std::vector<double> weights(static_cast<std::size_t>(n_cells), pixel_area);
+
+    for (const auto& rec : injections)
+        weights[static_cast<std::size_t>(rec.flat)] += rec.drainage_area_m2;
+
+    return accumulate_raster(weights);
+}
+
+void lsdtt_flowinfo::write_drainage_area_raster_with_injection(
+    const std::string& vector_path,
+    const std::string& out_path,
+    raster_output_format format,
+    const std::string& drainage_area_field) const
+{
+    lsdtt_raster_result r =
+        get_drainage_area_raster_with_injection(vector_path, drainage_area_field);
     lsdtt_data_loader loader;
     loader.write_full(r, out_path, format);
 }

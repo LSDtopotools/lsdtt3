@@ -55,6 +55,22 @@
 namespace lsdtt {
 
 // -----------------------------------------------------------------------------
+// pixel_connectivity
+//
+// Controls how neighbouring pixels are connected in component labelling and
+// filtering.
+//
+//   d4 — 4-connectivity: north, south, east, west only.
+//         Diagonal pixels are not considered neighbours.
+//         Use for flat-surface labelling where channels (which cut
+//         diagonally) should separate adjacent flats into distinct components.
+//
+//   d8 — 8-connectivity: all eight surrounding pixels.
+//         Default.  Use for all other binary-mask operations.
+// -----------------------------------------------------------------------------
+enum class pixel_connectivity { d4, d8 };
+
+// -----------------------------------------------------------------------------
 // binary_morphological_dilation
 //
 // Dilation of a binary raster with a structuring element of radius_metres.
@@ -197,8 +213,11 @@ lsdtt_raster_cpu binary_fill_holes(
 // -----------------------------------------------------------------------------
 // filter_binary_components_by_size
 //
-// Removes 8-connected foreground components with fewer than
-// min_component_pixels pixels.
+// Removes foreground components with fewer than min_component_pixels pixels.
+//
+// connectivity
+//   d8 (default) — 8-connected components (includes diagonals).
+//   d4           — 4-connected components (cardinal directions only).
 //
 // Output:
 //   data = 1.0 for retained components
@@ -210,13 +229,21 @@ lsdtt_raster_cpu binary_fill_holes(
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu filter_binary_components_by_size(
     const lsdtt_raster_cpu& binary,
-    int                     min_component_pixels
+    int                     min_component_pixels,
+    pixel_connectivity      connectivity = pixel_connectivity::d8
 );
 
 // -----------------------------------------------------------------------------
 // label_binary_components_by_size
 //
-// Labels 8-connected foreground components that meet a minimum size threshold.
+// Labels foreground components that meet a minimum size threshold.
+//
+// connectivity
+//   d8 (default) — 8-connected components (includes diagonals).
+//   d4           — 4-connected components (cardinal directions only).
+//                  Use for flat-surface labelling so that channel pixels
+//                  (which are narrow, often diagonal) cleanly separate
+//                  adjacent flat polygons into distinct labelled regions.
 //
 // Output:
 //   data = 1,2,3,... for retained components
@@ -232,7 +259,8 @@ lsdtt_raster_cpu filter_binary_components_by_size(
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu label_binary_components_by_size(
     const lsdtt_raster_cpu& binary,
-    int                     min_component_pixels
+    int                     min_component_pixels,
+    pixel_connectivity      connectivity = pixel_connectivity::d8
 );
 
 } // namespace lsdtt

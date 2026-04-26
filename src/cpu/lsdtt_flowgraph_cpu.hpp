@@ -95,6 +95,7 @@
 #include <string>
 #include <vector>
 
+#include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
 #include "../core/lsdtt_raster_result.hpp"
 #include "../core/lsdtt_types.hpp"
@@ -348,6 +349,20 @@ public:
     // Convenience: accumulate() returned as an lsdtt_raster_result.
     [[nodiscard]] lsdtt_raster_result accumulate_raster(
         const std::vector<double>& cell_weights = {}
+    ) const;
+
+    // Drainage area with upstream injection from a point vector file.
+    // See lsdtt_flowinfo_cpu documentation for full semantics; the only
+    // difference here is that flow is D-infinity / MFD (fractional receivers).
+    [[nodiscard]] lsdtt_raster_result get_drainage_area_raster_with_injection(
+        const std::string& vector_path,
+        const std::string& drainage_area_field = "drainage_area"
+    ) const;
+    void write_drainage_area_raster_with_injection(
+        const std::string& vector_path,
+        const std::string& out_path,
+        raster_output_format format            = raster_output_format::cog,
+        const std::string& drainage_area_field = "drainage_area"
     ) const;
 
     // ------------------------------------------------------------------

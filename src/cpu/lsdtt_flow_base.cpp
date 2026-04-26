@@ -20,12 +20,24 @@
 // -----------------------------------------------------------------------------
 
 #include <stdexcept>
+#include <string>
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 
 namespace lsdtt
 {
+
+lsdtt_raster_result lsdtt_flow_base::get_drainage_area_raster_with_injection(
+    const std::string& /*vector_path*/,
+    const std::string& /*drainage_area_field*/) const
+{
+    throw std::runtime_error(
+        "lsdtt_flow_base::get_drainage_area_raster_with_injection: "
+        "not supported by this flow routing implementation"
+    );
+}
+
 
 std::int64_t get_largest_basin_outlet_flat(const lsdtt_flow_base& flow)
 {

@@ -74,9 +74,12 @@
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_break_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_labelled_raster_stats_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_contours_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -356,6 +359,11 @@ int main(int argc, char* argv[])
         "Requires run_plane_analysis = true."};
 
     // --- Channel / river network ---
+    bool_default_map["break_flats_with_channels"] = false;
+    help_map["break_flats_with_channels"] = {"bool","false",
+        "Breaks up the flat surface by turning to false in the flat mask the pixels that are on top of a channel.",
+        "Runs a separate routing step to network"};
+
     bool_default_map["write_channel_network"] = false;
     help_map["write_channel_network"] = {"bool","false",
         "Build and write a D8 channel/junction network.",""};
@@ -376,6 +384,13 @@ int main(int argc, char* argv[])
     int_default_map["channel_threshold_contributing_pixels"] = 1000;
     help_map["channel_threshold_contributing_pixels"] = {"int","1000",
         "Minimum D8 contributing-pixel count to classify a pixel as a channel head.",""};
+
+    string_default_map["drainage_injection_vector_file"] = "";
+    help_map["drainage_injection_vector_file"] = {"string","",
+        "Path to a point vector file for upstream drainage area injection.",
+        "Features must carry a numeric 'drainage_area' attribute (m²). "
+        "Useful when rivers enter the tile from outside its extent. "
+        "If empty, no injection is applied."};
 
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool","true",
@@ -579,8 +594,94 @@ int main(int argc, char* argv[])
 
         const int min_comp = ip["min_component_pixels"];
         std::cout << "Removing flat components < " << min_comp << " pixels...\n";
-        flat_mask = lsdtt::filter_binary_components_by_size(flat_mask, min_comp);
+        flat_mask = lsdtt::filter_binary_components_by_size(
+            flat_mask, min_comp, lsdtt::pixel_connectivity::d4);
     }
+
+
+    // -------------------------------------------------------------------------
+    // Break flats with channels
+    //
+    // Channel pixels are recorded in channel_break_pixels but flat_mask is NOT
+    // modified here.  Both channel breaks and slope breaks are derived from the
+    // same unmodified flat_mask and combined into the final labelling later.
+    // -------------------------------------------------------------------------
+    const std::size_t n_flat_pixels = flat_mask.get_data().size();
+    std::vector<uint8_t> channel_break_pixels(n_flat_pixels, 0);
+
+    if (bf["break_flats_with_channels"])
+    {
+        std::unique_ptr<lsdtt::lsdtt_flow_base> ch_flow;
+
+        std::cout << "\n--- D8 flow routing for channel network ---\n";
+        try
+        {
+            lsdtt::lsdtt_raster_cpu routing_dem = dem;
+            if (bf["fill_dem_for_flow_routing"])
+            {
+                std::cout << "Filling DEM for flow routing...\n";
+                routing_dem = lsdtt::fill_pits(
+                    dem, ff["fill_min_slope_for_routing"], ip["n_threads"]);
+            }
+
+            lsdtt::lsdtt_flowinfo_options fi_opts;
+            fi_opts.boundary_conditions       = sf["boundary_conditions"];
+            fi_opts.interior_nodata_is_outlet = true;
+            fi_opts.require_acyclic_graph     = true;
+            fi_opts.build_topological_order   = true;
+            fi_opts.build_s_vector            = true;
+            fi_opts.n_threads                 = ip["n_threads"];
+
+            ch_flow = lsdtt::make_flow_base(
+                routing_dem.get_data_array(),
+                routing_dem.get_mask_array(),
+                routing_dem.get_meta(),
+                fi_opts
+            );
+
+            // --- Drainage area (with optional upstream injection) ---
+            const std::string inj_path = sf["drainage_injection_vector_file"];
+
+            lsdtt::lsdtt_raster_result da_result;
+            if (!inj_path.empty())
+            {
+                std::cout << "Computing drainage area with injection from: "
+                          << inj_path << "\n";
+                da_result = ch_flow->get_drainage_area_raster_with_injection(inj_path);
+            }
+            else
+            {
+                std::cout << "Computing drainage area...\n";
+                da_result = ch_flow->get_drainage_area_raster();
+            }
+
+            // --- Record channel pixels (do not modify flat_mask) ---
+            const double pixel_area =
+                dem.get_meta().cell_size * dem.get_meta().cell_size;
+            const double da_threshold =
+                static_cast<double>(ip["channel_threshold_contributing_pixels"]) *
+                pixel_area;
+
+            std::cout << "Identifying channel pixels "
+                      << "(threshold=" << ip["channel_threshold_contributing_pixels"]
+                      << " pixels = " << da_threshold << " m²)...\n";
+
+            for (std::size_t i = 0; i < n_flat_pixels; ++i)
+            {
+                if (i < da_result.mask.size() &&
+                    da_result.mask[i] != 0 &&
+                    static_cast<double>(da_result.data[i]) >= da_threshold)
+                {
+                    channel_break_pixels[i] = 1;
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: channel flow routing failed: " << e.what() << "\n";
+        }
+    }
+
 
     // -------------------------------------------------------------------------
     // Write outputs
@@ -612,16 +713,9 @@ int main(int argc, char* argv[])
         loader.write_full(flat_mask.get_data(), flat_mask.get_meta(), p, out_format);
     }
 
-    // Labelled mask — always written (labelled from the post-processed flat_mask)
-    lsdtt::lsdtt_raster_cpu labelled_flat_mask =
-        lsdtt::label_binary_components_by_size(flat_mask, 1);
-    {
-        const std::string p = stem + "_labelled_flat_mask.tif";
-        std::cout << "Writing labelled flat mask (UInt32): " << p << "\n";
-        loader.write_full(labelled_flat_mask.get_data(),
-                          labelled_flat_mask.get_meta(), p, out_format,
-                          GDT_UInt32);
-    }
+    // labelled_flat_mask is populated after both channel and slope breaks are
+    // combined below.  Declare here so it is in scope for all downstream code.
+    lsdtt::lsdtt_raster_cpu labelled_flat_mask;
 
     // CDF CSV for relief
     if (!result.relief_smoothed_cdf.empty())
@@ -643,9 +737,17 @@ int main(int argc, char* argv[])
 
     write_dist("relief", result.relief_dist_fits);
 
+
+
     // -------------------------------------------------------------------------
     // Slope break detection (VEC adaptive threshold skeleton)
+    //
+    // Runs on the original flat_mask (unmodified by channel breaks).
+    // The connected centreline is hoisted out so it can be combined with
+    // channel_break_pixels in the final labelling step below.
     // -------------------------------------------------------------------------
+    lsdtt::lsdtt_raster_cpu slope_break_pixels;   // populated on success
+
     {
         lsdtt::vec_skeleton_request vsr;
         vsr.polyfit_lambda_metres           = static_cast<double>(ff["polyfit_lambda_metres"]);
@@ -788,11 +890,98 @@ int main(int argc, char* argv[])
             if (bf["write_slope_break_centreline_connected"])
                 write_r(vsres.skeleton_connected,
                         stem + "_slope_break_centreline_connected.tif");
+
+            // Hoist skeleton_connected for use in the combined labelling below.
+            slope_break_pixels = vsres.skeleton_connected;
         }
         catch (const std::exception& e)
         {
             std::cerr << "Warning: slope break finder failed: " << e.what() << "\n";
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Combined labelling: flat_mask minus channel pixels minus slope break pixels
+    //
+    // Both break masks were derived from the same unmodified flat_mask.
+    // Apply them together now to produce the final labelled surface map.
+    // -------------------------------------------------------------------------
+    {
+        std::cout << "\nBuilding combined break mask and labelling flat surfaces...\n";
+
+        lsdtt::lsdtt_raster_cpu broken_flat_mask = flat_mask;
+        std::vector<float>& bfm = broken_flat_mask.get_data();
+
+        // Apply channel breaks
+        for (std::size_t i = 0; i < n_flat_pixels; ++i)
+        {
+            if (channel_break_pixels[i] != 0)
+                bfm[i] = 0.0f;
+        }
+
+        // Apply slope break centreline
+        if (!slope_break_pixels.get_data().empty())
+        {
+            const std::vector<float>& sc = slope_break_pixels.get_data();
+            for (std::size_t i = 0; i < bfm.size(); ++i)
+            {
+                if (i < sc.size() && sc[i] > 0.5f)
+                    bfm[i] = 0.0f;
+            }
+        }
+
+        labelled_flat_mask = lsdtt::label_binary_components_by_size(
+            broken_flat_mask, 1, lsdtt::pixel_connectivity::d4);
+
+        {
+            const std::string p = stem + "_labelled_flat_mask.tif";
+            std::cout << "Writing labelled flat mask (UInt32): " << p << "\n";
+            loader.write_full(labelled_flat_mask.get_data(),
+                              labelled_flat_mask.get_meta(), p, out_format,
+                              GDT_UInt32);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Labelled raster stats (run on the final combined labels)
+    // -------------------------------------------------------------------------
+    {
+        lsdtt::labelled_raster_stats_request req_raststat;
+        req_raststat.minimum_label = 1;
+        req_raststat.min_values_per_label = 100;
+        req_raststat.compute_same_distribution_matrix = true;
+        req_raststat.ks_alpha = 0.05;
+        req_raststat.verbose = true;
+
+        lsdtt::labelled_raster_stats_result result_raststat =
+            lsdtt::analyse_labelled_raster_stats(labelled_flat_mask, dem, req_raststat);
+
+        std::cout << "Number of retained labels: "
+                  << result_raststat.n_labels() << "\n";
+
+        for (const auto& rec : result_raststat.records)
+        {
+            std::cout << "Label: " << rec.label
+                      << "  n=" << rec.stats.n_values
+                      << "  mean elevation=" << rec.stats.mean
+                      << "  median=" << rec.stats.median
+                      << "  stddev=" << rec.stats.stddev_population
+                      << "\n";
+        }
+
+        if (result_raststat.n_labels() >= 2)
+        {
+            std::cout << "Label " << result_raststat.records[0].label
+                      << " and label " << result_raststat.records[1].label
+                      << " same distribution? "
+                      << (result_raststat.same_distribution_matrix[0][1] ? "true" : "false")
+                      << "\n";
+        }
+
+        lsdtt::write_labelled_raster_stats_csv(
+            result_raststat, "labelled_raster_elevation_stats.csv");
+        lsdtt::write_labelled_raster_same_distribution_csv(
+            result_raststat, "labelled_raster_elevation_ks_matrix.csv");
     }
 
     // -------------------------------------------------------------------------

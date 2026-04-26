@@ -240,6 +240,54 @@ load_vector_point_layer_in_raster_crs(
 );
 
 // -----------------------------------------------------------------------------
+// lsdtt_drainage_injection_record
+//
+// One drainage-area injection record: a successfully-mapped raster pixel and
+// the upstream drainage area (in raster map units squared, e.g. m²) to add
+// to that pixel's initial weight before downstream accumulation.
+//
+// Typical use: a river crosses a tile edge and enters at a known pixel; the
+// caller loads these records, adds drainage_area_m2 to that pixel's initial
+// weight, then runs accumulate_raster() on the flow object.
+// -----------------------------------------------------------------------------
+struct lsdtt_drainage_injection_record
+{
+    int          point_id         = -1;
+    std::int64_t flat             = -1;
+    double       drainage_area_m2 = 0.0;
+};
+
+// -----------------------------------------------------------------------------
+// load_drainage_injection_points
+//
+// Reads a point vector layer (OGR-supported format: GeoPackage, Shapefile,
+// FlatGeobuf, GeoJSON, etc.), transforms each point into the raster CRS, maps
+// it onto a raster pixel, and reads a named numeric attribute as the upstream
+// drainage area to inject at that pixel.
+//
+// Only records that:
+//   - have a point geometry
+//   - map successfully onto the raster extent
+//   - carry a finite, non-negative value in drainage_area_field
+// are returned.  All other features are silently skipped.
+//
+// drainage_area_field
+//   Name of the numeric attribute holding the upstream drainage area in raster
+//   map units squared (e.g. m²).  Defaults to "drainage_area".
+//   If the field does not exist in the layer schema, std::runtime_error is thrown.
+//
+// layer_name
+//   Optional.  If empty, the first (or only) layer in the dataset is used.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_drainage_injection_record>
+load_drainage_injection_points(
+    const std::string&       vector_path,
+    const lsdtt_raster_meta& raster_meta,
+    const std::string&       drainage_area_field = "drainage_area",
+    const std::string&       layer_name          = ""
+);
+
+// -----------------------------------------------------------------------------
 // Convenience filters for downstream workflows
 //
 // These helpers extract only points that mapped successfully onto the raster.

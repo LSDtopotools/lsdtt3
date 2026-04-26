@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <initializer_list>
@@ -754,6 +755,125 @@ load_vector_point_layer_in_raster_crs(
     }
 
     return points;
+}
+
+// -----------------------------------------------------------------------------
+// load_drainage_injection_points
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_drainage_injection_record>
+load_drainage_injection_points(
+    const std::string&       vector_path,
+    const lsdtt_raster_meta& raster_meta,
+    const std::string&       drainage_area_field,
+    const std::string&       layer_name)
+{
+    ensure_gdal_init();
+
+    GDALDataset* raw_dataset = static_cast<GDALDataset*>(
+        GDALOpenEx(
+            vector_path.c_str(),
+            GDAL_OF_VECTOR | GDAL_OF_READONLY,
+            nullptr, nullptr, nullptr
+        )
+    );
+
+    if (!raw_dataset)
+    {
+        throw std::runtime_error(
+            "load_drainage_injection_points: could not open vector dataset: " +
+            vector_path
+        );
+    }
+
+    gdal_dataset_ptr dataset(raw_dataset);
+
+    OGRLayer* layer = select_vector_layer(dataset.get(), layer_name);
+
+    OGRFeatureDefn* defn = layer->GetLayerDefn();
+    const int field_idx = defn->GetFieldIndex(drainage_area_field.c_str());
+    if (field_idx < 0)
+    {
+        throw std::runtime_error(
+            "load_drainage_injection_points: field '" + drainage_area_field +
+            "' not found in layer '" + std::string(layer->GetName()) +
+            "' of dataset: " + vector_path
+        );
+    }
+
+    OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+    const oct_ptr transform =
+        make_layer_to_raster_transform(layer_srs, raster_meta);
+
+    std::vector<lsdtt_drainage_injection_record> records;
+    layer->ResetReading();
+
+    OGRFeature* feature = nullptr;
+    int next_point_id = 1;
+
+    while ((feature = layer->GetNextFeature()) != nullptr)
+    {
+        const int point_id = next_point_id++;
+
+        OGRGeometry* geometry = feature->GetGeometryRef();
+
+        if (geometry == nullptr ||
+            wkbFlatten(geometry->getGeometryType()) != wkbPoint)
+        {
+            OGRFeature::DestroyFeature(feature);
+            continue;
+        }
+
+        const OGRPoint* ogr_point = geometry->toPoint();
+        double x = ogr_point->getX();
+        double y = ogr_point->getY();
+
+        if (layer_srs == nullptr)
+        {
+            OGRFeature::DestroyFeature(feature);
+            continue;
+        }
+
+        if (!transform_xy(transform, x, y))
+        {
+            OGRFeature::DestroyFeature(feature);
+            continue;
+        }
+
+        lsdtt_input_point pt;
+        pt.x = x;
+        pt.y = y;
+        map_raster_xy_to_pixel(raster_meta, pt);
+
+        if (pt.status != lsdtt_point_input_status::success)
+        {
+            OGRFeature::DestroyFeature(feature);
+            continue;
+        }
+
+        if (!feature->IsFieldSetAndNotNull(field_idx))
+        {
+            OGRFeature::DestroyFeature(feature);
+            continue;
+        }
+
+        const double da = feature->GetFieldAsDouble(field_idx);
+
+        if (!std::isfinite(da) || da < 0.0)
+        {
+            OGRFeature::DestroyFeature(feature);
+            continue;
+        }
+
+        lsdtt_drainage_injection_record rec;
+        rec.point_id         = point_id;
+        rec.flat             = pt.flat;
+        rec.drainage_area_m2 = da;
+        records.push_back(rec);
+
+        OGRFeature::DestroyFeature(feature);
+    }
+
+    return records;
 }
 
 // -----------------------------------------------------------------------------

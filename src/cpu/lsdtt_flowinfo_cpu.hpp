@@ -454,6 +454,31 @@ public:
     }
 
     // -------------------------------------------------------------------------
+    // Weighted accumulation
+    //
+    // accumulate() performs a forward-push through the topological order,
+    // propagating each cell's value to its D8 receiver.
+    //
+    // cell_weights
+    //   Empty (default) → each valid cell contributes cell_size^2 (m^2).
+    //   Sized → caller-supplied per-cell initial values; use this to inject
+    //   upstream drainage area at edge pixels where a river enters the tile.
+    //   nodata cells should have weight 0.  All finite values are accepted.
+    //   Size must equal n_rows * n_cols.
+    //
+    // Requires build_topological_order = true in lsdtt_flowinfo_options.
+    // Returns a vector of length n_rows*n_cols; nodata cells hold 0.
+    // -------------------------------------------------------------------------
+    [[nodiscard]] std::vector<double> accumulate(
+        const std::vector<double>& cell_weights = {}
+    ) const;
+
+    // Convenience: accumulate() returned as an lsdtt_raster_result.
+    [[nodiscard]] lsdtt_raster_result accumulate_raster(
+        const std::vector<double>& cell_weights = {}
+    ) const;
+
+    // -------------------------------------------------------------------------
     // Source extraction
     // -------------------------------------------------------------------------
     [[nodiscard]] std::vector<std::int64_t>
@@ -491,6 +516,24 @@ public:
         const std::string& out_path,
         raster_output_format format = raster_output_format::cog
     ) const override;
+
+    // Drainage area with upstream injection from a point vector file.
+    // Reads a point layer whose features carry a numeric drainage_area_field
+    // attribute (default "drainage_area", in raster map units squared).
+    // Each successfully mapped point adds its attribute value to that pixel's
+    // initial weight before accumulation, allowing upstream area from outside
+    // the tile to be injected at edge-crossing river pixels.
+    // Requires build_topological_order = true in lsdtt_flowinfo_options.
+    [[nodiscard]] lsdtt_raster_result get_drainage_area_raster_with_injection(
+        const std::string& vector_path,
+        const std::string& drainage_area_field = "drainage_area"
+    ) const override;
+    void write_drainage_area_raster_with_injection(
+        const std::string& vector_path,
+        const std::string& out_path,
+        raster_output_format format          = raster_output_format::cog,
+        const std::string& drainage_area_field = "drainage_area"
+    ) const;
 
     [[nodiscard]] lsdtt_raster_result get_distance_from_outlet_raster() const override;
 
