@@ -137,6 +137,14 @@ lsdtt_raster_cpu compute_hillshade(
 );
 
 // -----------------------------------------------------------------------------
+// 3x3 gradient (optimised for speed. Very fast.)
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(
+    const lsdtt_raster_cpu& raster
+);
+
+
+// -----------------------------------------------------------------------------
 // moving_window_mean
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu moving_window_mean(

@@ -278,6 +278,79 @@ lsdtt_raster_cpu compute_hillshade(
     );
 }
 
+
+
+// -----------------------------------------------------------------------------
+// compute_gradient_magnitude_3x3_square
+//
+// Centred-difference gradient magnitude on a full 3x3 square neighbourhood:
+//
+//   dzdx = (z_E - z_W) / (2L)
+//   dzdy = (z_N - z_S) / (2L)
+//   gradient_magnitude = sqrt(dzdx^2 + dzdy^2)
+//
+// Requires a fully valid 3x3 neighbourhood; otherwise output is nodata.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(
+    const lsdtt_raster_cpu& raster)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_gradient_magnitude_3x3_square: input raster metadata is invalid"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int    nrows   = meta.n_rows;
+    const int    ncols   = meta.n_cols;
+    const double L       = meta.cell_size;
+    const double inv_2L  = 1.0 / (2.0 * L);
+    const float  nodata  = static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static)
+#endif
+    for (int row = 1; row < nrows - 1; ++row)
+    {
+        for (int col = 1; col < ncols - 1; ++col)
+        {
+            if (window3x3_has_nodata(dem, mask, meta, row, col)) continue;
+
+            const double z_n = static_cast<double>(dem(row - 1, col));
+            const double z_s = static_cast<double>(dem(row + 1, col));
+            const double z_e = static_cast<double>(dem(row, col + 1));
+            const double z_w = static_cast<double>(dem(row, col - 1));
+
+            const double dzdx = (z_e - z_w) * inv_2L;
+            const double dzdy = (z_n - z_s) * inv_2L;
+
+            const double gradient_magnitude =
+                std::sqrt(dzdx * dzdx + dzdy * dzdy);
+
+            out(row, col)      = static_cast<float>(gradient_magnitude);
+            out_mask(row, col) = 1;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
+
+
 // -----------------------------------------------------------------------------
 // moving_window_mean
 // -----------------------------------------------------------------------------
@@ -2001,11 +2074,126 @@ static bool solve_6x6(double A[6][6], double b[6], double x[6])
     return true;
 }
 
+
+// -----------------------------------------------------------------------------
+// total_curvature_3x3_square_fast
+//
+// Fast path for the common 3x3 square case.
+//
+// If the full 3x3 neighbourhood is valid and in-bounds, use the direct
+// 5-point Laplacian stencil:
+//
+//   laplacian = (z_E + z_W + z_N + z_S - 4*z_C) / L^2
+//
+// Otherwise, fall back to the existing local OLS fit over the in-bounds valid
+// subset of the 3x3 window. This preserves the current behaviour where edge
+// pixels or windows with some nodata can still produce output when at least
+// six valid samples remain and the local system is solvable.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu total_curvature_3x3_square_fast(
+    const lsdtt_raster_cpu& raster)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    const int    nrows   = meta.n_rows;
+    const int    ncols   = meta.n_cols;
+    const float  nodata  = static_cast<float>(meta.no_data_value);
+    const double L       = meta.cell_size;
+    const double inv_l2  = 1.0 / (L * L);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const bool is_interior =
+                row > 0 && row < nrows - 1 &&
+                col > 0 && col < ncols - 1;
+
+            // Fast stencil path when the full 3x3 is available and valid.
+            if (is_interior &&
+                !window3x3_has_nodata(dem, mask, meta, row, col))
+            {
+                const double z_c = static_cast<double>(dem(row,     col));
+                const double z_n = static_cast<double>(dem(row - 1, col));
+                const double z_s = static_cast<double>(dem(row + 1, col));
+                const double z_e = static_cast<double>(dem(row,     col + 1));
+                const double z_w = static_cast<double>(dem(row,     col - 1));
+
+                const double laplacian =
+                    (z_e + z_w + z_n + z_s - 4.0 * z_c) * inv_l2;
+
+                out(row, col)      = static_cast<float>(laplacian);
+                out_mask(row, col) = 1;
+                continue;
+            }
+
+            // Fallback to the existing local quadratic OLS fit on the valid
+            // in-bounds subset of the 3x3 window.
+            double AtA[6][6] = {};
+            double Atz[6]    = {};
+            int    n_valid   = 0;
+
+            for (int dr = -1; dr <= 1; ++dr)
+            {
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    const int wr = row + dr;
+                    const int wc = col + dc;
+
+                    if (wr < 0 || wr >= nrows || wc < 0 || wc >= ncols) continue;
+                    if (mask(wr, wc) == 0) continue;
+                    if (meta.is_nodata(dem(wr, wc))) continue;
+
+                    const double x = static_cast<double>(dc) * L;
+                    const double y = static_cast<double>(-dr) * L;
+                    const double z = static_cast<double>(dem(wr, wc));
+
+                    const double basis[6] = { x*x, y*y, x*y, x, y, 1.0 };
+
+                    for (int i = 0; i < 6; ++i)
+                    {
+                        for (int j = 0; j < 6; ++j)
+                        {
+                            AtA[i][j] += basis[i] * basis[j];
+                        }
+                        Atz[i] += basis[i] * z;
+                    }
+
+                    ++n_valid;
+                }
+            }
+
+            if (n_valid < 6) continue;
+
+            double coeffs[6] = {};
+            if (!solve_6x6(AtA, Atz, coeffs)) continue;
+
+            out(row, col)      = static_cast<float>(2.0 * (coeffs[0] + coeffs[1]));
+            out_mask(row, col) = 1;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
+
+
 lsdtt_raster_cpu moving_window_total_curvature(
     const lsdtt_raster_cpu& raster,
     double                  radius_metres,
-    window_shape            shape
-)
+    window_shape            shape)
 {
     const lsdtt_raster_meta& meta = raster.get_meta();
 
@@ -2023,6 +2211,17 @@ lsdtt_raster_cpu moving_window_total_curvature(
     const float nodata = static_cast<float>(meta.no_data_value);
     const double L     = meta.cell_size;
 
+    const int W = std::max(
+        1,
+        static_cast<int>(std::ceil(radius_metres / L))
+    );
+
+    // Fast path for the common 3x3 square case.
+    if (shape == window_shape::square && W == 1)
+    {
+        return total_curvature_3x3_square_fast(raster);
+    }
+
     const window_offsets win = make_window_offsets(radius_metres, L, shape);
 
     lsdtt_array2d<float>   dem  = data_view(raster);
@@ -2032,28 +2231,29 @@ lsdtt_raster_cpu moving_window_total_curvature(
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
 
 #ifdef _OPENMP
-    #pragma omp parallel for collapse(2) schedule(dynamic)
+    #pragma omp parallel for collapse(2) schedule(static)
 #endif
     for (int row = 0; row < nrows; ++row)
     {
         for (int col = 0; col < ncols; ++col)
         {
-            // Accumulate AᵀA (6x6) and Aᵀz (6x1).
-            // Basis: [x², y², xy, x, y, 1] evaluated at offsets from centre.
             double AtA[6][6] = {};
             double Atz[6]    = {};
             int    n_valid   = 0;
 
-            for (const auto& [dr, dc] : win.offsets)
+            for (const auto& off : win.offsets)
             {
+                const int dr = off.first;
+                const int dc = off.second;
+
                 const int wr = row + dr;
                 const int wc = col + dc;
-                if (!dem.in_bounds(wr, wc)) continue;
+                if (wr < 0 || wr >= nrows || wc < 0 || wc >= ncols) continue;
                 if (mask(wr, wc) == 0) continue;
                 if (meta.is_nodata(dem(wr, wc))) continue;
 
                 const double x = static_cast<double>(dc) * L;
-                const double y = static_cast<double>(-dr) * L;  // row increases downward
+                const double y = static_cast<double>(-dr) * L;
                 const double z = static_cast<double>(dem(wr, wc));
 
                 const double basis[6] = { x*x, y*y, x*y, x, y, 1.0 };
@@ -2061,7 +2261,9 @@ lsdtt_raster_cpu moving_window_total_curvature(
                 for (int i = 0; i < 6; ++i)
                 {
                     for (int j = 0; j < 6; ++j)
+                    {
                         AtA[i][j] += basis[i] * basis[j];
+                    }
                     Atz[i] += basis[i] * z;
                 }
 
@@ -2073,10 +2275,7 @@ lsdtt_raster_cpu moving_window_total_curvature(
             double coeffs[6] = {};
             if (!solve_6x6(AtA, Atz, coeffs)) continue;
 
-            // Laplacian = z_xx + z_yy = 2*a + 2*b = 2*c[0] + 2*c[1]
-            const double laplacian = 2.0 * (coeffs[0] + coeffs[1]);
-
-            out(row, col)      = static_cast<float>(laplacian);
+            out(row, col)      = static_cast<float>(2.0 * (coeffs[0] + coeffs[1]));
             out_mask(row, col) = 1;
         }
     }
@@ -2087,6 +2286,7 @@ lsdtt_raster_cpu moving_window_total_curvature(
         meta
     );
 }
+
 
 
 // ============================================================================
