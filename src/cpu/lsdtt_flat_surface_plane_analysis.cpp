@@ -472,6 +472,44 @@ plane_analysis_result analyse_flat_surface_planes(
     }
 
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Per-pixel plane residual raster.
+    // -------------------------------------------------------------------------
+    const float nodata_f = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   res_data(npix, nodata_f);
+    std::vector<uint8_t> res_mask(npix, uint8_t{0});
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        const double y_rel = (static_cast<double>(nrows - row) - 0.5) * cell_size;
+
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = static_cast<std::size_t>(row) *
+                                    static_cast<std::size_t>(ncols) +
+                                    static_cast<std::size_t>(col);
+
+            if (dem_mask[idx] == 0 || label_mask[idx] == 0) continue;
+
+            const int lbl = static_cast<int>(std::round(label_data[idx]));
+            if (lbl <= 0 || lbl > max_label) continue;
+
+            const label_plane_fit& pf = plane_fits[static_cast<std::size_t>(lbl)];
+            if (!pf.valid) continue;
+
+            const float z = dem_data[idx];
+            if (!std::isfinite(z) || meta.is_nodata(z)) continue;
+
+            const double x_rel = (static_cast<double>(col) + 0.5) * cell_size;
+            const double z_hat = pf.a * x_rel + pf.b * y_rel + pf.c;
+
+            res_data[idx] = static_cast<float>(static_cast<double>(z) - z_hat);
+            res_mask[idx] = uint8_t{1};
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Dense cross-surface RMSE matrix
     //
     // plane_on_label_rmse[i][j] = RMSE of plane_i evaluated on label_j pixels.
@@ -587,11 +625,13 @@ plane_analysis_result analyse_flat_surface_planes(
     // Assemble result
     // -------------------------------------------------------------------------
     plane_analysis_result result;
-    result.plane_fits         = std::move(plane_fits);
-    result.merge_candidates   = std::move(merge_candidates);
-    result.merge_group        = std::move(merge_group);
-    result.n_groups           = n_groups;
+    result.plane_fits          = std::move(plane_fits);
+    result.merge_candidates    = std::move(merge_candidates);
+    result.merge_group         = std::move(merge_group);
+    result.n_groups            = n_groups;
     result.plane_on_label_rmse = std::move(plane_on_label_rmse);
+    result.plane_residual_raster =
+        lsdtt_raster_cpu(std::move(res_data), std::move(res_mask), meta);
 
     return result;
 }

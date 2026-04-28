@@ -349,14 +349,58 @@ int main(int argc, char* argv[])
     help_map["plane_split_bimodal_threshold"] = {"float","0.4",
         "Valley/peak ratio threshold for bimodal split detection.",""};
 
-    bool_default_map["write_merge_candidates"] = true;
-    help_map["write_merge_candidates"] = {"bool","true",
-        "Write all pairwise merge candidate pairs to CSV.",""};
+    bool_default_map["write_plane_on_label_rmse"] = false;
+    help_map["write_plane_on_label_rmse"] = {"bool","false",
+        "Write the dense plane-on-label RMSE matrix to CSV.",
+        "Output suffix: _plane_on_label_rmse.csv  Requires run_plane_analysis = true."};
+
+    bool_default_map["write_residual_relief_merge_candidates"] = false;
+    help_map["write_residual_relief_merge_candidates"] = {"bool","false",
+        "Write merge candidate pairs from the residual-relief plane analysis to CSV.",
+        "Output suffix: _residual_relief_merge_candidates.csv  Requires run_plane_analysis = true."};
 
     bool_default_map["apply_plane_merges"] = false;
     help_map["apply_plane_merges"] = {"bool","false",
         "Apply plane-analysis merge groups to the labelled flat mask.",
         "Requires run_plane_analysis = true."};
+
+    bool_default_map["write_plane_residual_raster"] = true;
+    help_map["write_plane_residual_raster"] = {"bool","true",
+        "Write per-pixel residuals between DEM elevation and fitted plane for each label.",
+        "Output suffix: _plane_residual.tif  Requires run_plane_analysis = true."};
+
+    bool_default_map["write_residual_relief_raster"] = true;
+    help_map["write_residual_relief_raster"] = {"bool","true",
+        "Write local relief computed on the plane-residual raster.",
+        "Uses the same window as the original flat mask. "
+        "Output suffix: _residual_relief.tif  Requires run_plane_analysis = true."};
+
+    float_default_map["residual_relief_threshold_multiplier"] = 0.5f;
+    help_map["residual_relief_threshold_multiplier"] = {"float","0.5",
+        "Threshold for the residual relief filter, as a multiplier of the flat-mask relief threshold.",
+        "Pixels where residual_relief > multiplier * relief_threshold are removed from the flat mask "
+        "before the residual-relief labelling step."};
+
+    bool_default_map["write_residual_relief_labelled_mask"] = true;
+    help_map["write_residual_relief_labelled_mask"] = {"bool","true",
+        "Write the labelled flat mask after applying the residual-relief filter.",
+        "Output suffix: _residual_relief_labelled_flat_mask.tif  Requires run_plane_analysis = true."};
+
+    int_default_map["residual_relief_spur_max_pixels"] = 10;
+    help_map["residual_relief_spur_max_pixels"] = {"int","10",
+        "Maximum spur length (pixels) pruned from the residual-relief skeleton.",
+        "0 = skip spur pruning."};
+
+    bool_default_map["write_residual_relief_skeleton"] = false;
+    help_map["write_residual_relief_skeleton"] = {"bool","false",
+        "Write the 1-pixel residual-relief skeleton used as break lines.",
+        "Output suffix: _residual_relief_skeleton.tif  Requires run_plane_analysis = true."};
+
+    int_default_map["merged_residual_relief_min_label_pixels"] = 10;
+    help_map["merged_residual_relief_min_label_pixels"] = {"int","10",
+        "Minimum pixel count for a label to be retained in the merged residual-relief mask.",
+        "Labels smaller than this are set to 0 before writing "
+        "_merged_residual_relief_labelled_flat_mask.tif."};
 
     // --- Channel / river network ---
     bool_default_map["break_flats_with_channels"] = false;
@@ -900,6 +944,7 @@ int main(int argc, char* argv[])
         }
     }
 
+
     // -------------------------------------------------------------------------
     // Combined labelling: flat_mask minus channel pixels minus slope break pixels
     //
@@ -943,48 +988,6 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Labelled raster stats (run on the final combined labels)
-    // -------------------------------------------------------------------------
-    {
-        lsdtt::labelled_raster_stats_request req_raststat;
-        req_raststat.minimum_label = 1;
-        req_raststat.min_values_per_label = 100;
-        req_raststat.compute_same_distribution_matrix = true;
-        req_raststat.ks_alpha = 0.05;
-        req_raststat.verbose = true;
-
-        lsdtt::labelled_raster_stats_result result_raststat =
-            lsdtt::analyse_labelled_raster_stats(labelled_flat_mask, dem, req_raststat);
-
-        std::cout << "Number of retained labels: "
-                  << result_raststat.n_labels() << "\n";
-
-        for (const auto& rec : result_raststat.records)
-        {
-            std::cout << "Label: " << rec.label
-                      << "  n=" << rec.stats.n_values
-                      << "  mean elevation=" << rec.stats.mean
-                      << "  median=" << rec.stats.median
-                      << "  stddev=" << rec.stats.stddev_population
-                      << "\n";
-        }
-
-        if (result_raststat.n_labels() >= 2)
-        {
-            std::cout << "Label " << result_raststat.records[0].label
-                      << " and label " << result_raststat.records[1].label
-                      << " same distribution? "
-                      << (result_raststat.same_distribution_matrix[0][1] ? "true" : "false")
-                      << "\n";
-        }
-
-        lsdtt::write_labelled_raster_stats_csv(
-            result_raststat, "labelled_raster_elevation_stats.csv");
-        lsdtt::write_labelled_raster_same_distribution_csv(
-            result_raststat, "labelled_raster_elevation_ks_matrix.csv");
-    }
-
-    // -------------------------------------------------------------------------
     // Optional plane analysis
     // -------------------------------------------------------------------------
     if (bf["run_plane_analysis"])
@@ -1011,17 +1014,6 @@ int main(int argc, char* argv[])
 
         std::cout << "  " << pa.n_groups << " merge group(s) across "
                   << (pa.plane_fits.size() - 1) << " labelled surfaces\n";
-
-        if (bf["apply_plane_merges"])
-        {
-            const std::string p = stem + "_merged_labelled_flat_mask.tif";
-            std::cout << "Writing merged labelled flat mask (UInt32): " << p << "\n";
-            lsdtt::lsdtt_raster_cpu merged_labels =
-                lsdtt::merge_labelled_flat_mask_from_plane_analysis(
-                    labelled_flat_mask, pa);
-            loader.write_full(merged_labels.get_data(),
-                              merged_labels.get_meta(), p, out_format, GDT_UInt32);
-        }
 
         {
             const std::string p = stem + "_plane_fits.csv";
@@ -1051,29 +1043,7 @@ int main(int argc, char* argv[])
                 rows);
         }
 
-        if (bf["write_merge_candidates"])
-        {
-            const std::string p = stem + "_merge_candidates.csv";
-            std::cout << "Writing merge candidates: " << p << "\n";
-            std::vector<std::vector<std::string>> rows;
-            rows.reserve(pa.merge_candidates.size());
-            for (const auto& mc : pa.merge_candidates)
-            {
-                rows.push_back({
-                    std::to_string(mc.label_i), std::to_string(mc.label_j),
-                    std::to_string(mc.mean_residual_ji), std::to_string(mc.mean_residual_ij),
-                    std::to_string(mc.rmse_ji), std::to_string(mc.rmse_ij),
-                    std::to_string(mc.normalised_offset),
-                    mc.same_level ? "true" : "false"
-                });
-            }
-            loader.write_csv(p,
-                {"label_i","label_j","mean_residual_ji","mean_residual_ij",
-                 "rmse_ji","rmse_ij","normalised_offset","same_level"},
-                rows);
-        }
-
-        if (!pa.plane_on_label_rmse.empty())
+        if (bf["write_plane_on_label_rmse"] && !pa.plane_on_label_rmse.empty())
         {
             const std::string p = stem + "_plane_on_label_rmse.csv";
             std::cout << "Writing plane-on-label RMSE matrix: " << p << "\n";
@@ -1095,28 +1065,253 @@ int main(int argc, char* argv[])
             loader.write_csv(p, header, rows);
         }
 
+        if (bf["write_plane_residual_raster"] &&
+            !pa.plane_residual_raster.get_data().empty())
         {
-            const std::string p = stem + "_split_candidates.csv";
-            std::cout << "Writing split candidates: " << p << "\n";
-            std::vector<std::vector<std::string>> rows;
-            for (std::size_t lbl = 1; lbl < pa.plane_fits.size(); ++lbl)
+            const std::string p = stem + "_plane_residual.tif";
+            std::cout << "Writing plane residual raster: " << p << "\n";
+            loader.write_full(pa.plane_residual_raster.get_data(),
+                              pa.plane_residual_raster.get_meta(), p, out_format);
+        }
+
+        // -----------------------------------------------------------------
+        // Residual-relief skeleton filter
+        //
+        // 1. Compute local relief on the plane-residual raster (same window
+        //    as the original flat mask).
+        // 2. Binary mask: residual_relief > threshold.
+        // 3. Skeletonise (Zhang-Suen) → 1-pixel break lines.
+        // 4. Optional spur pruning.
+        // 5. Second-pass labelling: flat_mask minus channel breaks minus
+        //    slope-break pixels minus residual skeleton.
+        // -----------------------------------------------------------------
+        if (!pa.plane_residual_raster.get_data().empty())
+        {
+            const int    wpix   = ip["relief_window_pixels"];
+            const int    half   = (wpix - 1) / 2;
+            const double radius = static_cast<double>(std::max(1, half))
+                                  * dem.get_meta().cell_size;
+            const double resid_thresh =
+                req.relief_threshold_metres *
+                static_cast<double>(ff["residual_relief_threshold_multiplier"]);
+
+            std::cout << "\nComputing residual-relief (window radius="
+                      << radius << " m, threshold=" << resid_thresh << " m)...\n";
+
+            lsdtt::lsdtt_raster_cpu resid_relief;
+            try
             {
-                const auto& pf = pa.plane_fits[lbl];
-                if (!pf.valid || !pf.split_candidate) continue;
-                const int grp = (lbl < pa.merge_group.size())
-                                ? pa.merge_group[lbl] : -1;
-                rows.push_back({
-                    std::to_string(pf.label), std::to_string(pf.n_pixels),
-                    std::to_string(pf.a), std::to_string(pf.b), std::to_string(pf.c),
-                    std::to_string(pf.mean_z), std::to_string(pf.rmse),
-                    std::to_string(pf.slope_magnitude), std::to_string(pf.aspect_degrees),
-                    std::to_string(pf.split_confidence), std::to_string(grp)
-                });
+                resid_relief = lsdtt::moving_window_local_relief(
+                    pa.plane_residual_raster, radius);
             }
-            loader.write_csv(p,
-                {"label","n_pixels","a","b","c","mean_z","rmse",
-                 "slope_magnitude","aspect_degrees","split_confidence","merge_group"},
-                rows);
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: residual relief computation failed: "
+                          << e.what() << "\n";
+            }
+
+            if (!resid_relief.get_data().empty())
+            {
+                if (bf["write_residual_relief_raster"])
+                {
+                    const std::string p = stem + "_residual_relief.tif";
+                    std::cout << "Writing residual relief: " << p << "\n";
+                    loader.write_full(resid_relief.get_data(),
+                                      resid_relief.get_meta(), p, out_format);
+                }
+
+                // Build binary mask: foreground where residual_relief > threshold.
+                lsdtt::lsdtt_raster_cpu resid_binary = resid_relief;
+                {
+                    std::vector<float>&         bd = resid_binary.get_data();
+                    const std::vector<uint8_t>& rm = resid_relief.get_mask();
+                    const std::vector<float>&   rr = resid_relief.get_data();
+                    for (std::size_t i = 0; i < bd.size(); ++i)
+                    {
+                        if (rm[i] == 0 || !std::isfinite(rr[i]))
+                            bd[i] = 0.0f;
+                        else
+                            bd[i] = (static_cast<double>(rr[i]) > resid_thresh)
+                                    ? 1.0f : 0.0f;
+                    }
+                }
+
+                // Skeletonise.
+                lsdtt::lsdtt_raster_cpu resid_skeleton;
+                try
+                {
+                    resid_skeleton = lsdtt::thin_zhang_suen(resid_binary);
+
+                    const int spur_max = ip["residual_relief_spur_max_pixels"];
+                    if (spur_max > 0)
+                        resid_skeleton = lsdtt::prune_skeleton_spurs(
+                            resid_skeleton, spur_max);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: residual-relief skeletonisation failed: "
+                              << e.what() << "\n";
+                }
+
+                if (!resid_skeleton.get_data().empty())
+                {
+                    if (bf["write_residual_relief_skeleton"])
+                    {
+                        const std::string p = stem + "_residual_relief_skeleton.tif";
+                        std::cout << "Writing residual-relief skeleton: " << p << "\n";
+                        loader.write_full(resid_skeleton.get_data(),
+                                          resid_skeleton.get_meta(), p, out_format);
+                    }
+
+                    // Second-pass labelling: flat_mask minus channel breaks
+                    // minus slope-break pixels minus residual skeleton.
+                    lsdtt::lsdtt_raster_cpu refined_broken = flat_mask;
+                    {
+                        std::vector<float>& rbd = refined_broken.get_data();
+
+                        for (std::size_t i = 0; i < n_flat_pixels; ++i)
+                            if (channel_break_pixels[i] != 0) rbd[i] = 0.0f;
+
+                        if (!slope_break_pixels.get_data().empty())
+                        {
+                            const std::vector<float>& sc = slope_break_pixels.get_data();
+                            for (std::size_t i = 0; i < rbd.size() && i < sc.size(); ++i)
+                                if (sc[i] > 0.5f) rbd[i] = 0.0f;
+                        }
+
+                        const std::vector<float>&   rsk = resid_skeleton.get_data();
+                        const std::vector<uint8_t>& rsm = resid_skeleton.get_mask();
+                        std::size_t n_skel_px = 0;
+                        for (std::size_t i = 0; i < rbd.size() && i < rsk.size(); ++i)
+                        {
+                            if (rsm[i] != 0 && rsk[i] > 0.5f)
+                            {
+                                rbd[i] = 0.0f;
+                                ++n_skel_px;
+                            }
+                        }
+                        std::cout << "  Residual skeleton applied: "
+                                  << n_skel_px << " break pixels.\n";
+                    }
+
+                    lsdtt::lsdtt_raster_cpu resid_labelled =
+                        lsdtt::label_binary_components_by_size(
+                            refined_broken, 1,
+                            lsdtt::pixel_connectivity::d4);
+
+                    if (bf["write_residual_relief_labelled_mask"])
+                    {
+                        const std::string p =
+                            stem + "_residual_relief_labelled_flat_mask.tif";
+                        std::cout << "Writing residual-relief labelled mask (UInt32): "
+                                  << p << "\n";
+                        loader.write_full(resid_labelled.get_data(),
+                                          resid_labelled.get_meta(), p, out_format,
+                                          GDT_UInt32);
+                    }
+
+                    // ---------------------------------------------------------
+                    // Plane analysis on residual-relief labels: merge detection.
+                    // ---------------------------------------------------------
+                    try
+                    {
+                        lsdtt::plane_analysis_result pa2 =
+                            lsdtt::analyse_flat_surface_planes(
+                                dem, resid_labelled, preq);
+
+                        std::cout << "  Residual-relief labels: "
+                                  << pa2.n_groups << " merge group(s) across "
+                                  << (pa2.plane_fits.size() - 1)
+                                  << " labelled surfaces\n";
+
+                        if (bf["write_residual_relief_merge_candidates"])
+                        {
+                            const std::string p =
+                                stem + "_residual_relief_merge_candidates.csv";
+                            std::cout << "Writing residual-relief merge candidates: "
+                                      << p << "\n";
+                            std::vector<std::vector<std::string>> rows;
+                            rows.reserve(pa2.merge_candidates.size());
+                            for (const auto& mc : pa2.merge_candidates)
+                            {
+                                rows.push_back({
+                                    std::to_string(mc.label_i),
+                                    std::to_string(mc.label_j),
+                                    std::to_string(mc.mean_residual_ji),
+                                    std::to_string(mc.mean_residual_ij),
+                                    std::to_string(mc.rmse_ji),
+                                    std::to_string(mc.rmse_ij),
+                                    std::to_string(mc.normalised_offset),
+                                    mc.same_level ? "true" : "false"
+                                });
+                            }
+                            loader.write_csv(p,
+                                {"label_i","label_j",
+                                 "mean_residual_ji","mean_residual_ij",
+                                 "rmse_ji","rmse_ij",
+                                 "normalised_offset","same_level"},
+                                rows);
+                        }
+
+                        {
+                            lsdtt::lsdtt_raster_cpu merged =
+                                lsdtt::merge_labelled_flat_mask_from_plane_analysis(
+                                    resid_labelled, pa2);
+
+                            // Remove labels smaller than the minimum pixel count.
+                            const int min_lbl_px =
+                                ip["merged_residual_relief_min_label_pixels"];
+                            if (min_lbl_px > 1)
+                            {
+                                std::vector<float>& md = merged.get_data();
+                                const std::vector<uint8_t>& mm = merged.get_mask();
+                                const std::size_t np = md.size();
+
+                                // Count pixels per label.
+                                std::unordered_map<int,int> lbl_count;
+                                for (std::size_t i = 0; i < np; ++i)
+                                {
+                                    if (mm[i] == 0) continue;
+                                    const int lbl = static_cast<int>(
+                                        std::round(md[i]));
+                                    if (lbl > 0) ++lbl_count[lbl];
+                                }
+
+                                // Zero out undersized labels.
+                                std::size_t n_removed = 0;
+                                for (std::size_t i = 0; i < np; ++i)
+                                {
+                                    if (mm[i] == 0) continue;
+                                    const int lbl = static_cast<int>(
+                                        std::round(md[i]));
+                                    if (lbl > 0 &&
+                                        lbl_count[lbl] < min_lbl_px)
+                                    {
+                                        md[i] = 0.0f;
+                                        ++n_removed;
+                                    }
+                                }
+                                std::cout << "  Removed " << n_removed
+                                          << " pixels in labels < "
+                                          << min_lbl_px << " px.\n";
+                            }
+
+                            const std::string p =
+                                stem + "_merged_residual_relief_labelled_flat_mask.tif";
+                            std::cout << "Writing merged residual-relief labelled mask "
+                                         "(UInt32): " << p << "\n";
+                            loader.write_full(merged.get_data(),
+                                              merged.get_meta(), p, out_format,
+                                              GDT_UInt32);
+                        }
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: plane analysis on residual-relief "
+                                     "labels failed: " << e.what() << "\n";
+                    }
+                }
+            }
         }
     }
 

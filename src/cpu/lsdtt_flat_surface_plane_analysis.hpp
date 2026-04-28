@@ -180,6 +180,11 @@ struct plane_analysis_result
     //   - rows for invalid planes are NaN
     //   - columns for labels with no valid DEM pixels are NaN
     std::vector<std::vector<double>> plane_on_label_rmse;
+
+    // Per-pixel plane residual raster: z_actual - z_plane(label_k).
+    // Valid only for pixels belonging to a label with a valid plane fit.
+    // nodata elsewhere.
+    lsdtt_raster_cpu plane_residual_raster;
 };
 
 // =============================================================================
