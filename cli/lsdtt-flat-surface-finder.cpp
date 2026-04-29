@@ -62,6 +62,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/cpu/lsdtt_flat_surface_finder.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
@@ -436,6 +437,32 @@ int main(int argc, char* argv[])
         "Useful when rivers enter the tile from outside its extent. "
         "If empty, no injection is applied."};
 
+    // --- Channel source points (for network building and flat-surface connections) ---
+    string_default_map["source_points_path"] = "";
+    help_map["source_points_path"] = {"string","",
+        "Path to a source-point file used to seed the channel network.",
+        "CSV input is interpreted as lat/lon in EPSG:4326. "
+        "Georeferenced vector input (GeoPackage, FlatGeobuf) is read via OGR "
+        "and transformed into the raster CRS. "
+        "Required when write_channel_network or connect_flat_surfaces_to_channels is true."};
+
+    string_default_map["source_points_layer_name"] = "";
+    help_map["source_points_layer_name"] = {"string","",
+        "Layer name for vector source-point input. Empty = first layer.",""};
+
+    string_default_map["source_points_input_format"] = "auto_detect";
+    help_map["source_points_input_format"] = {"string","auto_detect",
+        "Format hint for source-point input.",
+        "auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer."};
+
+    string_default_map["source_points_latitude_field_name"] = "latitude";
+    help_map["source_points_latitude_field_name"] = {"string","latitude",
+        "Latitude field name for CSV source-point input.",""};
+
+    string_default_map["source_points_longitude_field_name"] = "longitude";
+    help_map["source_points_longitude_field_name"] = {"string","longitude",
+        "Longitude field name for CSV source-point input.",""};
+
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool","true",
         "Write channel links as a vector line layer.",""};
@@ -653,14 +680,20 @@ int main(int argc, char* argv[])
     const std::size_t n_flat_pixels = flat_mask.get_data().size();
     std::vector<uint8_t> channel_break_pixels(n_flat_pixels, 0);
 
-    if (bf["break_flats_with_channels"])
-    {
-        std::unique_ptr<lsdtt::lsdtt_flow_base> ch_flow;
+    // Shared flow objects — built once, reused by break_flats_with_channels,
+    // write_channel_network, and connect_flat_surfaces_to_channels.
+    lsdtt::lsdtt_raster_cpu routing_dem = dem;
+    std::unique_ptr<lsdtt::lsdtt_flow_base> ch_flow;
 
-        std::cout << "\n--- D8 flow routing for channel network ---\n";
+    const bool need_any_flow = bf["break_flats_with_channels"] ||
+                               bf["write_channel_network"] ||
+                               bf["connect_flat_surfaces_to_channels"];
+
+    if (need_any_flow)
+    {
+        std::cout << "\n--- D8 flow routing ---\n";
         try
         {
-            lsdtt::lsdtt_raster_cpu routing_dem = dem;
             if (bf["fill_dem_for_flow_routing"])
             {
                 std::cout << "Filling DEM for flow routing...\n";
@@ -680,49 +713,66 @@ int main(int argc, char* argv[])
                 routing_dem.get_data_array(),
                 routing_dem.get_mask_array(),
                 routing_dem.get_meta(),
-                fi_opts
-            );
-
-            // --- Drainage area (with optional upstream injection) ---
-            const std::string inj_path = sf["drainage_injection_vector_file"];
-
-            lsdtt::lsdtt_raster_result da_result;
-            if (!inj_path.empty())
-            {
-                std::cout << "Computing drainage area with injection from: "
-                          << inj_path << "\n";
-                da_result = ch_flow->get_drainage_area_raster_with_injection(inj_path);
-            }
-            else
-            {
-                std::cout << "Computing drainage area...\n";
-                da_result = ch_flow->get_drainage_area_raster();
-            }
-
-            // --- Record channel pixels (do not modify flat_mask) ---
-            const double pixel_area =
-                dem.get_meta().cell_size * dem.get_meta().cell_size;
-            const double da_threshold =
-                static_cast<double>(ip["channel_threshold_contributing_pixels"]) *
-                pixel_area;
-
-            std::cout << "Identifying channel pixels "
-                      << "(threshold=" << ip["channel_threshold_contributing_pixels"]
-                      << " pixels = " << da_threshold << " m²)...\n";
-
-            for (std::size_t i = 0; i < n_flat_pixels; ++i)
-            {
-                if (i < da_result.mask.size() &&
-                    da_result.mask[i] != 0 &&
-                    static_cast<double>(da_result.data[i]) >= da_threshold)
-                {
-                    channel_break_pixels[i] = 1;
-                }
-            }
+                fi_opts);
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: channel flow routing failed: " << e.what() << "\n";
+            std::cerr << "Warning: flow routing failed: " << e.what() << "\n";
+        }
+    }
+
+    if (bf["break_flats_with_channels"])
+    {
+        if (!ch_flow)
+        {
+            std::cerr << "Warning: flow routing unavailable — "
+                         "skipping break_flats_with_channels.\n";
+        }
+        else
+        {
+            std::cout << "\n--- Breaking flats with channel pixels ---\n";
+            try
+            {
+                const std::string inj_path = sf["drainage_injection_vector_file"];
+
+                lsdtt::lsdtt_raster_result da_result;
+                if (!inj_path.empty())
+                {
+                    std::cout << "Computing drainage area with injection from: "
+                              << inj_path << "\n";
+                    da_result = ch_flow->get_drainage_area_raster_with_injection(inj_path);
+                }
+                else
+                {
+                    std::cout << "Computing drainage area...\n";
+                    da_result = ch_flow->get_drainage_area_raster();
+                }
+
+                const double pixel_area =
+                    dem.get_meta().cell_size * dem.get_meta().cell_size;
+                const double da_threshold =
+                    static_cast<double>(ip["channel_threshold_contributing_pixels"]) *
+                    pixel_area;
+
+                std::cout << "Identifying channel pixels "
+                          << "(threshold=" << ip["channel_threshold_contributing_pixels"]
+                          << " pixels = " << da_threshold << " m²)...\n";
+
+                for (std::size_t i = 0; i < n_flat_pixels; ++i)
+                {
+                    if (i < da_result.mask.size() &&
+                        da_result.mask[i] != 0 &&
+                        static_cast<double>(da_result.data[i]) >= da_threshold)
+                    {
+                        channel_break_pixels[i] = 1;
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: channel break identification failed: "
+                          << e.what() << "\n";
+            }
         }
     }
 
@@ -1317,64 +1367,96 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Channel / river network  +  flat-surface → channel connections
+    //
+    // Flow (ch_flow) was already built in the shared block above.
+    // Channel sources are loaded from a file supplied by the user.
     // -------------------------------------------------------------------------
     const bool need_flow = bf["write_channel_network"] ||
                            bf["connect_flat_surfaces_to_channels"];
 
-    std::unique_ptr<lsdtt::lsdtt_flow_base>             ch_flow;
     std::vector<std::int64_t>                            ch_sources;
     std::unique_ptr<lsdtt::lsdtt_junction_network_base>  ch_jnet;
 
     if (need_flow)
     {
-        std::cout << "\n--- D8 flow routing for channel network ---\n";
-        try
+        if (!ch_flow)
         {
-            lsdtt::lsdtt_raster_cpu routing_dem = dem;
-            if (bf["fill_dem_for_flow_routing"])
+            std::cerr << "Warning: flow routing unavailable — "
+                         "skipping channel network and flat-surface connections.\n";
+        }
+        else
+        {
+            const std::string src_path = sf["source_points_path"];
+            if (src_path.empty())
             {
-                std::cout << "Filling DEM for flow routing...\n";
-                routing_dem = lsdtt::fill_pits(
-                    dem, ff["fill_min_slope_for_routing"], ip["n_threads"]);
-            }
-
-            lsdtt::lsdtt_flowinfo_options fi_opts;
-            fi_opts.boundary_conditions       = sf["boundary_conditions"];
-            fi_opts.interior_nodata_is_outlet = true;
-            fi_opts.require_acyclic_graph     = true;
-            fi_opts.build_topological_order   = true;
-            fi_opts.build_s_vector            = true;
-            fi_opts.n_threads                 = ip["n_threads"];
-
-            ch_flow = lsdtt::make_flow_base(
-                routing_dem.get_data_array(),
-                routing_dem.get_mask_array(),
-                routing_dem.get_meta(),
-                fi_opts
-            );
-
-            const int thresh = ip["channel_threshold_contributing_pixels"];
-            std::cout << "Extracting channel heads (threshold = "
-                      << thresh << " pixels)...\n";
-            ch_sources = ch_flow->get_sources_index_threshold(thresh);
-            std::cout << "  " << ch_sources.size() << " channel head(s) found.\n";
-
-            if (ch_sources.empty())
-            {
-                std::cerr << "Warning: no channel heads found — "
-                             "increase channel_threshold_contributing_pixels.\n";
+                std::cerr << "Warning: source_points_path is required for "
+                             "write_channel_network / connect_flat_surfaces_to_channels "
+                             "but was not supplied — skipping.\n";
             }
             else
             {
-                std::cout << "Building junction network...\n";
-                ch_jnet = lsdtt::make_junction_network_base(*ch_flow, ch_sources);
-                std::cout << "  " << ch_jnet->n_junctions() << " junction(s)  "
-                          << ch_jnet->n_channel_cells() << " channel cell(s)\n";
+                std::cout << "\n--- Loading channel source points from file ---\n";
+                try
+                {
+                    auto resolve_src_fmt =
+                        [](const std::string& fmt) -> lsdtt::lsdtt_point_input_format
+                    {
+                        if (fmt == "auto_detect" || fmt == "auto")
+                            return lsdtt::lsdtt_point_input_format::auto_detect;
+                        if (fmt == "csv" || fmt == "csv_latitude_longitude_epsg4326")
+                            return lsdtt::lsdtt_point_input_format::
+                                csv_latitude_longitude_epsg4326;
+                        if (fmt == "ogr_vector_layer" || fmt == "vector" || fmt == "ogr")
+                            return lsdtt::lsdtt_point_input_format::ogr_vector_layer;
+                        throw std::runtime_error(
+                            "Unknown source_points_input_format: " + fmt);
+                    };
+
+                    lsdtt::lsdtt_point_input_options point_opts;
+                    point_opts.input_format =
+                        resolve_src_fmt(sf["source_points_input_format"]);
+                    point_opts.vector_layer_name =
+                        sf["source_points_layer_name"];
+                    point_opts.csv_latitude_field_name =
+                        sf["source_points_latitude_field_name"];
+                    point_opts.csv_longitude_field_name =
+                        sf["source_points_longitude_field_name"];
+                    point_opts.keep_points_outside_raster = true;
+
+                    std::cout << "Loading source points from: " << src_path << "\n";
+                    std::vector<lsdtt::lsdtt_input_point> input_points =
+                        lsdtt::load_points_in_raster_crs(
+                            src_path, routing_dem.get_meta(), point_opts);
+                    std::cout << "  " << input_points.size() << " point(s) loaded\n";
+
+                    ch_sources =
+                        lsdtt::successfully_mapped_input_points_to_flats(input_points);
+                    std::cout << "  " << ch_sources.size()
+                              << " source(s) mapped to valid raster cells\n";
+
+                    if (ch_sources.empty())
+                    {
+                        std::cerr << "Warning: no source points mapped to valid "
+                                     "raster cells — check source_points_path CRS "
+                                     "and coordinates.\n";
+                    }
+                    else
+                    {
+                        std::cout << "Building junction network...\n";
+                        ch_jnet = lsdtt::make_junction_network_base(
+                            *ch_flow, ch_sources);
+                        std::cout << "  " << ch_jnet->n_junctions()
+                                  << " junction(s)  "
+                                  << ch_jnet->n_channel_cells()
+                                  << " channel cell(s)\n";
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: channel network build failed: "
+                              << e.what() << "\n";
+                }
             }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Warning: channel flow routing failed: " << e.what() << "\n";
         }
     }
 

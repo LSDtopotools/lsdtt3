@@ -33,7 +33,7 @@ lsdtt3/
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-hydraulic-routing.cpp
 │   ├── lsdtt-mountain-front.cpp
-│   ├── lsdtt-raster-basin-stats.cpp
+│   ├── lsdtt-basin-stats.cpp
 │   ├── lsdtt-raster-preprocessing.cpp
 │   ├── lsdtt-raster-synthetic-tests.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
@@ -444,8 +444,13 @@ Current CLI programs are:
   Builds D8 flow routing, extracts a channel/junction network, and optionally
   selects and writes junction-aware basins (outlines, raster labels, statistics).
 
-- **`lsdtt-raster-basin-stats.cpp`**  
-  Extracts basins from a junction network and computes raster statistics per basin.
+- **`lsdtt-basin-stats.cpp`**  
+  Reads a DEM and a CSV of basin outlet points (latitude, longitude; optional gauge_id,
+  gauge_name columns) and computes a suite of hydromorphic statistics per basin:
+  elevation percentiles, slope (gradient magnitude) percentiles, flow-distance-from-outlet
+  percentiles, centroid lat/lon, drainage area, nodata-edge flag, and channel length by
+  Strahler stream order (orders 1–6). Basins touching nodata or the raster edge are
+  optionally rejected (reject_nodata_edge_basins, default true).
 
 - **`lsdtt-feature-finder.cpp`**  
   Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope morphology).
