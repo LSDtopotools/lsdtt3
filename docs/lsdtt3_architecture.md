@@ -34,6 +34,7 @@ lsdtt3/
 │   ├── lsdtt-hydraulic-routing.cpp
 │   ├── lsdtt-mountain-front.cpp
 │   ├── lsdtt-basin-stats.cpp
+│   ├── lsdtt-stream-burning.cpp
 │   ├── lsdtt-raster-preprocessing.cpp
 │   ├── lsdtt-raster-synthetic-tests.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
@@ -489,6 +490,14 @@ Current CLI programs are:
 
 - **`lsdtt-spectral-analysis.cpp`** *(requires FFTW3)*  
   Spectral surface analysis workflows using the FFTW double API.
+
+- **`lsdtt-stream-burning.cpp`**  
+  Loads a polyline vector channel network and a DEM, finds degree-1 source tips in the
+  vector network (`find_vector_network_source_tips`), optionally writes those tips as a QC
+  point layer, then seeds a D8 junction/channel network from those tips. Writes the
+  DEM-extracted network as lines and optionally as points and junctions. The two networks
+  (vector-supplied vs DEM-extracted) are intended for subsequent comparison to decide
+  where to burn the vector channel directly into the DEM vs follow DEM routing.
 
 ### Polyfit method rule
 

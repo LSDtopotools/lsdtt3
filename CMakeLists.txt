@@ -353,6 +353,7 @@ lsdtt_cli(lsdtt-flat-surface-finder    cli/lsdtt-flat-surface-finder.cpp)
 lsdtt_cli(lsdtt-hydraulic-routing      cli/lsdtt-hydraulic-routing.cpp)
 lsdtt_cli(lsdtt-channel-network-analysis cli/lsdtt-channel-network-analysis.cpp)
 lsdtt_cli(lsdtt-cross-sections         cli/lsdtt-cross-sections.cpp)
+lsdtt_cli(lsdtt-stream-burning         cli/lsdtt-stream-burning.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
