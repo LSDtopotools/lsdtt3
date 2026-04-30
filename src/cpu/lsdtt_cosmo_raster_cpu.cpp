@@ -198,16 +198,18 @@ static double erate_initial_guess(double measured_conc,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem)
+lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
+                                              const CrnNcData&         nc,
+                                              double                   age_yr)
 {
     const auto& meta = dem.get_meta();
     const auto& data = dem.get_data_array();
     const auto& mask = dem.get_mask_array();
-    int nr = meta.n_rows, nc = meta.n_cols;
+    int nr = meta.n_rows, nc_cols = meta.n_cols;
     float ndv = static_cast<float>(meta.no_data_value);
 
-    lsdtt_array2d<float>   prod_data(nr, nc, ndv);
-    lsdtt_array2d<uint8_t> prod_mask(nr, nc, 0);
+    lsdtt_array2d<float>   prod_data(nr, nc_cols, ndv);
+    lsdtt_array2d<uint8_t> prod_mask(nr, nc_cols, 0);
 
     OGRCoordinateTransformation* ct = make_to_wgs84(meta);
     if (!ct)
@@ -219,13 +221,13 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem)
     // Then batch-transform all at once (one GDAL call instead of one per pixel).
     std::vector<int>    valid_r, valid_c;
     std::vector<double> xs, ys;
-    valid_r.reserve(static_cast<std::size_t>(nr * nc / 2));
+    valid_r.reserve(static_cast<std::size_t>(nr * nc_cols / 2));
     valid_c.reserve(valid_r.capacity());
     xs.reserve(valid_r.capacity());
     ys.reserve(valid_r.capacity());
 
     for (int r = 0; r < nr; ++r)
-        for (int c = 0; c < nc; ++c)
+        for (int c = 0; c < nc_cols; ++c)
             if (mask(r, c))
             {
                 valid_r.push_back(r);
@@ -247,18 +249,28 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem)
     OCTDestroyCoordinateTransformation(ct);
 
     // xs now holds longitudes, ys holds latitudes.
-    // stone2000sp is pure arithmetic — parallelise over valid pixels.
+    const bool use_era40  = nc.loaded;
+    const bool use_paleomag = nc.loaded && (age_yr > 0.0);
+
     lsdtt_crn_parameters ref_params;
 
 #pragma omp parallel for schedule(static) default(none) \
-    shared(n_valid, valid_r, valid_c, xs, ys, data, prod_data, prod_mask, ref_params, meta)
+    shared(n_valid, valid_r, valid_c, xs, ys, data, prod_data, prod_mask, \
+           ref_params, meta, nc, age_yr, use_era40, use_paleomag)
     for (int k = 0; k < n_valid; ++k)
     {
         int r = valid_r[k], c = valid_c[k];
-        double lat      = ys[k];
-        double elev     = static_cast<double>(data(r, c));
-        double pressure = lsdtt_crn_parameters::atmospheric_pressure_standard(elev);
-        double scaling  = ref_params.stone2000sp(lat, pressure, 1.0);
+        double lat  = ys[k];
+        double lon  = xs[k];
+        double elev = static_cast<double>(data(r, c));
+
+        double pressure = use_era40
+            ? lsdtt_crn_parameters::atmospheric_pressure_era40(lat, lon, elev, nc)
+            : lsdtt_crn_parameters::atmospheric_pressure_standard(elev);
+
+        double scaling = use_paleomag
+            ? ref_params.stone2000sp_paleomag(lat, pressure, 1.0, age_yr, nc)
+            : ref_params.stone2000sp(lat, pressure, 1.0);
 
         prod_data(r, c) = static_cast<float>(scaling);
         prod_mask(r, c) = 1;

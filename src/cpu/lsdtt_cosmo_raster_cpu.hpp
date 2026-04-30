@@ -30,10 +30,25 @@ namespace lsdtt
 
 // ── Production raster ────────────────────────────────────────────────────────
 // Computes the Stone (2000) spallation scaling factor at every valid pixel.
-// Requires a projected DEM (UTM/polar). Atmospheric pressure is estimated
-// from elevation using the standard-atmosphere barometric formula.
+// Requires a projected DEM (UTM/polar).
+//
+// nc      : ERA40 / paleomagnetic data loaded via lsdtt_crn_parameters::load_nc_data().
+//           When nc.loaded == false, falls back to the standard-atmosphere formula and
+//           no paleomagnetic correction (equivalent to the single-argument overload).
+// age_yr  : Sample exposure age in years.  When > 0 and nc.loaded == true, applies
+//           the Muscheler VDM time-integrated paleomagnetic correction to the Stone
+//           scaling factor.  When 0 (default), modern field only.
+//
 // Returns a raster with the same geometry as dem; nodata pixels are preserved.
-lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem);
+lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
+                                              const CrnNcData&         nc,
+                                              double                   age_yr = 0.0);
+
+// Backward-compatible overload: standard atmosphere, no paleomagnetic correction.
+inline lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem)
+{
+    return calculate_production_raster(dem, CrnNcData{}, 0.0);
+}
 
 // ── CRN concentration raster ─────────────────────────────────────────────────
 // Computes steady-state cosmogenic concentration at every pixel upslope of

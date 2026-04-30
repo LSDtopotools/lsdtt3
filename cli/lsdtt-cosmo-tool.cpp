@@ -165,6 +165,20 @@ int main(int argc, char* argv[])
         "Rock (bulk) density in kg/m3.",
         "Used to convert effective erosion rate (g/cm2/yr) to mm/kyr."};
 
+    // --- Atmosphere and palaeomagnetic correction ---
+    string_default_map["crn_nc_file"] = "";
+    help_map["crn_nc_file"] = {"string","",
+        "Path to crn_parameters.nc (ERA40 grids + Muscheler VDM record).",
+        "Required for ERA40 atmosphere and paleomagnetic correction. "
+        "Leave empty to use the standard (SLHL) atmosphere with no paleomagetic correction."};
+
+    float_default_map["sample_age_yr"] = 0.0f;
+    help_map["sample_age_yr"] = {"float","0",
+        "Sample exposure age in years (yr BP). Used for paleomagnetic correction.",
+        "Set > 0 to apply the Muscheler VDM time-integrated Stone/Lal paleomagnetic "
+        "correction. Requires crn_nc_file to be set. Default 0 = no correction (modern field)."};
+
+
     // --- Sample points ---
     string_default_map["points_filename"] = "CRN_points.csv";
     help_map["points_filename"] = {"string","CRN_points.csv",
@@ -274,10 +288,27 @@ int main(int argc, char* argv[])
 
     const std::string points_path = pp.add_read_path_if_needed(sf["points_filename"]);
     const std::string write_base  = pp.get_full_write_path();
+    const std::string crn_nc_file = sf["crn_nc_file"].empty()
+        ? "" : pp.add_read_path_if_needed(sf["crn_nc_file"]);
+    const double sample_age_yr    = static_cast<double>(ff["sample_age_yr"]);
+
+    // Load ERA40 / Muscheler NC data if requested
+    lsdtt::CrnNcData crn_nc;
+    if (!crn_nc_file.empty())
+    {
+        std::cout << "Loading CRN NC data: " << crn_nc_file << "\n";
+        crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(crn_nc_file);
+    }
+    const bool use_era40     = crn_nc.loaded;
+    const bool use_paleomag  = crn_nc.loaded && (sample_age_yr > 0.0);
 
     std::cout << "Nuclide       : " << nuclide << "\n"
               << "Muon scheme   : " << muon_scheme << "\n"
               << "Rock density  : " << rock_density_kg_m3 << " kg/m3\n"
+              << "Atmosphere    : " << (use_era40 ? "ERA40" : "standard") << "\n"
+              << "Palaeomag     : " << (use_paleomag
+                                        ? "Muscheler VDM (" + std::to_string(static_cast<int>(sample_age_yr)) + " yr)"
+                                        : "off (modern field)") << "\n"
               << "Points file   : " << points_path << "\n"
               << "Conc column   : " << concentration_col_name << "\n\n";
 
@@ -339,8 +370,12 @@ int main(int argc, char* argv[])
     const auto& flow = dynamic_cast<const lsdtt::lsdtt_flowinfo&>(*flow_ptr);
 
     // ── 3. Production raster ──────────────────────────────────────────────────
-    std::cout << "Calculating Stone 2000 production raster...\n";
-    lsdtt::lsdtt_raster_cpu prod_raster = lsdtt::calculate_production_raster(filled_dem);
+    std::cout << "Calculating Stone 2000 production raster"
+              << (use_era40    ? " (ERA40 atmosphere)"          : "")
+              << (use_paleomag ? " + palaeomagnetic correction" : "")
+              << "...\n";
+    lsdtt::lsdtt_raster_cpu prod_raster =
+        lsdtt::calculate_production_raster(filled_dem, crn_nc, sample_age_yr);
 
     if (bf["write_production_raster"])
     {

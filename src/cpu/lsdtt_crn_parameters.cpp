@@ -2,6 +2,10 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <algorithm>
+#ifdef LSDTT_HAS_NETCDF
+#include <netcdf.h>
+#endif
 
 namespace lsdtt
 {
@@ -384,6 +388,283 @@ double lsdtt_crn_parameters::interp1d(const std::vector<double>& x,
         }
     }
     return y[n - 1];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// load_nc_data
+// ─────────────────────────────────────────────────────────────────────────────
+CrnNcData lsdtt_crn_parameters::load_nc_data(const std::string& nc_path)
+{
+    CrnNcData out;
+#ifdef LSDTT_HAS_NETCDF
+    int ncid;
+    if (nc_open(nc_path.c_str(), NC_NOWRITE, &ncid) != NC_NOERR)
+    {
+        std::cerr << "load_nc_data: cannot open \"" << nc_path << "\"\n";
+        return out;
+    }
+
+    auto read_var1d_d = [&](const char* name, std::vector<double>& v) {
+        int varid;
+        if (nc_inq_varid(ncid, name, &varid) != NC_NOERR) return;
+        int ndims; int dimids[8];
+        nc_inq_var(ncid, varid, nullptr, nullptr, &ndims, dimids, nullptr);
+        std::size_t n = 1;
+        for (int d = 0; d < ndims; ++d) {
+            std::size_t s; nc_inq_dimlen(ncid, dimids[d], &s); n *= s;
+        }
+        v.resize(n);
+        nc_get_var_double(ncid, varid, v.data());
+    };
+
+    auto read_var2d_f = [&](const char* name, std::vector<float>& v) {
+        int varid;
+        if (nc_inq_varid(ncid, name, &varid) != NC_NOERR) return;
+        int ndims; int dimids[8];
+        nc_inq_var(ncid, varid, nullptr, nullptr, &ndims, dimids, nullptr);
+        std::size_t n = 1;
+        for (int d = 0; d < ndims; ++d) {
+            std::size_t s; nc_inq_dimlen(ncid, dimids[d], &s); n *= s;
+        }
+        v.resize(n);
+        nc_get_var_float(ncid, varid, v.data());
+    };
+
+    auto read_var1d_f = [&](const char* name, std::vector<float>& v) {
+        int varid;
+        if (nc_inq_varid(ncid, name, &varid) != NC_NOERR) return;
+        int ndims; int dimids[8];
+        nc_inq_var(ncid, varid, nullptr, nullptr, &ndims, dimids, nullptr);
+        std::size_t n = 1;
+        for (int d = 0; d < ndims; ++d) {
+            std::size_t s; nc_inq_dimlen(ncid, dimids[d], &s); n *= s;
+        }
+        v.resize(n);
+        nc_get_var_float(ncid, varid, v.data());
+    };
+
+    read_var1d_d("era40_lat",       out.era40_lat);
+    read_var1d_d("era40_lon",       out.era40_lon);
+    read_var2d_f("era40_meanP",     out.era40_meanP);
+    read_var2d_f("era40_meanT",     out.era40_meanT);
+    read_var1d_d("lifton_lr",       out.lifton_lr);
+    read_var1d_d("muscheler_time",  out.muscheler_time);
+    read_var1d_f("muscheler_vdm",   out.muscheler_vdm);
+
+    nc_close(ncid);
+
+    out.loaded = (!out.era40_lat.empty() && !out.era40_meanP.empty() &&
+                  !out.lifton_lr.empty() && !out.muscheler_vdm.empty());
+    if (out.loaded)
+        std::cout << "load_nc_data: loaded " << nc_path
+                  << "  ERA40=" << out.era40_lat.size() << "×" << out.era40_lon.size()
+                  << "  Muscheler=" << out.muscheler_time.size() << " steps\n";
+    else
+        std::cerr << "load_nc_data: file opened but variables missing in \"" << nc_path << "\"\n";
+#else
+    std::cerr << "load_nc_data: lsdtt3 was compiled without netCDF-C support.\n";
+#endif
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// bilinear_era40
+// Grid axes: lat_ax descending (90→-90), lon_ax ascending (0→360).
+// ─────────────────────────────────────────────────────────────────────────────
+double lsdtt_crn_parameters::bilinear_era40(const std::vector<double>& lat_ax,
+                                             const std::vector<double>& lon_ax,
+                                             const std::vector<float>&  grid,
+                                             double lat, double lon)
+{
+    int nlat = static_cast<int>(lat_ax.size());
+    int nlon = static_cast<int>(lon_ax.size());
+    if (nlat < 2 || nlon < 2) return std::numeric_limits<double>::quiet_NaN();
+
+    // Clamp lat to grid bounds
+    lat = std::max(lat_ax.back(), std::min(lat_ax.front(), lat));
+    // Wrap lon to [0, 360)
+    while (lon <   0.0) lon += 360.0;
+    while (lon > 360.0) lon -= 360.0;
+
+    // Find lon bracket (ascending)
+    int jlo = 0;
+    for (int j = 0; j < nlon - 1; ++j) {
+        if (lon >= lon_ax[j] && lon <= lon_ax[j+1]) { jlo = j; break; }
+        if (j == nlon - 2) jlo = j;
+    }
+    double tlon = (lon_ax[jlo+1] > lon_ax[jlo])
+                  ? (lon - lon_ax[jlo]) / (lon_ax[jlo+1] - lon_ax[jlo])
+                  : 0.0;
+
+    // Find lat bracket (descending — lat_ax[0] is largest)
+    int ilo = 0;
+    for (int i = 0; i < nlat - 1; ++i) {
+        if (lat <= lat_ax[i] && lat >= lat_ax[i+1]) { ilo = i; break; }
+        if (i == nlat - 2) ilo = i;
+    }
+    double tlat = (lat_ax[ilo] > lat_ax[ilo+1])
+                  ? (lat_ax[ilo] - lat) / (lat_ax[ilo] - lat_ax[ilo+1])
+                  : 0.0;
+
+    // Bilinear: corners (ilo,jlo) (ilo,jlo+1) (ilo+1,jlo) (ilo+1,jlo+1)
+    auto idx = [&](int i, int j) { return static_cast<std::size_t>(i) * nlon + j; };
+    double v00 = grid[idx(ilo,   jlo)];
+    double v01 = grid[idx(ilo,   jlo+1)];
+    double v10 = grid[idx(ilo+1, jlo)];
+    double v11 = grid[idx(ilo+1, jlo+1)];
+
+    return (1-tlat)*(1-tlon)*v00 + (1-tlat)*tlon*v01
+           + tlat*(1-tlon)*v10  + tlat*tlon*v11;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// atmospheric_pressure_era40
+// Mirrors ERA40atm() from lsd.py (Balco/Lifton, CRONUS origin).
+// ─────────────────────────────────────────────────────────────────────────────
+double lsdtt_crn_parameters::atmospheric_pressure_era40(double lat_deg, double lon_deg,
+                                                         double elevation_m,
+                                                         const CrnNcData& nc)
+{
+    if (!nc.loaded || nc.era40_lat.empty() || nc.era40_meanP.empty())
+        return atmospheric_pressure_standard(elevation_m);
+
+    // Normalise longitude to [0, 360)
+    if (lon_deg < 0.0) lon_deg += 360.0;
+
+    double P_sl = bilinear_era40(nc.era40_lat, nc.era40_lon, nc.era40_meanP, lat_deg, lon_deg);
+    double T_sl = bilinear_era40(nc.era40_lat, nc.era40_lon, nc.era40_meanT, lat_deg, lon_deg);
+
+    // Lifton lapse rate polynomial: dtdz(lat) = -Σ_k lr[k]*lat^k  (K m⁻¹, positive upward)
+    // Signed latitude to match COSPAR CIRA-86 fit (lsd.py uses site_lat signed).
+    double dtdz = 0.0;
+    double lat_k = 1.0;
+    for (std::size_t k = 0; k < nc.lifton_lr.size(); ++k) {
+        dtdz += nc.lifton_lr[k] * lat_k;
+        lat_k *= lat_deg;
+    }
+    dtdz = -dtdz;   // sign convention: dtdz > 0 means temperature falls with altitude
+
+    const double gmr = -0.03417;   // -g*M/R (Balco 2008)
+    double T_site = T_sl - dtdz * elevation_m;
+    if (T_site <= 0.0) T_site = 1.0;   // guard unphysical elevations
+    return P_sl * std::exp((gmr / dtdz) * (std::log(T_sl) - std::log(T_site)));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// stone_factor_at_rc
+// Converts geomagnetic cutoff rigidity Rc [GV] to Stone 2000 spallation scaling
+// factor at pressure P_mbar.  Mirrors Rc_StoneFactors() from PR_processes.py.
+// ─────────────────────────────────────────────────────────────────────────────
+double lsdtt_crn_parameters::stone_factor_at_rc(double Rc_GV, double P_mbar)
+{
+    // Stone table: latitudes, coefficients (same values as in stone2000sp)
+    static const double ilat[7]  = { 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0 };
+    static const double sa[7] = { 31.8518, 34.3699, 40.3153, 42.0983, 56.7733, 69.0720, 71.8733 };
+    static const double sb[7] = { 250.3193, 258.4759, 308.9894, 512.6857, 649.1343, 832.4566, 863.1927 };
+    static const double sc[7] = { -0.083393,-0.089807,-0.106248,-0.120551,-0.160859,-0.199252,-0.207069 };
+    static const double sd[7] = { 7.4260e-5,7.9457e-5,9.4508e-5,1.1752e-4,1.5463e-4,1.9391e-4,2.0127e-4 };
+    static const double se[7] = { -2.2397e-8,-2.3697e-8,-2.8234e-8,-3.8809e-8,-5.0330e-8,-6.3653e-8,-6.6043e-8 };
+
+    const double P  = P_mbar;
+    const double P2 = P * P, P3 = P2 * P;
+    const double eP = std::exp(-P / 150.0);
+
+    // Reference Rc values from Stone table latitudes: i_Rc = 14.3 * cos^4(lat_rad)
+    // and corresponding spallation factors at this pressure
+    std::vector<double> i_Rc(7), i_sf(7);
+    for (int k = 0; k < 7; ++k) {
+        double lat_r = ilat[k] * M_PI / 180.0;
+        double c4 = std::pow(std::cos(lat_r), 4.0);
+        i_Rc[k] = 14.3 * c4;
+        i_sf[k] = sa[k] + sb[k] * eP + sc[k] * P + sd[k] * P2 + se[k] * P3;
+    }
+
+    // Extend to Rc = 0: Stone factor at 60° applies below this rigidity
+    i_Rc.push_back(0.0);
+    i_sf.push_back(i_sf[6]);
+
+    // Extend to Rc = 25 GV using log-log fit to the first 3 points (lat 0,10,20)
+    // fitting: log(sf) = slope * log(Rc) + intercept
+    double slope = (std::log(i_sf[0]) - std::log(i_sf[2]))
+                 / (std::log(i_Rc[0]) - std::log(i_Rc[2]));
+    for (int rc_ext = 25; rc_ext > 15; --rc_ext) {
+        double sf_ext = std::exp(std::log(i_sf[0])
+                                 + slope * (std::log(rc_ext) - std::log(i_Rc[0])));
+        i_Rc.push_back(static_cast<double>(rc_ext));
+        i_sf.push_back(sf_ext);
+    }
+
+    // Sort both vectors by ascending Rc for interpolation
+    std::size_t n = i_Rc.size();
+    std::vector<std::size_t> idx(n);
+    for (std::size_t i = 0; i < n; ++i) idx[i] = i;
+    std::sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) {
+        return i_Rc[a] < i_Rc[b];
+    });
+    std::vector<double> Rc_s(n), sf_s(n);
+    for (std::size_t i = 0; i < n; ++i) { Rc_s[i] = i_Rc[idx[i]]; sf_s[i] = i_sf[idx[i]]; }
+
+    return interp1d(Rc_s, sf_s, Rc_GV);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// stone2000sp_paleomag
+// Stone 2000 scaling with time-integrated paleomagnetic correction via the
+// Muscheler VDM record.  Follows Rc_correctedStoneFactors() / PR_processes.py.
+// ─────────────────────────────────────────────────────────────────────────────
+double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
+                                                   double Fsp, double age_yr,
+                                                   const CrnNcData& nc) const
+{
+    if (!nc.loaded || nc.muscheler_time.empty() || age_yr <= 0.0)
+        return stone2000sp(lat_deg, P_mbar, Fsp);
+
+    const double lat_rad = std::fabs(lat_deg) * M_PI / 180.0;
+    const double cos4lat = std::pow(std::cos(lat_rad), 4.0);
+
+    // Rc [GV] from VDM [10²² Am²]: dipole formula (Störmer unit)
+    // Rc = (μ₀ × M × 1e22 / 4π) / R² × c × cos⁴(lat) / 1e9
+    // = (1e-7 × M × 1e22 × 3e8) / (6.3712e6)² × cos⁴(lat)  — but must match Python exactly:
+    // Python: (p * 1e22 * 4e-7 * 3e8) / (16e9 * (6.3712e6)^2) * cos^4(lat)
+    static const double Rc_c = (4e-7 * 3e8 * 1e22) / (16e9 * 6.3712e6 * 6.3712e6);
+
+    // Locate the portion of Muscheler record within [0, age_yr]
+    int n = static_cast<int>(nc.muscheler_time.size());
+    int n_use = 0;
+    for (int i = 0; i < n; ++i) {
+        if (nc.muscheler_time[i] <= age_yr) n_use = i + 1; else break;
+    }
+    if (n_use < 2)
+        return stone2000sp(lat_deg, P_mbar, Fsp);
+
+    // Build Stone spallation factor at each time step
+    std::vector<double> sf_t(n_use);
+    for (int i = 0; i < n_use; ++i) {
+        double Rc = Rc_c * static_cast<double>(nc.muscheler_vdm[i]) * cos4lat;
+        sf_t[i] = stone_factor_at_rc(Rc, P_mbar);
+    }
+
+    // Trapezoidal time average of sf over [time[0], time[n_use-1]]
+    double integral = 0.0;
+    for (int i = 1; i < n_use; ++i) {
+        double dt = nc.muscheler_time[i] - nc.muscheler_time[i-1];
+        integral += 0.5 * (sf_t[i] + sf_t[i-1]) * dt;
+    }
+    double t_span = nc.muscheler_time[n_use-1] - nc.muscheler_time[0];
+    if (t_span <= 0.0)
+        return stone2000sp(lat_deg, P_mbar, Fsp);
+    double sf_avg = integral / t_span;
+
+    // Modern spallation factor (VDM at t ≈ 0, i.e. index 0)
+    double Rc_modern = Rc_c * static_cast<double>(nc.muscheler_vdm[0]) * cos4lat;
+    double sf_modern = stone_factor_at_rc(Rc_modern, P_mbar);
+    if (sf_modern <= 0.0)
+        return stone2000sp(lat_deg, P_mbar, Fsp);
+
+    // Scale the total Stone factor by the paleomagnetic correction ratio
+    // (correction applies to the spallation component only; muon term unchanged)
+    double correction = sf_avg / sf_modern;
+    return stone2000sp(lat_deg, P_mbar, Fsp) * correction;
 }
 
 } // namespace lsdtt

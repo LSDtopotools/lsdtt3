@@ -72,6 +72,19 @@ if(PkgConfig_FOUND)
 endif()
 
 # =============================================================================
+# Optional: netCDF-C (required by lsdtt_crn_parameters ERA40 / paleomagnetic)
+# =============================================================================
+set(LSDTT_HAS_NETCDF OFF)
+find_path(NETCDF_INCLUDE_DIR NAMES netcdf.h)
+find_library(NETCDF_LIBRARY  NAMES netcdf)
+if(NETCDF_INCLUDE_DIR AND NETCDF_LIBRARY)
+    set(LSDTT_HAS_NETCDF ON)
+    message(STATUS "netCDF-C found: ${NETCDF_LIBRARY} — ERA40 / paleomagnetic correction enabled")
+else()
+    message(STATUS "netCDF-C not found — ERA40 atmosphere and paleomagnetic correction disabled")
+endif()
+
+# =============================================================================
 # Optional: OpenCV (core + imgproc — required by lsdtt_raster_opencv_cpu)
 # =============================================================================
 option(LSDTT_OPENCV "Build OpenCV image-analysis routines" ON)
@@ -276,6 +289,12 @@ if(LSDTT_HAS_FFTW)
     target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_FFTW=1)
     target_include_directories(lsdtt3_cpu PUBLIC ${FFTW3_INCLUDE_DIRS})
     target_link_libraries(lsdtt3_cpu PUBLIC ${FFTW3_LIBRARIES})
+endif()
+
+if(LSDTT_HAS_NETCDF)
+    target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_NETCDF=1)
+    target_include_directories(lsdtt3_cpu PUBLIC ${NETCDF_INCLUDE_DIR})
+    target_link_libraries(lsdtt3_cpu PUBLIC ${NETCDF_LIBRARY})
 endif()
 
 if(LSDTT_HAS_OPENCV)
