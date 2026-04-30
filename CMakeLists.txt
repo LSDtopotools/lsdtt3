@@ -237,6 +237,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_contours_cpu.cpp
     src/cpu/lsdtt_labelled_raster_stats_cpu.cpp
     src/cpu/lsdtt_cross_sections_cpu.cpp
+    src/cpu/lsdtt_crn_parameters.cpp
+    src/cpu/lsdtt_cosmo_raster_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
@@ -354,6 +356,7 @@ lsdtt_cli(lsdtt-hydraulic-routing      cli/lsdtt-hydraulic-routing.cpp)
 lsdtt_cli(lsdtt-channel-network-analysis cli/lsdtt-channel-network-analysis.cpp)
 lsdtt_cli(lsdtt-cross-sections         cli/lsdtt-cross-sections.cpp)
 lsdtt_cli(lsdtt-stream-burning         cli/lsdtt-stream-burning.cpp)
+lsdtt_cli(lsdtt-cosmo-tool             cli/lsdtt-cosmo-tool.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
