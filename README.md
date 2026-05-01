@@ -4,6 +4,7 @@ A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) wit
 
 **Copyright:** Simon M. Mudd
 **Licence:** GPL-3.0
+**Additional developers:** Rutger Vervoordeldonk
 
 ---
 
@@ -13,7 +14,7 @@ lsdtt3 is a C++ library and set of command line tools for topographic analysis
 of digital elevation models (DEMs). It is a ground-up redesign of
 [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2), retaining the
 core algorithms and scientific functionality while rebuilding the architecture
-for modern C++17, cleaner GPU support, and easier incremental development.
+for modern C++17, the potential to add GPU support, and easier incremental development (although "easier" is in the eye of the beholder).
 
 If you are using this software for research, please also cite the original
 LSDTopoTools2:
@@ -23,20 +24,19 @@ LSDTopoTools2:
 > LSDtopotools/LSDTopoTools2: LSDTopoTools2 v0.9 (v0.9). Zenodo.
 > https://doi.org/10.5281/zenodo.8076231
 
-lsdtt3 has the following design goals compared to LSDTopoTools2:
+lsdtt3 has the following *BIG* improvements LSDTopoTools2:
 
-- Ability to load data in any format compatible with GDAL (e.g., geotiff, COG, vrt, bil, asc, etc).
+- Ability to load data in any format compatible with GDAL (e.g., geotiff, COG, vrt, bil, asc, etc). The vrt input is especially juicy if you have loads of big annoying tiles. 
 - Can write vector formats with correct georeferecing using GDAL
 - Can read any projection. Preprocessing tools that automate projection (UTM below 75 degrees north/south, polar projection at high latitude, option for custom lambert azimuthal equal area for large DEMs spanning >2 UTM zones).
 - Clean separation between file I/O, data storage, and computation
-- CPU and GPU compute backends behind a shared abstract interface
-- Analysis routines as free functions — changing one analysis file only
-  recompiles that file
-- Multithreading implemented for selected routines
-- D8 and DAG (D-infinity / MFD) flow routing behind a common interface (althougb DAG yet to be implemented)
-- Cloud Optimised GeoTIFF (COG) output by default
+- CPU and GPU compute backends behind a shared abstract interface (although GPU is a figment of Simon Mudd's imagination at this point)
+- Analysis routines as free functions — changing one analysis file only. This is sort of working. But you don't have to wait 20 minutes for the code to compile every time you change LSDRaster. 
+- Multithreading implemented for selected routines, and many routines are **MUCH, MUCH** faster (AI refactoring played a big role here. But we check against old routines. Most of the time at least.)
+- D8 and DAG (D-infinity / MFD) flow routing behind a common interface. We use a number of modern filling and priority flood algorithms cribbed from Richard Barnes routines. 
+- Cloud Optimised GeoTIFF (COG) output by default. 
 - Pixel indexing for flow calculations using int64 which allow processing of very large (>40000x40000 pixels) DEMs. You will need a high memory system though!
-- More dependencies than LSDTopoTools2 but all dependencies are widely used and easily installed on Linux systems
+- More dependencies than LSDTopoTools2 but all dependencies are widely used and easily installed on Linux systems. The increased dependencies unfortunately mean you will need to spend more time talking to your IT team if you don't have administrative rights. But it is worth it for the speed. 
 
 **lsdtt3 is NOT backward compatible with LSDTopotools2, it is a complete update of the data structures**
 
@@ -93,7 +93,12 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
-Compiled executables are placed in `bin/`.
+Compiled executables just sit in `build/`.
+If you want to use them do this:
+
+```sh
+export PATH=/my/path/to/lsdtt3/build:$PATH
+```
 
 ### CMake options
 
@@ -111,8 +116,8 @@ text with `key: value` pairs, one per line. Lines beginning with `#` are
 ignored. Pass `-h` to any program for parameter documentation.
 
 ```sh
-./bin/lsdtt-raster-preprocessing my_params.driver
-./bin/lsdtt-test-flowinfo my_params.driver
+/my/path/to/lsdtt3/build/lsdtt-raster-preprocessing my_params.driver
+/my/path/to/lsdtt3/build/lsdtt-test-flowinfo my_params.driver
 ```
 
 **`lsdtt-raster-preprocessing`** — conditions a DEM before analysis. Operations
@@ -126,6 +131,8 @@ flow direction, donor count, and outlet mask.
 
 **`lsdtt-raster-synthetic-tests`** — generates synthetic rasters and tests
 the wavelet quadratic fit analysis.
+
+**And more (I will add all of them here at some point)**
 
 ---
 
@@ -153,6 +160,7 @@ input is never modified. Functions are grouped by category:
 - `lsdtt_raster_nodata_filling_cpu` — interior void filling (iterative average or Laplacian)
 - `lsdtt_raster_spectral_cpu` — wavelet quadratic fit (requires FFTW3)
 - `lsdtt_raster_synthetic_surfaces_cpu` — synthetic test surface generators
+- And many more
 
 ### Flow routing
 
