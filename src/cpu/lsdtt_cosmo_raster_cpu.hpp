@@ -85,6 +85,57 @@ double calculate_accumulated_crn_concentration(
     const lsdtt_flowinfo& flow,
     std::int64_t outlet_node);
 
+// ── Whole-raster steady-state CRN concentration ──────────────────────────────
+// Same physics as calculate_crn_concentration_raster but operates on every
+// valid pixel (no flow routing / outlet restriction needed).
+// nuclide       : "Be10", "Al26", or "C14"
+// muon_scheme   : see lsdtt_crn_parameters::reset_scaling
+// erosion_raster: effective erosion rate (g cm⁻² yr⁻¹) per pixel
+// prod_raster   : Stone 2000 scaling raster (from calculate_production_raster)
+// topo_shield   : topographic shielding (dimensionless 0–1; 1 = unshielded)
+// snow_shield   : snow shielding as effective depth (g cm⁻²); 0 = no snow
+// self_shield   : self shielding as effective depth (g cm⁻²); 0 = surface
+lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
+    const std::string&      nuclide,
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& erosion_raster,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const lsdtt_raster_cpu& snow_shield,
+    const lsdtt_raster_cpu& self_shield);
+
+// ── Step-change CRN concentration (whole raster) ─────────────────────────────
+// Computes the transient concentration after an instantaneous step change in
+// erosion rate.  Surface sample (effective depth = 0).
+//
+// At pixels where time_since_change > 0:
+//   1. start depth = eff_erate_new × time_since_change
+//   2. initialise SS at eff_erate_old at that starting depth
+//   3. evolve for time_since_change yr at eff_erate_new → surface concentration
+// At pixels where time_since_change <= 0: returns SS at eff_erate_new.
+//
+// eff_erate_old_g_cm2_yr / eff_erate_new_g_cm2_yr : uniform scalar erosion rates
+// time_since_change : raster of years since the step change occurred (0 = no change)
+lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
+    const std::string&      nuclide,
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& time_since_change,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  eff_erate_old_g_cm2_yr,
+    double                  eff_erate_new_g_cm2_yr);
+
+// ── Whole-raster CRN accumulation ────────────────────────────────────────────
+// Computes the erosion-weighted mean concentration at every pixel using D8
+// flow accumulation:
+//   C_acc[i] = Σ_upslope(C × ε) / Σ_upslope(ε)
+// Returns nodata where the accumulated erosion is zero.
+// Requires flow routing built with build_topological_order = true.
+lsdtt_raster_cpu calculate_accumulated_crn_raster(
+    const lsdtt_raster_cpu& conc_raster,
+    const lsdtt_raster_cpu& erosion_raster,
+    const lsdtt_flowinfo&   flow);
+
 // ── Erosion-rate inversion ────────────────────────────────────────────────────
 // Inverts a measured nuclide concentration to an effective erosion rate using
 // Newton-Raphson followed by bisection if N-R does not converge.

@@ -368,6 +368,245 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
+    const std::string&      nuclide,
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& erosion_raster,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const lsdtt_raster_cpu& snow_shield,
+    const lsdtt_raster_cpu& self_shield)
+{
+    const auto& meta = prod_raster.get_meta();
+    int nr = meta.n_rows, nc = meta.n_cols;
+    int n_total = nr * nc;
+    float ndv = static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   out_data(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> out_mask(nr, nc, 0);
+
+    const auto& e_data  = erosion_raster.get_data_array();
+    const auto& e_mask  = erosion_raster.get_mask_array();
+    const auto& p_data  = prod_raster.get_data_array();
+    const auto& p_mask  = prod_raster.get_mask_array();
+    const auto& ts_data = topo_shield.get_data_array();
+    const auto& ts_mask = topo_shield.get_mask_array();
+    const auto& snow_d  = snow_shield.get_data_array();
+    const auto& snow_m  = snow_shield.get_mask_array();
+    const auto& self_d  = self_shield.get_data_array();
+    const auto& self_m  = self_shield.get_mask_array();
+
+#pragma omp parallel default(none) \
+    shared(nr, nc, n_total, e_data, e_mask, p_data, p_mask, ts_data, ts_mask, \
+           snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme)
+    {
+        lsdtt_crn_parameters params;
+        lsdtt_crn_particle   particle;
+
+#pragma omp for schedule(static)
+        for (int k = 0; k < n_total; ++k)
+        {
+            int row = k / nc;
+            int col = k % nc;
+
+            if (!e_mask(row, col) || !p_mask(row, col) ||
+                !ts_mask(row, col) || !snow_m(row, col) || !self_m(row, col))
+                continue;
+
+            double erate           = static_cast<double>(e_data(row, col));
+            double total_shielding = static_cast<double>(p_data(row, col)) *
+                                     static_cast<double>(ts_data(row, col));
+            double d_top = static_cast<double>(snow_d(row, col));
+            double d_bot = d_top + static_cast<double>(self_d(row, col));
+
+            params.reset_scaling(muon_scheme);
+            params.scale_F_values(total_shielding, nuclide);
+
+            double conc = 0.0;
+            if (nuclide == "Al26")
+            {
+                particle.update_26Al_ss(erate, params, d_top, d_bot);
+                conc = particle.get_conc_26Al();
+            }
+            else if (nuclide == "C14")
+            {
+                particle.update_14C_ss(erate, params, d_top, d_bot);
+                conc = particle.get_conc_14C();
+            }
+            else
+            {
+                particle.update_10Be_ss(erate, params, d_top, d_bot);
+                conc = particle.get_conc_10Be();
+            }
+
+            out_data(row, col) = static_cast<float>(conc);
+            out_mask(row, col) = 1;
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
+    const std::string&      nuclide,
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& time_since_change,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  eff_erate_old_g_cm2_yr,
+    double                  eff_erate_new_g_cm2_yr)
+{
+    const auto& meta = prod_raster.get_meta();
+    int nr = meta.n_rows, nc = meta.n_cols;
+    int n_total = nr * nc;
+    float ndv = static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   out_data(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> out_mask(nr, nc, 0);
+
+    const auto& p_data  = prod_raster.get_data_array();
+    const auto& p_mask  = prod_raster.get_mask_array();
+    const auto& ts_data = topo_shield.get_data_array();
+    const auto& ts_mask = topo_shield.get_mask_array();
+    const auto& t_data  = time_since_change.get_data_array();
+    const auto& t_mask  = time_since_change.get_mask_array();
+
+#pragma omp parallel default(none) \
+    shared(nr, nc, n_total, p_data, p_mask, ts_data, ts_mask, t_data, t_mask, \
+           out_data, out_mask, nuclide, muon_scheme, \
+           eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr)
+    {
+        lsdtt_crn_parameters params;
+        lsdtt_crn_particle   particle;
+
+#pragma omp for schedule(static)
+        for (int k = 0; k < n_total; ++k)
+        {
+            int row = k / nc;
+            int col = k % nc;
+
+            if (!p_mask(row, col) || !ts_mask(row, col) || !t_mask(row, col))
+                continue;
+
+            double total_shielding = static_cast<double>(p_data(row, col)) *
+                                     static_cast<double>(ts_data(row, col));
+            double t_step = static_cast<double>(t_data(row, col));
+
+            params.reset_scaling(muon_scheme);
+            params.scale_F_values(total_shielding, nuclide);
+
+            double conc = 0.0;
+
+            if (t_step > 0.0)
+            {
+                // Particle was at starting depth = eff_erate_new * t_step at t_step yr ago.
+                // SS at eff_erate_old, then evolved for t_step yr at eff_erate_new.
+                double d_start = eff_erate_new_g_cm2_yr * t_step;
+                particle.set_effective_depth(d_start);
+                particle.set_conc_10Be(0.0);
+                particle.set_conc_26Al(0.0);
+                particle.set_conc_14C(0.0);
+
+                if (nuclide == "Al26")
+                {
+                    particle.update_26Al_ss(eff_erate_old_g_cm2_yr, params, d_start, d_start);
+                    particle.update_conc(t_step, eff_erate_new_g_cm2_yr, params);
+                    conc = particle.get_conc_26Al();
+                }
+                else if (nuclide == "C14")
+                {
+                    particle.update_14C_ss(eff_erate_old_g_cm2_yr, params, d_start, d_start);
+                    particle.update_conc(t_step, eff_erate_new_g_cm2_yr, params);
+                    conc = particle.get_conc_14C();
+                }
+                else
+                {
+                    particle.update_10Be_ss(eff_erate_old_g_cm2_yr, params, d_start, d_start);
+                    particle.update_conc(t_step, eff_erate_new_g_cm2_yr, params);
+                    conc = particle.get_conc_10Be();
+                }
+            }
+            else
+            {
+                // No step change at this pixel: SS at new erosion rate (surface sample)
+                if (nuclide == "Al26")
+                {
+                    particle.update_26Al_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                    conc = particle.get_conc_26Al();
+                }
+                else if (nuclide == "C14")
+                {
+                    particle.update_14C_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                    conc = particle.get_conc_14C();
+                }
+                else
+                {
+                    particle.update_10Be_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                    conc = particle.get_conc_10Be();
+                }
+            }
+
+            out_data(row, col) = static_cast<float>(conc);
+            out_mask(row, col) = 1;
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+lsdtt_raster_cpu calculate_accumulated_crn_raster(
+    const lsdtt_raster_cpu& conc_raster,
+    const lsdtt_raster_cpu& erosion_raster,
+    const lsdtt_flowinfo&   flow)
+{
+    const auto& meta   = conc_raster.get_meta();
+    int nr = meta.n_rows, nc_cols = meta.n_cols;
+    int n_total = nr * nc_cols;
+    float ndv = static_cast<float>(meta.no_data_value);
+
+    const auto& c_data = conc_raster.get_data_array();
+    const auto& c_mask = conc_raster.get_mask_array();
+    const auto& e_data = erosion_raster.get_data_array();
+    const auto& e_mask = erosion_raster.get_mask_array();
+
+    // Build per-cell weight vectors for accumulation.
+    // nodata cells contribute 0 to both sums.
+    std::vector<double> atoms_flux(static_cast<std::size_t>(n_total), 0.0);
+    std::vector<double> erosion_wt(static_cast<std::size_t>(n_total), 0.0);
+
+    for (int k = 0; k < n_total; ++k)
+    {
+        int row = k / nc_cols;
+        int col = k % nc_cols;
+        if (!c_mask(row, col) || !e_mask(row, col)) continue;
+        double erate = static_cast<double>(e_data(row, col));
+        double conc  = static_cast<double>(c_data(row, col));
+        atoms_flux[static_cast<std::size_t>(k)] = conc * erate;
+        erosion_wt[static_cast<std::size_t>(k)] = erate;
+    }
+
+    std::vector<double> acc_atoms = flow.accumulate(atoms_flux);
+    std::vector<double> acc_eros  = flow.accumulate(erosion_wt);
+
+    lsdtt_array2d<float>   out_data(nr, nc_cols, ndv);
+    lsdtt_array2d<uint8_t> out_mask(nr, nc_cols, 0);
+
+    for (int k = 0; k < n_total; ++k)
+    {
+        int row = k / nc_cols;
+        int col = k % nc_cols;
+        double acc_e = acc_eros[static_cast<std::size_t>(k)];
+        if (acc_e <= 0.0) continue;
+        out_data(row, col) = static_cast<float>(acc_atoms[static_cast<std::size_t>(k)] / acc_e);
+        out_mask(row, col) = 1;
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 double calculate_accumulated_crn_concentration(
     const lsdtt_raster_cpu& conc_raster,
     const lsdtt_raster_cpu& erosion_raster,

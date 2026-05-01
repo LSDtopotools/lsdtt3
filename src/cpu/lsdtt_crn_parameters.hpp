@@ -104,6 +104,18 @@ public:
     double stone2000sp_paleomag(double lat_deg, double P_mbar, double Fsp,
                                 double age_yr, const CrnNcData& nc) const;
 
+    // ── Production scaling ────────────────────────────────────────────────────
+    // Multiplies P0 for all nuclides by the Stone 2000 factor (or any other
+    // site-specific production scaling).  Call after reset_scaling(), before
+    // scale_F_values().  Primarily used by the column / particle model.
+    void apply_production_scaling(double factor)
+    {
+        P0_10Be_ *= factor;
+        P0_26Al_ *= factor;
+        P0_14C_  *= factor;
+        P0_36Cl_ *= factor;
+    }
+
     // ── Standardisation ──────────────────────────────────────────────────────
     // Returns the factor to multiply a measured concentration by to convert it
     // to the reference standard (07KNSTD for Be10, KNSTD for Al26).

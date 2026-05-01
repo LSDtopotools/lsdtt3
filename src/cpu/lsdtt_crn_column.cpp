@@ -108,34 +108,11 @@ lsdtt_crn_parameters lsdtt_crn_column::make_params(double production_scaling,
 {
     lsdtt_crn_parameters p;
     p.reset_scaling(muon_scheme);
-    p.scale_F_values(production_scaling, "Be10");
-    // All three nuclides use the same Γ and F ratios after scaling;
-    // scale_F_values writes only the chosen nuclide's F[].  We need a unified
-    // approach: scale all three with the same shielding factor.
-    // Reset and re-scale individually, then merge.
-    // Actually in lsdtt3, scale_F_values applies the SAME effective depth to
-    // the chosen nuclide.  For the column, we apply the same production_scaling
-    // to all three.  We need to call it three times.
-    // Re-do cleanly:
-    p.reset_scaling(muon_scheme);
-    // scale_F_values modifies F for the named nuclide in-place; call for each.
-    // But reset_scaling wipes all, so we have to call each without resetting.
-    // Simplest: scale_F_values should be idempotent; call each separately
-    // after reset.  Here we must NOT reset between calls.
-    // We need a separate approach: just set production_scaling into the
-    // CRNParameters by abusing scale_F_values three times.
-    // (scale_F_values(s, nuclide) multiplies F[nuclide][] by effective depth
-    //  correction that maps scalar shielding s to an equivalent F[].)
-    // For a column simulation production_scaling == Stone factor × topo shielding,
-    // a dimensionless number ≤ 1.  scale_F_values expects total_shielding in [0,1].
-    // Cap at 1 to satisfy the guard.
-    double s = std::min(1.0, std::max(0.0, production_scaling));
-    if (s < 1.0)
-    {
-        p.scale_F_values(s, "Be10");
-        p.scale_F_values(s, "Al26");
-        p.scale_F_values(s, "C14");
-    }
+    // Apply Stone / site production scaling by multiplying P0 directly.
+    // This handles both factors < 1 and > 1 (high-latitude enhancement).
+    // scale_F_values is reserved for shielding < 1 in the simple modes.
+    if (production_scaling != 1.0)
+        p.apply_production_scaling(production_scaling);
     return p;
 }
 
