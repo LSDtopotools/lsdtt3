@@ -385,6 +385,7 @@ lsdtt_cli(lsdtt-cosmo-tool             cli/lsdtt-cosmo-tool.cpp)
 lsdtt_cli(lsdtt-cosmo-prediction       cli/lsdtt-cosmo-prediction.cpp)
 lsdtt_cli(lsdtt-crn-column-tool        cli/lsdtt-crn-column-tool.cpp)
 lsdtt_cli(lsdtt-marsh-topography       cli/lsdtt-marsh-topography.cpp)
+lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
