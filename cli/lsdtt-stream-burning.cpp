@@ -275,6 +275,44 @@ int main(int argc, char* argv[])
         "Output format for the junction comparison point file.",
         "Allowed values: flatgeobuf, fgb, gpkg, csv."};
 
+    // --- snap_to_network: junction gap repair ---
+    bool_default_map["repair_junction_gaps"] = false;
+    help_map["repair_junction_gaps"] = {"bool","false",
+        "Attempt to repair DEM obstructions at mismatched first-layer junctions.",
+        "For each junction pair whose distance exceeds min_gap_m, runs a "
+        "least-cost terrain path from the DEM junction to the vector junction "
+        "and carves the DEM to allow correct D8 routing.  Falls back to burning "
+        "under the input vector where no terrain path can be found (tunnels). "
+        "Only used when stream_burn_mode is snap_to_network."};
+
+    float_default_map["min_gap_m"] = 50.0f;
+    help_map["min_gap_m"] = {"float","50",
+        "Minimum junction-pair distance (m) to trigger gap repair.",
+        "Pairs closer than this are considered correctly matched and skipped."};
+
+    int_default_map["max_gap_search_px"] = 60;
+    help_map["max_gap_search_px"] = {"int","60",
+        "Search-window half-width in pixels for gap repair.",
+        "The Dijkstra search is bounded to a rectangle that spans the vector "
+        "and DEM junction locations expanded by this many pixels on each side."};
+
+    float_default_map["gap_uphill_penalty"] = 20.0f;
+    help_map["gap_uphill_penalty"] = {"float","20",
+        "Cost multiplier applied to uphill elevation steps during gap repair.",
+        "Higher values force the repair path to cross obstructions at their "
+        "lowest point; lower values allow more relaxed routing."};
+
+    float_default_map["max_gap_climb_m"] = 10.0f;
+    help_map["max_gap_climb_m"] = {"float","10",
+        "Maximum elevation the repair path may climb above the DEM junction (m).",
+        "Paths exceeding this limit are rejected as likely tunnels or deep cuts "
+        "and fall back to the vector-burn strategy."};
+
+    bool_default_map["write_repaired_dem"] = false;
+    help_map["write_repaired_dem"] = {"bool","false",
+        "Write the modified (gap-repaired) DEM as a raster.",
+        "Only used when repair_junction_gaps is true."};
+
     // --- Output — QC/diagnostic ---
     bool_default_map["write_vector_sources"] = true;
     help_map["write_vector_sources"] = {"bool","true",
@@ -900,6 +938,52 @@ int main(int argc, char* argv[])
             }
             else
             {
+                // ── Optional gap repair ───────────────────────────────────────
+                if (bf["repair_junction_gaps"])
+                {
+                    std::cout << "\n--- Repairing junction gaps ---\n";
+                    std::cout << "  min_gap_m        = " << ff["min_gap_m"]        << "\n";
+                    std::cout << "  max_gap_search_px= " << ifs["max_gap_search_px"] << "\n";
+                    std::cout << "  gap_uphill_penalty=" << ff["gap_uphill_penalty"] << "\n";
+                    std::cout << "  max_gap_climb_m  = " << ff["max_gap_climb_m"]  << "\n";
+
+                    try
+                    {
+                        lsdtt::repair_junction_gaps(
+                            dem,   // modifies dem in place
+                            pairs,
+                            stream_vector_path,
+                            static_cast<double>(ff["min_gap_m"]),
+                            ifs["max_gap_search_px"],
+                            static_cast<double>(ff["gap_uphill_penalty"]),
+                            static_cast<double>(ff["max_gap_climb_m"])
+                        );
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: repair_junction_gaps failed: "
+                                  << e.what() << "\n";
+                    }
+
+                    if (bf["write_repaired_dem"])
+                    {
+                        const std::string rdem = out_path(pp, "_repaired", ".tif");
+                        std::cout << "Writing repaired DEM: " << rdem << "\n";
+                        try
+                        {
+                            lsdtt::lsdtt_data_loader dl;
+                            dl.write_full(dem.get_data(), dem.get_meta(),
+                                          rdem, lsdtt::raster_output_format::cog);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            std::cerr << "Warning: could not write repaired DEM: "
+                                      << e.what() << "\n";
+                        }
+                    }
+                }
+
+                // ── Junction comparison output ────────────────────────────────
                 const std::string ext    = lsdtt::output_extension(junc_cmp_fmt);
                 const std::string output = out_path(pp, "_junction_comparison", ext);
                 std::cout << "Writing: " << output << "\n";

@@ -143,6 +143,34 @@ lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(
     const lsdtt_raster_cpu& raster
 );
 
+// -----------------------------------------------------------------------------
+// compute_plan_curvature_3x3_square
+//
+// Plan curvature (horizontal curvature) from the standard 8-point
+// Zevenbergen-Thorne (1987) stencil on the full 3×3 neighbourhood.
+//
+// Uses the same derivative notation as compute_polyfit_metrics:
+//   p = dz/dx = (z_E - z_W) / (2L)
+//   q = dz/dy = (z_N - z_S) / (2L)   [y increases northward]
+//   r = d²z/dx²  = (z_E + z_W - 2 z_C) / L²
+//   t = d²z/dy²  = (z_N + z_S - 2 z_C) / L²
+//   s = d²z/dxdy = (z_NE - z_NW - z_SE + z_SW) / (4 L²)
+//
+//   plan_curvature = (q² r  −  2 p q s  +  p² t) / sqrt((p² + q²)³)
+//
+// Sign convention (lsdtt3):
+//   Positive → concave across the contour (flow convergence, channel bottom).
+//   Negative → convex across the contour  (flow divergence, ridge nose).
+//   Zero     → flat or near-flat slope; plan curvature is undefined there
+//               and the pixel is set to 0 with valid mask.
+//
+// Edge pixels and any pixel whose full 3×3 neighbourhood contains nodata are
+// set to nodata in the output.  Units: m⁻¹.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_plan_curvature_3x3_square(
+    const lsdtt_raster_cpu& raster
+);
+
 
 // -----------------------------------------------------------------------------
 // moving_window_mean

@@ -28,6 +28,9 @@ lsdtt3/
 │   ├── lsdtt-channel-extraction.cpp
 │   ├── lsdtt-channel-network-analysis.cpp
 │   ├── lsdtt-chi-analysis.cpp             *(requires Eigen3)*
+│   ├── lsdtt-cosmo-prediction.cpp
+│   ├── lsdtt-cosmo-tool.cpp
+│   ├── lsdtt-crn-column-tool.cpp
 │   ├── lsdtt-drainage-analysis.cpp
 │   ├── lsdtt-feature-finder.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
@@ -119,6 +122,10 @@ lsdtt3/
 │   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
 │   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity
 │   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
+│   │   ├── lsdtt_cosmo_raster_cpu.hpp/.cpp                   — raster CRN: production, SS/step-change concentration, flow accumulation
+│   │   ├── lsdtt_crn_parameters.hpp/.cpp                     — Stone 2000 scaling, muon schemes, ERA40/palaeomagnetic correction
+│   │   ├── lsdtt_crn_column.hpp/.cpp                         — 1-D transient CRN column simulation
+│   │   ├── lsdtt_crn_particle.hpp                            — header-only: SS and transient nuclide concentration particle
 │   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
 │   └── utils/
 │       ├── lsdtt_array2d.hpp                — header-only 2D array
@@ -218,6 +225,9 @@ the utility-layer numerical functions.
 - `lsdtt_raster_binary_mask_cpu.cpp`
 - `lsdtt_burn_streams_cpu.cpp`
 - `lsdtt_mountain_front_cpu.cpp`
+- `lsdtt_cosmo_raster_cpu.cpp`
+- `lsdtt_crn_parameters.cpp`
+- `lsdtt_crn_column.cpp`
 - `lsdtt_raster_opencv_cpu.cpp` *(when OpenCV is available)*
 - `lsdtt_chi_ksn_inversion_cpu.cpp` *(when Eigen3 is available)*
 
@@ -498,6 +508,36 @@ Current CLI programs are:
   DEM-extracted network as lines and optionally as points and junctions. The two networks
   (vector-supplied vs DEM-extracted) are intended for subsequent comparison to decide
   where to burn the vector channel directly into the DEM vs follow DEM routing.
+
+- **`lsdtt-cosmo-tool.cpp`**  
+  Cosmogenic nuclide erosion-rate inversion. Loads measured nuclide concentrations at
+  channel sample points (CSV with latitude/longitude), computes the Stone 2000 production
+  raster, snaps points to the D8 channel network, and inverts each measured concentration
+  to a basin-averaged effective erosion rate using Newton-Raphson + bisection.
+  Optionally applies AMS standardisation and uses ERA40 atmospheric / palaeomagnetic
+  corrections when a `crn_parameters.nc` file is supplied.
+
+- **`lsdtt-cosmo-prediction.cpp`**  
+  Predicts cosmogenic nuclide concentrations across a DEM.  Three modes, selectable
+  independently and combinable in a single run:
+  - `calculate_crn_concentration_raster` — steady-state concentration at every pixel
+    given an erosion-rate field and shielding rasters
+    (`calculate_crn_concentration_raster_whole`).
+  - `calculate_step_change_crn_concentration_raster` — transient concentration after
+    an instantaneous step change in erosion rate; per-pixel `time_since_change` raster,
+    uniform pre- and post-change effective erosion rates
+    (`calculate_crn_concentration_raster_step_change`).
+  - `calculate_accumulated_crn_concentration` — erosion-weighted average concentration
+    accumulated downstream via D8 flow routing (`calculate_accumulated_crn_raster`).
+  All shielding inputs (topographic, snow, self) and the erosion-rate raster can be
+  loaded from disk or specified as uniform scalar defaults.
+  Outputs: `_<nuclide>_crn_conc.tif`, `_<nuclide>_step_crn_conc.tif`,
+  `_<nuclide>_crn_acc.tif`.
+
+- **`lsdtt-crn-column-tool.cpp`**  
+  1-D cosmogenic nuclide column simulation (no DEM required).  Three modes:
+  `steady_state`, `step_change`, and `full_transient` (user-supplied erosion-history CSV).
+  Uses `lsdtt_crn_column` and `lsdtt_crn_parameters`.
 
 ### Polyfit method rule
 
@@ -1579,6 +1619,110 @@ links sharing the same Strahler order. It differs from a compact link.
 - `write_strahler_channels(...)` — Strahler-focused attribute schema (order, length, slope)
 - `write_tokunaga_channels(...)` — Tokunaga-focused attribute schema (donor order, receiver order, offset); same geometry
 - `write_tokunaga_summary_data(...)` — pair counts, offset statistics, and fit results to CSV
+
+---
+
+## lsdtt_cosmo_raster_cpu
+
+File: `src/cpu/lsdtt_cosmo_raster_cpu.hpp/.cpp`
+
+Raster-level cosmogenic nuclide operations.  All free functions in `namespace lsdtt`.
+
+### Production raster
+
+`calculate_production_raster(dem, nc={}, age_yr=0)` → `lsdtt_raster_cpu`
+
+Computes the Stone (2000) spallation scaling factor at every valid pixel.
+`nc` is an optional `CrnNcData` struct loaded via `lsdtt_crn_parameters::load_nc_data()`;
+when `nc.loaded == false` the standard-atmosphere formula is used with no palaeomagnetic
+correction.  `age_yr > 0` activates the Muscheler VDM time-integrated correction.
+
+### Steady-state concentration — single basin
+
+`calculate_crn_concentration_raster(nuclide, muon_scheme, erosion, prod, topo, snow, self, flow, outlet_node)` → `lsdtt_raster_cpu`
+
+Computes steady-state concentration at every pixel **upslope** of `outlet_node`.
+Used by the erosion-rate inversion workflow in `lsdtt-cosmo-tool`.
+
+### Steady-state concentration — whole raster
+
+`calculate_crn_concentration_raster_whole(nuclide, muon_scheme, erosion, prod, topo, snow, self)` → `lsdtt_raster_cpu`
+
+Same physics as the single-basin version but operates on **every valid pixel** with no
+flow-routing dependency.  OpenMP-parallelised over all pixels.  Used by
+`lsdtt-cosmo-prediction`.
+
+### Step-change concentration — whole raster
+
+`calculate_crn_concentration_raster_step_change(nuclide, muon_scheme, time_since_change, prod, topo, eff_erate_old, eff_erate_new)` → `lsdtt_raster_cpu`
+
+Transient surface concentration after an instantaneous step change in erosion rate.
+Per-pixel `time_since_change` raster (yr); uniform scalar `eff_erate_old` and
+`eff_erate_new` (g cm⁻² yr⁻¹).
+
+At each pixel where `time_since_change > 0`:
+1. Starting depth = `eff_erate_new × time_since_change`
+2. Initialise SS at `eff_erate_old` at that depth
+3. Evolve for `time_since_change` yr at `eff_erate_new` → surface concentration
+
+At pixels where `time_since_change ≤ 0`: returns SS at `eff_erate_new`.
+
+### Accumulated concentration — single outlet (scalar)
+
+`calculate_accumulated_crn_concentration(conc, erosion, flow, outlet_node)` → `double`
+
+Erosion-weighted mean concentration across all upslope pixels of `outlet_node`.
+
+### Accumulated concentration — whole raster
+
+`calculate_accumulated_crn_raster(conc, erosion, flow)` → `lsdtt_raster_cpu`
+
+Erosion-weighted mean concentration at **every pixel** using D8 flow accumulation:
+`C_acc[i] = Σ_upslope(C × ε) / Σ_upslope(ε)`.  Calls `flow.accumulate()` twice
+(O(N) each).  Used by `lsdtt-cosmo-prediction`.
+
+### Erosion-rate inversion
+
+`calculate_eff_erate_from_conc(measured_conc, nuclide, muon_scheme, prod, topo, snow, self, flow, outlet_node, predicted_conc&)` → `double`
+
+Inverts a measured nuclide concentration to an effective erosion rate using
+Newton-Raphson (analytic derivative) followed by bisection if N-R does not converge.
+Precomputes a basin summary in O(N) so each N-R and bisection step costs O(4).
+
+### Supported nuclides and muon schemes
+
+Nuclides: `"Be10"`, `"Al26"`, `"C14"`
+
+Muon schemes: `"Braucher"`, `"BraucherBorchers"` (default), `"Granger"`, `"Schaller"`, `"newCRONUS"`
+
+---
+
+## lsdtt_crn_parameters / lsdtt_crn_particle / lsdtt_crn_column
+
+**`lsdtt_crn_parameters`** (`src/cpu/lsdtt_crn_parameters.hpp/.cpp`)
+
+Physics constants for CRN production and decay.  Workflow per pixel:
+1. `reset_scaling(muon_scheme)` — restore standard F values
+2. `scale_F_values(total_shielding, nuclide)` — fold shielding into F arrays
+3. Pass `const&` to `lsdtt_crn_particle`
+
+Also provides: `stone2000sp()`, `stone2000sp_paleomag()`,
+`atmospheric_pressure_standard()`, `atmospheric_pressure_era40()`,
+`load_nc_data()`, `apply_production_scaling()`, standardisation maps.
+
+**`lsdtt_crn_particle`** (`src/cpu/lsdtt_crn_particle.hpp`, header-only)
+
+Lightweight particle tracking nuclide concentrations.  Methods:
+- `update_10Be_ss / update_26Al_ss / update_14C_ss` — steady-state at point or depth-integrated
+- `init_ss_all` — SS for all three nuclides at current depth
+- `update_conc(dt, eff_erate, params)` — analytic transient update for all three nuclides
+- `remove_mass(depth_m, density)` — advance particle to shallower depth
+
+**`lsdtt_crn_column`** (`src/cpu/lsdtt_crn_column.hpp/.cpp`)
+
+1-D transient column simulation.  Reads an erosion-history CSV (`time,rate,removal`).
+Methods: `run_transient(depths, scaling, muon_scheme, initial_*)`, `steady_state(...)`,
+`step_change(d_eff, eff_erate_old, eff_erate_new, t_step, scaling, muon_scheme)`.
 
 ---
 

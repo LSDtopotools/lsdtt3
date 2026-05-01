@@ -352,6 +352,92 @@ lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(
 
 
 // -----------------------------------------------------------------------------
+// compute_plan_curvature_3x3_square
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_plan_curvature_3x3_square(
+    const lsdtt_raster_cpu& raster)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::compute_plan_curvature_3x3_square: "
+            "input raster metadata is invalid");
+
+    meta.check_projected_metres();
+
+    const int    nrows  = meta.n_rows;
+    const int    ncols  = meta.n_cols;
+    const double L      = meta.cell_size;
+    const double inv_2L = 1.0 / (2.0 * L);
+    const double inv_L2 = 1.0 / (L * L);
+    const double inv_4L2 = 1.0 / (4.0 * L * L);
+    const float  nodata = static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    lsdtt_array2d<float>   out(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static)
+#endif
+    for (int row = 1; row < nrows - 1; ++row)
+    {
+        for (int col = 1; col < ncols - 1; ++col)
+        {
+            if (window3x3_has_nodata(dem, mask, meta, row, col)) continue;
+
+            const double z_c  = static_cast<double>(dem(row,     col    ));
+            const double z_n  = static_cast<double>(dem(row - 1, col    ));
+            const double z_s  = static_cast<double>(dem(row + 1, col    ));
+            const double z_e  = static_cast<double>(dem(row,     col + 1));
+            const double z_w  = static_cast<double>(dem(row,     col - 1));
+            const double z_ne = static_cast<double>(dem(row - 1, col + 1));
+            const double z_nw = static_cast<double>(dem(row - 1, col - 1));
+            const double z_se = static_cast<double>(dem(row + 1, col + 1));
+            const double z_sw = static_cast<double>(dem(row + 1, col - 1));
+
+            // First derivatives
+            const double p = (z_e - z_w) * inv_2L;   // dz/dx
+            const double q = (z_n - z_s) * inv_2L;   // dz/dy  (y = northward)
+
+            const double slope2 = p * p + q * q;
+            if (slope2 < 1e-12)
+            {
+                // Near-flat: plan curvature undefined; write 0 as valid output
+                out(row, col)      = 0.0f;
+                out_mask(row, col) = 1;
+                continue;
+            }
+
+            // Second derivatives
+            const double r_xx = (z_e + z_w - 2.0 * z_c) * inv_L2;
+            const double t_yy = (z_n + z_s - 2.0 * z_c) * inv_L2;
+            const double s_xy = (z_ne - z_nw - z_se + z_sw) * inv_4L2;
+
+            // plan_curvature = (q²·r − 2·p·q·s + p²·t) / (p²+q²)^(3/2)
+            // Positive = concave across contour = flow convergence / channel
+            const double kh =
+                (q * q * r_xx - 2.0 * p * q * s_xy + p * p * t_yy)
+                / std::pow(slope2, 1.5);
+
+            out(row, col)      = static_cast<float>(kh);
+            out_mask(row, col) = 1;
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out.get_vector()),
+        std::move(out_mask.get_vector()),
+        meta
+    );
+}
+
+
+
+// -----------------------------------------------------------------------------
 // moving_window_mean
 // -----------------------------------------------------------------------------
 

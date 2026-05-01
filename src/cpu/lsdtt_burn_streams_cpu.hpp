@@ -172,6 +172,31 @@ struct burned_stream_profile
 );
 
 // ---------------------------------------------------------------------------
+// GapFixType
+//
+// Records the outcome of repair_junction_gaps for each junction pair.
+// ---------------------------------------------------------------------------
+enum class GapFixType
+{
+    ok,               // distance within tolerance — no repair attempted
+    curvature_bridge, // repaired via least-cost terrain path
+    vector_burn,      // repaired via fallback burn under the input vector
+    unresolved        // gap too complex to auto-repair (tunnel, etc.)
+};
+
+inline const char* gap_fix_type_str(GapFixType t)
+{
+    switch (t)
+    {
+        case GapFixType::ok:               return "ok";
+        case GapFixType::curvature_bridge: return "curvature_bridge";
+        case GapFixType::vector_burn:      return "vector_burn";
+        case GapFixType::unresolved:       return "unresolved";
+    }
+    return "unknown";
+}
+
+// ---------------------------------------------------------------------------
 // vector_dem_junction_pair
 //
 // One matched pair of junctions: a first-layer junction from the supplied
@@ -180,11 +205,13 @@ struct burned_stream_profile
 // ---------------------------------------------------------------------------
 struct vector_dem_junction_pair
 {
-    int      pair_id      = 0;
-    lsdtt_xy vector_xy;          // junction location in the supplied vector
-    lsdtt_xy dem_xy;             // nearest junction in the DEM network
-    double   distance_m   = 0.0; // Euclidean distance between them (m)
-    int      n_sources    = 0;   // number of source tips that merge here
+    int        pair_id    = 0;
+    lsdtt_xy   vector_xy;          // junction location in the supplied vector
+    lsdtt_xy   dem_xy;             // nearest junction in the DEM network
+    double     distance_m = 0.0;   // Euclidean distance between them (m)
+    int        n_sources  = 0;     // number of source tips that merge here
+    GapFixType fix_type   = GapFixType::ok; // repair outcome
+    int        n_burned   = 0;     // pixels lowered during repair
 };
 
 // ---------------------------------------------------------------------------
@@ -211,16 +238,52 @@ find_first_layer_junction_pairs(
 );
 
 // ---------------------------------------------------------------------------
+// repair_junction_gaps
+//
+// For every junction pair whose distance_m >= min_gap_m, attempts to bridge
+// the gap in the DEM so that D8 re-routing will produce a junction close to
+// vector_xy rather than dem_xy.
+//
+// Algorithm (per pair):
+//   1. Run a least-cost Dijkstra from dem_xy to the neighbourhood of
+//      vector_xy within a bounding window expanded by max_search_px pixels.
+//      Cost per step = step_distance + max(0, Δelev) × uphill_mult.
+//   2. If a path is found and its maximum elevation does not exceed the
+//      dem_xy elevation by more than max_climb_m, carve the path
+//      monotonically downhill from the higher end to the lower end.
+//      fix_type → GapFixType::curvature_bridge.
+//   3. Otherwise (tunnel, deep cut, large barrier): burn the input vector
+//      segments that pass through the search window within that window.
+//      fix_type → GapFixType::vector_burn.
+//   4. If the fallback also produces no pixels (e.g. vector does not cross
+//      the window), fix_type → GapFixType::unresolved.
+//
+// dem is modified in-place.  pairs[i].fix_type and pairs[i].n_burned are
+// updated.  Pairs with distance_m < min_gap_m are left with fix_type = ok.
+// ---------------------------------------------------------------------------
+void repair_junction_gaps(
+    lsdtt_raster_cpu&                      dem,
+    std::vector<vector_dem_junction_pair>& pairs,
+    const std::string&                     vector_path,
+    double                                 min_gap_m    = 50.0,
+    int                                    max_search_px = 60,
+    double                                 uphill_mult   = 20.0,
+    double                                 max_climb_m   = 10.0
+);
+
+// ---------------------------------------------------------------------------
 // write_junction_comparison_points
 //
 // Writes a single point file containing both members of every junction pair.
 // Each row represents one point (vector or DEM junction).
 //
 // Attributes per feature:
-//   pair_id        (int64)  — shared by the two points in a pair
-//   is_dem_junction (int64) — 0 = vector network junction, 1 = DEM junction
-//   distance_m     (double) — distance between the paired points
-//   n_sources      (int64)  — source tips converging at this junction
+//   pair_id         (int64)  — shared by the two points in a pair
+//   is_dem_junction (int64)  — 0 = vector junction, 1 = DEM junction
+//   distance_m      (double) — distance between the paired points
+//   n_sources       (int64)  — source tips converging at this junction
+//   fix_type        (string) — "ok", "curvature_bridge", "vector_burn", or
+//                              "unresolved"
 // ---------------------------------------------------------------------------
 void write_junction_comparison_points(
     const std::vector<vector_dem_junction_pair>& pairs,

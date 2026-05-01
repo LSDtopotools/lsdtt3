@@ -24,6 +24,7 @@
 #include "../core/lsdtt_junction_network_base.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
+#include "lsdtt_least_cost_path.hpp"
 #include "lsdtt_proximity_cpu.hpp"
 
 namespace lsdtt
@@ -511,6 +512,232 @@ find_first_layer_junction_pairs(
 }
 
 // ---------------------------------------------------------------------------
+// repair_junction_gaps  — internal helpers
+// ---------------------------------------------------------------------------
+namespace {
+
+// Burn vector segments that have any vertex inside the bounding box
+// (x_lo,x_hi,y_lo,y_hi) in world coordinates.
+// Returns the number of DEM pixels actually lowered.
+int burn_vector_in_window(
+    lsdtt_raster_cpu&           dem,
+    const std::string&          vector_path,
+    double x_lo, double x_hi,
+    double y_lo, double y_hi)
+{
+    lsdtt_data_loader loader;
+    try { loader.open_vector(vector_path); }
+    catch (...) { return 0; }
+
+    const auto names = loader.get_layer_names();
+    if (names.empty()) { loader.close_vector(); return 0; }
+
+    const lsdtt_vector_layer vlayer = loader.read_vector_layer(names[0]);
+    loader.close_vector();
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    std::vector<float>&         elev = dem.get_data();
+    const std::vector<uint8_t>& mask = dem.get_mask();
+    const int    nr = meta.n_rows;
+    const int    nc = meta.n_cols;
+    const double cs = meta.cell_size;
+    const double perp_thr = static_cast<float>(std::sqrt(2.0) * 0.5 * cs);
+
+    int total_burned = 0;
+
+    for (std::size_t fi = 0; fi < vlayer.size(); ++fi)
+    {
+        const auto* line = std::get_if<lsdtt_line_geom>(&vlayer.records[fi].geometry);
+        if (!line || line->points.size() < 2) continue;
+
+        // Check if any vertex falls within the window
+        bool in_window = false;
+        for (const auto& pt : line->points)
+        {
+            if (pt.x >= x_lo && pt.x <= x_hi && pt.y >= y_lo && pt.y <= y_hi)
+            { in_window = true; break; }
+        }
+        if (!in_window) continue;
+
+        // Compute swath distances for this feature on the full DEM
+        swath_distances swath;
+        try { swath = compute_swath_distances(dem, line->points, 0); }
+        catch (...) { continue; }
+
+        const auto& along_d = swath.along_axis.get_data();
+        const auto& along_m = swath.along_axis.get_mask();
+        const auto& perp_d  = swath.perp_distance.get_data();
+
+        // Collect pixels under the line that are also inside the window
+        struct pnode { double along; int flat; };
+        std::vector<pnode> nodes;
+
+        for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+        {
+            const int idx = r * nc + c;
+            if (!mask[idx] || !along_m[idx]) continue;
+            if (perp_d[idx] > perp_thr) continue;
+
+            const double x = meta.x_min + (c + 0.5) * cs;
+            const double y = meta.y_min + (nr - r - 0.5) * cs;
+            if (x < x_lo || x > x_hi || y < y_lo || y > y_hi) continue;
+
+            nodes.push_back({static_cast<double>(along_d[idx]), idx});
+        }
+        if (nodes.empty()) continue;
+
+        std::sort(nodes.begin(), nodes.end(),
+                  [](const pnode& a, const pnode& b){ return a.along < b.along; });
+
+        // Determine flow direction: lower end is outlet
+        const double e_front = elev[nodes.front().flat];
+        const double e_back  = elev[nodes.back().flat];
+
+        // Build index sequence from upstream (high) to downstream (low)
+        std::vector<int> seq;
+        seq.reserve(nodes.size());
+        if (e_front >= e_back)
+            for (const auto& n : nodes) seq.push_back(n.flat);
+        else
+            for (int i = static_cast<int>(nodes.size())-1; i >= 0; --i)
+                seq.push_back(nodes[i].flat);
+
+        // Count pixels that will be lowered
+        double rmin = elev[seq[0]];
+        for (int f : seq)
+        {
+            const double e = elev[f];
+            if (e < rmin) { rmin = e; }
+            else if (e > rmin)
+            {
+                elev[f] = static_cast<float>(rmin);
+                ++total_burned;
+            }
+        }
+    }
+    return total_burned;
+}
+
+} // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// repair_junction_gaps
+// ---------------------------------------------------------------------------
+void repair_junction_gaps(
+    lsdtt_raster_cpu&                      dem,
+    std::vector<vector_dem_junction_pair>& pairs,
+    const std::string&                     vector_path,
+    double                                 min_gap_m,
+    int                                    max_search_px,
+    double                                 uphill_mult,
+    double                                 max_climb_m)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int    nr = meta.n_rows;
+    const int    nc = meta.n_cols;
+    const double cs = meta.cell_size;
+
+    const int goal_radius = std::max(3, max_search_px / 4);
+
+    auto to_rc = [&](const lsdtt_xy& xy, int& r, int& c) -> bool
+    {
+        c = static_cast<int>((xy.x - meta.x_min) / cs);
+        r = static_cast<int>((meta.y_max() - xy.y) / cs);
+        return r >= 0 && r < nr && c >= 0 && c < nc;
+    };
+
+    int n_bridge = 0, n_vburn = 0, n_unresolved = 0;
+
+    for (auto& pair : pairs)
+    {
+        if (pair.distance_m < min_gap_m)
+        {
+            pair.fix_type = GapFixType::ok;
+            continue;
+        }
+
+        int rv, cv, rd, cd;
+        if (!to_rc(pair.vector_xy, rv, cv) || !to_rc(pair.dem_xy, rd, cd))
+        {
+            std::cerr << "  pair " << pair.pair_id
+                      << ": junction outside raster — skipping\n";
+            pair.fix_type = GapFixType::unresolved;
+            ++n_unresolved;
+            continue;
+        }
+
+        // Search window: bounding box of V_j and D_j expanded by max_search_px
+        lcp_params lcp;
+        lcp.uphill_mult = uphill_mult;
+        lcp.goal_radius = goal_radius;
+        lcp.r_min = std::max(0,    std::min(rv, rd) - max_search_px);
+        lcp.r_max = std::min(nr-1, std::max(rv, rd) + max_search_px);
+        lcp.c_min = std::max(0,    std::min(cv, cd) - max_search_px);
+        lcp.c_max = std::min(nc-1, std::max(cv, cd) + max_search_px);
+
+        // ── Least-cost path: D_j → V_j neighbourhood ─────────────────────────
+        lcp_result lcp_res;
+        try
+        {
+            lcp_res = raster_least_cost_path(dem, rd, cd, rv, cv, lcp);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "  pair " << pair.pair_id
+                      << ": LCP failed (" << e.what() << ")\n";
+        }
+
+        if (lcp_res.found && lcp_res.max_climb <= max_climb_m)
+        {
+            burn_monotonic_path(dem, lcp_res.path);
+            pair.fix_type = GapFixType::curvature_bridge;
+            pair.n_burned = static_cast<int>(lcp_res.path.size());
+            ++n_bridge;
+            std::cout << "  pair " << pair.pair_id
+                      << ": bridge (" << pair.n_burned << " px"
+                      << ", climb=" << lcp_res.max_climb << " m)\n";
+            continue;
+        }
+
+        if (lcp_res.found)
+            std::cout << "  pair " << pair.pair_id
+                      << ": climb " << lcp_res.max_climb
+                      << " m > " << max_climb_m << " m — vector burn fallback\n";
+        else
+            std::cout << "  pair " << pair.pair_id
+                      << ": no terrain path — vector burn fallback\n";
+
+        // ── Fallback: burn under vector segments within the window ────────────
+        const double x_lo = meta.x_min + lcp.c_min * cs;
+        const double x_hi = meta.x_min + (lcp.c_max + 1) * cs;
+        const double y_lo = meta.y_min + (nr - lcp.r_max - 1) * cs;
+        const double y_hi = meta.y_min + (nr - lcp.r_min) * cs;
+
+        const int nb = burn_vector_in_window(dem, vector_path,
+                                             x_lo, x_hi, y_lo, y_hi);
+        if (nb > 0)
+        {
+            pair.fix_type = GapFixType::vector_burn;
+            pair.n_burned = nb;
+            ++n_vburn;
+            std::cout << "  pair " << pair.pair_id
+                      << ": vector burn (" << nb << " px)\n";
+        }
+        else
+        {
+            pair.fix_type = GapFixType::unresolved;
+            ++n_unresolved;
+            std::cout << "  pair " << pair.pair_id << ": unresolved (tunnel?)\n";
+        }
+    }
+
+    std::cout << "repair_junction_gaps: bridge=" << n_bridge
+              << "  vector_burn=" << n_vburn
+              << "  unresolved=" << n_unresolved << "\n";
+}
+
+// ---------------------------------------------------------------------------
 // write_junction_comparison_points
 // ---------------------------------------------------------------------------
 void write_junction_comparison_points(
@@ -523,12 +750,14 @@ void write_junction_comparison_points(
     if (pairs.empty()) return;
 
     lsdtt_vector_schema schema;
-    schema.field_names = {"pair_id", "is_dem_junction", "distance_m", "n_sources"};
+    schema.field_names = {"pair_id", "is_dem_junction", "distance_m",
+                          "n_sources", "fix_type"};
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::double_type,
-        lsdtt_vector_field_type::int64_type
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::string_type
     };
 
     const vector_output_format vfmt =
@@ -544,13 +773,16 @@ void write_junction_comparison_points(
 
     for (const auto& p : pairs)
     {
+        const std::string ft = gap_fix_type_str(p.fix_type);
+
         // Vector network junction
         writer.write_point(
             p.vector_xy.x, p.vector_xy.y,
             {std::int64_t{p.pair_id},
              std::int64_t{0},
              p.distance_m,
-             std::int64_t{p.n_sources}});
+             std::int64_t{p.n_sources},
+             ft});
 
         // DEM junction
         writer.write_point(
@@ -558,7 +790,8 @@ void write_junction_comparison_points(
             {std::int64_t{p.pair_id},
              std::int64_t{1},
              p.distance_m,
-             std::int64_t{p.n_sources}});
+             std::int64_t{p.n_sources},
+             ft});
     }
 
     writer.finish_vector_write();
