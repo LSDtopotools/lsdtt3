@@ -1129,10 +1129,12 @@ void lsdtt_vector_to_junction_network::create(
     }
 
     build_topological_order();
+    build_outlet_keys();
     build_strahler_order();
     build_s_vector();
 
     is_built_ = true;
+
 }
 
 // -----------------------------------------------------------------------------
@@ -1164,6 +1166,13 @@ void lsdtt_vector_to_junction_network::require_valid_junction(
 // -----------------------------------------------------------------------------
 // accessors
 // -----------------------------------------------------------------------------
+std::int32_t lsdtt_vector_to_junction_network::outlet_of_junction(
+    std::int32_t junction) const
+{
+    require_valid_junction(junction);
+    return junctions_[static_cast<std::size_t>(junction)].outlet_junction;
+}
+
 std::int32_t lsdtt_vector_to_junction_network::receiver_of_junction(
     std::int32_t junction) const
 {
@@ -1268,6 +1277,72 @@ bool lsdtt_vector_to_junction_network::is_upslope_of(
     return cpos >= tstart && cpos < tstart + tsize;
 }
 
+
+void lsdtt_vector_to_junction_network::build_outlet_keys()
+{
+    if (!has_topological_order_)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_to_junction_network: topological order must be built before outlet keys"
+        );
+    }
+
+    for (auto& j : junctions_)
+    {
+        j.outlet_junction = k_nodata_junction;
+    }
+
+    // Work from downstream to upstream so each receiver already has its outlet.
+    for (auto it = topological_order_.rbegin(); it != topological_order_.rend(); ++it)
+    {
+        const std::int32_t junction_id = *it;
+        auto& j = junctions_[static_cast<std::size_t>(junction_id)];
+
+        if (j.is_outlet)
+        {
+            j.outlet_junction = j.junction_id;
+        }
+        else
+        {
+            const std::int32_t rec = j.receiver_junction;
+
+            if (rec < 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_vector_to_junction_network: non-outlet junction has no valid receiver while building outlet keys"
+                );
+            }
+
+            const std::int32_t outlet =
+                junctions_[static_cast<std::size_t>(rec)].outlet_junction;
+
+            if (outlet < 0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_vector_to_junction_network: receiver outlet key was not set before donor while building outlet keys"
+                );
+            }
+
+            j.outlet_junction = outlet;
+        }
+    }
+
+    for (auto& e : edges_)
+    {
+        const std::int32_t up = e.upstream_junction;
+        if (up < 0)
+        {
+            throw std::runtime_error(
+                "lsdtt_vector_to_junction_network: edge has invalid upstream junction while building outlet keys"
+            );
+        }
+
+        e.outlet_junction =
+            junctions_[static_cast<std::size_t>(up)].outlet_junction;
+    }
+}
+
+
 // -----------------------------------------------------------------------------
 // build_topological_order
 // -----------------------------------------------------------------------------
@@ -1338,8 +1413,24 @@ void lsdtt_vector_to_junction_network::build_strahler_order()
         );
     }
 
+    // Reset all orders.
     for (auto& j : junctions_)
     {
+        j.junction_strahler_order = 0;
+        j.downstream_edge_strahler_order = 0;
+    }
+
+    for (auto& e : edges_)
+    {
+        e.strahler_order = 0;
+    }
+
+    // IMPORTANT:
+    // Work from upstream to downstream using the topological order.
+    for (const std::int32_t junction_id : topological_order_)
+    {
+        auto& j = junctions_[static_cast<std::size_t>(junction_id)];
+
         if (j.donor_junctions.empty())
         {
             j.junction_strahler_order = 1;
@@ -1349,27 +1440,29 @@ void lsdtt_vector_to_junction_network::build_strahler_order()
             std::int32_t max_order = 0;
             int n_at_max = 0;
 
-            for (const std::int32_t donor : j.donor_junctions)
+            for (const std::int32_t donor_id : j.donor_junctions)
             {
-                const std::int32_t order =
-                    junctions_[static_cast<std::size_t>(donor)].junction_strahler_order;
+                const std::int32_t donor_order =
+                    junctions_[static_cast<std::size_t>(donor_id)]
+                        .junction_strahler_order;
 
-                if (order > max_order)
+                if (donor_order > max_order)
                 {
-                    max_order = order;
+                    max_order = donor_order;
                     n_at_max = 1;
                 }
-                else if (order == max_order)
+                else if (donor_order == max_order)
                 {
                     ++n_at_max;
                 }
             }
 
             j.junction_strahler_order =
-                (n_at_max >= 2) ? max_order + 1 : max_order;
+                (n_at_max >= 2) ? (max_order + 1) : max_order;
         }
     }
 
+    // The downstream edge leaving a junction gets that junction's Strahler order.
     for (auto& e : edges_)
     {
         e.strahler_order =
@@ -1391,6 +1484,7 @@ void lsdtt_vector_to_junction_network::build_strahler_order()
         }
     }
 }
+
 
 // -----------------------------------------------------------------------------
 // build_s_vector
@@ -1493,6 +1587,7 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
         "is_dem_edge",
         "is_outlet",
         "receiver_junction",
+        "outlet_junction",
         "downstream_edge_id",
         "downstream_edge_order",
         "junction_order",
@@ -1506,6 +1601,7 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
@@ -1540,6 +1636,7 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
                 static_cast<std::int64_t>(j.is_dem_edge_junction ? 1 : 0),
                 static_cast<std::int64_t>(j.is_outlet ? 1 : 0),
                 static_cast<std::int64_t>(j.receiver_junction),
+                static_cast<std::int64_t>(j.outlet_junction),
                 static_cast<std::int64_t>(j.downstream_edge_id),
                 static_cast<std::int64_t>(j.downstream_edge_strahler_order),
                 static_cast<std::int64_t>(j.junction_strahler_order),
@@ -1574,6 +1671,7 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         "strahler_order",
         "upstream_junction",
         "receiver_junction",
+        "outlet_junction",
         "junction_a",
         "junction_b",
         "length_m"
@@ -1585,8 +1683,10 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::double_type
     };
+
 
     loader.begin_vector_write(
         out_path,
@@ -1602,10 +1702,9 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         loader.write_line(
             e.xy,
             {
-                static_cast<std::int64_t>(e.edge_id),
-                static_cast<std::int64_t>(e.strahler_order),
                 static_cast<std::int64_t>(e.upstream_junction),
                 static_cast<std::int64_t>(e.receiver_junction),
+                static_cast<std::int64_t>(e.outlet_junction),
                 static_cast<std::int64_t>(e.junction_a),
                 static_cast<std::int64_t>(e.junction_b),
                 e.length_metres

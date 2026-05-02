@@ -82,7 +82,9 @@ struct lsdtt_vector_network_junction
     bool is_outlet = false;
 
     std::int32_t receiver_junction = k_outlet_junction;
+    std::int32_t outlet_junction   = k_nodata_junction;
     std::int32_t downstream_edge_id = -1;
+
 
     // Strahler order of the compact downstream edge leaving this junction.
     // For outlet junctions this is 0.
@@ -109,8 +111,10 @@ struct lsdtt_vector_network_edge
     // Directed compact edge after receiver assignment.
     std::int32_t upstream_junction = k_nodata_junction;
     std::int32_t receiver_junction = k_outlet_junction;
+    std::int32_t outlet_junction   = k_nodata_junction;
 
     std::int32_t strahler_order = 0;
+
 
     double length_metres = 0.0;
 
@@ -162,6 +166,12 @@ public:
     {
         return static_cast<std::int32_t>(outlets_.size());
     }
+
+    [[nodiscard]] std::int32_t n_basins() const noexcept
+    {
+        return static_cast<std::int32_t>(outlets_.size());
+    }
+
 
     [[nodiscard]] bool has_topological_order() const noexcept
     {
@@ -218,6 +228,9 @@ public:
         std::int32_t junction
     ) const;
 
+    [[nodiscard]] std::int32_t outlet_of_junction(std::int32_t junction) const;
+
+
     [[nodiscard]] bool is_upslope_of(
         std::int32_t candidate_junction,
         std::int32_t target_junction
@@ -239,6 +252,7 @@ private:
     void require_built() const;
     void require_valid_junction(std::int32_t junction) const;
 
+    void build_outlet_keys();
     void build_topological_order();
     void build_strahler_order();
     void build_s_vector();

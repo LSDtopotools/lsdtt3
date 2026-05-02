@@ -19,6 +19,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <iomanip>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -34,6 +35,10 @@
 namespace lsdtt
 {
 
+
+
+
+    
 // ---------------------------------------------------------------------------
 // find_vector_network_source_tips
 // ---------------------------------------------------------------------------
@@ -520,6 +525,203 @@ find_first_layer_junction_pairs(
 // ---------------------------------------------------------------------------
 namespace {
 
+
+
+
+
+struct dem_candidate_junction_view
+{
+    int      junction_id = -1;
+    lsdtt_xy xy;
+    double   elevation = 0.0;
+    int      n_donors = 0;
+};
+
+double resolved_candidate_match_radius(
+    const candidate_junction_search_params& params,
+    const lsdtt_raster_meta&                meta)
+{
+    if (params.match_radius_m > 0.0)
+    {
+        return params.match_radius_m;
+    }
+
+    return 2.0 * meta.cell_size;
+}
+
+double planar_distance(
+    const lsdtt_xy& a,
+    const lsdtt_xy& b)
+{
+    const double dx = a.x - b.x;
+    const double dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+std::vector<dem_candidate_junction_view>
+build_dem_candidate_junction_views(
+    const lsdtt_junction_network_base& dem_network,
+    const lsdtt_raster_cpu&            dem)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const std::vector<float>& dem_data = dem.get_data();
+    const std::vector<uint8_t>& dem_mask = dem.get_mask();
+
+    auto flat_of = [&](int row, int col) -> std::int64_t
+    {
+        return static_cast<std::int64_t>(row) * meta.n_cols + col;
+    };
+
+    std::vector<dem_candidate_junction_view> out;
+    out.reserve(static_cast<std::size_t>(dem_network.n_junctions()));
+
+    for (std::int32_t j = 0; j < dem_network.n_junctions(); ++j)
+    {
+        if (!dem_network.is_valid_junction(j)) continue;
+
+        const int row = dem_network.row_of_junction(j);
+        const int col = dem_network.col_of_junction(j);
+
+        const std::int64_t flat = flat_of(row, col);
+        if (flat < 0 || flat >= static_cast<std::int64_t>(dem_data.size()))
+            continue;
+
+        if (!dem_mask[static_cast<std::size_t>(flat)])
+            continue;
+
+        if (meta.is_nodata(dem_data[static_cast<std::size_t>(flat)]))
+            continue;
+
+        if (!std::isfinite(dem_data[static_cast<std::size_t>(flat)]))
+            continue;
+
+        dem_candidate_junction_view v;
+        v.junction_id = j;
+        v.xy = cell_center_from_row_col(meta, row, col);
+        v.elevation = static_cast<double>(
+            dem_data[static_cast<std::size_t>(flat)]
+        );
+        v.n_donors = static_cast<int>(dem_network.donor_junction_size(j));
+
+        out.push_back(v);
+    }
+
+    return out;
+}
+
+std::vector<dem_candidate_junction_view>
+filter_dem_headwaters(
+    const std::vector<dem_candidate_junction_view>& dem_views)
+{
+    std::vector<dem_candidate_junction_view> out;
+    out.reserve(dem_views.size());
+
+    for (const auto& v : dem_views)
+    {
+        if (v.n_donors == 0)
+        {
+            out.push_back(v);
+        }
+    }
+
+    return out;
+}
+
+int find_nearest_dem_junction(
+    const lsdtt_xy&                                 xy,
+    const std::vector<dem_candidate_junction_view>& dem_views,
+    double&                                         best_distance_m)
+{
+    int best_id = -1;
+    best_distance_m = std::numeric_limits<double>::infinity();
+
+    for (const auto& dj : dem_views)
+    {
+        const double d = planar_distance(xy, dj.xy);
+
+        if (d < best_distance_m)
+        {
+            best_distance_m = d;
+            best_id = dj.junction_id;
+        }
+    }
+
+    if (best_id < 0)
+    {
+        best_distance_m = -1.0;
+    }
+
+    return best_id;
+}
+
+int lca_two_dem_junctions(
+    const lsdtt_junction_network_base& dem_network,
+    int                                ja,
+    int                                jb)
+{
+    if (ja < 0 || jb < 0) return -1;
+    if (!dem_network.is_valid_junction(ja)) return -1;
+    if (!dem_network.is_valid_junction(jb)) return -1;
+
+    std::unordered_set<int> ancestors;
+    ancestors.reserve(static_cast<std::size_t>(dem_network.n_junctions()));
+
+    int cur = ja;
+    for (int safety = 0; safety <= dem_network.n_junctions(); ++safety)
+    {
+        if (cur < 0) break;
+        if (!dem_network.is_valid_junction(cur)) break;
+
+        ancestors.insert(cur);
+
+        const int rec = dem_network.receiver_of_junction(cur);
+        if (rec < 0 || rec == cur) break;
+        cur = rec;
+    }
+
+    cur = jb;
+    for (int safety = 0; safety <= dem_network.n_junctions(); ++safety)
+    {
+        if (cur < 0) break;
+        if (!dem_network.is_valid_junction(cur)) break;
+
+        if (ancestors.find(cur) != ancestors.end())
+        {
+            return cur;
+        }
+
+        const int rec = dem_network.receiver_of_junction(cur);
+        if (rec < 0 || rec == cur) break;
+        cur = rec;
+    }
+
+    return -1;
+}
+
+int lca_many_dem_junctions(
+    const lsdtt_junction_network_base& dem_network,
+    const std::vector<int>&            junction_ids)
+{
+    if (junction_ids.empty()) return -1;
+
+    int lca = junction_ids.front();
+    for (std::size_t i = 1; i < junction_ids.size(); ++i)
+    {
+        lca = lca_two_dem_junctions(dem_network, lca, junction_ids[i]);
+        if (lca < 0) return -1;
+    }
+
+    return lca;
+}
+
+
+
+
+
+
+
+
+    
 // Burn vector segments that have any vertex inside the bounding box
 // (x_lo,x_hi,y_lo,y_hi) in world coordinates.
 // Returns the number of DEM pixels actually lowered.
@@ -800,6 +1002,520 @@ void write_junction_comparison_points(
 
     writer.finish_vector_write();
 }
+
+
+
+
+// ---------------------------------------------------------------------------
+// find_candidate_junctions_phase
+//
+// Finds the most upstream mismatched vector junction in each basin by
+// comparing vector-network topology against the DEM-extracted junction
+// network.
+//
+// Approach
+// --------
+// This is a TOPOLOGICAL matching algorithm, not a nearest-junction search.
+//
+// The DEM network is seeded from source junctions derived from the vector
+// network, so after correct conditioning the DEM network should reproduce the
+// same branching structure as the vector network. The right DEM counterpart
+// of a vector junction is therefore not simply the closest DEM junction in
+// space. Instead, it is the junction where the DEM branches corresponding to
+// that vector junction's immediate donor branches first meet.
+//
+// The algorithm works basin-by-basin, where a basin is identified by the
+// vector outlet_junction key.
+//
+// Per-basin workflow
+// ------------------
+// 1. Initialise source mappings
+//    Every vector source junction in the basin is mapped to the nearest DEM
+//    headwater junction (DEM junction with zero donors). This is justified
+//    because the DEM network was extracted using vector-derived source seeds.
+//
+// 2. Walk vector junctions in upstream -> downstream topological order
+//    By the time a junction is visited, all of its immediate donor vector
+//    junctions should already have DEM counterparts assigned.
+//
+// 3. For each non-source vector junction:
+//    - gather the DEM counterparts of its immediate donor vector junctions
+//    - compute the DEM lowest common ancestor (LCA) of those donor
+//      DEM junctions
+//
+//    That LCA is the topologically correct DEM counterpart of the vector
+//    junction, because it is the first place downstream where those DEM
+//    branches unite.
+//
+// 4. Test for mismatch
+//    A vector junction is flagged as a candidate mismatch when any of the
+//    following occur:
+//
+//      donor_mapping_missing
+//        One or more donor vector junctions does not yet have a DEM
+//        counterpart.
+//
+//      no_common_dem_ancestor
+//        The DEM counterparts of the donor branches do not have a valid
+//        common downstream ancestor.
+//
+//      dem_branches_join_too_early
+//        The DEM LCA is itself one of the donor DEM junctions, indicating
+//        that branches merged too early, or multiple vector donors collapsed
+//        onto the same DEM branch.
+//
+//      donor_count_mismatch
+//        The topologically matched DEM junction exists, but its number of
+//        donor junctions differs from that of the vector junction.
+//
+//      dem_junction_too_far
+//        The DEM donor branches do join, but the location of their join
+//        (the LCA junction) is farther from the vector junction than the
+//        allowed tolerance.
+//
+// 5. Candidate selection
+//    The search stops at the FIRST mismatched candidate-type junction in each
+//    basin. "Candidate-type" means vector junctions with at least
+//    minimum_vector_donor_junctions donors, which in the first implementation
+//    usually means true confluences only.
+//
+// 6. Accepted matches propagate downstream
+//    If a vector junction passes all checks, its DEM LCA is stored as the
+//    accepted DEM counterpart for use when processing downstream vector
+//    junctions in the same basin.
+//
+// Why only one candidate per basin per phase?
+// -------------------------------------------
+// Repairing a junction changes DEM flow routing downstream, which can alter
+// DEM junction positions and even the identity of downstream LCAs. Because of
+// this, only the most upstream mismatch in a basin should be repaired before
+// the DEM flow network is recalculated. Different basins, however, are
+// independent and can each contribute one candidate in the same phase.
+//
+// Output
+// ------
+// Returns:
+//   - complete_basins   : basins with no mismatched candidate junction
+//   - incomplete_basins : basins with a candidate requiring repair
+//   - candidates        : at most one candidate record per incomplete basin
+//
+// Note on distance tolerance
+// --------------------------
+// match_radius_m is used here as a LOCATION TOLERANCE between the vector
+// junction and its topologically correct DEM counterpart (the LCA), not as a
+// search radius for arbitrary nearby DEM junctions.
+// ---------------------------------------------------------------------------
+CandidateJunctionPhaseResult
+find_candidate_junctions_phase(
+    const lsdtt_vector_to_junction_network& vector_network,
+    const lsdtt_junction_network_base&      dem_network,
+    const lsdtt_raster_cpu&                 dem,
+    int                                     phase,
+    const candidate_junction_search_params& params)
+{
+    CandidateJunctionPhaseResult result;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const double match_radius_m =
+        resolved_candidate_match_radius(params, meta);
+
+    const std::vector<dem_candidate_junction_view> dem_views =
+        build_dem_candidate_junction_views(dem_network, dem);
+
+    const std::vector<dem_candidate_junction_view> dem_headwaters =
+        filter_dem_headwaters(dem_views);
+
+    std::unordered_map<int, const dem_candidate_junction_view*> dem_by_id;
+    dem_by_id.reserve(dem_views.size());
+
+    for (const auto& dv : dem_views)
+    {
+        dem_by_id[dv.junction_id] = &dv;
+    }
+
+    // ---------------------------------------------------------------------
+    // One vector basin at a time.
+    // ---------------------------------------------------------------------
+    for (const std::int32_t basin_outlet : vector_network.outlets())
+    {
+        bool basin_complete = true;
+
+        // For this basin and this phase:
+        // vector junction id -> corresponding DEM junction id
+        std::unordered_map<int, int> vector_to_dem;
+        vector_to_dem.reserve(static_cast<std::size_t>(vector_network.n_junctions()));
+
+        // -----------------------------------------------------------------
+        // Step 0: map vector source junctions to DEM headwaters.
+        // -----------------------------------------------------------------
+        for (const std::int32_t jid : vector_network.topological_order())
+        {
+            const auto& vj =
+                vector_network.junctions()[static_cast<std::size_t>(jid)];
+
+            if (vj.outlet_junction != basin_outlet)
+                continue;
+
+            if (!vj.donor_junctions.empty())
+                continue;
+
+            double best_distance_m = -1.0;
+            const int dem_source_jid =
+                find_nearest_dem_junction(
+                    lsdtt_xy{vj.x, vj.y},
+                    dem_headwaters,
+                    best_distance_m
+                );
+
+            if (dem_source_jid >= 0)
+            {
+                vector_to_dem[jid] = dem_source_jid;
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Step 1: walk vector junctions upstream -> downstream.
+        // For each vector junction, the topologically correct DEM counterpart
+        // is the LCA of the DEM counterparts of its immediate donor junctions.
+        // -----------------------------------------------------------------
+        for (const std::int32_t jid : vector_network.topological_order())
+        {
+            const auto& vj =
+                vector_network.junctions()[static_cast<std::size_t>(jid)];
+
+            if (vj.outlet_junction != basin_outlet)
+                continue;
+
+            // Source junctions were handled above.
+            if (vj.donor_junctions.empty())
+                continue;
+
+            const bool is_candidate_type =
+                static_cast<int>(vj.donor_junctions.size()) >=
+                params.minimum_vector_donor_junctions;
+
+            // Gather DEM counterparts of the immediate donor vector junctions.
+            std::vector<int> donor_dem_junctions;
+            donor_dem_junctions.reserve(vj.donor_junctions.size());
+
+            bool missing_donor_mapping = false;
+
+            for (const int donor_vj : vj.donor_junctions)
+            {
+                const auto it = vector_to_dem.find(donor_vj);
+                if (it == vector_to_dem.end() || it->second < 0)
+                {
+                    missing_donor_mapping = true;
+                    break;
+                }
+
+                donor_dem_junctions.push_back(it->second);
+            }
+
+            if (missing_donor_mapping)
+            {
+                if (is_candidate_type)
+                {
+                    CandidateJunctionRecord rec;
+                    rec.phase = phase;
+                    rec.basin_outlet_junction = basin_outlet;
+
+                    rec.vector_junction_id = vj.junction_id;
+                    rec.vector_xy = lsdtt_xy{vj.x, vj.y};
+                    rec.vector_elevation = vj.elevation;
+                    rec.vector_n_donors =
+                        static_cast<int>(vj.donor_junctions.size());
+                    rec.vector_order = vj.junction_strahler_order;
+
+                    rec.dem_junction_id = -1;
+                    rec.dem_n_donors = -1;
+                    rec.match_distance_m = -1.0;
+                    rec.mismatch_reason = "donor_mapping_missing";
+
+                    result.candidates.push_back(std::move(rec));
+                    basin_complete = false;
+                    break;
+                }
+
+                continue;
+            }
+
+            const int dem_lca_jid =
+                lca_many_dem_junctions(dem_network, donor_dem_junctions);
+
+            if (dem_lca_jid < 0)
+            {
+                if (is_candidate_type)
+                {
+                    CandidateJunctionRecord rec;
+                    rec.phase = phase;
+                    rec.basin_outlet_junction = basin_outlet;
+
+                    rec.vector_junction_id = vj.junction_id;
+                    rec.vector_xy = lsdtt_xy{vj.x, vj.y};
+                    rec.vector_elevation = vj.elevation;
+                    rec.vector_n_donors =
+                        static_cast<int>(vj.donor_junctions.size());
+                    rec.vector_order = vj.junction_strahler_order;
+
+                    rec.dem_junction_id = -1;
+                    rec.dem_n_donors = -1;
+                    rec.match_distance_m = -1.0;
+                    rec.mismatch_reason = "no_common_dem_ancestor";
+
+                    result.candidates.push_back(std::move(rec));
+                    basin_complete = false;
+                    break;
+                }
+
+                continue;
+            }
+
+            const dem_candidate_junction_view& dem_lca =
+                *dem_by_id.at(dem_lca_jid);
+
+            // Degenerate case:
+            // if the LCA is one of the donor DEM junctions, then those branches
+            // have already merged too early, or multiple vector donors have
+            // collapsed onto the same DEM branch.
+            bool lca_is_a_donor = false;
+            for (const int ddj : donor_dem_junctions)
+            {
+                if (ddj == dem_lca_jid)
+                {
+                    lca_is_a_donor = true;
+                    break;
+                }
+            }
+
+            if (lca_is_a_donor)
+            {
+                if (is_candidate_type)
+                {
+                    CandidateJunctionRecord rec;
+                    rec.phase = phase;
+                    rec.basin_outlet_junction = basin_outlet;
+
+                    rec.vector_junction_id = vj.junction_id;
+                    rec.vector_xy = lsdtt_xy{vj.x, vj.y};
+                    rec.vector_elevation = vj.elevation;
+                    rec.vector_n_donors =
+                        static_cast<int>(vj.donor_junctions.size());
+                    rec.vector_order = vj.junction_strahler_order;
+
+                    rec.dem_junction_id = dem_lca.junction_id;
+                    rec.dem_xy = dem_lca.xy;
+                    rec.dem_elevation = dem_lca.elevation;
+                    rec.dem_n_donors = dem_lca.n_donors;
+                    rec.match_distance_m =
+                        planar_distance(rec.vector_xy, rec.dem_xy);
+                    rec.mismatch_reason = "dem_branches_join_too_early";
+
+                    result.candidates.push_back(std::move(rec));
+                    basin_complete = false;
+                    break;
+                }
+
+                continue;
+            }
+
+            const double junction_distance_m =
+                planar_distance(lsdtt_xy{vj.x, vj.y}, dem_lca.xy);
+
+            if (is_candidate_type &&
+                params.require_matching_donor_count &&
+                dem_lca.n_donors != static_cast<int>(vj.donor_junctions.size()))
+            {
+                CandidateJunctionRecord rec;
+                rec.phase = phase;
+                rec.basin_outlet_junction = basin_outlet;
+
+                rec.vector_junction_id = vj.junction_id;
+                rec.vector_xy = lsdtt_xy{vj.x, vj.y};
+                rec.vector_elevation = vj.elevation;
+                rec.vector_n_donors =
+                    static_cast<int>(vj.donor_junctions.size());
+                rec.vector_order = vj.junction_strahler_order;
+
+                rec.dem_junction_id = dem_lca.junction_id;
+                rec.dem_xy = dem_lca.xy;
+                rec.dem_elevation = dem_lca.elevation;
+                rec.dem_n_donors = dem_lca.n_donors;
+                rec.match_distance_m = junction_distance_m;
+                rec.mismatch_reason = "donor_count_mismatch";
+
+                result.candidates.push_back(std::move(rec));
+                basin_complete = false;
+                break;
+            }
+
+            if (is_candidate_type && junction_distance_m > match_radius_m)
+            {
+                CandidateJunctionRecord rec;
+                rec.phase = phase;
+                rec.basin_outlet_junction = basin_outlet;
+
+                rec.vector_junction_id = vj.junction_id;
+                rec.vector_xy = lsdtt_xy{vj.x, vj.y};
+                rec.vector_elevation = vj.elevation;
+                rec.vector_n_donors =
+                    static_cast<int>(vj.donor_junctions.size());
+                rec.vector_order = vj.junction_strahler_order;
+
+                rec.dem_junction_id = dem_lca.junction_id;
+                rec.dem_xy = dem_lca.xy;
+                rec.dem_elevation = dem_lca.elevation;
+                rec.dem_n_donors = dem_lca.n_donors;
+                rec.match_distance_m = junction_distance_m;
+                rec.mismatch_reason = "dem_junction_too_far";
+
+                result.candidates.push_back(std::move(rec));
+                basin_complete = false;
+                break;
+            }
+
+            // If we got here, this junction is accepted as correctly matched.
+            vector_to_dem[jid] = dem_lca_jid;
+        }
+
+        if (basin_complete)
+        {
+            result.complete_basins.push_back(basin_outlet);
+        }
+        else
+        {
+            result.incomplete_basins.push_back(basin_outlet);
+        }
+    }
+
+    std::sort(result.complete_basins.begin(), result.complete_basins.end());
+    std::sort(result.incomplete_basins.begin(), result.incomplete_basins.end());
+
+    return result;
+}
+
+
+
+
+
+// ---------------------------------------------------------------------------
+// write_candidate_junction_points
+//
+// Writes candidate junction diagnostics as point features.
+//
+// For each candidate record:
+//   - one point is written at the vector junction location
+//   - if a DEM counterpart exists, one point is also written at the DEM
+//     junction location
+//
+// The attribute is_dem_junction distinguishes the two:
+//   0 -> vector junction
+//   1 -> DEM junction
+//
+// This makes it easy to visualise candidate pairs in GIS.
+// ---------------------------------------------------------------------------
+void write_candidate_junction_points(
+    const std::vector<CandidateJunctionRecord>& records,
+    const lsdtt_raster_meta&                    meta,
+    const std::string&                          filename,
+    point_output_format                         fmt,
+    bool                                        spatial_index)
+{
+    if (records.empty()) return;
+
+    if (fmt == point_output_format::csv)
+    {
+        throw std::invalid_argument(
+            "write_candidate_junction_points: CSV output is not supported in this implementation; use flatgeobuf or gpkg."
+        );
+    }
+
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "phase",
+        "basin_outlet",
+        "vector_jid",
+        "vector_ndonors",
+        "vector_order",
+        "dem_jid",
+        "dem_ndonors",
+        "distance_m",
+        "is_dem_junction",
+        "mismatch_reason"
+    };
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::string_type
+    };
+
+    const vector_output_format vfmt =
+        convert_point_to_vector_output_format(fmt);
+
+    lsdtt_data_loader writer;
+    writer.begin_vector_write(
+        filename,
+        "candidate_junctions",
+        schema,
+        meta.crs_wkt,
+        vfmt,
+        spatial_index
+    );
+
+    for (const auto& r : records)
+    {
+        // Vector-side point
+        writer.write_point(
+            r.vector_xy.x,
+            r.vector_xy.y,
+            {
+                static_cast<std::int64_t>(r.phase),
+                static_cast<std::int64_t>(r.basin_outlet_junction),
+                static_cast<std::int64_t>(r.vector_junction_id),
+                static_cast<std::int64_t>(r.vector_n_donors),
+                static_cast<std::int64_t>(r.vector_order),
+                static_cast<std::int64_t>(r.dem_junction_id),
+                static_cast<std::int64_t>(r.dem_n_donors),
+                r.match_distance_m,
+                std::int64_t{0},
+                r.mismatch_reason
+            }
+        );
+
+        // DEM-side point, if a matched DEM junction exists
+        if (r.dem_junction_id >= 0)
+        {
+            writer.write_point(
+                r.dem_xy.x,
+                r.dem_xy.y,
+                {
+                    static_cast<std::int64_t>(r.phase),
+                    static_cast<std::int64_t>(r.basin_outlet_junction),
+                    static_cast<std::int64_t>(r.vector_junction_id),
+                    static_cast<std::int64_t>(r.vector_n_donors),
+                    static_cast<std::int64_t>(r.vector_order),
+                    static_cast<std::int64_t>(r.dem_junction_id),
+                    static_cast<std::int64_t>(r.dem_n_donors),
+                    r.match_distance_m,
+                    std::int64_t{1},
+                    r.mismatch_reason
+                }
+            );
+        }
+    }
+
+    writer.finish_vector_write();
+}
+
+
+
 
 // ---------------------------------------------------------------------------
 // resolve_stream_burn_mode

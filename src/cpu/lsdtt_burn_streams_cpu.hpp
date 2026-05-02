@@ -48,6 +48,7 @@
 #include "../core/lsdtt_raster_meta.hpp"
 #include "../core/lsdtt_types.hpp"
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_vector_to_junction_network.hpp"
 
 namespace lsdtt
 {
@@ -376,6 +377,118 @@ struct junction_repair_params
     double uphill_mult   = 20.0;
     double max_climb_m   = 10.0;
 };
+
+
+// ---------------------------------------------------------------------------
+// candidate_junction_search_params
+//
+// Controls how vector and DEM junctions are compared when searching for the
+// most upstream mismatched junction in each basin.
+//
+// The first working version is deliberately conservative:
+//   - search one vector basin at a time
+//   - scan vector junctions in upstream->downstream topological order
+//   - only consider vector junctions with at least
+//     minimum_vector_donor_junctions donors
+//   - match to the nearest DEM junction within match_radius_m
+//   - flag mismatch if no match exists, or donor counts differ
+// ---------------------------------------------------------------------------
+struct candidate_junction_search_params
+{
+    // If <= 0, defaults to 2 * DEM cell size.
+    double match_radius_m = -1.0;
+
+    // Only vector junctions with at least this many donors are considered
+    // repair candidates. 2 means "true confluences only".
+    int minimum_vector_donor_junctions = 2;
+
+    // If true, a nearest DEM match is still considered a mismatch when the
+    // donor counts differ.
+    bool require_matching_donor_count = true;
+};
+
+// ---------------------------------------------------------------------------
+// CandidateJunctionRecord
+//
+// One candidate mismatched junction for one vector basin in one phase.
+// The point geometry written to file is the vector junction location.
+// ---------------------------------------------------------------------------
+struct CandidateJunctionRecord
+{
+    int        phase                = 0;
+    int        basin_outlet_junction = -1;
+
+    int        vector_junction_id   = -1;
+    lsdtt_xy   vector_xy;
+    double     vector_elevation     = 0.0;
+    int        vector_n_donors      = 0;
+    int        vector_order         = 0;
+
+    int        dem_junction_id      = -1;
+    lsdtt_xy   dem_xy;
+    double     dem_elevation        = 0.0;
+    int        dem_n_donors         = -1;
+
+    double     match_distance_m     = -1.0;
+    std::string mismatch_reason;
+};
+
+// ---------------------------------------------------------------------------
+// CandidateJunctionPhaseResult
+//
+// Result of searching one candidate-repair phase.
+// complete_basins and incomplete_basins are keyed by outlet_junction.
+// There is at most one candidate record per incomplete basin.
+// ---------------------------------------------------------------------------
+struct CandidateJunctionPhaseResult
+{
+    std::vector<int> complete_basins;
+    std::vector<int> incomplete_basins;
+    std::vector<CandidateJunctionRecord> candidates;
+};
+
+// ---------------------------------------------------------------------------
+// find_candidate_junctions_phase
+//
+// Finds the most upstream mismatched vector junction in each basin by comparing
+// the vector junction network against the DEM-extracted junction network.
+//
+// Mismatch criteria in the first working version:
+//   1. no DEM junction lies within match_radius_m of the vector junction, or
+//   2. nearest DEM junction exists but donor count differs
+//
+// Basins with no mismatches are returned in complete_basins.
+// ---------------------------------------------------------------------------
+[[nodiscard]] CandidateJunctionPhaseResult
+find_candidate_junctions_phase(
+    const lsdtt_vector_to_junction_network& vector_network,
+    const lsdtt_junction_network_base&      dem_network,
+    const lsdtt_raster_cpu&                 dem,
+    int                                     phase = 0,
+    const candidate_junction_search_params& params =
+        candidate_junction_search_params()
+);
+
+// ---------------------------------------------------------------------------
+// write_candidate_junction_points
+//
+// Writes the phase candidate points as a vector point file.
+// Output geometry is the vector junction location.
+//
+// Attributes:
+//   phase, basin_outlet, vector_jid, vector_ndonors, vector_order,
+//   dem_jid, dem_ndonors, distance_m, mismatch_reason
+//
+// fmt must not be csv in this first implementation.
+// ---------------------------------------------------------------------------
+void write_candidate_junction_points(
+    const std::vector<CandidateJunctionRecord>& records,
+    const lsdtt_raster_meta&                    meta,
+    const std::string&                          filename,
+    point_output_format                         fmt,
+    bool                                        spatial_index = false
+);
+
 
 // ---------------------------------------------------------------------------
 // build_vector_networks

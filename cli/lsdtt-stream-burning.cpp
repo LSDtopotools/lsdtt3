@@ -54,6 +54,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unordered_set>
+
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
@@ -282,14 +284,14 @@ int main(int argc, char* argv[])
     bool_default_map["repair_junction_gaps"] = false;
     help_map["repair_junction_gaps"] = {"bool","false",
         "Attempt to repair DEM obstructions at mismatched first-layer junctions.",
-        "For each junction pair whose distance exceeds min_gap_m, runs a "
+        "For each junction pair whose distance exceeds junction_tolerance_m, runs a "
         "least-cost terrain path from the DEM junction to the vector junction "
         "and carves the DEM to allow correct D8 routing.  Falls back to burning "
         "under the input vector where no terrain path can be found (tunnels). "
         "Only used when stream_burn_mode is snap_to_network."};
 
-    float_default_map["min_gap_m"] = 50.0f;
-    help_map["min_gap_m"] = {"float","50",
+    float_default_map["junction_tolerance_m"] = 50.0f;
+    help_map["junction_tolerance_m"] = {"float","50",
         "Minimum junction-pair distance (m) to trigger gap repair.",
         "Pairs closer than this are considered correctly matched and skipped."};
 
@@ -399,6 +401,9 @@ int main(int argc, char* argv[])
 
     lsdtt::point_output_format  vec_src_fmt =
         lsdtt::resolve_point_output_format(sf["vector_sources_output_format"]);
+
+    lsdtt::point_output_format  junc_cmp_fmt =
+        lsdtt::resolve_point_output_format(sf["junction_comparison_output_format"]);     
 
     lsdtt::vector_output_format dem_net_line_fmt =
         lsdtt::resolve_vector_output_format(sf["dem_network_output_format"]);
@@ -571,6 +576,7 @@ int main(int argc, char* argv[])
     std::cout << "Vector junctions : " << vector_network.n_junctions() << "\n";
     std::cout << "Vector edges     : " << vector_network.n_edges() << "\n";
     std::cout << "Vector outlets   : " << vector_network.n_outlets() << "\n";
+    std::cout << "Vector basins    : " << vector_network.n_basins() << "\n";
 
     // -------------------------------------------------------------------------
     // Step 4 — Write the clipped vector junction network
@@ -625,7 +631,8 @@ int main(int argc, char* argv[])
     // the DEM at the raster edge, that edge junction should seed the extracted
     // DEM network.
     // -------------------------------------------------------------------------
-    std::cout << "\n--- Extracting vector source junctions ---\n";
+    std::cout << "\n--- Extracting vector endpoints ---\n";
+
 
     std::vector<lsdtt::lsdtt_xy> vector_source_points;
     std::vector<std::int32_t>    vector_source_junction_ids;
@@ -783,16 +790,17 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 5c — Optional QC write of vector source junctions
+    // Step 5c — Optional QC write of vector endpoints
     // -------------------------------------------------------------------------
     if (bf["write_vector_sources"])
     {
-        std::cout << "\n--- Writing vector source junctions ---\n";
+        std::cout << "\n--- Writing vector endpoints ---\n";
+
 
         const std::string ext =
             lsdtt::output_extension(vec_src_fmt);
         const std::string vsrc_file =
-            out_path(pp, "_vector_sources", ext);
+            out_path(pp, "_vector_endpoints", ext);
 
         std::cout << "Writing: " << vsrc_file << "\n";
 
@@ -888,7 +896,7 @@ int main(int argc, char* argv[])
 
                 loader.begin_vector_write(
                     vsrc_file,
-                    "vector_sources",
+                    "vector_endpoints",
                     schema,
                     dem.get_meta().crs_wkt,
                     vfmt,
@@ -929,7 +937,7 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: failed to write vector source junctions: "
+            std::cerr << "Warning: failed to write vector endpoints: "
                       << e.what() << "\n";
         }
     }
@@ -1121,13 +1129,126 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     else if (burn_mode == lsdtt::stream_burn_mode::snap_to_network)
     {
-        std::cout << "\n--- snap_to_network mode ---\n";
-        std::cout << "The clipped vector junction network has been built and written.\n";
-        std::cout << "The DEM-seeded extracted network has also been built and written.\n";
-        std::cout << "Comparison / broken-link repair has not yet been migrated\n";
-        std::cout << "to lsdtt_vector_to_junction_network, so no comparison or\n";
-        std::cout << "repair will be attempted in this run.\n";
+        std::cout << "\n--- Finding candidate junctions (phase 00) ---\n";
+
+        lsdtt::candidate_junction_search_params cj_params;
+        cj_params.minimum_vector_donor_junctions = 2;
+        cj_params.require_matching_donor_count   = true;
+        cj_params.match_radius_m                 = static_cast<double>(ff["junction_tolerance_m"]);
+
+        std::cout << "Candidate junction tolerance (junction_tolerance_m): "
+                  << cj_params.match_radius_m << " m\n";
+
+
+        lsdtt::CandidateJunctionPhaseResult phase_result;
+        try
+        {
+            phase_result = lsdtt::find_candidate_junctions_phase(
+                vector_network,
+                *dem_network,
+                dem,
+                0,
+                cj_params
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: candidate junction search failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        // Print basin status to screen
+        std::cout << "Complete basins   (" << phase_result.complete_basins.size() << "): ";
+        if (phase_result.complete_basins.empty())
+        {
+            std::cout << "none";
+        }
+        else
+        {
+            for (std::size_t i = 0; i < phase_result.complete_basins.size(); ++i)
+            {
+                if (i > 0) std::cout << ", ";
+                std::cout << phase_result.complete_basins[i];
+            }
+        }
+        std::cout << "\n";
+
+        std::cout << "Basins needing repair (" << phase_result.incomplete_basins.size() << "): ";
+        if (phase_result.incomplete_basins.empty())
+        {
+            std::cout << "none";
+        }
+        else
+        {
+            for (std::size_t i = 0; i < phase_result.incomplete_basins.size(); ++i)
+            {
+                if (i > 0) std::cout << ", ";
+                std::cout << phase_result.incomplete_basins[i];
+            }
+        }
+        std::cout << "\n";
+
+        for (const auto& c : phase_result.candidates)
+        {
+            std::cout << "  basin " << c.basin_outlet_junction
+                      << " -> candidate vector junction " << c.vector_junction_id
+                      << "  reason=" << c.mismatch_reason
+                      << "  vector_xy=(" << c.vector_xy.x
+                      << ", " << c.vector_xy.y << ")";
+
+            if (c.dem_junction_id >= 0)
+            {
+                std::cout << "  dem_junction=" << c.dem_junction_id
+                          << "  dem_xy=(" << c.dem_xy.x
+                          << ", " << c.dem_xy.y << ")"
+                          << "  distance_m=" << c.match_distance_m;
+            }
+            else
+            {
+                std::cout << "  dem_junction=NONE";
+            }
+
+            std::cout << "\n";
+        }
+
+
+
+        if (!phase_result.candidates.empty())
+        {
+            const std::string ext =
+                lsdtt::output_extension(junc_cmp_fmt);
+            const std::string output =
+                out_path(pp, "_candidate_junctions_phase_00", ext);
+
+            std::cout << "Writing: " << output << "\n";
+
+            try
+            {
+                lsdtt::write_candidate_junction_points(
+                    phase_result.candidates,
+                    dem.get_meta(),
+                    output,
+                    junc_cmp_fmt,
+                    bf["calculate_spatial_index"]
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing candidate junction points failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+        else
+        {
+            std::cout << "No candidate junctions found; all basins complete.\n";
+        }
+
+        std::cout << "\nCandidate detection complete. "
+                  << "Repair step not yet implemented.\n";
     }
+
 
 
     // -------------------------------------------------------------------------
