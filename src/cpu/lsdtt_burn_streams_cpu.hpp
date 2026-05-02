@@ -323,4 +323,111 @@ void write_burned_stream_profiles_points(
     bool                                      spatial_index = false
 );
 
+// ---------------------------------------------------------------------------
+// VectorNetworkNode
+// A node in the reconstructed directed network graph.
+// is_clipped: endpoint was interpolated to the DEM bounding-box edge.
+// ---------------------------------------------------------------------------
+struct VectorNetworkNode
+{
+    int              node_id           = -1;
+    lsdtt_xy         xy;
+    bool             is_source         = false;
+    bool             is_outlet         = false;
+    bool             is_clipped        = false;
+    std::vector<int> upstream_node_ids;
+    int              downstream_node_id = -1;
+};
+
+// ---------------------------------------------------------------------------
+// VectorNetwork
+// One complete directed river network (single outlet).
+// junction_topo_order lists every non-source, non-outlet node ID in
+// upstream-first order (process index 0 first).
+// ---------------------------------------------------------------------------
+struct VectorNetwork
+{
+    std::vector<VectorNetworkNode> nodes;
+    int                            outlet_node_id      = -1;
+    std::vector<int>               junction_topo_order;
+};
+
+// ---------------------------------------------------------------------------
+// JunctionRepairRecord
+// ---------------------------------------------------------------------------
+struct JunctionRepairRecord
+{
+    int        repair_index  = 0;
+    int        network_index = 0;
+    lsdtt_xy   vector_xy;
+    lsdtt_xy   dem_xy;
+    double     distance_m    = 0.0;
+    GapFixType fix_type      = GapFixType::ok;
+    int        n_burned      = 0;
+};
+
+// ---------------------------------------------------------------------------
+// junction_repair_params
+// ---------------------------------------------------------------------------
+struct junction_repair_params
+{
+    double min_gap_m     = 50.0;
+    int    max_search_px = 60;
+    double uphill_mult   = 20.0;
+    double max_climb_m   = 10.0;
+};
+
+// ---------------------------------------------------------------------------
+// build_vector_networks
+//
+// Reads the polyline vector file and builds a directed graph for every
+// connected stream network that overlaps the DEM extent.  Polylines that
+// cross the DEM bounding box are clipped: the intersection of the crossing
+// segment with the bbox edge is interpolated and used as the outlet endpoint.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::vector<VectorNetwork>
+build_vector_networks(
+    const std::string&      vector_path,
+    const lsdtt_raster_cpu& dem
+);
+
+// ---------------------------------------------------------------------------
+// repair_stream_junctions
+//
+// Iterates over every junction in the vector network in topological order
+// (upstream first, across all disconnected sub-networks).  For each junction:
+//   1. Computes the LCA of the DEM junctions corresponding to its immediate
+//      upstream vector nodes.  Source nodes map to the nearest DEM headwater;
+//      previously processed junctions use their stored DEM counterpart.
+//   2. If the gap exceeds params.min_gap_m, applies a DEM repair (least-cost
+//      terrain path or vector-burn fallback) then re-extracts the full flow
+//      routing and junction network before continuing.
+//
+// flow and dem_network are updated in place to reflect the final state.
+// Returns one record per repaired junction.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::vector<JunctionRepairRecord>
+repair_stream_junctions(
+    lsdtt_raster_cpu&                             dem,
+    const std::string&                            vector_path,
+    const std::vector<std::int64_t>&              source_flats,
+    std::unique_ptr<lsdtt_flow_base>&             flow,
+    std::unique_ptr<lsdtt_junction_network_base>& dem_network,
+    const lsdtt_flowinfo_options&                 fi_opts,
+    const lsdtt_junction_network_options&         jn_opts,
+    const junction_repair_params&                 params
+);
+
+// ---------------------------------------------------------------------------
+// write_junction_repair_log
+//
+// Writes the repair log as CSV.
+// Columns: repair_index, network_index, vector_x, vector_y,
+//          dem_x, dem_y, distance_m, fix_type, n_burned
+// ---------------------------------------------------------------------------
+void write_junction_repair_log(
+    const std::vector<JunctionRepairRecord>& records,
+    const std::string&                       filename
+);
+
 } // namespace lsdtt

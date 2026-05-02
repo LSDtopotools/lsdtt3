@@ -64,6 +64,9 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/cpu/lsdtt_vector_to_junction_network.hpp"
+
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -313,6 +316,12 @@ int main(int argc, char* argv[])
         "Write the modified (gap-repaired) DEM as a raster.",
         "Only used when repair_junction_gaps is true."};
 
+    bool_default_map["write_repair_log"] = true;
+    help_map["write_repair_log"] = {"bool","true",
+        "Write a CSV log of every junction repair performed.",
+        "Columns: repair_index, network_index, vector_x, vector_y, dem_x, dem_y, "
+        "distance_m, fix_type, n_burned.  Only used when repair_junction_gaps is true."};
+
     // --- Output — QC/diagnostic ---
     bool_default_map["write_vector_sources"] = true;
     help_map["write_vector_sources"] = {"bool","true",
@@ -396,9 +405,6 @@ int main(int argc, char* argv[])
 
     lsdtt::point_output_format  dem_net_point_fmt =
         lsdtt::resolve_point_output_format(sf["dem_network_output_format"]);
-
-    lsdtt::point_output_format  junc_cmp_fmt =
-        lsdtt::resolve_point_output_format(sf["junction_comparison_output_format"]);
 
     lsdtt::point_output_format  burned_prof_fmt =
         lsdtt::resolve_point_output_format(sf["burned_profiles_output_format"]);
@@ -533,203 +539,408 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — Load vector network and find source tips
+    // Step 3 — Build clipped vector junction network
     // -------------------------------------------------------------------------
-    std::cout << "\n--- Finding vector network source tips ---\n";
+    std::cout << "\n--- Building clipped vector junction network ---\n";
     std::cout << "Vector file: " << stream_vector_path << "\n";
 
-    lsdtt::vector_network_endpoints net_endpoints;
+    lsdtt::lsdtt_vector_to_junction_network_options vjn_opts;
+    lsdtt::lsdtt_vector_to_junction_network vector_network;
+
     try
     {
-        net_endpoints = lsdtt::find_vector_network_source_tips(
+        vector_network.create(
             stream_vector_path,
             dem,
-            flow.get()
+            vjn_opts
         );
     }
     catch (const std::exception& e)
     {
-        std::cerr << "FATAL: source tip detection failed: " << e.what() << "\n";
+        std::cerr << "FATAL: building clipped vector junction network failed: "
+                  << e.what() << "\n";
         return 1;
     }
 
-    if (net_endpoints.source_tips.empty())
+    if (vector_network.empty())
     {
-        std::cerr << "FATAL: no source tips found in the vector network. "
-                  << "Check that stream_vector_path contains polyline features "
-                  << "and overlaps the DEM.\n";
+        std::cerr << "FATAL: clipped vector junction network is empty.\n";
         return 1;
     }
 
-    std::cout << "Source tips found: " << net_endpoints.source_tips.size()
-              << "\n";
-    if (net_endpoints.has_outlet)
+    std::cout << "Vector junctions : " << vector_network.n_junctions() << "\n";
+    std::cout << "Vector edges     : " << vector_network.n_edges() << "\n";
+    std::cout << "Vector outlets   : " << vector_network.n_outlets() << "\n";
+
+    // -------------------------------------------------------------------------
+    // Step 4 — Write the clipped vector junction network
+    // -------------------------------------------------------------------------
     {
-        std::cout << "Outlet tip       : ("
-                  << net_endpoints.outlet_tip.x << ", "
-                  << net_endpoints.outlet_tip.y << ")\n";
+        const std::string junction_file =
+            out_path(pp, "_vector_junctions", ".fgb");
+
+        std::cout << "Writing vector junctions: " << junction_file << "\n";
+
+        try
+        {
+            vector_network.write_junctions_fgb(
+                junction_file,
+                bf["calculate_spatial_index"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing vector junction network junctions failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    {
+        const std::string edge_file =
+            out_path(pp, "_vector_edges", ".fgb");
+
+        std::cout << "Writing vector edges    : " << edge_file << "\n";
+
+        try
+        {
+            vector_network.write_edges_fgb(
+                edge_file,
+                bf["calculate_spatial_index"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing vector junction network edges failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Step 4 — Map vector source tips to DEM flat indices
+    // Step 5 — Extract source junctions from the clipped vector network
     //
-    // Each source tip is mapped to the DEM cell that contains its coordinate.
-    // Tips outside the raster extent or on nodata pixels are skipped.
-    // valid_source_tips mirrors source_flats: only tips that passed all checks.
+    // Sources are junctions with no donor junctions and which are not outlets.
+    // DEM-edge junctions are allowed here: if a clipped upstream channel enters
+    // the DEM at the raster edge, that edge junction should seed the extracted
+    // DEM network.
     // -------------------------------------------------------------------------
-    std::cout << "\n--- Mapping vector sources to DEM pixels ---\n";
+    std::cout << "\n--- Extracting vector source junctions ---\n";
 
-    const lsdtt::lsdtt_raster_meta& meta     = dem.get_meta();
+    std::vector<lsdtt::lsdtt_xy> vector_source_points;
+    std::vector<std::int32_t>    vector_source_junction_ids;
+    std::vector<std::int64_t>    vector_source_is_dem_edge;
+
+    std::vector<lsdtt::lsdtt_xy> vector_outlet_points;
+    std::vector<std::int32_t>    vector_outlet_junction_ids;
+    std::vector<std::int64_t>    vector_outlet_is_dem_edge;
+
+    vector_source_points.reserve(
+        static_cast<std::size_t>(vector_network.n_junctions())
+    );
+    vector_outlet_points.reserve(
+        static_cast<std::size_t>(vector_network.n_outlets())
+    );
+
+    for (const auto& junction : vector_network.junctions())
+    {
+        const lsdtt::lsdtt_xy xy{junction.x, junction.y};
+
+        if (junction.is_outlet)
+        {
+            vector_outlet_points.push_back(xy);
+            vector_outlet_junction_ids.push_back(junction.junction_id);
+            vector_outlet_is_dem_edge.push_back(
+                junction.is_dem_edge_junction ? std::int64_t{1}
+                                             : std::int64_t{0}
+            );
+        }
+
+        if (!junction.is_outlet && junction.donor_junctions.empty())
+        {
+            vector_source_points.push_back(xy);
+            vector_source_junction_ids.push_back(junction.junction_id);
+            vector_source_is_dem_edge.push_back(
+                junction.is_dem_edge_junction ? std::int64_t{1}
+                                             : std::int64_t{0}
+            );
+        }
+    }
+
+    std::cout << "Vector source junctions: "
+              << vector_source_points.size() << "\n";
+    std::cout << "Vector outlet junctions: "
+              << vector_outlet_points.size() << "\n";
+
+    if (vector_source_points.empty())
+    {
+        std::cerr << "FATAL: no source junctions found in the clipped vector network.\n";
+        return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 5b — Map vector source junctions to DEM flat indices
+    //
+    // Each source junction is mapped to the DEM cell that contains its
+    // coordinate. Junctions outside the raster extent or on nodata pixels
+    // are skipped.
+    // -------------------------------------------------------------------------
+    std::cout << "\n--- Mapping vector source junctions to DEM pixels ---\n";
+
+    const lsdtt::lsdtt_raster_meta& meta_ref = dem.get_meta();
     const lsdtt::lsdtt_array2d_u8&  dem_mask = dem.get_mask_array();
 
     std::vector<std::int64_t> source_flats;
-    std::vector<lsdtt::lsdtt_xy> valid_source_tips;
-    source_flats.reserve(net_endpoints.source_tips.size());
-    valid_source_tips.reserve(net_endpoints.source_tips.size());
+    std::vector<lsdtt::lsdtt_xy> valid_source_points;
+    std::vector<std::int32_t> valid_source_junction_ids;
+    std::vector<std::int64_t> valid_source_is_dem_edge;
+
+    source_flats.reserve(vector_source_points.size());
+    valid_source_points.reserve(vector_source_points.size());
+    valid_source_junction_ids.reserve(vector_source_points.size());
+    valid_source_is_dem_edge.reserve(vector_source_points.size());
 
     int n_skipped = 0;
-    for (const auto& tip : net_endpoints.source_tips)
+
+    for (std::size_t i = 0; i < vector_source_points.size(); ++i)
     {
+        const lsdtt::lsdtt_xy& pt = vector_source_points[i];
+
         try
         {
             const int col = static_cast<int>(
-                std::floor((tip.x - meta.x_min) / meta.cell_size));
-            const int row = static_cast<int>(
-                std::floor((meta.y_max() - tip.y) / meta.cell_size));
+                std::floor((pt.x - meta_ref.x_min) / meta_ref.cell_size)
+            );
 
-            if (row < 0 || row >= meta.n_rows ||
-                col < 0 || col >= meta.n_cols)
+            const int row = static_cast<int>(
+                std::floor((meta_ref.y_max() - pt.y) / meta_ref.cell_size)
+            );
+
+            if (row < 0 || row >= meta_ref.n_rows ||
+                col < 0 || col >= meta_ref.n_cols)
             {
-                std::cerr << "Warning: source tip (" << tip.x << ", "
-                          << tip.y << ") lies outside the DEM extent; skipping.\n";
+                std::cerr << "Warning: vector source junction ("
+                          << pt.x << ", " << pt.y
+                          << ") lies outside the DEM extent; skipping.\n";
                 ++n_skipped;
                 continue;
             }
 
             if (dem_mask(row, col) == 0)
             {
-                std::cerr << "Warning: source tip (" << tip.x << ", "
-                          << tip.y << ") falls on a nodata DEM pixel; skipping.\n";
+                std::cerr << "Warning: vector source junction ("
+                          << pt.x << ", " << pt.y
+                          << ") falls on a nodata DEM pixel; skipping.\n";
                 ++n_skipped;
                 continue;
             }
 
             const std::int64_t flat =
-                static_cast<std::int64_t>(row) * meta.n_cols + col;
+                static_cast<std::int64_t>(row) * meta_ref.n_cols + col;
 
-            // Avoid duplicate source flats
             bool already_present = false;
             for (const auto f : source_flats)
             {
-                if (f == flat) { already_present = true; break; }
+                if (f == flat)
+                {
+                    already_present = true;
+                    break;
+                }
             }
+
             if (!already_present)
             {
                 source_flats.push_back(flat);
-                valid_source_tips.push_back(tip);
+                valid_source_points.push_back(pt);
+                valid_source_junction_ids.push_back(
+                    vector_source_junction_ids[i]
+                );
+                valid_source_is_dem_edge.push_back(
+                    vector_source_is_dem_edge[i]
+                );
             }
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: mapping tip failed: " << e.what() << "\n";
+            std::cerr << "Warning: mapping vector source junction failed: "
+                      << e.what() << "\n";
             ++n_skipped;
         }
     }
 
-    std::cout << "Source tips mapped   : " << valid_source_tips.size() << "\n";
+    std::cout << "Source junctions mapped : " << valid_source_points.size() << "\n";
     if (n_skipped > 0)
     {
-        std::cout << "Tips skipped         : " << n_skipped
+        std::cout << "Junctions skipped      : " << n_skipped
                   << " (outside DEM or on nodata)\n";
     }
 
     if (source_flats.empty())
     {
-        std::cerr << "FATAL: no source tips could be mapped to valid DEM pixels.\n"
+        std::cerr << "FATAL: no vector source junctions could be mapped to valid DEM pixels.\n"
                   << "Check that the vector file CRS matches the DEM CRS.\n";
         return 1;
     }
 
     // -------------------------------------------------------------------------
-    // Step 5 — Write valid vector source tips as point layer (QC output)
-    //
-    // Only tips that successfully mapped to a valid DEM pixel are written.
+    // Step 5c — Optional QC write of vector source junctions
     // -------------------------------------------------------------------------
     if (bf["write_vector_sources"])
     {
-        std::cout << "\n--- Writing vector source tips ---\n";
+        std::cout << "\n--- Writing vector source junctions ---\n";
 
         const std::string ext =
             lsdtt::output_extension(vec_src_fmt);
         const std::string vsrc_file =
             out_path(pp, "_vector_sources", ext);
+
         std::cout << "Writing: " << vsrc_file << "\n";
 
         try
         {
-            lsdtt::lsdtt_vector_schema schema;
-            schema.field_names = {"tip_id", "is_outlet"};
-            schema.field_types = {
-                lsdtt::lsdtt_vector_field_type::int64_type,
-                lsdtt::lsdtt_vector_field_type::int64_type
-            };
-
-            const lsdtt::vector_output_format vfmt =
-                (vec_src_fmt == lsdtt::point_output_format::csv)
-                    ? lsdtt::vector_output_format::flatgeobuf
-                    : lsdtt::convert_point_to_vector_output_format(vec_src_fmt);
-
-            lsdtt::lsdtt_data_loader writer;
-
             if (vec_src_fmt == lsdtt::point_output_format::csv)
             {
-                writer.begin_vector_write(
-                    vsrc_file, "vector_sources",
-                    schema, dem.get_meta().crs_wkt,
-                    lsdtt::vector_output_format::flatgeobuf,
-                    bf["calculate_spatial_index"]
+                if (dem.get_meta().crs_wkt.empty())
+                {
+                    throw std::runtime_error(
+                        "CSV output requires a valid raster CRS so points can be transformed to EPSG:4326"
+                    );
+                }
+
+                const lsdtt::lsdtt_coordinate_transform transform =
+                    lsdtt::lsdtt_coordinate_transform::from_epsg(
+                        dem.get_meta().crs_wkt,
+                        4326
+                    );
+
+                std::vector<std::string> headers =
+                {
+                    "latitude",
+                    "longitude",
+                    "junction_id",
+                    "is_outlet",
+                    "is_dem_edge"
+                };
+
+                std::vector<std::vector<std::string>> rows;
+                rows.reserve(
+                    valid_source_points.size() +
+                    (bf["write_vector_outlet"] ? vector_outlet_points.size() : 0)
                 );
+
+                for (std::size_t i = 0; i < valid_source_points.size(); ++i)
+                {
+                    const lsdtt::lsdtt_lonlat ll =
+                        lsdtt::xy_to_lonlat(
+                            valid_source_points[i].x,
+                            valid_source_points[i].y,
+                            transform
+                        );
+
+                    rows.push_back({
+                        std::to_string(ll.latitude),
+                        std::to_string(ll.longitude),
+                        std::to_string(valid_source_junction_ids[i]),
+                        "0",
+                        std::to_string(valid_source_is_dem_edge[i])
+                    });
+                }
+
+                if (bf["write_vector_outlet"])
+                {
+                    for (std::size_t i = 0; i < vector_outlet_points.size(); ++i)
+                    {
+                        const lsdtt::lsdtt_lonlat ll =
+                            lsdtt::xy_to_lonlat(
+                                vector_outlet_points[i].x,
+                                vector_outlet_points[i].y,
+                                transform
+                            );
+
+                        rows.push_back({
+                            std::to_string(ll.latitude),
+                            std::to_string(ll.longitude),
+                            std::to_string(vector_outlet_junction_ids[i]),
+                            "1",
+                            std::to_string(vector_outlet_is_dem_edge[i])
+                        });
+                    }
+                }
+
+                loader.write_csv(vsrc_file, headers, rows);
             }
             else
             {
-                writer.begin_vector_write(
-                    vsrc_file, "vector_sources",
-                    schema, dem.get_meta().crs_wkt,
-                    vfmt, bf["calculate_spatial_index"]
-                );
-            }
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {
+                    "junction_id",
+                    "is_outlet",
+                    "is_dem_edge"
+                };
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type
+                };
 
-            std::int64_t tip_id = 0;
-            for (const auto& tip : valid_source_tips)
-            {
-                writer.write_point(
-                    tip.x, tip.y,
-                    {tip_id++, std::int64_t{0}}
-                );
-            }
+                const lsdtt::vector_output_format vfmt =
+                    lsdtt::convert_point_to_vector_output_format(vec_src_fmt);
 
-            if (bf["write_vector_outlet"] && net_endpoints.has_outlet)
-            {
-                writer.write_point(
-                    net_endpoints.outlet_tip.x,
-                    net_endpoints.outlet_tip.y,
-                    {tip_id++, std::int64_t{1}}
+                loader.begin_vector_write(
+                    vsrc_file,
+                    "vector_sources",
+                    schema,
+                    dem.get_meta().crs_wkt,
+                    vfmt,
+                    bf["calculate_spatial_index"]
                 );
-            }
 
-            writer.finish_vector_write();
+                for (std::size_t i = 0; i < valid_source_points.size(); ++i)
+                {
+                    loader.write_point(
+                        valid_source_points[i].x,
+                        valid_source_points[i].y,
+                        {
+                            static_cast<std::int64_t>(valid_source_junction_ids[i]),
+                            std::int64_t{0},
+                            valid_source_is_dem_edge[i]
+                        }
+                    );
+                }
+
+                if (bf["write_vector_outlet"])
+                {
+                    for (std::size_t i = 0; i < vector_outlet_points.size(); ++i)
+                    {
+                        loader.write_point(
+                            vector_outlet_points[i].x,
+                            vector_outlet_points[i].y,
+                            {
+                                static_cast<std::int64_t>(vector_outlet_junction_ids[i]),
+                                std::int64_t{1},
+                                vector_outlet_is_dem_edge[i]
+                            }
+                        );
+                    }
+                }
+
+                loader.finish_vector_write();
+            }
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: failed to write vector sources: "
+            std::cerr << "Warning: failed to write vector source junctions: "
                       << e.what() << "\n";
         }
     }
 
+
     // -------------------------------------------------------------------------
-    // Step 6 — Build DEM junction network seeded from valid vector source tips
+    // Step 6 — Build DEM junction network seeded from vector source junctions
     // -------------------------------------------------------------------------
-    std::cout << "\n--- Building DEM channel network (seeded from vector sources) ---\n";
+
+    std::cout << "\n--- Building DEM channel network (seeded from vector source junctions) ---\n";
+
 
     lsdtt::lsdtt_junction_network_options jn_opts;
     jn_opts.build_topological_order = true;
@@ -906,106 +1117,18 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // snap_to_network — compare vector and DEM junction locations
+    // snap_to_network
     // -------------------------------------------------------------------------
     else if (burn_mode == lsdtt::stream_burn_mode::snap_to_network)
     {
-        if (bf["write_junction_comparison"])
-        {
-            std::cout << "\n--- Comparing first-layer junctions ---\n";
-
-            std::vector<lsdtt::vector_dem_junction_pair> pairs;
-            try
-            {
-                pairs = lsdtt::find_first_layer_junction_pairs(
-                    stream_vector_path,
-                    dem,
-                    net_endpoints,
-                    *dem_network
-                );
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: junction comparison failed: " << e.what() << "\n";
-                return 1;
-            }
-
-            if (pairs.empty())
-            {
-                std::cout << "No first-layer junctions found. "
-                             "Check that the vector network contains at least "
-                             "two source tips that merge at a junction inside the DEM.\n";
-            }
-            else
-            {
-                // ── Optional gap repair ───────────────────────────────────────
-                if (bf["repair_junction_gaps"])
-                {
-                    std::cout << "\n--- Repairing junction gaps ---\n";
-                    std::cout << "  min_gap_m        = " << ff["min_gap_m"]        << "\n";
-                    std::cout << "  max_gap_search_px= " << ifs["max_gap_search_px"] << "\n";
-                    std::cout << "  gap_uphill_penalty=" << ff["gap_uphill_penalty"] << "\n";
-                    std::cout << "  max_gap_climb_m  = " << ff["max_gap_climb_m"]  << "\n";
-
-                    try
-                    {
-                        lsdtt::repair_junction_gaps(
-                            dem,   // modifies dem in place
-                            pairs,
-                            stream_vector_path,
-                            static_cast<double>(ff["min_gap_m"]),
-                            ifs["max_gap_search_px"],
-                            static_cast<double>(ff["gap_uphill_penalty"]),
-                            static_cast<double>(ff["max_gap_climb_m"])
-                        );
-                    }
-                    catch (const std::exception& e)
-                    {
-                        std::cerr << "Warning: repair_junction_gaps failed: "
-                                  << e.what() << "\n";
-                    }
-
-                    if (bf["write_repaired_dem"])
-                    {
-                        const std::string rdem = out_path(pp, "_repaired", ".tif");
-                        std::cout << "Writing repaired DEM: " << rdem << "\n";
-                        try
-                        {
-                            lsdtt::lsdtt_data_loader dl;
-                            dl.write_full(dem.get_data(), dem.get_meta(),
-                                          rdem, lsdtt::raster_output_format::cog);
-                        }
-                        catch (const std::exception& e)
-                        {
-                            std::cerr << "Warning: could not write repaired DEM: "
-                                      << e.what() << "\n";
-                        }
-                    }
-                }
-
-                // ── Junction comparison output ────────────────────────────────
-                const std::string ext    = lsdtt::output_extension(junc_cmp_fmt);
-                const std::string output = out_path(pp, "_junction_comparison", ext);
-                std::cout << "Writing: " << output << "\n";
-                try
-                {
-                    lsdtt::write_junction_comparison_points(
-                        pairs,
-                        dem.get_meta(),
-                        output,
-                        junc_cmp_fmt,
-                        bf["calculate_spatial_index"]
-                    );
-                }
-                catch (const std::exception& e)
-                {
-                    std::cerr << "FATAL: writing junction comparison failed: "
-                              << e.what() << "\n";
-                    return 1;
-                }
-            }
-        }
+        std::cout << "\n--- snap_to_network mode ---\n";
+        std::cout << "The clipped vector junction network has been built and written.\n";
+        std::cout << "The DEM-seeded extracted network has also been built and written.\n";
+        std::cout << "Comparison / broken-link repair has not yet been migrated\n";
+        std::cout << "to lsdtt_vector_to_junction_network, so no comparison or\n";
+        std::cout << "repair will be attempted in this run.\n";
     }
+
 
     // -------------------------------------------------------------------------
     // Parameter echo

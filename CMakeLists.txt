@@ -254,6 +254,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_crn_parameters.cpp
     src/cpu/lsdtt_crn_column.cpp
     src/cpu/lsdtt_cosmo_raster_cpu.cpp
+    src/cpu/lsdtt_vector_to_junction_network.cpp
 )
 
 if(LSDTT_HAS_OPENCV)

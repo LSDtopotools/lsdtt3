@@ -11,12 +11,16 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <queue>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1126,6 +1130,603 @@ void write_burned_stream_profiles_points(
     }
 
     writer.finish_vector_write();
+}
+
+// ===========================================================================
+// build_vector_networks helpers
+// ===========================================================================
+namespace {
+
+inline bool bbox_inside(double x, double y,
+                        double x0, double x1, double y0, double y1) noexcept
+{
+    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+}
+
+// Segment [a→b]: a is inside the bbox, b is outside.
+// Returns the intersection point on the bbox edge.
+lsdtt_xy interpolate_to_bbox_edge(lsdtt_xy a, lsdtt_xy b,
+                                   double x0, double x1, double y0, double y1)
+{
+    double t = 1.0;
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    if (dx >  1e-12) t = std::min(t, (x1 - a.x) / dx);
+    if (dx < -1e-12) t = std::min(t, (x0 - a.x) / dx);
+    if (dy >  1e-12) t = std::min(t, (y1 - a.y) / dy);
+    if (dy < -1e-12) t = std::min(t, (y0 - a.y) / dy);
+    t = std::max(0.0, std::min(1.0, t));
+    return {a.x + t * dx, a.y + t * dy};
+}
+
+struct BboxClipResult { lsdtt_xy pt; bool valid = false; bool clipped = false; };
+
+// Clip the FRONT (index-0) endpoint of a polyline to the DEM bbox.
+BboxClipResult clip_poly_front(const std::vector<lsdtt_xy>& pts,
+                                double x0, double x1, double y0, double y1)
+{
+    if (pts.empty()) return {};
+    if (bbox_inside(pts[0].x, pts[0].y, x0, x1, y0, y1))
+        return {pts[0], true, false};
+    for (std::size_t i = 1; i < pts.size(); ++i)
+        if (bbox_inside(pts[i].x, pts[i].y, x0, x1, y0, y1))
+            return {interpolate_to_bbox_edge(pts[i], pts[i-1], x0, x1, y0, y1), true, true};
+    return {};
+}
+
+// Clip the BACK (last-index) endpoint of a polyline to the DEM bbox.
+BboxClipResult clip_poly_back(const std::vector<lsdtt_xy>& pts,
+                               double x0, double x1, double y0, double y1)
+{
+    if (pts.empty()) return {};
+    const int N = static_cast<int>(pts.size()) - 1;
+    if (bbox_inside(pts[N].x, pts[N].y, x0, x1, y0, y1))
+        return {pts[N], true, false};
+    for (int i = N - 1; i >= 0; --i)
+        if (bbox_inside(pts[i].x, pts[i].y, x0, x1, y0, y1))
+            return {interpolate_to_bbox_edge(pts[i], pts[i+1], x0, x1, y0, y1), true, true};
+    return {};
+}
+
+} // anonymous namespace
+
+// ===========================================================================
+// build_vector_networks
+// ===========================================================================
+std::vector<VectorNetwork>
+build_vector_networks(const std::string& vector_path, const lsdtt_raster_cpu& dem)
+{
+    // ---- Load vector -------------------------------------------------------
+    lsdtt_data_loader loader;
+    try { loader.open_vector(vector_path); }
+    catch (const std::exception& e)
+    {
+        throw std::runtime_error(
+            std::string("build_vector_networks: cannot open vector: ") + e.what());
+    }
+    const auto layer_names = loader.get_layer_names();
+    if (layer_names.empty())
+        throw std::runtime_error("build_vector_networks: no layers in " + vector_path);
+    const lsdtt_vector_layer vlayer = loader.read_vector_layer(layer_names[0]);
+    loader.close_vector();
+
+    // ---- DEM extent and helpers --------------------------------------------
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const double x0 = meta.x_min;
+    const double x1 = meta.x_min + meta.n_cols * meta.cell_size;
+    const double y0 = meta.y_min;
+    const double y1 = meta.y_min + meta.n_rows * meta.cell_size;
+    const double cs = meta.cell_size;
+
+    const lsdtt_array2d_f&  dem_data = dem.get_data_array();
+    const lsdtt_array2d_u8& dem_mask = dem.get_mask_array();
+    auto sample_elev = [&](double x, double y) -> double {
+        const int col = static_cast<int>(std::floor((x - meta.x_min) / cs));
+        const int row = static_cast<int>(std::floor((meta.y_max() - y) / cs));
+        if (row < 0 || row >= meta.n_rows || col < 0 || col >= meta.n_cols
+            || dem_mask(row, col) == 0)
+            return std::numeric_limits<double>::quiet_NaN();
+        return static_cast<double>(dem_data(row, col));
+    };
+
+    // Quantised key: snap endpoints to half-cell grid for robust matching
+    const double snap = cs * 0.5;
+    auto make_key = [snap](double x, double y) -> std::string {
+        return std::to_string(static_cast<std::int64_t>(std::round(x / snap)))
+             + "_"
+             + std::to_string(static_cast<std::int64_t>(std::round(y / snap)));
+    };
+
+    // ---- Clip each polyline to DEM bbox ------------------------------------
+    struct PolyInfo {
+        lsdtt_xy front, back;
+        bool front_clipped = false;
+        bool back_clipped  = false;
+        bool valid         = false;
+    };
+    std::vector<PolyInfo> polys(vlayer.size());
+
+    for (std::size_t fi = 0; fi < vlayer.size(); ++fi)
+    {
+        const auto* line = std::get_if<lsdtt_line_geom>(&vlayer.records[fi].geometry);
+        if (!line || line->points.size() < 2) continue;
+        const auto fe = clip_poly_front(line->points, x0, x1, y0, y1);
+        const auto be = clip_poly_back (line->points, x0, x1, y0, y1);
+        if (!fe.valid || !be.valid) continue;
+        polys[fi] = {fe.pt, be.pt, fe.clipped, be.clipped, true};
+    }
+
+    // ---- Build endpoint adjacency map --------------------------------------
+    // ep_adj[key] = {(poly_index, is_back_end), ...}
+    std::unordered_map<std::string, std::vector<std::pair<int,bool>>> ep_adj;
+    std::unordered_map<std::string, lsdtt_xy>                         ep_xy;
+    std::unordered_map<std::string, bool>                              ep_clipped;
+
+    for (int i = 0; i < static_cast<int>(polys.size()); ++i)
+    {
+        if (!polys[i].valid) continue;
+        const std::string kf = make_key(polys[i].front.x, polys[i].front.y);
+        const std::string kb = make_key(polys[i].back.x,  polys[i].back.y);
+        ep_adj[kf].emplace_back(i, false);
+        ep_adj[kb].emplace_back(i, true);
+        ep_xy[kf]      = polys[i].front;
+        ep_xy[kb]      = polys[i].back;
+        ep_clipped[kf] = polys[i].front_clipped;
+        ep_clipped[kb] = polys[i].back_clipped;
+    }
+
+    // ---- Connected components (BFS over endpoint keys) ---------------------
+    std::unordered_map<std::string, int>      key_comp;
+    std::vector<std::vector<std::string>>     comp_keys;
+
+    for (const auto& [seed, _] : ep_adj)
+    {
+        if (key_comp.count(seed)) continue;
+        const int cid = static_cast<int>(comp_keys.size());
+        comp_keys.emplace_back();
+        std::queue<std::string> bfsq;
+        bfsq.push(seed);
+        key_comp[seed] = cid;
+        while (!bfsq.empty())
+        {
+            const std::string cur = bfsq.front(); bfsq.pop();
+            comp_keys[cid].push_back(cur);
+            for (const auto& [pi, is_back] : ep_adj.at(cur))
+            {
+                const auto& p = polys[pi];
+                const std::string other = is_back
+                    ? make_key(p.front.x, p.front.y)
+                    : make_key(p.back.x,  p.back.y);
+                if (!key_comp.count(other))
+                {
+                    key_comp[other] = cid;
+                    bfsq.push(other);
+                }
+            }
+        }
+    }
+
+    // ---- Helper: follow chain of degree-2 nodes to next graph node ---------
+    // Returns the key of the first node reached with degree != 2.
+    auto follow_chain = [&](const std::string& start,
+                             const std::string& from) -> std::string
+    {
+        std::string cur = start, prev = from;
+        for (int step = 0; step < 100000; ++step)
+        {
+            const auto it = ep_adj.find(cur);
+            if (it == ep_adj.end() || it->second.size() != 2) break;
+            std::string next;
+            for (const auto& [pi, is_back] : it->second)
+            {
+                const auto& p = polys[pi];
+                const std::string other = is_back
+                    ? make_key(p.front.x, p.front.y)
+                    : make_key(p.back.x,  p.back.y);
+                if (other != prev) { next = other; break; }
+            }
+            if (next.empty() || next == cur) break;
+            prev = cur;
+            cur  = next;
+        }
+        return cur;
+    };
+
+    // ---- Build one VectorNetwork per connected component -------------------
+    std::vector<VectorNetwork> result;
+
+    for (int cid = 0; cid < static_cast<int>(comp_keys.size()); ++cid)
+    {
+        const auto& all_keys = comp_keys[cid];
+
+        // Graph nodes are keys with degree != 2
+        std::vector<std::string> graph_keys;
+        for (const auto& k : all_keys)
+            if (ep_adj.at(k).size() != 2) graph_keys.push_back(k);
+
+        if (graph_keys.empty()) continue;
+
+        // Assign node IDs
+        std::unordered_map<std::string, int> key_nid;
+        VectorNetwork net;
+        for (const auto& k : graph_keys)
+        {
+            const int nid = static_cast<int>(net.nodes.size());
+            key_nid[k]   = nid;
+            VectorNetworkNode node;
+            node.node_id   = nid;
+            node.xy        = ep_xy.at(k);
+            node.is_clipped = ep_clipped.count(k) && ep_clipped.at(k);
+            net.nodes.push_back(node);
+        }
+
+        // Build undirected graph edges (one per unique pair via chain following)
+        struct UEdge { int a, b; };
+        std::vector<UEdge> uedges;
+        std::set<std::pair<int,int>> seen;
+
+        for (const auto& k : graph_keys)
+        {
+            const int nid_a = key_nid.at(k);
+            for (const auto& [pi, is_back] : ep_adj.at(k))
+            {
+                const auto& p = polys[pi];
+                const std::string imm = is_back
+                    ? make_key(p.front.x, p.front.y)
+                    : make_key(p.back.x,  p.back.y);
+                const std::string far = follow_chain(imm, k);
+                if (!key_nid.count(far)) continue;
+                const int nid_b = key_nid.at(far);
+                if (nid_a == nid_b) continue;
+                const auto ek = std::make_pair(std::min(nid_a, nid_b),
+                                               std::max(nid_a, nid_b));
+                if (!seen.insert(ek).second) continue;
+                uedges.push_back({nid_a, nid_b});
+            }
+        }
+
+        // Assign flow direction to each edge
+        // Clipped nodes are at the downstream (outlet) end of their edges.
+        // Otherwise compare DEM elevation: higher endpoint is upstream.
+        struct DEdge { int up, dn; };
+        std::vector<DEdge> dedges;
+        dedges.reserve(uedges.size());
+
+        for (const auto& ue : uedges)
+        {
+            const auto& na = net.nodes[ue.a];
+            const auto& nb = net.nodes[ue.b];
+            int up = -1, dn = -1;
+
+            if (na.is_clipped && !nb.is_clipped)        { up = ue.b; dn = ue.a; }
+            else if (nb.is_clipped && !na.is_clipped)   { up = ue.a; dn = ue.b; }
+            else
+            {
+                const double ea = sample_elev(na.xy.x, na.xy.y);
+                const double eb = sample_elev(nb.xy.x, nb.xy.y);
+                if (!std::isnan(ea) && !std::isnan(eb))
+                {
+                    if (ea >= eb) { up = ue.a; dn = ue.b; }
+                    else          { up = ue.b; dn = ue.a; }
+                }
+                else if (!std::isnan(ea)) { up = ue.a; dn = ue.b; }
+                else                      { up = ue.b; dn = ue.a; }
+            }
+
+            if (up >= 0) dedges.push_back({up, dn});
+        }
+
+        // Populate directed adjacency on nodes
+        for (const auto& de : dedges)
+        {
+            net.nodes[de.up].downstream_node_id = de.dn;
+            net.nodes[de.dn].upstream_node_ids.push_back(de.up);
+        }
+
+        // Classify source / outlet
+        for (auto& node : net.nodes)
+        {
+            if (node.upstream_node_ids.empty() && node.downstream_node_id >= 0)
+                node.is_source = true;
+            if (node.downstream_node_id == -1 && !node.upstream_node_ids.empty())
+                node.is_outlet = true;
+        }
+
+        // Identify THE outlet (prefer clipped, then lowest elevation)
+        {
+            std::vector<int> outlets;
+            for (const auto& n : net.nodes)
+                if (n.is_outlet) outlets.push_back(n.node_id);
+
+            if (outlets.empty())
+            {
+                std::cerr << "build_vector_networks: component " << cid
+                          << " has no outlet; skipping\n";
+                continue;
+            }
+
+            int best = outlets[0];
+            for (int oi : outlets)
+            {
+                if (net.nodes[oi].is_clipped)  { best = oi; break; }
+                const double ea = sample_elev(net.nodes[best].xy.x, net.nodes[best].xy.y);
+                const double eb = sample_elev(net.nodes[oi].xy.x,   net.nodes[oi].xy.y);
+                if (!std::isnan(eb) && (std::isnan(ea) || eb < ea)) best = oi;
+            }
+            net.outlet_node_id = best;
+        }
+
+        // Kahn's topological sort — collect junctions in upstream-first order
+        std::unordered_map<int,int> in_deg;
+        for (const auto& n : net.nodes)
+            in_deg[n.node_id] = static_cast<int>(n.upstream_node_ids.size());
+
+        std::queue<int> kq;
+        for (const auto& n : net.nodes)
+            if (in_deg[n.node_id] == 0) kq.push(n.node_id);
+
+        while (!kq.empty())
+        {
+            const int cur = kq.front(); kq.pop();
+            const auto& cn = net.nodes[cur];
+            if (!cn.is_source && !cn.is_outlet)
+                net.junction_topo_order.push_back(cur);
+            if (cn.downstream_node_id >= 0)
+                if (--in_deg.at(cn.downstream_node_id) == 0)
+                    kq.push(cn.downstream_node_id);
+        }
+
+        result.push_back(std::move(net));
+    }
+
+    std::cout << "build_vector_networks: " << result.size() << " network(s)\n";
+    for (int i = 0; i < static_cast<int>(result.size()); ++i)
+    {
+        int ns = 0, nj = 0;
+        for (const auto& n : result[i].nodes)
+            if (n.is_source) ++ns;
+            else if (!n.is_outlet) ++nj;
+        std::cout << "  network " << i << ": " << ns << " source(s), "
+                  << nj << " junction(s)\n";
+    }
+    return result;
+}
+
+// ===========================================================================
+// repair_stream_junctions
+// ===========================================================================
+std::vector<JunctionRepairRecord>
+repair_stream_junctions(
+    lsdtt_raster_cpu&                             dem,
+    const std::string&                            vector_path,
+    const std::vector<std::int64_t>&              source_flats,
+    std::unique_ptr<lsdtt_flow_base>&             flow,
+    std::unique_ptr<lsdtt_junction_network_base>& dem_network,
+    const lsdtt_flowinfo_options&                 fi_opts,
+    const lsdtt_junction_network_options&         jn_opts,
+    const junction_repair_params&                 params)
+{
+    const std::vector<VectorNetwork> networks = build_vector_networks(vector_path, dem);
+    const lsdtt_raster_meta& meta = dem.get_meta();
+
+    // ---- DEM headwater helpers ---------------------------------------------
+    struct DemHW { std::int32_t junc_id; lsdtt_xy xy; };
+
+    auto build_headwaters = [&]() -> std::vector<DemHW>
+    {
+        std::vector<DemHW> hw;
+        const std::int32_t n = dem_network->n_junctions();
+        for (std::int32_t j = 0; j < n; ++j)
+        {
+            if (!dem_network->is_valid_junction(j)) continue;
+            if (dem_network->donor_junction_size(j) != 0) continue;
+            const lsdtt_xy jxy = cell_center_from_row_col(
+                meta, dem_network->row_of_junction(j), dem_network->col_of_junction(j));
+            hw.push_back({j, jxy});
+        }
+        return hw;
+    };
+
+    auto nearest_headwater = [](const lsdtt_xy& pt,
+                                 const std::vector<DemHW>& hw) -> std::int32_t
+    {
+        double best = std::numeric_limits<double>::max();
+        std::int32_t best_j = -1;
+        for (const auto& h : hw)
+        {
+            const double d2 = (h.xy.x - pt.x) * (h.xy.x - pt.x)
+                            + (h.xy.y - pt.y) * (h.xy.y - pt.y);
+            if (d2 < best) { best = d2; best_j = h.junc_id; }
+        }
+        return best_j;
+    };
+
+    // LCA of two junctions: walk ja to outlet collecting ancestors,
+    // then walk jb until hitting one.
+    auto lca_two = [&](std::int32_t ja, std::int32_t jb) -> std::int32_t
+    {
+        std::unordered_set<std::int32_t> seen;
+        for (std::int32_t cur = ja; cur >= 0; )
+        {
+            seen.insert(cur);
+            const std::int32_t recv = dem_network->receiver_of_junction(cur);
+            if (recv < 0 || recv == cur) break;
+            cur = recv;
+        }
+        for (std::int32_t cur = jb; cur >= 0; )
+        {
+            if (seen.count(cur)) return cur;
+            const std::int32_t recv = dem_network->receiver_of_junction(cur);
+            if (recv < 0 || recv == cur) break;
+            cur = recv;
+        }
+        return -1;
+    };
+
+    // Recursive DEM-junction finder via LCA.
+    // cache maps vector node_id → DEM junction_id for the CURRENT extraction.
+    std::function<std::int32_t(const VectorNetwork&, int,
+                               const std::vector<DemHW>&,
+                               std::unordered_map<int,std::int32_t>&)>
+    find_dem_junction;
+
+    find_dem_junction = [&](const VectorNetwork&                  net,
+                             int                                   node_id,
+                             const std::vector<DemHW>&             hw,
+                             std::unordered_map<int,std::int32_t>& cache)
+        -> std::int32_t
+    {
+        auto it = cache.find(node_id);
+        if (it != cache.end()) return it->second;
+
+        const auto& node = net.nodes[node_id];
+        std::int32_t result = -1;
+
+        if (node.is_source)
+        {
+            result = nearest_headwater(node.xy, hw);
+        }
+        else
+        {
+            std::vector<std::int32_t> ups;
+            for (int uid : node.upstream_node_ids)
+            {
+                const std::int32_t uj = find_dem_junction(net, uid, hw, cache);
+                if (uj >= 0) ups.push_back(uj);
+            }
+            if (!ups.empty())
+            {
+                result = ups[0];
+                for (std::size_t i = 1; i < ups.size(); ++i)
+                {
+                    result = lca_two(result, ups[i]);
+                    if (result < 0) break;
+                }
+            }
+        }
+
+        cache[node_id] = result;
+        return result;
+    };
+
+    // ---- Main repair loop --------------------------------------------------
+    std::vector<JunctionRepairRecord> records;
+    int repair_index = 0;
+    auto dem_hw = build_headwaters();
+
+    for (int ni = 0; ni < static_cast<int>(networks.size()); ++ni)
+    {
+        const auto& net = networks[ni];
+        std::unordered_map<int,std::int32_t> cache;
+
+        for (int junc_nid : net.junction_topo_order)
+        {
+            const auto& junc_node = net.nodes[junc_nid];
+
+            // Find DEM counterpart
+            const std::int32_t dem_junc =
+                find_dem_junction(net, junc_nid, dem_hw, cache);
+
+            if (dem_junc < 0)
+            {
+                std::cout << "  [net " << ni << " junc " << junc_nid
+                          << "]: no DEM counterpart found; skipping\n";
+                continue;
+            }
+
+            const lsdtt_xy dem_jxy = cell_center_from_row_col(
+                meta,
+                dem_network->row_of_junction(dem_junc),
+                dem_network->col_of_junction(dem_junc));
+
+            const double dx   = dem_jxy.x - junc_node.xy.x;
+            const double dy   = dem_jxy.y - junc_node.xy.y;
+            const double dist = std::sqrt(dx * dx + dy * dy);
+
+            std::cout << "  [net " << ni << " junc " << junc_nid
+                      << "]: gap=" << dist << " m";
+
+            if (dist < params.min_gap_m)
+            {
+                std::cout << " (within tolerance)\n";
+                continue;
+            }
+
+            std::cout << " — repairing\n";
+
+            // Single-pair repair via existing repair_junction_gaps
+            vector_dem_junction_pair pair;
+            pair.pair_id    = repair_index;
+            pair.vector_xy  = junc_node.xy;
+            pair.dem_xy     = dem_jxy;
+            pair.distance_m = dist;
+            pair.n_sources  = static_cast<int>(junc_node.upstream_node_ids.size());
+            std::vector<vector_dem_junction_pair> pv = {pair};
+
+            repair_junction_gaps(dem, pv, vector_path,
+                                 params.min_gap_m,
+                                 params.max_search_px,
+                                 params.uphill_mult,
+                                 params.max_climb_m);
+
+            JunctionRepairRecord rec;
+            rec.repair_index  = repair_index++;
+            rec.network_index = ni;
+            rec.vector_xy     = junc_node.xy;
+            rec.dem_xy        = dem_jxy;
+            rec.distance_m    = dist;
+            rec.fix_type      = pv[0].fix_type;
+            rec.n_burned      = pv[0].n_burned;
+            records.push_back(rec);
+
+            std::cout << "    → " << gap_fix_type_str(pv[0].fix_type)
+                      << " (" << pv[0].n_burned << " px)"
+                      << "  re-extracting network...\n";
+
+            // Re-extract flow routing and junction network
+            flow       = make_flow_base(dem.get_data_array(), dem.get_mask_array(),
+                                        meta, fi_opts);
+            dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
+
+            // Refresh headwaters and invalidate cache
+            dem_hw = build_headwaters();
+            cache.clear();
+        }
+    }
+
+    std::cout << "repair_stream_junctions: " << repair_index
+              << " repair(s) applied across "
+              << networks.size() << " network(s)\n";
+    return records;
+}
+
+// ===========================================================================
+// write_junction_repair_log
+// ===========================================================================
+void write_junction_repair_log(
+    const std::vector<JunctionRepairRecord>& records,
+    const std::string&                       filename)
+{
+    std::ofstream f(filename);
+    if (!f)
+        throw std::runtime_error(
+            "write_junction_repair_log: cannot open " + filename);
+
+    f << "repair_index,network_index,vector_x,vector_y,"
+         "dem_x,dem_y,distance_m,fix_type,n_burned\n";
+
+    for (const auto& r : records)
+    {
+        f << r.repair_index  << ","
+          << r.network_index << ","
+          << r.vector_xy.x   << ","
+          << r.vector_xy.y   << ","
+          << r.dem_xy.x      << ","
+          << r.dem_xy.y      << ","
+          << r.distance_m    << ","
+          << gap_fix_type_str(r.fix_type) << ","
+          << r.n_burned      << "\n";
+    }
 }
 
 } // namespace lsdtt
