@@ -86,6 +86,43 @@ lsdtt_raster_cpu rasterise_polygons(
     polygon_rasterise_rule  rule = polygon_rasterise_rule::any_coverage
 );
 
+// As above, but burns at most `max_features` polygon features (0 = all).
+lsdtt_raster_cpu rasterise_polygons(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      vector_path,
+    polygon_rasterise_rule  rule,
+    int                     max_features
+);
+
+// -----------------------------------------------------------------------------
+// polygon_bbox
+//
+// Axis-aligned bounding box in a projected coordinate system.
+// All coordinates are in the same CRS as the reference raster.
+// -----------------------------------------------------------------------------
+struct polygon_bbox
+{
+    double xmin = 0.0;
+    double ymin = 0.0;
+    double xmax = 0.0;
+    double ymax = 0.0;
+};
+
+// -----------------------------------------------------------------------------
+// get_first_polygon_bbox_in_raster_crs
+//
+// Returns the bounding box of the first polygon feature in the first layer of
+// `vector_path`, transformed into the CRS described by `raster_crs_wkt`.
+//
+// If the vector and raster already share a CRS, no transformation is applied.
+// Throws std::runtime_error if the file cannot be opened, has no polygon
+// features, or the CRS transform fails.
+// -----------------------------------------------------------------------------
+polygon_bbox get_first_polygon_bbox_in_raster_crs(
+    const std::string& vector_path,
+    const std::string& raster_crs_wkt
+);
+
 // -----------------------------------------------------------------------------
 // rasterise_polylines
 //

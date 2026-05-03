@@ -1567,4 +1567,39 @@ void lsdtt_data_loader::clip_vector_to_raster_bbox(
     }
 }
 
+// count_features_in_first_layer
+// =============================================================================
+int lsdtt_data_loader::count_features_in_first_layer(
+    const std::string& vector_path)
+{
+    GDALAllRegister();
+
+    GDALDataset* raw = static_cast<GDALDataset*>(
+        GDALOpenEx(vector_path.c_str(),
+                   GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                   nullptr, nullptr, nullptr)
+    );
+
+    if (!raw)
+    {
+        throw std::runtime_error(
+            "count_features_in_first_layer: cannot open: " + vector_path +
+            "\nGDAL error: " + std::string(CPLGetLastErrorMsg())
+        );
+    }
+
+    struct ds_closer { void operator()(GDALDataset* d) const { if (d) GDALClose(d); } };
+    std::unique_ptr<GDALDataset, ds_closer> guard(raw);
+
+    OGRLayer* layer = raw->GetLayer(0);
+    if (!layer)
+    {
+        throw std::runtime_error(
+            "count_features_in_first_layer: no layers in: " + vector_path
+        );
+    }
+
+    return static_cast<int>(layer->GetFeatureCount(/*bForce=*/TRUE));
+}
+
 } // namespace lsdtt

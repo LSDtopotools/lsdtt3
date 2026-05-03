@@ -567,6 +567,11 @@ public:
         vector_output_format     out_fmt
     );
 
+    // Return the feature count of the first layer in a vector file.
+    // Returns -1 if the driver cannot determine the count without scanning.
+    // Throws std::runtime_error if the file cannot be opened.
+    static int count_features_in_first_layer(const std::string& vector_path);
+
     // Write a table to a CSV file. The first row is a header.
     //
     //   out_path   — output .csv file path

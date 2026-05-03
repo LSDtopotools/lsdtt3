@@ -71,6 +71,7 @@
 #include "../src/cpu/lsdtt_raster_mosaic_cpu.hpp"
 #include "../src/cpu/lsdtt_depression_hierarchy_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
+#include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -506,6 +507,45 @@ int main(int argc, char* argv[])
         "Allowed values: flatgeobuf, fgb, gpkg. "
         "FlatGeobuf is preferred, especially on WSL2."};
 
+    // --- Clip raster to polygon ---
+    bool_default_map["clip_raster_to_polygon"] = false;
+    help_map["clip_raster_to_polygon"] = {"bool","false",
+        "Crop the DEM to the minimum bounding box of a polygon.",
+        "The DEM is cropped to the smallest axis-aligned rectangle that "
+        "contains the polygon, in the raster's own CRS. "
+        "Pixels outside the polygon are also set to nodata unless "
+        "force_rectangular_raster is true. "
+        "If the file contains more than one polygon, a warning is issued and "
+        "only the first polygon is used. "
+        "Set polygon_clip_fname to the path of the polygon file. "
+        "Output suffix: _polygon_clipped.tif"};
+
+    string_default_map["polygon_clip_fname"] = "";
+    help_map["polygon_clip_fname"] = {"string","",
+        "Path to the polygon vector file used to clip the DEM.",
+        "Any OGR-readable polygon format is accepted (GeoPackage, FlatGeobuf, "
+        "Shapefile, GeoJSON, etc.). The first layer and first polygon are used. "
+        "Required when clip_raster_to_polygon is true."};
+
+    bool_default_map["force_rectangular_raster"] = false;
+    help_map["force_rectangular_raster"] = {"bool","false",
+        "When clipping to a polygon, keep all data inside the bounding box.",
+        "If false (default), pixels that fall inside the bounding box but "
+        "outside the polygon shape are set to nodata. "
+        "If true, all pixels within the bounding box are kept regardless of "
+        "whether they fall inside the polygon — the output is a plain "
+        "rectangular crop. Only used when clip_raster_to_polygon is true."};
+
+    string_default_map["polygon_clip_rule"] = "majority_coverage";
+    help_map["polygon_clip_rule"] = {"string","majority_coverage",
+        "Pixel inclusion rule when masking by the polygon shape.",
+        "Only used when clip_raster_to_polygon is true and "
+        "force_rectangular_raster is false. "
+        "any_coverage: pixel is kept if the polygon touches any part of it. "
+        "majority_coverage: pixel is kept if the polygon centre falls inside "
+        "(approximately 50% coverage, default). "
+        "full_coverage: pixel is kept only if the polygon covers it fully."};
+
     // -------------------------------------------------------------------------
     // Parse — fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
@@ -860,6 +900,92 @@ int main(int argc, char* argv[])
             catch (const std::exception& e)
             {
                 std::cerr << "Warning: binary mask application failed: "
+                          << e.what() << "\n";
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2c — Crop to polygon bounding box (and optionally mask by shape)
+    // -------------------------------------------------------------------------
+    if (bf["clip_raster_to_polygon"])
+    {
+        std::cout << "\n--- Clip raster to polygon ---\n";
+
+        const std::string& poly_path = sf["polygon_clip_fname"];
+        if (poly_path.empty())
+        {
+            std::cerr << "Warning: clip_raster_to_polygon is true but "
+                         "polygon_clip_fname is empty — skipping.\n";
+        }
+        else
+        {
+            std::cout << "Polygon file: " << poly_path << "\n";
+            try
+            {
+                // Warn if the file contains multiple polygons.
+                const int n_features =
+                    lsdtt::lsdtt_data_loader::count_features_in_first_layer(
+                        poly_path);
+                if (n_features > 1)
+                {
+                    std::cerr << "Warning: polygon file contains "
+                              << n_features
+                              << " polygon(s) — only the first will be used.\n";
+                }
+                else
+                {
+                    std::cout << "  " << n_features << " polygon(s) found.\n";
+                }
+
+                // Get the polygon bbox in the raster's CRS.
+                const lsdtt::polygon_bbox bbox =
+                    lsdtt::get_first_polygon_bbox_in_raster_crs(
+                        poly_path, dem.get_meta().crs_wkt);
+
+                std::cout << "  Polygon bbox (raster CRS):\n"
+                          << "    xmin=" << bbox.xmin << "  ymin=" << bbox.ymin
+                          << "  xmax=" << bbox.xmax << "  ymax=" << bbox.ymax
+                          << "\n";
+
+                // Crop the DEM to the polygon bbox.
+                dem = lsdtt::clip_raster_to_bbox(
+                          dem, bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax);
+
+                // Optionally mask pixels outside the polygon shape.
+                if (!bf["force_rectangular_raster"])
+                {
+                    lsdtt::polygon_rasterise_rule poly_rule =
+                        lsdtt::polygon_rasterise_rule::majority_coverage;
+                    {
+                        const std::string& rs = sf["polygon_clip_rule"];
+                        if (rs == "any_coverage")
+                            poly_rule =
+                                lsdtt::polygon_rasterise_rule::any_coverage;
+                        else if (rs == "full_coverage")
+                            poly_rule =
+                                lsdtt::polygon_rasterise_rule::full_coverage;
+                        else if (rs != "majority_coverage")
+                            std::cerr << "Warning: unknown polygon_clip_rule '"
+                                      << rs
+                                      << "' — using majority_coverage.\n";
+                    }
+
+                    const lsdtt::lsdtt_raster_cpu poly_mask =
+                        lsdtt::rasterise_polygons(dem, poly_path,
+                                                  poly_rule, 1);
+
+                    dem = lsdtt::algebra::raster_mask_by_binary_keep(
+                              dem, poly_mask);
+                }
+
+                const std::string o = out_path(pp, "_polygon_clipped.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: polygon clip failed: "
                           << e.what() << "\n";
             }
         }

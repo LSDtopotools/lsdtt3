@@ -841,4 +841,93 @@ lsdtt_raster_cpu clip_to_maximum_rectangle(
     );
 }
 
+// =============================================================================
+// clip_raster_to_bbox
+// =============================================================================
+lsdtt_raster_cpu clip_raster_to_bbox(
+    const lsdtt_raster_cpu& raster,
+    double xmin,
+    double ymin,
+    double xmax,
+    double ymax)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::clip_raster_to_bbox: invalid raster metadata");
+    }
+
+    const double cs     = meta.cell_size;
+    const int    nrows  = meta.n_rows;
+    const int    ncols  = meta.n_cols;
+    const double x_min  = meta.x_min;
+    const double y_max  = meta.y_min + nrows * cs;  // northern edge
+
+    // Convert bbox to pixel indices (snap outward).
+    // Columns: col c spans [x_min + c*cs, x_min + (c+1)*cs].
+    // Rows: row r spans [y_max - (r+1)*cs, y_max - r*cs].
+    int col_start = static_cast<int>(std::floor((xmin - x_min) / cs));
+    int col_end   = static_cast<int>(std::ceil ((xmax - x_min) / cs)) - 1;
+    int row_start = static_cast<int>(std::floor((y_max - ymax) / cs));
+    int row_end   = static_cast<int>(std::ceil ((y_max - ymin) / cs)) - 1;
+
+    // Clamp to raster extent.
+    col_start = std::max(0, col_start);
+    col_end   = std::min(ncols - 1, col_end);
+    row_start = std::max(0, row_start);
+    row_end   = std::min(nrows - 1, row_end);
+
+    if (col_start > col_end || row_start > row_end)
+    {
+        throw std::runtime_error(
+            "lsdtt::clip_raster_to_bbox: bbox does not overlap the raster "
+            "extent");
+    }
+
+    const int out_nrows = row_end - row_start + 1;
+    const int out_ncols = col_end - col_start + 1;
+
+    const lsdtt_array2d<float>   dem (nrows, ncols,
+                                      lsdtt_array2d<float>::from_ptr,
+                                      raster.get_data().data());
+    const lsdtt_array2d<uint8_t> mask(nrows, ncols,
+                                      lsdtt_array2d<uint8_t>::from_ptr,
+                                      raster.get_mask().data());
+
+    lsdtt_array2d<float>   out_dem (out_nrows, out_ncols,
+                                    static_cast<float>(meta.no_data_value));
+    lsdtt_array2d<uint8_t> out_mask(out_nrows, out_ncols, uint8_t{0});
+
+    for (int r = 0; r < out_nrows; ++r)
+    {
+        for (int c = 0; c < out_ncols; ++c)
+        {
+            out_dem (r, c) = dem (row_start + r, col_start + c);
+            out_mask(r, c) = mask(row_start + r, col_start + c);
+        }
+    }
+
+    lsdtt_raster_meta out_meta = meta;
+    out_meta.n_rows = out_nrows;
+    out_meta.n_cols = out_ncols;
+    // x_min shifts right by col_start columns.
+    out_meta.x_min  = meta.x_min + col_start * cs;
+    // y_min shifts up: (nrows - row_end - 1) rows above the original bottom.
+    out_meta.y_min  = meta.y_min + (nrows - row_end - 1) * cs;
+
+    std::cout << "lsdtt::clip_raster_to_bbox:\n"
+              << "  Input  : " << nrows << " x " << ncols << " pixels\n"
+              << "  Output : " << out_nrows << " x " << out_ncols << " pixels\n"
+              << "  Rows   : " << row_start << " to " << row_end   << "\n"
+              << "  Cols   : " << col_start << " to " << col_end   << "\n";
+
+    return lsdtt_raster_cpu(
+        std::move(out_dem.get_vector()),
+        std::move(out_mask.get_vector()),
+        out_meta
+    );
+}
+
 } // namespace lsdtt

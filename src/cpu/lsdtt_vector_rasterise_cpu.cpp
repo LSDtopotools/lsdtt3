@@ -169,14 +169,15 @@ bool is_line_type(OGRwkbGeometryType t)
            t == wkbUnknown;
 }
 
-// Collects all geometry pointers from `layer` (one per feature), optionally
-// transforming with `ct`. Returns cloned OGRGeometry* objects — caller owns
-// them. Features whose geometry is missing or of the wrong wkb class are
-// skipped. `accept_type` is called to filter individual geometries.
+// Collects geometry pointers from `layer`, optionally transforming with `ct`.
+// Returns cloned OGRGeometry* objects — caller owns them. Features whose
+// geometry is missing or of the wrong wkb class are skipped.
+// max_features == 0 means collect all; otherwise stop after max_features.
 std::vector<OGRGeometry*> collect_geometries(
     OGRLayer*                      layer,
     OGRCoordinateTransformation*   ct,
-    bool (*accept_type)(OGRwkbGeometryType))
+    bool (*accept_type)(OGRwkbGeometryType),
+    int                            max_features = 0)
 {
     std::vector<OGRGeometry*> out;
 
@@ -184,6 +185,12 @@ std::vector<OGRGeometry*> collect_geometries(
     OGRFeature* feat;
     while ((feat = layer->GetNextFeature()) != nullptr)
     {
+        if (max_features > 0 && static_cast<int>(out.size()) >= max_features)
+        {
+            OGRFeature::DestroyFeature(feat);
+            break;
+        }
+
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom && accept_type(geom->getGeometryType()))
         {
@@ -746,6 +753,167 @@ lsdtt_raster_cpu rasterise_polygons(
 
     free_geometries(geoms);
     return build_output(reference_raster, raw);
+}
+
+// =============================================================================
+// rasterise_polygons (max_features overload)
+// =============================================================================
+lsdtt_raster_cpu rasterise_polygons(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      vector_path,
+    polygon_rasterise_rule  rule,
+    int                     max_features)
+{
+    const lsdtt_raster_meta& meta = reference_raster.get_meta();
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "rasterise_polygons: reference raster metadata is invalid");
+    }
+
+    GDALDataset* vec_ds = nullptr;
+    OGRLayer*    layer  = open_first_layer(vector_path, vec_ds);
+
+    const OGRwkbGeometryType layer_type = layer->GetGeomType();
+    if (!is_polygon_type(layer_type))
+    {
+        GDALClose(vec_ds);
+        throw std::runtime_error(
+            "rasterise_polygons: first layer of '" + vector_path +
+            "' is not a polygon layer (type=" +
+            std::string(OGRGeometryTypeToName(layer_type)) + ")");
+    }
+
+    auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
+
+    auto geoms = collect_geometries(layer, ct.get(), is_polygon_type,
+                                    max_features);
+    GDALClose(vec_ds);
+
+    if (geoms.empty())
+    {
+        const std::size_t npix =
+            static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+        std::vector<float>   data(npix, 0.0f);
+        std::vector<uint8_t> mask = reference_raster.get_mask();
+        return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+    }
+
+    std::vector<uint8_t> raw;
+
+    if (rule == polygon_rasterise_rule::full_coverage)
+    {
+        constexpr int os = 4;
+        const int burn_nrows = meta.n_rows * os;
+        const int burn_ncols = meta.n_cols * os;
+
+        double gt[6];
+        fill_geotransform(meta, gt);
+        gt[1] /= os;
+        gt[5] /= os;
+
+        GDALDataset* mem_ds = make_mem_byte_raster(burn_nrows, burn_ncols, gt);
+        burn_geometries(mem_ds, geoms, /*all_touched=*/false);
+        const auto hi_res = read_byte_band(mem_ds, burn_nrows, burn_ncols);
+        GDALClose(mem_ds);
+
+        constexpr int sub = os * os;
+        raw.resize(static_cast<std::size_t>(meta.n_rows) * meta.n_cols, 0u);
+
+        for (int r = 0; r < meta.n_rows; ++r)
+        {
+            for (int c = 0; c < meta.n_cols; ++c)
+            {
+                int count = 0;
+                for (int sr = 0; sr < os; ++sr)
+                    for (int sc = 0; sc < os; ++sc)
+                        count += hi_res[
+                            static_cast<std::size_t>(r * os + sr) * burn_ncols +
+                            (c * os + sc)];
+
+                raw[static_cast<std::size_t>(r) * meta.n_cols + c] =
+                    (count == sub) ? 1u : 0u;
+            }
+        }
+    }
+    else
+    {
+        double gt[6];
+        fill_geotransform(meta, gt);
+
+        GDALDataset* mem_ds = make_mem_byte_raster(meta.n_rows, meta.n_cols, gt);
+        burn_geometries(mem_ds, geoms,
+                        rule == polygon_rasterise_rule::any_coverage);
+        raw = read_byte_band(mem_ds, meta.n_rows, meta.n_cols);
+        GDALClose(mem_ds);
+    }
+
+    free_geometries(geoms);
+    return build_output(reference_raster, raw);
+}
+
+// =============================================================================
+// get_first_polygon_bbox_in_raster_crs
+// =============================================================================
+polygon_bbox get_first_polygon_bbox_in_raster_crs(
+    const std::string& vector_path,
+    const std::string& raster_crs_wkt)
+{
+    GDALDataset* vec_ds = nullptr;
+    OGRLayer*    layer  = open_first_layer(vector_path, vec_ds);
+
+    struct ds_guard_t {
+        GDALDataset* ds;
+        ~ds_guard_t() { if (ds) GDALClose(ds); }
+    } ds_guard{vec_ds};
+
+    auto ct = make_ct_if_needed(layer->GetSpatialRef(), raster_crs_wkt);
+
+    layer->ResetReading();
+    OGRFeature* feat = layer->GetNextFeature();
+
+    if (!feat)
+    {
+        throw std::runtime_error(
+            "get_first_polygon_bbox_in_raster_crs: no features in: " +
+            vector_path);
+    }
+
+    struct feat_guard_t {
+        OGRFeature* f;
+        ~feat_guard_t() { if (f) OGRFeature::DestroyFeature(f); }
+    } feat_guard{feat};
+
+    OGRGeometry* geom = feat->GetGeometryRef();
+    if (!geom)
+    {
+        throw std::runtime_error(
+            "get_first_polygon_bbox_in_raster_crs: first feature has no "
+            "geometry in: " + vector_path);
+    }
+
+    // Work on a clone if we need to transform.
+    OGRGeometry* work = ct ? geom->clone() : geom;
+    struct work_guard_t {
+        OGRGeometry* g;
+        bool owned;
+        ~work_guard_t() { if (owned && g) delete g; }
+    } work_guard{work, ct != nullptr};
+
+    if (ct)
+    {
+        if (work->transform(ct.get()) != OGRERR_NONE)
+        {
+            throw std::runtime_error(
+                "get_first_polygon_bbox_in_raster_crs: CRS transform failed "
+                "for: " + vector_path);
+        }
+    }
+
+    OGREnvelope env;
+    work->getEnvelope(&env);
+
+    return polygon_bbox{env.MinX, env.MinY, env.MaxX, env.MaxY};
 }
 
 // =============================================================================

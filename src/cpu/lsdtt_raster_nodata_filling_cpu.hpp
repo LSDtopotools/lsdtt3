@@ -73,4 +73,22 @@ lsdtt_raster_cpu clip_to_maximum_rectangle(
     const lsdtt_raster_cpu& raster
 );
 
+// -----------------------------------------------------------------------------
+// clip_raster_to_bbox
+//
+// Crop a raster to a coordinate bounding box given in the raster's own CRS.
+// Pixel boundaries are snapped outward so every pixel that overlaps the bbox
+// is retained. The output raster has updated x_min, y_min, n_rows, n_cols.
+//
+// Throws std::runtime_error if the bbox does not overlap the raster extent
+// or if the raster metadata are invalid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu clip_raster_to_bbox(
+    const lsdtt_raster_cpu& raster,
+    double xmin,
+    double ymin,
+    double xmax,
+    double ymax
+);
+
 } // namespace lsdtt
