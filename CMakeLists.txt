@@ -255,6 +255,9 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_crn_column.cpp
     src/cpu/lsdtt_cosmo_raster_cpu.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
+    src/cpu/lsdtt_marsh_platform_cpu.cpp
+    src/cpu/lsdtt_tidal_channel_cpu.cpp
+    src/cpu/lsdtt_tidal_skeleton_metrics_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
