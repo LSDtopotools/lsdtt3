@@ -557,9 +557,14 @@ tidal_channel_result find_tidal_channels(
     // -------------------------------------------------------------------------
     if (request.extract_skeleton)
     {
-        std::cout << "  Extracting skeleton..." << std::endl;
+        std::cout << "  Extracting skeleton with thin medial ridge routine..." << std::endl;
         result.channel_skeleton =
-            thin_zhang_suen(result.channel_mask);
+            thin_distance_guided(
+                result.channel_mask,
+                0.5   // preserve_distance_pixels
+            );
+
+
 
         if (request.skeleton_terminal_loop_max_pixels > 0 ||
             request.skeleton_spur_max_pixels > 0 ||

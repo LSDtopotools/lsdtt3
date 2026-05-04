@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -1112,6 +1113,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
     // -------------------------------------------------------------------------
     // Skeleton node diagnostics
     // -------------------------------------------------------------------------
+    std::cout << "  Classifying skeleton nodes..." << std::endl;
     const skeleton_node_result snr =
         classify_skeleton_nodes(skeleton);
 
@@ -1122,9 +1124,12 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
     // -------------------------------------------------------------------------
     // Sections from extracted skeleton segments
     // -------------------------------------------------------------------------
+    std::cout << "  Extracting skeleton segments..." << std::endl;
     const std::vector<skeleton_segment> segments =
         extract_skeleton_segments(skeleton);
 
+    std::cout << "  Building nodes and sections (" << segments.size()
+              << " segments)..." << std::endl;
     build_nodes_and_sections_(
         dem,
         segments,
@@ -1143,6 +1148,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
     // -------------------------------------------------------------------------
     // Outlets and downstream distance
     // -------------------------------------------------------------------------
+    std::cout << "  Choosing outlets..." << std::endl;
     const std::vector<std::int32_t> outlets =
         choose_outlets_(
             result.nodes,
@@ -1152,6 +1158,8 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
             request.outlet_mode
         );
 
+    std::cout << "  Computing downstream distances (" << outlets.size()
+              << " outlet(s))..." << std::endl;
     const std::vector<double> node_distances =
         compute_node_downstream_distances_(
             result.nodes,
@@ -1164,6 +1172,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
         result.nodes[i].downstream_distance_metres = node_distances[i];
     }
 
+    std::cout << "  Orienting sections..." << std::endl;
     orient_sections_downstream_(
         result.sections,
         result.nodes
@@ -1172,6 +1181,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
     // -------------------------------------------------------------------------
     // Orders
     // -------------------------------------------------------------------------
+    std::cout << "  Assigning section orders..." << std::endl;
     assign_section_orders_(
         result.sections,
         result.nodes
@@ -1188,6 +1198,9 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
     // -------------------------------------------------------------------------
     // Stations
     // -------------------------------------------------------------------------
+    std::cout << "  Sampling stations (" << result.sections.size()
+              << " sections, spacing = " << request.station_spacing_metres
+              << " m)..." << std::endl;
     std::vector<std::vector<std::int64_t>> station_ids_by_section;
     build_stations_(
         dem,
@@ -1202,6 +1215,8 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
     // -------------------------------------------------------------------------
     if (request.compute_cross_sections && !result.stations.empty())
     {
+        std::cout << "  Computing cross-sections ("
+                  << result.stations.size() << " stations)..." << std::endl;
 #ifdef _OPENMP
 #pragma omp parallel for if(result.sections.size() > 8) num_threads(request.n_threads > 0 ? request.n_threads : omp_get_max_threads())
 #endif
@@ -1240,6 +1255,8 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
     // -------------------------------------------------------------------------
     if (request.compute_station_strip_metrics && !result.stations.empty())
     {
+        std::cout << "  Computing strip metrics ("
+                  << result.stations.size() << " stations)..." << std::endl;
         const std::size_t nstations = result.stations.size();
         const std::size_t nvars = request.strip_value_rasters.size();
         const std::size_t nvar_stride = std::max<std::size_t>(nvars, 1);

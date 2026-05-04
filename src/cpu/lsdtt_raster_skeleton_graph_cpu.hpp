@@ -114,6 +114,54 @@ lsdtt_raster_cpu thin_zhang_suen(
     const lsdtt_raster_cpu& binary
 );
 
+
+// -----------------------------------------------------------------------------
+// thin_distance_guided
+//
+// Distance-guided thinning for binary masks.
+//
+// Method notes
+// ------------
+// This is intended as an alternative to plain Zhang-Suen thinning for masks
+// such as tidal channels, where staircase corners and blocky banks can produce
+// loops, diamonds, and stubs under pure boundary-peeling thinning.
+//
+// The method is:
+//
+//   1. compute an approximate Euclidean distance-to-background support field
+//      inside the valid binary mask
+//   2. run Zhang-Suen-style thinning iterations
+//   3. protect locally central pixels (local maxima of the support field)
+//      from deletion during thinning
+//
+// So this is not a pure medial-axis extractor. It is a connectivity-preserving
+// thinning method with a centreline preference.
+//
+// Conceptual background:
+//   - medial axis idea: Blum (1967)
+//   - sampled-grid EDT background: Felzenszwalb & Huttenlocher (2012)
+//
+// Practical behaviour:
+//   - usually better than plain Zhang-Suen on sharp raster corners
+//   - still returns a 1-pixel raster skeleton
+//   - still compatible with downstream spur / loop pruning
+//
+// Parameters
+// ----------
+// preserve_distance_pixels
+//   Minimum distance-to-background support needed before a local support maximum
+//   is protected from deletion.
+//   Typical values:
+//     0.5  -> more permissive
+//     0.75 -> useful for narrow channels
+//     1.0  -> good default
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu thin_distance_guided(
+    const lsdtt_raster_cpu& binary,
+    double                  preserve_distance_pixels = 1.0
+);
+
+
 // -----------------------------------------------------------------------------
 // classify_skeleton_nodes
 //
