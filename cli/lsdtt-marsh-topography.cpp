@@ -302,10 +302,35 @@ int main(int argc, char* argv[])
         "Fill isolated one-pixel holes in the final marsh-platform mask.",
         "Useful for minor raster cleanup."};
 
-    int_default_map["marsh_min_platform_component_pixels"] = 1;
-    help_map["marsh_min_platform_component_pixels"] = {"int","1",
-        "Minimum component size for the final marsh-platform mask.",
-        "Set > 1 to remove isolated tiny platform fragments."};
+   bool_default_map["marsh_apply_scarp_closing"] = false;
+   help_map["marsh_apply_scarp_closing"] = {"bool","false",
+       "Apply binary closing to the cleaned marsh scarp mask.",
+       "Useful for bridging tiny gaps in otherwise continuous scarps "
+       "before platform seeding."};
+
+   float_default_map["marsh_scarp_closing_radius_metres"] = 0.0f;
+   help_map["marsh_scarp_closing_radius_metres"] = {"float","0.0",
+       "Binary closing radius for the marsh scarp mask, in metres.",
+       "Used only when marsh_apply_scarp_closing is true."};
+
+   bool_default_map["marsh_label_use_scarp_barriers"] = false;
+   help_map["marsh_label_use_scarp_barriers"] = {"bool","false",
+       "Treat scarps as barriers when labelling marsh-platform components.",
+       "Scarp pixels are removed from the raster used for final platform "
+       "component labelling, so scarps separate adjacent platform surfaces."};
+
+   bool_default_map["marsh_label_use_d4_connectivity"] = false;
+   help_map["marsh_label_use_d4_connectivity"] = {"bool","false",
+       "Use d4 connectivity when labelling marsh-platform components.",
+       "Useful when 1-pixel scarps should block diagonal leakage between "
+       "neighbouring platform surfaces."};
+
+   int_default_map["marsh_min_platform_component_pixels"] = 1;
+   help_map["marsh_min_platform_component_pixels"] = {"int","1",
+       "Minimum component size for the final marsh-platform mask.",
+       "Set > 1 to remove isolated tiny platform fragments."};
+
+
 
     // -------------------------------------------------------------------------
     // Tidal-channel parameters
@@ -923,14 +948,24 @@ int main(int argc, char* argv[])
             ifs["marsh_max_platform_growth_iterations"];
         request.cutoff_histogram_run_length_bins =
             ifs["marsh_cutoff_histogram_run_length_bins"];
-        request.preserve_scarps_in_final_platform =
-            bf["marsh_preserve_scarps_in_final_platform"];
-        request.fill_high_gaps = bf["marsh_fill_high_gaps"];
-        request.fill_pools = bf["marsh_fill_pools"];
-        request.fill_small_holes = bf["marsh_fill_small_holes"];
-        request.min_platform_component_pixels =
-            ifs["marsh_min_platform_component_pixels"];
-        request.n_threads = ifs["n_threads"];
+       request.preserve_scarps_in_final_platform =
+           bf["marsh_preserve_scarps_in_final_platform"];
+       request.apply_scarp_closing =
+           bf["marsh_apply_scarp_closing"];
+       request.scarp_closing_radius_metres =
+           ff["marsh_scarp_closing_radius_metres"];
+       request.label_use_scarp_barriers =
+           bf["marsh_label_use_scarp_barriers"];
+       request.label_use_d4_connectivity =
+           bf["marsh_label_use_d4_connectivity"];
+       request.fill_high_gaps = bf["marsh_fill_high_gaps"];
+       request.fill_pools = bf["marsh_fill_pools"];
+       request.fill_small_holes = bf["marsh_fill_small_holes"];
+       request.min_platform_component_pixels =
+           ifs["marsh_min_platform_component_pixels"];
+       request.n_threads = ifs["n_threads"];
+
+
 
         try
         {

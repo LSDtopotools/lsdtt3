@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -120,7 +121,16 @@ static void validate_request_(const marsh_platform_request& request)
             "lsdtt::find_marsh_platform: min_platform_component_pixels must be >= 1"
         );
     }
+
+    if (request.apply_scarp_closing &&
+        !(request.scarp_closing_radius_metres > 0.0))
+    {
+        throw std::invalid_argument(
+            "lsdtt::find_marsh_platform: scarp_closing_radius_metres must be > 0 when apply_scarp_closing is true"
+        );
+    }
 }
+
 
 static std::vector<uint8_t> make_valid_domain_mask_(const lsdtt_raster_cpu& raster)
 {
@@ -188,6 +198,28 @@ static lsdtt_raster_cpu binary_raster_from_mask_(
 
     return lsdtt_raster_cpu(std::move(out), std::move(out_mask), meta);
 }
+
+static std::vector<uint8_t> foreground_mask_from_binary_raster_(
+    const lsdtt_raster_cpu& raster)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    const std::vector<float>& data = raster.get_data();
+    const std::vector<uint8_t>& mask = raster.get_mask();
+
+    std::vector<uint8_t> out(data.size(), uint8_t{0});
+
+    for (std::size_t i = 0; i < data.size(); ++i)
+    {
+        if (is_binary_fg_(meta, data, mask, i))
+        {
+            out[i] = uint8_t{1};
+        }
+    }
+
+    return out;
+}
+
+
 
 // -----------------------------------------------------------------------------
 // Relative relief
@@ -1512,6 +1544,7 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Slope
     // -------------------------------------------------------------------------
+    std::cout << "  Slope..." << std::endl;
     if (supplied_slope != nullptr)
     {
         result.slope = *supplied_slope;
@@ -1524,12 +1557,14 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Relative reliefs
     // -------------------------------------------------------------------------
+    std::cout << "  Relative reliefs..." << std::endl;
     result.dem_relative_relief   = compute_relative_relief_(dem, request.n_threads);
     result.slope_relative_relief = compute_relative_relief_(result.slope, request.n_threads);
 
     // -------------------------------------------------------------------------
     // Search space
     // -------------------------------------------------------------------------
+    std::cout << "  Search space..." << std::endl;
     {
         const search_space_result_ ss =
             compute_search_space_(
@@ -1546,6 +1581,7 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Scarp seeds
     // -------------------------------------------------------------------------
+    std::cout << "  Scarp seeds..." << std::endl;
     const std::vector<uint8_t> scarp_seed_mask =
         detect_scarp_seeds_(result.slope, result.search_space, request.n_threads);
 
@@ -1555,6 +1591,8 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Scarp growth
     // -------------------------------------------------------------------------
+    std::cout << "  Scarp growth (up to "
+              << request.max_scarp_growth_iterations << " iterations)..." << std::endl;
     std::vector<float> scarp_order(meta.n_pixels(), 0.0f);
     grow_scarps_(
         result.slope,
@@ -1572,11 +1610,25 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Scarp cleaning
     // -------------------------------------------------------------------------
-    const std::vector<uint8_t> scarp_mask =
+    std::vector<uint8_t> scarp_mask =
         clean_scarps_(
             result.scarp_order_raster.get_data(),
             dem,
             request);
+
+    if (request.apply_scarp_closing)
+    {
+        const lsdtt_raster_cpu scarp_mask_raster =
+            binary_raster_from_mask_(scarp_mask, dem_valid, meta);
+
+        const lsdtt_raster_cpu closed_scarp_raster =
+            binary_morphological_closing(
+                scarp_mask_raster,
+                request.scarp_closing_radius_metres
+            );
+
+        scarp_mask = foreground_mask_from_binary_raster_(closed_scarp_raster);
+    }
 
     result.scarp_mask =
         binary_raster_from_mask_(scarp_mask, dem_valid, meta);
@@ -1586,7 +1638,6 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     std::vector<float> platform_order =
         seed_platform_from_scarps_(scarp_mask, dem, request.n_threads);
-
     {
         std::vector<uint8_t> seed_bin(platform_order.size(), uint8_t{0});
         for (std::size_t i = 0; i < platform_order.size(); ++i)
@@ -1600,6 +1651,8 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Platform growth
     // -------------------------------------------------------------------------
+    std::cout << "  Platform growth (up to "
+              << request.max_platform_growth_iterations << " iterations)..." << std::endl;
     const std::vector<float> local_dem_max_11x11 =
         precompute_local_dem_max_11x11_(dem, request.n_threads);
 
@@ -1623,6 +1676,7 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // First cutoff
     // -------------------------------------------------------------------------
+    std::cout << "  Cutoff elevation..." << std::endl;
     cutoff_result_ cut1 =
         compute_cutoff_histogram_(
             platform_order,
@@ -1640,6 +1694,7 @@ marsh_platform_result find_marsh_platform(
         cut1.diag.threshold_value,
         request.n_threads);
 
+    std::cout << "  Fill and cleanup..." << std::endl;
     if (request.fill_high_gaps)
     {
         fill_high_gaps_(
@@ -1674,6 +1729,7 @@ marsh_platform_result find_marsh_platform(
 
     if (request.preserve_scarps_in_final_platform)
     {
+        std::cout << "  Reinserting scarps..." << std::endl;
         final_scarps =
             clean_scarps_from_platform_(
                 scarp_mask,
@@ -1720,6 +1776,7 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Final cutoff
     // -------------------------------------------------------------------------
+    std::cout << "  Final cutoff..." << std::endl;
     cutoff_result_ cut2 =
         compute_cutoff_histogram_(
             platform_order,
@@ -1740,6 +1797,7 @@ marsh_platform_result find_marsh_platform(
     // -------------------------------------------------------------------------
     // Final binary platform mask
     // -------------------------------------------------------------------------
+    std::cout << "  Final platform mask..." << std::endl;
     {
         std::vector<uint8_t> platform_bin(platform_order.size(), uint8_t{0});
         for (std::size_t i = 0; i < platform_order.size(); ++i)
@@ -1760,13 +1818,38 @@ marsh_platform_result find_marsh_platform(
                 pixel_connectivity::d8);
     }
 
+    lsdtt_raster_cpu platform_label_source = result.platform_mask;
+
+    if (request.label_use_scarp_barriers)
+    {
+        std::vector<uint8_t> label_fg =
+            foreground_mask_from_binary_raster_(result.platform_mask);
+
+        for (std::size_t i = 0; i < label_fg.size(); ++i)
+        {
+            if (final_scarps[i] != 0)
+            {
+                label_fg[i] = uint8_t{0};
+            }
+        }
+
+        platform_label_source =
+            binary_raster_from_mask_(label_fg, dem_valid, meta);
+    }
+
+    const pixel_connectivity label_connectivity =
+        request.label_use_d4_connectivity
+        ? pixel_connectivity::d4
+        : pixel_connectivity::d8;
+
     result.platform_label_raster =
         label_binary_components_by_size(
-            result.platform_mask,
+            platform_label_source,
             std::max(1, request.min_platform_component_pixels),
-            pixel_connectivity::d8);
+            label_connectivity);
 
     return result;
 }
+
 
 } // namespace lsdtt

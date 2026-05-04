@@ -9,12 +9,15 @@
 #include "lsdtt_tidal_channel_cpu.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -355,6 +358,9 @@ tidal_channel_result find_tidal_channels(
         const double radius = request.median_window_radii_metres[i];
         const double threshold = result.thresholds_metres[i];
 
+        std::cout << "  Scale " << (i + 1) << "/" << n_scales
+                  << " (radius = " << radius << " m)..." << std::endl;
+
         lsdtt_raster_cpu median_raster =
             moving_window_median(
                 dem,
@@ -382,6 +388,7 @@ tidal_channel_result find_tidal_channels(
     // -------------------------------------------------------------------------
     // Multi-scale combination
     // -------------------------------------------------------------------------
+    std::cout << "  Combining scale masks..." << std::endl;
     result.channel_mask =
         combine_threshold_masks_(
             result.threshold_masks,
@@ -392,6 +399,12 @@ tidal_channel_result find_tidal_channels(
     // -------------------------------------------------------------------------
     // Optional binary cleanup
     // -------------------------------------------------------------------------
+    if (request.apply_binary_closing || request.fill_holes ||
+        request.min_channel_component_pixels > 1)
+    {
+        std::cout << "  Cleaning channel mask..." << std::endl;
+    }
+
     if (request.apply_binary_closing)
     {
         result.channel_mask =
@@ -422,20 +435,138 @@ tidal_channel_result find_tidal_channels(
     // -------------------------------------------------------------------------
     if (request.compute_upl)
     {
-        result.upl =
+        const lsdtt_raster_meta& cm_meta = result.channel_mask.get_meta();
+        const std::vector<float>& cm_data = result.channel_mask.get_data();
+        const std::vector<uint8_t>& cm_mask = result.channel_mask.get_mask();
+
+        std::size_t n_total   = cm_data.size();
+        std::size_t n_valid   = 0;
+        std::size_t n_invalid = 0;
+        std::size_t n_fg      = 0;
+        std::size_t n_bg      = 0;
+
+        for (std::size_t i = 0; i < cm_data.size(); ++i)
+        {
+            if (cm_mask[i] == 0 ||
+                cm_meta.is_nodata(cm_data[i]) ||
+                !std::isfinite(cm_data[i]))
+            {
+                ++n_invalid;
+                continue;
+            }
+
+            ++n_valid;
+
+            if (cm_data[i] > 0.5f)
+            {
+                ++n_fg;
+            }
+            else
+            {
+                ++n_bg;
+            }
+        }
+
+        std::cout
+            << "  UPL diagnostics:\n"
+            << "    total pixels              : " << n_total << "\n"
+            << "    valid mask pixels         : " << n_valid << "\n"
+            << "    invalid/nodata pixels     : " << n_invalid << "\n"
+            << "    foreground channel pixels : " << n_fg << "\n"
+            << "    background valid pixels   : " << n_bg << "\n";
+
+        if (n_fg == 0)
+        {
+            throw std::runtime_error(
+                "lsdtt::find_tidal_channels: channel mask contains no foreground pixels; cannot compute UPL"
+            );
+        }
+
+        // ---------------------------------------------------------------------
+        // Build an all-valid binary raster for EDT.
+        //
+        // Some EDT implementations do not cope safely with nodata / masked holes.
+        // Here we convert every pixel to valid:
+        //   foreground channel -> 1
+        //   everything else    -> 0
+        // then restore the original valid-domain mask after EDT.
+        // ---------------------------------------------------------------------
+        std::vector<float> edt_data(n_total, 0.0f);
+        std::vector<uint8_t> edt_mask(n_total, uint8_t{1});
+
+        for (std::size_t i = 0; i < n_total; ++i)
+        {
+            const bool is_valid =
+                cm_mask[i] != 0 &&
+                !cm_meta.is_nodata(cm_data[i]) &&
+                std::isfinite(cm_data[i]);
+
+            edt_data[i] = (is_valid && cm_data[i] > 0.5f) ? 1.0f : 0.0f;
+        }
+
+        lsdtt_raster_cpu edt_input(
+            std::move(edt_data),
+            std::move(edt_mask),
+            cm_meta
+        );
+
+        std::cout << "  Calling euclidean_distance_transform on sanitised all-valid mask...\n";
+
+        lsdtt_raster_cpu edt_upl =
             euclidean_distance_transform(
-                result.channel_mask,
+                edt_input,
                 request.n_threads
             );
+
+        std::cout << "  EDT returned; restoring original valid-domain mask...\n";
+
+        std::vector<float> upl_data = edt_upl.get_data();
+        std::vector<uint8_t> upl_mask(n_total, uint8_t{0});
+
+        for (std::size_t i = 0; i < n_total; ++i)
+        {
+            const bool is_valid =
+                cm_mask[i] != 0 &&
+                !cm_meta.is_nodata(cm_data[i]) &&
+                std::isfinite(cm_data[i]);
+
+            if (is_valid)
+            {
+                upl_mask[i] = uint8_t{1};
+            }
+            else
+            {
+                upl_data[i] = static_cast<float>(cm_meta.no_data_value);
+                upl_mask[i] = uint8_t{0};
+            }
+        }
+
+        result.upl = lsdtt_raster_cpu(
+            std::move(upl_data),
+            std::move(upl_mask),
+            cm_meta
+        );
+
+        std::cout << "  UPL complete.\n";
     }
+
+
 
     // -------------------------------------------------------------------------
     // Optional skeletonisation
     // -------------------------------------------------------------------------
     if (request.extract_skeleton)
     {
+        std::cout << "  Extracting skeleton..." << std::endl;
         result.channel_skeleton =
             thin_zhang_suen(result.channel_mask);
+
+        if (request.skeleton_terminal_loop_max_pixels > 0 ||
+            request.skeleton_spur_max_pixels > 0 ||
+            request.skeleton_min_component_pixels > 1)
+        {
+            std::cout << "  Pruning skeleton..." << std::endl;
+        }
 
         if (request.skeleton_terminal_loop_max_pixels > 0)
         {
@@ -471,6 +602,8 @@ tidal_channel_result find_tidal_channels(
         if (request.connect_skeleton_segments &&
             !result.channel_skeleton.get_data().empty())
         {
+            std::cout << "  Reconnecting skeleton segments..." << std::endl;
+
             const lsdtt_raster_cpu support_raster =
                 build_connection_support_raster_(result.residual_rasters);
 

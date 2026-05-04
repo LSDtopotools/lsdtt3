@@ -173,6 +173,25 @@ struct marsh_platform_request
     //   If true, cleaned scarps are reinserted into the final platform mask,
     //   matching the legacy Python workflow.
     //
+    // apply_scarp_closing
+    //   Apply a binary morphological closing to the cleaned scarp mask before
+    //   platform seeding. This is useful for bridging tiny 1- or 2-pixel gaps
+    //   in otherwise continuous scarps.
+    //
+    // scarp_closing_radius_metres
+    //   Radius of the binary closing operation, in metres.
+    //   Used only when apply_scarp_closing is true.
+    //
+    // label_use_scarp_barriers
+    //   If true, scarp pixels are removed from the raster used for final
+    //   platform component labelling. This makes scarps act as barriers rather
+    //   than connectors between adjacent platform surfaces.
+    //
+    // label_use_d4_connectivity
+    //   If true, use d4 connectivity when labelling marsh-platform components.
+    //   This is useful when 1-pixel scarps should separate neighbouring
+    //   platform surfaces without diagonal leakage across the scarp.
+    //
     // fill_high_gaps
     //   Reapply the legacy "fill high gaps" step after cutoffing.
     //
@@ -187,10 +206,16 @@ struct marsh_platform_request
     //   Set to 1 to disable component-size filtering.
     // -------------------------------------------------------------------------
     bool preserve_scarps_in_final_platform = true;
+    bool apply_scarp_closing               = false;
+    double scarp_closing_radius_metres     = 0.0;
+    bool label_use_scarp_barriers          = false;
+    bool label_use_d4_connectivity         = false;
     bool fill_high_gaps                    = true;
     bool fill_pools                        = true;
     bool fill_small_holes                  = true;
     int  min_platform_component_pixels     = 1;
+
+
 
     // -------------------------------------------------------------------------
     // Misc

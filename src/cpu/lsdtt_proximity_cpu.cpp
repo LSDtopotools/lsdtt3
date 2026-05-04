@@ -60,12 +60,14 @@ static void dt1d(
         double s;
         while (true)
         {
-            const int vk = v[k];
+            const int vk = v[static_cast<std::size_t>(k)];
             s = ((f[q] + static_cast<double>(q * q)) -
                  (f[static_cast<std::size_t>(vk)] + static_cast<double>(vk * vk))) /
                 (2.0 * (static_cast<double>(q) - static_cast<double>(vk)));
-            if (s > z[static_cast<std::size_t>(k)])
+
+            if (s > z[static_cast<std::size_t>(k)] || k == 0)
                 break;
+
             --k;
         }
         ++k;
@@ -103,6 +105,12 @@ static void dt2d(
 {
     const std::size_t nr = static_cast<std::size_t>(n_rows);
     const std::size_t nc = static_cast<std::size_t>(n_cols);
+
+    // Clamp "infinite" values to something safely larger than any real squared
+    // distance in the grid.
+    const double large =
+        static_cast<double>(n_rows + n_cols) * static_cast<double>(n_rows + n_cols);
+
     // -------------------------------------------------------------------------
     // Pass 1: transform each column independently (iterate over columns).
     // For column c, the input to dt1d is sq_dist[r*nc+c] for r in [0,nr).
@@ -113,8 +121,13 @@ static void dt2d(
     for (int c = 0; c < n_cols; ++c)
     {
         std::vector<double> f(nr), d(nr);
+
         for (std::size_t r = 0; r < nr; ++r)
-            f[r] = sq_dist[r * nc + static_cast<std::size_t>(c)];
+        {
+            double v = sq_dist[r * nc + static_cast<std::size_t>(c)];
+            if (v > large) v = large;
+            f[r] = v;
+        }
 
         dt1d(f, d, nr);
 
@@ -133,20 +146,20 @@ static void dt2d(
     {
         std::vector<double> f(nc), d(nc);
         const std::size_t row_off = static_cast<std::size_t>(r) * nc;
-        for (std::size_t c = 0; c < nc; ++c)
-            f[c] = sq_dist[row_off + c];
 
-        // Clamp INF to a large but finite value so dt1d arithmetic is safe.
-        // Any pixel that was INF will remain very large after the transform.
-        const double large = static_cast<double>(nr + nc) * static_cast<double>(nr + nc);
         for (std::size_t c = 0; c < nc; ++c)
-            if (f[c] > large) f[c] = large;
+        {
+            double v = sq_dist[row_off + c];
+            if (v > large) v = large;
+            f[c] = v;
+        }
 
         dt1d(f, d, nc);
 
         for (std::size_t c = 0; c < nc; ++c)
             sq_dist[row_off + c] = d[c];
     }
+
 }
 
 
@@ -176,12 +189,14 @@ static void dt1d_with_argmin(
         double s;
         while (true)
         {
-            const int vk = v[k];
+            const int vk = v[static_cast<std::size_t>(k)];
             s = ((f[q] + static_cast<double>(q * q)) -
                  (f[static_cast<std::size_t>(vk)] + static_cast<double>(vk * vk))) /
                 (2.0 * (static_cast<double>(q) - static_cast<double>(vk)));
-            if (s > z[static_cast<std::size_t>(k)])
+
+            if (s > z[static_cast<std::size_t>(k)] || k == 0)
                 break;
+
             --k;
         }
         ++k;
