@@ -468,6 +468,12 @@ public:
     // Return the names of all layers in the open vector dataset.
     std::vector<std::string> get_layer_names() const;
 
+    // Return the CRS WKT of a layer in the open vector dataset.
+    // If layer_name is empty, use the first layer (or only layer).
+    std::string get_vector_layer_crs_wkt(
+        const std::string& layer_name = ""
+    ) const;
+
     // Read a vector layer. This is loaded in as an lsdtt_vector_layer,
     // which contains the schema (attribute table names and field types) and
     // the indiviudal features (including geometry and attribute values).

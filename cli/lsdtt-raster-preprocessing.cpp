@@ -58,6 +58,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <sstream>
+
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
@@ -72,9 +74,147 @@
 #include "../src/cpu/lsdtt_depression_hierarchy_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 #include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
+#include "../src/core/lsdtt_point_input.hpp"
+
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+
+// this is for sampling raster points
+struct raster_attribute_request
+{
+    std::string raster_path;
+    std::string attribute_name;
+};
+
+static std::vector<std::string> split_csv_simple(const std::string& line)
+{
+    std::vector<std::string> tokens;
+    std::stringstream ss(line);
+    std::string item;
+
+    while (std::getline(ss, item, ','))
+    {
+        // trim leading/trailing whitespace
+        const auto first = item.find_first_not_of(" \t\r\n");
+        const auto last  = item.find_last_not_of(" \t\r\n");
+        if (first == std::string::npos) tokens.push_back("");
+        else tokens.push_back(item.substr(first, last - first + 1));
+    }
+    return tokens;
+}
+
+
+static std::vector<raster_attribute_request> read_raster_attribute_csv(
+    const std::string& csv_path,
+    const lsdtt::lsdtt_param_parser& pp)
+{
+    std::ifstream in(csv_path);
+    if (!in.is_open())
+    {
+        throw std::runtime_error(
+            "Cannot open raster_attribute_csv: " + csv_path
+        );
+    }
+
+    std::string header_line;
+    if (!std::getline(in, header_line))
+    {
+        throw std::runtime_error(
+            "raster_attribute_csv is empty: " + csv_path
+        );
+    }
+
+    auto header = split_csv_simple(header_line);
+
+    int raster_col = -1;
+    int attr_col   = -1;
+
+    for (int i = 0; i < static_cast<int>(header.size()); ++i)
+    {
+        if (header[i] == "raster")    raster_col = i;
+        if (header[i] == "attribute") attr_col   = i;
+    }
+
+    if (raster_col < 0 || attr_col < 0)
+    {
+        throw std::runtime_error(
+            "raster_attribute_csv must contain columns named "
+            "'raster' and 'attribute'"
+        );
+    }
+
+    std::vector<raster_attribute_request> requests;
+
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty()) continue;
+
+        auto tokens = split_csv_simple(line);
+        if (static_cast<int>(tokens.size()) <= std::max(raster_col, attr_col))
+        {
+            continue;
+        }
+
+        raster_attribute_request req;
+        req.raster_path    = pp.add_read_path_if_needed(tokens[raster_col]);
+        req.attribute_name = tokens[attr_col];
+
+        if (!req.raster_path.empty() && !req.attribute_name.empty())
+        {
+            requests.push_back(req);
+        }
+    }
+
+    return requests;
+}
+
+static std::vector<lsdtt::lsdtt_vector_field_value>
+sample_raster_to_vector_points(
+    const std::string& raster_path,
+    const std::string& point_path,
+    const std::string& point_layer_name)
+{
+    lsdtt::lsdtt_data_loader raster_loader;
+    raster_loader.open_raster(raster_path);
+
+    const lsdtt::lsdtt_raster_meta& meta = raster_loader.get_meta();
+    lsdtt::lsdtt_raster_tile tile = raster_loader.read_full();
+
+    std::vector<lsdtt::lsdtt_input_point> mapped_points =
+        lsdtt::load_vector_point_layer_in_raster_crs(
+            point_path, meta, point_layer_name, true
+        );
+
+    std::vector<lsdtt::lsdtt_vector_field_value> sampled;
+    sampled.reserve(mapped_points.size());
+
+    for (const auto& pt : mapped_points)
+    {
+        if (pt.status != lsdtt::lsdtt_point_input_status::success ||
+            pt.flat < 0 ||
+            pt.flat >= static_cast<std::int64_t>(tile.data.size()))
+        {
+            sampled.push_back(std::monostate{});
+            continue;
+        }
+
+        if (tile.mask[static_cast<std::size_t>(pt.flat)] == 0)
+        {
+            sampled.push_back(std::monostate{});
+            continue;
+        }
+
+        sampled.push_back(
+            static_cast<double>(tile.data[static_cast<std::size_t>(pt.flat)])
+        );
+    }
+
+    return sampled;
+}
+
+
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -545,6 +685,43 @@ int main(int argc, char* argv[])
         "majority_coverage: pixel is kept if the polygon centre falls inside "
         "(approximately 50% coverage, default). "
         "full_coverage: pixel is kept only if the polygon covers it fully."};
+
+    // --- Point sampling ---
+    bool_default_map["sample_rasters_to_points"] = false;
+    help_map["sample_rasters_to_points"] = {"bool","false",
+        "Sample a list of rasters onto a point dataset.",
+        "Reads a point dataset and a CSV file with columns raster,attribute. "
+        "Each raster is sampled at each point and written as a new attribute "
+        "in an output point file."};
+
+    string_default_map["point_data_fname"] = "";
+    help_map["point_data_fname"] = {"string","",
+        "Path to the input point dataset.",
+        "Recommended input is an OGR-readable point vector file such as "
+        "FlatGeobuf, GeoPackage, Shapefile, or GeoJSON. "
+        "CSV latitude/longitude support can also be added, but vector input is "
+        "the cleanest first implementation because existing attributes are preserved."};
+
+    string_default_map["point_data_layer_name"] = "";
+    help_map["point_data_layer_name"] = {"string","",
+        "Optional layer name for the input point dataset.",
+        "If empty, the first layer is used, or the only layer if the file has one."};
+
+    string_default_map["raster_attribute_csv"] = "";
+    help_map["raster_attribute_csv"] = {"string","",
+        "CSV file listing rasters to sample, with columns raster,attribute.",
+        "The raster column gives the raster filename or path. "
+        "The attribute column gives the name of the output attribute to append "
+        "to the point file."};
+
+    string_default_map["sampled_points_output_format"] = "flatgeobuf";
+    help_map["sampled_points_output_format"] = {"string","flatgeobuf",
+        "Output format for sampled point data.",
+        "Allowed values: flatgeobuf, fgb, gpkg. "
+        "FlatGeobuf is recommended."};
+
+
+
 
     // -------------------------------------------------------------------------
     // Parse — fills maps from the parameter file, falling back to defaults
@@ -1374,6 +1551,156 @@ int main(int argc, char* argv[])
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Step 10 — Sample rasters to points
+    // -------------------------------------------------------------------------
+    if (bf["sample_rasters_to_points"])
+    {
+        std::cout << "\n--- Sample rasters to points ---\n";
+
+        const std::string point_path =
+            pp.add_read_path_if_needed(sf["point_data_fname"]);
+        const std::string list_csv =
+            pp.add_read_path_if_needed(sf["raster_attribute_csv"]);
+        const std::string layer_name = sf["point_data_layer_name"];
+
+        if (sf["point_data_fname"].empty())
+        {
+            std::cerr << "Warning: sample_rasters_to_points is true but "
+                        "point_data_fname is empty — skipping.\n";
+        }
+        else if (sf["raster_attribute_csv"].empty())
+        {
+            std::cerr << "Warning: sample_rasters_to_points is true but "
+                        "raster_attribute_csv is empty — skipping.\n";
+        }
+        else
+        {
+            try
+            {
+                // Read the input point layer
+                lsdtt::lsdtt_data_loader point_loader;
+                point_loader.open_vector(point_path);
+
+                std::string use_layer = layer_name;
+                if (use_layer.empty())
+                {
+                    auto layer_names = point_loader.get_layer_names();
+                    if (layer_names.empty())
+                    {
+                        throw std::runtime_error("Point dataset has no layers.");
+                    }
+                    use_layer = layer_names[0];
+                }
+
+                lsdtt::lsdtt_vector_layer points =
+                    point_loader.read_vector_layer(use_layer);
+
+                // You need this extra loader method:
+                const std::string point_crs_wkt =
+                    point_loader.get_vector_layer_crs_wkt(use_layer);
+
+                // Read raster list
+                std::vector<raster_attribute_request> requests =
+                    read_raster_attribute_csv(list_csv, pp);
+
+                if (requests.empty())
+                {
+                    throw std::runtime_error(
+                        "No raster requests found in raster_attribute_csv."
+                    );
+                }
+
+                // Sample each raster
+                std::vector<std::vector<lsdtt::lsdtt_vector_field_value>> sampled_columns;
+                sampled_columns.reserve(requests.size());
+
+                for (const auto& req : requests)
+                {
+                    std::cout << "Sampling raster: " << req.raster_path
+                            << " -> attribute: " << req.attribute_name << "\n";
+
+                    sampled_columns.push_back(
+                        sample_raster_to_vector_points(
+                            req.raster_path, point_path, use_layer
+                        )
+                    );
+
+                    if (sampled_columns.back().size() != points.records.size())
+                    {
+                        throw std::runtime_error(
+                            "Point count mismatch while sampling raster: " +
+                            req.raster_path
+                        );
+                    }
+                }
+
+                // Build output schema
+                lsdtt::lsdtt_vector_schema out_schema = points.schema;
+                for (const auto& req : requests)
+                {
+                    out_schema.field_names.push_back(req.attribute_name);
+                    out_schema.field_types.push_back(
+                        lsdtt::lsdtt_vector_field_type::double_type
+                    );
+                }
+
+                const lsdtt::point_output_format pt_fmt =
+                    lsdtt::resolve_point_output_format(
+                        sf["sampled_points_output_format"]
+                    );
+
+                if (pt_fmt == lsdtt::point_output_format::csv)
+                {
+                    throw std::runtime_error(
+                        "CSV output for vector point input is not yet implemented "
+                        "in this first version."
+                    );
+                }
+
+                const lsdtt::vector_output_format vec_fmt =
+                    lsdtt::convert_point_to_vector_output_format(pt_fmt);
+
+                const std::string out_file =
+                    out_path(pp, "_sampled_points" +
+                                lsdtt::output_extension(pt_fmt));
+
+                point_loader.begin_vector_write(
+                    out_file,
+                    "sampled_points",
+                    out_schema,
+                    point_crs_wkt,
+                    vec_fmt
+                );
+
+                for (std::size_t i = 0; i < points.records.size(); ++i)
+                {
+                    const auto& geom =
+                        std::get<lsdtt::lsdtt_point_geom>(points.records[i].geometry);
+
+                    std::vector<lsdtt::lsdtt_vector_field_value> out_fields =
+                        points.records[i].field_values;
+
+                    for (std::size_t j = 0; j < sampled_columns.size(); ++j)
+                    {
+                        out_fields.push_back(sampled_columns[j][i]);
+                    }
+
+                    point_loader.write_point(geom.x, geom.y, out_fields);
+                }
+
+                point_loader.finish_vector_write();
+                std::cout << "Wrote sampled points: " << out_file << "\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: point sampling failed: "
+                        << e.what() << "\n";
+            }
+        }
+    }
+
 
     // -------------------------------------------------------------------------
     // Parameter echo — always printed so runs are reproducible from the log

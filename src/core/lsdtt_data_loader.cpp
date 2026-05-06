@@ -1027,6 +1027,73 @@ lsdtt_vector_layer lsdtt_data_loader::read_vector_layer(
     return result;
 }
  
+
+std::string lsdtt_data_loader::get_vector_layer_crs_wkt(
+    const std::string& layer_name
+) const
+{
+    if (!vector_open_)
+    {
+        throw std::runtime_error(
+            "lsdtt_data_loader: get_vector_layer_crs_wkt() called with no vector dataset open"
+        );
+    }
+
+    OGRLayer* layer = nullptr;
+
+    if (!layer_name.empty())
+    {
+        layer = vector_dataset_->GetLayerByName(layer_name.c_str());
+        if (!layer)
+        {
+            throw std::runtime_error(
+                "lsdtt_data_loader: layer not found: " + layer_name
+            );
+        }
+    }
+    else
+    {
+        if (vector_dataset_->GetLayerCount() == 0)
+        {
+            throw std::runtime_error(
+                "lsdtt_data_loader: vector dataset contains no layers"
+            );
+        }
+
+        layer = vector_dataset_->GetLayer(0);
+        if (!layer)
+        {
+            throw std::runtime_error(
+                "lsdtt_data_loader: failed to access first vector layer"
+            );
+        }
+    }
+
+    OGRSpatialReference* srs = layer->GetSpatialRef();
+    if (!srs)
+    {
+        return "";
+    }
+
+    OGRSpatialReference srs_copy(*srs);
+    srs_copy.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    char* wkt = nullptr;
+    if (srs_copy.exportToWkt(&wkt) != OGRERR_NONE || !wkt)
+    {
+        throw std::runtime_error(
+            "lsdtt_data_loader: failed to export vector layer CRS to WKT"
+        );
+    }
+
+    std::string out_wkt(wkt);
+    CPLFree(wkt);
+    return out_wkt;
+}
+
+
+
+
 void lsdtt_data_loader::close_vector()
 {
     vector_dataset_.reset();
