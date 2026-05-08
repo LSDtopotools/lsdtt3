@@ -48,36 +48,39 @@ inline bool is_valid_scalar_(
 
 static void validate_request_(const tidal_channel_request& request)
 {
-    if (request.median_window_radii_metres.empty())
+    if (!request.use_flood_mask)
     {
-        throw std::invalid_argument(
-            "lsdtt::find_tidal_channels: median_window_radii_metres must not be empty"
-        );
-    }
-
-    for (double r : request.median_window_radii_metres)
-    {
-        if (!(r > 0.0))
+        if (request.median_window_radii_metres.empty())
         {
             throw std::invalid_argument(
-                "lsdtt::find_tidal_channels: all median_window_radii_metres must be > 0"
+                "lsdtt::find_tidal_channels: median_window_radii_metres must not be empty"
             );
         }
-    }
 
-    if (request.residual_thresholds_metres.empty())
-    {
-        throw std::invalid_argument(
-            "lsdtt::find_tidal_channels: residual_thresholds_metres must not be empty"
-        );
-    }
+        for (double r : request.median_window_radii_metres)
+        {
+            if (!(r > 0.0))
+            {
+                throw std::invalid_argument(
+                    "lsdtt::find_tidal_channels: all median_window_radii_metres must be > 0"
+                );
+            }
+        }
 
-    if (!(request.residual_thresholds_metres.size() == 1 ||
-          request.residual_thresholds_metres.size() == request.median_window_radii_metres.size()))
-    {
-        throw std::invalid_argument(
-            "lsdtt::find_tidal_channels: residual_thresholds_metres must have size 1 or match median_window_radii_metres"
-        );
+        if (request.residual_thresholds_metres.empty())
+        {
+            throw std::invalid_argument(
+                "lsdtt::find_tidal_channels: residual_thresholds_metres must not be empty"
+            );
+        }
+
+        if (!(request.residual_thresholds_metres.size() == 1 ||
+              request.residual_thresholds_metres.size() == request.median_window_radii_metres.size()))
+        {
+            throw std::invalid_argument(
+                "lsdtt::find_tidal_channels: residual_thresholds_metres must have size 1 or match median_window_radii_metres"
+            );
+        }
     }
 
     if (request.apply_binary_closing &&
@@ -342,59 +345,78 @@ tidal_channel_result find_tidal_channels(
     }
 
     tidal_channel_result result;
-    result.scales_metres     = request.median_window_radii_metres;
-    result.thresholds_metres = resolve_thresholds_(request);
 
-    const std::size_t n_scales = request.median_window_radii_metres.size();
-    result.median_rasters.reserve(n_scales);
-    result.residual_rasters.reserve(n_scales);
-    result.threshold_masks.reserve(n_scales);
-
-    // -------------------------------------------------------------------------
-    // Per-scale median residuals and threshold masks
-    // -------------------------------------------------------------------------
-    for (std::size_t i = 0; i < n_scales; ++i)
+    if (request.use_flood_mask)
     {
-        const double radius = request.median_window_radii_metres[i];
-        const double threshold = result.thresholds_metres[i];
+        // ---------------------------------------------------------------------
+        // Simple flood-mask mode: threshold DEM elevation directly.
+        // Pixels at or below flood_elevation_metres become channel pixels.
+        // ---------------------------------------------------------------------
+        std::cout << "  Flood-mask mode: marking pixels <= "
+                  << request.flood_elevation_metres << " m as channels...\n";
 
-        std::cout << "  Scale " << (i + 1) << "/" << n_scales
-                  << " (radius = " << radius << " m)..." << std::endl;
-
-        lsdtt_raster_cpu median_raster =
-            moving_window_median(
+        result.channel_mask =
+            algebra::raster_binary_true_below_threshold(
                 dem,
-                radius,
-                window_shape::square
+                static_cast<float>(request.flood_elevation_metres)
             );
-
-        lsdtt_raster_cpu residual_raster =
-            algebra::raster_subtract(
-                median_raster,
-                dem
-            );
-
-        lsdtt_raster_cpu threshold_mask =
-            algebra::raster_binary_true_above_threshold(
-                residual_raster,
-                static_cast<float>(threshold)
-            );
-
-        result.median_rasters.push_back(std::move(median_raster));
-        result.residual_rasters.push_back(std::move(residual_raster));
-        result.threshold_masks.push_back(std::move(threshold_mask));
     }
+    else
+    {
+        result.scales_metres     = request.median_window_radii_metres;
+        result.thresholds_metres = resolve_thresholds_(request);
 
-    // -------------------------------------------------------------------------
-    // Multi-scale combination
-    // -------------------------------------------------------------------------
-    std::cout << "  Combining scale masks..." << std::endl;
-    result.channel_mask =
-        combine_threshold_masks_(
-            result.threshold_masks,
-            request.scale_mode,
-            request.n_threads
-        );
+        const std::size_t n_scales = request.median_window_radii_metres.size();
+        result.median_rasters.reserve(n_scales);
+        result.residual_rasters.reserve(n_scales);
+        result.threshold_masks.reserve(n_scales);
+
+        // ---------------------------------------------------------------------
+        // Per-scale median residuals and threshold masks
+        // ---------------------------------------------------------------------
+        for (std::size_t i = 0; i < n_scales; ++i)
+        {
+            const double radius = request.median_window_radii_metres[i];
+            const double threshold = result.thresholds_metres[i];
+
+            std::cout << "  Scale " << (i + 1) << "/" << n_scales
+                      << " (radius = " << radius << " m)..." << std::endl;
+
+            lsdtt_raster_cpu median_raster =
+                moving_window_median(
+                    dem,
+                    radius,
+                    window_shape::square
+                );
+
+            lsdtt_raster_cpu residual_raster =
+                algebra::raster_subtract(
+                    median_raster,
+                    dem
+                );
+
+            lsdtt_raster_cpu threshold_mask =
+                algebra::raster_binary_true_above_threshold(
+                    residual_raster,
+                    static_cast<float>(threshold)
+                );
+
+            result.median_rasters.push_back(std::move(median_raster));
+            result.residual_rasters.push_back(std::move(residual_raster));
+            result.threshold_masks.push_back(std::move(threshold_mask));
+        }
+
+        // ---------------------------------------------------------------------
+        // Multi-scale combination
+        // ---------------------------------------------------------------------
+        std::cout << "  Combining scale masks..." << std::endl;
+        result.channel_mask =
+            combine_threshold_masks_(
+                result.threshold_masks,
+                request.scale_mode,
+                request.n_threads
+            );
+    }
 
     // -------------------------------------------------------------------------
     // Optional binary cleanup

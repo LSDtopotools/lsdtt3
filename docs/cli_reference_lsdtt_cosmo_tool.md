@@ -1,0 +1,151 @@
+# CLI reference: lsdtt-cosmo-tool
+
+Inverts measured cosmogenic nuclide concentrations to basin-averaged effective erosion rates using the production–accumulation–inversion approach. Loads a DEM, builds D8 flow routing, computes a Stone 2000 production raster, snaps sample points to the channel network, and writes a CSV of erosion rate estimates with optional uncertainty bounds.
+
+The DEM must be in a projected CRS (e.g. UTM). At least one sample must be successfully snapped to a channel.
+
+## Usage
+
+```
+lsdtt-cosmo-tool <path> <parameter_file>
+lsdtt-cosmo-tool <parameter_file>         # path defaults to ./
+lsdtt-cosmo-tool -h                       # print help and exit
+lsdtt-cosmo-tool -v                       # print version and exit
+```
+
+## Parameter file format
+
+```
+# Lines beginning with # are comments.
+key: value
+```
+
+---
+
+## Pipeline overview
+
+| Step | Description |
+|---|---|
+| 1 | Load DEM; check projected CRS |
+| 2 | Pit fill (skipped when `fill_before_routing: false`) |
+| 3 | D8 flow routing |
+| 4 | Stone 2000 production raster |
+| 5 | Load sample points from CSV; snap to channel |
+| 6 | For each sample: apply standardisation, invert to erosion rate, compute uncertainty bounds |
+| 7 | Write output CSV |
+
+---
+
+## Input / output parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `read_path` | string | directory of parameter file | Directory containing the input DEM. |
+| `read_fname` | string | parameter file stem | Input raster filename (without extension). |
+| `write_path` | string | same as `read_path` | Directory for output files. |
+| `write_fname` | string | same as `read_fname` | Output filename stem. |
+
+The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
+
+---
+
+## CRN physics
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `nuclide` | string | `Be10` | Nuclide used for erosion rate inversion. Options: `Be10`, `Al26`, `C14`. |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. |
+| `rock_density_kg_m3` | float | `2650` | Rock bulk density (kg/m³). Used to convert effective erosion rate (g/cm²/yr) to mm/kyr. |
+
+---
+
+## Atmosphere and palaeomagnetic correction
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `crn_nc_file` | string | `` | Path to `crn_parameters.nc` (ERA40 grids + Muscheler VDM record). Required for ERA40 atmosphere and palaeomagnetic correction. Leave empty to use the standard (SLHL) atmosphere with no correction. |
+| `sample_age_yr` | float | `0` | Sample exposure age (yr BP). Used for palaeomagnetic correction. Set > 0 to apply time-integrated Muscheler VDM correction. Requires `crn_nc_file`. |
+
+---
+
+## Sample points
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `points_filename` | string | `CRN_points.csv` | CSV file containing sample locations and concentrations. Must have `latitude` and `longitude` columns (EPSG:4326). |
+| `sample_column_name` | string | `sample_name` | Column name for sample identifiers. Optional; omitted from output if not present. |
+| `concentration_column_name` | string | `` | Column name for measured nuclide concentration (atoms/g). Defaults to `<nuclide>_CONC` if not set. |
+| `uncertainty_column_name` | string | `` | Column name for 1-sigma concentration uncertainty (atoms/g). Defaults to `<nuclide>_uncertainty`. If absent, uncertainty bounds are skipped. |
+| `standardisation_column_name` | string | `standardisation` | Column name for AMS standardisation name. If absent, no standardisation correction is applied. |
+
+---
+
+## Shielding
+
+Shielding values are applied uniformly across the entire basin.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `self_shield_eff_thickness` | float | `0` | Sample self-shielding as effective depth (g/cm²). `0` = surface sample. |
+| `snow_shield_eff_thickness` | float | `0` | Snow shielding as effective depth (g/cm²). `0` = no snow correction. |
+| `topo_shield_value` | float | `1` | Topographic shielding factor (dimensionless, 0–1). `1` = no topographic shielding. |
+
+---
+
+## DEM preparation
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `fill_before_routing` | bool | `true` | Fill DEM pits before building D8 flow routing. Set `false` only if the DEM is already pit-filled. |
+| `min_slope_for_fill` | float | `0.0001` | Minimum imposed slope during pit filling (m/m). Used only when `fill_before_routing: true`. |
+| `boundary_conditions` | string | `oooo` | D8 flow routing boundary conditions. Four-character string (N,E,S,W): `o` = open, `b` = forced outlet. |
+
+---
+
+## Channel snapping
+
+Sample points are snapped to the nearest channel pixel meeting the contributing-pixel threshold using an expanding square search.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `threshold_contributing_pixels` | int | `1000` | Minimum contributing pixels for a node to be considered a channel. |
+| `snap_search_radius_pixels` | int | `8` | Maximum search radius (pixels) when snapping points to a channel. |
+
+---
+
+## Output
+
+| Parameter | Type | Default | Output file |
+|---|---|---|---|
+| `write_production_raster` | bool | `false` | `<write_fname>_PROD.tif` — Stone 2000 production scaling raster. |
+
+The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns include latitude, longitude, measured concentration, predicted concentration, effective erosion rate (g/cm²/yr), and erosion rate (mm/kyr). Uncertainty bound columns are added when an uncertainty column is present in the input.
+
+---
+
+## Example parameter file
+
+```
+read_path:  /data/dems/
+read_fname: my_dem
+write_path: /data/output/
+write_fname: my_samples
+
+nuclide:       Be10
+muon_scheme:   BraucherBorchers
+rock_density_kg_m3: 2650
+
+fill_before_routing:             true
+min_slope_for_fill:              0.0001
+boundary_conditions:             oooo
+threshold_contributing_pixels:   1000
+snap_search_radius_pixels:       8
+
+points_filename:                 CRN_points.csv
+concentration_column_name:       Be10_CONC
+uncertainty_column_name:         Be10_uncertainty
+standardisation_column_name:     standardisation
+sample_column_name:              sample_name
+
+write_production_raster: false
+```

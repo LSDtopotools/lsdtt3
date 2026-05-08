@@ -75,6 +75,17 @@ enum class tidal_channel_scale_mode
 struct tidal_channel_request
 {
     // -------------------------------------------------------------------------
+    // Simple flood-mask mode
+    //
+    // When use_flood_mask is true the multi-scale median workflow is skipped.
+    // Any valid pixel whose elevation is <= flood_elevation_metres is marked
+    // as a channel pixel.  All downstream cleanup, UPL, and skeleton steps
+    // still apply.
+    // -------------------------------------------------------------------------
+    bool   use_flood_mask          = false;
+    double flood_elevation_metres  = 0.0;
+
+    // -------------------------------------------------------------------------
     // Residual scales
     //
     // Each radius defines a moving-window median:
@@ -84,6 +95,8 @@ struct tidal_channel_request
     //
     // A positive residual means the pixel lies below the local median surface.
     // This is the structured-grid TidalGeoPro channelness signal.
+    //
+    // Ignored when use_flood_mask is true.
     // -------------------------------------------------------------------------
     std::vector<double> median_window_radii_metres = {5.0, 10.0, 20.0};
 

@@ -335,6 +335,19 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Tidal-channel parameters
     // -------------------------------------------------------------------------
+    bool_default_map["tidal_use_flood_mask"] = false;
+    help_map["tidal_use_flood_mask"] = {"bool","false",
+        "Use simple elevation-threshold channel mask instead of multi-scale median.",
+        "When true, any pixel whose elevation is at or below "
+        "tidal_flood_elevation_metres is classified as a channel. "
+        "All cleanup, UPL, and skeleton steps still apply."};
+
+    float_default_map["tidal_flood_elevation_metres"] = 0.0f;
+    help_map["tidal_flood_elevation_metres"] = {"float","0.0",
+        "Elevation threshold for the flood-mask channel method (metres).",
+        "Used only when tidal_use_flood_mask is true. "
+        "Pixels at or below this value are marked as channel."};
+
     string_default_map["tidal_median_window_radii_metres"] = "5,10,20";
     help_map["tidal_median_window_radii_metres"] = {"string","5,10,20",
         "Comma-delimited median-window radii for tidal-channel extraction.",
@@ -1122,6 +1135,8 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Tidal-channel extraction ---\n";
 
         lsdtt::tidal_channel_request request;
+        request.use_flood_mask = bf["tidal_use_flood_mask"];
+        request.flood_elevation_metres = static_cast<double>(ff["tidal_flood_elevation_metres"]);
         request.median_window_radii_metres = tidal_scales;
         request.residual_thresholds_metres = tidal_thresholds;
         request.scale_mode = scale_mode;
