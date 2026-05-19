@@ -21,6 +21,8 @@
 //   6. Frangi filter
 //   7. Otsu threshold segmentation (requires OpenCV)
 //   8. Hough line extraction (requires OpenCV)
+//   9. Curvature skeletons
+//  10. Cloth drape — upper envelope surface and incision depth
 //
 // Usage:
 //   lsdtt-surface-metrics <path> <parameter_file>
@@ -53,6 +55,7 @@
 #include "../src/cpu/lsdtt_slope_break_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
+#include "../src/cpu/lsdtt_landscape_drape_cpu.hpp"
 
 #ifdef LSDTT_HAS_OPENCV
 #include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
@@ -776,6 +779,68 @@ int main(int argc, char* argv[])
         "Outputs: _vec_adaptive_mean_skeleton.tif, _vec_adaptive_gaussian_skeleton.tif."
         "Only active when write_vec_adaptive_threshold = true."};
 
+    // --- Cloth drape ---
+    bool_default_map["write_cloth_envelope_raster"] = false;
+    help_map["write_cloth_envelope_raster"] = {"bool","false",
+        "Write the cloth-drape upper envelope surface.",
+        "Runs a Verlet cloth simulation: a flat sheet at max DEM elevation falls "
+        "under gravity and comes to rest on ridges and summits. The resting "
+        "position is the upper landscape envelope. "
+        "Output: _cloth_envelope.tif. "
+        "For best results supply a pit-filled or breached DEM."};
+
+    bool_default_map["write_cloth_incision_raster"] = false;
+    help_map["write_cloth_incision_raster"] = {"bool","false",
+        "Write the cloth-drape incision depth raster (envelope minus DEM).",
+        "Positive values indicate how far the terrain surface lies below the "
+        "envelope at each pixel (valley incision depth). Negative values "
+        "indicate residual pits or nodata artefacts above the envelope. "
+        "Output: _cloth_incision.tif."};
+
+    bool_default_map["write_cloth_crest_mask_raster"] = false;
+    help_map["write_cloth_crest_mask_raster"] = {"bool","false",
+        "Write the cloth contact (crest / summit) pixel mask.",
+        "1 = cloth particle was pinned by terrain contact (ridge or summit); "
+        "0 = particle settled freely between ridges. Useful for diagnosing "
+        "which features govern the envelope shape. "
+        "Output: _cloth_crest_mask.tif."};
+
+    float_default_map["cloth_rigidity"] = 1.0f;
+    help_map["cloth_rigidity"] = {"float","1.0",
+        "Spring stiffness of the cloth (controls envelope smoothness).",
+        "Higher values produce a smoother, longer-wavelength envelope that "
+        "bridges across narrow valleys and ridges. Equivalent to the Tension "
+        "parameter in the Carretier and Valenti EnvelopSurface script. "
+        "Typical range: 0.5 (closely follows terrain) to 20 (broad smooth drape)."};
+
+    float_default_map["cloth_gravity"] = 0.3f;
+    help_map["cloth_gravity"] = {"float","0.3",
+        "Downward gravitational force per Verlet step (m/step²).",
+        "Controls how quickly the cloth descends. Reducing gravity gives the "
+        "cloth more time to equilibrate spring forces before contact, which "
+        "can improve convergence on complex terrain. Default (0.3) follows "
+        "Zhang et al. (2016) CSF."};
+
+    float_default_map["cloth_class_threshold"] = 0.5f;
+    help_map["cloth_class_threshold"] = {"float","0.5",
+        "Contact tolerance in metres: cloth is pinned when within this distance of the DEM.",
+        "Increase (1–5 m) for coarse-resolution DEMs, noisy data, or DEMs "
+        "with residual artefact pits. Decrease (0.1 m) for smooth high-resolution "
+        "lidar where precise ridge contact is desired."};
+
+    int_default_map["cloth_max_iterations"] = 500;
+    help_map["cloth_max_iterations"] = {"int","500",
+        "Maximum number of Verlet integration steps.",
+        "The simulation stops early when max_displacement < cloth_convergence_tol. "
+        "Increase for large or complex DEMs where convergence is slow."};
+
+    float_default_map["cloth_convergence_tol"] = 0.005f;
+    help_map["cloth_convergence_tol"] = {"float","0.005",
+        "Convergence tolerance: maximum cloth displacement (m) per step to declare settled.",
+        "Tighten to 0.001 m for precise incision mapping on smooth terrain. "
+        "Loosen to 0.01 m for faster runs on coarse DEMs where sub-centimetre "
+        "precision is not needed."};
+
     // -------------------------------------------------------------------------
     // Parse — fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
@@ -1498,6 +1563,72 @@ int main(int argc, char* argv[])
                      "build does not include OpenCV. Skipping.\n";
     }
 #endif
+
+    // -------------------------------------------------------------------------
+    // Step 10 — Cloth drape (upper envelope + incision)
+    // -------------------------------------------------------------------------
+    if (bf["write_cloth_envelope_raster"] ||
+        bf["write_cloth_incision_raster"]  ||
+        bf["write_cloth_crest_mask_raster"])
+    {
+        std::cout << "\n--- Cloth drape ---\n";
+        std::cout << "Rigidity          : " << ff["cloth_rigidity"]         << "\n";
+        std::cout << "Gravity           : " << ff["cloth_gravity"]          << " m/step²\n";
+        std::cout << "Class threshold   : " << ff["cloth_class_threshold"]  << " m\n";
+        std::cout << "Max iterations    : " << ifs["cloth_max_iterations"]  << "\n";
+        std::cout << "Convergence tol   : " << ff["cloth_convergence_tol"]  << " m\n";
+
+        try
+        {
+            lsdtt::lsdtt_cloth_drape_options drape_opts;
+            drape_opts.rigidity         = ff["cloth_rigidity"];
+            drape_opts.gravity          = ff["cloth_gravity"];
+            drape_opts.class_threshold  = ff["cloth_class_threshold"];
+            drape_opts.max_iterations   = ifs["cloth_max_iterations"];
+            drape_opts.convergence_tol  = ff["cloth_convergence_tol"];
+            drape_opts.n_threads        = n_threads;
+
+            lsdtt::lsdtt_cloth_drape_result drape =
+                lsdtt::compute_cloth_drape(dem, drape_opts);
+
+            if (bf["write_cloth_envelope_raster"])
+            {
+                const std::string o = out_path(pp, "_cloth_envelope.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    drape.envelope.get_data(),
+                    drape.envelope.get_meta(),
+                    o, out_fmt
+                );
+            }
+
+            if (bf["write_cloth_incision_raster"])
+            {
+                const std::string o = out_path(pp, "_cloth_incision.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    drape.incision.get_data(),
+                    drape.incision.get_meta(),
+                    o, out_fmt
+                );
+            }
+
+            if (bf["write_cloth_crest_mask_raster"])
+            {
+                const std::string o = out_path(pp, "_cloth_crest_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    drape.crest_mask.get_data(),
+                    drape.crest_mask.get_meta(),
+                    o, out_fmt
+                );
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: cloth drape failed: " << e.what() << "\n";
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Parameter echo — always printed so runs are reproducible from the log

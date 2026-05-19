@@ -111,6 +111,7 @@ lsdtt3/
 │   │   ├── lsdtt_swath_cpu.hpp/.cpp                          — swath profile extraction
 │   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp                 — mountain front identification from DEM
 │   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
+│   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp               — Verlet cloth drape: upper envelope surface and incision depth
 │   │   ├── lsdtt_flat_surface_finder.hpp/.cpp                — flat surface identification (MADk2, residual IQR, NVD)
 │   │   ├── lsdtt_flat_surface_plane_analysis.hpp/.cpp        — plane analysis on detected flat surfaces
 │   │   ├── lsdtt_hydraulic_graph_cpu.hpp/.cpp                — CPU hydraulic routing (lsdtt_hydraulic_base impl, Gailleton et al. 2024)
@@ -225,6 +226,7 @@ the utility-layer numerical functions.
 - `lsdtt_raster_binary_mask_cpu.cpp`
 - `lsdtt_burn_streams_cpu.cpp`
 - `lsdtt_mountain_front_cpu.cpp`
+- `lsdtt_landscape_drape_cpu.cpp`
 - `lsdtt_cosmo_raster_cpu.cpp`
 - `lsdtt_crn_parameters.cpp`
 - `lsdtt_crn_column.cpp`
@@ -1112,6 +1114,8 @@ Inner loops are OpenMP-parallelised.
 - `raster_divide(a, b)` — result = a / b; additionally nodata where b == 0
 - `raster_log(a)` — natural log; additionally nodata where a ≤ 0
 - `raster_log10(a)` — base-10 log; additionally nodata where a ≤ 0
+- `raster_negate(a)` — unary minus: result = −a
+- `raster_scalar_subtract(c, a)` — scalar minus raster: result = c − a  (e.g. DEM inversion: `raster_scalar_subtract(max_val, dem)`)
 
 **`lsdtt_raster_surface_metrics_cpu`:**
 - `compute_hillshade(raster, azimuth=315, altitude=45, z_factor=1.0)`
@@ -1789,6 +1793,69 @@ Does NOT perform DEM feature scoring, polygon conversion, or skeleton analysis �
 **`lsdtt_thread_utils.hpp`** — header-only: `resolve_thread_count(n_threads)` returns `n_threads` if > 0, otherwise the OpenMP or hardware maximum.
 
 **`lsdtt_binary_array2d_tracing.hpp/.cpp`** — binary array tracing utilities (used by skeleton graph and related morphology code).
+
+---
+
+## lsdtt_landscape_drape_cpu
+
+File: `src/cpu/lsdtt_landscape_drape_cpu.hpp/.cpp`
+
+Computes an upper landscape envelope surface that drapes over the topography,
+resting on ridges and summits, and derives a pixel-wise incision depth raster
+(`envelope − DEM`).
+
+**Algorithm: Verlet cloth simulation**
+
+A flat virtual cloth is initialised at `max_elevation` and allowed to fall under
+gravity onto the terrain. 8-connected spring forces keep the cloth smooth between
+contact points. A particle is pinned when it descends within `class_threshold`
+metres of the terrain surface. At equilibrium the cloth satisfies ∇²f = 0
+between contact points — identical to harmonic interpolation through the ridge
+points.  Verlet time-stepping naturally enforces the above-terrain constraint that
+a direct solver cannot.
+
+This is the upper-envelope equivalent of the Zhang et al. (2016) Cloth Simulation
+Filter (CSF) for LiDAR ground classification, and replicates the geomorphological
+intent of the Carretier & Valenti EnvelopSurface GRASS script without requiring
+explicit crest extraction via inverted-DEM flow routing.
+
+**Key types:**
+
+```cpp
+struct lsdtt_cloth_drape_options {
+    float gravity           = 0.3f;    // downward force per step (m/step²)
+    float rigidity          = 1.0f;    // spring stiffness — higher = smoother envelope
+    float time_step         = 0.65f;   // Verlet dt
+    float class_threshold   = 0.5f;    // contact tolerance (m); raise for noisy DEMs
+    int   max_iterations    = 500;
+    float convergence_tol   = 0.005f;  // max displacement (m) to declare settled
+    int   n_threads         = 0;
+};
+
+struct lsdtt_cloth_drape_result {
+    lsdtt_raster_cpu envelope;              // cloth equilibrium = upper landscape envelope
+    lsdtt_raster_cpu incision;             // envelope − DEM (negative = DEM above envelope)
+    lsdtt_raster_cpu crest_mask;           // 1 = pinned pixel (ridge / summit contact)
+    int              iterations_taken;
+    float            final_max_displacement;
+};
+```
+
+**Public API:**
+- `compute_cloth_drape(dem, opts)` → `lsdtt_cloth_drape_result`
+
+**Parameter guidance:**
+- `rigidity`: equivalent to the `Tension` parameter in the Carretier/Valenti script
+  and to spring stiffness in CSF. Start at 1.0; increase (5–20) for broader,
+  smoother envelopes over highly dissected terrain.
+- `class_threshold`: increase (1–5 m) for DEMs with residual artefact pits or
+  coarse resolution.
+- `convergence_tol`: 0.005 m is appropriate for metre-scale DEMs; tighten to
+  0.001 m if incision values are noisy at convergence.
+
+**References:**
+- Zhang W. et al. (2016) Remote Sensing 8(6):501. DOI: 10.3390/rs8060501
+- Carretier S. & Valenti C. — EnvelopSurface.bash (IRD/GET, France)
 
 ---
 

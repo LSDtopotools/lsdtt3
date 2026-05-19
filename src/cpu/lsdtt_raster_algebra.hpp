@@ -154,6 +154,18 @@ lsdtt_raster_cpu raster_scale(
     float                   factor
 );
 
+/// Negate valid pixels: result = -a
+lsdtt_raster_cpu raster_negate(
+    const lsdtt_raster_cpu& a
+);
+
+/// Scalar minus raster: result = c - a
+/// Useful for DEM inversion (max_elevation - dem).
+lsdtt_raster_cpu raster_scalar_subtract(
+    float                   c,
+    const lsdtt_raster_cpu& a
+);
+
 /// Clamp valid pixels to [lower, upper]: result = clamp(a, lower, upper)
 /// Throws std::invalid_argument if lower > upper.
 lsdtt_raster_cpu raster_clip(

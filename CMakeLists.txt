@@ -258,6 +258,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_marsh_platform_cpu.cpp
     src/cpu/lsdtt_tidal_channel_cpu.cpp
     src/cpu/lsdtt_tidal_skeleton_metrics_cpu.cpp
+    src/cpu/lsdtt_landscape_drape_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
