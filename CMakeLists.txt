@@ -259,6 +259,9 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_tidal_channel_cpu.cpp
     src/cpu/lsdtt_tidal_skeleton_metrics_cpu.cpp
     src/cpu/lsdtt_landscape_drape_cpu.cpp
+    src/cpu/lsdtt_stream_power_cpu.cpp
+    src/cpu/lsdtt_hillslope_transport_cpu.cpp
+    src/cpu/lsdtt_lem_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
@@ -387,6 +390,7 @@ lsdtt_cli(lsdtt-cosmo-prediction       cli/lsdtt-cosmo-prediction.cpp)
 lsdtt_cli(lsdtt-crn-column-tool        cli/lsdtt-crn-column-tool.cpp)
 lsdtt_cli(lsdtt-marsh-topography       cli/lsdtt-marsh-topography.cpp)
 lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
+lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)

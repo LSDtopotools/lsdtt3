@@ -374,6 +374,12 @@ public:
     // Steepest-descent slope magnitude (m/m) at each cell.
     [[nodiscard]] lsdtt_raster_result dinf_slopes() const;
 
+    // Direct reference to the raw D-inf slope vector (length n_rows*n_cols).
+    // Use this in tight loops to avoid constructing an lsdtt_raster_result.
+    // Values at nodata / MFD-mode cells are undefined (typically 0 or NaN).
+    [[nodiscard]] const std::vector<float>& dinf_slopes_raw() const noexcept
+    { return dinf_slopes_; }
+
     // Flow direction in degrees: compass bearing, 0 = N, 90 = E, 180 = S,
     // 270 = W.  Sink cells carry no_data_value.
     [[nodiscard]] lsdtt_raster_result dinf_flow_direction() const;
