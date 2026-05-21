@@ -56,7 +56,8 @@ struct lsdtt_lem_options
     float uplift_rate                     = 1e-4f;
 
     // Process switches
-    bool  enable_fluvial_erosion          = true;
+    bool  enable_d8_fluvial_erosion       = true;
+    bool  enable_dinf_fluvial_erosion     = false;
     bool  enable_hillslope_transport      = false;
     bool  enable_uplift                   = true;
 

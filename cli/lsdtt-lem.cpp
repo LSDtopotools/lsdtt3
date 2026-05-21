@@ -10,8 +10,10 @@
 // lsdtt-lem
 //
 // Simple landscape evolution model (LEM) using:
-//   - D-infinity flow routing (Tarboton 1997 / Anand et al. 2020)
-//   - Implicit stream-power fluvial incision (Braun & Willett 2013)
+//   - D8 flow routing (O'Callaghan & Mark 1984) or
+//     D-infinity flow routing (Tarboton 1997)
+//   - Implicit stream-power fluvial incision (Braun & Willett 2013 in the 
+//     case of single flow receivers, or Anand et al. 2020 for multiple flow)
 //   - Cidre finite-volume hillslope transport (Carretier et al. 2016)
 //
 // Usage:
@@ -241,11 +243,13 @@ int main(int argc, char* argv[])
     help_map["fill_min_slope"]         = {"float","0.0001","Minimum slope imposed by pit filling.","Used when fill_initial_surface is true."};
 
     // Process switches
-    bool_default_map["enable_fluvial_erosion"]       = true;
+    bool_default_map["enable_d8_fluvial_erosion"]    = true;
+    bool_default_map["enable_dinf_fluvial_erosion"]  = false;
     bool_default_map["enable_hillslope_transport"]   = false;
     bool_default_map["enable_nonlinear_hillslopes"]  = false;
     bool_default_map["enable_uplift"]                = true;
-    help_map["enable_fluvial_erosion"]      = {"bool","true","Enable stream-power fluvial incision.",""};
+    help_map["enable_d8_fluvial_erosion"]      = {"bool","true","Enable d8 stream-power fluvial incision.","d8 with n=1 always uses closed-form and is therefore very stable. For other n uses newton-raphson."};
+    help_map["enable_dinf_fluvial_erosion"]      = {"bool","true","Enable d-infinity stream-power fluvial incision.","Uses stable closed-form for n=1 only on nodes that have only a single receiver, otherwise uses newton-raphson."};
     help_map["enable_hillslope_transport"]  = {"bool","false","Enable Cidre hillslope diffusion.",""};
     help_map["enable_nonlinear_hillslopes"] = {"bool","false","Use nonlinear Cidre transport (Carretier et al. 2016). Requires enable_hillslope_transport.",""};
     help_map["enable_uplift"]               = {"bool","true","Apply uniform tectonic uplift.",""};
@@ -320,7 +324,8 @@ int main(int argc, char* argv[])
     opts.critical_hillslope_slope        = ff["critical_hillslope_slope"];
     opts.deposit_on_hillslope_baselevels = true;
     opts.uplift_rate                     = ff["uplift_rate"];
-    opts.enable_fluvial_erosion          = bf["enable_fluvial_erosion"];
+    opts.enable_d8_fluvial_erosion       = bf["enable_d8_fluvial_erosion"];
+    opts.enable_dinf_fluvial_erosion     = bf["enable_dinf_fluvial_erosion"];
     opts.enable_hillslope_transport      = bf["enable_hillslope_transport"];
     opts.enable_uplift                   = bf["enable_uplift"];
     opts.boundary_conditions             = sf["boundary_conditions"];
@@ -330,7 +335,8 @@ int main(int argc, char* argv[])
     // Print settings summary
     // -------------------------------------------------------------------------
     std::cout << "\n--- Model configuration ---\n";
-    std::cout << "  Fluvial erosion   : " << (opts.enable_fluvial_erosion  ? "on" : "off")
+    std::cout << "  D8 fluvial erosion   : " << (opts.enable_d8_fluvial_erosion  ? "on" : "off")
+              << "  Dinf fluvial erosion   : " << (opts.enable_dinf_fluvial_erosion  ? "on" : "off")
               << "  (K=" << opts.erodibility << ", m=" << opts.m_exponent
               << ", n=" << opts.n_exponent << ")\n";
     std::cout << "  Hillslope transp. : " << (opts.enable_hillslope_transport ? "on" : "off");
@@ -478,45 +484,63 @@ int main(int argc, char* argv[])
 
     auto do_step = [&]()
     {
-        auto [next, stats] = lsdtt::run_lem_step(current, opts, boundary_flats);
-        current    = std::move(next);
-        total_time += dt;
-        ++iter;
-
-        // Store stats
-        stats_rows.push_back({
-            std::to_string(iter),
-            std::to_string(total_time),
-            std::to_string(stats.delta_max_elevation),
-            std::to_string(stats.delta_mean_elevation),
-            std::to_string(stats.max_local_elevation_change),
-            std::to_string(stats.mean_erosion_rate),
-            std::to_string(stats.max_erosion_rate)
-        });
-
-        // Progress reporting every 10 steps
-        if (iter % 10 == 0 || iter <= 5)
+        try
         {
-            std::cout << "  iter=" << std::setw(6) << iter
-                      << "  t=" << std::setw(10) << total_time << " yr"
-                      << "  mean_erosion=" << std::scientific << std::setprecision(3)
-                      << stats.mean_erosion_rate << " m/yr"
-                      << "  delta_max_z=" << stats.delta_max_elevation << "\n"
-                      << std::defaultfloat;
-        }
+            auto [next, stats] = lsdtt::run_lem_step(current, opts, boundary_flats);
+            current    = std::move(next);
+            total_time += dt;
+            ++iter;
 
-        // Intermediate raster
-        if (write_freq > 0 && iter % write_freq == 0)
-        {
-            const std::string p = out_path(pp, "_model_iteration_" + std::to_string(iter));
-            try { write_raster(loader, current, p, out_fmt); }
-            catch (const std::exception& e)
+            // Store stats
+            stats_rows.push_back({
+                std::to_string(iter),
+                std::to_string(total_time),
+                std::to_string(stats.delta_max_elevation),
+                std::to_string(stats.delta_mean_elevation),
+                std::to_string(stats.max_local_elevation_change),
+                std::to_string(stats.mean_erosion_rate),
+                std::to_string(stats.max_erosion_rate)
+            });
+
+            // Progress reporting every 10 steps
+            if (iter % 10 == 0 || iter <= 5)
             {
-                std::cerr << "Warning: intermediate write failed: " << e.what() << "\n";
+                std::cout << "  iter=" << std::setw(6) << iter
+                          << "  t=" << std::setw(10) << total_time << " yr"
+                          << "  mean_erosion=" << std::scientific << std::setprecision(3)
+                          << stats.mean_erosion_rate << " m/yr"
+                          << "  delta_max_z=" << stats.delta_max_elevation << "\n"
+                          << std::defaultfloat;
             }
-        }
 
-        return stats;
+              // Intermediate raster
+            if (write_freq > 0 && iter % write_freq == 0)
+            {
+                const std::string p = out_path(pp, "_model_iteration_" + std::to_string(iter));
+                try { write_raster(loader, current, p, out_fmt); }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: intermediate write failed: " << e.what() << "\n";
+                }
+            }
+
+            return stats;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "\n[do_step] std::exception at iter=" << iter
+                      << " t=" << total_time << "\n"
+                      << "  what(): " << e.what() << "\n";
+            std::cerr.flush();
+            std::terminate();  // hard stop — avoids recursive throw
+        }
+        catch (...)
+        {
+            std::cerr << "\n[do_step] unknown exception at iter=" << iter
+                      << " t=" << total_time << "\n";
+            std::cerr.flush();
+            std::terminate();
+        }
     };
 
     if (steady_state)

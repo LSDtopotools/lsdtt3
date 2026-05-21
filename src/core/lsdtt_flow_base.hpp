@@ -82,6 +82,7 @@ struct lsdtt_flowinfo_options
     bool        build_topological_order   = true;
     bool        build_s_vector            = true;
     int         n_threads                 = 0;
+    bool        allow_pits_as_outlets     = false;
 };
 
 class lsdtt_flow_base

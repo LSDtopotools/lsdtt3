@@ -482,6 +482,14 @@ int main(int argc, char* argv[])
         "basins nested in other basins are printed on top of the parent basin."
     };
 
+    // --- Basin printing to raster ---
+    bool_default_map["write_basins_datamap"] = false;
+    help_map["write_basins_datamap"] = {"bool", "false",
+        "Writes the basins datamap. For each basin, there is a row that contains "
+        "the junction number, the outlet flat index."
+        "This can be helpful for debugging etc." 
+    };
+
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
@@ -1511,6 +1519,49 @@ int main(int argc, char* argv[])
             catch (const std::exception& e)
             {
                 std::cerr << "FATAL: writing basin raster failed: "
+                        << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        if (bf["write_basins_datamap"])
+        {
+            std::cout << "\n--- Basin datamap output ---\n";
+ 
+            const std::string output_file =
+                out_path(pp, "_junction_basins_datamap", ".csv");
+ 
+            std::cout << "Writing: " << output_file << "\n";
+ 
+            try
+            {
+                // Build one row per surviving basin.
+                // Columns: junction_number, outlet_flat_index
+                const std::vector<std::string> headers = {
+                    "junction_number",
+                    "outlet_flat_index"
+                };
+ 
+                std::vector<std::vector<std::string>> rows;
+                rows.reserve(basin_manager.size());
+ 
+                for (std::size_t i = 0; i < basin_manager.size(); ++i)
+                {
+                    const lsdtt::lsdtt_junction_basin_cpu& basin =
+                        basin_manager.basin_at(i);
+ 
+                    rows.push_back({
+                        std::to_string(basin.get_junction_number()),
+                        std::to_string(basin.get_basin_outlet_flat_index())
+                    });
+                }
+ 
+                lsdtt::lsdtt_data_loader datamap_loader;
+                datamap_loader.write_csv(output_file, headers, rows);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing basin datamap failed: "
                         << e.what() << "\n";
                 return 1;
             }
