@@ -1112,11 +1112,21 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
             }
             else
             {
-                throw std::runtime_error(
-                    "lsdtt_flowinfo: could not assign a receiver at row " +
-                    std::to_string(row) + ", col " + std::to_string(col) +
-                    ". The DEM likely contains an unresolved sink or flat."
-                );
+                if (options.allow_pits_as_outlets)
+                {
+                    // Treat unresolvable cells as outlets (e.g. during LEM runs
+                    // where the evolving surface may develop transient pits)
+                    receiver_(row, col)     = outlet_receiver;
+                    receiver_dir_(row, col) = no_direction;
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "lsdtt_flowinfo: could not assign a receiver at row " +
+                        std::to_string(row) + ", col " + std::to_string(col) +
+                        ". The DEM likely contains an unresolved sink or flat."
+                    );
+                }
             }
         }
     }

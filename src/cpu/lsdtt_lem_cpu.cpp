@@ -42,31 +42,55 @@ run_lem_step(
     // Snapshot of pre-step elevations for statistics (valid cells only)
     const std::vector<float> z_before = z_pre;
 
-    // -------------------------------------------------------------------------
-    // 1. Build D-infinity flow graph
-    // -------------------------------------------------------------------------
-    lsdtt_flowgraph_options fg_opts;
-    fg_opts.boundary_conditions       = opts.boundary_conditions;
-    fg_opts.interior_nodata_is_outlet = true;
-    fg_opts.method                    = lsdtt_flowgraph_method::d_infinity;
-    fg_opts.n_threads                 = opts.n_threads;
-
-    lsdtt_flowgraph_cpu flow(
-        dem.get_data_array(),
-        dem.get_mask_array(),
-        dem.get_meta(),
-        fg_opts
-    );
-
     lsdtt_raster_cpu current = dem;
 
     // -------------------------------------------------------------------------
-    // 2. Fluvial incision
+    // 1. Fluvial incision
     // -------------------------------------------------------------------------
-    if (opts.enable_fluvial_erosion)
+    if (opts.enable_d8_fluvial_erosion)
     {
-        current = compute_stream_power_incision(
-            current, flow,
+        // Build D8 flow graph (only when needed)
+        lsdtt_flowinfo_options fi_opts;
+        fi_opts.boundary_conditions       = opts.boundary_conditions;
+        fi_opts.interior_nodata_is_outlet = true;
+        fi_opts.allow_pits_as_outlets     = true; // LEM surface may have transient pits
+
+        lsdtt_flowinfo flow_d8(
+            dem.get_data_array(),
+            dem.get_mask_array(),
+            dem.get_meta(),
+            fi_opts
+        );
+
+        current = compute_d8_stream_power_incision(
+            current, flow_d8,
+            opts.erodibility,
+            opts.m_exponent,
+            opts.n_exponent,
+            opts.timestep,
+            opts.incision_threshold_area,
+            opts.divide_area_by_dx,
+            opts.slope_clamp
+        );
+    }
+    else if (opts.enable_dinf_fluvial_erosion)
+    {
+        // Build D-infinity flow graph for fluvial incision
+        lsdtt_flowgraph_options fg_opts;
+        fg_opts.boundary_conditions       = opts.boundary_conditions;
+        fg_opts.interior_nodata_is_outlet = true;
+        fg_opts.method                    = lsdtt_flowgraph_method::d_infinity;
+        fg_opts.n_threads                 = opts.n_threads;
+
+        lsdtt_flowgraph_cpu flow_dinf(
+            dem.get_data_array(),
+            dem.get_mask_array(),
+            dem.get_meta(),
+            fg_opts
+        );
+
+        current = compute_dinf_stream_power_incision(
+            current, flow_dinf,
             opts.erodibility,
             opts.m_exponent,
             opts.n_exponent,
@@ -79,13 +103,26 @@ run_lem_step(
     }
 
     // -------------------------------------------------------------------------
-    // 3. Hillslope transport (uses the same flow graph built from the DEM at
-    //    the start of the step — consistent with a first-order operator split)
+    // 2. Build D-infinity flow graph for hillslope transport
+    //    This is built from the post-incision topography
     // -------------------------------------------------------------------------
     if (opts.enable_hillslope_transport)
     {
+        lsdtt_flowgraph_options fg_opts;
+        fg_opts.boundary_conditions       = opts.boundary_conditions;
+        fg_opts.interior_nodata_is_outlet = true;
+        fg_opts.method                    = lsdtt_flowgraph_method::d_infinity;
+        fg_opts.n_threads                 = opts.n_threads;
+
+        lsdtt_flowgraph_cpu flow_hillslope(
+            current.get_data_array(),
+            current.get_mask_array(),
+            current.get_meta(),
+            fg_opts
+        );
+
         current = compute_cidre_hillslope_transport(
-            current, flow,
+            current, flow_hillslope,
             opts.hillslope_diffusivity,
             opts.timestep,
             opts.enable_nonlinear_hillslopes,

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <numeric>
 #include <vector>
+#include <iostream>
 
 #ifdef _OPENMP
 #  include <omp.h>
@@ -22,26 +23,6 @@ namespace lsdtt
 
 // -----------------------------------------------------------------------------
 // build_reverse_levels
-//
-// Given the topological order (headwaters first, outlets last), build a list
-// of level boundaries for the REVERSE sweep (outlets first).
-//
-// Returns a vector of (begin, end) pairs into the reversed topological order,
-// where all nodes within a pair are mutually independent in the reverse sweep:
-// every node's receivers were processed in an earlier level.
-//
-// Algorithm: assign level[i] = 0 for outlets; for any node u, its level in
-// the reverse sweep = max(level[receiver]) + 1.  We then group by level.
-//
-// For the REVERSE sweep we iterate from outlets to headwaters, so level 0 =
-// outlets, level max = headwaters.
-//
-// We build this by sweeping the FORWARD topological order in reverse:
-//   node = topological_order[i]  (highest topo index = outlet is first here)
-//   level[node] = max over receivers k of (level[recv_k]) + 1
-//                 (receivers already processed because they have higher topo index
-//                  → they came earlier in the forward order, later in the reverse sweep)
-// Wait, that's confusing. Let me think more carefully.
 //
 // Forward topo order: headwaters first (index 0), outlets last (index N-1).
 // Reverse sweep: process index N-1 first (outlet), index 0 last (headwater).
@@ -112,10 +93,162 @@ build_reverse_levels(const lsdtt_flowgraph_cpu& flow)
     return levels;
 }
 
+
 // -----------------------------------------------------------------------------
-// compute_stream_power_incision
+// compute_d8_stream_power_incision
 // -----------------------------------------------------------------------------
-lsdtt_raster_cpu compute_stream_power_incision(
+lsdtt_raster_cpu compute_d8_stream_power_incision(
+    const lsdtt_raster_cpu&  dem,
+    const lsdtt_flowinfo& flow,
+    float K,
+    float m,
+    float n,
+    float dt,
+    float incision_threshold_area,
+    bool  divide_area_by_dx,
+    float slope_clamp)
+{
+    const lsdtt_raster_meta& meta       = dem.get_meta();
+    const float              dx         = static_cast<float>(meta.cell_size);
+    const float              dx_diag    = dx * std::sqrt(2.0f);
+    const std::int64_t       n_cells    = static_cast<std::int64_t>(meta.n_rows)
+                                          * meta.n_cols;
+
+    // Working elevation array updated in-place
+    std::vector<float>       z(dem.get_data());
+    const std::vector<float>& z_old = dem.get_data();
+
+    // Drainage area via D8 accumulation
+    std::vector<double> area_d = flow.accumulate();
+
+    // Topological order is headwater→outlet; we need outlet→headwater,
+    // so iterate in reverse.
+    const std::vector<std::int64_t>& topo = flow.topological_order();
+
+    // NR parameters
+    const int    NR_MAX_ITER = 100;
+    const double NR_TOL      = 1e-6;
+    const bool   n_is_one    = (std::abs(n - 1.0f) < 1e-6f);
+
+    // Diagonal direction codes per the header convention:
+    //   7  0  1
+    //   6  x  2
+    //   5  4  3
+    // Odd codes (1, 3, 5, 7) are diagonal.
+    auto is_diagonal_dir = [](std::uint8_t dir) -> bool {
+        return (dir & 1u) == 1u;
+    };
+
+    // Iterate outlet → headwater (reverse of topological order)
+    for (std::int64_t ti = static_cast<std::int64_t>(topo.size()) - 1;
+         ti >= 0; --ti)
+    {
+        const std::int64_t flat = topo[static_cast<std::size_t>(ti)];
+
+        // Skip outlets — they are baselevel, not eroded
+        if (flow.is_outlet_unchecked(flat))
+            continue;
+
+        // Skip nodata
+        if (!flow.is_valid_cell(flat))
+            continue;
+
+        // Receiver index and grid spacing
+        const std::int64_t  recv = flow.receiver_of_unchecked(flat);
+        const std::uint8_t  dir  = flow.receiver_dir_of_unchecked(flat);
+
+        if (recv < 0 || recv >= n_cells)
+            continue;
+
+        const float dx_eff = is_diagonal_dir(dir) ? dx_diag : dx;
+
+        // Drainage area
+        double area = area_d[static_cast<std::size_t>(flat)];
+        if (divide_area_by_dx)
+            area /= dx;
+
+        if (incision_threshold_area > 0.0f &&
+            area < static_cast<double>(incision_threshold_area))
+            continue;
+
+        const float  z_i_old = z_old[static_cast<std::size_t>(flat)];
+        const float  z_r     = z[static_cast<std::size_t>(recv)];   // already updated
+        float        z_new   = z_i_old;
+
+        // Node already at or below its receiver — no incision possible
+        if (z_r >= z_i_old)
+            continue;
+
+        const double elev_tolerance = static_cast<double>(slope_clamp) * dx_eff;
+        const double kam = static_cast<double>(K) *
+                           std::pow(area, static_cast<double>(m));
+
+        if (n_is_one)
+        {
+            // Closed-form implicit update (Braun & Willett 2013, eq. 2):
+            //   z_new = (z_old + K*A^m*(dt/dx)*z_r) / (1 + K*A^m*(dt/dx))
+            const double spf = kam * (dt / dx_eff);
+            z_new = static_cast<float>((z_i_old + z_r * spf) / (1.0 + spf));
+
+            // Guard: elevation must not increase
+            if ((z_new - z_i_old) > static_cast<float>(elev_tolerance) ||
+                std::isnan(z_new))
+            {
+                z_new = z_i_old;
+            }
+        }
+        else
+        {
+            // Newton-Raphson for n ≠ 1:
+            //   f(z)  = z - z_old + K*A^m * dt * ((z - z_r)/dx)^n = 0
+            //   f'(z) = 1 + K*A^m * dt * (n/dx) * ((z - z_r)/dx)^(n-1)
+            double epsilon = elev_tolerance + 1.0;
+            int    iter_count = 0;
+
+            do {
+                const double slope = (z_new - z_r) / dx_eff;
+
+                if (slope <= 0.0) {
+                    // Slope gone negative: stall; overexcavation clamp below
+                    epsilon = 0.0;
+                } else {
+                    const double f_z  = z_new - z_i_old
+                                      + kam * dt * std::pow(slope, n);
+                    const double f_dz = 1.0
+                                      + kam * dt * (n / dx_eff)
+                                        * std::pow(slope, n - 1.0);
+                    epsilon = f_z / f_dz;
+                }
+                z_new -= static_cast<float>(epsilon);
+
+                ++iter_count;
+                if (iter_count > NR_MAX_ITER)
+                    epsilon = elev_tolerance / 2.0;
+
+            } while (std::abs(epsilon) > elev_tolerance);
+
+            // Guard: elevation must not increase
+            if ((z_new - z_i_old) > static_cast<float>(elev_tolerance) ||
+                std::isnan(z_new))
+            {
+                z_new = z_i_old;
+            }
+
+            // Overexcavation: clamp to minimum slope above receiver
+            if (z_new < z_r)
+                z_new = static_cast<float>(z_r + slope_clamp * dx_eff);
+        }
+
+        z[static_cast<std::size_t>(flat)] = z_new;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(z),
+        std::vector<uint8_t>(dem.get_mask()),
+        meta
+    );
+}
+lsdtt_raster_cpu compute_dinf_stream_power_incision(
     const lsdtt_raster_cpu&    dem,
     const lsdtt_flowgraph_cpu& flow,
     float K,
@@ -135,10 +268,11 @@ lsdtt_raster_cpu compute_stream_power_incision(
 #endif
 
     const lsdtt_raster_meta& meta = dem.get_meta();
-    const float dx = static_cast<float>(meta.cell_size);
+    const float dx_cardinal  = static_cast<float>(meta.cell_size);
+    const float dx_diagonal  = static_cast<float>(meta.cell_size) * std::sqrt(2.0f);
     const std::int64_t n_cells = static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
 
-    // Copy DEM data — this is the working array we update in place
+    // Working elevation array, updated in-place during the sweep
     std::vector<float> z(dem.get_data());
     const std::vector<float>& z_old = dem.get_data();
 
@@ -148,11 +282,10 @@ lsdtt_raster_cpu compute_stream_power_incision(
     // Build levels for the reverse sweep (outlet → headwater)
     auto levels = build_reverse_levels(flow);
 
-    const bool n_is_one = (std::abs(n - 1.0f) < 1e-6f);
-
     // NR parameters
-    const int    NR_MAX_ITER = 50;
-    const float  NR_TOL      = 1e-6f;
+    const int   NR_MAX_ITER = 100;
+    const float NR_TOL      = 1e-6f;
+    const bool  n_is_one    = (std::abs(n - 1.0f) < 1e-6f);
 
     for (auto& level : levels)
     {
@@ -165,123 +298,176 @@ lsdtt_raster_cpu compute_stream_power_incision(
         {
             const std::int64_t flat = level[static_cast<std::size_t>(li)];
 
-            // Baselevel nodes are not eroded
-            if (flow.is_outlet_flat(flat))
-                continue;
+            if (flow.is_outlet_flat(flat)) continue;
+            if (!flow.is_valid_flat(flat)) continue;
 
-            // Skip nodata
-            if (!flow.is_valid_flat(flat))
-                continue;
-
-            // Drainage area
             double area = area_d[static_cast<std::size_t>(flat)];
             if (divide_area_by_dx)
-                area /= dx;
+                area /= dx_cardinal;
 
             if (incision_threshold_area > 0.0f &&
                 area < static_cast<double>(incision_threshold_area))
                 continue;
 
-            // Weighted receiver elevation (using updated z, since receivers
-            // were processed in earlier levels of this reverse sweep)
-            const std::int64_t nr = flow.n_receivers(flat);
-            float z_recv_weighted = 0.0f;
-            float w_sum = 0.0f;
-            for (std::int64_t k = 0; k < nr; ++k)
-            {
-                const std::int64_t recv = flow.receiver_index_at(flat, k);
-                const float        w    = flow.receiver_weight_at(flat, k);
-                if (recv >= 0 && recv < n_cells)
-                {
-                    z_recv_weighted += w * z[static_cast<std::size_t>(recv)];
-                    w_sum += w;
-                }
-            }
-            if (w_sum < 1e-10f)
-                continue;
-            z_recv_weighted /= w_sum;  // normalise in case weights don't sum to 1
-
-            // Effective distance l_eff (from Anand et al. 2020):
-            // use old elevation to estimate current slope distance
-            const float dz_old = z_old[static_cast<std::size_t>(flat)] - z_recv_weighted;
-            if (dz_old <= 0.0f)
-                continue;  // already at or below receiver — no incision
-
-            // S_old (approximate effective slope for distance estimation)
-            // l_eff = dz_old / S_max  but S_max = dz_old / l_eff → we use dx as
-            // the D-inf slope distance.  Using dx is a slight simplification; the
-            // original Anand uses the true slope length, but for the implicit update
-            // it cancels as long as we are consistent.
-            const float l_eff = dx;
-
-            // K_factor = K * dt * A^m
-            const double K_factor = static_cast<double>(K) * dt *
-                                    std::pow(area, static_cast<double>(m));
-
             const float z_i_old = z_old[static_cast<std::size_t>(flat)];
+            float       z_new   = z_i_old;
 
-            float z_new;
-            if (n_is_one)
+            const std::int64_t nr = flow.n_receivers(flat);
+
+            // ----------------------------------------------------------------
+            // Classify receiver configuration, mirroring fluvial_incision_Dinf:
+            //   receiver 0 = cardinal (weight==1 → only cardinal)
+            //   receiver 1 = diagonal (weight==1 → only diagonal)
+            //   both weights non-zero → two-receiver case
+            // ----------------------------------------------------------------
+            float w0 = (nr > 0) ? flow.receiver_weight_at(flat, 0) : 0.0f;
+            float w1 = (nr > 1) ? flow.receiver_weight_at(flat, 1) : 0.0f;
+
+            // Snap near-unity weights to exactly 1.0 to match reference logic
+            bool only_cardinal = (nr == 1) || (w0 >= 1.0f - 1e-6f);
+            bool only_diagonal = (nr > 1)  && (w1 >= 1.0f - 1e-6f);
+            bool two_receivers = (nr > 1)  && !only_cardinal && !only_diagonal;
+
+            // Retrieve receiver elevations (already updated, earlier in sweep)
+            auto recv_elev = [&](int k) -> float {
+                if (k >= nr) return z_i_old;
+                const std::int64_t idx = flow.receiver_index_at(flat, k);
+                if (idx < 0 || idx >= n_cells) return z_i_old;
+                return z[static_cast<std::size_t>(idx)];
+            };
+
+            const float z_e1 = recv_elev(0);   // cardinal receiver elevation
+            const float z_e2 = recv_elev(1);   // diagonal receiver elevation (if present)
+
+            const double kam = static_cast<double>(K) *
+                               std::pow(area, static_cast<double>(m));
+            const double elev_tolerance = static_cast<double>(slope_clamp) * dx_cardinal;
+
+            // ----------------------------------------------------------------
+            // Two-receiver case  (Anand et al. 2020, eq. 5)
+            // f(z)  = z - z_old + K*A^m * [(z_e1-z)^2/dx^2 + (z_e2-z_e1)^2/dx^2]^(n/2) * dt
+            // f'(z) = 1 - K*A^m * n * (z_e1-z)/dx^2 * sbt^(n/2 - 1) * dt
+            // Both distances use dx_cardinal per the reference implementation.
+            // ----------------------------------------------------------------
+            if (two_receivers)
             {
-                // Closed-form implicit update (Braun & Willett 2013, eq. 2):
-                //   z_new = (z_old + K*dt*A^m / l_eff * z_recv) /
-                //           (1 + K*dt*A^m / l_eff)
-                const float coeff = static_cast<float>(K_factor) / l_eff;
-                z_new = (z_i_old + coeff * z_recv_weighted) /
-                        (1.0f + coeff);
+                double epsilon = elev_tolerance + 1.0;
+                int    iter_count = 0;
+
+                do {
+                    double sbt = std::pow((z_e1 - z_new) / dx_cardinal, 2.0)
+                               + std::pow((z_e2 - z_e1) / dx_cardinal, 2.0);
+
+                    if (sbt <= 0.0) {
+                        epsilon = 0.0;
+                    } else {
+                        const double f_z  = z_new - z_i_old
+                                          + kam * std::pow(sbt, 0.5 * n) * dt;
+                        const double f_dz = 1.0
+                                          - kam * n * (z_e1 - z_new)
+                                            / (dx_cardinal * dx_cardinal)
+                                            * std::pow(sbt, 0.5 * n - 1.0) * dt;
+                        epsilon = f_z / f_dz;
+                    }
+                    z_new -= static_cast<float>(epsilon);
+
+                    ++iter_count;
+                    if (iter_count > NR_MAX_ITER)
+                        epsilon = elev_tolerance / 2.0;
+
+                } while (std::abs(epsilon) > elev_tolerance);
+
+                // Instability: elevation increased — revert
+                if ((z_new - z_i_old) > static_cast<float>(elev_tolerance) ||
+                    std::isnan(z_new))
+                {
+                    z_new = z_i_old;
+                }
+
+                // Overexcavation: clamp above lowest receiver
+                const float z_min_recv = std::min(z_e1, z_e2);
+                if (z_new < z_min_recv)
+                    z_new = z_min_recv + slope_clamp * dx_cardinal;
             }
+
+            // ----------------------------------------------------------------
+            // Single-receiver cases
+            // ----------------------------------------------------------------
             else
             {
-                // Newton-Raphson for general n:
-                // f(z) = z - z_old + K*dt*A^m * ((z - z_recv)/l_eff)^n = 0
-                z_new = z_i_old;  // initial guess
-                bool converged = false;
-                for (int iter = 0; iter < NR_MAX_ITER; ++iter)
+                // Pick the correct receiver elevation and grid spacing
+                float z_r;
+                float dx_eff;
+                if (only_diagonal) {
+                    z_r    = z_e2;
+                    dx_eff = dx_diagonal;
+                } else {
+                    z_r    = z_e1;
+                    dx_eff = dx_cardinal;
+                }
+
+                if (z_r >= z_i_old)
                 {
-                    const float slope = (z_new - z_recv_weighted) / l_eff;
-                    if (slope <= 0.0f)
+                    // Node already at or below receiver — no incision
+                    z_new = z_i_old;
+                }
+                else if (n_is_one)
+                {
+                    // Closed-form implicit update (Braun & Willett 2013, eq. 2)
+                    const double spf = kam * (dt / dx_eff);
+                    z_new = static_cast<float>(
+                        (z_i_old + z_r * spf) / (1.0 + spf));
+
+                    if ((z_new - z_i_old) > static_cast<float>(elev_tolerance) ||
+                        std::isnan(z_new))
                     {
-                        z_new = z_recv_weighted + slope_clamp * l_eff;
-                        converged = true;
-                        break;
-                    }
-                    const float slope_n   = static_cast<float>(
-                        std::pow(static_cast<double>(slope), static_cast<double>(n)));
-                    const float f         = z_new - z_i_old +
-                                            static_cast<float>(K_factor) * slope_n;
-                    const float df        = 1.0f + static_cast<float>(K_factor) *
-                                            n / l_eff *
-                                            static_cast<float>(std::pow(
-                                                static_cast<double>(slope),
-                                                static_cast<double>(n - 1.0f)));
-                    const float dz        = f / df;
-                    z_new -= dz;
-                    if (std::abs(dz) < NR_TOL)
-                    {
-                        converged = true;
-                        break;
+                        z_new = z_i_old;
                     }
                 }
-                if (!converged || z_new < z_recv_weighted)
+                else
                 {
-                    // Fallback: clamp to minimum slope above receiver
-                    z_new = z_recv_weighted + slope_clamp * l_eff;
+                    // Newton-Raphson for n ≠ 1
+                    double epsilon = elev_tolerance + 1.0;
+                    int    iter_count = 0;
+
+                    do {
+                        const double slope = (z_new - z_r) / dx_eff;
+
+                        if (slope <= 0.0) {
+                            epsilon = 0.0;
+                        } else {
+                            const double f_z  = z_new - z_i_old
+                                              + kam * dt * std::pow(slope, n);
+                            const double f_dz = 1.0
+                                              + kam * dt * (n / dx_eff)
+                                                * std::pow(slope, n - 1.0);
+                            epsilon = f_z / f_dz;
+                        }
+                        z_new -= static_cast<float>(epsilon);
+
+                        ++iter_count;
+                        if (iter_count > NR_MAX_ITER)
+                            epsilon = elev_tolerance / 2.0;
+
+                    } while (std::abs(epsilon) > elev_tolerance);
+
+                    // Instability: elevation increased — revert
+                    if ((z_new - z_i_old) > static_cast<float>(elev_tolerance) ||
+                        std::isnan(z_new))
+                    {
+                        z_new = z_i_old;
+                    }
+
+                    // Overexcavation: clamp above receiver
+                    if (z_new < z_r)
+                        z_new = static_cast<float>(z_r + slope_clamp * dx_eff);
                 }
             }
-
-            // Never erode below receiver (no over-excavation)
-            if (z_new < z_recv_weighted)
-                z_new = z_recv_weighted + slope_clamp * l_eff;
-
-            // Never deposit (stream power is erosion only)
-            if (z_new > z_i_old)
-                z_new = z_i_old;
 
             z[static_cast<std::size_t>(flat)] = z_new;
         }
     }
 
-    // Return new raster with same mask and meta as input
     return lsdtt_raster_cpu(
         std::move(z),
         std::vector<uint8_t>(dem.get_mask()),
