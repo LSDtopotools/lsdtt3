@@ -1434,6 +1434,7 @@ polyfit_metric_result compute_polyfit_metrics(
     output_slot out_d2zdxdy                     = make_slot(polyfit_metric::d2zdxdy);
     output_slot out_d2zdy2                      = make_slot(polyfit_metric::d2zdy2);
     output_slot out_slope                       = make_slot(polyfit_metric::slope);
+    output_slot out_slope_degrees               = make_slot(polyfit_metric::slope_degrees);
     output_slot out_aspect_radians              = make_slot(polyfit_metric::aspect_radians);
     output_slot out_aspect_degrees              = make_slot(polyfit_metric::aspect_degrees);
     output_slot out_laplacian                   = make_slot(polyfit_metric::laplacian);
@@ -1458,6 +1459,7 @@ polyfit_metric_result compute_polyfit_metrics(
         out_dzdx.requested() ||
         out_dzdy.requested() ||
         out_slope.requested() ||
+        out_slope_degrees.requested() ||
         out_aspect_radians.requested() ||
         out_aspect_degrees.requested() ||
         out_mean_curvature.requested() ||
@@ -1500,6 +1502,7 @@ polyfit_metric_result compute_polyfit_metrics(
 
     const bool need_gradient =
         out_slope.requested() ||
+        out_slope_degrees.requested() ||
         out_aspect_radians.requested() ||
         out_aspect_degrees.requested() ||
         out_mean_curvature.requested() ||
@@ -1737,6 +1740,13 @@ polyfit_metric_result compute_polyfit_metrics(
             if (out_slope.requested())
             {
                 out_slope.write(idx, static_cast<float>(g));
+            }
+
+            // slope_degrees = atan(sqrt(p^2 + q^2)) * (180 / pi)
+            if(out_slope_degrees.requested())
+            {
+                const double slope_deg = std::atan(g) * (180.0 / M_PI);
+                out_slope_degrees.write(idx, static_cast<float>(slope_deg));
             }
 
             // aspect_radians = atan2(p, q), clockwise from north on [0, 2*pi)

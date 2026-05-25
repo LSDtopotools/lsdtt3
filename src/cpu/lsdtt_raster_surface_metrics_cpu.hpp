@@ -305,6 +305,7 @@ enum class polyfit_metric
     d2zdy2,                       // t = z_yy = 2*b
 
     slope,                        // sqrt(p^2 + q^2)
+    slope_degrees,                 // atan(sqrt(p^2 + q^2)) * (180 / pi)
     aspect_radians,               // clockwise from north
     aspect_degrees,               // clockwise from north
 
