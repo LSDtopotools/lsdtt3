@@ -120,10 +120,7 @@ similar public methods, write it as a free function. If you find yourself needin
 
 ## Example: adding a member function to lsdtt_raster_cpu
 
-Suppose you want a function that adds a constant value to every valid pixel.
-This is a reasonable member function because — while it could technically be
-written as a free function — it is a general-purpose operation on the raster's
-own data and fits naturally alongside the other primitive operations on the class.
+Note: you really only want to do this in extreme cases, preference is for free functions!
 
 ### 1. Declare it in `src/cpu/lsdtt_raster_cpu.hpp`
 

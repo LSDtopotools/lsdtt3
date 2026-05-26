@@ -5,6 +5,7 @@ A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) wit
 **Copyright:** Simon M. Mudd  
 **Licence:** GPL-3.0  
 **Additional developers:** Rutger Vervoordeldonk
+**Additional authors of proted code:** Fiona Clubb, Stuart Grieve, David Milodowski, Boris Gailleton, Martin Hurst, Declan Valters 
 
 ---
 
@@ -25,17 +26,22 @@ Key improvements over LSDTopoTools2:
 
 - Reads any GDAL-supported format (GeoTIFF, COG, VRT, BIL, ASC, …). VRT is especially useful for large tiled datasets.
 - Writes vector outputs (GeoPackage, FlatGeobuf, CSV) with correct georeferencing via GDAL/OGR.
-- Automatic projection handling: UTM below ±75°, polar stereographic at high latitude, optional Lambert LAEA for wide-extent rasters spanning more than two UTM zones.
-- Cloud Optimised GeoTIFF (COG) output by default.
-- 64-bit pixel indexing — can process DEMs larger than 40,000 × 40,000 pixels.
+- Automatic projection handling: If input data is not projected, converts to UTM below ±75°, polar stereographic at high latitude, optional Lambert LAEA for wide-extent rasters spanning more than two UTM zones.
+- If input raster is projected, keeps the projection. So regional projections (e.g., British National Grid) can be retained for both input and output. Can also ingest projected coordinates from other planets (e.g., Mars or Titan)
+- Cloud Optimised GeoTIFF (COG) output by default. Calculates internally time savings of COG format so small rasters are output as standard GeoTIFF.
+- 64-bit pixel indexing — can process DEMs larger than 40,000 × 40,000 pixels. Elswhere data types are used to reduce memory consumption (8 bit, and 32 bit data used where approriate).
 - D8 and DAG (D-infinity / MFD) flow routing. D8 uses the s-vector for O(1) upslope-set queries.
 - CPU and GPU backends behind a shared abstract interface (GPU is a placeholder for now).
-- Analysis routines as stateless free functions — editing one analysis file no longer triggers a full rebuild.
+- Analysis routines as stateless free functions — editing one analysis file no longer triggers a full rebuild. Analyses are also clustered by task so (hopefully) it is easier to find the functions you want. 
 - OpenMP multithreading for selected routines; many operations are substantially faster than the equivalent LSDTopoTools2 code.
+- Many algorithms made more robust and/or faster (e.g., Spectral analysis, proximity tools, metrics based on moving windows). 
+- Overall, users should have more flexibility/ease for file I/O, should see less memory consumption (and as a result be able to process bigger datasets and have fewer segmentation faults), and should see speedup of a number of key algorithms.
 
 ---
 
 ## Dependencies
+
+`lsdtt3` has more dependencies than `lsdtopotools2`. However all dependencies are stabile and easily installable on Linux (and by extension linux subsystems for Windows and MacOS). We also provide an apptainer container that allows running of the softare without having to manage installation. 
 
 | Dependency | Required | Enables |
 |---|---|---|
@@ -114,12 +120,13 @@ export PATH=/path/to/lsdtt3/build:$PATH
 
 All programs take a plain-text parameter file as their argument. Parameter files use `key: value` syntax, one entry per line; lines beginning with `#` are comments. Pass `-h` to any program for a full parameter reference.
 
+
 ```sh
 lsdtt-raster-preprocessing  my_params.driver
 lsdtt-drainage-analysis     my_params.driver
 ```
 
-Detailed parameter references for each program are in `docs/`.
+**Detailed parameter references for each program are in `docs/`.**
 
 ### DEM preparation
 
@@ -185,7 +192,7 @@ Detailed parameter references for each program are in `docs/`.
 
 ---
 
-## Documentation
+## Other Documentation
 
 | Document | Contents |
 |---|---|
@@ -207,6 +214,10 @@ Detailed parameter references for each program are in `docs/`.
 | `apptainer_def/apptainer_setup.md` | Apptainer container setup. |
 
 ---
+
+## Python helpers
+
+We also provide various python helpers (in `python_helpers/`) for simple visualisation and downloading of DEMs. Maintaining python environments is very time consuming and annoying, which is why the core tools are written in c++. We provide helper functions for users familiar with maintaining a geospatial python environment, but if you don't know how to do this just use a GIS and the internet to get and look at `lsdtt3` data inputs and outputs.  
 
 ## References
 
