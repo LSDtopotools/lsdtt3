@@ -1,14 +1,18 @@
 # CLI reference: lsdtt-marsh-topography
 
-High-level marsh and tidal-channel analysis workflow. Runs up to three linked stages:
+High-level marsh and tidal-channel analysis workflow. Three linked stages can be run independently or together: marsh-platform extraction, tidal-channel extraction, and tidal-skeleton metrics. At least one stage must be enabled. The DEM must be in a projected CRS (e.g. UTM).
 
-1. **Marsh-platform extraction** — identifies the marsh surface, scarps, and platform extent.
-2. **Tidal-channel extraction** — detects tidal channels using multi-scale median residuals, extracts a skeleton, and optionally computes UPL.
-3. **Tidal skeleton metrics** — measures section geometry (width, depth, area), assigns stations, and computes strip metrics.
+## Pipeline overview
 
-Each stage can be run independently or in any combination. At least one stage must be enabled.
+Each stage is independently toggled. Outputs from earlier stages are passed forward automatically.
 
-The DEM must be in a projected CRS (e.g. UTM).
+| Stage | Toggle | Description |
+|---|---|---|
+| 1 | `run_marsh_platform` | Extract marsh platform via scarp detection and iterative platform growth |
+| 2 | `run_tidal_channels` | Extract tidal channels via multi-scale median residual thresholding |
+| 3 | `run_tidal_skeleton_metrics` | Compute section, station, and strip metrics from the tidal skeleton |
+
+Stages 2 and 3 can use outputs from stage 1 (marsh mask in strip metrics). Stage 3 requires a channel mask and skeleton from stage 2, or pre-computed rasters supplied via `read_channel_mask_fname` and `read_skeleton_fname`.
 
 ## Usage
 
@@ -262,4 +266,50 @@ tidal_strip_include_marsh_mask:      true
 write_tidal_sections_vector:   true
 write_tidal_stations_vector:   true
 write_tidal_stations_csv:      true
+```
+
+## Example parameter file: tidal channels and metrics only
+
+```
+read_path:  /data/dems/
+read_fname: tidal_dem
+write_path: /data/output/
+write_fname: tidal_channels
+
+run_marsh_platform:          false
+run_tidal_channels:          true
+run_tidal_skeleton_metrics:  true
+
+tidal_median_window_radii_metres:    10,20
+tidal_residual_thresholds_metres:    0.15
+tidal_scale_mode:                    any_scale_pass
+tidal_extract_skeleton:              true
+tidal_skeleton_spur_max_pixels:      15
+tidal_compute_upl:                   true
+
+tidal_outlet_mode:                   lowest_endpoint
+tidal_station_spacing_metres:        5.0
+tidal_compute_cross_sections:        true
+tidal_strip_include_dem:             true
+tidal_strip_include_upl:             true
+```
+
+## Example parameter file: skeleton metrics from pre-computed inputs
+
+```
+read_path:  /data/dems/
+read_fname: dem
+write_path: /data/output/
+write_fname: skeleton_metrics
+
+run_marsh_platform:          false
+run_tidal_channels:          false
+run_tidal_skeleton_metrics:  true
+
+read_channel_mask_fname: /data/output/dem_tidal_channel_mask.tif
+read_skeleton_fname:     /data/output/dem_tidal_connected_skeleton.tif
+
+tidal_outlet_mode:            edge_nodes
+tidal_station_spacing_metres: 10.0
+tidal_compute_cross_sections: true
 ```
