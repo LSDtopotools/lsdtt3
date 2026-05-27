@@ -25,6 +25,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -51,6 +52,8 @@ struct lsdtt_lem_options
     bool  enable_nonlinear_hillslopes     = false;
     float critical_hillslope_slope        = 0.6f;
     bool  deposit_on_hillslope_baselevels = true;
+    // "linear" = explicit FD D·∇²z,  "roering" = explicit FD Roering 1999,  "cidre" = Carretier 2016
+    std::string hillslope_transport_model = "cidre";
 
     // Uplift
     float uplift_rate                     = 1e-4f;

@@ -14,32 +14,29 @@
 //
 //   U = K * A^m * S^n
 //
-// Solving for slope and integrating from baselevel (outlet → headwater):
+// Algorithm (chi-based, Mudd et al. 2014 JGR-ES eq. 4):
 //
-//   z[i] = z[receiver] + dx_eff * f * A[i]^(-m/n)          [D8 / single-receiver]
+//   Step 1 — compute chi for every valid cell (outlet → headwater sweep):
 //
-// For D-infinity two-receiver geometry (Anand et al. 2020):
+//     chi[outlet]  = 0
+//     chi[cell]    = chi[receiver] + dx_eff * A^(-m/n)        [D8 / single-receiver]
 //
-//   disc = (f * A^(-m/n))^2 - ((z_e2 - z_e1) / dx)^2
-//   z[i] = z_e1 + dx * sqrt(disc)           if disc >= 0
-//   z[i] = z_e1 + dx * f * A^(-m/n)         fallback to cardinal-only if disc < 0
+//   For D-infinity two-receiver geometry (Anand et al. 2020), chi is f-independent
+//   because z = baselevel + f*chi and the slope formula is homogeneous in f:
 //
-// where z_e1 = cardinal receiver elevation, z_e2 = diagonal receiver elevation,
-// and f = (U/K)^(1/n).
+//     dchi  = (chi[e2] - chi[e1]) / dx
+//     disc  = A^(-2m/n) - dchi^2
+//     chi[i] = chi[e1] + dx * sqrt(disc)      if disc >= 0
+//     chi[i] = chi[e1] + dx * A^(-m/n)        fallback to cardinal-only if disc < 0
 //
-// Two solver modes:
-//   K-mode:      User specifies K; elevations are computed in a single sweep.
-//   Relief-mode: User specifies target_relief (desired max(z) - baselevel);
-//               K is back-calculated so the output exactly reaches that relief.
+//   Step 2 — find MaxChi = max(chi) over all valid cells.
 //
-// Relief-mode derivation:
-//   All elevations scale linearly with f = (U/K)^(1/n) — this holds for D8,
-//   D-inf single-receiver, and D-inf two-receiver cases alike.  Therefore:
-//     1. Compute normalised heights g[i] with f = 1 (i.e. K = U = 1).
-//     2. max_unit_height = max(g[i] - baselevel)
-//     3. f_target        = target_relief / max_unit_height
-//     4. K_used          = U * (max_unit_height / target_relief)^n
-//     5. z[i]            = baselevel + f_target * g[i]
+//   Step 3 — determine f = (U/K)^(1/n):
+//     K-mode:      f = (U/K)^(1/n);   K_used = K
+//     Relief-mode: f = target_relief / MaxChi;   K_used = U * (MaxChi/target_relief)^n
+//
+//   Step 4 — assign elevations:
+//     z[i] = baselevel + f * chi[i]
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -103,18 +100,17 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
 // Analytically integrates the steady-state stream-power equation along
 // D-infinity flow paths using a parallel level sweep (build_reverse_levels).
 //
-// Receiver classification (same convention as compute_dinf_stream_power_incision):
+// Receiver classification:
 //   receiver 0 = cardinal  (weight w0)
 //   receiver 1 = diagonal  (weight w1)
-//   only_cardinal: nr == 1 || w0 >= 1 - eps
-//   only_diagonal: nr > 1  && w1 >= 1 - eps
-//   two_receivers: nr > 1  && !only_cardinal && !only_diagonal
+//   two_receivers: nr > 1 && w0 < 1-eps && w1 < 1-eps
+//   single receiver otherwise (cardinal or diagonal determined by geometry)
 //
-// Two-receiver steady-state formula (Anand et al. 2020 geometry):
-//   target_slope = f * A^(-m/n)
-//   disc = target_slope^2 - ((z_e2 - z_e1) / dx)^2
-//   z[i] = z_e1 + dx * sqrt(disc)          if disc >= 0
-//   z[i] = z_e1 + dx * target_slope        fallback if disc < 0 (cardinal-only)
+// Chi computation (f-independent — see file header):
+//   two-receiver:    dchi = (chi[e2]-chi[e1])/dx
+//                    chi[i] = chi[e1] + dx*sqrt(A^(-2m/n) - dchi^2)  [disc>=0]
+//                    chi[i] = chi[e1] + dx*A^(-m/n)                   [fallback]
+//   single receiver: chi[i] = chi[recv] + dx_eff * A^(-m/n)
 //
 // Parallelism: OMP parallel-for within each level, sequential across levels.
 // -----------------------------------------------------------------------------

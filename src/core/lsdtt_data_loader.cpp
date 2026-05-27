@@ -303,23 +303,13 @@ vector_output_format convert_point_to_vector_output_format(
 raster_output_format resolve_raster_output_format(
     const std::string& fmt_str)
 {
-    if (fmt_str == "cog")
-    {
-        return raster_output_format::cog;
-    }
-    if (fmt_str == "gtiff")
-    {
-        return raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown raster_output_format"
-                  << fmt_str << "' — defaulting to cog.\n";
-    }
+    if (fmt_str == "cog")          return raster_output_format::cog;
+    if (fmt_str == "gtiff")        return raster_output_format::gtiff;
+    if (fmt_str == "same_as_input") return raster_output_format::same_as_input;
+    if (fmt_str == "png")          return raster_output_format::png;
+
+    std::cerr << "Warning: unknown raster_output_format '" << fmt_str
+              << "' — defaulting to cog.\n";
     return raster_output_format::cog;
 }
 
@@ -831,6 +821,117 @@ void lsdtt_data_loader::write_tile(
     }
 }
 
+void lsdtt_data_loader::write_png(
+    const std::vector<float>& data,
+    const lsdtt_raster_meta&  meta,
+    const std::string&        out_path)
+{
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const float ndv = static_cast<float>(meta.no_data_value);
+
+    // -------------------------------------------------------------------------
+    // Find the valid-data range (exclude nodata and non-finite values).
+    // -------------------------------------------------------------------------
+    float dmin =  std::numeric_limits<float>::max();
+    float dmax = -std::numeric_limits<float>::max();
+    for (const float v : data)
+    {
+        if (!std::isfinite(v) || v == ndv) continue;
+        if (v < dmin) dmin = v;
+        if (v > dmax) dmax = v;
+    }
+
+    if (!std::isfinite(dmin) || dmax <= dmin)
+        dmax = dmin + 1.0f;   // degenerate: all nodata or uniform
+
+    // Maps dmin → 1, dmax → 255;  0 is reserved for nodata.
+    const float scale = 254.0f / (dmax - dmin);
+
+    // -------------------------------------------------------------------------
+    // Build uint8 image array.
+    // -------------------------------------------------------------------------
+    const auto n_pix = static_cast<std::size_t>(nrows) * ncols;
+    std::vector<uint8_t> img(n_pix, 0u);
+    for (std::size_t i = 0; i < data.size(); ++i)
+    {
+        const float v = data[i];
+        if (!std::isfinite(v) || v == ndv) continue;
+        const float norm = 1.0f + (v - dmin) * scale;
+        img[i] = static_cast<uint8_t>(std::max(1.0f, std::min(255.0f, norm)));
+    }
+
+    // -------------------------------------------------------------------------
+    // Write to an in-memory GDAL dataset with full georeferencing.
+    // -------------------------------------------------------------------------
+    GDALDriver* mem_drv = GetGDALDriverManager()->GetDriverByName("MEM");
+    if (!mem_drv)
+        throw std::runtime_error("write_png: GDAL MEM driver not available");
+
+    GDALDataset* mem_ds = mem_drv->Create("", ncols, nrows, 1, GDT_Byte, nullptr);
+    if (!mem_ds)
+        throw std::runtime_error("write_png: failed to create MEM dataset");
+
+    // Same geotransform convention as create_output_raster (top-left origin).
+    double gt[6] = {
+        meta.x_min,
+        meta.cell_size,
+        0.0,
+        meta.y_max(),        // = y_min + n_rows * cell_size
+        0.0,
+        -meta.cell_size
+    };
+    mem_ds->SetGeoTransform(gt);
+
+    if (!meta.crs_wkt.empty())
+        mem_ds->SetProjection(meta.crs_wkt.c_str());
+
+    GDALRasterBand* band = mem_ds->GetRasterBand(1);
+    band->SetNoDataValue(0.0);
+
+    // Store the stretch range as band metadata so the mapping can be reversed.
+    band->SetMetadataItem("LSDTT_DATA_MIN", std::to_string(dmin).c_str());
+    band->SetMetadataItem("LSDTT_DATA_MAX", std::to_string(dmax).c_str());
+
+    const CPLErr werr = band->RasterIO(
+        GF_Write, 0, 0, ncols, nrows,
+        img.data(), ncols, nrows, GDT_Byte, 0, 0);
+
+    if (werr != CE_None)
+    {
+        GDALClose(mem_ds);
+        throw std::runtime_error("write_png: RasterIO to MEM dataset failed");
+    }
+
+    // -------------------------------------------------------------------------
+    // Copy to PNG.  WORLDFILE=YES writes a .pgw for the geotransform.
+    // Closing the PNG dataset triggers the PAM mechanism which writes a
+    // .png.aux.xml sidecar carrying the full CRS WKT.
+    // -------------------------------------------------------------------------
+    GDALDriver* png_drv = GetGDALDriverManager()->GetDriverByName("PNG");
+    if (!png_drv)
+    {
+        GDALClose(mem_ds);
+        throw std::runtime_error(
+            "write_png: GDAL PNG driver not available — "
+            "rebuild GDAL with PNG/libpng support.");
+    }
+
+    char** opts = nullptr;
+    opts = CSLSetNameValue(opts, "WORLDFILE", "YES");
+
+    GDALDataset* png_ds = png_drv->CreateCopy(
+        out_path.c_str(), mem_ds, FALSE, opts, nullptr, nullptr);
+
+    CSLDestroy(opts);
+    GDALClose(mem_ds);
+
+    if (!png_ds)
+        throw std::runtime_error("write_png: CreateCopy failed for: " + out_path);
+
+    GDALClose(png_ds);   // flushes PNG and triggers .aux.xml write
+}
+
 void lsdtt_data_loader::write_full(
     const std::vector<float>& data,
     const lsdtt_raster_meta&  meta,
@@ -839,6 +940,12 @@ void lsdtt_data_loader::write_full(
     GDALDataType              out_type
 )
 {
+    if (format == raster_output_format::png)
+    {
+        write_png(data, meta, out_path);
+        return;
+    }
+
     create_output_raster(out_path, meta, format, 1, out_type);
 
     lsdtt_tile_window win;

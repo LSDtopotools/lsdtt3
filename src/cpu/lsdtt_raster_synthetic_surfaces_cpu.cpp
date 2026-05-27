@@ -327,6 +327,36 @@ static std::vector<float> generate_white_noise_core(
 }
 
 // -----------------------------------------------------------------------------
+// superimpose_ns_parabola
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu superimpose_ns_parabola(
+    const lsdtt_raster_cpu& dem,
+    float peak_elevation)
+{
+    const lsdtt_raster_meta& meta  = dem.get_meta();
+    const int   nrows  = meta.n_rows;
+    const int   ncols  = meta.n_cols;
+    const float centre = static_cast<float>(nrows - 1) * 0.5f;
+
+    std::vector<float> data = dem.get_data();
+    const std::vector<uint8_t>& mask = dem.get_mask();
+
+    for (int row = 0; row < nrows; ++row)
+    {
+        const float t = (static_cast<float>(row) - centre) / centre;
+        const float dz = peak_elevation * (1.0f - t * t);
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = flat_index(row, col, ncols);
+            if (mask[idx])
+                data[idx] += dz;
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(data), std::vector<uint8_t>(mask), meta);
+}
+
+// -----------------------------------------------------------------------------
 // generate_uniform_random_noise_surface
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu generate_uniform_random_noise_surface(

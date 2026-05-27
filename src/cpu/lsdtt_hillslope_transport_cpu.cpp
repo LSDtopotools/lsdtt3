@@ -181,4 +181,173 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
     );
 }
 
+
+// -----------------------------------------------------------------------------
+// compute_roering_hillslope_transport
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_roering_hillslope_transport(
+    const lsdtt_raster_cpu&         dem,
+    const std::vector<uint8_t>&     is_channel,
+    float kappa,
+    float dt_total,
+    bool  nonlinear,
+    float S_c,
+    int   n_threads)
+{
+#ifdef _OPENMP
+    if (n_threads > 0)
+        omp_set_num_threads(n_threads);
+#else
+    (void)n_threads;
+#endif
+
+    const lsdtt_raster_meta& meta  = dem.get_meta();
+    const int    nrows  = meta.n_rows;
+    const int    ncols  = meta.n_cols;
+    const float  h      = static_cast<float>(meta.cell_size);
+    const float  h2     = h * h;
+    const float  Sc2    = S_c * S_c;
+    const std::int64_t n_cells = static_cast<std::int64_t>(nrows) * ncols;
+
+    const std::vector<uint8_t>& mask = dem.get_mask();
+
+    // Working elevation array — updated in-place across sub-steps.
+    std::vector<float> z(dem.get_data());
+
+    // Read neighbour elevation with Neumann zero-flux at domain edges and
+    // at masked interior cells (reflect the donor cell back).
+    auto nbr_z = [&](int r, int c, int dr, int dc) -> float
+    {
+        int nr = std::max(0, std::min(nrows - 1, r + dr));
+        int nc = std::max(0, std::min(ncols - 1, c + dc));
+        const std::size_t nidx = static_cast<std::size_t>(nr * ncols + nc);
+        if (!mask[nidx])
+        {
+            // masked neighbour: reflect back to (r,c)
+            return z[static_cast<std::size_t>(r * ncols + c)];
+        }
+        return z[nidx];
+    };
+
+    float dt_remaining = dt_total;
+
+    while (dt_remaining > 0.0f)
+    {
+        // -----------------------------------------------------------------
+        // Determine stable sub-step size.
+        // For the nonlinear case scan the current field for α_max.
+        // For the linear case α = 1 and dt_stable is fixed.
+        // -----------------------------------------------------------------
+        float dt_sub;
+        if (!nonlinear)
+        {
+            // h²/(4D) — always larger than any realistic LEM dt
+            dt_sub = std::min(dt_remaining, h2 / (4.0f * kappa));
+        }
+        else
+        {
+            float alpha_max = 1.0f;
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) reduction(max : alpha_max)
+#endif
+            for (std::int64_t idx = 0; idx < n_cells; ++idx)
+            {
+                const std::size_t sidx = static_cast<std::size_t>(idx);
+                if (!mask[sidx] || is_channel[sidx]) continue;
+
+                const int row = static_cast<int>(idx / ncols);
+                const int col = static_cast<int>(idx % ncols);
+                const float zc = z[sidx];
+
+                const float zN = nbr_z(row, col, -1,  0);
+                const float zS = nbr_z(row, col, +1,  0);
+                const float zE = nbr_z(row, col,  0, +1);
+                const float zW = nbr_z(row, col,  0, -1);
+
+                // Full gradient magnitude squared / Sc² at this cell centre
+                const float gx = (zE - zW) / (2.0f * h);
+                const float gy = (zN - zS) / (2.0f * h);
+                const float s2 = std::min((gx*gx + gy*gy) / Sc2, 0.9999f);
+                const float alpha = 1.0f / (1.0f - s2);
+                if (alpha > alpha_max) alpha_max = alpha;
+
+                (void)zc;
+            }
+            // dt_stable = h²/(4·D·α_max)
+            const float dt_stable = h2 / (4.0f * kappa * alpha_max);
+            dt_sub = std::min(dt_remaining, dt_stable);
+        }
+
+        // Safety floor to prevent infinite loops
+        if (dt_sub <= 0.0f) dt_sub = dt_remaining;
+
+        const float kdt_over_h2 = kappa * dt_sub / h2;
+
+        // -----------------------------------------------------------------
+        // Explicit FD update.
+        // For the face alphas, use the same cross-slope correction as the
+        // steady-state solver (see lsdtt_hillslope_steady_state_cpu.cpp).
+        //   N/S faces: cross-slope = (zE-zW)/(2h)
+        //   E/W faces: cross-slope = (zN-zS)/(2h)
+        // -----------------------------------------------------------------
+        std::vector<float> z_new(z);  // copy: update into z_new, read from z
+
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (std::int64_t idx = 0; idx < n_cells; ++idx)
+        {
+            const std::size_t sidx = static_cast<std::size_t>(idx);
+            if (!mask[sidx] || is_channel[sidx]) continue;
+
+            const int row = static_cast<int>(idx / ncols);
+            const int col = static_cast<int>(idx % ncols);
+            const float zc = z[sidx];
+
+            const float zN = nbr_z(row, col, -1,  0);
+            const float zS = nbr_z(row, col, +1,  0);
+            const float zE = nbr_z(row, col,  0, +1);
+            const float zW = nbr_z(row, col,  0, -1);
+
+            float aN = 1.0f, aS = 1.0f, aE = 1.0f, aW = 1.0f;
+            if (nonlinear)
+            {
+                // N/S faces: face-normal slope + E-W cross-slope
+                const float sx = (zE - zW) / (2.0f * h);
+                const float cross_ns = sx * sx / Sc2;
+
+                auto alpha_face = [&](float z_nbr, float cross2) -> float
+                {
+                    const float dz_h = (z_nbr - zc) / h;
+                    const float s2 = std::min(dz_h * dz_h / Sc2 + cross2, 0.9999f);
+                    return 1.0f / (1.0f - s2);
+                };
+
+                // E/W faces: face-normal slope + N-S cross-slope
+                const float sy = (zN - zS) / (2.0f * h);
+                const float cross_ew = sy * sy / Sc2;
+
+                aN = alpha_face(zN, cross_ns);
+                aS = alpha_face(zS, cross_ns);
+                aE = alpha_face(zE, cross_ew);
+                aW = alpha_face(zW, cross_ew);
+            }
+
+            // dz/dt = D/h² * [αN*(zN-zc) + αS*(zS-zc) + αE*(zE-zc) + αW*(zW-zc)]
+            const float laplacian = aN * (zN - zc) + aS * (zS - zc)
+                                  + aE * (zE - zc) + aW * (zW - zc);
+            z_new[sidx] = zc + kdt_over_h2 * laplacian;
+        }
+
+        z.swap(z_new);
+        dt_remaining -= dt_sub;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(z),
+        std::vector<uint8_t>(mask),
+        meta
+    );
+}
+
 } // namespace lsdtt

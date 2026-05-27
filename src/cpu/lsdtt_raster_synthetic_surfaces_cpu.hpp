@@ -50,6 +50,25 @@ namespace lsdtt
 
 
 // -----------------------------------------------------------------------------
+// superimpose_ns_parabola
+//
+// Adds a N-S parabolic tilt to an existing raster in-place equivalent fashion
+// (returns a new raster).
+//
+// The parabola peaks at the centre row with value `peak_elevation` and is zero
+// at row 0 and row nrows-1 (the north and south boundaries).  Adding this to a
+// random surface ensures a general slope toward both boundaries so that flow
+// drains outward rather than pooling in internal basins.
+//
+//   z_parabola(row) = peak * (1 - ((row - c) / c)^2)
+//   where c = (nrows - 1) / 2  (centre row, fractional for even nrows)
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu superimpose_ns_parabola(
+    const lsdtt_raster_cpu& dem,
+    float peak_elevation
+);
+
+// -----------------------------------------------------------------------------
 // Stochastic synthetic raster generators
 //
 // These return only a DEM raster because there is no simple closed-form

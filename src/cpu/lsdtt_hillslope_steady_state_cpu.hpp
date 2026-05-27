@@ -22,7 +22,19 @@
 // channel elevation already represents the steady-state (channels erode at
 // rate U = uplift), so the RHS U*h²/D is exactly the correct balance term.
 //
-// Algorithm: Jacobi iteration with lagged nonlinear coefficients (Picard).
+// Algorithm: Red-Black Successive Over-Relaxation (SOR) with Picard-lagged
+// nonlinear coefficients.  Red-black ordering makes each colour pass safe to
+// parallelise with OpenMP.
+//
+// SOR relaxation factor ω (sor_omega):
+//   ω ∈ (1, 2) accelerates convergence from O(N²) Jacobi iterations to O(N)
+//   where N is the effective grid spacing between channel Dirichlet nodes.
+//   sor_omega = 0 (default): auto-estimate from grid size using the Poisson
+//   formula for a rectangular domain; the estimate is capped at 1.95 and is
+//   conservative for cases with dense distributed channel BCs.
+//   Typical manual values: 1.5 (safe/conservative) to 1.9 (aggressive).
+//   The nonlinear (Roering) solver is less tolerant of large ω; if it
+//   diverges, reduce sor_omega toward 1.3.
 // Convergence criterion: max|Δz| < tolerance over all hillslope pixels.
 //
 // Boundary conditions (boundary_conditions string, NESW order):
@@ -54,6 +66,7 @@ struct lsdtt_hillslope_steady_state_options
     std::string boundary_conditions = "oooo"; // NESW: 'o' open, 'p' periodic
     float tolerance      = 1e-4f;   // convergence: max|Δz| over hillslope pixels
     int   max_iterations = 10000;
+    float sor_omega      = 0.0f;    // SOR relaxation factor; 0 = auto from grid size
     int   n_threads      = 0;        // 0 = OMP default
 };
 
@@ -82,6 +95,43 @@ struct lsdtt_hillslope_steady_state_result
 // Returns the full elevation field (channels unchanged, hillslopes updated).
 // -----------------------------------------------------------------------------
 lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
+    const lsdtt_raster_cpu&                     dem,
+    const std::vector<uint8_t>&                 is_channel,
+    const lsdtt_hillslope_steady_state_options& opts = {}
+);
+
+// -----------------------------------------------------------------------------
+// compute_cidre_hillslope_steady_state
+//
+// Finds the steady-state hillslope elevation field using pseudo-transient
+// Cidre (Carretier et al. 2016) time-stepping rather than direct SOR.
+//
+// Algorithm: iterate
+//   1. Build D-inf flow graph from current elevation (Picard update of
+//      routing directions as z changes).
+//   2. One Cidre transport step with pseudo-time step dt = dx / (4·D).
+//   3. Add U·dt to every non-channel hillslope pixel (balance uplift).
+//   4. Restore channel pixels to Dirichlet values.
+//   5. Check max|Δz| < tolerance.
+//
+// Why a fixed pseudo-timestep is valid: the steady state is the fixed point
+// of (transport + uplift), independent of the step size used to approach it.
+// The step dt = dx/(4·D) keeps the linear Cidre scheme stable; the nonlinear
+// slope-restoration branch is unconditionally stable at any dt.
+//
+// Relationship to Roering SOR:
+//   At steady state the Cidre sediment flux equals the Roering flux law
+//   (both proportional to S·L where L = 1/(1-S²/Sc²)), so both solvers
+//   converge to the same elevation field (Carretier et al. 2016, §3.3).
+//   The transient paths differ: Cidre routes accumulated sediment flux
+//   downstream (not a pure divergence-form law), while Roering is strictly
+//   conservative in divergence form.  The steady-state solver lets you
+//   verify this equivalence directly.
+//
+// Interface is identical to compute_hillslope_steady_state so the two can
+// be swapped in the CLI with a single parameter (hillslope_ss_model).
+// -----------------------------------------------------------------------------
+lsdtt_hillslope_steady_state_result compute_cidre_hillslope_steady_state(
     const lsdtt_raster_cpu&                     dem,
     const std::vector<uint8_t>&                 is_channel,
     const lsdtt_hillslope_steady_state_options& opts = {}

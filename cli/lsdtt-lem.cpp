@@ -51,6 +51,7 @@
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation =
@@ -143,6 +144,19 @@ static std::string out_path(
     return pp.get_full_write_path() + suffix + ext;
 }
 
+// Overload that picks the right extension from the raster output format.
+// CSV and other non-raster paths should use the string overload with an
+// explicit ".csv" extension rather than calling this.
+static std::string out_path(
+    const lsdtt::lsdtt_param_parser& pp,
+    const std::string& suffix,
+    lsdtt::raster_output_format fmt)
+{
+    const std::string ext =
+        (fmt == lsdtt::raster_output_format::png) ? ".png" : ".tif";
+    return pp.get_full_write_path() + suffix + ext;
+}
+
 // -----------------------------------------------------------------------------
 // write_raster
 // -----------------------------------------------------------------------------
@@ -153,6 +167,26 @@ static void write_raster(
     lsdtt::raster_output_format    fmt)
 {
     loader.write_full(raster.get_data(), raster.get_meta(), path, fmt);
+}
+
+// -----------------------------------------------------------------------------
+// write_hillshade_png
+//
+// Computes a hillshade from the given raster and writes it as a PNG.
+// Always writes PNG regardless of the model's write_output_format setting.
+// -----------------------------------------------------------------------------
+static void write_hillshade_png(
+    lsdtt::lsdtt_data_loader&      loader,
+    const lsdtt::lsdtt_raster_cpu& raster,
+    const std::string&             path,
+    double azimuth,
+    double altitude,
+    double z_factor)
+{
+    const lsdtt::lsdtt_raster_cpu hs =
+        lsdtt::compute_hillshade(raster, azimuth, altitude, z_factor);
+    loader.write_full(hs.get_data(), hs.get_meta(), path,
+                      lsdtt::raster_output_format::png);
 }
 
 // -----------------------------------------------------------------------------
@@ -222,107 +256,309 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string> string_default_map;
     std::map<std::string, std::vector<std::string>> help_map;
 
-    // DEM loading vs synthetic surface
+    // --- DEM loading vs synthetic surface ---
     bool_default_map["read_initial_dem"] = false;
     help_map["read_initial_dem"] = {"bool","false",
         "Load initial topography from read_fname instead of building a synthetic surface.",
         "If true, the read_path / read_fname / read_ext from the parameter file are used."};
 
-    // Grid (when not loading a DEM)
-    int_default_map["nrows"]        = 200;
-    int_default_map["ncols"]        = 400;
+    // --- Grid (when not loading a DEM) ---
+    int_default_map["nrows"] = 200;
+    help_map["nrows"] = {"int","200",
+        "Number of rows in the model domain.",
+        "Used when read_initial_dem is false."};
+
+    int_default_map["ncols"] = 400;
+    help_map["ncols"] = {"int","400",
+        "Number of columns in the model domain.",
+        "Used when read_initial_dem is false."};
+
     float_default_map["grid_resolution"] = 30.0f;
-    help_map["nrows"]           = {"int","200","Number of rows in the model domain.","Used when read_initial_dem is false."};
-    help_map["ncols"]           = {"int","400","Number of columns in the model domain.","Used when read_initial_dem is false."};
-    help_map["grid_resolution"] = {"float","30","Cell size in metres.","Used when read_initial_dem is false."};
+    help_map["grid_resolution"] = {"float","30",
+        "Cell size in metres.",
+        "Used when read_initial_dem is false."};
 
-    // Initial conditions
+    // --- Initial conditions ---
     string_default_map["initial_surface_type"] = "flat";
+    help_map["initial_surface_type"] = {"string","flat",
+        "Initial surface type: flat, white_noise, red_noise, diamond_square.",
+        "flat = all zeros; white_noise = uniform random; "
+        "red_noise = low-frequency dominated; diamond_square = fractal terrain."};
+
     float_default_map["max_initial_elevation"] = 1.0f;
-    float_default_map["noise_target_stddev"]   = 1.0f;
-    int_default_map["noise_blur_passes"]       = 6;
+    help_map["max_initial_elevation"] = {"float","1.0",
+        "Max elevation of white-noise surface (m). Min is 0.",
+        "Used when initial_surface_type is white_noise."};
+
+    float_default_map["noise_target_stddev"] = 1.0f;
+    help_map["noise_target_stddev"] = {"float","1.0",
+        "Target standard deviation of the noise surface (m).",
+        "Used when initial_surface_type is red_noise or diamond_square."};
+
+    int_default_map["noise_blur_passes"] = 6;
+    help_map["noise_blur_passes"] = {"int","6",
+        "Number of blur passes for red_noise surface generation.",
+        ""};
+
     float_default_map["diamond_square_roughness"] = 0.55f;
-    int_default_map["random_seed"]             = 33;
-    bool_default_map["fill_initial_surface"]   = false;
-    float_default_map["fill_min_slope"]        = 0.0001f;
-    help_map["initial_surface_type"]      = {"string","flat","Initial surface type: flat, white_noise, red_noise, diamond_square.","flat = all zeros; white_noise = uniform random; red_noise = low-frequency dominated; diamond_square = fractal terrain."};
-    help_map["max_initial_elevation"]     = {"float","1.0","Max elevation of white-noise surface (m). Min is 0.","Used when initial_surface_type is white_noise."};
-    help_map["noise_target_stddev"]       = {"float","1.0","Target standard deviation of the noise surface (m).","Used when initial_surface_type is red_noise or diamond_square."};
-    help_map["noise_blur_passes"]         = {"int","6","Number of blur passes for red_noise surface generation.",""};
-    help_map["diamond_square_roughness"]  = {"float","0.55","Roughness exponent (0-1) for diamond-square surface. Higher = rougher.",""};
-    help_map["random_seed"]               = {"int","33","Random seed for the initial noise surface.",""};
-    help_map["fill_initial_surface"]      = {"bool","true","Apply pit-filling to the initial surface before running.",""};
-    help_map["fill_min_slope"]            = {"float","0.0001","Minimum slope imposed by pit filling.","Used when fill_initial_surface is true."};
+    help_map["diamond_square_roughness"] = {"float","0.55",
+        "Roughness exponent (0-1) for diamond-square surface. Higher = rougher.",
+        ""};
 
-    // Process switches
-    bool_default_map["enable_d8_fluvial_erosion"]    = true;
-    bool_default_map["enable_dinf_fluvial_erosion"]  = false;
-    bool_default_map["enable_hillslope_transport"]   = false;
-    bool_default_map["enable_nonlinear_hillslopes"]  = false;
-    bool_default_map["enable_uplift"]                = true;
-    help_map["enable_d8_fluvial_erosion"]      = {"bool","true","Enable d8 stream-power fluvial incision.","d8 with n=1 always uses closed-form and is therefore very stable. For other n uses newton-raphson."};
-    help_map["enable_dinf_fluvial_erosion"]      = {"bool","true","Enable d-infinity stream-power fluvial incision.","Uses stable closed-form for n=1 only on nodes that have only a single receiver, otherwise uses newton-raphson."};
-    help_map["enable_hillslope_transport"]  = {"bool","false","Enable Cidre hillslope diffusion.",""};
-    help_map["enable_nonlinear_hillslopes"] = {"bool","false","Use nonlinear Cidre transport (Carretier et al. 2016). Requires enable_hillslope_transport.",""};
-    help_map["enable_uplift"]               = {"bool","true","Apply uniform tectonic uplift.",""};
+    int_default_map["random_seed"] = 33;
+    help_map["random_seed"] = {"int","33",
+        "Random seed for the initial noise surface.",
+        ""};
 
-    // Parameters
-    float_default_map["uplift_rate"]                   = 1e-4f;
-    float_default_map["erodibility"]                   = 1e-3f;
-    float_default_map["m_exponent"]                    = 0.45f;
-    float_default_map["n_exponent"]                    = 1.0f;
-    float_default_map["hillslope_diffusivity"]         = 1e-3f;
-    float_default_map["critical_hillslope_slope"]      = 0.8f;
-    float_default_map["incision_threshold_area"]       = 0.0f;
-    bool_default_map["divide_area_by_dx"]              = true;
-    float_default_map["slope_clamp"]                   = 1e-5f;
-    help_map["uplift_rate"]                 = {"float","1e-4","Tectonic uplift rate (m/yr).","Applied uniformly to all valid pixels."};
-    help_map["erodibility"]                 = {"float","1e-3","Stream-power erodibility K (m^(1-2m) yr^-1).","Scales fluvial incision rate."};
-    help_map["m_exponent"]                  = {"float","0.45","Drainage area exponent m in stream power law.",""};
-    help_map["n_exponent"]                  = {"float","1.0","Slope exponent n in stream power law. n=1 uses closed-form solver; n!=1 uses Newton-Raphson.",""};
-    help_map["hillslope_diffusivity"]       = {"float","1e-3","Hillslope diffusivity kappa (m^2/yr). Used when enable_hillslope_transport is true.",""};
-    help_map["critical_hillslope_slope"]    = {"float","0.6","Critical slope Sc (m/m) for nonlinear hillslope transport.",""};
-    help_map["incision_threshold_area"]     = {"float","0","Minimum drainage area (m^2) for fluvial incision. 0 = no threshold.","Also defines channel pixels for hillslope coupling."};
-    help_map["divide_area_by_dx"]           = {"bool","true","Divide drainage area by cell size to get specific area.","Applies to both fluvial incision and hillslope coupling threshold."};
-    help_map["slope_clamp"]                 = {"float","1e-5","Minimum slope used as Newton-Raphson fallback in stream power solver.",""};
+    float_default_map["parabola_relief"] = 0.0f;
+    help_map["parabola_relief"] = {"float","0",
+        "Peak elevation (m) of a N-S parabola added to random initial surfaces.",
+        "The parabola is zero at the north and south boundaries and peaks at the "
+        "centre row. Adding it biases drainage toward both N/S boundaries, reducing "
+        "internal basins. Set > 0 to enable; typical values 2-5x the noise relief."};
 
-    // Analytical steady-state
-    bool_default_map["run_steady_state"]       = false;
-    string_default_map["steady_state_mode"]    = "K";
-    float_default_map["target_relief"]         = 1000.0f;
-    float_default_map["baselevel_elevation"]   = 0.0f;
-    help_map["run_steady_state"]     = {"bool","false","Compute analytical steady-state topography instead of running a time-stepping LEM.","Uses the flow algorithm selected by enable_d8_fluvial_erosion or enable_dinf_fluvial_erosion. Writes _steady_state_elevation.tif and returns."};
-    help_map["steady_state_mode"]    = {"string","K","Steady-state solver mode: K or relief.","K-mode: K (erodibility) is specified by the user. Relief-mode: target_relief is specified and K is back-calculated."};
-    help_map["target_relief"]        = {"float","1000","Target maximum relief (m) for relief-mode steady-state.","The highest point in the output raster will be baselevel_elevation + target_relief."};
-    help_map["baselevel_elevation"]  = {"float","0","Elevation (m) assigned to outlet nodes in the steady-state solution.",""};
+    float_default_map["post_breach_noise_relief"] = 0.0f;
+    help_map["post_breach_noise_relief"] = {"float","0",
+        "Half-amplitude (m) of uniform noise added after breaching the initial surface.",
+        "Breaking up post-breach flats prevents unnaturally regular drainage. "
+        "Set > 0 to enable; typical values 0.01-0.1 m. "
+        "Breaching is performed whenever parabola_relief > 0 or post_breach_noise_relief > 0."};
 
-    // Hillslope steady-state (applied after fluvial steady-state when run_steady_state is true)
-    bool_default_map["run_hillslope_steady_state"]  = false;
-    float_default_map["hillslope_ss_tolerance"]     = 1e-4f;
-    int_default_map["hillslope_ss_max_iterations"]  = 10000;
-    help_map["run_hillslope_steady_state"]   = {"bool","false","After the fluvial steady-state, solve for hillslope elevations using D*nabla^2*z = -U (linear) or Roering 1999 nonlinear transport. Requires run_steady_state: true and incision_threshold_area > 0.","Channel pixels (area >= incision_threshold_area) become Dirichlet BCs with their fluvial steady-state elevations."};
-    help_map["hillslope_ss_tolerance"]       = {"float","1e-4","Convergence criterion for hillslope steady-state: max|delta_z| over hillslope pixels.",""};
-    help_map["hillslope_ss_max_iterations"]  = {"int","10000","Maximum Jacobi iterations for hillslope steady-state solver.",""};
+    bool_default_map["fill_initial_surface"] = false;
+    help_map["fill_initial_surface"] = {"bool","false",
+        "Apply pit-filling to the initial surface before running.",
+        "Applied after breaching/noise conditioning when those are also enabled."};
 
-    // Timestepping
-    float_default_map["timestep"]             = 100.0f;
-    int_default_map["number_of_iterations"]   = 100;
-    bool_default_map["stop_at_steady_state"]  = false;
-    help_map["timestep"]              = {"float","100","Model timestep (yr).","Stability depends on erodibility, resolution and slope."};
-    help_map["number_of_iterations"]  = {"int","100","Number of timesteps to run.","Ignored when stop_at_steady_state is true."};
-    help_map["stop_at_steady_state"]  = {"bool","false","Stop when mean erosion rate is within 1% of uplift rate for 100 consecutive steps, then run 20x that count more.",""};
+    float_default_map["fill_min_slope"] = 0.0001f;
+    help_map["fill_min_slope"] = {"float","0.0001",
+        "Minimum slope imposed by pit filling.",
+        "Used when fill_initial_surface is true."};
 
-    // Output
+    // --- Process switches ---
+    bool_default_map["enable_d8_fluvial_erosion"] = true;
+    help_map["enable_d8_fluvial_erosion"] = {"bool","true",
+        "Enable D8 stream-power fluvial incision.",
+        "D8 with n=1 always uses closed-form and is therefore very stable. "
+        "For other n uses Newton-Raphson."};
+
+    bool_default_map["enable_dinf_fluvial_erosion"] = false;
+    help_map["enable_dinf_fluvial_erosion"] = {"bool","false",
+        "Enable D-infinity stream-power fluvial incision.",
+        "Uses stable closed-form for n=1 only on nodes that have only a single "
+        "receiver, otherwise uses Newton-Raphson."};
+
+    bool_default_map["enable_hillslope_transport"] = false;
+    help_map["enable_hillslope_transport"] = {"bool","false",
+        "Enable Cidre hillslope diffusion.",
+        ""};
+
+    bool_default_map["enable_nonlinear_hillslopes"] = false;
+    help_map["enable_nonlinear_hillslopes"] = {"bool","false",
+        "Use nonlinear transport (Roering 1999 or Carretier et al. 2016 depending on hillslope_model).",
+        "Requires enable_hillslope_transport."};
+
+    string_default_map["hillslope_model"] = "cidre";
+    help_map["hillslope_model"] = {"string","cidre",
+        "Hillslope transport model: linear, roering, or cidre.",
+        "linear: explicit FD of D·∇²z on the regular 4-connected grid (stable at any "
+        "typical LEM dt; no flow graph needed beyond channel ID). "
+        "roering: explicit FD of the Roering (1999) nonlinear law D·∇·[∇z/(1-(|∇z|/Sc)²)]; "
+        "auto-subcycles when near Sc (dt ≤ h²/(4·D·α_max)); enable_nonlinear_hillslopes "
+        "must be true or it reduces to linear FD. "
+        "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
+        "unconditionally stable near Sc via slope-restoration. "
+        "Requires enable_hillslope_transport."};
+
+    bool_default_map["enable_uplift"] = true;
+    help_map["enable_uplift"] = {"bool","true",
+        "Apply uniform tectonic uplift.",
+        ""};
+
+    // --- Process parameters ---
+    float_default_map["uplift_rate"] = 1e-4f;
+    help_map["uplift_rate"] = {"float","1e-4",
+        "Tectonic uplift rate (m/yr).",
+        "Applied uniformly to all valid pixels."};
+
+    float_default_map["erodibility"] = 1e-3f;
+    help_map["erodibility"] = {"float","1e-3",
+        "Stream-power erodibility K (m^(1-2m) yr^-1).",
+        "Scales fluvial incision rate."};
+
+    float_default_map["m_exponent"] = 0.45f;
+    help_map["m_exponent"] = {"float","0.45",
+        "Drainage area exponent m in stream power law.",
+        ""};
+
+    float_default_map["n_exponent"] = 1.0f;
+    help_map["n_exponent"] = {"float","1.0",
+        "Slope exponent n in stream power law.",
+        "n=1 uses closed-form solver; n!=1 uses Newton-Raphson."};
+
+    float_default_map["hillslope_diffusivity"] = 1e-3f;
+    help_map["hillslope_diffusivity"] = {"float","1e-3",
+        "Hillslope diffusivity kappa (m^2/yr).",
+        "Used when enable_hillslope_transport is true."};
+
+    float_default_map["critical_hillslope_slope"] = 0.8f;
+    help_map["critical_hillslope_slope"] = {"float","0.8",
+        "Critical slope Sc (m/m) for nonlinear hillslope transport.",
+        ""};
+
+    float_default_map["incision_threshold_area"] = 0.0f;
+    help_map["incision_threshold_area"] = {"float","0",
+        "Minimum drainage area (m^2) for fluvial incision. 0 = no threshold.",
+        "Also defines channel pixels for hillslope coupling."};
+
+    bool_default_map["divide_area_by_dx"] = true;
+    help_map["divide_area_by_dx"] = {"bool","true",
+        "Divide drainage area by cell size to get specific area.",
+        "Applies to both fluvial incision and hillslope coupling threshold."};
+
+    float_default_map["slope_clamp"] = 1e-5f;
+    help_map["slope_clamp"] = {"float","1e-5",
+        "Minimum slope used as Newton-Raphson fallback in stream power solver.",
+        ""};
+
+    // --- Analytical steady-state ---
+    bool_default_map["run_steady_state"] = false;
+    help_map["run_steady_state"] = {"bool","false",
+        "Compute analytical steady-state topography instead of running a time-stepping LEM.",
+        "Uses the flow algorithm selected by enable_d8_fluvial_erosion or "
+        "enable_dinf_fluvial_erosion. Writes _steady_state_elevation.tif and returns."};
+
+    string_default_map["steady_state_mode"] = "K";
+    help_map["steady_state_mode"] = {"string","K",
+        "Steady-state solver mode: K or relief.",
+        "K-mode: K (erodibility) is specified by the user. "
+        "Relief-mode: target_relief is specified and K is back-calculated."};
+
+    float_default_map["target_relief"] = 1000.0f;
+    help_map["target_relief"] = {"float","1000",
+        "Target maximum relief (m) for relief-mode steady-state.",
+        "The highest point in the output raster will be "
+        "baselevel_elevation + target_relief."};
+
+    float_default_map["baselevel_elevation"] = 0.0f;
+    help_map["baselevel_elevation"] = {"float","0",
+        "Elevation (m) assigned to outlet nodes in the steady-state solution.",
+        ""};
+
+    int_default_map["steady_state_n_cycles"] = 1;
+    help_map["steady_state_n_cycles"] = {"int","1",
+        "Number of snapping cycles for steady-state computation.",
+        "Each cycle recomputes the flow graph from the previous cycle's elevation, "
+        "allowing drainage divides to migrate one pixel per cycle. "
+        "Iterating (typically 5-20 cycles) smooths the sharp elevation breaks "
+        "across divides that appear in a single-pass steady-state snap. "
+        "The DEM is pit-filled between cycles."};
+
+    // --- Hillslope steady-state ---
+    bool_default_map["run_hillslope_steady_state"] = false;
+    help_map["run_hillslope_steady_state"] = {"bool","false",
+        "Solve for hillslope steady-state elevations after fluvial steady-state.",
+        "Solver is selected by hillslope_ss_model: linear, roering, or cidre. "
+        "Requires run_steady_state: true and incision_threshold_area > 0. "
+        "Channel pixels (area >= incision_threshold_area) become Dirichlet BCs."};
+
+    float_default_map["hillslope_ss_tolerance"] = 1e-4f;
+    help_map["hillslope_ss_tolerance"] = {"float","1e-4",
+        "Convergence criterion for hillslope steady-state: max|delta_z| over hillslope pixels.",
+        ""};
+
+    int_default_map["hillslope_ss_max_iterations"] = 10000;
+    help_map["hillslope_ss_max_iterations"] = {"int","10000",
+        "Maximum SOR iterations for hillslope steady-state solver.",
+        ""};
+
+    string_default_map["hillslope_ss_model"] = "roering";
+    help_map["hillslope_ss_model"] = {"string","roering",
+        "Hillslope steady-state solver: linear, roering, or cidre.",
+        "linear: Red-Black SOR solving D·∇²z = -U (standard Laplacian diffusion). "
+        "roering: Red-Black SOR solving D·∇·[∇z/(1-(|∇z|/Sc)²)] = -U (nonlinear). "
+        "Both SOR solvers converge in O(N) iterations with auto-tuned ω. "
+        "cidre: pseudo-transient Cidre (Carretier 2016) iterated until steady state. "
+        "Rebuilds the D-inf flow graph each iteration (Picard update of routing "
+        "directions). The nonlinear flag for cidre is taken from enable_nonlinear_hillslopes. "
+        "At steady state the nonlinear Cidre and Roering solvers produce the same "
+        "elevation field (Carretier et al. 2016 §3.3)."};
+
+    float_default_map["hillslope_sor_omega"] = 0.0f;
+    help_map["hillslope_sor_omega"] = {"float","0",
+        "SOR relaxation factor omega for hillslope steady-state (0 = auto).",
+        "Values in (1, 2) accelerate convergence. 0 = auto-estimate from grid size "
+        "(capped at 1.95). Typical manual values: 1.5 (safe) to 1.9 (fast). "
+        "Reduce toward 1.3 if the nonlinear solver diverges."};
+
+    // --- Hillshade output (steady-state runs only) ---
+    bool_default_map["write_hillshade_png"] = false;
+    help_map["write_hillshade_png"] = {"bool","false",
+        "Write a hillshade PNG of the final steady-state elevation.",
+        "Computes a standard Horn (1981) hillshade and saves it as a PNG alongside "
+        "the elevation output. If run_hillslope_steady_state is also true, a second "
+        "hillshade of the combined fluvial+hillslope surface is written. "
+        "PNG is always used regardless of write_output_format."};
+
+    float_default_map["hillshade_azimuth"] = 315.0f;
+    help_map["hillshade_azimuth"] = {"float","315",
+        "Sun azimuth for hillshade, degrees clockwise from north.",
+        "315 = northwest (ESRI/QGIS default)."};
+
+    float_default_map["hillshade_altitude"] = 45.0f;
+    help_map["hillshade_altitude"] = {"float","45",
+        "Sun altitude above the horizon for hillshade, degrees.",
+        "45 is the standard default."};
+
+    float_default_map["hillshade_z_factor"] = 1.0f;
+    help_map["hillshade_z_factor"] = {"float","1",
+        "Vertical exaggeration factor for hillshade.",
+        "Use values > 1 to emphasise relief on low-gradient landscapes."};
+
+    // --- Timestepping ---
+    float_default_map["timestep"] = 100.0f;
+    help_map["timestep"] = {"float","100",
+        "Model timestep (yr).",
+        "Stability depends on erodibility, resolution and slope."};
+
+    int_default_map["number_of_iterations"] = 100;
+    help_map["number_of_iterations"] = {"int","100",
+        "Number of timesteps to run.",
+        "Ignored when stop_at_steady_state is true."};
+
+    bool_default_map["stop_at_steady_state"] = false;
+    help_map["stop_at_steady_state"] = {"bool","false",
+        "Stop when mean erosion rate is within 1% of uplift rate for 100 consecutive steps.",
+        "After detection, runs 20x that step count more before stopping."};
+
+    // --- Output ---
     int_default_map["frequency_of_output_writing"] = 0;
-    string_default_map["write_output_format"]       = "cog";
-    bool_default_map["write_elevation_stats_csv"]   = true;
-    string_default_map["boundary_conditions"]       = "oooo";
-    int_default_map["n_threads"]                    = 0;
-    help_map["frequency_of_output_writing"]  = {"int","0","Write an intermediate raster every N iterations. 0 = write final only.",""};
-    help_map["write_output_format"]          = {"string","cog","Output raster format: cog, gtiff, same_as_input.",""};
-    help_map["write_elevation_stats_csv"]    = {"bool","true","Write per-timestep elevation statistics to a CSV file.",""};
-    help_map["boundary_conditions"]          = {"string","oooo","Flow routing boundary conditions (north/east/south/west). o=open, n=no-flux, p=periodic, b=forced outlet.",""};
-    help_map["n_threads"]                    = {"int","0","Number of OpenMP threads. 0 = all available.",""};
+    help_map["frequency_of_output_writing"] = {"int","0",
+        "Write an intermediate raster every N iterations. 0 = write final only.",
+        ""};
+
+    string_default_map["write_output_format"] = "cog";
+    help_map["write_output_format"] = {"string","cog",
+        "Output raster format: cog, gtiff, same_as_input, png.",
+        "png: 8-bit greyscale PNG for quick visualisation. Float32 elevation is "
+        "normalised to 1-255 (nodata→0). A worldfile (.pgw) and GDAL PAM sidecar "
+        "(.png.aux.xml) are written alongside for georeferencing. PNG cannot store "
+        "float32 values or embed a CRS natively, so use cog/gtiff for analysis."};
+
+    bool_default_map["write_elevation_stats_csv"] = true;
+    help_map["write_elevation_stats_csv"] = {"bool","true",
+        "Write per-timestep elevation statistics to a CSV file.",
+        ""};
+
+    // --- Routing and threading ---
+    string_default_map["boundary_conditions"] = "oooo";
+    help_map["boundary_conditions"] = {"string","oooo",
+        "Flow routing boundary conditions (north/east/south/west).",
+        "o=open, n=no-flux, p=periodic, b=forced outlet."};
+
+    int_default_map["n_threads"] = 0;
+    help_map["n_threads"] = {"int","0",
+        "Number of OpenMP threads. 0 = all available.",
+        ""};
 
     // -------------------------------------------------------------------------
     // Parse
@@ -351,6 +587,7 @@ int main(int argc, char* argv[])
     opts.slope_clamp                     = ff["slope_clamp"];
     opts.hillslope_diffusivity           = ff["hillslope_diffusivity"];
     opts.enable_nonlinear_hillslopes     = bf["enable_nonlinear_hillslopes"];
+    opts.hillslope_transport_model       = sf["hillslope_model"];
     opts.critical_hillslope_slope        = ff["critical_hillslope_slope"];
     opts.deposit_on_hillslope_baselevels = true;
     opts.uplift_rate                     = ff["uplift_rate"];
@@ -371,8 +608,14 @@ int main(int argc, char* argv[])
               << ", n=" << opts.n_exponent << ")\n";
     std::cout << "  Hillslope transp. : " << (opts.enable_hillslope_transport ? "on" : "off");
     if (opts.enable_hillslope_transport)
-        std::cout << "  (kappa=" << opts.hillslope_diffusivity << ", "
-                  << (opts.enable_nonlinear_hillslopes ? "nonlinear" : "linear") << ")";
+    {
+        const std::string& hm = sf["hillslope_model"];
+        std::cout << "  (model=" << hm
+                  << ", kappa=" << opts.hillslope_diffusivity;
+        if (hm == "roering" || hm == "cidre")
+            std::cout << ", " << (opts.enable_nonlinear_hillslopes ? "nonlinear" : "linear");
+        std::cout << ")";
+    }
     std::cout << "\n";
     std::cout << "  Uplift            : " << (opts.enable_uplift ? "on" : "off")
               << "  (U=" << opts.uplift_rate << " m/yr)\n";
@@ -472,7 +715,71 @@ int main(int argc, char* argv[])
         }
     }
 
-    // Optionally pit-fill the initial surface
+    // -------------------------------------------------------------------------
+    // Initial surface conditioning (random surfaces only):
+    //   1. Superimpose N-S parabola     (if parabola_relief > 0)
+    //   2. Breach depressions           (if either conditioning param > 0)
+    //   3. Add small post-breach noise  (if post_breach_noise_relief > 0)
+    // This suppresses internal basins and breaks up the large flats that
+    // breach/fill leaves behind, which otherwise produce unnaturally regular
+    // drainage networks.
+    // -------------------------------------------------------------------------
+    const bool do_parabola = !bf["read_initial_dem"]
+                             && ff["parabola_relief"] > 0.0f
+                             && sf["initial_surface_type"] != "flat";
+    const bool do_breach   = !bf["read_initial_dem"]
+                             && sf["initial_surface_type"] != "flat"
+                             && (ff["parabola_relief"] > 0.0f
+                                 || ff["post_breach_noise_relief"] > 0.0f);
+    const bool do_noise    = !bf["read_initial_dem"]
+                             && ff["post_breach_noise_relief"] > 0.0f
+                             && sf["initial_surface_type"] != "flat";
+
+    if (do_parabola)
+    {
+        std::cout << "Superimposing N-S parabola (peak=" << ff["parabola_relief"] << " m)...\n";
+        dem = lsdtt::superimpose_ns_parabola(dem, ff["parabola_relief"]);
+    }
+
+    if (do_breach)
+    {
+        std::cout << "Breaching depressions (Lindsay 2016)...\n";
+        try { dem = lsdtt::breach_depressions(dem, ifs["n_threads"]); }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: breaching failed: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (do_noise)
+    {
+        const float half = ff["post_breach_noise_relief"];
+        std::cout << "Adding post-breach noise (amplitude=" << half << " m)...\n";
+        const lsdtt::lsdtt_raster_cpu noise =
+            lsdtt::generate_uniform_random_noise_surface(
+                dem.get_meta(),
+                ifs["random_seed"] + 1,   // offset so pattern differs from initial surface
+                static_cast<double>(-half),
+                static_cast<double>( half),
+                ifs["n_threads"]);
+        // Add noise to dem pixel-by-pixel (valid cells only)
+        const auto& meta_d = dem.get_meta();
+        const std::int64_t n_cells =
+            static_cast<std::int64_t>(meta_d.n_rows) * meta_d.n_cols;
+        std::vector<float> zd = dem.get_data();
+        const std::vector<float>& zn = noise.get_data();
+        const std::vector<uint8_t>& md = dem.get_mask();
+        for (std::int64_t i = 0; i < n_cells; ++i)
+            if (md[static_cast<std::size_t>(i)])
+                zd[static_cast<std::size_t>(i)] += zn[static_cast<std::size_t>(i)];
+        dem = lsdtt::lsdtt_raster_cpu(
+            std::move(zd),
+            std::vector<uint8_t>(md),
+            meta_d);
+    }
+
+    // Optionally pit-fill the initial surface (applied after conditioning)
     if (bf["fill_initial_surface"])
     {
         std::cout << "Filling initial surface (min_slope=" << ff["fill_min_slope"] << ")...\n";
@@ -492,20 +799,12 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     if (bf["run_steady_state"])
     {
-        std::cout << "\n--- Analytical steady-state mode ---\n";
+        const int  n_cycles  = std::max(1, ifs["steady_state_n_cycles"]);
+        const bool use_dinf  = bf["enable_dinf_fluvial_erosion"];
 
-        // Ensure the DEM is filled even if fill_initial_surface was false
-        if (!bf["fill_initial_surface"])
-        {
-            std::cout << "Filling surface for flow routing (min_slope="
-                      << ff["fill_min_slope"] << ")...\n";
-            try { dem = lsdtt::fill_pits(dem, ff["fill_min_slope"], ifs["n_threads"]); }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
-                return 1;
-            }
-        }
+        std::cout << "\n--- Analytical steady-state mode ---\n";
+        if (n_cycles > 1)
+            std::cout << "  Snapping cycles: " << n_cycles << "\n";
 
         lsdtt::lsdtt_fluvial_steady_state_options ss_opts;
         ss_opts.U                   = ff["uplift_rate"];
@@ -518,38 +817,65 @@ int main(int argc, char* argv[])
         ss_opts.divide_area_by_dx   = bf["divide_area_by_dx"];
         ss_opts.n_threads           = ifs["n_threads"];
 
-        const bool use_dinf = bf["enable_dinf_fluvial_erosion"];
+        // D8 flow options (reused each cycle)
+        lsdtt::lsdtt_flowinfo_options fi_opts;
+        fi_opts.boundary_conditions = sf["boundary_conditions"];
+        fi_opts.build_s_vector      = false;
+        fi_opts.n_threads           = ifs["n_threads"];
+
+        // D-inf flow options (reused each cycle)
+        lsdtt::lsdtt_flowgraph_options fg_opts;
+        fg_opts.method              = lsdtt::lsdtt_flowgraph_method::d_infinity;
+        fg_opts.boundary_conditions = sf["boundary_conditions"];
+        fg_opts.n_threads           = ifs["n_threads"];
+
         lsdtt::lsdtt_fluvial_steady_state_result ss_result;
-        std::vector<double> area_d;  // stored for hillslope channel-mask computation
+        std::vector<double> area_d;  // updated on each cycle; used by hillslope step
 
-        if (!use_dinf)
+        // Working copy of the DEM — updated between cycles.
+        lsdtt::lsdtt_raster_cpu cycle_dem = dem;
+
+        for (int cycle = 1; cycle <= n_cycles; ++cycle)
         {
-            std::cout << "Building D8 flow graph...\n";
-            lsdtt::lsdtt_flowinfo_options fi_opts;
-            fi_opts.boundary_conditions = sf["boundary_conditions"];
-            fi_opts.build_s_vector      = false;
-            fi_opts.n_threads           = ifs["n_threads"];
-            lsdtt::lsdtt_flowinfo flow(
-                dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), fi_opts);
+            if (n_cycles > 1)
+                std::cout << "\rSnapping cycle " << cycle << " / " << n_cycles
+                          << "  " << std::flush;
+            else
+                std::cout << "  ";
 
-            area_d    = flow.accumulate();
-            std::cout << "Computing D8 steady-state elevation...\n";
-            ss_result = lsdtt::compute_d8_fluvial_steady_state(flow, ss_opts);
-        }
-        else
-        {
-            std::cout << "Building D-infinity flow graph...\n";
-            lsdtt::lsdtt_flowgraph_options fg_opts;
-            fg_opts.method              = lsdtt::lsdtt_flowgraph_method::d_infinity;
-            fg_opts.boundary_conditions = sf["boundary_conditions"];
-            fg_opts.n_threads           = ifs["n_threads"];
-            lsdtt::lsdtt_flowgraph_cpu flow(
-                dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), fg_opts);
+            // Pit-fill before flow routing (mandatory on every cycle because
+            // the previous cycle's steady-state surface may have depressions).
+            try { cycle_dem = lsdtt::fill_pits(
+                    cycle_dem, ff["fill_min_slope"], ifs["n_threads"]); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "\nFATAL: pit filling failed (cycle " << cycle
+                          << "): " << e.what() << "\n";
+                return 1;
+            }
 
-            area_d    = flow.accumulate();
-            std::cout << "Computing D-infinity steady-state elevation...\n";
-            ss_result = lsdtt::compute_dinf_fluvial_steady_state(flow, ss_opts);
+            if (!use_dinf)
+            {
+                lsdtt::lsdtt_flowinfo flow(
+                    cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
+                    cycle_dem.get_meta(), fi_opts);
+                area_d    = flow.accumulate();
+                ss_result = lsdtt::compute_d8_fluvial_steady_state(flow, ss_opts);
+            }
+            else
+            {
+                lsdtt::lsdtt_flowgraph_cpu flow(
+                    cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
+                    cycle_dem.get_meta(), fg_opts);
+                area_d    = flow.accumulate();
+                ss_result = lsdtt::compute_dinf_fluvial_steady_state(flow, ss_opts);
+            }
+
+            if (cycle < n_cycles)
+                cycle_dem = ss_result.elevation;   // feed result into next cycle
         }
+
+        if (n_cycles > 1) std::cout << "\n";
 
         const std::string mode_str = ss_opts.relief_mode ? "relief" : "K";
         const std::string flow_str = use_dinf ? "d_infinity" : "d8";
@@ -561,13 +887,29 @@ int main(int argc, char* argv[])
                   << "  computed_relief: " << ss_result.computed_relief << " m\n"
                   << "  max_unit_height: " << ss_result.max_unit_height << "\n";
 
-        const std::string ss_elev_path = out_path(pp, "_steady_state_elevation");
+        const std::string ss_elev_path = out_path(pp, "_steady_state_elevation", out_fmt);
         std::cout << "Writing steady-state elevation: " << ss_elev_path << "\n";
         try { write_raster(loader, ss_result.elevation, ss_elev_path, out_fmt); }
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: writing steady-state elevation failed: " << e.what() << "\n";
             return 1;
+        }
+
+        if (bf["write_hillshade_png"])
+        {
+            const std::string hs_png = out_path(pp, "_steady_state_hillshade", ".png");
+            std::cout << "Writing steady-state hillshade PNG: " << hs_png << "\n";
+            try {
+                write_hillshade_png(loader, ss_result.elevation, hs_png,
+                    static_cast<double>(ff["hillshade_azimuth"]),
+                    static_cast<double>(ff["hillshade_altitude"]),
+                    static_cast<double>(ff["hillshade_z_factor"]));
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: hillshade PNG write failed: " << e.what() << "\n";
+            }
         }
 
         if (bf["write_elevation_stats_csv"])
@@ -635,26 +977,43 @@ int main(int argc, char* argv[])
                 std::cout << "  Channel pixels (A >= " << thresh << "): " << n_chan
                           << "  Hillslope pixels: " << (n_hs - n_chan) << "\n";
 
+                const std::string hs_solver = sf["hillslope_ss_model"];
+
                 lsdtt::lsdtt_hillslope_steady_state_options hs_opts;
                 hs_opts.D                   = ff["hillslope_diffusivity"];
                 hs_opts.U                   = ff["uplift_rate"];
                 hs_opts.Sc                  = ff["critical_hillslope_slope"];
-                hs_opts.nonlinear           = bf["enable_nonlinear_hillslopes"];
                 hs_opts.boundary_conditions = sf["boundary_conditions"];
                 hs_opts.tolerance           = ff["hillslope_ss_tolerance"];
                 hs_opts.max_iterations      = ifs["hillslope_ss_max_iterations"];
+                hs_opts.sor_omega           = ff["hillslope_sor_omega"];
                 hs_opts.n_threads           = ifs["n_threads"];
 
-                const std::string hs_mode = hs_opts.nonlinear ? "Roering1999" : "linear";
-                std::cout << "  Transport mode : " << hs_mode << "\n"
+                // hillslope_ss_model drives the nonlinear flag for the SOR solvers.
+                // For cidre, enable_nonlinear_hillslopes controls linear vs nonlinear.
+                if (hs_solver == "roering")
+                    hs_opts.nonlinear = true;
+                else if (hs_solver == "linear")
+                    hs_opts.nonlinear = false;
+                else  // cidre
+                    hs_opts.nonlinear = bf["enable_nonlinear_hillslopes"];
+
+                const std::string hs_mode = hs_opts.nonlinear ? "nonlinear" : "linear";
+                std::cout << "  Solver         : " << hs_solver << "\n"
+                          << "  Transport mode : " << hs_mode << "\n"
                           << "  D=" << hs_opts.D << "  U=" << hs_opts.U;
                 if (hs_opts.nonlinear)
                     std::cout << "  Sc=" << hs_opts.Sc;
                 std::cout << "  tol=" << hs_opts.tolerance
                           << "  max_iter=" << hs_opts.max_iterations << "\n";
 
-                auto hs_result = lsdtt::compute_hillslope_steady_state(
-                    ss_result.elevation, is_channel, hs_opts);
+                lsdtt::lsdtt_hillslope_steady_state_result hs_result;
+                if (hs_solver == "cidre")
+                    hs_result = lsdtt::compute_cidre_hillslope_steady_state(
+                        ss_result.elevation, is_channel, hs_opts);
+                else  // "linear" or "roering" — both use the SOR solver
+                    hs_result = lsdtt::compute_hillslope_steady_state(
+                        ss_result.elevation, is_channel, hs_opts);
 
                 std::cout << "  Iterations: " << hs_result.n_iterations
                           << "  max|Δz|: " << hs_result.final_residual
@@ -664,7 +1023,7 @@ int main(int argc, char* argv[])
                     std::cerr << "Warning: hillslope solver did not converge within "
                               << hs_opts.max_iterations << " iterations.\n";
 
-                const std::string hs_path = out_path(pp, "_hillslope_steady_state_elevation");
+                const std::string hs_path = out_path(pp, "_hillslope_steady_state_elevation", out_fmt);
                 std::cout << "Writing hillslope steady-state elevation: " << hs_path << "\n";
                 try { write_raster(loader, hs_result.elevation, hs_path, out_fmt); }
                 catch (const std::exception& e)
@@ -672,6 +1031,25 @@ int main(int argc, char* argv[])
                     std::cerr << "FATAL: writing hillslope elevation failed: "
                               << e.what() << "\n";
                     return 1;
+                }
+
+                if (bf["write_hillshade_png"])
+                {
+                    const std::string hs_hs_png =
+                        out_path(pp, "_hillslope_steady_state_hillshade", ".png");
+                    std::cout << "Writing hillslope steady-state hillshade PNG: "
+                              << hs_hs_png << "\n";
+                    try {
+                        write_hillshade_png(loader, hs_result.elevation, hs_hs_png,
+                            static_cast<double>(ff["hillshade_azimuth"]),
+                            static_cast<double>(ff["hillshade_altitude"]),
+                            static_cast<double>(ff["hillshade_z_factor"]));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: hillshade PNG write failed: "
+                                  << e.what() << "\n";
+                    }
                 }
 
                 if (bf["write_elevation_stats_csv"])
@@ -712,7 +1090,7 @@ int main(int argc, char* argv[])
     // Write initial topography
     // -------------------------------------------------------------------------
     {
-        const std::string path_init = out_path(pp, "_initial_topography");
+        const std::string path_init = out_path(pp, "_initial_topography", out_fmt);
         std::cout << "Writing initial topography: " << path_init << "\n";
         try { write_raster(loader, dem, path_init, out_fmt); }
         catch (const std::exception& e)
@@ -793,7 +1171,7 @@ int main(int argc, char* argv[])
               // Intermediate raster
             if (write_freq > 0 && iter % write_freq == 0)
             {
-                const std::string p = out_path(pp, "_model_iteration_" + std::to_string(iter));
+                const std::string p = out_path(pp, "_model_iteration_" + std::to_string(iter), out_fmt);
                 try { write_raster(loader, current, p, out_fmt); }
                 catch (const std::exception& e)
                 {
@@ -867,7 +1245,7 @@ int main(int argc, char* argv[])
     // Write final topography
     // -------------------------------------------------------------------------
     {
-        const std::string path_final = out_path(pp, "_modelled_topography");
+        const std::string path_final = out_path(pp, "_modelled_topography", out_fmt);
         std::cout << "\nWriting final topography: " << path_final << "\n";
         try { write_raster(loader, current, path_final, out_fmt); }
         catch (const std::exception& e)

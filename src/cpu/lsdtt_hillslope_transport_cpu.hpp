@@ -82,4 +82,48 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
     int   n_threads = 0
 );
 
+// -----------------------------------------------------------------------------
+// compute_roering_hillslope_transport
+//
+// Explicit finite-difference (forward Euler) integration of the Roering 1999
+// nonlinear hillslope diffusion equation on a regular 4-connected grid:
+//
+//   ∂z/∂t = D * ∇·[ ∇z / (1 - (|∇z|/Sc)² ]
+//
+// Linear mode (nonlinear == false) uses the standard Laplacian (D * ∇²z).
+//
+// Boundary conditions:
+//   - Channel pixels (is_channel[i]==1) are fixed Dirichlet nodes.
+//   - Domain-edge pixels: Neumann zero-flux (face gradient = 0 at edge).
+//   - Masked (nodata) cells: unchanged.
+//
+// Stability:
+//   The explicit scheme requires dt ≤ h²/(4·D·α_max).  For the linear case
+//   α = 1 and stability is generous (h²/4D).  For the nonlinear case α grows
+//   near Sc, so the function automatically sub-cycles dt_total into stable
+//   sub-steps: it evaluates α_max from the current field at the start of each
+//   sub-step and takes the largest dt that satisfies the CFL bound (capped at
+//   dt_total so it always terminates in ≤ ceil(dt_total / dt_stable) sub-steps).
+//
+// Compared with compute_cidre_hillslope_transport:
+//   - No D-inf flow graph is needed for transport (only the is_channel mask,
+//     which the caller builds once from the fluvial flow graph).
+//   - The cell updates are embarrassingly parallel (all cells independent per
+//     sub-step) — no level-ordering overhead.
+//   - The nonlinear Roering law is conservative (divergence form), whereas
+//     Cidre's slope-restoration term is not strictly conservative.
+//   - Near Sc the explicit scheme sub-cycles; Cidre's slope-restoration avoids
+//     this by switching to a non-divergence-form removal, so Cidre can use
+//     larger timesteps when slopes approach Sc.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_roering_hillslope_transport(
+    const lsdtt_raster_cpu&         dem,
+    const std::vector<uint8_t>&     is_channel,
+    float kappa,
+    float dt_total,
+    bool  nonlinear,
+    float S_c,
+    int   n_threads = 0
+);
+
 } // namespace lsdtt

@@ -34,14 +34,13 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
 
     std::vector<double> area_d = flow.accumulate();
 
-    // Working elevation array
-    std::vector<float> z(static_cast<std::size_t>(n_cells), opts.baselevel_elevation);
-
-    // f = (U/K)^(1/n).  In relief-mode we do a unit sweep (f=1) first and
-    // rescale afterwards.
-    const float f = opts.relief_mode
-        ? 1.0f
-        : std::pow(opts.U / opts.K, 1.0f / opts.n);
+    // -------------------------------------------------------------------------
+    // Step 1: compute chi for each valid cell.
+    //   chi[outlet] = 0  (initialised to zero; outlet cells use continue)
+    //   chi[cell]   = chi[receiver] + dx_eff * A^(-m/n)
+    // Outlets in the topological order use continue so chi stays 0.
+    // -------------------------------------------------------------------------
+    std::vector<float> chi(static_cast<std::size_t>(n_cells), 0.0f);
 
     const auto& topo = flow.topological_order();
 
@@ -51,73 +50,71 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
     {
         const std::int64_t flat = topo[static_cast<std::size_t>(ti)];
 
-        if (flow.is_outlet_unchecked(flat))
-        {
-            z[static_cast<std::size_t>(flat)] = opts.baselevel_elevation;
-            continue;
-        }
-        if (!flow.is_valid_cell(flat))
+        if (flow.is_outlet_unchecked(flat) || !flow.is_valid_cell(flat))
             continue;
 
         double A = area_d[static_cast<std::size_t>(flat)];
         if (opts.divide_area_by_dx)
             A /= static_cast<double>(dx);
         if (A <= 0.0)
-            A = static_cast<double>(dx) * dx;   // defensive floor (one pixel area / dx)
+            A = static_cast<double>(dx) * dx;
 
         const std::int64_t recv = flow.receiver_of_unchecked(flat);
         const std::uint8_t dir  = flow.receiver_dir_of_unchecked(flat);
-        const float dx_eff = (dir & 1u) ? dx_diag : dx;   // odd = diagonal
+        const float dx_eff = (dir & 1u) ? dx_diag : dx;
 
-        const float slope = f * std::pow(static_cast<float>(A), -opts.m / opts.n);
-        z[static_cast<std::size_t>(flat)] =
-            z[static_cast<std::size_t>(recv)] + dx_eff * slope;
+        chi[static_cast<std::size_t>(flat)] =
+            chi[static_cast<std::size_t>(recv)]
+            + dx_eff * std::pow(static_cast<float>(A), -opts.m / opts.n);
     }
 
     // -------------------------------------------------------------------------
-    // Relief-mode: rescale so that max(z) - baselevel = target_relief exactly
+    // Step 2: find MaxChi (= max chi over valid cells).
+    // -------------------------------------------------------------------------
+    float MaxChi = 0.0f;
+    for (std::int64_t flat = 0; flat < n_cells; ++flat)
+    {
+        if (flow.is_valid_cell(flat))
+            MaxChi = std::max(MaxChi, chi[static_cast<std::size_t>(flat)]);
+    }
+    if (MaxChi <= 0.0f) MaxChi = 1.0f;   // degenerate guard
+
+    // -------------------------------------------------------------------------
+    // Step 3: determine f = (U/K)^(1/n) and K_used.
+    //   Relief-mode: K is back-calculated so that f * MaxChi = target_relief.
+    //   K-mode:      f is set from the supplied K directly.
     // -------------------------------------------------------------------------
     float K_used;
-    float max_unit_height;
-    float computed_relief;
-
+    float f;
     if (opts.relief_mode)
     {
-        float max_unit = 0.0f;
-        for (std::int64_t flat = 0; flat < n_cells; ++flat)
-        {
-            if (flow.is_valid_cell(flat))
-                max_unit = std::max(max_unit,
-                    z[static_cast<std::size_t>(flat)] - opts.baselevel_elevation);
-        }
-        if (max_unit <= 0.0f)
-            max_unit = 1.0f;   // degenerate guard
-
-        const float f_actual = opts.target_relief / max_unit;
-        for (std::int64_t flat = 0; flat < n_cells; ++flat)
-        {
-            if (flow.is_valid_cell(flat))
-                z[static_cast<std::size_t>(flat)] =
-                    opts.baselevel_elevation
-                    + f_actual * (z[static_cast<std::size_t>(flat)]
-                                  - opts.baselevel_elevation);
-        }
-        K_used         = opts.U * std::pow(max_unit / opts.target_relief, opts.n);
-        max_unit_height = max_unit;
-        computed_relief = opts.target_relief;
+        K_used = opts.U * std::pow(MaxChi / opts.target_relief, opts.n);
+        f      = opts.target_relief / MaxChi;   // == (U/K_used)^(1/n)
     }
     else
     {
         K_used = opts.K;
-        float max_z = opts.baselevel_elevation;
-        for (std::int64_t flat = 0; flat < n_cells; ++flat)
-        {
-            if (flow.is_valid_cell(flat))
-                max_z = std::max(max_z, z[static_cast<std::size_t>(flat)]);
-        }
-        max_unit_height = max_z - opts.baselevel_elevation;
-        computed_relief = max_unit_height;
+        f      = std::pow(opts.U / opts.K, 1.0f / opts.n);
     }
+
+    // -------------------------------------------------------------------------
+    // Step 4: assign elevations.
+    //   z[i] = baselevel + f * chi[i]  for all valid cells (outlets have chi=0)
+    //   nodata cells keep meta.no_data_value (write_full does not consult mask)
+    // -------------------------------------------------------------------------
+    std::vector<float> z(static_cast<std::size_t>(n_cells),
+                         static_cast<float>(meta.no_data_value));
+
+    for (std::int64_t flat = 0; flat < n_cells; ++flat)
+    {
+        if (flow.is_valid_cell(flat))
+            z[static_cast<std::size_t>(flat)] =
+                opts.baselevel_elevation
+                + f * chi[static_cast<std::size_t>(flat)];
+    }
+
+    const float computed_relief = f * MaxChi;
+    const float max_unit_height = MaxChi;   // chi with f = 1
 
     // Build mask
     std::vector<uint8_t> mask(static_cast<std::size_t>(n_cells), 0);
@@ -155,11 +152,32 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
 
     std::vector<double> area_d = flow.accumulate();
 
-    std::vector<float> z(static_cast<std::size_t>(n_cells), opts.baselevel_elevation);
+    // -------------------------------------------------------------------------
+    // Step 1: compute chi for each valid cell using the level sweep.
+    //
+    // Because z = baselevel + f * chi and f cancels in all receiver-to-cell
+    // differences, chi can be computed independently of f:
+    //
+    //   Single receiver (cardinal or diagonal):
+    //     chi[i] = chi[recv] + dx_eff * A^(-m/n)
+    //
+    //   Two receivers (rec[0]=cardinal e1, rec[1]=diagonal e2):
+    //     dchi  = (chi[e2] - chi[e1]) / dx
+    //     disc  = A^(-2m/n) - dchi^2
+    //     chi[i] = chi[e1] + dx * sqrt(disc)   if disc >= 0
+    //     chi[i] = chi[e1] + dx * A^(-m/n)     fallback (cardinal-only)
+    // -------------------------------------------------------------------------
+    std::vector<float> chi(static_cast<std::size_t>(n_cells), 0.0f);
 
-    const float f = opts.relief_mode
-        ? 1.0f
-        : std::pow(opts.U / opts.K, 1.0f / opts.n);
+    // Helper: is the k-th receiver reached by a diagonal step?
+    auto recv_diagonal = [&](std::int64_t flat, int k) -> bool {
+        if (k >= static_cast<int>(flow.n_receivers(flat))) return false;
+        const std::int64_t idx = flow.receiver_index_at(flat, k);
+        if (idx < 0 || idx >= n_cells) return false;
+        const int dr = std::abs(flow.row_from_flat(idx) - flow.row_from_flat(flat));
+        const int dc = std::abs(flow.col_from_flat(idx) - flow.col_from_flat(flat));
+        return (dr == 1 && dc == 1);
+    };
 
     auto levels = build_reverse_levels(flow);
 
@@ -174,13 +192,8 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
         {
             const std::int64_t flat = level[static_cast<std::size_t>(li)];
 
-            if (flow.is_outlet_flat(flat))
-            {
-                z[static_cast<std::size_t>(flat)] = opts.baselevel_elevation;
-                continue;
-            }
-            if (!flow.is_valid_flat(flat))
-                continue;
+            if (flow.is_outlet_flat(flat) || !flow.is_valid_flat(flat))
+                continue;   // chi[outlet] stays 0
 
             double A = area_d[static_cast<std::size_t>(flat)];
             if (opts.divide_area_by_dx)
@@ -188,96 +201,89 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
             if (A <= 0.0)
                 A = static_cast<double>(dx) * dx;
 
-            const float target_slope = f * std::pow(static_cast<float>(A),
-                                                     -opts.m / opts.n);
+            const float amn = std::pow(static_cast<float>(A), -opts.m / opts.n);
 
             const std::int64_t nr = flow.n_receivers(flat);
             const float w0 = (nr > 0) ? flow.receiver_weight_at(flat, 0) : 0.0f;
             const float w1 = (nr > 1) ? flow.receiver_weight_at(flat, 1) : 0.0f;
 
-            const bool only_cardinal = (nr == 1) || (w0 >= 1.0f - 1e-6f);
-            const bool only_diagonal = (nr > 1)  && (w1 >= 1.0f - 1e-6f);
-            const bool two_receivers = (nr > 1)  && !only_cardinal && !only_diagonal;
+            const bool two_receivers = (nr > 1) && !(w0 >= 1.0f - 1e-6f)
+                                                 && !(w1 >= 1.0f - 1e-6f);
 
-            // Retrieve receiver elevations (already set by earlier levels)
-            auto recv_elev = [&](int k) -> float {
-                if (k >= static_cast<int>(nr)) return opts.baselevel_elevation;
+            auto chi_of = [&](int k) -> float {
+                if (k >= static_cast<int>(nr)) return 0.0f;
                 const std::int64_t idx = flow.receiver_index_at(flat, k);
-                if (idx < 0 || idx >= n_cells) return opts.baselevel_elevation;
-                return z[static_cast<std::size_t>(idx)];
+                if (idx < 0 || idx >= n_cells) return 0.0f;
+                return chi[static_cast<std::size_t>(idx)];
             };
 
-            const float z_e1 = recv_elev(0);   // cardinal receiver
-            const float z_e2 = recv_elev(1);   // diagonal receiver (or z_e1 if absent)
-
-            float z_new;
+            float chi_new;
             if (two_receivers)
             {
-                const float diff_over_dx = (z_e2 - z_e1) / dx;
-                const float disc = target_slope * target_slope
-                                 - diff_over_dx * diff_over_dx;
+                // rec[0]=cardinal(e1), rec[1]=diagonal(e2)
+                const float dchi    = (chi_of(1) - chi_of(0)) / dx;
+                const float disc    = amn * amn - dchi * dchi;
                 if (disc >= 0.0f)
-                    z_new = z_e1 + dx * std::sqrt(disc);
+                    chi_new = chi_of(0) + dx * std::sqrt(disc);
                 else
-                    z_new = z_e1 + dx * target_slope;  // cardinal-only fallback
-            }
-            else if (only_diagonal)
-            {
-                z_new = z_e2 + dx_diag * target_slope;
+                    chi_new = chi_of(0) + dx * amn;   // cardinal-only fallback
             }
             else
             {
-                z_new = z_e1 + dx * target_slope;
+                // Single receiver (possibly diagonal when nr==1 and rec[0]=e2,
+                // or nr>1 with one weight dominating).
+                const int   k0     = (nr > 1 && w1 >= 1.0f - 1e-6f) ? 1 : 0;
+                const float dx_eff = recv_diagonal(flat, k0) ? dx_diag : dx;
+                chi_new = chi_of(k0) + dx_eff * amn;
             }
 
-            z[static_cast<std::size_t>(flat)] = z_new;
+            chi[static_cast<std::size_t>(flat)] = chi_new;
         }
     }
 
     // -------------------------------------------------------------------------
-    // Relief-mode rescaling (identical logic to D8 path)
+    // Step 2: find MaxChi.
+    // -------------------------------------------------------------------------
+    float MaxChi = 0.0f;
+    for (std::int64_t flat = 0; flat < n_cells; ++flat)
+    {
+        if (flow.is_valid_flat(flat))
+            MaxChi = std::max(MaxChi, chi[static_cast<std::size_t>(flat)]);
+    }
+    if (MaxChi <= 0.0f) MaxChi = 1.0f;
+
+    // -------------------------------------------------------------------------
+    // Step 3: determine f and K_used.
     // -------------------------------------------------------------------------
     float K_used;
-    float max_unit_height;
-    float computed_relief;
-
+    float f;
     if (opts.relief_mode)
     {
-        float max_unit = 0.0f;
-        for (std::int64_t flat = 0; flat < n_cells; ++flat)
-        {
-            if (flow.is_valid_flat(flat))
-                max_unit = std::max(max_unit,
-                    z[static_cast<std::size_t>(flat)] - opts.baselevel_elevation);
-        }
-        if (max_unit <= 0.0f)
-            max_unit = 1.0f;
-
-        const float f_actual = opts.target_relief / max_unit;
-        for (std::int64_t flat = 0; flat < n_cells; ++flat)
-        {
-            if (flow.is_valid_flat(flat))
-                z[static_cast<std::size_t>(flat)] =
-                    opts.baselevel_elevation
-                    + f_actual * (z[static_cast<std::size_t>(flat)]
-                                  - opts.baselevel_elevation);
-        }
-        K_used         = opts.U * std::pow(max_unit / opts.target_relief, opts.n);
-        max_unit_height = max_unit;
-        computed_relief = opts.target_relief;
+        K_used = opts.U * std::pow(MaxChi / opts.target_relief, opts.n);
+        f      = opts.target_relief / MaxChi;
     }
     else
     {
         K_used = opts.K;
-        float max_z = opts.baselevel_elevation;
-        for (std::int64_t flat = 0; flat < n_cells; ++flat)
-        {
-            if (flow.is_valid_flat(flat))
-                max_z = std::max(max_z, z[static_cast<std::size_t>(flat)]);
-        }
-        max_unit_height = max_z - opts.baselevel_elevation;
-        computed_relief = max_unit_height;
+        f      = std::pow(opts.U / opts.K, 1.0f / opts.n);
     }
+
+    // -------------------------------------------------------------------------
+    // Step 4: assign elevations.
+    // -------------------------------------------------------------------------
+    std::vector<float> z(static_cast<std::size_t>(n_cells),
+                         static_cast<float>(meta.no_data_value));
+
+    for (std::int64_t flat = 0; flat < n_cells; ++flat)
+    {
+        if (flow.is_valid_flat(flat))
+            z[static_cast<std::size_t>(flat)] =
+                opts.baselevel_elevation
+                + f * chi[static_cast<std::size_t>(flat)];
+    }
+
+    const float computed_relief = f * MaxChi;
+    const float max_unit_height = MaxChi;
 
     // Build mask
     std::vector<uint8_t> mask(static_cast<std::size_t>(n_cells), 0);

@@ -287,7 +287,13 @@ enum class raster_output_format
 {
     cog,            // Cloud Optimised GeoTIFF (default; falls back to gtiff below threshold)
     gtiff,          // Plain compressed GeoTIFF
-    same_as_input   // Match the input raster driver
+    same_as_input,  // Match the input raster driver
+    png             // 8-bit greyscale PNG (float32 → uint8 via min-max stretch)
+                    //   nodata pixels map to 0; valid data maps to 1–255.
+                    //   Writes a worldfile (.pgw) for the geotransform and a
+                    //   GDAL PAM sidecar (.png.aux.xml) for the CRS.
+                    //   PNG has no native float32 or CRS support so this format
+                    //   is for quick visualisation only, not for analysis reuse.
 };
 
 // This resolves the raster output format from a string 
@@ -644,6 +650,15 @@ private:
     void              read_meta_from_dataset();
     lsdtt_tile_window   clamp_window_to_raster(const lsdtt_tile_window& win) const;
     void              add_cog_overviews(GDALDataset* ds);
+
+    // Normalise float32 data to uint8 (nodata→0, valid→1–255) and write a
+    // GDAL PNG via MEM dataset + CreateCopy.  Writes a worldfile (.pgw) and
+    // lets GDAL emit a PAM sidecar (.png.aux.xml) for the CRS.
+    void              write_png(
+        const std::vector<float>& data,
+        const lsdtt_raster_meta&  meta,
+        const std::string&        out_path
+    );
 
     // Write a single lsdtt_vector_record to an already-open OGRLayer.
     // Used by both the streaming path (one at a time) and the buffered
