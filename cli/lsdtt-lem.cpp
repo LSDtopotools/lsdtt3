@@ -2,18 +2,22 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2026 Simon M. Mudd
+// Copyright (C) 2026 Simon M. Mudd and Rutger Vervoordeldonk
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt-lem
 //
-// Simple landscape evolution model (LEM) using:
+// 
+//
+// Simple landscape evolution model (LEM) that has evolved from MuddPILE and DONKmodel. 
+//  It has options for using:
 //   - D8 flow routing (O'Callaghan & Mark 1984) or
 //     D-infinity flow routing (Tarboton 1997)
 //   - Implicit stream-power fluvial incision (Braun & Willett 2013 in the 
 //     case of single flow receivers, or Anand et al. 2020 for multiple flow)
+//   - Snapping to steady state with both fluvial only and either linear or nonlinear sediment flux laws
 //   - Cidre finite-volume hillslope transport (Carretier et al. 2016)
 //
 // Usage:
@@ -247,7 +251,7 @@ int main(int argc, char* argv[])
     help_map["noise_blur_passes"]         = {"int","6","Number of blur passes for red_noise surface generation.",""};
     help_map["diamond_square_roughness"]  = {"float","0.55","Roughness exponent (0-1) for diamond-square surface. Higher = rougher.",""};
     help_map["random_seed"]               = {"int","33","Random seed for the initial noise surface.",""};
-    help_map["fill_initial_surface"]      = {"bool","false","Apply pit-filling to the initial surface before running.",""};
+    help_map["fill_initial_surface"]      = {"bool","true","Apply pit-filling to the initial surface before running.",""};
     help_map["fill_min_slope"]            = {"float","0.0001","Minimum slope imposed by pit filling.","Used when fill_initial_surface is true."};
 
     // Process switches
@@ -268,7 +272,7 @@ int main(int argc, char* argv[])
     float_default_map["m_exponent"]                    = 0.45f;
     float_default_map["n_exponent"]                    = 1.0f;
     float_default_map["hillslope_diffusivity"]         = 1e-3f;
-    float_default_map["critical_hillslope_slope"]      = 0.6f;
+    float_default_map["critical_hillslope_slope"]      = 0.8f;
     float_default_map["incision_threshold_area"]       = 0.0f;
     bool_default_map["divide_area_by_dx"]              = true;
     float_default_map["slope_clamp"]                   = 1e-5f;
@@ -414,6 +418,7 @@ int main(int argc, char* argv[])
 
         if (surf_type == "white_noise")
         {
+            std::cout << "I'm building an initial white noise surface." << std:: endl;
             dem = lsdtt::generate_uniform_random_noise_surface(
                 nr, nc, static_cast<double>(dx),
                 ifs["random_seed"],
@@ -424,6 +429,7 @@ int main(int argc, char* argv[])
         }
         else if (surf_type == "red_noise")
         {
+            std::cout << "I'm building an initial red noise surface." << std:: endl;
             dem = lsdtt::generate_red_noise_surface(
                 nr, nc, static_cast<double>(dx),
                 ifs["random_seed"],
@@ -435,6 +441,7 @@ int main(int argc, char* argv[])
         }
         else if (surf_type == "diamond_square")
         {
+            std::cout << "I'm building an initial diamond square surface." << std:: endl;
             dem = lsdtt::generate_diamond_square_surface(
                 nr, nc, static_cast<double>(dx),
                 ifs["random_seed"],
