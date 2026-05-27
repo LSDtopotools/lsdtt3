@@ -470,4 +470,26 @@ private:
     std::vector<float> dinf_direction_;  // compass bearing in degrees
 };
 
+// -----------------------------------------------------------------------------
+// Level-decomposition helpers for parallel sweeps over lsdtt_flowgraph_cpu
+//
+// build_reverse_levels
+//   Returns levels[0] = outlet nodes, levels.back() = headwater nodes.
+//   Each level contains mutually independent nodes in a reverse topological
+//   sweep (outlet → headwater). Used by stream-power incision and the
+//   fluvial steady-state solver.
+//   Depth = BFS distance from the nearest outlet along the reversed receiver DAG.
+//
+// build_forward_levels
+//   Returns levels[0] = ridge/headwater nodes, levels.back() = outlet nodes.
+//   Each level contains mutually independent nodes in a forward topological
+//   sweep (headwater → outlet). Used by hillslope transport.
+//   Depth = BFS distance from the nearest headwater along the forward DAG.
+// -----------------------------------------------------------------------------
+std::vector<std::vector<std::int64_t>>
+build_reverse_levels(const lsdtt_flowgraph_cpu& flow);
+
+std::vector<std::vector<std::int64_t>>
+build_forward_levels(const lsdtt_flowgraph_cpu& flow);
+
 } // namespace lsdtt

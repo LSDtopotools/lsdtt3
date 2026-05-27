@@ -1098,4 +1098,104 @@ lsdtt_raster_result lsdtt_flowgraph_cpu::dinf_flow_direction() const
     return result;
 }
 
+// -----------------------------------------------------------------------------
+// build_reverse_levels
+// -----------------------------------------------------------------------------
+std::vector<std::vector<std::int64_t>>
+build_reverse_levels(const lsdtt_flowgraph_cpu& flow)
+{
+    const auto& topo   = flow.topological_order();
+    const std::int64_t N = static_cast<std::int64_t>(topo.size());
+
+    std::vector<int> depth(static_cast<std::size_t>(
+        flow.meta().n_rows * flow.meta().n_cols), -1);
+
+    int max_depth = 0;
+    for (std::int64_t i = N - 1; i >= 0; --i)
+    {
+        const std::int64_t flat = topo[static_cast<std::size_t>(i)];
+        const std::int64_t nr   = flow.n_receivers(flat);
+
+        if (nr == 0)
+        {
+            depth[static_cast<std::size_t>(flat)] = 0;
+        }
+        else
+        {
+            int d = 0;
+            for (std::int64_t k = 0; k < nr; ++k)
+            {
+                const std::int64_t recv = flow.receiver_index_at(flat, k);
+                if (recv >= 0 && depth[static_cast<std::size_t>(recv)] >= 0)
+                    d = std::max(d, depth[static_cast<std::size_t>(recv)] + 1);
+            }
+            depth[static_cast<std::size_t>(flat)] = d;
+            max_depth = std::max(max_depth, d);
+        }
+    }
+
+    std::vector<std::vector<std::int64_t>> levels(
+        static_cast<std::size_t>(max_depth + 1));
+
+    for (std::int64_t i = N - 1; i >= 0; --i)
+    {
+        const std::int64_t flat = topo[static_cast<std::size_t>(i)];
+        const int d = depth[static_cast<std::size_t>(flat)];
+        if (d >= 0)
+            levels[static_cast<std::size_t>(d)].push_back(flat);
+    }
+
+    return levels;
+}
+
+// -----------------------------------------------------------------------------
+// build_forward_levels
+// -----------------------------------------------------------------------------
+std::vector<std::vector<std::int64_t>>
+build_forward_levels(const lsdtt_flowgraph_cpu& flow)
+{
+    const auto& topo   = flow.topological_order();
+    const std::int64_t N       = static_cast<std::int64_t>(topo.size());
+    const std::int64_t n_cells = static_cast<std::int64_t>(
+        flow.meta().n_rows) * flow.meta().n_cols;
+
+    std::vector<int> depth(static_cast<std::size_t>(n_cells), -1);
+
+    int max_depth = 0;
+    for (std::int64_t i = 0; i < N; ++i)
+    {
+        const std::int64_t flat = topo[static_cast<std::size_t>(i)];
+        if (depth[static_cast<std::size_t>(flat)] < 0)
+            depth[static_cast<std::size_t>(flat)] = 0;
+
+        const int d_next = depth[static_cast<std::size_t>(flat)] + 1;
+        const std::int64_t nr = flow.n_receivers(flat);
+        for (std::int64_t k = 0; k < nr; ++k)
+        {
+            const std::int64_t recv = flow.receiver_index_at(flat, k);
+            if (recv >= 0 && recv < n_cells)
+            {
+                if (depth[static_cast<std::size_t>(recv)] < d_next)
+                {
+                    depth[static_cast<std::size_t>(recv)] = d_next;
+                    max_depth = std::max(max_depth, d_next);
+                }
+            }
+        }
+    }
+
+    std::vector<std::vector<std::int64_t>> levels(
+        static_cast<std::size_t>(max_depth + 1));
+
+    for (std::int64_t i = 0; i < N; ++i)
+    {
+        const std::int64_t flat = topo[static_cast<std::size_t>(i)];
+        const int d = depth[static_cast<std::size_t>(flat)];
+        if (d >= 0)
+            levels[static_cast<std::size_t>(d)].push_back(flat);
+    }
+
+    return levels;
+}
+
 } // namespace lsdtt

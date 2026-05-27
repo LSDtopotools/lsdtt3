@@ -135,7 +135,7 @@ run_lem_step(
     }
 
     // -------------------------------------------------------------------------
-    // 4. Uplift (uniform)
+    // 3. Uplift (uniform)
     // -------------------------------------------------------------------------
     const std::vector<uint8_t>& mask = current.get_mask();
     std::vector<float>& z = current.get_data();
@@ -151,7 +151,7 @@ run_lem_step(
     }
 
     // -------------------------------------------------------------------------
-    // 5. Statistics (computed before boundary restoration so they reflect the
+    // 4. Statistics (computed before boundary restoration so they reflect the
     //    full-domain change)
     // -------------------------------------------------------------------------
     lsdtt_lem_step_stats stats{};
@@ -204,7 +204,7 @@ run_lem_step(
     }
 
     // -------------------------------------------------------------------------
-    // 6. Restore fixed-elevation boundary pixels
+    // 5. Restore fixed-elevation boundary pixels
     // -------------------------------------------------------------------------
     for (std::size_t i = 0; i < boundary_flats.size(); ++i)
     {

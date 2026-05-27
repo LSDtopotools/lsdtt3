@@ -262,6 +262,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_stream_power_cpu.cpp
     src/cpu/lsdtt_hillslope_transport_cpu.cpp
     src/cpu/lsdtt_lem_cpu.cpp
+    src/cpu/lsdtt_steady_state_cpu.cpp
+    src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)

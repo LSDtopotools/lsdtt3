@@ -45,6 +45,8 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "../src/cpu/lsdtt_steady_state_cpu.hpp"
+#include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation =
@@ -231,16 +233,22 @@ int main(int argc, char* argv[])
     help_map["grid_resolution"] = {"float","30","Cell size in metres.","Used when read_initial_dem is false."};
 
     // Initial conditions
-    bool_default_map["start_with_noise"]       = false;
+    string_default_map["initial_surface_type"] = "flat";
     float_default_map["max_initial_elevation"] = 1.0f;
+    float_default_map["noise_target_stddev"]   = 1.0f;
+    int_default_map["noise_blur_passes"]       = 6;
+    float_default_map["diamond_square_roughness"] = 0.55f;
     int_default_map["random_seed"]             = 33;
     bool_default_map["fill_initial_surface"]   = false;
     float_default_map["fill_min_slope"]        = 0.0001f;
-    help_map["start_with_noise"]       = {"bool","false","Start from a random noise surface instead of a flat surface.",""};
-    help_map["max_initial_elevation"]  = {"float","1.0","Maximum elevation of the initial noise surface (m).","Used when start_with_noise is true."};
-    help_map["random_seed"]            = {"int","33","Random seed for the initial noise surface.",""};
-    help_map["fill_initial_surface"]   = {"bool","false","Apply pit-filling to the initial surface before running.",""};
-    help_map["fill_min_slope"]         = {"float","0.0001","Minimum slope imposed by pit filling.","Used when fill_initial_surface is true."};
+    help_map["initial_surface_type"]      = {"string","flat","Initial surface type: flat, white_noise, red_noise, diamond_square.","flat = all zeros; white_noise = uniform random; red_noise = low-frequency dominated; diamond_square = fractal terrain."};
+    help_map["max_initial_elevation"]     = {"float","1.0","Max elevation of white-noise surface (m). Min is 0.","Used when initial_surface_type is white_noise."};
+    help_map["noise_target_stddev"]       = {"float","1.0","Target standard deviation of the noise surface (m).","Used when initial_surface_type is red_noise or diamond_square."};
+    help_map["noise_blur_passes"]         = {"int","6","Number of blur passes for red_noise surface generation.",""};
+    help_map["diamond_square_roughness"]  = {"float","0.55","Roughness exponent (0-1) for diamond-square surface. Higher = rougher.",""};
+    help_map["random_seed"]               = {"int","33","Random seed for the initial noise surface.",""};
+    help_map["fill_initial_surface"]      = {"bool","false","Apply pit-filling to the initial surface before running.",""};
+    help_map["fill_min_slope"]            = {"float","0.0001","Minimum slope imposed by pit filling.","Used when fill_initial_surface is true."};
 
     // Process switches
     bool_default_map["enable_d8_fluvial_erosion"]    = true;
@@ -273,6 +281,24 @@ int main(int argc, char* argv[])
     help_map["incision_threshold_area"]     = {"float","0","Minimum drainage area (m^2) for fluvial incision. 0 = no threshold.","Also defines channel pixels for hillslope coupling."};
     help_map["divide_area_by_dx"]           = {"bool","true","Divide drainage area by cell size to get specific area.","Applies to both fluvial incision and hillslope coupling threshold."};
     help_map["slope_clamp"]                 = {"float","1e-5","Minimum slope used as Newton-Raphson fallback in stream power solver.",""};
+
+    // Analytical steady-state
+    bool_default_map["run_steady_state"]       = false;
+    string_default_map["steady_state_mode"]    = "K";
+    float_default_map["target_relief"]         = 1000.0f;
+    float_default_map["baselevel_elevation"]   = 0.0f;
+    help_map["run_steady_state"]     = {"bool","false","Compute analytical steady-state topography instead of running a time-stepping LEM.","Uses the flow algorithm selected by enable_d8_fluvial_erosion or enable_dinf_fluvial_erosion. Writes _steady_state_elevation.tif and returns."};
+    help_map["steady_state_mode"]    = {"string","K","Steady-state solver mode: K or relief.","K-mode: K (erodibility) is specified by the user. Relief-mode: target_relief is specified and K is back-calculated."};
+    help_map["target_relief"]        = {"float","1000","Target maximum relief (m) for relief-mode steady-state.","The highest point in the output raster will be baselevel_elevation + target_relief."};
+    help_map["baselevel_elevation"]  = {"float","0","Elevation (m) assigned to outlet nodes in the steady-state solution.",""};
+
+    // Hillslope steady-state (applied after fluvial steady-state when run_steady_state is true)
+    bool_default_map["run_hillslope_steady_state"]  = false;
+    float_default_map["hillslope_ss_tolerance"]     = 1e-4f;
+    int_default_map["hillslope_ss_max_iterations"]  = 10000;
+    help_map["run_hillslope_steady_state"]   = {"bool","false","After the fluvial steady-state, solve for hillslope elevations using D*nabla^2*z = -U (linear) or Roering 1999 nonlinear transport. Requires run_steady_state: true and incision_threshold_area > 0.","Channel pixels (area >= incision_threshold_area) become Dirichlet BCs with their fluvial steady-state elevations."};
+    help_map["hillslope_ss_tolerance"]       = {"float","1e-4","Convergence criterion for hillslope steady-state: max|delta_z| over hillslope pixels.",""};
+    help_map["hillslope_ss_max_iterations"]  = {"int","10000","Maximum Jacobi iterations for hillslope steady-state solver.",""};
 
     // Timestepping
     float_default_map["timestep"]             = 100.0f;
@@ -382,11 +408,11 @@ int main(int argc, char* argv[])
         const int   nc   = ifs["ncols"];
         const float dx   = ff["grid_resolution"];
 
-        std::cout << "\nBuilding synthetic "
-                  << (bf["start_with_noise"] ? "noise" : "flat") << " surface: "
+        const std::string surf_type = sf["initial_surface_type"];
+        std::cout << "\nBuilding synthetic " << surf_type << " surface: "
                   << nr << " x " << nc << " @ " << dx << " m\n";
 
-        if (bf["start_with_noise"])
+        if (surf_type == "white_noise")
         {
             dem = lsdtt::generate_uniform_random_noise_surface(
                 nr, nc, static_cast<double>(dx),
@@ -396,15 +422,38 @@ int main(int argc, char* argv[])
                 ifs["n_threads"]
             );
         }
+        else if (surf_type == "red_noise")
+        {
+            dem = lsdtt::generate_red_noise_surface(
+                nr, nc, static_cast<double>(dx),
+                ifs["random_seed"],
+                0.0,
+                static_cast<double>(ff["noise_target_stddev"]),
+                ifs["noise_blur_passes"],
+                ifs["n_threads"]
+            );
+        }
+        else if (surf_type == "diamond_square")
+        {
+            dem = lsdtt::generate_diamond_square_surface(
+                nr, nc, static_cast<double>(dx),
+                ifs["random_seed"],
+                static_cast<double>(ff["diamond_square_roughness"]),
+                1.0,
+                0.0,
+                static_cast<double>(ff["noise_target_stddev"]),
+                ifs["n_threads"]
+            );
+        }
         else
         {
-            // Flat surface (all zeros)
+            // flat (default) — all zeros
             lsdtt::lsdtt_raster_meta meta;
-            meta.n_rows    = nr;
-            meta.n_cols    = nc;
-            meta.cell_size = static_cast<double>(dx);
-            meta.x_min     = 0.0;
-            meta.y_min     = 0.0;
+            meta.n_rows        = nr;
+            meta.n_cols        = nc;
+            meta.cell_size     = static_cast<double>(dx);
+            meta.x_min         = 0.0;
+            meta.y_min         = 0.0;
             meta.no_data_value = -9999.0;
 
             const std::size_t n = static_cast<std::size_t>(nr) * nc;
@@ -429,6 +478,227 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
             return 1;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Analytical steady-state (optional — exits after writing output)
+    // -------------------------------------------------------------------------
+    if (bf["run_steady_state"])
+    {
+        std::cout << "\n--- Analytical steady-state mode ---\n";
+
+        // Ensure the DEM is filled even if fill_initial_surface was false
+        if (!bf["fill_initial_surface"])
+        {
+            std::cout << "Filling surface for flow routing (min_slope="
+                      << ff["fill_min_slope"] << ")...\n";
+            try { dem = lsdtt::fill_pits(dem, ff["fill_min_slope"], ifs["n_threads"]); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        lsdtt::lsdtt_fluvial_steady_state_options ss_opts;
+        ss_opts.U                   = ff["uplift_rate"];
+        ss_opts.K                   = ff["erodibility"];
+        ss_opts.m                   = ff["m_exponent"];
+        ss_opts.n                   = ff["n_exponent"];
+        ss_opts.relief_mode         = (sf["steady_state_mode"] == "relief");
+        ss_opts.target_relief       = ff["target_relief"];
+        ss_opts.baselevel_elevation = ff["baselevel_elevation"];
+        ss_opts.divide_area_by_dx   = bf["divide_area_by_dx"];
+        ss_opts.n_threads           = ifs["n_threads"];
+
+        const bool use_dinf = bf["enable_dinf_fluvial_erosion"];
+        lsdtt::lsdtt_fluvial_steady_state_result ss_result;
+        std::vector<double> area_d;  // stored for hillslope channel-mask computation
+
+        if (!use_dinf)
+        {
+            std::cout << "Building D8 flow graph...\n";
+            lsdtt::lsdtt_flowinfo_options fi_opts;
+            fi_opts.boundary_conditions = sf["boundary_conditions"];
+            fi_opts.build_s_vector      = false;
+            fi_opts.n_threads           = ifs["n_threads"];
+            lsdtt::lsdtt_flowinfo flow(
+                dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), fi_opts);
+
+            area_d    = flow.accumulate();
+            std::cout << "Computing D8 steady-state elevation...\n";
+            ss_result = lsdtt::compute_d8_fluvial_steady_state(flow, ss_opts);
+        }
+        else
+        {
+            std::cout << "Building D-infinity flow graph...\n";
+            lsdtt::lsdtt_flowgraph_options fg_opts;
+            fg_opts.method              = lsdtt::lsdtt_flowgraph_method::d_infinity;
+            fg_opts.boundary_conditions = sf["boundary_conditions"];
+            fg_opts.n_threads           = ifs["n_threads"];
+            lsdtt::lsdtt_flowgraph_cpu flow(
+                dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), fg_opts);
+
+            area_d    = flow.accumulate();
+            std::cout << "Computing D-infinity steady-state elevation...\n";
+            ss_result = lsdtt::compute_dinf_fluvial_steady_state(flow, ss_opts);
+        }
+
+        const std::string mode_str = ss_opts.relief_mode ? "relief" : "K";
+        const std::string flow_str = use_dinf ? "d_infinity" : "d8";
+
+        std::cout << "\nSteady-state result:\n"
+                  << "  mode           : " << mode_str << "\n"
+                  << "  flow_algorithm : " << flow_str << "\n"
+                  << "  K_used         : " << ss_result.K_used << "\n"
+                  << "  computed_relief: " << ss_result.computed_relief << " m\n"
+                  << "  max_unit_height: " << ss_result.max_unit_height << "\n";
+
+        const std::string ss_elev_path = out_path(pp, "_steady_state_elevation");
+        std::cout << "Writing steady-state elevation: " << ss_elev_path << "\n";
+        try { write_raster(loader, ss_result.elevation, ss_elev_path, out_fmt); }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing steady-state elevation failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        if (bf["write_elevation_stats_csv"])
+        {
+            const std::string ss_csv = out_path(pp, "_steady_state_stats", ".csv");
+            std::cout << "Writing steady-state stats: " << ss_csv << "\n";
+            const std::vector<std::string> ss_headers = {
+                "mode", "flow_algorithm", "U", "K_input", "K_used",
+                "m", "n", "target_relief", "computed_relief", "max_unit_height"
+            };
+            const std::vector<std::vector<std::string>> ss_rows = {{
+                mode_str, flow_str,
+                std::to_string(ss_opts.U),
+                std::to_string(ss_opts.K),
+                std::to_string(ss_result.K_used),
+                std::to_string(ss_opts.m),
+                std::to_string(ss_opts.n),
+                std::to_string(ss_opts.target_relief),
+                std::to_string(ss_result.computed_relief),
+                std::to_string(ss_result.max_unit_height)
+            }};
+            try { loader.write_csv(ss_csv, ss_headers, ss_rows); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: steady-state stats CSV write failed: "
+                          << e.what() << "\n";
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Hillslope steady-state (optional post-step)
+        // ---------------------------------------------------------------------
+        if (bf["run_hillslope_steady_state"])
+        {
+            const float thresh = ff["incision_threshold_area"];
+            if (thresh <= 0.0f)
+            {
+                std::cerr << "Warning: run_hillslope_steady_state requires "
+                             "incision_threshold_area > 0. Skipping hillslope solve.\n";
+            }
+            else
+            {
+                // Build channel mask from drainage area
+                const lsdtt::lsdtt_raster_meta& hs_meta = ss_result.elevation.get_meta();
+                const float               dx_hs    = static_cast<float>(hs_meta.cell_size);
+                const int64_t             n_hs     = static_cast<int64_t>(hs_meta.n_rows)
+                                                     * hs_meta.n_cols;
+                const std::vector<uint8_t>& hs_mask = ss_result.elevation.get_mask();
+
+                std::vector<uint8_t> is_channel(static_cast<size_t>(n_hs), 0);
+                int64_t n_chan = 0;
+                for (int64_t flat = 0; flat < n_hs; ++flat)
+                {
+                    if (!hs_mask[static_cast<size_t>(flat)]) continue;
+                    double A = area_d[static_cast<size_t>(flat)];
+                    if (bf["divide_area_by_dx"]) A /= static_cast<double>(dx_hs);
+                    if (A >= static_cast<double>(thresh))
+                    {
+                        is_channel[static_cast<size_t>(flat)] = 1;
+                        ++n_chan;
+                    }
+                }
+
+                std::cout << "\n--- Hillslope steady-state ---\n";
+                std::cout << "  Channel pixels (A >= " << thresh << "): " << n_chan
+                          << "  Hillslope pixels: " << (n_hs - n_chan) << "\n";
+
+                lsdtt::lsdtt_hillslope_steady_state_options hs_opts;
+                hs_opts.D                   = ff["hillslope_diffusivity"];
+                hs_opts.U                   = ff["uplift_rate"];
+                hs_opts.Sc                  = ff["critical_hillslope_slope"];
+                hs_opts.nonlinear           = bf["enable_nonlinear_hillslopes"];
+                hs_opts.boundary_conditions = sf["boundary_conditions"];
+                hs_opts.tolerance           = ff["hillslope_ss_tolerance"];
+                hs_opts.max_iterations      = ifs["hillslope_ss_max_iterations"];
+                hs_opts.n_threads           = ifs["n_threads"];
+
+                const std::string hs_mode = hs_opts.nonlinear ? "Roering1999" : "linear";
+                std::cout << "  Transport mode : " << hs_mode << "\n"
+                          << "  D=" << hs_opts.D << "  U=" << hs_opts.U;
+                if (hs_opts.nonlinear)
+                    std::cout << "  Sc=" << hs_opts.Sc;
+                std::cout << "  tol=" << hs_opts.tolerance
+                          << "  max_iter=" << hs_opts.max_iterations << "\n";
+
+                auto hs_result = lsdtt::compute_hillslope_steady_state(
+                    ss_result.elevation, is_channel, hs_opts);
+
+                std::cout << "  Iterations: " << hs_result.n_iterations
+                          << "  max|Δz|: " << hs_result.final_residual
+                          << "  converged: " << (hs_result.converged ? "yes" : "NO") << "\n";
+
+                if (!hs_result.converged)
+                    std::cerr << "Warning: hillslope solver did not converge within "
+                              << hs_opts.max_iterations << " iterations.\n";
+
+                const std::string hs_path = out_path(pp, "_hillslope_steady_state_elevation");
+                std::cout << "Writing hillslope steady-state elevation: " << hs_path << "\n";
+                try { write_raster(loader, hs_result.elevation, hs_path, out_fmt); }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing hillslope elevation failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+
+                if (bf["write_elevation_stats_csv"])
+                {
+                    const std::string hs_csv = out_path(pp, "_hillslope_steady_state_stats", ".csv");
+                    std::cout << "Writing hillslope stats: " << hs_csv << "\n";
+                    const std::vector<std::string> hs_headers = {
+                        "transport_mode", "D", "U", "Sc",
+                        "incision_threshold_area", "n_channel_pixels",
+                        "n_iterations", "final_residual", "converged"
+                    };
+                    const std::vector<std::vector<std::string>> hs_rows = {{
+                        hs_mode,
+                        std::to_string(hs_opts.D),
+                        std::to_string(hs_opts.U),
+                        std::to_string(hs_opts.Sc),
+                        std::to_string(thresh),
+                        std::to_string(n_chan),
+                        std::to_string(hs_result.n_iterations),
+                        std::to_string(hs_result.final_residual),
+                        hs_result.converged ? "1" : "0"
+                    }};
+                    try { loader.write_csv(hs_csv, hs_headers, hs_rows); }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: hillslope stats CSV failed: "
+                                  << e.what() << "\n";
+                    }
+                }
+            }
+        }
+
+        pp.print_parameters();
+        return 0;
     }
 
     // -------------------------------------------------------------------------
