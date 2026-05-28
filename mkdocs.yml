@@ -1,0 +1,72 @@
+site_name: LSDTopoTools3
+site_description: Topographic analysis tools for geomorphology
+site_author: Simon M. Mudd
+repo_url: https://github.com/LSDtopotools/lsdtt3
+repo_name: LSDtopotools/lsdtt3
+docs_dir: docs
+use_directory_urls: false
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - What is lsdtt3:
+    - Overview: overview.md
+  - Installation:
+    - Installation hub: installing_locally.md
+    - Beta testing (Windows / WSL2): beta_testing_notes.md
+    - Windows (WSL2): lsdtt3_in_windows.md
+    - macOS (Multipass): lsdtt3_in_macos.md
+    - WSL2 notes: wsl2_notes.md
+    - Debian packaging: debian_packaging.md
+  - Command-line reference:
+    - DEM preparation:
+      - Raster preprocessing: cli_reference_lsdtt_raster_preprocessing.md
+    - Surface analysis:
+      - Surface metrics: cli_reference_lsdtt_surface_metrics.md
+      - Mountain front: cli_reference_lsdtt_mountain_front.md
+    - Flow routing and drainage:
+      - Drainage analysis: cli_reference_lsdtt_drainage_analysis.md
+      - Channel extraction: cli_reference_lsdtt_channel_extraction.md
+      - Stream burning: cli_reference_lsdtt_stream_burning.md
+      - Basin extraction: cli_reference_lsdtt_basin_extraction.md
+      - Basin statistics: cli_reference_lsdtt_basin_stats.md
+    - Channel network analysis:
+      - Channel network analysis: cli_reference_lsdtt_channel_network_analysis.md
+      - Chi analysis: cli_reference_lsdtt_chi_analysis.md
+      - Cross sections: cli_reference_lsdtt_cross_sections.md
+    - Tidal / marsh:
+      - Marsh topography: cli_reference_lsdtt_marsh_topography.md
+    - Cosmogenic nuclides:
+      - Cosmo tool: cli_reference_lsdtt_cosmo_tool.md
+      - Cosmo prediction: cli_reference_lsdtt_cosmo_prediction.md
+      - CRN column tool: cli_reference_lsdtt_crn_column_tool.md
+    - Landscape evolution:
+      - Landscape evolution model: cli_reference_lsdtt_lem.md
+  - Developer notes:
+    - Architecture: lsdtt3_architecture.md
+    - Developer onboarding: developer_onboarding.md
+    - Backend abstraction rules: backend_abstraction_rules.md
+    - Flow routing (D8): using_lsdtt_flowinfo.md
+    - Utilities layer: lsdtt_utils_guide.md
