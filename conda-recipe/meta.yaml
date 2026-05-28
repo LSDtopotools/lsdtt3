@@ -1,0 +1,76 @@
+# conda-recipe/meta.yaml
+#
+# Conda-forge build recipe for lsdtt3.
+#
+# Status: PLACEHOLDER — not yet submitted to conda-forge.
+#         The repository must be public before a conda-forge submission.
+#
+# When the repo goes public:
+#   1. Fill in the sha256 checksum for the source tarball.
+#   2. Open a PR against https://github.com/conda-forge/staged-recipes
+#      adding this recipe under recipes/lsdtt3/meta.yaml.
+#   3. The conda-forge bot will run the build, and on merge the package
+#      becomes available via:  conda install -c conda-forge lsdtt3
+#
+# To test this recipe locally before submitting:
+#   conda install conda-build
+#   conda build conda-recipe/
+#
+# -------------------------------------------------------------------------
+
+{% set version = "0.2.0" %}
+
+package:
+  name: lsdtt3
+  version: {{ version }}
+
+source:
+  url: https://github.com/LSDtopotools/lsdtt3/archive/refs/tags/v{{ version }}.tar.gz
+  # sha256: fill_this_in_before_submitting
+  # Run: curl -fsSL <url> | sha256sum
+
+build:
+  number: 0
+  # Windows is not yet supported (the build system targets Linux/macOS).
+  skip: true  # [win]
+
+requirements:
+  build:
+    - {{ compiler('cxx') }}
+    - cmake >=3.15
+    - make                # [unix]
+    - pkg-config          # [unix]
+  host:
+    - gdal
+    - fftw
+    - libopencv
+    - eigen
+    - libnetcdf
+  run:
+    # Eigen3 is header-only — no runtime dependency.
+    - gdal
+    - fftw
+    - libopencv
+    - libnetcdf
+
+test:
+  commands:
+    - lsdtt-channel-extraction --help
+    - lsdtt-basin-extraction --help
+    - lsdtt-drainage-analysis --help
+
+about:
+  home: https://github.com/LSDtopotools/lsdtt3
+  license: GPL-3.0-only
+  license_file: LICENSE
+  summary: LSDTopoTools3 — topographic analysis for geomorphology
+  description: |
+    LSDTopoTools3 (lsdtt3) is a C++17 library and collection of command-line
+    tools for topographic analysis in geomorphology. It provides routines for
+    channel extraction, basin delineation, chi analysis, cosmogenic nuclide
+    analysis, hillslope metrics, spectral analysis, and more.
+  doc_url: https://github.com/LSDtopotools/lsdtt3/tree/main/docs
+
+extra:
+  recipe-maintainers:
+    - simon-m-mudd

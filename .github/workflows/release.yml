@@ -1,0 +1,89 @@
+name: Build and release
+
+# Triggers:
+#   - push of a version tag (e.g. git tag v0.2.1 && git push origin v0.2.1)
+#   - manual run from the GitHub Actions tab (Actions → Build and release → Run workflow)
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the artifact to (leave blank to only build)"
+        required: false
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # Runtime and build dependencies.
+      #
+      # These are the same packages that install.sh tells beta testers to
+      # install, so the compiled binaries will work against their system
+      # libraries without any bundling.
+      # ------------------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            cmake build-essential pkg-config \
+            libgdal-dev \
+            libfftw3-dev \
+            libopencv-dev \
+            libeigen3-dev \
+            libnetcdf-dev \
+            libgomp1
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLSDTT_OPENCV=ON \
+            -DLSDTT_EIGEN=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      # ------------------------------------------------------------------
+      # Collect all lsdtt-* executables into a versioned tarball.
+      # The tarball unpacks to:
+      #   lsdtt3-ubuntu-22.04/
+      #     bin/
+      #       lsdtt-channel-extraction
+      #       lsdtt-basin-extraction
+      #       ...
+      #     install.sh
+      # ------------------------------------------------------------------
+      - name: Package
+        run: |
+          PKG="lsdtt3-ubuntu-22.04"
+          mkdir -p "$PKG/bin"
+          cp build/lsdtt-* "$PKG/bin/"
+          cp install.sh "$PKG/"
+          tar czf "${PKG}.tar.gz" "$PKG"
+
+      # ------------------------------------------------------------------
+      # Upload the tarball as a release asset.
+      # On a tag push this creates (or updates) the GitHub Release.
+      # On a manual run without a tag it uploads as a workflow artifact
+      # instead, visible under the Actions run summary.
+      # ------------------------------------------------------------------
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lsdtt3-ubuntu-22.04.tar.gz
+          generate_release_notes: true
+
+      - name: Upload as workflow artifact (manual run)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsdtt3-ubuntu-22.04
+          path: lsdtt3-ubuntu-22.04.tar.gz
+          retention-days: 14

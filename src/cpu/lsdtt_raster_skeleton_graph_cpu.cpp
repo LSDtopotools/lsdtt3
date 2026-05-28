@@ -2538,6 +2538,338 @@ compute_skeleton_segment_strength(
 
 
 // -----------------------------------------------------------------------------
+// compute_skeleton_topology
+// -----------------------------------------------------------------------------
+skeleton_topology_summary
+compute_skeleton_topology(
+    const std::vector<skeleton_segment>& segments)
+{
+    skeleton_topology_summary summary;
+
+    if (segments.empty())
+        return summary;
+
+    // -------------------------------------------------------------------------
+    // Walk every segment to:
+    //   (a) classify it (singleton / loop / open),
+    //   (b) register its endpoint nodes in a map keyed by (row, col),
+    //   (c) accumulate segment lengths and orientation vectors.
+    //
+    // Node registration
+    // -----------------
+    // We map each unique pixel position to its crossing number (CN).  The CN is
+    // a property of the raster pixel and is the same no matter which segment
+    // reports it, so the first encounter is sufficient.
+    //
+    // Node classes:
+    //   CN = 0  -> singleton isolated pixel (vertex only, not a graph edge)
+    //   CN = 1  -> endpoint / dangling tip
+    //   CN = 2  -> chain pixel (interior of a segment, not stored as a node)
+    //   CN >= 3 -> junction / branch point
+    //
+    // Segment classes (after extraction by extract_skeleton_segments):
+    //   Singleton : is_loop=false, both endpoints have CN=0, 1 pixel
+    //   Loop      : is_loop=true,  start_node == end_node, CN=2 at both
+    //   Open      : all remaining (CN=1..n at endpoints, start != end or self-
+    //               returning with CN>=3 at both ends)
+    // -------------------------------------------------------------------------
+    using node_key = std::pair<int, int>;
+
+    // node_cn maps unique node (row, col) -> crossing number.
+    std::map<node_key, int> node_cn;
+
+    int n_singleton_segs = 0;
+    int n_loop_segs      = 0;
+    int n_open_segs      = 0;
+
+    // Segment pixel counts for length statistics.
+    // Singletons are excluded because they are not graph edges.
+    std::vector<double> seg_pixel_counts;
+    seg_pixel_counts.reserve(segments.size());
+
+    // -------------------------------------------------------------------------
+    // Orientation accumulation via doubled-angle circular statistics.
+    //
+    // For undirected line orientations theta in [0, pi), the standard trick is
+    // to double the angles, accumulate unit vectors in the complex plane, then
+    // halve the resultant angle to recover the dominant orientation.
+    //
+    //   sum_k w_k exp(2i theta_k)  =  (sum_cos) + i (sum_sin)
+    //
+    // The magnitude of the normalised resultant:
+    //   R = sqrt(sum_cos^2 + sum_sin^2) / sum_w
+    // is the mean resultant length, also called the anisotropy index.
+    //   R = 0 -> orientations uniformly distributed (isotropic)
+    //   R = 1 -> all orientations identical (perfectly aligned)
+    //
+    // Each segment is weighted by its pixel count so that long segments
+    // contribute more than short ones.
+    //
+    // Segment orientation is taken from the chord between start_node and
+    // end_node.  Loop segments and zero-chord self-returning open segments are
+    // excluded (they carry no net directional information).
+    //
+    // Reference: Mardia & Jupp (2000), Directional Statistics, Wiley, sec. 2.3.
+    // -------------------------------------------------------------------------
+    double sum_cos = 0.0;
+    double sum_sin = 0.0;
+    double sum_w   = 0.0;
+
+    for (const skeleton_segment& seg : segments)
+    {
+        if (seg.pixels.empty())
+            continue;
+
+        const node_key k_start(seg.start_node.row, seg.start_node.col);
+        const node_key k_end  (seg.end_node.row,   seg.end_node.col);
+
+        // Register both endpoint node positions.
+        // For singletons and pure loops start == end, so only one entry is made.
+        if (node_cn.find(k_start) == node_cn.end())
+            node_cn[k_start] = seg.start_node.crossing_number;
+
+        if (node_cn.find(k_end) == node_cn.end())
+            node_cn[k_end] = seg.end_node.crossing_number;
+
+        // -----------------------------------------------------------------
+        // Singleton detection:
+        //   A singleton is an isolated degree-0 pixel with CN=0 on both ends
+        //   and is_loop=false.  It contributes one vertex but zero graph edges.
+        //   Exclude it from all per-segment statistics.
+        // -----------------------------------------------------------------
+        if (!seg.is_loop &&
+            seg.start_node.crossing_number == 0 &&
+            seg.end_node.crossing_number   == 0)
+        {
+            ++n_singleton_segs;
+            continue;
+        }
+
+        // -----------------------------------------------------------------
+        // Classify as loop or open, then accumulate length and orientation.
+        // -----------------------------------------------------------------
+        if (seg.is_loop)
+            ++n_loop_segs;
+        else
+            ++n_open_segs;
+
+        const double len =
+            static_cast<double>(seg.pixels.size());
+
+        seg_pixel_counts.push_back(len);
+
+        // Orientation: open segments only, using chord from start to end node.
+        // Loop segments have start == end so the chord is zero; self-returning
+        // open segments (attached small loops at junctions) likewise have zero
+        // chord.  The chord_len > 0 guard handles both cases.
+        if (!seg.is_loop)
+        {
+            const double dr = static_cast<double>(
+                seg.end_node.row - seg.start_node.row);
+            const double dc = static_cast<double>(
+                seg.end_node.col - seg.start_node.col);
+
+            const double chord_len = std::sqrt(dr * dr + dc * dc);
+
+            if (chord_len > 0.0)
+            {
+                // atan2 in (-pi, pi). Fold to [0, pi) for undirected orientation.
+                double theta = std::atan2(dc, dr);
+                if (theta < 0.0) theta += 3.14159265358979323846;
+
+                const double two_theta = 2.0 * theta;
+                sum_cos += len * std::cos(two_theta);
+                sum_sin += len * std::sin(two_theta);
+                sum_w   += len;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Count endpoint and junction nodes from the registered node map.
+    //
+    // CN = 1  -> endpoint (dangling tip, counts as a topological free end)
+    // CN >= 3 -> junction (branch point)
+    // CN = 2  -> pure-loop seeds; not endpoints or junctions in the graph sense
+    // CN = 0  -> singleton pixels; isolated vertices, not topological nodes
+    // -------------------------------------------------------------------------
+    int n_endpoint_nodes = 0;
+    int n_junction_nodes = 0;
+
+    for (const auto& kv : node_cn)
+    {
+        const int cn = kv.second;
+        if      (cn == 1) ++n_endpoint_nodes;
+        else if (cn >= 3) ++n_junction_nodes;
+    }
+
+    // -------------------------------------------------------------------------
+    // Graph counts for the Euler formula.
+    //
+    //   V = total unique node positions (all CN classes, including singletons
+    //       and loop seeds with CN=2).
+    //   E = true graph edges = non-singleton segments (open + loop).
+    //   C = number of connected components, computed below.
+    // -------------------------------------------------------------------------
+    const int V = static_cast<int>(node_cn.size());
+    const int E = n_open_segs + n_loop_segs;
+
+    // -------------------------------------------------------------------------
+    // Connected components.
+    //
+    // compute_skeleton_segment_component_ids_ performs a BFS over the segment
+    // adjacency graph: two segments are adjacent when they share a node
+    // (row, col) coordinate.  Each singleton becomes its own component because
+    // it shares its unique position with no other segment.
+    //
+    // Component IDs are assigned as 0, 1, 2, … so the total count is
+    // max_id + 1 when the list is non-empty.
+    // -------------------------------------------------------------------------
+    const std::vector<int> comp_ids =
+        compute_skeleton_segment_component_ids_(segments);
+
+    int max_comp_id = -1;
+    for (const int c : comp_ids)
+    {
+        if (c > max_comp_id) max_comp_id = c;
+    }
+
+    const int C = (max_comp_id >= 0) ? max_comp_id + 1 : 0;
+
+    // -------------------------------------------------------------------------
+    // First Betti number (cycle rank, beta_1).
+    //
+    // For a finite graph with V vertices, E edges, and C connected components:
+    //   beta_1 = E - V + C
+    //
+    // This equals the dimension of the cycle space — the minimum number of edges
+    // that must be removed to make the graph a spanning forest.  Each independent
+    // loop in the skeleton contributes exactly 1 to beta_1.
+    //
+    // Consistency check for special cases:
+    //   Singleton alone:   E=0, V=1, C=1  -> beta_1 = 0  (correct, no loops)
+    //   Isolated loop:     E=1, V=1, C=1  -> beta_1 = 1  (correct, one cycle)
+    //   Open path A-B:     E=1, V=2, C=1  -> beta_1 = 0  (correct, acyclic)
+    //   Triangle A-B-C-A:  E=3, V=3, C=1  -> beta_1 = 1  (correct)
+    //
+    // Reference: Hatcher (2002), Algebraic Topology, Cambridge UP, section 2.2.
+    // -------------------------------------------------------------------------
+    const int beta_1 = E - V + C;
+
+    // Graph Euler characteristic chi = beta_0 - beta_1, where beta_0 = C.
+    const int chi = C - beta_1;
+
+    // -------------------------------------------------------------------------
+    // Segment length statistics.
+    //
+    // Lengths are in pixels (pixel count along the ordered segment chain).
+    // This is a proxy for arc length; callers can multiply by cell size
+    // in metres for physical units.
+    // -------------------------------------------------------------------------
+    double mean_len  = 0.0;
+    double std_len   = 0.0;
+    double total_len = 0.0;
+
+    if (!seg_pixel_counts.empty())
+    {
+        for (const double l : seg_pixel_counts)
+            total_len += l;
+
+        mean_len = total_len /
+            static_cast<double>(seg_pixel_counts.size());
+
+        double var = 0.0;
+        for (const double l : seg_pixel_counts)
+        {
+            const double d = l - mean_len;
+            var += d * d;
+        }
+        var /= static_cast<double>(seg_pixel_counts.size());
+        std_len = std::sqrt(var);
+    }
+
+    // -------------------------------------------------------------------------
+    // Orientation anisotropy and dominant direction.
+    //
+    // Normalise the accumulated doubled-angle sum to get the mean resultant:
+    //   (rx, ry) = (sum_cos / sum_w, sum_sin / sum_w)
+    //   R = sqrt(rx^2 + ry^2) in [0, 1]
+    //
+    // Recover the dominant undirected orientation from the resultant angle phi:
+    //   phi = atan2(ry, rx) in (-pi, pi)
+    //   theta* = phi / 2               (halve the doubled angle)
+    //   if theta* < 0: theta* += pi    (map to [0, pi))
+    //
+    // The dominant orientation in degrees is theta* * 180 / pi in [0, 180).
+    // -------------------------------------------------------------------------
+    double anisotropy               = 0.0;
+    double dominant_orientation_deg = 0.0;
+
+    if (sum_w > 0.0)
+    {
+        const double rx = sum_cos / sum_w;
+        const double ry = sum_sin / sum_w;
+
+        anisotropy = std::sqrt(rx * rx + ry * ry);
+
+        // atan2 of the doubled-angle resultant, then halve to get [0, pi).
+        constexpr double pi = 3.14159265358979323846;
+        double phi      = std::atan2(ry, rx);
+        double theta_star = phi / 2.0;
+        if (theta_star < 0.0) theta_star += pi;
+
+        dominant_orientation_deg = theta_star * (180.0 / pi);
+    }
+
+    // -------------------------------------------------------------------------
+    // Derived ratios.
+    //
+    // branching_ratio: proportion of all topologically significant nodes that
+    //   are junctions.  Low for open/dendritic patterns, high for labyrinthine.
+    //
+    // loop_fraction: proportion of proper segments (non-singleton) that are
+    //   closed loops.  Distinct from beta_1: a single ring has loop_fraction=1,
+    //   but a figure-eight has loop_fraction=0 yet beta_1=2.
+    // -------------------------------------------------------------------------
+    const int topo_nodes = n_endpoint_nodes + n_junction_nodes;
+    const double branching_ratio =
+        topo_nodes > 0
+            ? static_cast<double>(n_junction_nodes) /
+              static_cast<double>(topo_nodes)
+            : 0.0;
+
+    const int n_proper_segs = n_open_segs + n_loop_segs;
+    const double loop_fraction =
+        n_proper_segs > 0
+            ? static_cast<double>(n_loop_segs) /
+              static_cast<double>(n_proper_segs)
+            : 0.0;
+
+    // -------------------------------------------------------------------------
+    // Pack results.
+    // -------------------------------------------------------------------------
+    summary.n_segments             = n_singleton_segs + n_open_segs + n_loop_segs;
+    summary.n_open_segments        = n_open_segs;
+    summary.n_loop_segments        = n_loop_segs;
+    summary.n_singleton_segments   = n_singleton_segs;
+    summary.n_endpoint_nodes       = n_endpoint_nodes;
+    summary.n_junction_nodes       = n_junction_nodes;
+    summary.n_connected_components = C;
+    summary.cycle_rank             = beta_1;
+    summary.euler_characteristic   = chi;
+    summary.branching_ratio        = branching_ratio;
+    summary.loop_fraction          = loop_fraction;
+    summary.mean_segment_length_pixels  = mean_len;
+    summary.std_segment_length_pixels   = std_len;
+    summary.total_length_pixels         = total_len;
+    summary.orientation_anisotropy      = anisotropy;
+    summary.dominant_orientation_degrees = dominant_orientation_deg;
+
+    return summary;
+}
+
+
+// -----------------------------------------------------------------------------
 // estimate_skeleton_endpoint_tangents
 // -----------------------------------------------------------------------------
 std::vector<skeleton_endpoint_tangent>

@@ -318,6 +318,92 @@ compute_skeleton_segment_strength(
 
 
 // -----------------------------------------------------------------------------
+// skeleton_topology_summary
+//
+// Topological and geometric summary of a pruned skeleton treated as a graph.
+//
+// The skeleton is modelled as a planar graph:
+//   - Vertices (V): unique pixel positions with crossing number != 2.
+//       CN = 1  -> endpoint (dangling tip)
+//       CN >= 3 -> junction (branch point)
+//       CN = 0  -> singleton (isolated pixel; vertex only, no edges)
+//   - Edges (E): segments connecting non-chain pixels (open and loop segments).
+//     Singleton segments are not counted as edges.
+//   - Components (C): connected components of the segment graph.
+//
+// First Betti number (cycle rank):
+//   beta_1 = E - V + C
+//
+//   This is the dimension of the cycle space, i.e. the number of independent
+//   loops that cannot be contracted to a point without leaving the graph.
+//   Reference: Hatcher (2002), Algebraic Topology, Cambridge UP, section 2.2.
+//
+// Graph Euler characteristic:
+//   chi = beta_0 - beta_1 = C - beta_1 = V - E
+//
+// Interpretation for peat-pattern discrimination:
+//   beta_1 ~ 0         -> open dendritic network  (degraded hagged bog)
+//   beta_1 large       -> many enclosed patches   (near-intact pool-hummock bog)
+//   branching_ratio ~0 -> stripe-like structure   (artificial drains, string bog)
+//   branching_ratio ~1 -> labyrinthine / branching
+//   anisotropy ~0      -> isotropic pattern       (natural cracks)
+//   anisotropy ~1      -> directionally aligned   (drains, string-bog ridges)
+// -----------------------------------------------------------------------------
+struct skeleton_topology_summary
+{
+    // Segment counts
+    int n_segments           = 0;   // total segments (all types)
+    int n_open_segments      = 0;   // open chains (endpoint or junction terminated)
+    int n_loop_segments      = 0;   // closed loops (is_loop == true)
+    int n_singleton_segments = 0;   // isolated degree-0 pixels (not graph edges)
+
+    // Node counts (unique pixel positions by topological class)
+    int n_endpoint_nodes       = 0; // crossing number == 1
+    int n_junction_nodes       = 0; // crossing number >= 3
+    int n_connected_components = 0; // connected components C
+
+    // First Betti number: beta_1 = E - V + C (number of independent cycles)
+    int cycle_rank           = 0;
+
+    // Graph Euler characteristic: chi = C - cycle_rank = V - E
+    int euler_characteristic = 0;
+
+    // branching_ratio: n_junctions / (n_endpoints + n_junctions) in [0, 1]
+    double branching_ratio   = 0.0;
+
+    // loop_fraction: n_loop_segments / (n_open + n_loop) in [0, 1]
+    double loop_fraction     = 0.0;
+
+    // Segment length in pixels (open and loop segments; singletons excluded)
+    double mean_segment_length_pixels = 0.0;
+    double std_segment_length_pixels  = 0.0;
+    double total_length_pixels        = 0.0;
+
+    // Orientation anisotropy from doubled-angle circular statistics in [0, 1].
+    //   0 = isotropic,  1 = perfectly aligned.
+    // Loop and singleton segments do not contribute.
+    // Reference: Mardia & Jupp (2000), Directional Statistics, Wiley, sec. 2.3.
+    double orientation_anisotropy       = 0.0;
+    double dominant_orientation_degrees = 0.0; // dominant direction in [0, 180)
+};
+
+// -----------------------------------------------------------------------------
+// compute_skeleton_topology
+//
+// Computes the topological and geometric summary of an extracted skeleton.
+//
+// Input:
+//   segments - result of extract_skeleton_segments()
+//
+// Returns a zero-initialised summary for an empty segment list.
+// -----------------------------------------------------------------------------
+[[nodiscard]] skeleton_topology_summary
+compute_skeleton_topology(
+    const std::vector<skeleton_segment>& segments
+);
+
+
+// -----------------------------------------------------------------------------
 // skeleton_endpoint_tangent
 //
 // Local outward tangent estimate for an endpoint of an extracted segment.
