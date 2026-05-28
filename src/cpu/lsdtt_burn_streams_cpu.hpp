@@ -372,10 +372,36 @@ struct JunctionRepairRecord
 // ---------------------------------------------------------------------------
 struct junction_repair_params
 {
+    // ── Gap tolerance and terrain-Dijkstra controls ──────────────────────────
     double min_gap_m     = 50.0;
     int    max_search_px = 60;
     double uphill_mult   = 20.0;
     double max_climb_m   = 10.0;
+
+    // ── Channel-score guidance ────────────────────────────────────────────────
+    // alpha > 0 enables channelness weighting in the Dijkstra cost:
+    //   step_distance × (1 + alpha × (1 − channel_score[px]))
+    // lambda values <= 0 are auto-derived from the DEM cell size
+    //   (min = 3 × cell_size, max = 10 × cell_size).
+    double channel_score_alpha    = 2.0;
+    double channel_lambda_min_m   = -1.0;
+    double channel_lambda_max_m   = -1.0;
+    int    channel_n_scales       = 4;
+
+    // ── Divergence-point scoring weights ─────────────────────────────────────
+    // Score for each upstream channel pixel =
+    //   w_proximity × proximity(pixel, vector_junction)
+    //   + w_channel  × channel_score[pixel]
+    // Proximity dominates so the algorithm favours the crossing point nearest
+    // the target even when channel signal is weak.
+    double w_proximity            = 0.7;
+    double w_channel              = 0.3;
+
+    // ── Landing-zone threshold ────────────────────────────────────────────────
+    // Minimum channel score for a pixel near the vector junction to be
+    // considered a landing target.  When no pixel meets this threshold the
+    // pixel that contains the vector junction xy is used as the sole target.
+    double landing_score_threshold = 0.1;
 };
 
 

@@ -31,6 +31,7 @@
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "lsdtt_least_cost_path.hpp"
 #include "lsdtt_proximity_cpu.hpp"
+#include "lsdtt_raster_feature_finder_cpu.hpp"
 
 namespace lsdtt
 {
@@ -2209,6 +2210,274 @@ build_vector_networks(const std::string& vector_path, const lsdtt_raster_cpu& de
 }
 
 // ===========================================================================
+// collect_upslope_channel_pixels
+//
+// Returns all channel pixels in the upslope contributing area of
+// dem_junction_flat that lie within max_distance_m of target_xy.
+//
+// Why this exists
+// ---------------
+// In the parallel-swale failure mode the DEM junction is displaced
+// DOWNSTREAM of the true divergence point.  The correct repair start — the
+// pixel where the channel should branch toward the vector junction — lies
+// somewhere upstream of the DEM junction.  Traversing the full upslope
+// contributing area and keeping only channel pixels gives the candidate set
+// from which repair_junction_channel_guided selects the best divergence point.
+//
+// The distance filter bounds the search to pixels plausibly within reach of
+// the repair target.  Without it, distant headwater channels that share the
+// same contributing area would inflate the candidate set and distort scores.
+//
+// Implementation: flow.for_each_upslope_node traverses all pixels that drain
+// through dem_junction_flat; dem_network.is_channel filters to the extracted
+// channel skeleton only (not every contributing-area pixel).
+// ===========================================================================
+static std::vector<std::int64_t> collect_upslope_channel_pixels(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& dem_network,
+    std::int64_t                       dem_junction_flat,
+    const lsdtt_xy&                    target_xy,
+    double                             max_distance_m,
+    const lsdtt_raster_meta&           meta)
+{
+    std::vector<std::int64_t> result;
+    const double max_d2 = max_distance_m * max_distance_m;
+
+    flow.for_each_upslope_node(dem_junction_flat, [&](std::int64_t flat)
+    {
+        if (!dem_network.is_channel(flat)) return;
+
+        const int    row = static_cast<int>(flat / static_cast<std::int64_t>(meta.n_cols));
+        const int    col = static_cast<int>(flat % static_cast<std::int64_t>(meta.n_cols));
+        const lsdtt_xy xy = cell_center_from_row_col(meta, row, col);
+
+        const double dx = xy.x - target_xy.x;
+        const double dy = xy.y - target_xy.y;
+        if (dx * dx + dy * dy <= max_d2)
+            result.push_back(flat);
+    });
+
+    return result;
+}
+
+// ===========================================================================
+// repair_junction_channel_guided
+//
+// Three-phase repair for a single mismatched vector–DEM junction pair.
+//
+// Core problem
+// ------------
+// In the parallel-swale case the DEM junction is downstream of the true
+// divergence point.  Simply routing from the DEM junction to the vector
+// junction would carve the wrong reach of channel.  The algorithm must
+// instead: (a) find the best divergence point in the upstream channel
+// network, (b) find a channelised landing zone near the vector junction,
+// and (c) carve a terrain-guided path between them.
+//
+// Phase 1 — divergence-point selection
+//   Collects all channel pixels upstream of dem_junction_flat within
+//   2× gap_distance_m of the vector junction (via collect_upslope_channel_pixels).
+//   Each candidate pixel is scored:
+//     score = w_proximity × 1/(1 + dist/gap) + w_channel × channel_score[px]
+//   Proximity dominates (default w_proximity = 0.7) so the divergence point
+//   lands close to the repair target; channel score (w_channel = 0.3) gives
+//   secondary preference for concave terrain.  When no upstream channel pixels
+//   are found the DEM junction itself becomes the divergence point.
+//
+// Phase 2 — landing zone
+//   Scans a square window of radius match_radius_m around the vector junction
+//   and collects pixels with channel_score ≥ landing_score_threshold.  The
+//   repair does not need to hit the exact vector junction pixel — any
+//   channelised pixel in the landing window qualifies as a target.  When none
+//   qualify (flat terrain, no curvature signal), the pixel containing the
+//   vector junction coordinate is used as the sole landing target.  This
+//   correctly handles case B (low-relief parallel swales) where the terrain
+//   gives no signal and the vector position is the only ground truth.
+//
+// Phase 3 — channel-score-guided Dijkstra + monotonic burn
+//   Runs multi-target Dijkstra (goal_flats = landing zone pixels) from the
+//   divergence point.  Step cost:
+//     step_distance × (1 + alpha × (1 − score[px])) + max(0, Δelev) × uphill
+//   High channel-score pixels are cheaper, steering the path through existing
+//   swale geometry.  The cheapest landing pixel is reached first (Dijkstra
+//   guarantee).  The path is then burned monotonically so D8 routes through it.
+//
+// Returns curvature_bridge on success, unresolved if the LCP fails.
+// n_burned is set to the path length in pixels on success.
+// ===========================================================================
+static GapFixType repair_junction_channel_guided(
+    lsdtt_raster_cpu&                  dem,
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& dem_network,
+    std::int64_t                       dem_junction_flat,
+    const lsdtt_xy&                    vector_junction_xy,
+    double                             gap_distance_m,
+    double                             match_radius_m,
+    const std::vector<float>&          channel_score_data,
+    double                             channel_score_alpha,
+    double                             w_proximity,
+    double                             w_channel,
+    double                             landing_score_threshold,
+    double                             uphill_mult,
+    int&                               n_burned)
+{
+    const lsdtt_raster_meta&  meta     = dem.get_meta();
+    const double              cs       = meta.cell_size;
+    const std::int64_t        ncols    = static_cast<std::int64_t>(meta.n_cols);
+
+    auto to_row = [&](std::int64_t f) -> int
+        { return static_cast<int>(f / ncols); };
+    auto to_col = [&](std::int64_t f) -> int
+        { return static_cast<int>(f % ncols); };
+
+    // ── Phase 1: find divergence point ───────────────────────────────────────
+    const std::vector<std::int64_t> upstream =
+        collect_upslope_channel_pixels(
+            flow, dem_network,
+            dem_junction_flat,
+            vector_junction_xy,
+            2.0 * gap_distance_m,
+            meta);
+
+    std::int64_t divergence_flat = dem_junction_flat;
+
+    if (!upstream.empty())
+    {
+        double best_score = -1.0;
+
+        for (std::int64_t flat : upstream)
+        {
+            const lsdtt_xy xy  = cell_center_from_row_col(
+                meta, to_row(flat), to_col(flat));
+            const double   dx   = xy.x - vector_junction_xy.x;
+            const double   dy   = xy.y - vector_junction_xy.y;
+            const double   dist = std::sqrt(dx*dx + dy*dy);
+
+            const double prox = 1.0 / (1.0 + dist / std::max(gap_distance_m, cs));
+            const double chan = static_cast<double>(channel_score_data[flat]);
+            const double s   = w_proximity * prox + w_channel * chan;
+
+            if (s > best_score) { best_score = s; divergence_flat = flat; }
+        }
+
+        const lsdtt_xy div_xy = cell_center_from_row_col(
+            meta, to_row(divergence_flat), to_col(divergence_flat));
+        std::cout << "    divergence point: ("
+                  << div_xy.x << ", " << div_xy.y << ")  score=" << best_score
+                  << "  upstream candidates=" << upstream.size() << "\n";
+    }
+    else
+    {
+        std::cout << "    no upstream channel pixels within 2× gap; "
+                     "using DEM junction as divergence point\n";
+    }
+
+    // ── Phase 2: landing zone near vector junction ────────────────────────────
+    const int vj_row = static_cast<int>(
+        std::floor((meta.y_max() - vector_junction_xy.y) / cs));
+    const int vj_col = static_cast<int>(
+        std::floor((vector_junction_xy.x - meta.x_min) / cs));
+
+    const int landing_px = static_cast<int>(std::ceil(match_radius_m / cs));
+
+    const std::vector<uint8_t>& dem_mask = dem.get_mask();
+    std::vector<std::int64_t>   landing_flats;
+
+    for (int dr = -landing_px; dr <= landing_px; ++dr)
+    {
+        for (int dc = -landing_px; dc <= landing_px; ++dc)
+        {
+            const int r = vj_row + dr;
+            const int c = vj_col + dc;
+            if (r < 0 || r >= meta.n_rows ||
+                c < 0 || c >= meta.n_cols) continue;
+
+            const double dist_m =
+                std::sqrt(static_cast<double>(dr*dr + dc*dc)) * cs;
+            if (dist_m > match_radius_m) continue;
+
+            const std::int64_t flat = static_cast<std::int64_t>(r) * ncols + c;
+            if (!dem_mask[flat]) continue;
+
+            const double score =
+                static_cast<double>(channel_score_data[flat]);
+            if (score >= landing_score_threshold)
+                landing_flats.push_back(flat);
+        }
+    }
+
+    // Fallback: pixel containing the vector junction
+    if (landing_flats.empty())
+    {
+        if (vj_row >= 0 && vj_row < meta.n_rows &&
+            vj_col >= 0 && vj_col < meta.n_cols)
+        {
+            const std::int64_t vj_flat =
+                static_cast<std::int64_t>(vj_row) * ncols + vj_col;
+            if (dem_mask[vj_flat])
+                landing_flats.push_back(vj_flat);
+        }
+    }
+
+    if (landing_flats.empty())
+    {
+        std::cerr << "    repair_junction_channel_guided: "
+                     "no valid landing pixels near vector junction\n";
+        return GapFixType::unresolved;
+    }
+
+    std::cout << "    landing zone: " << landing_flats.size()
+              << " candidate pixel(s) within " << match_radius_m << " m\n";
+
+    // ── Phase 3: channel-score-guided Dijkstra ────────────────────────────────
+    const int div_row = to_row(divergence_flat);
+    const int div_col = to_col(divergence_flat);
+    const int buf     = landing_px + 10;
+
+    lcp_params lcp;
+    lcp.uphill_mult         = uphill_mult;
+    lcp.channel_score       = &channel_score_data;
+    lcp.channel_score_alpha = channel_score_alpha;
+    lcp.goal_flats          = landing_flats;
+    lcp.r_min = std::max(0,             std::min(div_row, vj_row) - buf);
+    lcp.r_max = std::min(meta.n_rows-1, std::max(div_row, vj_row) + buf);
+    lcp.c_min = std::max(0,             std::min(div_col, vj_col) - buf);
+    lcp.c_max = std::min(meta.n_cols-1, std::max(div_col, vj_col) + buf);
+
+    lcp_result lcp_res;
+    try
+    {
+        // goal_row / goal_col are ignored because goal_flats is non-empty;
+        // pass the vector-junction pixel as a safe (in-bounds) value.
+        lcp_res = raster_least_cost_path(
+            dem, div_row, div_col,
+            vj_row, vj_col,
+            lcp);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "    repair_junction_channel_guided: LCP failed: "
+                  << e.what() << "\n";
+        return GapFixType::unresolved;
+    }
+
+    if (!lcp_res.found)
+    {
+        std::cout << "    repair_junction_channel_guided: "
+                     "no path found in search window\n";
+        return GapFixType::unresolved;
+    }
+
+    burn_monotonic_path(dem, lcp_res.path);
+    n_burned = static_cast<int>(lcp_res.path.size());
+
+    std::cout << "    channel-guided path burned: " << n_burned
+              << " px, climb=" << lcp_res.max_climb << " m\n";
+
+    return GapFixType::curvature_bridge;
+}
+
+// ===========================================================================
 // repair_stream_junctions
 // ===========================================================================
 std::vector<JunctionRepairRecord>
@@ -2224,6 +2493,70 @@ repair_stream_junctions(
 {
     const std::vector<VectorNetwork> networks = build_vector_networks(vector_path, dem);
     const lsdtt_raster_meta& meta = dem.get_meta();
+
+    // ── Channel candidate scores (computed once on the unmodified DEM) ──────
+    //
+    // Channel score = multiscale plan-curvature persistence (Hessian + depth).
+    // Range [0, 1]: 1 = strong valley / channel, 0 = ridge or planar terrain.
+    //
+    // Two roles in the repair algorithm:
+    //   (a) Phase 1 divergence scoring — channel score contributes secondary
+    //       preference for concave terrain when ranking upstream channel pixels
+    //       as divergence-point candidates.
+    //   (b) Phase 3 Dijkstra weighting — high-score pixels are cheaper to
+    //       traverse, steering the repair path through existing swale geometry
+    //       rather than cutting across hillslopes.
+    //
+    // Curvature (not flow accumulation) is used because curvature is a terrain
+    // geometry property that remains meaningful even at road crossings and
+    // embankments where flow accumulation is artificially disrupted by the
+    // obstruction.
+    //
+    // Computed once before the repair loop.  Small monotonic burns lower only
+    // a few pixels and do not significantly alter the multi-scale curvature
+    // structure; recomputing after every burn would be expensive and would not
+    // materially change repair decisions for subsequent junctions.
+    bool               have_channel_scores = false;
+    std::vector<float> channel_score_data;
+
+    {
+        const double cs = meta.cell_size;
+        channel_candidate_request cc_req;
+        cc_req.channel_lambda_min_metres =
+            (params.channel_lambda_min_m > 0)
+            ? params.channel_lambda_min_m : cs * 3.0;
+        cc_req.channel_lambda_max_metres =
+            (params.channel_lambda_max_m > 0)
+            ? params.channel_lambda_max_m : cs * 10.0;
+
+        if (cc_req.channel_lambda_max_metres <= cc_req.channel_lambda_min_metres)
+            cc_req.channel_lambda_max_metres = cc_req.channel_lambda_min_metres * 3.0;
+
+        cc_req.channel_n_scales          = params.channel_n_scales;
+        cc_req.weight_persistent         = 0.7;
+        cc_req.weight_depth              = 0.3;
+        cc_req.weight_slope              = 0.0;
+        cc_req.use_hessian_filter        = true;
+        cc_req.positive_curvature_is_good = true;
+
+        std::cout << "repair_stream_junctions: computing channel candidates "
+                  << "(lambda " << cc_req.channel_lambda_min_metres
+                  << "–"        << cc_req.channel_lambda_max_metres
+                  << " m, " << cc_req.channel_n_scales << " scales)...\n";
+        try
+        {
+            channel_candidate_result cc = find_channel_candidates(dem, cc_req);
+            channel_score_data  = cc.score.get_data();
+            have_channel_scores = true;
+            std::cout << "  channel candidates computed.\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "  Warning: channel candidate computation failed: "
+                      << e.what() << "\n"
+                      << "  All repairs will use terrain-only Dijkstra.\n";
+        }
+    }
 
     // ---- DEM headwater helpers ---------------------------------------------
     struct DemHW { std::int32_t junc_id; lsdtt_xy xy; };
@@ -2325,6 +2658,29 @@ repair_stream_junctions(
         return result;
     };
 
+    // ── Nearest-junction distance helper ─────────────────────────────────────
+    // Scans the current dem_network for the junction closest to target.
+    // Always uses the most recent dem_network (captured by reference).
+    auto nearest_junction_dist_to = [&](const lsdtt_xy& target) -> double
+    {
+        double best_d2 = std::numeric_limits<double>::max();
+        const std::int32_t nj = dem_network->n_junctions();
+        for (std::int32_t j = 0; j < nj; ++j)
+        {
+            if (!dem_network->is_valid_junction(j)) continue;
+            const lsdtt_xy jxy = cell_center_from_row_col(
+                meta,
+                dem_network->row_of_junction(j),
+                dem_network->col_of_junction(j));
+            const double d2 = (jxy.x - target.x) * (jxy.x - target.x)
+                            + (jxy.y - target.y) * (jxy.y - target.y);
+            if (d2 < best_d2) best_d2 = d2;
+        }
+        return (best_d2 < std::numeric_limits<double>::max())
+               ? std::sqrt(best_d2)
+               : std::numeric_limits<double>::max();
+    };
+
     // ---- Main repair loop --------------------------------------------------
     std::vector<JunctionRepairRecord> records;
     int repair_index = 0;
@@ -2370,20 +2726,89 @@ repair_stream_junctions(
 
             std::cout << " — repairing\n";
 
-            // Single-pair repair via existing repair_junction_gaps
-            vector_dem_junction_pair pair;
-            pair.pair_id    = repair_index;
-            pair.vector_xy  = junc_node.xy;
-            pair.dem_xy     = dem_jxy;
-            pair.distance_m = dist;
-            pair.n_sources  = static_cast<int>(junc_node.upstream_node_ids.size());
-            std::vector<vector_dem_junction_pair> pv = {pair};
+            GapFixType fix_type = GapFixType::unresolved;
+            int        n_burned = 0;
+            bool       repair_ok = false;
 
-            repair_junction_gaps(dem, pv, vector_path,
-                                 params.min_gap_m,
-                                 params.max_search_px,
-                                 params.uphill_mult,
-                                 params.max_climb_m);
+            // ── Attempt 1: three-phase channel-guided repair ──────────────────
+            if (have_channel_scores)
+            {
+                const std::int64_t dem_junc_flat =
+                    dem_network->flat_of_junction(dem_junc);
+
+                fix_type = repair_junction_channel_guided(
+                    dem, *flow, *dem_network,
+                    dem_junc_flat,
+                    junc_node.xy,
+                    dist,
+                    params.min_gap_m,
+                    channel_score_data,
+                    params.channel_score_alpha,
+                    params.w_proximity,
+                    params.w_channel,
+                    params.landing_score_threshold,
+                    params.uphill_mult,
+                    n_burned);
+
+                if (fix_type == GapFixType::curvature_bridge)
+                {
+                    // Re-extract and check whether the junction moved
+                    flow        = make_flow_base(dem.get_data_array(),
+                                                 dem.get_mask_array(), meta, fi_opts);
+                    dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
+                    dem_hw      = build_headwaters();
+                    cache.clear();
+
+                    const double new_gap = nearest_junction_dist_to(junc_node.xy);
+                    if (new_gap <= params.min_gap_m)
+                    {
+                        repair_ok = true;
+                        std::cout << "    → channel-guided: success"
+                                  << "  new gap=" << new_gap << " m\n";
+                    }
+                    else
+                    {
+                        std::cout << "    → channel-guided: burned but gap still "
+                                  << new_gap << " m; trying terrain Dijkstra fallback\n";
+                    }
+                }
+                else
+                {
+                    std::cout << "    → channel-guided: " << gap_fix_type_str(fix_type)
+                              << "; trying terrain Dijkstra fallback\n";
+                }
+            }
+
+            // ── Attempt 2: terrain-only Dijkstra fallback ─────────────────────
+            if (!repair_ok)
+            {
+                vector_dem_junction_pair pair;
+                pair.pair_id    = repair_index;
+                pair.vector_xy  = junc_node.xy;
+                pair.dem_xy     = dem_jxy;
+                pair.distance_m = dist;
+                pair.n_sources  = static_cast<int>(junc_node.upstream_node_ids.size());
+                std::vector<vector_dem_junction_pair> pv = {pair};
+
+                repair_junction_gaps(dem, pv, vector_path,
+                                     params.min_gap_m,
+                                     params.max_search_px,
+                                     params.uphill_mult,
+                                     params.max_climb_m);
+
+                fix_type  = pv[0].fix_type;
+                n_burned += pv[0].n_burned;
+
+                std::cout << "    → terrain fallback: " << gap_fix_type_str(fix_type)
+                          << " (" << pv[0].n_burned << " px)"
+                          << "  re-extracting network...\n";
+
+                flow        = make_flow_base(dem.get_data_array(),
+                                             dem.get_mask_array(), meta, fi_opts);
+                dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
+                dem_hw      = build_headwaters();
+                cache.clear();
+            }
 
             JunctionRepairRecord rec;
             rec.repair_index  = repair_index++;
@@ -2391,22 +2816,9 @@ repair_stream_junctions(
             rec.vector_xy     = junc_node.xy;
             rec.dem_xy        = dem_jxy;
             rec.distance_m    = dist;
-            rec.fix_type      = pv[0].fix_type;
-            rec.n_burned      = pv[0].n_burned;
+            rec.fix_type      = fix_type;
+            rec.n_burned      = n_burned;
             records.push_back(rec);
-
-            std::cout << "    → " << gap_fix_type_str(pv[0].fix_type)
-                      << " (" << pv[0].n_burned << " px)"
-                      << "  re-extracting network...\n";
-
-            // Re-extract flow routing and junction network
-            flow       = make_flow_base(dem.get_data_array(), dem.get_mask_array(),
-                                        meta, fi_opts);
-            dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
-
-            // Refresh headwaters and invalidate cache
-            dem_hw = build_headwaters();
-            cache.clear();
         }
     }
 

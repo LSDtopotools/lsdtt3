@@ -75,6 +75,31 @@ struct lcp_params
     int    r_max = -1;
     int    c_min = -1;
     int    c_max = -1;
+
+    // Optional channel-score weighting.
+    //
+    // When channel_score != nullptr and channel_score_alpha > 0, the per-step
+    // cost becomes:
+    //   step_distance × (1 + channel_score_alpha × (1 − score[neighbour]))
+    //   + max(0, Δelev) × uphill_mult
+    //
+    // score values are expected in [0, 1]: 1 = strong channel, 0 = off-channel.
+    // The vector must be flat-indexed with the same size as the DEM and must
+    // outlive this call.  nullptr disables the feature (original behaviour).
+    const std::vector<float>* channel_score       = nullptr;
+    double                    channel_score_alpha  = 0.0;
+
+    // Optional multi-target goal.
+    //
+    // When goal_flats is non-empty it overrides the (goal_row, goal_col) /
+    // goal_radius single-target check: the search terminates as soon as any
+    // pixel whose flat index appears in goal_flats is dequeued.  Because
+    // Dijkstra processes nodes in cost order the first target reached is
+    // guaranteed to be the cheapest.
+    //
+    // goal_row, goal_col and goal_radius are ignored when goal_flats is
+    // non-empty.
+    std::vector<std::int64_t> goal_flats;
 };
 
 // ---------------------------------------------------------------------------

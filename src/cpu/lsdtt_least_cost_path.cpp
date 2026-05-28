@@ -13,6 +13,7 @@
 #include <limits>
 #include <queue>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 #include "../core/lsdtt_raster_meta.hpp"
@@ -45,7 +46,7 @@ lcp_result raster_least_cost_path(
     const int c_min = (params.c_min >= 0) ? params.c_min : 0;
     const int c_max = (params.c_max >= 0) ? std::min(params.c_max, nc-1) : nc-1;
 
-    // Validate start and goal
+    // Validate start
     auto in_bounds = [&](int r, int c)
     {
         return r >= 0 && r < nr && c >= 0 && c < nc;
@@ -53,12 +54,31 @@ lcp_result raster_least_cost_path(
 
     if (!in_bounds(start_row, start_col))
         throw std::invalid_argument("raster_least_cost_path: start pixel out of range");
-    if (!in_bounds(goal_row, goal_col))
-        throw std::invalid_argument("raster_least_cost_path: goal pixel out of range");
 
     const int start_flat = start_row * nc + start_col;
     if (!mask[start_flat])
         throw std::invalid_argument("raster_least_cost_path: start pixel is nodata");
+
+    // Build goal set (multi-target) or validate single goal
+    const bool multi_target = !params.goal_flats.empty();
+    std::unordered_set<int> goal_set;
+
+    if (multi_target)
+    {
+        goal_set.reserve(params.goal_flats.size());
+        for (std::int64_t gf : params.goal_flats)
+            goal_set.insert(static_cast<int>(gf));
+    }
+    else
+    {
+        if (!in_bounds(goal_row, goal_col))
+            throw std::invalid_argument("raster_least_cost_path: goal pixel out of range");
+    }
+
+    // Channel score pointers (null when feature disabled)
+    const std::vector<float>* scores = params.channel_score;
+    const double              alpha  = (scores && params.channel_score_alpha > 0.0)
+                                       ? params.channel_score_alpha : 0.0;
 
     const int N = nr * nc;
     std::vector<double> dist(N, std::numeric_limits<double>::infinity());
@@ -73,12 +93,12 @@ lcp_result raster_least_cost_path(
     static constexpr int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
     static constexpr int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
 
-    const double gr2  = static_cast<double>(params.goal_radius)
-                      * static_cast<double>(params.goal_radius);
+    const double gr2    = static_cast<double>(params.goal_radius)
+                        * static_cast<double>(params.goal_radius);
     const double uphill = params.uphill_mult;
 
-    int    goal_flat  = -1;
-    double goal_cost  = std::numeric_limits<double>::infinity();
+    int    goal_flat = -1;
+    double goal_cost = std::numeric_limits<double>::infinity();
 
     while (!pq.empty())
     {
@@ -89,13 +109,25 @@ lcp_result raster_least_cost_path(
         const int cc = cf % nc;
 
         // Goal check
-        const double dgr = cr - goal_row;
-        const double dgc = cc - goal_col;
-        if (dgr*dgr + dgc*dgc <= gr2)
+        if (multi_target)
         {
-            goal_flat = cf;
-            goal_cost = cd;
-            break;  // optimal by Dijkstra property
+            if (goal_set.count(cf))
+            {
+                goal_flat = cf;
+                goal_cost = cd;
+                break;
+            }
+        }
+        else
+        {
+            const double dgr = cr - goal_row;
+            const double dgc = cc - goal_col;
+            if (dgr*dgr + dgc*dgc <= gr2)
+            {
+                goal_flat = cf;
+                goal_cost = cd;
+                break;
+            }
         }
 
         for (int k = 0; k < 8; ++k)
@@ -107,11 +139,21 @@ lcp_result raster_least_cost_path(
             const int nf = nr2 * nc + nc2;
             if (!mask[nf]) continue;
 
-            const bool is_diag = (DR[k] != 0 && DC[k] != 0);
-            const double step  = is_diag ? cs * 1.41421356237 : cs;
+            const bool   is_diag = (DR[k] != 0 && DC[k] != 0);
+            const double step    = is_diag ? cs * 1.41421356237 : cs;
+
+            // Channel-score weighting: pixels with high channel score are cheaper.
+            double channel_factor = 1.0;
+            if (alpha > 0.0 && scores)
+            {
+                const double s = static_cast<double>((*scores)[nf]);
+                channel_factor = 1.0 + alpha * (1.0 - s);
+            }
+
             const double ed    = static_cast<double>(elev[nf])
                                - static_cast<double>(elev[cf]);
-            const double ncost = cd + step + std::max(0.0, ed) * uphill;
+            const double ncost = cd + step * channel_factor
+                               + std::max(0.0, ed) * uphill;
 
             if (ncost < dist[nf])
             {

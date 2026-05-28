@@ -324,6 +324,33 @@ int main(int argc, char* argv[])
         "Columns: repair_index, network_index, vector_x, vector_y, dem_x, dem_y, "
         "distance_m, fix_type, n_burned.  Only used when repair_junction_gaps is true."};
 
+    // --- Channel-score guidance for gap repair ---
+    float_default_map["channel_score_alpha"] = 2.0f;
+    help_map["channel_score_alpha"] = {"float","2.0",
+        "Strength of channel-score weighting in the repair Dijkstra cost function.",
+        "Cost per step = step_distance × (1 + alpha × (1 − channel_score)) "
+        "+ max(0, Δelev) × gap_uphill_penalty.  "
+        "alpha=0 disables channel guidance (terrain cost only).  "
+        "Only used when repair_junction_gaps is true."};
+
+    float_default_map["channel_lambda_min_m"] = -1.0f;
+    help_map["channel_lambda_min_m"] = {"float","-1",
+        "Minimum wavelength (m) for multiscale channel candidate detection.",
+        "Values <= 0 default to 3 × DEM cell size.  "
+        "Only used when repair_junction_gaps is true."};
+
+    float_default_map["channel_lambda_max_m"] = -1.0f;
+    help_map["channel_lambda_max_m"] = {"float","-1",
+        "Maximum wavelength (m) for multiscale channel candidate detection.",
+        "Values <= 0 default to 10 × DEM cell size.  "
+        "Only used when repair_junction_gaps is true."};
+
+    int_default_map["channel_n_scales"] = 4;
+    help_map["channel_n_scales"] = {"int","4",
+        "Number of wavelength scales for channel candidate detection.",
+        "More scales improve robustness but increase compute time.  "
+        "Only used when repair_junction_gaps is true."};
+
     // --- Output — QC/diagnostic ---
     bool_default_map["write_vector_sources"] = true;
     help_map["write_vector_sources"] = {"bool","true",
@@ -1126,6 +1153,27 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // snap_to_network
+    //
+    // Strategy: build two independent channel junction networks from the same
+    // source seeds and compare their first-layer (headwater) junctions.
+    //
+    //   VECTOR NETWORK — the human-checked polyline file, correct topology but
+    //     imprecise channel position (digitised from imagery or GPS track).
+    //
+    //   DEM NETWORK    — D8 routing seeded from the vector source tips, precise
+    //     positions but potentially diverted by roads, embankments, or
+    //     vegetation-obscured low-relief terrain.
+    //
+    // Phase 0 — topological candidate detection
+    //   Walk vector junctions upstream → downstream; for each junction compute
+    //   the lowest common ancestor (LCA) of the DEM counterparts of its donor
+    //   branches.  A junction is flagged as a mismatch when the LCA is too far
+    //   from the vector junction, branch counts differ, or no common ancestor
+    //   exists.  Only the MOST UPSTREAM mismatch in each basin is reported per
+    //   phase, because repairing it may move downstream DEM junctions.
+    //
+    // Gap repair (optional — repair_junction_gaps = true)
+    //   See the detailed comment in the gap repair block below.
     // -------------------------------------------------------------------------
     else if (burn_mode == lsdtt::stream_burn_mode::snap_to_network)
     {
@@ -1245,8 +1293,213 @@ int main(int argc, char* argv[])
             std::cout << "No candidate junctions found; all basins complete.\n";
         }
 
-        std::cout << "\nCandidate detection complete. "
-                  << "Repair step not yet implemented.\n";
+        std::cout << "\nCandidate detection complete.\n";
+
+        // -----------------------------------------------------------------------
+        // Gap repair — repairing DEM obstructions at mismatched junctions
+        //
+        // Two failure modes motivate this step:
+        //
+        //   A. Road / embankment crossings (10–30 m barriers)
+        //      The DEM shows a clear ridge crossing the channel.  The true
+        //      channel is visible as a concave feature on both sides of the
+        //      barrier.  A least-cost path from the correct divergence point
+        //      across the barrier to a landing zone near the vector junction
+        //      can be found using terrain curvature alone.
+        //
+        //   B. Parallel swales / low-relief divides
+        //      The source channel runs down one swale, then crosses a very low
+        //      divide into a second swale.  D8 routing misses the crossing and
+        //      continues down the first swale, placing the DEM junction well
+        //      DOWNSTREAM of the true confluence.  There is little or no terrain
+        //      curvature signal at the crossing point, so the vector network is
+        //      the only ground truth.
+        //
+        // Why upstream scanning is required
+        //   In case B the DEM junction is downstream of the true divergence
+        //   point.  Routing from the DEM junction directly to the vector
+        //   junction would carve the wrong reach of channel.  Instead, all
+        //   channel pixels in the upslope contributing area of the DEM junction
+        //   are scored as divergence candidates, and the best-scoring one
+        //   becomes the repair start.
+        //
+        // Three-phase channel-guided algorithm (attempt 1)
+        //   Phase 1 — scan upslope channel pixels (within 2× gap distance of
+        //     the vector junction) and score each candidate:
+        //       score = w_proximity / (1 + dist/gap) + w_channel × channel_score
+        //     Proximity dominates (w_proximity = 0.7) so the divergence point is
+        //     selected close to the target; channel score provides secondary
+        //     preference for concave terrain (channel_lambda_min/max_m control
+        //     the curvature detection scale).
+        //
+        //   Phase 2 — scan pixels within junction_tolerance_m of the vector
+        //     junction.  Those with channel_score ≥ landing threshold are
+        //     collected as landing-zone targets.  The repair does NOT need to
+        //     hit the exact vector junction pixel — any channelised pixel nearby
+        //     qualifies.  When none qualify (flat terrain, no curvature signal),
+        //     the pixel containing the vector junction coordinate is the target.
+        //
+        //   Phase 3 — run a multi-target channel-score-guided Dijkstra from the
+        //     divergence point to the landing zone, then carve the path
+        //     monotonically so D8 will route through it.
+        //     Step cost: step_distance × (1 + channel_score_alpha × (1 − score))
+        //     + max(0, Δelev) × gap_uphill_penalty
+        //     High-channel-score pixels (concave terrain) are cheaper, steering
+        //     the path through existing swale geometry.
+        //
+        // Two-attempt strategy
+        //   Attempt 1: channel-guided (phases 1–3).  After burning the DEM
+        //     network is re-extracted.  If the nearest DEM junction to the
+        //     vector junction is now within junction_tolerance_m, success.
+        //
+        //   Attempt 2: terrain-only Dijkstra fallback.  Used when channel-guided
+        //     fails or channel scores could not be computed.  Routes directly
+        //     from the DEM junction to the vector junction using only elevation
+        //     cost, with max_gap_climb_m as a guard against unrealistic tunnels.
+        //
+        // Repairs proceed in upstream-first topological order (one junction per
+        // phase per basin) so that each burn propagates correctly before the
+        // next downstream junction is checked.
+        // -----------------------------------------------------------------------
+        if (bf["repair_junction_gaps"] && !phase_result.incomplete_basins.empty())
+        {
+            std::cout << "\n--- Repairing junction gaps ---\n";
+
+            lsdtt::junction_repair_params repair_params;
+            repair_params.min_gap_m              = static_cast<double>(ff["junction_tolerance_m"]);
+            repair_params.max_search_px          = ifs["max_gap_search_px"];
+            repair_params.uphill_mult            = static_cast<double>(ff["gap_uphill_penalty"]);
+            repair_params.max_climb_m            = static_cast<double>(ff["max_gap_climb_m"]);
+            repair_params.channel_score_alpha    = static_cast<double>(ff["channel_score_alpha"]);
+            repair_params.channel_lambda_min_m   = static_cast<double>(ff["channel_lambda_min_m"]);
+            repair_params.channel_lambda_max_m   = static_cast<double>(ff["channel_lambda_max_m"]);
+            repair_params.channel_n_scales       = ifs["channel_n_scales"];
+
+            std::vector<lsdtt::JunctionRepairRecord> repair_records;
+            try
+            {
+                repair_records = lsdtt::repair_stream_junctions(
+                    routed_dem,
+                    stream_vector_path,
+                    source_flats,
+                    flow,
+                    dem_network,
+                    fi_opts,
+                    jn_opts,
+                    repair_params
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: repair_stream_junctions failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            std::cout << "Repairs attempted: " << repair_records.size() << "\n";
+
+            // Write repair log
+            if (bf["write_repair_log"] && !repair_records.empty())
+            {
+                const std::string log_file = out_path(pp, "_repair_log", ".csv");
+                std::cout << "Writing repair log: " << log_file << "\n";
+                try
+                {
+                    lsdtt::write_junction_repair_log(repair_records, log_file);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write repair log: "
+                              << e.what() << "\n";
+                }
+            }
+
+            // Write repaired DEM
+            if (bf["write_repaired_dem"])
+            {
+                const std::string dem_file = out_path(pp, "_repaired", ".tif");
+                std::cout << "Writing repaired DEM: " << dem_file << "\n";
+                try
+                {
+                    lsdtt::lsdtt_data_loader writer;
+                    writer.write_full(routed_dem.get_data(),
+                                      routed_dem.get_meta(),
+                                      dem_file);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write repaired DEM: "
+                              << e.what() << "\n";
+                }
+            }
+
+            // Re-run phase 0 candidate detection on the repaired network
+            // to show the post-repair state.
+            std::cout << "\n--- Post-repair candidate check (phase 00) ---\n";
+            lsdtt::CandidateJunctionPhaseResult post_result;
+            try
+            {
+                post_result = lsdtt::find_candidate_junctions_phase(
+                    vector_network,
+                    *dem_network,
+                    routed_dem,
+                    0,
+                    cj_params
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: post-repair candidate check failed: "
+                          << e.what() << "\n";
+            }
+
+            std::cout << "Post-repair complete basins   ("
+                      << post_result.complete_basins.size() << "): ";
+            for (std::size_t i = 0; i < post_result.complete_basins.size(); ++i)
+            {
+                if (i > 0) std::cout << ", ";
+                std::cout << post_result.complete_basins[i];
+            }
+            if (post_result.complete_basins.empty()) std::cout << "none";
+            std::cout << "\n";
+
+            std::cout << "Post-repair basins still needing repair ("
+                      << post_result.incomplete_basins.size() << "): ";
+            for (std::size_t i = 0; i < post_result.incomplete_basins.size(); ++i)
+            {
+                if (i > 0) std::cout << ", ";
+                std::cout << post_result.incomplete_basins[i];
+            }
+            if (post_result.incomplete_basins.empty()) std::cout << "none";
+            std::cout << "\n";
+
+            if (!post_result.candidates.empty())
+            {
+                const std::string ext    = lsdtt::output_extension(junc_cmp_fmt);
+                const std::string output =
+                    out_path(pp, "_candidate_junctions_post_repair", ext);
+                std::cout << "Writing: " << output << "\n";
+                try
+                {
+                    lsdtt::write_candidate_junction_points(
+                        post_result.candidates,
+                        routed_dem.get_meta(),
+                        output,
+                        junc_cmp_fmt,
+                        bf["calculate_spatial_index"]
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write post-repair candidates: "
+                              << e.what() << "\n";
+                }
+            }
+        }
+        else if (bf["repair_junction_gaps"] && phase_result.incomplete_basins.empty())
+        {
+            std::cout << "All basins complete — no repair needed.\n";
+        }
     }
 
 
