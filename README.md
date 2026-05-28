@@ -1,5 +1,7 @@
 # lsdtt3
 
+![LSDTopoTools3 logo](docs/LSD-logo.png)
+
 A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) with a modern C++ architecture.
 
 **Copyright:** Simon M. Mudd  

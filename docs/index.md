@@ -1,5 +1,9 @@
 # LSDTopoTools3
 
+<p align="center">
+  <img src="LSD-logo.png" alt="LSDTopoTools3 logo" width="220">
+</p>
+
 **LSDTopoTools3** (lsdtt3) is a C++17 library and set of command-line tools for topographic analysis of digital elevation models (DEMs). It is a ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2), retaining the core algorithms while rebuilding the architecture for modern C++, optional GPU support, and easier incremental development.
 
 ---

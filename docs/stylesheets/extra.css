@@ -1,0 +1,14 @@
+/* Navy primary colour */
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color:        #0a2240;
+  --md-primary-fg-color--light: #1a3d6e;
+  --md-primary-fg-color--dark:  #061629;
+}
+
+/* Visible links in dark mode */
+[data-md-color-scheme="slate"] .md-typeset a {
+  color: #7ec8f7;
+}
+[data-md-color-scheme="slate"] .md-typeset a:hover {
+  color: #aadcfc;
+}
