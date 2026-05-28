@@ -551,34 +551,161 @@ Wherever a CLI or algorithm lets the user choose a polyfit method, the options a
 
 ### CLI design rule
 
-Every CLI uses `lsdtt_param_parser`.
+Every CLI uses `lsdtt_param_parser`. Use `cli/lsdtt-channel-extraction.cpp` and
+`cli/lsdtt-surface-metrics.cpp` as canonical reference implementations.
 
-CLI source files should follow a common layout:
-1. usage/banner helpers
-2. command-line flag parsing
-3. parameter defaults grouped by theme
-4. `help_map` entries immediately after each parameter declaration
-5. parameter parsing
-6. cross-parameter logic
-7. input loading
-8. processing pipeline
-9. output writing
-10. `print_parameters()` for reproducibility
+CLI source files follow this layout, in order:
 
-### Parameter declaration rule
+1. file-header comment block (copyright, brief description, outputs, usage)
+2. `#include` block
+3. `static const` version and citation strings
+4. `print_banner()` — fixed-width box to stdout
+5. `parse_args()` — handles `-h`, `-v`, `-c` flags; returns `{path, fname}`
+6. helper free functions (if unavoidable — see helper rule below)
+7. `main()`:
+   a. call `print_banner()` and `parse_args()`
+   b. construct `lsdtt_param_parser`
+   c. declare all five maps and fill defaults + help (see below)
+   d. call `parse_all_parameters`
+   e. read results back from the parser
+   f. cross-parameter validation / derived values
+   g. load DEM and verify projection
+   h. build flow routing and channel network (if needed)
+   i. run analysis pipeline
+   j. write outputs
+   k. call `pp.print_help(...)` then `pp.print_parameters()`
 
-In CLI files:
-- parameters should **not** be declared `const`
-- parameters should be grouped by workflow theme
-- every `help_map` entry should appear **immediately after** the corresponding
-  parameter default declaration
+### Parameter map pattern (mandatory)
 
-This pattern is now the standard for all CLIs because it makes developer-facing
-options easy to inspect and keeps the parameter contract readable in one place.
+Every CLI declares exactly **five maps**:
 
-Try to avoid helper functions at the top of CLIs. See if helpers have a more logical position
-within /cpu or /utils files. If necessary declare a new .hpp/.cpp pair instead of
-helper functions since it is very likeley that a helper in one CLI will be recycled by another.
+```cpp
+std::map<std::string, bool>                     bool_default_map;
+std::map<std::string, float>                    float_default_map;
+std::map<std::string, int>                      int_default_map;
+std::map<std::string, std::string>              string_default_map;
+std::map<std::string, std::vector<std::string>> help_map;
+```
+
+For every parameter, the default and the help entry are declared on **consecutive lines**:
+
+```cpp
+// --- Section label ---
+float_default_map["my_param_m"] = 10.0f;
+help_map["my_param_m"] = {"float","10.0",
+    "Short one-line description including units [m].",
+    "Longer explanation: valid range, physical meaning, cross-references to "
+    "related parameters, caveats. Be specific about units and defaults."};
+
+bool_default_map["write_my_raster"] = false;
+help_map["write_my_raster"] = {"bool","false",
+    "Write the result raster.",
+    "Output file: <write_fname>_my_result.tif."};
+```
+
+The `help_map` entry format is always `{type_string, default_string, short_desc, long_desc}`.
+Valid type strings: `"bool"`, `"int"`, `"float"`, `"string"`.
+
+### Parsing and reading parameters back
+
+```cpp
+// Always call with this argument order: float, int, bool, string
+pp.parse_all_parameters(
+    float_default_map,
+    int_default_map,
+    bool_default_map,
+    string_default_map
+);
+
+// Read results back into short-named maps for convenience
+std::map<std::string, bool>        bf  = pp.get_bool_parameters();
+std::map<std::string, float>       ff  = pp.get_float_parameters();
+std::map<std::string, int>         ifs = pp.get_int_parameters();
+std::map<std::string, std::string> sf  = pp.get_string_parameters();
+```
+
+Parameters are not declared `const` because cross-parameter logic may adjust them.
+
+### Writing the help file and parameter echo
+
+At the end of every successful run:
+
+```cpp
+pp.print_help(
+    help_map,
+    pp.get_full_write_path() + "_README",
+    k_version,
+    k_citation
+);
+pp.print_parameters();
+```
+
+`print_help` writes a CSV and an HTML reference file alongside the outputs so
+users can look up every parameter, its type, default, and description without
+reading source code.
+
+### Flow routing in CLIs
+
+The concrete class defined in `lsdtt_flowinfo_cpu.hpp` is named **`lsdtt_flowinfo`**
+(the file name and the class name differ — the class has no `_cpu` suffix).
+
+CLIs that need only the abstract flow interface (e.g. writing flow-direction rasters,
+then dynamic-casting for threshold source extraction) should use the factory:
+
+```cpp
+// Include lsdtt_flow_base.hpp, not lsdtt_flowinfo_cpu.hpp
+auto flow = lsdtt::make_flow_base(dem_data, dem_mask, meta, fi_opts);
+// returns unique_ptr<lsdtt_flow_base>
+
+// Cast when concrete API is needed
+const lsdtt::lsdtt_flowinfo* flow_cpu =
+    dynamic_cast<const lsdtt::lsdtt_flowinfo*>(flow.get());
+```
+
+CLIs that need the full `lsdtt_flowinfo` API throughout (e.g. sediment routing,
+LEM) may construct the concrete object directly:
+
+```cpp
+// Include lsdtt_flowinfo_cpu.hpp — the class inside is lsdtt::lsdtt_flowinfo
+lsdtt::lsdtt_flowinfo flow(
+    dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), fi_opts);
+```
+
+Never write `lsdtt::lsdtt_flowinfo_cpu` — that type does not exist.
+
+### Junction network in CLIs
+
+Use the concrete class directly when topological-order and s_vector access are needed:
+
+```cpp
+lsdtt::lsdtt_junction_network_options jn_opts;
+jn_opts.build_topological_order = true;
+jn_opts.build_s_vector          = true;
+
+lsdtt::lsdtt_junction_network_cpu jn(flow, source_flats, jn_opts);
+```
+
+Source flats come from `flow.get_sources_index_threshold(threshold)`.
+
+### Helper function rule
+
+Avoid helper free functions at the top of CLI files. If a helper is non-trivial,
+it almost certainly belongs in a `.hpp/.cpp` pair in `src/cpu/` or `src/utils/`
+because the same logic will likely be needed by another CLI. A function declared
+at file scope in a CLI is invisible to the rest of the project.
+
+### Comma-separated string parameters
+
+Parameters such as grain-size vectors that are supplied as comma-separated values
+should be stored as `string_default_map` entries and parsed with:
+
+```cpp
+std::vector<double> vals = pp.parse_double_vector("my_param");
+```
+
+The `parse_double_vector` / `parse_float_vector` / `parse_int_vector` helpers are
+on `lsdtt_param_parser` and expect the string to already have been registered via
+`string_default_map`.
 
 
 ---
@@ -1886,8 +2013,12 @@ The `graphflood/` directory contains third-party header-only graph-based flood r
 6. No warnings — `-Wall -Wextra -Wpedantic` enforced
 7. FFTW double (`fftw_*`), not float; not threaded FFTW
 8. Analysis free functions take `const lsdtt_raster_cpu&` — not the base class
-9. CLIs hold flow routing via `unique_ptr<lsdtt_flow_base>` from factory —
-   never construct `lsdtt_flowinfo_cpu` directly in a CLI
+9. The concrete D8 flow class is `lsdtt_flowinfo` (defined in `lsdtt_flowinfo_cpu.hpp`
+   — note: class name has no `_cpu` suffix; file name does).
+   CLIs that only need the abstract interface use `make_flow_base()` and hold
+   `unique_ptr<lsdtt_flow_base>`. CLIs that need the full concrete API throughout
+   (LEM, sediment routing) construct `lsdtt_flowinfo` directly.
+   Never write `lsdtt_flowinfo_cpu` — that type does not exist.
 10. `src/core/` = abstract interfaces, factories, shared types, I/O only
 11. `src/cpu/` = all CPU implementations (raster, flow, and algebra)
 12. `src/gpu/` = all GPU implementations
@@ -1902,12 +2033,15 @@ The `graphflood/` directory contains third-party header-only graph-based flood r
     so the provenance of every output file is unambiguous from its filename
 16. `lsdtt_raster_algebra` lives in `src/cpu/lsdtt_raster_algebra.hpp/.cpp`; include from `src/cpu/`.
     Use `lsdtt::algebra::raster_subtract(a, b)` etc. for diff rasters in CLIs.
-17. Every CLI uses `lsdtt_param_parser`
-18. CLI parameters are grouped by theme, not declared in one unstructured block
-19. In CLIs, `help_map` entries come immediately after the corresponding
-    parameter default declaration
-20. CLI parameter variables are intentionally not `const` because
-    cross-parameter logic may adjust them after parsing
+17. Every CLI uses `lsdtt_param_parser`. See the "CLI design rule" section above
+    for the mandatory five-map pattern, `parse_all_parameters` call signature,
+    and `print_help` / `print_parameters` conventions.
+18. CLI parameters are grouped by workflow theme; each default and its `help_map`
+    entry are declared on consecutive lines (default first, then help).
+19. `parse_all_parameters` argument order is always: float, int, bool, string.
+    Read results back via `pp.get_bool_parameters()` etc. into `bf`, `ff`, `ifs`, `sf`.
+20. CLI parameter variables are intentionally not `const` because cross-parameter
+    logic may adjust them after parsing.
 21. Pure grid-geometry helpers belong in `src/utils/`; GDAL/OGR-backed vector
     and projection helpers belong in `src/core/`
 22. Vector outputs should prefer typed attributes and single-file binary formats

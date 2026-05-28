@@ -1,11 +1,12 @@
 # Beta testing and distribution notes
 
-This document covers two things:
+This document covers three things:
 
-1. **For beta testers** — how to install lsdtt3 on a Windows machine using WSL2.
-2. **For the developer** — how the release pipeline works and how to create a release.
+1. **For beta testers without GitHub access** — how to install lsdtt3 on a Windows machine using WSL2 from a tarball shared directly.
+2. **For beta testers with GitHub access** — how to authenticate with GitHub and download the release tarball themselves.
+3. **For the developer** — how the release pipeline works and how to create a release.
 
-A third section covers the future conda-forge route for when the repository goes public.
+A fourth section covers the future conda-forge route for when the repository goes public.
 
 ---
 
@@ -123,10 +124,74 @@ When filing a bug report please include:
 1. The exact command you ran.
 2. The full terminal output (copy and paste it).
 3. The Ubuntu version: `cat /etc/os-release | grep VERSION=`
-4. The lsdtt3 version: check the release tag you installed, e.g. `v0.2.0`.
+4. The lsdtt3 version: check the release tag you installed, e.g. `v0.1.0`.
 
 Send this to the developer or open an issue on the GitHub repository if you have
 access.
+
+---
+
+## For beta testers with GitHub access: downloading the tarball yourself
+
+If you have been added to the GitHub repository you can download the release
+tarball directly using the `gh` command-line tool rather than waiting for the
+developer to share the file.
+
+### Step 1 — Install the GitHub CLI
+
+Inside your WSL2 Ubuntu terminal:
+
+```bash
+sudo apt install gh
+```
+
+If the apt version is outdated, install the current release from GitHub's own
+package feed:
+
+```bash
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+    https://cli.github.com/packages stable main" \
+    | sudo tee /etc/apt/sources.list.d/github-cli.list
+sudo apt update && sudo apt install gh
+```
+
+### Step 2 — Authenticate with GitHub
+
+```bash
+gh auth login
+```
+
+When prompted:
+
+1. **Where do you use GitHub?** → `GitHub.com`
+2. **What is your preferred protocol?** → `SSH`
+3. **Upload your public SSH key?** → select your existing key (e.g. `~/.ssh/id_rsa.pub`), or press Enter to skip if you only want HTTPS token access
+4. **How would you like to authenticate?** → `Paste an authentication token`
+
+To generate the token, go to **GitHub.com → profile picture → Settings →
+Developer settings** (bottom of the left sidebar) **→ Personal access tokens →
+Tokens (classic) → Generate new token (classic)**. Give it any name, set an
+expiry, and check exactly two scopes:
+
+- **`repo`** (full private repo access)
+- **`read:org`** (required to verify organisation membership)
+
+Click **Generate token**, copy the `ghp_...` string, and paste it when `gh auth
+login` asks.
+
+### Step 3 — Download the release tarball and install
+
+```bash
+gh release download v0.1.0 --repo LSDtopotools/lsdtt3 \
+    --pattern "lsdtt3-ubuntu-22.04.tar.gz" -D /tmp/
+bash install.sh /tmp/lsdtt3-ubuntu-22.04.tar.gz
+```
+
+Replace `v0.1.0` with the tag the developer told you to use. Then follow
+Steps 3 and 4 from the section above (verify the installation and access your
+Windows files).
 
 ---
 

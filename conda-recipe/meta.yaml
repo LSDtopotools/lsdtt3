@@ -18,14 +18,15 @@
 #
 # -------------------------------------------------------------------------
 
-{% set version = "0.2.0" %}
+{% set version = "0.1.0" %}
 
 package:
   name: lsdtt3
   version: {{ version }}
 
 source:
-  url: https://github.com/LSDtopotools/lsdtt3/archive/refs/tags/v{{ version }}.tar.gz
+  path: ..
+  #url: https://github.com/LSDtopotools/lsdtt3/archive/refs/tags/v{{ version }}.tar.gz
   # sha256: fill_this_in_before_submitting
   # Run: curl -fsSL <url> | sha256sum
 
