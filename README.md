@@ -39,6 +39,52 @@ Key improvements over LSDTopoTools2:
 
 ---
 
+## Beta testing: quick install (Windows / WSL2)
+
+lsdtt3 is currently in private beta. If you have been invited to test it you do
+not need to compile anything. Pre-built executables for Ubuntu 22.04 are
+attached to each [GitHub Release](../../releases/latest) as
+`lsdtt3-ubuntu-22.04.tar.gz`.
+
+### Step 1 — get a Linux terminal
+
+On Windows, install WSL2 and Ubuntu 22.04 if you have not already done so:
+
+1. Open PowerShell as administrator and run `wsl --install`.
+2. Restart, then install **Ubuntu 22.04 LTS** from the Microsoft Store.
+3. Launch Ubuntu and set a username and password when prompted.
+
+### Step 2 — install lsdtt3
+
+Download `lsdtt3-ubuntu-22.04.tar.gz` from the Releases page (or from the
+link the developer sent you) and run:
+
+```bash
+bash install.sh /mnt/c/Users/YourName/Desktop/lsdtt3-ubuntu-22.04.tar.gz
+```
+
+The installer installs the required system libraries, unpacks all the
+command-line tools to `~/.local/lsdtt3/bin`, and adds them to your `PATH`.
+
+### Step 3 — open a new terminal and verify
+
+```bash
+lsdtt-channel-extraction --help
+```
+
+If you see a list of parameters the installation succeeded.
+
+### Reporting bugs
+
+Please include:
+- the exact command you ran
+- the full terminal output (copy and paste)
+- your Ubuntu version: `cat /etc/os-release | grep VERSION=`
+
+**Full installation and troubleshooting notes:** `docs/beta_testing_notes.md`
+
+---
+
 ## Dependencies
 
 `lsdtt3` has more dependencies than `lsdtopotools2`. However all dependencies are stabile and easily installable on Linux (and by extension linux subsystems for Windows and MacOS). We also provide an apptainer container that allows running of the softare without having to manage installation. 
@@ -206,6 +252,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `docs/cli_reference_lsdtt_basin_stats.md` | Basin statistics: outlet CSV format, snapping, output columns. |
 | `docs/cli_reference_lsdtt_chi_analysis.md` | Chi analysis: m/n sweep, disorder metrics, bootstrap, k_sn inversion. |
 | `docs/cli_reference_lsdtt_cosmo_prediction.md` | CRN prediction: steady-state, step-change, accumulated concentration. |
+| `docs/beta_testing_notes.md` | Beta tester install guide (WSL2), release pipeline, and future conda-forge plan. |
 | `docs/installing_locally.md` | Local installation notes. |
 | `docs/lsdtt3_in_windows.md` | Windows (WSL2) setup. |
 | `docs/wsl2_notes.md` | WSL2-specific notes. |
