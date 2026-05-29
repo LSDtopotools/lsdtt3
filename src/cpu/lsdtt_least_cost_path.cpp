@@ -59,21 +59,48 @@ lcp_result raster_least_cost_path(
     if (!mask[start_flat])
         throw std::invalid_argument("raster_least_cost_path: start pixel is nodata");
 
-    // Build goal set (multi-target) or validate single goal
-    const bool multi_target = !params.goal_flats.empty();
+    // Build goal set (multi-target) or validate single goal.
+    // Multi-target goals are filtered to valid, in-window DEM pixels.
+    const bool multi_target_requested = !params.goal_flats.empty();
     std::unordered_set<int> goal_set;
 
-    if (multi_target)
+    auto in_window = [&](int r, int c)
+    {
+        return r >= r_min && r <= r_max && c >= c_min && c <= c_max;
+    };
+
+    if (!in_window(start_row, start_col))
+        throw std::invalid_argument(
+            "raster_least_cost_path: start pixel lies outside search window");
+
+    const std::int64_t N64 = static_cast<std::int64_t>(nr) * nc;
+
+    if (multi_target_requested)
     {
         goal_set.reserve(params.goal_flats.size());
-        for (std::int64_t gf : params.goal_flats)
-            goal_set.insert(static_cast<int>(gf));
+        for (std::int64_t gf64 : params.goal_flats)
+        {
+            if (gf64 < 0 || gf64 >= N64) continue;
+            const int gf = static_cast<int>(gf64);
+            const int gr = gf / nc;
+            const int gc = gf % nc;
+            if (!in_window(gr, gc)) continue;
+            if (!mask[gf])          continue;
+            goal_set.insert(gf);
+        }
+        if (goal_set.empty())
+            return lcp_result{};
     }
     else
     {
         if (!in_bounds(goal_row, goal_col))
             throw std::invalid_argument("raster_least_cost_path: goal pixel out of range");
+        if (!in_window(goal_row, goal_col))
+            throw std::invalid_argument(
+                "raster_least_cost_path: goal pixel lies outside search window");
     }
+
+    const bool multi_target = !goal_set.empty();
 
     // Channel score pointers (null when feature disabled)
     const std::vector<float>* scores = params.channel_score;
@@ -193,41 +220,56 @@ lcp_result raster_least_cost_path(
 // ---------------------------------------------------------------------------
 void burn_monotonic_path(
     lsdtt_raster_cpu&                   dem,
-    const std::vector<std::int64_t>&    path)
+    const std::vector<std::int64_t>&    path,
+    double                              min_slope)
 {
     if (path.empty()) return;
 
+    const lsdtt_raster_meta& meta = dem.get_meta();
     std::vector<float>& elev = dem.get_data();
 
-    const double e0 = elev[path.front()];
-    const double eN = elev[path.back()];
+    auto step_length = [&](std::int64_t a, std::int64_t b) -> double
+    {
+        const int ar = static_cast<int>(a / meta.n_cols);
+        const int ac = static_cast<int>(a % meta.n_cols);
+        const int br = static_cast<int>(b / meta.n_cols);
+        const int bc = static_cast<int>(b % meta.n_cols);
+        const int dr = std::abs(ar - br);
+        const int dc = std::abs(ac - bc);
+        return (dr == 1 && dc == 1) ? meta.cell_size * 1.4142135623730950488
+                                    : meta.cell_size;
+    };
+
+    const double e0 = elev[static_cast<std::size_t>(path.front())];
+    const double eN = elev[static_cast<std::size_t>(path.back())];
+
+    auto scan = [&](auto begin_it, auto end_it)
+    {
+        if (begin_it == end_it) return;
+        std::int64_t prev_flat = *begin_it;
+        double allowed = elev[static_cast<std::size_t>(prev_flat)];
+
+        for (auto it = begin_it; it != end_it; ++it)
+        {
+            const std::int64_t flat = *it;
+            if (it != begin_it)
+            {
+                const double ds = step_length(prev_flat, flat);
+                allowed -= std::max(0.0, min_slope) * ds;
+            }
+            const double z = elev[static_cast<std::size_t>(flat)];
+            if (z < allowed)
+                allowed = z;
+            else if (z > allowed)
+                elev[static_cast<std::size_t>(flat)] = static_cast<float>(allowed);
+            prev_flat = flat;
+        }
+    };
 
     if (e0 >= eN)
-    {
-        // Forward: path[0] is the upstream (high) end
-        double rmin = e0;
-        for (std::int64_t f : path)
-        {
-            const double e = elev[f];
-            if (e < rmin)
-                rmin = e;
-            else if (e > rmin)
-                elev[f] = static_cast<float>(rmin);
-        }
-    }
+        scan(path.begin(), path.end());
     else
-    {
-        // Reverse: path[N-1] is the upstream (high) end
-        double rmin = eN;
-        for (int i = static_cast<int>(path.size()) - 1; i >= 0; --i)
-        {
-            const double e = elev[path[i]];
-            if (e < rmin)
-                rmin = e;
-            else if (e > rmin)
-                elev[path[i]] = static_cast<float>(rmin);
-        }
-    }
+        scan(path.rbegin(), path.rend());
 }
 
 } // namespace lsdtt

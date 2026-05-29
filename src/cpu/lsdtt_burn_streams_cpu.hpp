@@ -179,20 +179,22 @@ struct burned_stream_profile
 // ---------------------------------------------------------------------------
 enum class GapFixType
 {
-    ok,               // distance within tolerance — no repair attempted
-    curvature_bridge, // repaired via least-cost terrain path
-    vector_burn,      // repaired via fallback burn under the input vector
-    unresolved        // gap too complex to auto-repair (tunnel, etc.)
+    ok,                    // distance within tolerance — no repair attempted
+    channel_guided_bridge, // repaired via channel-score-guided least-cost path
+    terrain_bridge,        // repaired via terrain-only least-cost path
+    vector_burn,           // repaired via fallback burn under the input vector
+    unresolved             // gap too complex to auto-repair (tunnel, etc.)
 };
 
 inline const char* gap_fix_type_str(GapFixType t)
 {
     switch (t)
     {
-        case GapFixType::ok:               return "ok";
-        case GapFixType::curvature_bridge: return "curvature_bridge";
-        case GapFixType::vector_burn:      return "vector_burn";
-        case GapFixType::unresolved:       return "unresolved";
+        case GapFixType::ok:                    return "ok";
+        case GapFixType::channel_guided_bridge: return "channel_guided_bridge";
+        case GapFixType::terrain_bridge:        return "terrain_bridge";
+        case GapFixType::vector_burn:           return "vector_burn";
+        case GapFixType::unresolved:            return "unresolved";
     }
     return "unknown";
 }
@@ -358,13 +360,35 @@ struct VectorNetwork
 // ---------------------------------------------------------------------------
 struct JunctionRepairRecord
 {
-    int        repair_index  = 0;
-    int        network_index = 0;
+    int        repair_index           = 0;
+    int        phase                  = 0;
+    int        basin_outlet_junction  = -1;
+    int        vector_junction_id     = -1;
+    int        dem_junction_id        = -1;
+
     lsdtt_xy   vector_xy;
     lsdtt_xy   dem_xy;
-    double     distance_m    = 0.0;
-    GapFixType fix_type      = GapFixType::ok;
-    int        n_burned      = 0;
+
+    double     distance_m             = 0.0;
+    double     post_distance_m        = -1.0;
+    double     max_climb_m            = -1.0;
+    double     total_cost             = -1.0;
+
+    GapFixType fix_type               = GapFixType::ok;
+    int        n_burned               = 0;
+    int        n_landing_pixels       = 0;
+
+    lsdtt_xy   divergence_xy;   // breach start (lower channel end of repair)
+    lsdtt_xy   target_xy;       // path endpoint (higher channel end of repair)
+    bool       success                = false;
+
+    // Legacy field — kept for repair_stream_junctions compatibility
+    int        network_index          = 0;
+
+    std::string mismatch_reason;
+
+    // Full burned path for diagnostic line output (flat pixel indices)
+    std::vector<std::int64_t> burned_path;
 };
 
 // ---------------------------------------------------------------------------
@@ -377,6 +401,18 @@ struct junction_repair_params
     int    max_search_px = 60;
     double uphill_mult   = 20.0;
     double max_climb_m   = 10.0;
+
+    // Enforce a strictly downhill repair burn (m/m).
+    // Set 0 for the original non-increasing running-minimum behaviour.
+    double repair_min_slope = 0.0001;
+
+    // When non-empty, the repair function writes intermediate diagnostic
+    // rasters (score binary, skeleton) with this path prefix.
+    std::string diagnostic_prefix;
+
+    // Current repair phase index; used to suffix per-phase diagnostic outputs
+    // (e.g. _spur_endpoints_phase_NN.fgb).  Set by repair_candidate_junctions.
+    int diagnostic_phase = -1;
 
     // ── Channel-score guidance ────────────────────────────────────────────────
     // alpha > 0 enables channelness weighting in the Dijkstra cost:
@@ -498,14 +534,13 @@ find_candidate_junctions_phase(
 // ---------------------------------------------------------------------------
 // write_candidate_junction_points
 //
-// Writes the phase candidate points as a vector point file.
-// Output geometry is the vector junction location.
+// Writes the phase candidate points as a vector point file or CSV.
+// Each record produces one point at the vector junction and, when a DEM
+// counterpart exists, one point at the DEM junction (is_dem_junction = 1).
 //
 // Attributes:
 //   phase, basin_outlet, vector_jid, vector_ndonors, vector_order,
-//   dem_jid, dem_ndonors, distance_m, mismatch_reason
-//
-// fmt must not be csv in this first implementation.
+//   dem_jid, dem_ndonors, distance_m, is_dem_junction, mismatch_reason
 // ---------------------------------------------------------------------------
 void write_candidate_junction_points(
     const std::vector<CandidateJunctionRecord>& records,
@@ -513,6 +548,35 @@ void write_candidate_junction_points(
     const std::string&                          filename,
     point_output_format                         fmt,
     bool                                        spatial_index = false
+);
+
+// ---------------------------------------------------------------------------
+// repair_candidate_junctions
+//
+// Phase-based repair. Repairs the supplied candidate records in order,
+// re-extracting flow and junction network after each burn.
+// Updates dem, flow, and dem_network in place.
+//
+// precomputed_channel_scores: when non-null, used directly instead of
+// recomputing channel scores from the DEM.  Pass the same vector across
+// phases to avoid redundant polyfit work.  nullptr triggers internal
+// computation as before.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::vector<JunctionRepairRecord>
+repair_candidate_junctions(
+    lsdtt_raster_cpu&                             dem,
+    const lsdtt_vector_to_junction_network&       vector_network,
+    const std::string&                            vector_path,
+    const std::vector<CandidateJunctionRecord>&   candidates,
+    const std::vector<std::int64_t>&              source_flats,
+    std::unique_ptr<lsdtt_flow_base>&             flow,
+    std::unique_ptr<lsdtt_junction_network_base>& dem_network,
+    const lsdtt_flowinfo_options&                 fi_opts,
+    const lsdtt_junction_network_options&         jn_opts,
+    const junction_repair_params&                 params,
+    int                                           phase = 0,
+    int                                           repair_index_offset = 0,
+    const std::vector<float>*                     precomputed_channel_scores = nullptr
 );
 
 
@@ -531,19 +595,9 @@ build_vector_networks(
 );
 
 // ---------------------------------------------------------------------------
-// repair_stream_junctions
+// repair_stream_junctions  [DEPRECATED — use repair_candidate_junctions]
 //
-// Iterates over every junction in the vector network in topological order
-// (upstream first, across all disconnected sub-networks).  For each junction:
-//   1. Computes the LCA of the DEM junctions corresponding to its immediate
-//      upstream vector nodes.  Source nodes map to the nearest DEM headwater;
-//      previously processed junctions use their stored DEM counterpart.
-//   2. If the gap exceeds params.min_gap_m, applies a DEM repair (least-cost
-//      terrain path or vector-burn fallback) then re-extracts the full flow
-//      routing and junction network before continuing.
-//
-// flow and dem_network are updated in place to reflect the final state.
-// Returns one record per repaired junction.
+// Legacy topology-walk repair. Kept for backwards compatibility.
 // ---------------------------------------------------------------------------
 [[nodiscard]] std::vector<JunctionRepairRecord>
 repair_stream_junctions(
@@ -561,8 +615,11 @@ repair_stream_junctions(
 // write_junction_repair_log
 //
 // Writes the repair log as CSV.
-// Columns: repair_index, network_index, vector_x, vector_y,
-//          dem_x, dem_y, distance_m, fix_type, n_burned
+// Columns: repair_index, phase, basin_outlet_junction, vector_junction_id,
+//          dem_junction_id, vector_x, vector_y, dem_x, dem_y,
+//          distance_m, post_distance_m, fix_type, n_burned, success,
+//          max_climb_m, total_cost, n_landing_pixels,
+//          divergence_x, divergence_y, mismatch_reason
 // ---------------------------------------------------------------------------
 void write_junction_repair_log(
     const std::vector<JunctionRepairRecord>& records,

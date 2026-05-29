@@ -17,6 +17,7 @@
 #include <map>
 #include <queue>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <iomanip>
@@ -28,10 +29,13 @@
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_junction_network_base.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
+#include "../core/lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "lsdtt_least_cost_path.hpp"
 #include "lsdtt_proximity_cpu.hpp"
+#include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_feature_finder_cpu.hpp"
+#include "lsdtt_raster_skeleton_graph_cpu.hpp"
 
 namespace lsdtt
 {
@@ -897,8 +901,8 @@ void repair_junction_gaps(
 
         if (lcp_res.found && lcp_res.max_climb <= max_climb_m)
         {
-            burn_monotonic_path(dem, lcp_res.path);
-            pair.fix_type = GapFixType::curvature_bridge;
+            burn_monotonic_path(dem, lcp_res.path, 0.0);
+            pair.fix_type = GapFixType::channel_guided_bridge;
             pair.n_burned = static_cast<int>(lcp_res.path.size());
             ++n_bridge;
             std::cout << "  pair " << pair.pair_id
@@ -1424,59 +1428,99 @@ void write_candidate_junction_points(
 {
     if (records.empty()) return;
 
+    auto precise_string = [](double value) -> std::string
+    {
+        std::ostringstream ss;
+        ss.precision(17);
+        ss << value;
+        return ss.str();
+    };
+
     if (fmt == point_output_format::csv)
     {
-        throw std::invalid_argument(
-            "write_candidate_junction_points: CSV output is not supported in this implementation; use flatgeobuf or gpkg."
-        );
+        if (meta.crs_wkt.empty())
+            throw std::runtime_error(
+                "write_candidate_junction_points: CSV output requires a valid CRS");
+
+        const lsdtt_coordinate_transform transform =
+            lsdtt_coordinate_transform::from_epsg(meta.crs_wkt, 4326);
+
+        std::vector<std::string> headers = {
+            "latitude", "longitude", "phase", "basin_outlet",
+            "vector_jid", "vector_ndonors", "vector_order",
+            "dem_jid", "dem_ndonors", "distance_m",
+            "is_dem_junction", "mismatch_reason"
+        };
+
+        std::vector<std::vector<std::string>> rows;
+        rows.reserve(records.size() * 2);
+
+        for (const auto& r : records)
+        {
+            const lsdtt_lonlat llv = xy_to_lonlat(r.vector_xy.x, r.vector_xy.y, transform);
+            rows.push_back({
+                precise_string(llv.latitude), precise_string(llv.longitude),
+                std::to_string(r.phase), std::to_string(r.basin_outlet_junction),
+                std::to_string(r.vector_junction_id), std::to_string(r.vector_n_donors),
+                std::to_string(r.vector_order), std::to_string(r.dem_junction_id),
+                std::to_string(r.dem_n_donors), precise_string(r.match_distance_m),
+                "0", r.mismatch_reason
+            });
+
+            if (r.dem_junction_id >= 0)
+            {
+                const lsdtt_lonlat lld = xy_to_lonlat(r.dem_xy.x, r.dem_xy.y, transform);
+                rows.push_back({
+                    precise_string(lld.latitude), precise_string(lld.longitude),
+                    std::to_string(r.phase), std::to_string(r.basin_outlet_junction),
+                    std::to_string(r.vector_junction_id), std::to_string(r.vector_n_donors),
+                    std::to_string(r.vector_order), std::to_string(r.dem_junction_id),
+                    std::to_string(r.dem_n_donors), precise_string(r.match_distance_m),
+                    "1", r.mismatch_reason
+                });
+            }
+        }
+
+        lsdtt_data_loader loader;
+        loader.write_csv(filename, headers, rows);
+        return;
     }
 
     lsdtt_vector_schema schema;
     schema.field_names = {
-        "phase",
-        "basin_outlet",
-        "vector_jid",
-        "vector_ndonors",
-        "vector_order",
-        "dem_jid",
-        "dem_ndonors",
-        "distance_m",
-        "is_dem_junction",
-        "mismatch_reason"
+        "phase", "basin_outlet", "vector_jid", "vector_ndonors", "vector_order",
+        "dem_jid", "dem_ndonors", "distance_m", "is_dem_junction", "mismatch_reason"
     };
     schema.field_types = {
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::double_type,
-        lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::string_type
+        lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::string_type
     };
 
-    const vector_output_format vfmt =
-        convert_point_to_vector_output_format(fmt);
+    const vector_output_format vfmt = convert_point_to_vector_output_format(fmt);
 
     lsdtt_data_loader writer;
-    writer.begin_vector_write(
-        filename,
-        "candidate_junctions",
-        schema,
-        meta.crs_wkt,
-        vfmt,
-        spatial_index
-    );
+    writer.begin_vector_write(filename, "candidate_junctions", schema,
+                              meta.crs_wkt, vfmt, spatial_index);
 
     for (const auto& r : records)
     {
-        // Vector-side point
-        writer.write_point(
-            r.vector_xy.x,
-            r.vector_xy.y,
-            {
+        writer.write_point(r.vector_xy.x, r.vector_xy.y, {
+            static_cast<std::int64_t>(r.phase),
+            static_cast<std::int64_t>(r.basin_outlet_junction),
+            static_cast<std::int64_t>(r.vector_junction_id),
+            static_cast<std::int64_t>(r.vector_n_donors),
+            static_cast<std::int64_t>(r.vector_order),
+            static_cast<std::int64_t>(r.dem_junction_id),
+            static_cast<std::int64_t>(r.dem_n_donors),
+            r.match_distance_m, std::int64_t{0}, r.mismatch_reason
+        });
+
+        if (r.dem_junction_id >= 0)
+        {
+            writer.write_point(r.dem_xy.x, r.dem_xy.y, {
                 static_cast<std::int64_t>(r.phase),
                 static_cast<std::int64_t>(r.basin_outlet_junction),
                 static_cast<std::int64_t>(r.vector_junction_id),
@@ -1484,31 +1528,8 @@ void write_candidate_junction_points(
                 static_cast<std::int64_t>(r.vector_order),
                 static_cast<std::int64_t>(r.dem_junction_id),
                 static_cast<std::int64_t>(r.dem_n_donors),
-                r.match_distance_m,
-                std::int64_t{0},
-                r.mismatch_reason
-            }
-        );
-
-        // DEM-side point, if a matched DEM junction exists
-        if (r.dem_junction_id >= 0)
-        {
-            writer.write_point(
-                r.dem_xy.x,
-                r.dem_xy.y,
-                {
-                    static_cast<std::int64_t>(r.phase),
-                    static_cast<std::int64_t>(r.basin_outlet_junction),
-                    static_cast<std::int64_t>(r.vector_junction_id),
-                    static_cast<std::int64_t>(r.vector_n_donors),
-                    static_cast<std::int64_t>(r.vector_order),
-                    static_cast<std::int64_t>(r.dem_junction_id),
-                    static_cast<std::int64_t>(r.dem_n_donors),
-                    r.match_distance_m,
-                    std::int64_t{1},
-                    r.mismatch_reason
-                }
-            );
+                r.match_distance_m, std::int64_t{1}, r.mismatch_reason
+            });
         }
     }
 
@@ -2261,51 +2282,755 @@ static std::vector<std::int64_t> collect_upslope_channel_pixels(
 }
 
 // ===========================================================================
-// repair_junction_channel_guided
-//
-// Three-phase repair for a single mismatched vector–DEM junction pair.
-//
-// Core problem
-// ------------
-// In the parallel-swale case the DEM junction is downstream of the true
-// divergence point.  Simply routing from the DEM junction to the vector
-// junction would carve the wrong reach of channel.  The algorithm must
-// instead: (a) find the best divergence point in the upstream channel
-// network, (b) find a channelised landing zone near the vector junction,
-// and (c) carve a terrain-guided path between them.
-//
-// Phase 1 — divergence-point selection
-//   Collects all channel pixels upstream of dem_junction_flat within
-//   2× gap_distance_m of the vector junction (via collect_upslope_channel_pixels).
-//   Each candidate pixel is scored:
-//     score = w_proximity × 1/(1 + dist/gap) + w_channel × channel_score[px]
-//   Proximity dominates (default w_proximity = 0.7) so the divergence point
-//   lands close to the repair target; channel score (w_channel = 0.3) gives
-//   secondary preference for concave terrain.  When no upstream channel pixels
-//   are found the DEM junction itself becomes the divergence point.
-//
-// Phase 2 — landing zone
-//   Scans a square window of radius match_radius_m around the vector junction
-//   and collects pixels with channel_score ≥ landing_score_threshold.  The
-//   repair does not need to hit the exact vector junction pixel — any
-//   channelised pixel in the landing window qualifies as a target.  When none
-//   qualify (flat terrain, no curvature signal), the pixel containing the
-//   vector junction coordinate is used as the sole landing target.  This
-//   correctly handles case B (low-relief parallel swales) where the terrain
-//   gives no signal and the vector position is the only ground truth.
-//
-// Phase 3 — channel-score-guided Dijkstra + monotonic burn
-//   Runs multi-target Dijkstra (goal_flats = landing zone pixels) from the
-//   divergence point.  Step cost:
-//     step_distance × (1 + alpha × (1 − score[px])) + max(0, Δelev) × uphill
-//   High channel-score pixels are cheaper, steering the path through existing
-//   swale geometry.  The cheapest landing pixel is reached first (Dijkstra
-//   guarantee).  The path is then burned monotonically so D8 routes through it.
-//
-// Returns curvature_bridge on success, unresolved if the LCP fails.
-// n_burned is set to the path length in pixels on success.
+// Anonymous namespace — internal repair helpers
 // ===========================================================================
-static GapFixType repair_junction_channel_guided(
+namespace
+{
+
+struct repair_attempt_result
+{
+    GapFixType fix_type        = GapFixType::unresolved;
+    int        n_burned        = 0;
+    double     max_climb_m     = -1.0;
+    double     total_cost      = -1.0;
+    int        n_landing_pixels = 0;
+    lsdtt_xy   divergence_xy;   // breach start (on lower channel)
+    lsdtt_xy   target_xy;       // path endpoint (on higher channel)
+    std::vector<std::int64_t> burned_path;  // flat indices start→end
+};
+
+double nearest_junction_distance_to_xy(
+    const lsdtt_junction_network_base& dem_network,
+    const lsdtt_raster_meta&           meta,
+    const lsdtt_xy&                    target_xy,
+    int*                               best_junction = nullptr)
+{
+    double best_d2 = std::numeric_limits<double>::max();
+    int best_j = -1;
+    const std::int32_t nj = dem_network.n_junctions();
+    for (std::int32_t j = 0; j < nj; ++j)
+    {
+        if (!dem_network.is_valid_junction(j)) continue;
+        const lsdtt_xy jxy = cell_center_from_row_col(
+            meta, dem_network.row_of_junction(j), dem_network.col_of_junction(j));
+        const double dx = jxy.x - target_xy.x;
+        const double dy = jxy.y - target_xy.y;
+        const double d2 = dx * dx + dy * dy;
+        if (d2 < best_d2) { best_d2 = d2; best_j = j; }
+    }
+    if (best_junction) *best_junction = best_j;
+    return (best_j >= 0) ? std::sqrt(best_d2)
+                         : std::numeric_limits<double>::infinity();
+}
+
+bool xy_to_valid_row_col(
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_xy&         xy,
+    int&                    row,
+    int&                    col)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    col = static_cast<int>(std::floor((xy.x - meta.x_min) / meta.cell_size));
+    row = static_cast<int>(std::floor((meta.y_max() - xy.y) / meta.cell_size));
+    if (row < 0 || row >= meta.n_rows || col < 0 || col >= meta.n_cols)
+        return false;
+    const std::int64_t flat = static_cast<std::int64_t>(row) * meta.n_cols + col;
+    return dem.get_mask()[static_cast<std::size_t>(flat)] != 0;
+}
+
+} // anonymous namespace
+
+// ===========================================================================
+// repair_junction_parallel_channels
+//
+// Both repair endpoints are on DEM-extracted channels.  The vector junction
+// is used only to identify WHICH two DEM branches need connecting.
+//
+// The DEM junction (candidate.dem_junction_id) is the confluence where the
+// two mis-matched branches currently meet.  Its donor junctions in the DEM
+// network are the two upstream branches:
+//
+//   Branch B (correct)  — the donor whose junction is closest to the vector
+//                         junction location.  D8 is already routing this
+//                         branch roughly correctly.
+//   Branch A (wrong)    — the donor whose junction is farthest from the
+//                         vector junction.  D8 is routing this branch down
+//                         the wrong valley.
+//
+// Algorithm:
+//   1. Classify the donors of the DEM junction into Branch A (far) and
+//      Branch B (close) using distance from the vector junction.
+//   2. Collect DEM channel pixels for each branch within 2× gap.
+//   3. Find the closest pair of pixels (one from each branch) — that pair
+//      sits at the natural col between the two parallel valleys.
+//   4. Determine which pixel is lower.  The lower one is the breach start;
+//      the higher branch pixels are the goal set.
+//   5. Additionally: from the lower breach pixel, search upstream for the
+//      farthest channel pixel that still faces the higher branch (via
+//      channelised bank score), and use that as the actual breach start.
+//      This ensures the burn reaches as far upstream as needed.
+//   6. Run LCP from breach start to higher branch (goal_flats); burn.
+// ===========================================================================
+static repair_attempt_result repair_junction_parallel_channels(
+    lsdtt_raster_cpu&                           dem,
+    const lsdtt_flow_base&                      flow,
+    const lsdtt_junction_network_base&          dem_network,
+    std::int64_t                                dem_junction_flat,
+    const lsdtt_xy&                             vector_junction_xy,
+    int                                         /* vector_junction_id */,
+    const lsdtt_vector_to_junction_network&     /* vector_network */,
+    double                                      gap_distance_m,
+    double                                      match_radius_m,
+    const std::vector<float>&                   channel_score_data,
+    const junction_repair_params&               params)
+{
+    repair_attempt_result out;
+    out.fix_type = GapFixType::unresolved;
+
+    const lsdtt_raster_meta& meta  = dem.get_meta();
+    const double  cs    = meta.cell_size;
+    const int     nr    = meta.n_rows;
+    const int     nc    = meta.n_cols;
+    const std::int64_t ncols64 = static_cast<std::int64_t>(nc);
+
+    auto to_row  = [&](std::int64_t f) { return static_cast<int>(f / ncols64); };
+    auto to_col  = [&](std::int64_t f) { return static_cast<int>(f % ncols64); };
+    auto to_flat = [&](int r, int c)   { return static_cast<std::int64_t>(r) * ncols64 + c; };
+
+    static constexpr int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    static constexpr int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+    const auto& elev_data = dem.get_data();
+    const auto& mask_data = dem.get_mask();
+
+    // ── Step 1: classify donors into Branch A (far) and Branch B (close) ────
+    const std::int32_t dem_junc32 =
+        static_cast<std::int32_t>(dem_junction_flat / ncols64 * ncols64 == dem_junction_flat
+            ? dem_junction_flat / ncols64
+            : dem_junction_flat / ncols64); // unused; get via junction API
+
+    // Find which junction ID corresponds to dem_junction_flat
+    std::int32_t dem_jid = -1;
+    {
+        const std::int32_t nj = dem_network.n_junctions();
+        for (std::int32_t j = 0; j < nj; ++j)
+        {
+            if (dem_network.flat_of_junction(j) == dem_junction_flat)
+            { dem_jid = j; break; }
+        }
+    }
+    if (dem_jid < 0)
+    {
+        std::cerr << "    parallel: DEM junction not found for flat\n";
+        return out;
+    }
+
+    const std::int32_t n_donors = dem_network.donor_junction_size(dem_jid);
+    if (n_donors < 2)
+    {
+        std::cerr << "    parallel: DEM junction has fewer than 2 donors ("
+                  << n_donors << "); cannot identify two branches\n";
+        return out;
+    }
+
+    std::int32_t branch_a_jid = -1, branch_b_jid = -1;
+    double best_close_d2 = std::numeric_limits<double>::max();
+    double best_far_d2   = 0.0;
+
+    for (std::int32_t donor : dem_network.donor_junctions(dem_jid))
+    {
+        const lsdtt_xy dxy = cell_center_from_row_col(
+            meta,
+            dem_network.row_of_junction(donor),
+            dem_network.col_of_junction(donor));
+        const double dx = dxy.x - vector_junction_xy.x;
+        const double dy = dxy.y - vector_junction_xy.y;
+        const double d2 = dx*dx + dy*dy;
+        if (d2 < best_close_d2) { best_close_d2 = d2; branch_b_jid = donor; }
+        if (d2 > best_far_d2)   { best_far_d2   = d2; branch_a_jid = donor; }
+    }
+
+    if (branch_a_jid == branch_b_jid)
+    {
+        // All donors at same distance — pick the two with highest basin area
+        // (fallback: just pick first two)
+        auto donors = dem_network.donor_junctions(dem_jid);
+        branch_a_jid = donors[0];
+        branch_b_jid = donors[1];
+    }
+
+    const lsdtt_xy branch_a_xy = cell_center_from_row_col(
+        meta,
+        dem_network.row_of_junction(branch_a_jid),
+        dem_network.col_of_junction(branch_a_jid));
+    const lsdtt_xy branch_b_xy = cell_center_from_row_col(
+        meta,
+        dem_network.row_of_junction(branch_b_jid),
+        dem_network.col_of_junction(branch_b_jid));
+
+    std::cout << "    parallel: Branch_A(wrong) jid=" << branch_a_jid
+              << " at (" << branch_a_xy.x << "," << branch_a_xy.y << ")"
+              << "  Branch_B(correct) jid=" << branch_b_jid
+              << " at (" << branch_b_xy.x << "," << branch_b_xy.y << ")\n";
+
+    // ── Step 2: collect and classify channel pixels for each branch ──────────
+    //
+    // Branch A goes down the WRONG valley — its pixels are far from the
+    // vector junction, so collecting from branch_a_flat upslope centred on
+    // the vector junction gives almost nothing.
+    //
+    // Correct approach: collect ALL upslope channel pixels from the DEM
+    // junction (which captures both branches), then classify each pixel to
+    // Branch A or B by checking which donor's upslope set it belongs to.
+    const std::int64_t branch_a_flat = dem_network.flat_of_junction(branch_a_jid);
+    const std::int64_t branch_b_flat = dem_network.flat_of_junction(branch_b_jid);
+
+    // Collect the channel pixels of each DEM segment.  A segment runs from its
+    // donor junction (here a source/channel head, so its upslope is ~1 pixel)
+    // DOWNSTREAM along the channel link to the matched DEM junction.  Walk the
+    // D8 receiver chain from the donor junction to the DEM junction, collecting
+    // every pixel of the link.
+    //
+    // (Collecting the donor's *upslope* set was the bug: a source junction has
+    // essentially no upslope, so both segments collapsed to a single pixel and
+    // the nearest-pixel search degenerated.)
+    auto collect_link = [&](std::int64_t donor_flat)
+    {
+        std::vector<std::int64_t> seg;
+        std::int64_t cur = donor_flat;
+        seg.push_back(cur);
+        const int max_steps = nr * nc;  // safety bound; walk terminates earlier
+        int steps = 0;
+        while (cur != dem_junction_flat && !flow.is_outlet(cur) && steps++ < max_steps)
+        {
+            const std::int64_t nxt = flow.receiver_of(cur);
+            if (nxt == cur || nxt < 0) break;
+            cur = nxt;
+            seg.push_back(cur);
+        }
+        return seg;
+    };
+
+    std::vector<std::int64_t> channel_a = collect_link(branch_a_flat);
+    std::vector<std::int64_t> channel_b = collect_link(branch_b_flat);
+
+    if (channel_a.empty() || channel_b.empty())
+    {
+        std::cerr << "    parallel: empty channel set (A="
+                  << channel_a.size() << " B=" << channel_b.size() << ")\n";
+        return out;
+    }
+
+    std::cout << "    parallel: Branch_A pixels=" << channel_a.size()
+              << "  Branch_B pixels=" << channel_b.size() << "\n";
+
+    // ── Step 3: find Branch A pixel nearest to vector junction ─────────────
+    // This anchors the search for the breach start near the correct location.
+    std::int64_t a_near_vj = branch_a_flat;
+    {
+        double best_d2 = std::numeric_limits<double>::max();
+        for (std::int64_t f : channel_a)
+        {
+            const lsdtt_xy xy = cell_center_from_row_col(meta, to_row(f), to_col(f));
+            const double dx = xy.x - vector_junction_xy.x;
+            const double dy = xy.y - vector_junction_xy.y;
+            const double d2 = dx*dx + dy*dy;
+            if (d2 < best_d2) { best_d2 = d2; a_near_vj = f; }
+        }
+    }
+
+    // ── Step 4: find breach start via channel-score skeleton ─────────────────
+    //
+    // Strategy:
+    //   a) Build a binary mask of the channel-score raster restricted to a
+    //      search window around the vector junction.  Use a low threshold so
+    //      the small col/depression between the two valleys is included.
+    //   b) Remove small blobs (noise).
+    //   c) Skeletonize and prune short spurs.
+    //   d) Extract degree-1 skeleton endpoints.
+    //   e) From those endpoints, keep only ones that:
+    //        - are on the Branch A (lower) side of the area (closer to channel_a
+    //          than to channel_b)
+    //        - point toward the higher channel (Branch B)
+    //   f) The endpoint closest to a Branch B pixel is the breach start.
+    //      If no suitable endpoint is found, fall back to a_near_vj.
+
+    // Search window around the vector junction
+    const int vj_r = static_cast<int>((meta.y_max() - vector_junction_xy.y) / cs);
+    const int vj_c = static_cast<int>((vector_junction_xy.x - meta.x_min) / cs);
+    const int win_px = static_cast<int>(std::ceil(gap_distance_m / cs)) + 20;
+
+    const int w_r0 = std::max(0,    vj_r - win_px);
+    const int w_r1 = std::min(nr-1, vj_r + win_px);
+    const int w_c0 = std::max(0,    vj_c - win_px);
+    const int w_c1 = std::min(nc-1, vj_c + win_px);
+
+    // Threshold: calibrate against the channel-score values found on the
+    // confirmed DEM channel network.  The previous window-local 20th-percentile
+    // rule discarded too many channelised cells (the skeleton came out too
+    // sparse).  Instead, sample the channel score at every DEM-network channel
+    // pixel and take the 5th percentile (lowest 5%) of those values: this
+    // retains ~95% of genuine channel cells, giving a denser binary mask.
+    std::vector<float> network_scores;
+    network_scores.reserve(static_cast<std::size_t>(dem_network.n_channel_cells()));
+    {
+        const std::int64_t n_flat = static_cast<std::int64_t>(nr) * ncols64;
+        for (std::int64_t f = 0; f < n_flat; ++f)
+        {
+            const std::size_t idx = static_cast<std::size_t>(f);
+            if (mask_data[idx] && dem_network.is_channel(f))
+                network_scores.push_back(channel_score_data[idx]);
+        }
+    }
+
+    float score_thresh = 0.0f;
+    if (!network_scores.empty())
+    {
+        std::sort(network_scores.begin(), network_scores.end());
+        const std::size_t p05 = network_scores.size() / 20;  // lowest 5%
+        score_thresh = network_scores[p05];
+    }
+
+    std::cout << "    parallel: channel score threshold=" << score_thresh
+              << " (5th pct of " << network_scores.size()
+              << " DEM-network channel pixels)  window="
+              << (w_r1-w_r0+1) << "×" << (w_c1-w_c0+1) << " px\n";
+
+    // Build windowed binary mask of channel score
+    lsdtt_raster_cpu score_bin(
+        lsdtt_array2d<float>(meta.n_rows, meta.n_cols, 0.0f),
+        lsdtt_array2d<uint8_t>(dem.get_mask_array()),
+        meta
+    );
+    {
+        auto& sd = score_bin.get_data();
+        for (int r = w_r0; r <= w_r1; ++r)
+        {
+            for (int c = w_c0; c <= w_c1; ++c)
+            {
+                const std::size_t idx = static_cast<std::size_t>(to_flat(r, c));
+                if (mask_data[idx] &&
+                    channel_score_data[idx] > 0.0f &&
+                    channel_score_data[idx] >= score_thresh)
+                    sd[idx] = 1.0f;
+            }
+        }
+    }
+
+    // Minimum component size: at least 3 pixels to suppress single-pixel noise
+    const int min_blob = 3;
+    lsdtt_raster_cpu filtered = filter_binary_components_by_size(score_bin, min_blob);
+
+    // Keep only components that touch a DEM channel pixel.  Hillslope blobs
+    // (high channel score locally but with no connection to the mapped channel
+    // network) are discarded, which greatly cleans up the mask.
+    {
+        lsdtt_raster_cpu labelled = label_binary_components_by_size(filtered, 1);
+        const auto& lab = labelled.get_data();
+
+        // Component labels that contain at least one DEM channel pixel
+        std::unordered_set<std::uint32_t> keep_labels;
+        const std::int64_t n_flat = static_cast<std::int64_t>(nr) * ncols64;
+        for (std::int64_t f = 0; f < n_flat; ++f)
+        {
+            const std::size_t idx = static_cast<std::size_t>(f);
+            const std::uint32_t L = static_cast<std::uint32_t>(lab[idx]);
+            if (L != 0 && dem_network.is_channel(f))
+                keep_labels.insert(L);
+        }
+
+        auto& fd = filtered.get_data();
+        for (std::int64_t f = 0; f < n_flat; ++f)
+        {
+            const std::size_t idx = static_cast<std::size_t>(f);
+            if (fd[idx] > 0.5f &&
+                keep_labels.count(static_cast<std::uint32_t>(lab[idx])) == 0)
+                fd[idx] = 0.0f;
+        }
+
+        std::cout << "    parallel: kept " << keep_labels.size()
+                  << " channel-connected component(s)\n";
+    }
+
+    // Report the binary mask before skeletonisation
+    std::size_t n_mask_fg = 0;
+    for (float v : filtered.get_data()) if (v > 0.5f) ++n_mask_fg;
+    std::cout << "    parallel: binary mask foreground pixels (pre-skeleton)="
+              << n_mask_fg << "\n";
+
+    // Fill interior holes: background pixels enclosed by foreground.  Each such
+    // hole skeletonises into a small ring/loop that suppresses endpoint
+    // detection on the branch beyond it.  binary_fill_holes fills exactly the
+    // background regions not connected to the domain exterior.
+    filtered = binary_fill_holes(filtered);
+
+    // Skeletonize.  thin_distance_guided is more robust than plain Zhang–Suen
+    // on blocky / staircase masks: it protects the medial axis and produces far
+    // fewer loop and diamond artefacts, so branch tips become clean endpoints.
+    lsdtt_raster_cpu skeleton = thin_distance_guided(filtered, 1.0);
+
+    // Prune spurs shorter than 2 pixels
+    skeleton = prune_skeleton_spurs(skeleton, 2);
+
+    // Break terminal "lollipop" loops.  Where a channel-score blob skeletonises
+    // into a small closed ring at the tip, the true spur tip is a degree-2 loop
+    // pixel and is never reported as an endpoint.  Pruning these rings exposes
+    // the real endpoint pointing toward the col.
+    skeleton = prune_terminal_loops(skeleton, 30);
+
+    // Extract endpoints (degree-1 tips)
+    const skeleton_node_result snr = classify_skeleton_nodes(skeleton);
+
+    std::cout << "    parallel: skeleton endpoints=" << snr.endpoints.size() << "\n";
+
+    // Write diagnostic rasters if prefix is set
+    if (!params.diagnostic_prefix.empty())
+    {
+        try
+        {
+            lsdtt_data_loader dwriter;
+            dwriter.write_full(score_bin.get_data(), meta,
+                               params.diagnostic_prefix + "_score_binary.tif");
+            dwriter.write_full(filtered.get_data(), meta,
+                               params.diagnostic_prefix + "_binary_filtered.tif");
+            dwriter.write_full(skeleton.get_data(), meta,
+                               params.diagnostic_prefix + "_skeleton.tif");
+            std::cout << "    parallel: wrote score_binary, binary_filtered and "
+                         "skeleton diagnostics\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "    parallel: could not write diagnostics: " << e.what() << "\n";
+        }
+
+        // Write ALL classified skeleton endpoints (not just the lower-channel
+        // spurs) so the skeleton's endpoint detection can be verified directly.
+        const int  ep_ph = std::max(0, params.diagnostic_phase);
+        const std::string ep_ph_str =
+            (ep_ph < 10 ? std::string("0") : std::string()) + std::to_string(ep_ph);
+        const std::string ep_file =
+            params.diagnostic_prefix + "_skeleton_endpoints_phase_" + ep_ph_str + ".fgb";
+        try
+        {
+            lsdtt_vector_schema schema;
+            schema.field_names = { "row", "col", "degree" };
+            schema.field_types = {
+                lsdtt_vector_field_type::int64_type,
+                lsdtt_vector_field_type::int64_type,
+                lsdtt_vector_field_type::int64_type
+            };
+            lsdtt_data_loader ew;
+            ew.begin_vector_write(ep_file, "skeleton_endpoints", schema,
+                                  meta.crs_wkt,
+                                  vector_output_format::flatgeobuf, false);
+            for (const skeleton_node& ep : snr.endpoints)
+            {
+                const lsdtt_xy xy = cell_center_from_row_col(meta, ep.row, ep.col);
+                std::vector<lsdtt_vector_field_value> attrs = {
+                    static_cast<std::int64_t>(ep.row),
+                    static_cast<std::int64_t>(ep.col),
+                    static_cast<std::int64_t>(ep.degree)
+                };
+                ew.write_point(xy.x, xy.y, attrs);
+            }
+            ew.finish_vector_write();
+            std::cout << "    parallel: wrote " << snr.endpoints.size()
+                      << " skeleton endpoints to " << ep_file << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "    parallel: could not write skeleton endpoints: "
+                      << e.what() << "\n";
+        }
+    }
+
+    // ── Step c: decide which branch is the LOWER channel and which is UPPER ──
+    //
+    // Compare the elevation of each branch at its pixel nearest the vector
+    // junction.  The repair carries flow from the upper (higher) channel down
+    // into the lower channel.
+    std::int64_t b_near_vj = branch_b_flat;
+    {
+        double best_d2 = std::numeric_limits<double>::max();
+        for (std::int64_t f : channel_b)
+        {
+            const lsdtt_xy xy = cell_center_from_row_col(meta, to_row(f), to_col(f));
+            const double dx = xy.x - vector_junction_xy.x;
+            const double dy = xy.y - vector_junction_xy.y;
+            const double d2 = dx*dx + dy*dy;
+            if (d2 < best_d2) { best_d2 = d2; b_near_vj = f; }
+        }
+    }
+
+    const float elev_a_near = elev_data[static_cast<std::size_t>(a_near_vj)];
+    const float elev_b_near = elev_data[static_cast<std::size_t>(b_near_vj)];
+    const bool  a_is_lower  = elev_a_near <= elev_b_near;
+
+    const std::vector<std::int64_t>& lower_channel = a_is_lower ? channel_a : channel_b;
+    const std::vector<std::int64_t>& upper_channel = a_is_lower ? channel_b : channel_a;
+
+    std::cout << "    parallel: lower channel = Branch_" << (a_is_lower ? "A" : "B")
+              << " (elev " << (a_is_lower ? elev_a_near : elev_b_near) << " m);"
+              << " upper channel = Branch_" << (a_is_lower ? "B" : "A")
+              << " (elev " << (a_is_lower ? elev_b_near : elev_a_near) << " m)\n";
+
+    const std::unordered_set<std::int64_t> lower_set(
+        lower_channel.begin(), lower_channel.end());
+    const std::unordered_set<std::int64_t> upper_set(
+        upper_channel.begin(), upper_channel.end());
+
+    // ── Step d: select the breach endpoint by D8 connectivity ───────────────
+    //
+    // Endpoint selection must NOT be keyed on how close the skeleton tip itself
+    // is to the vector junction — the correct tip can sit on a long spur whose
+    // end lies well outside the search radius.  Instead we use where each
+    // endpoint's flow *joins the lower channel*:
+    //
+    //   1. From each skeleton endpoint, follow D8 downstream until it reaches
+    //      one of the two channels.
+    //   2. Discard endpoints whose flow reaches the UPPER channel; keep only
+    //      those that drain to the LOWER channel.
+    //   3. Record where each kept endpoint joins the lower channel.
+    //   4. Keep only endpoints whose join point lies within the search radius
+    //      of the (vector) target junction.
+    //   5/6. Among those, choose the endpoint closest to a pixel on the upper
+    //      channel; burn from that nearest upper pixel to the endpoint, then
+    //      follow D8 from the endpoint down to the lower channel.
+    const double search_radius_m =
+        std::max(match_radius_m > 0.0 ? match_radius_m : 0.0, 10.0 * cs);
+    const double radius2 = search_radius_m * search_radius_m;
+
+    // Trace D8 from a start flat to the first lower/upper channel pixel.
+    // Returns 0 if it reached the lower channel, 1 if the upper channel,
+    // -1 if neither.  On a hit, join_flat holds the channel pixel reached.
+    auto trace_to_channel = [&](std::int64_t start, std::int64_t& join_flat) -> int
+    {
+        std::int64_t cur = start;
+        const int max_steps = nr + nc + 8 * win_px;  // generous bound
+        int steps = 0;
+        while (steps++ < max_steps)
+        {
+            if (lower_set.count(cur)) { join_flat = cur; return 0; }
+            if (upper_set.count(cur)) { join_flat = cur; return 1; }
+            if (flow.is_outlet(cur)) break;
+            const std::int64_t nxt = flow.receiver_of(cur);
+            if (nxt == cur || nxt < 0) break;
+            cur = nxt;
+        }
+        return -1;
+    };
+
+    struct breach_candidate
+    {
+        std::int64_t ep_flat;
+        lsdtt_xy     ep_xy;
+        std::int64_t join_flat;           // where its D8 path meets the lower channel
+        double       join_dist_to_vj_m;
+        std::int64_t nearest_upper_flat;
+        double       dist_to_upper_m;
+    };
+    std::vector<breach_candidate> cands;
+
+    for (const skeleton_node& ep : snr.endpoints)
+    {
+        const std::int64_t ep_flat = to_flat(ep.row, ep.col);
+
+        // (1)(2) D8 from the endpoint; keep only lower-channel-draining tips
+        std::int64_t join_flat = -1;
+        const int which = trace_to_channel(ep_flat, join_flat);
+        if (which != 0) continue;         // no channel, or drains to the upper channel
+
+        // (3)(4) join point must lie within the search radius of the junction
+        const lsdtt_xy join_xy =
+            cell_center_from_row_col(meta, to_row(join_flat), to_col(join_flat));
+        const double jdx = join_xy.x - vector_junction_xy.x;
+        const double jdy = join_xy.y - vector_junction_xy.y;
+        const double join_d2 = jdx*jdx + jdy*jdy;
+        if (join_d2 > radius2) continue;
+
+        // nearest upper-channel pixel to the endpoint
+        const lsdtt_xy ep_xy = cell_center_from_row_col(meta, ep.row, ep.col);
+        double       d2_upper      = std::numeric_limits<double>::max();
+        std::int64_t nearest_upper = -1;
+        for (std::int64_t f : upper_channel)
+        {
+            const lsdtt_xy xy = cell_center_from_row_col(meta, to_row(f), to_col(f));
+            const double dx = ep_xy.x - xy.x, dy = ep_xy.y - xy.y;
+            const double d2 = dx*dx + dy*dy;
+            if (d2 < d2_upper) { d2_upper = d2; nearest_upper = f; }
+        }
+
+        breach_candidate bc;
+        bc.ep_flat            = ep_flat;
+        bc.ep_xy              = ep_xy;
+        bc.join_flat          = join_flat;
+        bc.join_dist_to_vj_m  = std::sqrt(join_d2);
+        bc.nearest_upper_flat = nearest_upper;
+        bc.dist_to_upper_m    = std::sqrt(d2_upper);
+        cands.push_back(bc);
+    }
+
+    std::cout << "    parallel: lower-channel endpoints joining within "
+              << search_radius_m << " m of vector junction = "
+              << cands.size() << "\n";
+
+    // (6) choose the endpoint closest to the upper channel (narrowest breach)
+    int    best_idx = -1;
+    double best_d   = std::numeric_limits<double>::max();
+    for (std::size_t i = 0; i < cands.size(); ++i)
+        if (cands[i].dist_to_upper_m < best_d)
+        { best_d = cands[i].dist_to_upper_m; best_idx = static_cast<int>(i); }
+
+    // ── Write all breach candidates to a diagnostic FGB for bug checking ────
+    if (!params.diagnostic_prefix.empty())
+    {
+        const int  ph_i = std::max(0, params.diagnostic_phase);
+        const std::string ph_str =
+            (ph_i < 10 ? std::string("0") : std::string()) + std::to_string(ph_i);
+        const std::string spur_file =
+            params.diagnostic_prefix + "_spur_endpoints_phase_" + ph_str + ".fgb";
+        try
+        {
+            lsdtt_vector_schema schema;
+            schema.field_names = {
+                "cand_index", "is_selected", "dist_to_upper_m", "join_dist_to_vj_m"
+            };
+            schema.field_types = {
+                lsdtt_vector_field_type::int64_type,
+                lsdtt_vector_field_type::int64_type,
+                lsdtt_vector_field_type::double_type,
+                lsdtt_vector_field_type::double_type
+            };
+            lsdtt_data_loader sw;
+            sw.begin_vector_write(spur_file, "spur_endpoints", schema,
+                                  meta.crs_wkt,
+                                  vector_output_format::flatgeobuf, false);
+            for (std::size_t i = 0; i < cands.size(); ++i)
+            {
+                std::vector<lsdtt_vector_field_value> attrs = {
+                    static_cast<std::int64_t>(i),
+                    std::int64_t{ static_cast<int>(i) == best_idx ? 1 : 0 },
+                    cands[i].dist_to_upper_m,
+                    cands[i].join_dist_to_vj_m
+                };
+                sw.write_point(cands[i].ep_xy.x, cands[i].ep_xy.y, attrs);
+            }
+            sw.finish_vector_write();
+            std::cout << "    parallel: wrote " << cands.size()
+                      << " breach candidates to " << spur_file << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "    parallel: could not write spur endpoints: "
+                      << e.what() << "\n";
+        }
+    }
+
+    if (best_idx < 0)
+    {
+        std::cout << "    parallel: no lower-channel endpoint joins near the "
+                     "vector junction; leaving unresolved\n";
+        return out;
+    }
+
+    const breach_candidate& chosen   = cands[static_cast<std::size_t>(best_idx)];
+    const std::int64_t      spur_flat = chosen.ep_flat;
+    const std::int64_t      burn_init = chosen.nearest_upper_flat;  // on upper channel
+
+    const int spur_r = to_row(spur_flat),  spur_c = to_col(spur_flat);
+    const int init_r = to_row(burn_init),  init_c = to_col(burn_init);
+
+    std::cout << "    parallel: chosen endpoint=("
+              << chosen.ep_xy.x << "," << chosen.ep_xy.y << ")"
+              << " dist_to_upper=" << chosen.dist_to_upper_m << " m;"
+              << " join_dist_to_vj=" << chosen.join_dist_to_vj_m << " m;"
+              << " burn init (upper)=("
+              << cell_center_from_row_col(meta, init_r, init_c).x << ","
+              << cell_center_from_row_col(meta, init_r, init_c).y << ")\n";
+
+    // ── Burn from the upper-channel initiation point down to the spur ───────
+    const int buf = std::max(params.max_search_px, win_px);
+
+    lcp_params lcp;
+    lcp.uphill_mult         = params.uphill_mult;
+    lcp.channel_score       = &channel_score_data;
+    lcp.channel_score_alpha = params.channel_score_alpha;
+    lcp.goal_flats          = std::vector<std::int64_t>{ spur_flat };
+    lcp.r_min = std::max(0,    std::min(init_r, spur_r) - buf);
+    lcp.r_max = std::min(nr-1, std::max(init_r, spur_r) + buf);
+    lcp.c_min = std::max(0,    std::min(init_c, spur_c) - buf);
+    lcp.c_max = std::min(nc-1, std::max(init_c, spur_c) + buf);
+
+    lcp_result lcp_res;
+    try { lcp_res = raster_least_cost_path(dem, init_r, init_c, spur_r, spur_c, lcp); }
+    catch (const std::exception& e)
+    { std::cerr << "    parallel LCP failed: " << e.what() << "\n"; return out; }
+
+    if (!lcp_res.found)
+    { std::cout << "    parallel: no path from upper channel to spur\n"; return out; }
+
+    out.max_climb_m = lcp_res.max_climb;
+    out.total_cost  = lcp_res.total_cost;
+
+    if (lcp_res.max_climb > params.max_climb_m)
+    {
+        std::cout << "    parallel: climb=" << lcp_res.max_climb
+                  << " m > " << params.max_climb_m << " m; rejected\n";
+        return out;
+    }
+
+    burn_monotonic_path(dem, lcp_res.path, params.repair_min_slope);
+
+    // ── Follow D8 from the spur endpoint down to the lower channel ──────────
+    std::vector<std::int64_t> d8_tail;
+    {
+        std::int64_t cur     = spur_flat;
+        bool         reached = lower_set.count(cur) > 0;
+        int          steps   = 0;
+        const int    max_steps = std::max(1000, buf * 8);
+        while (!reached && steps++ < max_steps && !flow.is_outlet(cur))
+        {
+            const std::int64_t nxt = flow.receiver_of(cur);
+            if (nxt == cur || nxt < 0) break;
+            cur = nxt;
+            d8_tail.push_back(cur);
+            if (lower_set.count(cur)) { reached = true; break; }
+        }
+        if (!reached)
+            std::cout << "    parallel: warning - D8 from spur did not reach the "
+                         "lower channel within " << max_steps << " steps\n";
+    }
+
+    // Full repair path: upper channel -> spur (burned) -> (D8) -> lower channel
+    out.burned_path = lcp_res.path;
+    out.burned_path.insert(out.burned_path.end(), d8_tail.begin(), d8_tail.end());
+
+    out.n_burned         = static_cast<int>(lcp_res.path.size());
+    out.n_landing_pixels = static_cast<int>(lower_channel.size());
+    out.fix_type         = GapFixType::channel_guided_bridge;
+
+    // divergence = upper-channel initiation; target = lower-channel landing
+    out.divergence_xy = cell_center_from_row_col(meta, init_r, init_c);
+    if (!out.burned_path.empty())
+    {
+        const std::int64_t end_flat = out.burned_path.back();
+        out.target_xy = cell_center_from_row_col(
+            meta, to_row(end_flat), to_col(end_flat));
+    }
+
+    std::cout << "    parallel: burned " << out.n_burned
+              << " px (climb=" << lcp_res.max_climb << " m), D8 tail="
+              << d8_tail.size() << " px"
+              << "  start=(" << out.divergence_xy.x << "," << out.divergence_xy.y << ")"
+              << "  end=("   << out.target_xy.x     << "," << out.target_xy.y     << ")\n";
+    return out;
+}
+
+
+// ===========================================================================
+// repair_junction_channel_guided
+// ===========================================================================
+static repair_attempt_result repair_junction_channel_guided(
     lsdtt_raster_cpu&                  dem,
     const lsdtt_flow_base&             flow,
     const lsdtt_junction_network_base& dem_network,
@@ -2314,57 +3039,86 @@ static GapFixType repair_junction_channel_guided(
     double                             gap_distance_m,
     double                             match_radius_m,
     const std::vector<float>&          channel_score_data,
-    double                             channel_score_alpha,
-    double                             w_proximity,
-    double                             w_channel,
-    double                             landing_score_threshold,
-    double                             uphill_mult,
-    int&                               n_burned)
+    const junction_repair_params&      params)
 {
-    const lsdtt_raster_meta&  meta     = dem.get_meta();
-    const double              cs       = meta.cell_size;
-    const std::int64_t        ncols    = static_cast<std::int64_t>(meta.n_cols);
+    repair_attempt_result out;
+    out.fix_type = GapFixType::unresolved;
 
-    auto to_row = [&](std::int64_t f) -> int
-        { return static_cast<int>(f / ncols); };
-    auto to_col = [&](std::int64_t f) -> int
-        { return static_cast<int>(f % ncols); };
+    const lsdtt_raster_meta& meta  = dem.get_meta();
+    const double cs = meta.cell_size;
+    const std::int64_t ncols = static_cast<std::int64_t>(meta.n_cols);
+
+    auto to_row = [&](std::int64_t f) -> int { return static_cast<int>(f / ncols); };
+    auto to_col = [&](std::int64_t f) -> int { return static_cast<int>(f % ncols); };
 
     // ── Phase 1: find divergence point ───────────────────────────────────────
+    //
+    // Score upstream channel pixels against the MIDPOINT of the gap, not the
+    // vector junction end.  Scoring against the vector junction end selects
+    // pixels that are already near the landing zone, producing a trivially
+    // short path that does not redirect the channel.  The midpoint target
+    // selects a pixel somewhere along the mis-routed reach, from which a
+    // meaningful LCP can bridge across to the target valley.
+    //
+    // Candidates within match_radius_m of the vector junction are excluded:
+    // those pixels are landing-zone candidates, not upstream divergence points.
     const std::vector<std::int64_t> upstream =
         collect_upslope_channel_pixels(
-            flow, dem_network,
-            dem_junction_flat,
-            vector_junction_xy,
-            2.0 * gap_distance_m,
-            meta);
+            flow, dem_network, dem_junction_flat,
+            vector_junction_xy, 2.0 * gap_distance_m, meta);
+
+    // Midpoint between DEM junction and vector junction
+    const lsdtt_xy dem_junction_xy =
+        cell_center_from_row_col(meta,
+            to_row(dem_junction_flat), to_col(dem_junction_flat));
+
+    const lsdtt_xy midpoint{
+        (dem_junction_xy.x + vector_junction_xy.x) * 0.5,
+        (dem_junction_xy.y + vector_junction_xy.y) * 0.5
+    };
 
     std::int64_t divergence_flat = dem_junction_flat;
 
     if (!upstream.empty())
     {
         double best_score = -1.0;
+        int    n_eligible = 0;
 
         for (std::int64_t flat : upstream)
         {
-            const lsdtt_xy xy  = cell_center_from_row_col(
-                meta, to_row(flat), to_col(flat));
-            const double   dx   = xy.x - vector_junction_xy.x;
-            const double   dy   = xy.y - vector_junction_xy.y;
-            const double   dist = std::sqrt(dx*dx + dy*dy);
+            const lsdtt_xy xy = cell_center_from_row_col(meta, to_row(flat), to_col(flat));
 
-            const double prox = 1.0 / (1.0 + dist / std::max(gap_distance_m, cs));
+            // Exclude pixels already in the landing zone
+            const double dv_x = xy.x - vector_junction_xy.x;
+            const double dv_y = xy.y - vector_junction_xy.y;
+            if (std::sqrt(dv_x*dv_x + dv_y*dv_y) < match_radius_m)
+                continue;
+
+            ++n_eligible;
+
+            // Proximity to midpoint — scale denominator by half the gap
+            const double dm_x = xy.x - midpoint.x;
+            const double dm_y = xy.y - midpoint.y;
+            const double dist = std::sqrt(dm_x*dm_x + dm_y*dm_y);
+            const double half_gap = std::max(gap_distance_m * 0.5, cs);
+            const double prox = 1.0 / (1.0 + dist / half_gap);
             const double chan = static_cast<double>(channel_score_data[flat]);
-            const double s   = w_proximity * prox + w_channel * chan;
-
+            const double s = params.w_proximity * prox + params.w_channel * chan;
             if (s > best_score) { best_score = s; divergence_flat = flat; }
         }
 
-        const lsdtt_xy div_xy = cell_center_from_row_col(
-            meta, to_row(divergence_flat), to_col(divergence_flat));
-        std::cout << "    divergence point: ("
-                  << div_xy.x << ", " << div_xy.y << ")  score=" << best_score
-                  << "  upstream candidates=" << upstream.size() << "\n";
+        if (n_eligible == 0)
+        {
+            // All upstream pixels are already at the landing end — fall back
+            // to the DEM junction as the divergence point
+            std::cout << "    all upstream candidates in landing zone; "
+                         "using DEM junction as divergence point\n";
+        }
+        else
+        {
+            std::cout << "    divergence point selected  candidates="
+                      << upstream.size() << " eligible=" << n_eligible << "\n";
+        }
     }
     else
     {
@@ -2372,16 +3126,18 @@ static GapFixType repair_junction_channel_guided(
                      "using DEM junction as divergence point\n";
     }
 
+    out.divergence_xy = cell_center_from_row_col(
+        meta, to_row(divergence_flat), to_col(divergence_flat));
+
     // ── Phase 2: landing zone near vector junction ────────────────────────────
     const int vj_row = static_cast<int>(
         std::floor((meta.y_max() - vector_junction_xy.y) / cs));
     const int vj_col = static_cast<int>(
         std::floor((vector_junction_xy.x - meta.x_min) / cs));
-
     const int landing_px = static_cast<int>(std::ceil(match_radius_m / cs));
 
     const std::vector<uint8_t>& dem_mask = dem.get_mask();
-    std::vector<std::int64_t>   landing_flats;
+    std::vector<std::int64_t> landing_flats;
 
     for (int dr = -landing_px; dr <= landing_px; ++dr)
     {
@@ -2389,55 +3145,44 @@ static GapFixType repair_junction_channel_guided(
         {
             const int r = vj_row + dr;
             const int c = vj_col + dc;
-            if (r < 0 || r >= meta.n_rows ||
-                c < 0 || c >= meta.n_cols) continue;
-
-            const double dist_m =
-                std::sqrt(static_cast<double>(dr*dr + dc*dc)) * cs;
+            if (r < 0 || r >= meta.n_rows || c < 0 || c >= meta.n_cols) continue;
+            const double dist_m = std::sqrt(static_cast<double>(dr*dr + dc*dc)) * cs;
             if (dist_m > match_radius_m) continue;
-
             const std::int64_t flat = static_cast<std::int64_t>(r) * ncols + c;
-            if (!dem_mask[flat]) continue;
-
-            const double score =
-                static_cast<double>(channel_score_data[flat]);
-            if (score >= landing_score_threshold)
+            if (!dem_mask[static_cast<std::size_t>(flat)]) continue;
+            if (static_cast<double>(channel_score_data[flat]) >= params.landing_score_threshold)
                 landing_flats.push_back(flat);
         }
     }
 
-    // Fallback: pixel containing the vector junction
     if (landing_flats.empty())
     {
         if (vj_row >= 0 && vj_row < meta.n_rows &&
             vj_col >= 0 && vj_col < meta.n_cols)
         {
-            const std::int64_t vj_flat =
-                static_cast<std::int64_t>(vj_row) * ncols + vj_col;
-            if (dem_mask[vj_flat])
+            const std::int64_t vj_flat = static_cast<std::int64_t>(vj_row) * ncols + vj_col;
+            if (dem_mask[static_cast<std::size_t>(vj_flat)])
                 landing_flats.push_back(vj_flat);
         }
     }
 
+    out.n_landing_pixels = static_cast<int>(landing_flats.size());
+
     if (landing_flats.empty())
     {
-        std::cerr << "    repair_junction_channel_guided: "
-                     "no valid landing pixels near vector junction\n";
-        return GapFixType::unresolved;
+        std::cerr << "    repair_junction_channel_guided: no valid landing pixels\n";
+        return out;
     }
-
-    std::cout << "    landing zone: " << landing_flats.size()
-              << " candidate pixel(s) within " << match_radius_m << " m\n";
 
     // ── Phase 3: channel-score-guided Dijkstra ────────────────────────────────
     const int div_row = to_row(divergence_flat);
     const int div_col = to_col(divergence_flat);
-    const int buf     = landing_px + 10;
+    const int buf = std::max(params.max_search_px, landing_px + 10);
 
     lcp_params lcp;
-    lcp.uphill_mult         = uphill_mult;
+    lcp.uphill_mult         = params.uphill_mult;
     lcp.channel_score       = &channel_score_data;
-    lcp.channel_score_alpha = channel_score_alpha;
+    lcp.channel_score_alpha = params.channel_score_alpha;
     lcp.goal_flats          = landing_flats;
     lcp.r_min = std::max(0,             std::min(div_row, vj_row) - buf);
     lcp.r_max = std::min(meta.n_rows-1, std::max(div_row, vj_row) + buf);
@@ -2447,38 +3192,324 @@ static GapFixType repair_junction_channel_guided(
     lcp_result lcp_res;
     try
     {
-        // goal_row / goal_col are ignored because goal_flats is non-empty;
-        // pass the vector-junction pixel as a safe (in-bounds) value.
-        lcp_res = raster_least_cost_path(
-            dem, div_row, div_col,
-            vj_row, vj_col,
-            lcp);
+        lcp_res = raster_least_cost_path(dem, div_row, div_col, vj_row, vj_col, lcp);
     }
     catch (const std::exception& e)
     {
-        std::cerr << "    repair_junction_channel_guided: LCP failed: "
-                  << e.what() << "\n";
-        return GapFixType::unresolved;
+        std::cerr << "    channel-guided LCP failed: " << e.what() << "\n";
+        return out;
     }
 
     if (!lcp_res.found)
     {
-        std::cout << "    repair_junction_channel_guided: "
-                     "no path found in search window\n";
-        return GapFixType::unresolved;
+        std::cout << "    channel-guided: no path found in search window\n";
+        return out;
     }
 
-    burn_monotonic_path(dem, lcp_res.path);
-    n_burned = static_cast<int>(lcp_res.path.size());
+    out.max_climb_m = lcp_res.max_climb;
+    out.total_cost  = lcp_res.total_cost;
 
-    std::cout << "    channel-guided path burned: " << n_burned
+    if (lcp_res.max_climb > params.max_climb_m)
+    {
+        std::cout << "    channel-guided path rejected: climb=" << lcp_res.max_climb
+                  << " m > " << params.max_climb_m << " m\n";
+        return out;
+    }
+
+    burn_monotonic_path(dem, lcp_res.path, params.repair_min_slope);
+    out.n_burned    = static_cast<int>(lcp_res.path.size());
+    out.fix_type    = GapFixType::channel_guided_bridge;
+    out.burned_path = lcp_res.path;
+    if (!lcp_res.path.empty())
+    {
+        const std::int64_t end_flat = lcp_res.path.back();
+        const lsdtt_raster_meta& m = dem.get_meta();
+        out.target_xy = cell_center_from_row_col(
+            m, static_cast<int>(end_flat / m.n_cols),
+               static_cast<int>(end_flat % m.n_cols));
+    }
+
+    std::cout << "    channel-guided: burned " << out.n_burned
               << " px, climb=" << lcp_res.max_climb << " m\n";
-
-    return GapFixType::curvature_bridge;
+    return out;
 }
 
 // ===========================================================================
-// repair_stream_junctions
+// repair_junction_terrain_fallback
+// ===========================================================================
+static repair_attempt_result repair_junction_terrain_fallback(
+    lsdtt_raster_cpu&              dem,
+    const std::string&             vector_path,
+    const CandidateJunctionRecord& candidate,
+    const junction_repair_params&  params)
+{
+    repair_attempt_result out;
+    out.fix_type = GapFixType::unresolved;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+
+    int rv = -1, cv = -1, rd = -1, cd = -1;
+    if (!xy_to_valid_row_col(dem, candidate.vector_xy, rv, cv) ||
+        !xy_to_valid_row_col(dem, candidate.dem_xy,    rd, cd))
+        return out;
+
+    lcp_params lcp;
+    lcp.uphill_mult = params.uphill_mult;
+    lcp.goal_radius = std::max(3, params.max_search_px / 4);
+    lcp.r_min = std::max(0,             std::min(rv, rd) - params.max_search_px);
+    lcp.r_max = std::min(meta.n_rows-1, std::max(rv, rd) + params.max_search_px);
+    lcp.c_min = std::max(0,             std::min(cv, cd) - params.max_search_px);
+    lcp.c_max = std::min(meta.n_cols-1, std::max(cv, cd) + params.max_search_px);
+
+    lcp_result lcp_res;
+    try { lcp_res = raster_least_cost_path(dem, rd, cd, rv, cv, lcp); }
+    catch (const std::exception& e)
+    { std::cerr << "    terrain fallback LCP failed: " << e.what() << "\n"; }
+
+    if (lcp_res.found)
+    {
+        out.max_climb_m = lcp_res.max_climb;
+        out.total_cost  = lcp_res.total_cost;
+        if (lcp_res.max_climb <= params.max_climb_m)
+        {
+            burn_monotonic_path(dem, lcp_res.path, params.repair_min_slope);
+            out.fix_type    = GapFixType::terrain_bridge;
+            out.n_burned    = static_cast<int>(lcp_res.path.size());
+            out.burned_path = lcp_res.path;
+            if (!lcp_res.path.empty())
+            {
+                const std::int64_t ef = lcp_res.path.back();
+                const lsdtt_raster_meta& m = dem.get_meta();
+                out.target_xy = cell_center_from_row_col(
+                    m, static_cast<int>(ef / m.n_cols),
+                       static_cast<int>(ef % m.n_cols));
+            }
+            return out;
+        }
+    }
+
+    // Vector burn fallback
+    const double cs = meta.cell_size;
+    const double x_lo = meta.x_min + lcp.c_min * cs;
+    const double x_hi = meta.x_min + (lcp.c_max + 1) * cs;
+    const double y_lo = meta.y_min + (meta.n_rows - lcp.r_max - 1) * cs;
+    const double y_hi = meta.y_min + (meta.n_rows - lcp.r_min) * cs;
+
+    const int nb = burn_vector_in_window(dem, vector_path, x_lo, x_hi, y_lo, y_hi);
+    if (nb > 0)
+    {
+        out.fix_type = GapFixType::vector_burn;
+        out.n_burned = nb;
+    }
+    return out;
+}
+
+// ===========================================================================
+// repair_candidate_junctions
+// ===========================================================================
+std::vector<JunctionRepairRecord>
+repair_candidate_junctions(
+    lsdtt_raster_cpu&                             dem,
+    const lsdtt_vector_to_junction_network&       vector_network,
+    const std::string&                            vector_path,
+    const std::vector<CandidateJunctionRecord>&   candidates,
+    const std::vector<std::int64_t>&              source_flats,
+    std::unique_ptr<lsdtt_flow_base>&             flow,
+    std::unique_ptr<lsdtt_junction_network_base>& dem_network,
+    const lsdtt_flowinfo_options&                 fi_opts,
+    const lsdtt_junction_network_options&         jn_opts,
+    const junction_repair_params&                 params_in,
+    int                                           phase,
+    int                                           repair_index_offset,
+    const std::vector<float>*                     precomputed_channel_scores)
+{
+    std::vector<JunctionRepairRecord> records;
+    records.reserve(candidates.size());
+    if (candidates.empty()) return records;
+
+    // Local copy so per-phase diagnostic outputs can be tagged with the phase.
+    junction_repair_params params = params_in;
+    params.diagnostic_phase = phase;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+
+    const bool use_channel_guidance =
+        params.channel_score_alpha > 0.0 && params.w_channel > 0.0;
+
+    bool               have_channel_scores = false;
+    std::vector<float> channel_score_data;
+
+    if (precomputed_channel_scores && !precomputed_channel_scores->empty())
+    {
+        // Caller already computed scores — reuse them
+        channel_score_data  = *precomputed_channel_scores;
+        have_channel_scores = true;
+        std::cout << "repair_candidate_junctions: using precomputed channel scores\n";
+    }
+    else if (use_channel_guidance)
+    {
+        const double cs = meta.cell_size;
+        channel_candidate_request cc_req;
+        cc_req.channel_lambda_min_metres =
+            (params.channel_lambda_min_m > 0.0) ? params.channel_lambda_min_m : cs * 3.0;
+        cc_req.channel_lambda_max_metres =
+            (params.channel_lambda_max_m > 0.0) ? params.channel_lambda_max_m : cs * 10.0;
+        if (cc_req.channel_lambda_max_metres <= cc_req.channel_lambda_min_metres)
+            cc_req.channel_lambda_max_metres = cc_req.channel_lambda_min_metres * 3.0;
+        cc_req.channel_n_scales           = params.channel_n_scales;
+        cc_req.weight_persistent          = 0.7;
+        cc_req.weight_depth               = 0.3;
+        cc_req.weight_slope               = 0.0;
+        cc_req.use_hessian_filter         = true;
+        cc_req.positive_curvature_is_good = true;
+
+        std::cout << "repair_candidate_junctions: computing channel scores "
+                  << "(lambda " << cc_req.channel_lambda_min_metres
+                  << "–" << cc_req.channel_lambda_max_metres
+                  << " m, " << cc_req.channel_n_scales << " scales)\n";
+        try
+        {
+            channel_candidate_result cc = find_channel_candidates(dem, cc_req);
+            channel_score_data  = cc.score.get_data();
+            have_channel_scores = true;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "  Warning: channel score computation failed: "
+                      << e.what() << "\n"
+                      << "  Repairs will use terrain fallback only.\n";
+        }
+    }
+
+    int repair_index = repair_index_offset;
+
+    for (const CandidateJunctionRecord& c : candidates)
+    {
+        JunctionRepairRecord rec;
+        rec.repair_index          = repair_index++;
+        rec.phase                 = phase;
+        rec.basin_outlet_junction = c.basin_outlet_junction;
+        rec.vector_junction_id    = c.vector_junction_id;
+        rec.dem_junction_id       = c.dem_junction_id;
+        rec.vector_xy             = c.vector_xy;
+        rec.dem_xy                = c.dem_xy;
+        rec.distance_m            = c.match_distance_m;
+        rec.mismatch_reason       = c.mismatch_reason;
+        rec.fix_type              = GapFixType::unresolved;
+
+        if (c.dem_junction_id < 0 || c.match_distance_m < 0.0)
+        {
+            std::cout << "  candidate vector_jid=" << c.vector_junction_id
+                      << ": no DEM counterpart; skipping\n";
+            records.push_back(rec);
+            continue;
+        }
+
+        if (c.match_distance_m < params.min_gap_m)
+        {
+            rec.fix_type = GapFixType::ok;
+            rec.success  = true;
+            records.push_back(rec);
+            continue;
+        }
+
+        std::cout << "  repairing candidate vector_jid=" << c.vector_junction_id
+                  << " basin=" << c.basin_outlet_junction
+                  << " gap=" << c.match_distance_m
+                  << " m reason=" << c.mismatch_reason << "\n";
+
+        repair_attempt_result attempt;
+
+        const std::int64_t dem_junc_flat =
+            dem_network->flat_of_junction(
+                static_cast<std::int32_t>(c.dem_junction_id));
+
+        // Attempt 1: parallel channel repair (handles parallel-swale case)
+        if (have_channel_scores)
+        {
+            try
+            {
+                attempt = repair_junction_parallel_channels(
+                    dem, *flow, *dem_network,
+                    dem_junc_flat, c.vector_xy,
+                    c.vector_junction_id, vector_network,
+                    c.match_distance_m, params.min_gap_m,
+                    channel_score_data, params);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "    parallel channel repair exception: "
+                          << e.what() << "\n";
+                attempt.fix_type = GapFixType::unresolved;
+            }
+        }
+
+        // Attempt 2: channel-guided fallback (barrier/crossing case)
+        if (attempt.fix_type == GapFixType::unresolved && have_channel_scores)
+        {
+            try
+            {
+                attempt = repair_junction_channel_guided(
+                    dem, *flow, *dem_network,
+                    dem_junc_flat, c.vector_xy,
+                    c.match_distance_m, params.min_gap_m,
+                    channel_score_data, params);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "    channel-guided repair exception: "
+                          << e.what() << "\n";
+                attempt.fix_type = GapFixType::unresolved;
+            }
+        }
+
+        // Attempt 3: terrain fallback
+        if (attempt.fix_type == GapFixType::unresolved)
+        {
+            attempt = repair_junction_terrain_fallback(dem, vector_path, c, params);
+        }
+
+        rec.fix_type          = attempt.fix_type;
+        rec.n_burned          = attempt.n_burned;
+        rec.max_climb_m       = attempt.max_climb_m;
+        rec.total_cost        = attempt.total_cost;
+        rec.n_landing_pixels  = attempt.n_landing_pixels;
+        rec.divergence_xy     = attempt.divergence_xy;
+        rec.target_xy         = attempt.target_xy;
+        rec.burned_path       = std::move(attempt.burned_path);
+
+        if (attempt.fix_type != GapFixType::unresolved &&
+            attempt.fix_type != GapFixType::ok)
+        {
+            flow = make_flow_base(
+                dem.get_data_array(), dem.get_mask_array(), meta, fi_opts);
+            dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
+
+            int nearest_j = -1;
+            rec.post_distance_m = nearest_junction_distance_to_xy(
+                *dem_network, meta, c.vector_xy, &nearest_j);
+            rec.success = rec.post_distance_m <= params.min_gap_m;
+
+            std::cout << "    result: " << gap_fix_type_str(rec.fix_type)
+                      << " burned=" << rec.n_burned
+                      << " post_gap=" << rec.post_distance_m
+                      << " m success=" << (rec.success ? "true" : "false") << "\n";
+        }
+        else
+        {
+            rec.post_distance_m = c.match_distance_m;
+            rec.success = false;
+            std::cout << "    repair unresolved\n";
+        }
+
+        records.push_back(rec);
+    }
+
+    return records;
+}
+
+// ===========================================================================
+// repair_stream_junctions  [DEPRECATED]
 // ===========================================================================
 std::vector<JunctionRepairRecord>
 repair_stream_junctions(
@@ -2736,21 +3767,19 @@ repair_stream_junctions(
                 const std::int64_t dem_junc_flat =
                     dem_network->flat_of_junction(dem_junc);
 
-                fix_type = repair_junction_channel_guided(
+                repair_attempt_result attempt = repair_junction_channel_guided(
                     dem, *flow, *dem_network,
                     dem_junc_flat,
                     junc_node.xy,
                     dist,
                     params.min_gap_m,
                     channel_score_data,
-                    params.channel_score_alpha,
-                    params.w_proximity,
-                    params.w_channel,
-                    params.landing_score_threshold,
-                    params.uphill_mult,
-                    n_burned);
+                    params);
 
-                if (fix_type == GapFixType::curvature_bridge)
+                fix_type = attempt.fix_type;
+                n_burned = attempt.n_burned;
+
+                if (fix_type == GapFixType::channel_guided_bridge)
                 {
                     // Re-extract and check whether the junction moved
                     flow        = make_flow_base(dem.get_data_array(),
@@ -2840,20 +3869,34 @@ void write_junction_repair_log(
         throw std::runtime_error(
             "write_junction_repair_log: cannot open " + filename);
 
-    f << "repair_index,network_index,vector_x,vector_y,"
-         "dem_x,dem_y,distance_m,fix_type,n_burned\n";
+    f << "repair_index,phase,basin_outlet_junction,vector_junction_id,"
+         "dem_junction_id,vector_x,vector_y,dem_x,dem_y,"
+         "distance_m,post_distance_m,fix_type,n_burned,success,"
+         "max_climb_m,total_cost,n_landing_pixels,"
+         "divergence_x,divergence_y,mismatch_reason\n";
 
     for (const auto& r : records)
     {
-        f << r.repair_index  << ","
-          << r.network_index << ","
-          << r.vector_xy.x   << ","
-          << r.vector_xy.y   << ","
-          << r.dem_xy.x      << ","
-          << r.dem_xy.y      << ","
-          << r.distance_m    << ","
+        f << r.repair_index           << ","
+          << r.phase                  << ","
+          << r.basin_outlet_junction  << ","
+          << r.vector_junction_id     << ","
+          << r.dem_junction_id        << ","
+          << r.vector_xy.x            << ","
+          << r.vector_xy.y            << ","
+          << r.dem_xy.x               << ","
+          << r.dem_xy.y               << ","
+          << r.distance_m             << ","
+          << r.post_distance_m        << ","
           << gap_fix_type_str(r.fix_type) << ","
-          << r.n_burned      << "\n";
+          << r.n_burned               << ","
+          << (r.success ? 1 : 0)      << ","
+          << r.max_climb_m            << ","
+          << r.total_cost             << ","
+          << r.n_landing_pixels       << ","
+          << r.divergence_xy.x        << ","
+          << r.divergence_xy.y        << ","
+          << r.mismatch_reason        << "\n";
     }
 }
 

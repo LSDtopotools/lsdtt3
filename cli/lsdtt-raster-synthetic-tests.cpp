@@ -46,6 +46,18 @@ static const std::string k_tool_name = "lsdtt-raster-synthetic-tests";
 // print_banner
 // -----------------------------------------------------------------------------
 static void print_banner()
+{
+    std::cout
+        << "=========================================================\n"
+        << "|| Welcome to lsdtt-raster-synthetic-tests             ||\n"
+        << "|| Synthetic raster generation and testing             ||\n"
+        << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
+        << "=========================================================\n"
+        << "|| Version : " << k_version  << "\n"
+        << "|| Citation: " << k_citation << "\n"
+        << "=========================================================\n\n";
+}
+
 // -----------------------------------------------------------------------------
 // coeff_name / coeff_raster
 // -----------------------------------------------------------------------------

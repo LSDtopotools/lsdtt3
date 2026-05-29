@@ -1083,7 +1083,7 @@ int main(int argc, char* argv[])
               // Intermediate raster
             if (write_freq > 0 && iter % write_freq == 0)
             {
-                const std::string p = pp.make_output_path( "_model_iteration_" + std::to_string(iter), out_fmt);
+                const std::string p = pp.make_output_path("_model_iteration_" + std::to_string(iter), fmt_ext(out_fmt));
                 try { loader.write_full(current.get_data(), current.get_meta(), p, out_fmt); }
                 catch (const std::exception& e)
                 {

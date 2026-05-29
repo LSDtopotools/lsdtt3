@@ -62,6 +62,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
@@ -247,11 +248,35 @@ int main(int argc, char* argv[])
         "Write the modified (gap-repaired) DEM as a raster.",
         "Only used when repair_junction_gaps is true."};
 
+    bool_default_map["write_channel_score_raster"] = false;
+    help_map["write_channel_score_raster"] = {"bool","false",
+        "Write the channel candidate score raster used to guide gap repair.",
+        "Values in [0,1]: 1 = strong channel signal, 0 = off-channel. "
+        "Useful for diagnosing why a repair path is or is not found. "
+        "Only written when repair_junction_gaps is true and channel guidance is enabled."};
+
+    bool_default_map["write_divergence_points"] = false;
+    help_map["write_divergence_points"] = {"bool","false",
+        "Write the divergence point chosen for each repair attempt as a vector point file.",
+        "Shows exactly where the channel-guided LCP starts. "
+        "Only written when repair_junction_gaps is true."};
+
     bool_default_map["write_repair_log"] = true;
     help_map["write_repair_log"] = {"bool","true",
         "Write a CSV log of every junction repair performed.",
-        "Columns: repair_index, network_index, vector_x, vector_y, dem_x, dem_y, "
-        "distance_m, fix_type, n_burned.  Only used when repair_junction_gaps is true."};
+        "Only used when repair_junction_gaps is true."};
+
+    int_default_map["max_repair_phases"] = 10;
+    help_map["max_repair_phases"] = {"int","10",
+        "Maximum number of candidate-detection/repair phases.",
+        "Each phase repairs at most one upstream-most candidate per incomplete "
+        "basin, then re-routes the DEM and re-runs candidate detection."};
+
+    float_default_map["repair_min_slope"] = -1.0f;
+    help_map["repair_min_slope"] = {"float","-1",
+        "Minimum downhill slope imposed on carved repair paths (m/m).",
+        "Values <= 0 default to fill_min_slope. Set 0 explicitly only if "
+        "non-increasing flat burns are desired."};
 
     // --- Channel-score guidance for gap repair ---
     float_default_map["channel_score_alpha"] = 2.0f;
@@ -1123,7 +1148,7 @@ int main(int argc, char* argv[])
             phase_result = lsdtt::find_candidate_junctions_phase(
                 vector_network,
                 *dem_network,
-                dem,
+                routed_dem,
                 0,
                 cj_params
             );
@@ -1191,12 +1216,12 @@ int main(int argc, char* argv[])
 
 
 
-        if (!phase_result.candidates.empty())
+        if (bf["write_junction_comparison"] && !phase_result.candidates.empty())
         {
             const std::string ext =
                 lsdtt::output_extension(junc_cmp_fmt);
             const std::string output =
-                pp.make_output_path( "_candidate_junctions_phase_00", ext);
+                pp.make_output_path("_candidate_junctions_phase_00", ext);
 
             std::cout << "Writing: " << output << "\n";
 
@@ -1204,7 +1229,7 @@ int main(int argc, char* argv[])
             {
                 lsdtt::write_candidate_junction_points(
                     phase_result.candidates,
-                    dem.get_meta(),
+                    routed_dem.get_meta(),
                     output,
                     junc_cmp_fmt,
                     bf["calculate_spatial_index"]
@@ -1212,12 +1237,11 @@ int main(int argc, char* argv[])
             }
             catch (const std::exception& e)
             {
-                std::cerr << "FATAL: writing candidate junction points failed: "
+                std::cerr << "Warning: could not write candidate junction points: "
                           << e.what() << "\n";
-                return 1;
             }
         }
-        else
+        else if (phase_result.candidates.empty())
         {
             std::cout << "No candidate junctions found; all basins complete.\n";
         }
@@ -1295,134 +1319,354 @@ int main(int argc, char* argv[])
             std::cout << "\n--- Repairing junction gaps ---\n";
 
             lsdtt::junction_repair_params repair_params;
-            repair_params.min_gap_m              = static_cast<double>(ff["junction_tolerance_m"]);
-            repair_params.max_search_px          = ifs["max_gap_search_px"];
-            repair_params.uphill_mult            = static_cast<double>(ff["gap_uphill_penalty"]);
-            repair_params.max_climb_m            = static_cast<double>(ff["max_gap_climb_m"]);
-            repair_params.channel_score_alpha    = static_cast<double>(ff["channel_score_alpha"]);
-            repair_params.channel_lambda_min_m   = static_cast<double>(ff["channel_lambda_min_m"]);
-            repair_params.channel_lambda_max_m   = static_cast<double>(ff["channel_lambda_max_m"]);
-            repair_params.channel_n_scales       = ifs["channel_n_scales"];
+            repair_params.min_gap_m           = static_cast<double>(ff["junction_tolerance_m"]);
+            repair_params.max_search_px       = ifs["max_gap_search_px"];
+            repair_params.uphill_mult         = static_cast<double>(ff["gap_uphill_penalty"]);
+            repair_params.max_climb_m         = static_cast<double>(ff["max_gap_climb_m"]);
+            repair_params.channel_score_alpha = static_cast<double>(ff["channel_score_alpha"]);
+            repair_params.channel_lambda_min_m = static_cast<double>(ff["channel_lambda_min_m"]);
+            repair_params.channel_lambda_max_m = static_cast<double>(ff["channel_lambda_max_m"]);
+            repair_params.channel_n_scales    = ifs["channel_n_scales"];
+            repair_params.repair_min_slope    =
+                (ff["repair_min_slope"] > 0.0f)
+                    ? static_cast<double>(ff["repair_min_slope"])
+                    : static_cast<double>(ff["fill_min_slope"]);
+            if (bf["write_divergence_points"])
+                repair_params.diagnostic_prefix = pp.get_full_write_path();
 
-            std::vector<lsdtt::JunctionRepairRecord> repair_records;
-            try
+            // Compute channel scores once for all repair phases.
+            // The DEM changes only by a few pixels per phase; recomputing
+            // each time is expensive and not materially more accurate.
+            std::vector<float> channel_scores;
+            if (repair_params.channel_score_alpha > 0.0 &&
+                repair_params.w_channel > 0.0)
             {
-                repair_records = lsdtt::repair_stream_junctions(
-                    routed_dem,
-                    stream_vector_path,
-                    source_flats,
-                    flow,
-                    dem_network,
-                    fi_opts,
-                    jn_opts,
-                    repair_params
-                );
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: repair_stream_junctions failed: "
-                          << e.what() << "\n";
-                return 1;
-            }
-
-            std::cout << "Repairs attempted: " << repair_records.size() << "\n";
-
-            // Write repair log
-            if (bf["write_repair_log"] && !repair_records.empty())
-            {
-                const std::string log_file = pp.make_output_path( "_repair_log", ".csv");
-                std::cout << "Writing repair log: " << log_file << "\n";
+                std::cout << "Computing channel scores (once for all phases)...\n";
+                lsdtt::channel_candidate_request cc_req;
+                const double cs = routed_dem.get_meta().cell_size;
+                cc_req.channel_lambda_min_metres =
+                    (repair_params.channel_lambda_min_m > 0.0)
+                        ? repair_params.channel_lambda_min_m : cs * 3.0;
+                cc_req.channel_lambda_max_metres =
+                    (repair_params.channel_lambda_max_m > 0.0)
+                        ? repair_params.channel_lambda_max_m : cs * 10.0;
+                if (cc_req.channel_lambda_max_metres <=
+                    cc_req.channel_lambda_min_metres)
+                    cc_req.channel_lambda_max_metres =
+                        cc_req.channel_lambda_min_metres * 3.0;
+                cc_req.channel_n_scales           = repair_params.channel_n_scales;
+                cc_req.weight_persistent          = 0.7;
+                cc_req.weight_depth               = 0.3;
+                cc_req.weight_slope               = 0.0;
+                cc_req.use_hessian_filter         = true;
+                cc_req.positive_curvature_is_good = true;
                 try
                 {
-                    lsdtt::write_junction_repair_log(repair_records, log_file);
+                    lsdtt::channel_candidate_result cc =
+                        lsdtt::find_channel_candidates(routed_dem, cc_req);
+                    channel_scores = cc.score.get_data();
+                    std::cout << "Channel scores computed.\n";
+
+                    if (bf["write_channel_score_raster"])
+                    {
+                        const std::string cs_file =
+                            pp.make_output_path("_channel_score", ".tif");
+                        std::cout << "Writing channel score raster: " << cs_file << "\n";
+                        try
+                        {
+                            lsdtt::lsdtt_data_loader writer;
+                            writer.write_full(channel_scores,
+                                              routed_dem.get_meta(),
+                                              cs_file);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            std::cerr << "Warning: could not write channel score raster: "
+                                      << e.what() << "\n";
+                        }
+                    }
                 }
                 catch (const std::exception& e)
                 {
-                    std::cerr << "Warning: could not write repair log: "
-                              << e.what() << "\n";
+                    std::cerr << "Warning: channel score computation failed: "
+                              << e.what() << "\n"
+                              << "  Repairs will use terrain fallback only.\n";
                 }
             }
 
-            // Write repaired DEM
+            std::vector<lsdtt::JunctionRepairRecord> all_repair_records;
+            lsdtt::CandidateJunctionPhaseResult current_phase = phase_result;
+            const int max_phases = std::max(1, ifs["max_repair_phases"]);
+
+            // Track per-basin gap from previous phase to detect stalls.
+            // key = basin_outlet_junction, value = match_distance_m
+            std::map<int, double> prev_gaps;
+            for (const auto& c : current_phase.candidates)
+                prev_gaps[c.basin_outlet_junction] = c.match_distance_m;
+
+            for (int phase = 0; phase < max_phases; ++phase)
+            {
+                if (current_phase.candidates.empty())
+                {
+                    std::cout << "No candidates in phase " << phase
+                              << "; stopping repair loop.\n";
+                    break;
+                }
+
+                std::cout << "\n--- Repair phase " << phase << " ---\n";
+                std::cout << "Candidates: " << current_phase.candidates.size() << "\n";
+
+                std::vector<lsdtt::JunctionRepairRecord> phase_records;
+                try
+                {
+                    phase_records = lsdtt::repair_candidate_junctions(
+                        routed_dem,
+                        vector_network,
+                        stream_vector_path,
+                        current_phase.candidates,
+                        source_flats,
+                        flow,
+                        dem_network,
+                        fi_opts,
+                        jn_opts,
+                        repair_params,
+                        phase,
+                        static_cast<int>(all_repair_records.size()),
+                        channel_scores.empty() ? nullptr : &channel_scores
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: repair_candidate_junctions failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+
+                all_repair_records.insert(
+                    all_repair_records.end(),
+                    phase_records.begin(), phase_records.end());
+
+                std::cout << "Repairs this phase: " << phase_records.size() << "\n";
+
+                if (bf["write_divergence_points"] && !phase_records.empty())
+                {
+                    const std::string ph_str =
+                        phase < 10 ? std::string("0") + std::to_string(phase)
+                                   : std::to_string(phase);
+                    const std::string crs = routed_dem.get_meta().crs_wkt;
+                    const lsdtt::lsdtt_raster_meta& dmeta = routed_dem.get_meta();
+
+                    // ── Two-endpoint point file ───────────────────────────────
+                    const std::string pts_file =
+                        pp.make_output_path("_repair_endpoints_phase_" + ph_str, ".fgb");
+                    std::cout << "Writing repair endpoints: " << pts_file << "\n";
+                    try
+                    {
+                        lsdtt::lsdtt_vector_schema schema;
+                        schema.field_names = {
+                            "repair_index", "vector_junction_id",
+                            "is_start",   // 1=lower channel start, 0=higher channel end
+                            "fix_type", "n_burned", "max_climb_m"
+                        };
+                        schema.field_types = {
+                            lsdtt::lsdtt_vector_field_type::int64_type,
+                            lsdtt::lsdtt_vector_field_type::int64_type,
+                            lsdtt::lsdtt_vector_field_type::int64_type,
+                            lsdtt::lsdtt_vector_field_type::string_type,
+                            lsdtt::lsdtt_vector_field_type::int64_type,
+                            lsdtt::lsdtt_vector_field_type::double_type
+                        };
+                        lsdtt::lsdtt_data_loader pts_writer;
+                        pts_writer.begin_vector_write(
+                            pts_file, "repair_endpoints", schema, crs,
+                            lsdtt::vector_output_format::flatgeobuf, false);
+                        for (const auto& rec : phase_records)
+                        {
+                            if (rec.fix_type == lsdtt::GapFixType::unresolved ||
+                                rec.fix_type == lsdtt::GapFixType::ok) continue;
+                            std::vector<lsdtt::lsdtt_vector_field_value> attrs = {
+                                static_cast<std::int64_t>(rec.repair_index),
+                                static_cast<std::int64_t>(rec.vector_junction_id),
+                                std::int64_t{1},
+                                std::string(lsdtt::gap_fix_type_str(rec.fix_type)),
+                                static_cast<std::int64_t>(rec.n_burned),
+                                rec.max_climb_m
+                            };
+                            pts_writer.write_point(
+                                rec.divergence_xy.x, rec.divergence_xy.y, attrs);
+                            attrs[2] = std::int64_t{0};
+                            pts_writer.write_point(
+                                rec.target_xy.x, rec.target_xy.y, attrs);
+                        }
+                        pts_writer.finish_vector_write();
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: could not write repair endpoints: "
+                                  << e.what() << "\n";
+                    }
+
+                    // ── Repair segment line file ──────────────────────────────
+                    const std::string seg_file =
+                        pp.make_output_path("_repair_segments_phase_" + ph_str, ".fgb");
+                    std::cout << "Writing repair segments: " << seg_file << "\n";
+                    try
+                    {
+                        lsdtt::lsdtt_vector_schema schema;
+                        schema.field_names = {
+                            "repair_index", "vector_junction_id",
+                            "fix_type", "n_burned", "max_climb_m"
+                        };
+                        schema.field_types = {
+                            lsdtt::lsdtt_vector_field_type::int64_type,
+                            lsdtt::lsdtt_vector_field_type::int64_type,
+                            lsdtt::lsdtt_vector_field_type::string_type,
+                            lsdtt::lsdtt_vector_field_type::int64_type,
+                            lsdtt::lsdtt_vector_field_type::double_type
+                        };
+                        lsdtt::lsdtt_data_loader seg_writer;
+                        seg_writer.begin_vector_write(
+                            seg_file, "repair_segments", schema, crs,
+                            lsdtt::vector_output_format::flatgeobuf, false);
+                        for (const auto& rec : phase_records)
+                        {
+                            if (rec.burned_path.size() < 2) continue;
+                            std::vector<lsdtt::lsdtt_xy> line;
+                            line.reserve(rec.burned_path.size());
+                            for (std::int64_t f : rec.burned_path)
+                            {
+                                const int r = static_cast<int>(f / dmeta.n_cols);
+                                const int c = static_cast<int>(f % dmeta.n_cols);
+                                line.push_back(lsdtt::cell_center_from_row_col(dmeta, r, c));
+                            }
+                            seg_writer.write_line(
+                                line,
+                                {
+                                    static_cast<std::int64_t>(rec.repair_index),
+                                    static_cast<std::int64_t>(rec.vector_junction_id),
+                                    std::string(lsdtt::gap_fix_type_str(rec.fix_type)),
+                                    static_cast<std::int64_t>(rec.n_burned),
+                                    rec.max_climb_m
+                                });
+                        }
+                        seg_writer.finish_vector_write();
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: could not write repair segments: "
+                                  << e.what() << "\n";
+                    }
+                }
+
+                // Re-run candidate detection
+                std::cout << "\n--- Candidate check after repair phase " << phase << " ---\n";
+                try
+                {
+                    current_phase = lsdtt::find_candidate_junctions_phase(
+                        vector_network, *dem_network, routed_dem,
+                        phase + 1, cj_params);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: candidate check after phase "
+                              << phase << " failed: " << e.what() << "\n";
+                    break;
+                }
+
+                std::cout << "Complete basins   (" << current_phase.complete_basins.size() << "): ";
+                if (current_phase.complete_basins.empty()) std::cout << "none";
+                else for (std::size_t i = 0; i < current_phase.complete_basins.size(); ++i)
+                { if (i > 0) std::cout << ", "; std::cout << current_phase.complete_basins[i]; }
+                std::cout << "\n";
+
+                std::cout << "Basins still needing repair (" << current_phase.incomplete_basins.size() << "): ";
+                if (current_phase.incomplete_basins.empty()) std::cout << "none";
+                else for (std::size_t i = 0; i < current_phase.incomplete_basins.size(); ++i)
+                { if (i > 0) std::cout << ", "; std::cout << current_phase.incomplete_basins[i]; }
+                std::cout << "\n";
+
+                // No-progress detection: stop if every remaining candidate has
+                // the same gap as the previous phase (burn had no effect).
+                {
+                    bool any_progress = false;
+                    for (const auto& c : current_phase.candidates)
+                    {
+                        auto it = prev_gaps.find(c.basin_outlet_junction);
+                        if (it == prev_gaps.end() ||
+                            c.match_distance_m < it->second - 1.0)
+                        {
+                            any_progress = true;
+                            break;
+                        }
+                    }
+                    // Update gap table for next iteration
+                    prev_gaps.clear();
+                    for (const auto& c : current_phase.candidates)
+                        prev_gaps[c.basin_outlet_junction] = c.match_distance_m;
+
+                    if (!any_progress && !current_phase.incomplete_basins.empty())
+                    {
+                        std::cout << "No gap reduction after phase " << phase
+                                  << "; stopping repair loop.\n";
+                        break;
+                    }
+                }
+
+                if (bf["write_junction_comparison"] && !current_phase.candidates.empty())
+                {
+                    const std::string ext = lsdtt::output_extension(junc_cmp_fmt);
+                    const std::string ph_str =
+                        (phase + 1 < 10)
+                            ? std::string("0") + std::to_string(phase + 1)
+                            : std::to_string(phase + 1);
+                    const std::string output =
+                        pp.make_output_path("_candidate_junctions_phase_" + ph_str, ext);
+                    std::cout << "Writing: " << output << "\n";
+                    try
+                    {
+                        lsdtt::write_candidate_junction_points(
+                            current_phase.candidates,
+                            routed_dem.get_meta(),
+                            output, junc_cmp_fmt,
+                            bf["calculate_spatial_index"]);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: could not write phase candidates: "
+                                  << e.what() << "\n";
+                    }
+                }
+
+                if (current_phase.incomplete_basins.empty())
+                {
+                    std::cout << "All basins complete after phase " << phase << ".\n";
+                    break;
+                }
+            }
+
+            std::cout << "Total repairs attempted: " << all_repair_records.size() << "\n";
+
+            if (bf["write_repair_log"] && !all_repair_records.empty())
+            {
+                const std::string log_file = pp.make_output_path("_repair_log", ".csv");
+                std::cout << "Writing repair log: " << log_file << "\n";
+                try { lsdtt::write_junction_repair_log(all_repair_records, log_file); }
+                catch (const std::exception& e)
+                { std::cerr << "Warning: could not write repair log: " << e.what() << "\n"; }
+            }
+
             if (bf["write_repaired_dem"])
             {
-                const std::string dem_file = pp.make_output_path( "_repaired", ".tif");
+                const std::string dem_file = pp.make_output_path("_repaired", ".tif");
                 std::cout << "Writing repaired DEM: " << dem_file << "\n";
                 try
                 {
                     lsdtt::lsdtt_data_loader writer;
                     writer.write_full(routed_dem.get_data(),
-                                      routed_dem.get_meta(),
-                                      dem_file);
+                                      routed_dem.get_meta(), dem_file);
                 }
                 catch (const std::exception& e)
-                {
-                    std::cerr << "Warning: could not write repaired DEM: "
-                              << e.what() << "\n";
-                }
-            }
-
-            // Re-run phase 0 candidate detection on the repaired network
-            // to show the post-repair state.
-            std::cout << "\n--- Post-repair candidate check (phase 00) ---\n";
-            lsdtt::CandidateJunctionPhaseResult post_result;
-            try
-            {
-                post_result = lsdtt::find_candidate_junctions_phase(
-                    vector_network,
-                    *dem_network,
-                    routed_dem,
-                    0,
-                    cj_params
-                );
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "Warning: post-repair candidate check failed: "
-                          << e.what() << "\n";
-            }
-
-            std::cout << "Post-repair complete basins   ("
-                      << post_result.complete_basins.size() << "): ";
-            for (std::size_t i = 0; i < post_result.complete_basins.size(); ++i)
-            {
-                if (i > 0) std::cout << ", ";
-                std::cout << post_result.complete_basins[i];
-            }
-            if (post_result.complete_basins.empty()) std::cout << "none";
-            std::cout << "\n";
-
-            std::cout << "Post-repair basins still needing repair ("
-                      << post_result.incomplete_basins.size() << "): ";
-            for (std::size_t i = 0; i < post_result.incomplete_basins.size(); ++i)
-            {
-                if (i > 0) std::cout << ", ";
-                std::cout << post_result.incomplete_basins[i];
-            }
-            if (post_result.incomplete_basins.empty()) std::cout << "none";
-            std::cout << "\n";
-
-            if (!post_result.candidates.empty())
-            {
-                const std::string ext    = lsdtt::output_extension(junc_cmp_fmt);
-                const std::string output =
-                    pp.make_output_path( "_candidate_junctions_post_repair", ext);
-                std::cout << "Writing: " << output << "\n";
-                try
-                {
-                    lsdtt::write_candidate_junction_points(
-                        post_result.candidates,
-                        routed_dem.get_meta(),
-                        output,
-                        junc_cmp_fmt,
-                        bf["calculate_spatial_index"]
-                    );
-                }
-                catch (const std::exception& e)
-                {
-                    std::cerr << "Warning: could not write post-repair candidates: "
-                              << e.what() << "\n";
-                }
+                { std::cerr << "Warning: could not write repaired DEM: " << e.what() << "\n"; }
             }
         }
         else if (bf["repair_junction_gaps"] && phase_result.incomplete_basins.empty())

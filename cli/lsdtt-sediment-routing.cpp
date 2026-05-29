@@ -46,9 +46,9 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation =
-static const std::string k_tool_name = "lsdtt-sediment-routing";
     "d-CASCADE: Battista G. et al. (2022) GMD 15:4227-4267\n"
     "lsdtt3:    https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-sediment-routing";
 
 // -----------------------------------------------------------------------------
 static void print_banner()

@@ -143,10 +143,15 @@ struct lcp_result
 //
 // path must contain flat pixel indices as returned by raster_least_cost_path.
 // An empty path is a no-op.
+//
+// min_slope (m/m): when > 0, enforces a strictly descending profile —
+//   each step is allowed at most (previous_allowed − min_slope × step_length).
+//   Set to 0 for the original running-minimum behaviour (non-increasing only).
 // ---------------------------------------------------------------------------
 void burn_monotonic_path(
     lsdtt_raster_cpu&                   dem,
-    const std::vector<std::int64_t>&    path
+    const std::vector<std::int64_t>&    path,
+    double                              min_slope = 0.0
 );
 
 } // namespace lsdtt
