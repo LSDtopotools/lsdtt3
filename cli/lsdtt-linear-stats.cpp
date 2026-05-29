@@ -20,7 +20,6 @@
 //   lsdtt-linear-stats -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
-#include <initializer_list>
 #include <iostream>
 #include <filesystem>
 #include <map>
@@ -37,6 +36,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-linear-stats";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -53,76 +53,6 @@ static void print_banner()
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-linear-stats <path> <parameter_file>\n"
-                << "       lsdtt-linear-stats <parameter_file>\n"
-                << "       lsdtt-linear-stats -h   (this help)\n"
-                << "       lsdtt-linear-stats -v   (version)\n"
-                << "       lsdtt-linear-stats -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-linear-stats version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path — build a full output path from parser + suffix + extension
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
 }
 
 // -----------------------------------------------------------------------------
@@ -198,7 +128,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -314,7 +245,7 @@ int main(int argc, char* argv[])
     const std::string output_extension =
         lsdtt::output_extension(output_format);
 
-    const std::string output_file = out_path(pp, "_linear_stats", output_extension);
+    const std::string output_file = pp.make_output_path( "_linear_stats", output_extension);
 
 
     // -------------------------------------------------------------------------

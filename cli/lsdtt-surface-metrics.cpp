@@ -36,7 +36,6 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <set>
@@ -63,6 +62,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-surface-metrics";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -78,80 +78,6 @@ static void print_banner()
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags)
-        {
-            if (s == f) return true;
-        }
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        const std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-surface-metrics <path> <parameter_file>\n"
-                << "       lsdtt-surface-metrics <parameter_file>\n"
-                << "       lsdtt-surface-metrics -h   (this help)\n"
-                << "       lsdtt-surface-metrics -v   (version)\n"
-                << "       lsdtt-surface-metrics -c   (citation)\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-surface-metrics version " << k_version << "\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path — build a full output path from the param parser + suffix
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string&               suffix)
-{
-    return pp.get_full_write_path() + suffix;
 }
 
 // -----------------------------------------------------------------------------
@@ -409,7 +335,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -964,7 +891,7 @@ int main(int argc, char* argv[])
                 ff["hillshade_z_factor"]
             );
 
-            const std::string o = out_path(pp, "_hillshade.tif");
+            const std::string o = pp.make_output_path( "_hillshade.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 hillshade.get_data(),
@@ -1001,7 +928,7 @@ int main(int argc, char* argv[])
                     local_relief_shape
                 );
 
-            const std::string o = out_path(pp, "_local_relief.tif");
+            const std::string o = pp.make_output_path( "_local_relief.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 local_relief.get_data(),
@@ -1069,7 +996,7 @@ int main(int argc, char* argv[])
                 };
                 for (const auto& entry : entries)
                 {
-                    const std::string o = out_path(pp, entry.suffix);
+                    const std::string o = pp.make_output_path( entry.suffix);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(
                         entry.raster.get_data(),
@@ -1095,7 +1022,7 @@ int main(int argc, char* argv[])
                 {
                     if (!metric_result.has(metric)) continue;
                     const std::string o =
-                        out_path(pp, polyfit_metric_suffix(metric, method_str));
+                        pp.make_output_path( polyfit_metric_suffix(metric, method_str));
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(
                         metric_result.at(metric).get_data(),
@@ -1195,9 +1122,9 @@ int main(int argc, char* argv[])
                     n_threads
                 );
 
-            const std::string o_or  = out_path(pp, "_madk2_or.tif");
-            const std::string o_dmc = out_path(pp, "_madk2_dmc.tif");
-            const std::string o_ra  = out_path(pp, "_madk2_ra.tif");
+            const std::string o_or  = pp.make_output_path( "_madk2_or.tif");
+            const std::string o_dmc = pp.make_output_path( "_madk2_dmc.tif");
+            const std::string o_ra  = pp.make_output_path( "_madk2_ra.tif");
 
             std::cout << "Writing: " << o_or  << "\n";
             loader.write_full(
@@ -1261,7 +1188,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_frangi_raster"])
             {
-                const std::string o = out_path(pp, "_frangi.tif");
+                const std::string o = pp.make_output_path( "_frangi.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     frangi.response.get_data(),
@@ -1273,7 +1200,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_frangi_scale_raster"])
             {
-                const std::string o = out_path(pp, "_frangi_scale.tif");
+                const std::string o = pp.make_output_path( "_frangi_scale.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     frangi.best_scale_metres.get_data(),
@@ -1310,7 +1237,7 @@ int main(int argc, char* argv[])
                     0   // disable OpenCV pool; we use n_threads
                 );
 
-            const std::string o = out_path(pp, "_otsu.tif");
+            const std::string o = pp.make_output_path( "_otsu.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 otsu_result.get_data(),
@@ -1360,7 +1287,7 @@ int main(int argc, char* argv[])
                     0
                 );
 
-            const std::string o = out_path(pp, "_hough_lines.tif");
+            const std::string o = pp.make_output_path( "_hough_lines.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 hough_result.get_data(),
@@ -1413,13 +1340,13 @@ int main(int argc, char* argv[])
 
             // Write the curvature rasters so the user can inspect them
             {
-                const std::string o = out_path(pp, "_vec_skeleton_curvature.tif");
+                const std::string o = pp.make_output_path( "_vec_skeleton_curvature.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(vec_raster.get_data(),
                                   vec_raster.get_meta(), o, out_fmt);
             }
             {
-                const std::string o = out_path(pp, "_profile_curvature.tif");
+                const std::string o = pp.make_output_path( "_profile_curvature.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(profile_raster.get_data(),
                                   profile_raster.get_meta(), o, out_fmt);
@@ -1430,7 +1357,7 @@ int main(int argc, char* argv[])
             csr.vec_threshold               = static_cast<double>(ff["vec_skeleton_threshold"]);
             csr.vec_use_cdf_threshold       = bf["vec_skeleton_use_cdf_threshold"];
             csr.vec_write_cdf               = bf["vec_skeleton_write_cdf"];
-            csr.vec_cdf_path                = out_path(pp, "_vec_skeleton_cdf.csv");
+            csr.vec_cdf_path                = pp.make_output_path( "_vec_skeleton_cdf.csv");
             csr.profile_relief_window_metres = static_cast<double>(ff["profile_relief_window_metres"]);
             csr.profile_relief_threshold     = static_cast<double>(ff["profile_relief_threshold"]);
             csr.spur_max_pixels             = ifs["curvature_skeleton_spur_max_pixels"];
@@ -1446,7 +1373,7 @@ int main(int argc, char* argv[])
                                const std::string& suffix)
             {
                 if (r.get_data().empty()) return;
-                const std::string o = out_path(pp, suffix);
+                const std::string o = pp.make_output_path( suffix);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(r.get_data(), r.get_meta(), o, out_fmt);
             };
@@ -1495,7 +1422,7 @@ int main(int argc, char* argv[])
 
             // Write the VEC raster for inspection
             {
-                const std::string o = out_path(pp, "_vec_adaptive_curvature.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_curvature.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(vec_raster.get_data(),
                                   vec_raster.get_meta(), o, out_fmt);
@@ -1510,7 +1437,7 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::threshold_adaptive_mean(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
-                const std::string o = out_path(pp, "_vec_adaptive_mean.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_mean.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(mean_binary.get_data(),
                                   mean_binary.get_meta(), o, out_fmt);
@@ -1521,7 +1448,7 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::threshold_adaptive_gaussian(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
-                const std::string o = out_path(pp, "_vec_adaptive_gaussian.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_gaussian.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(gauss_binary.get_data(),
                                   gauss_binary.get_meta(), o, out_fmt);
@@ -1541,7 +1468,7 @@ int main(int argc, char* argv[])
                         skel = lsdtt::prune_skeleton_spurs(skel, spur_px);
                     if (min_comp > 1)
                         skel = lsdtt::filter_binary_components_by_size(skel, min_comp);
-                    const std::string o = out_path(pp, suffix);
+                    const std::string o = pp.make_output_path( suffix);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(skel.get_data(), skel.get_meta(), o, out_fmt);
                 };
@@ -1593,7 +1520,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_envelope_raster"])
             {
-                const std::string o = out_path(pp, "_cloth_envelope.tif");
+                const std::string o = pp.make_output_path( "_cloth_envelope.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.envelope.get_data(),
@@ -1604,7 +1531,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_incision_raster"])
             {
-                const std::string o = out_path(pp, "_cloth_incision.tif");
+                const std::string o = pp.make_output_path( "_cloth_incision.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.incision.get_data(),
@@ -1615,7 +1542,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_crest_mask_raster"])
             {
-                const std::string o = out_path(pp, "_cloth_crest_mask.tif");
+                const std::string o = pp.make_output_path( "_cloth_crest_mask.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.crest_mask.get_data(),

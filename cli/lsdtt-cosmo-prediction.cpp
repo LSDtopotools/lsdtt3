@@ -39,7 +39,6 @@
 
 #include <cmath>
 #include <fstream>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -61,6 +60,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-cosmo-prediction";
 
 // -----------------------------------------------------------------------------
 static void print_banner()
@@ -74,29 +74,6 @@ static void print_banner()
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
         << "========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-static std::pair<std::string,std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags) {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    if (argc == 2 && is_flag(argv[1], {"-h","--help"}))
-    {
-        std::cout << "Usage:\n"
-                  << "  lsdtt-cosmo-prediction <path> <param_file>\n"
-                  << "  lsdtt-cosmo-prediction <param_file>\n"
-                  << "  lsdtt-cosmo-prediction -h\n";
-        std::exit(0);
-    }
-    if (argc == 3) return {std::string(argv[1]), std::string(argv[2])};
-    if (argc == 2) return {"./",              std::string(argv[1])};
-    std::cerr << "Usage: lsdtt-cosmo-prediction <path> <param_file>\n";
-    std::exit(1);
 }
 
 // -----------------------------------------------------------------------------
@@ -121,7 +98,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [read_path, param_file] = parse_args(argc, argv);
+    auto [read_path, param_file] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
     lsdtt::lsdtt_param_parser pp(read_path, param_file);
 
     // -------------------------------------------------------------------------

@@ -25,7 +25,6 @@
 // -----------------------------------------------------------------------------
 
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -40,6 +39,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-feature-finder";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -49,88 +49,12 @@ static void print_banner()
     std::cout
         << "=========================================================\n"
         << "|| Welcome to lsdtt-feature-finder                     ||\n"
-        << "|| I am going to look for terrain features for you     ||\n"
+        << "|| This looks for features like drains and channels    ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
-        << "=========================================================\n"
+        << "========================================================\n"
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags)
-        {
-            if (s == f) return true;
-        }
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        const std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-feature-finder <path> <parameter_file>\n"
-                << "       lsdtt-feature-finder <parameter_file>\n"
-                << "       lsdtt-feature-finder -h   (this help)\n"
-                << "       lsdtt-feature-finder -v   (version)\n"
-                << "       lsdtt-feature-finder -c   (citation)\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-feature-finder version " << k_version << "\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string&               suffix)
-{
-    return pp.get_full_write_path() + suffix;
 }
 
 // -----------------------------------------------------------------------------
@@ -223,24 +147,6 @@ static bool resolve_curvature_sign_positive_is_good(const std::string& s)
         ". Expected positive or negative."
     );
 }
-
-// -----------------------------------------------------------------------------
-// write_raster
-// -----------------------------------------------------------------------------
-static void write_raster(
-    lsdtt::lsdtt_data_loader&      loader,
-    const lsdtt::lsdtt_raster_cpu& raster,
-    const std::string&             path,
-    lsdtt::raster_output_format    format)
-{
-    loader.write_full(
-        raster.get_data(),
-        raster.get_meta(),
-        path,
-        format
-    );
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -248,7 +154,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -719,41 +626,41 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_drain_mask_raster"))
             {
-                const std::string o = out_path(pp, "_drain_mask.tif");
+                const std::string o = pp.make_output_path( "_drain_mask.tif");
                 std::cout << "Writing: " << o << "\n";
-                write_raster(loader, result.drain_mask, o, out_fmt);
+                loader.write_full(result.drain_mask.get_data(), result.drain_mask.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_drain_diagnostics"))
             {
-                const std::string o1 = out_path(pp, "_drain_frangi_response.tif");
-                const std::string o2 = out_path(pp, "_drain_frangi_scale.tif");
-                const std::string o3 = out_path(pp, "_drain_threshold_mask.tif");
-                const std::string o4 = out_path(pp, "_drain_accumulation_curvature.tif");
-                const std::string o5 = out_path(pp, "_drain_log10_abs_accumulation_curvature.tif");
-                const std::string o6 = out_path(pp, "_drain_blurred_log10_abs_accumulation_curvature.tif");
-                const std::string o7 = out_path(pp, "_drain_masked_frangi_scale.tif");
+                const std::string o1 = pp.make_output_path( "_drain_frangi_response.tif");
+                const std::string o2 = pp.make_output_path( "_drain_frangi_scale.tif");
+                const std::string o3 = pp.make_output_path( "_drain_threshold_mask.tif");
+                const std::string o4 = pp.make_output_path( "_drain_accumulation_curvature.tif");
+                const std::string o5 = pp.make_output_path( "_drain_log10_abs_accumulation_curvature.tif");
+                const std::string o6 = pp.make_output_path( "_drain_blurred_log10_abs_accumulation_curvature.tif");
+                const std::string o7 = pp.make_output_path( "_drain_masked_frangi_scale.tif");
 
                 std::cout << "Writing: " << o1 << "\n";
-                write_raster(loader, result.frangi_response, o1, out_fmt);
+                loader.write_full(result.frangi_response.get_data(), result.frangi_response.get_meta(), o1, out_fmt);
 
                 std::cout << "Writing: " << o2 << "\n";
-                write_raster(loader, result.frangi_best_scale_metres, o2, out_fmt);
+                loader.write_full(result.frangi_best_scale_metres.get_data(), result.frangi_best_scale_metres.get_meta(), o2, out_fmt);
 
                 std::cout << "Writing: " << o3 << "\n";
-                write_raster(loader, result.threshold_mask, o3, out_fmt);
+                loader.write_full(result.threshold_mask.get_data(), result.threshold_mask.get_meta(), o3, out_fmt);
 
                 std::cout << "Writing: " << o4 << "\n";
-                write_raster(loader, result.accumulation_curvature, o4, out_fmt);
+                loader.write_full(result.accumulation_curvature.get_data(), result.accumulation_curvature.get_meta(), o4, out_fmt);
 
                 std::cout << "Writing: " << o5 << "\n";
-                write_raster(loader, result.log10_abs_accumulation_curvature, o5, out_fmt);
+                loader.write_full(result.log10_abs_accumulation_curvature.get_data(), result.log10_abs_accumulation_curvature.get_meta(), o5, out_fmt);
 
                 std::cout << "Writing: " << o6 << "\n";
-                write_raster(loader, result.blurred_log10_abs_accumulation_curvature, o6, out_fmt);
+                loader.write_full(result.blurred_log10_abs_accumulation_curvature.get_data(), result.blurred_log10_abs_accumulation_curvature.get_meta(), o6, out_fmt);
 
                 std::cout << "Writing: " << o7 << "\n";
-                write_raster(loader, result.masked_frangi_scale, o7, out_fmt);
+                loader.write_full(result.masked_frangi_scale.get_data(), result.masked_frangi_scale.get_meta(), o7, out_fmt);
 
             }
 
@@ -784,47 +691,47 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_channel_candidate_score_raster"))
             {
-                const std::string o = out_path(pp, "_channel_candidate_score.tif");
+                const std::string o = pp.make_output_path( "_channel_candidate_score.tif");
                 std::cout << "Writing: " << o << "\n";
-                write_raster(loader, result.score, o, out_fmt);
+                loader.write_full(result.score.get_data(), result.score.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_channel_candidate_mask_raster"))
             {
-                const std::string o = out_path(pp, "_channel_candidate_mask.tif");
+                const std::string o = pp.make_output_path( "_channel_candidate_mask.tif");
                 std::cout << "Writing: " << o << "\n";
-                write_raster(loader, result.mask, o, out_fmt);
+                loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_channel_best_scale_raster"))
             {
-                const std::string o = out_path(pp, "_channel_best_scale.tif");
+                const std::string o = pp.make_output_path( "_channel_best_scale.tif");
                 std::cout << "Writing: " << o << "\n";
-                write_raster(loader, result.best_scale_metres, o, out_fmt);
+                loader.write_full(result.best_scale_metres.get_data(), result.best_scale_metres.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_channel_candidate_diagnostics"))
             {
                 const std::string o_persistent =
-                    out_path(pp, "_channel_candidate_persistent.tif");
+                    pp.make_output_path( "_channel_candidate_persistent.tif");
                 const std::string o_depth =
-                    out_path(pp, "_channel_candidate_depth_signal.tif");
+                    pp.make_output_path( "_channel_candidate_depth_signal.tif");
                 const std::string o_slope =
-                    out_path(pp, "_channel_candidate_slope_signal.tif");
+                    pp.make_output_path( "_channel_candidate_slope_signal.tif");
                 const std::string o_elong =
-                    out_path(pp, "_channel_candidate_hessian_elongation.tif");
+                    pp.make_output_path( "_channel_candidate_hessian_elongation.tif");
 
                 std::cout << "Writing: " << o_persistent << "\n";
-                write_raster(loader, result.persistent, o_persistent, out_fmt);
+                loader.write_full(result.persistent.get_data(), result.persistent.get_meta(), o_persistent, out_fmt);
 
                 std::cout << "Writing: " << o_depth << "\n";
-                write_raster(loader, result.depth_signal, o_depth, out_fmt);
+                loader.write_full(result.depth_signal.get_data(), result.depth_signal.get_meta(), o_depth, out_fmt);
 
                 std::cout << "Writing: " << o_slope << "\n";
-                write_raster(loader, result.slope_signal, o_slope, out_fmt);
+                loader.write_full(result.slope_signal.get_data(), result.slope_signal.get_meta(), o_slope, out_fmt);
 
                 std::cout << "Writing: " << o_elong << "\n";
-                write_raster(loader, result.hessian_elongation, o_elong, out_fmt);
+                loader.write_full(result.hessian_elongation.get_data(), result.hessian_elongation.get_meta(), o_elong, out_fmt);
             }
 
             if (bf.at("write_channel_scale_diagnostics"))
@@ -834,9 +741,9 @@ int main(int argc, char* argv[])
                     const std::string suffix =
                         "_channel_candidate_curv_raw_s"
                         + std::to_string(i) + ".tif";
-                    const std::string o = out_path(pp, suffix);
+                    const std::string o = pp.make_output_path( suffix);
                     std::cout << "Writing: " << o << "\n";
-                    write_raster(loader, result.curvature_raw_by_scale[i], o, out_fmt);
+                    loader.write_full(result.curvature_raw_by_scale[i].get_data(), result.curvature_raw_by_scale[i].get_meta(), o, out_fmt);
                 }
 
                 for (std::size_t i = 0; i < result.curvature_signal_by_scale.size(); ++i)
@@ -844,9 +751,9 @@ int main(int argc, char* argv[])
                     const std::string suffix =
                         "_channel_candidate_curv_signal_s"
                         + std::to_string(i) + ".tif";
-                    const std::string o = out_path(pp, suffix);
+                    const std::string o = pp.make_output_path( suffix);
                     std::cout << "Writing: " << o << "\n";
-                    write_raster(loader, result.curvature_signal_by_scale[i], o, out_fmt);
+                    loader.write_full(result.curvature_signal_by_scale[i].get_data(), result.curvature_signal_by_scale[i].get_meta(), o, out_fmt);
                 }
 
                 for (std::size_t i = 0; i < result.persistence_by_adjacent_scale_pair.size(); ++i)
@@ -854,10 +761,9 @@ int main(int argc, char* argv[])
                     const std::string suffix =
                         "_channel_candidate_persistence_pair"
                         + std::to_string(i) + ".tif";
-                    const std::string o = out_path(pp, suffix);
+                    const std::string o = pp.make_output_path( suffix);
                     std::cout << "Writing: " << o << "\n";
-                    write_raster(loader, result.persistence_by_adjacent_scale_pair[i],
-                                 o, out_fmt);
+                    loader.write_full(result.persistence_by_adjacent_scale_pair[i].get_data(), result.persistence_by_adjacent_scale_pair[i].get_meta(), o, out_fmt);
                 }
             }
         }
@@ -878,9 +784,9 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_relief_ratio_raster"))
             {
-                const std::string o = out_path(pp, "_relief_ratio.tif");
+                const std::string o = pp.make_output_path( "_relief_ratio.tif");
                 std::cout << "Writing: " << o << "\n";
-                write_raster(loader, relief_ratio, o, out_fmt);
+                loader.write_full(relief_ratio.get_data(), relief_ratio.get_meta(), o, out_fmt);
             }
         }
         else

@@ -79,6 +79,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-raster-preprocessing";
 
 // this is for sampling raster points
 struct raster_attribute_request
@@ -232,78 +233,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// parse_args — returns {path, filename} or handles -h/-v/-c and exits
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-raster-preprocessing <path> <parameter_file>\n"
-                << "       lsdtt-raster-preprocessing <parameter_file>\n"
-                << "       lsdtt-raster-preprocessing -h   (this help)\n"
-                << "       lsdtt-raster-preprocessing -v   (version)\n"
-                << "       lsdtt-raster-preprocessing -c   (citation)\n\n"
-                << "See docs/lsdtt3_architecture.md for parameter file "
-                   "documentation.\n";
-            exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-raster-preprocessing version "
-                      << k_version << "\n";
-            exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation",
-                        "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path — build a full output path from the param parser + suffix
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix)
-{
-    return pp.get_full_write_path() + suffix;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -311,7 +240,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Load parameter file
@@ -1036,7 +966,7 @@ int main(int argc, char* argv[])
 
     if (count_valid(dem) < valid_before_masking)
     {
-        const std::string o = out_path(pp, "_remove_seas.tif");
+        const std::string o = pp.make_output_path( "_remove_seas.tif");
         std::cout << "Threshold masking changed "
                   << (valid_before_masking - count_valid(dem))
                   << " pixel(s) — writing: " << o << "\n";
@@ -1070,7 +1000,7 @@ int main(int argc, char* argv[])
                 const std::size_t valid_after = count_valid(dem);
                 std::cout << "  Valid pixels after masking: " << valid_after << "\n";
 
-                const std::string o = out_path(pp, "_binary_masked.tif");
+                const std::string o = pp.make_output_path( "_binary_masked.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
             }
@@ -1156,7 +1086,7 @@ int main(int argc, char* argv[])
                               dem, poly_mask);
                 }
 
-                const std::string o = out_path(pp, "_polygon_clipped.tif");
+                const std::string o = pp.make_output_path( "_polygon_clipped.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
             }
@@ -1190,7 +1120,7 @@ int main(int argc, char* argv[])
                 dem, nfm, ifs["nodata_fill_max_iter"], 1e-6f, n_threads
             );
 
-            std::string o = out_path(pp, "_nodata_filled.tif");
+            std::string o = pp.make_output_path( "_nodata_filled.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(nodata_filled_dem.get_data(),
                               nodata_filled_dem.get_meta(), o, out_fmt);
@@ -1215,7 +1145,7 @@ int main(int argc, char* argv[])
         {
             lsdtt::lsdtt_raster_cpu clipped =
                 lsdtt::clip_to_maximum_rectangle(src);
-            std::string o = out_path(pp, "_clipped_rect.tif");
+            std::string o = pp.make_output_path( "_clipped_rect.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(clipped.get_data(), clipped.get_meta(),
                               o, out_fmt);
@@ -1266,7 +1196,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_breached_raster"])
             {
-                std::string o = out_path(pp, "_breached.tif");
+                std::string o = pp.make_output_path( "_breached.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(breached.get_data(),
                                   breached.get_meta(), o, out_fmt);
@@ -1280,7 +1210,7 @@ int main(int argc, char* argv[])
                 {
                     lsdtt::lsdtt_raster_cpu carve_diff =
                         lsdtt::algebra::raster_subtract(breached, working_dem);
-                    std::string o = out_path(pp, "_carve_diff.tif");
+                    std::string o = pp.make_output_path( "_carve_diff.tif");
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(carve_diff.get_data(),
                                       carve_diff.get_meta(), o, out_fmt);
@@ -1372,7 +1302,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_fill_raster"])
             {
-                std::string o = out_path(pp, "_fill.tif");
+                std::string o = pp.make_output_path( "_fill.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(filled_dem.get_data(),
                                   filled_dem.get_meta(), o, out_fmt);
@@ -1390,7 +1320,7 @@ int main(int argc, char* argv[])
 
                     if (bf["write_fill_diff_raster"])
                     {
-                        std::string o = out_path(pp, "_fill_diff.tif");
+                        std::string o = pp.make_output_path( "_fill_diff.tif");
                         std::cout << "Writing: " << o << "\n";
                         loader.write_full(fill_diff_raster.get_data(),
                                           fill_diff_raster.get_meta(), o, out_fmt);
@@ -1430,7 +1360,7 @@ int main(int argc, char* argv[])
                     lsdtt::resolve_vector_output_format(sf["depression_polygons_output_format"]);
 
                 const std::string o =
-                    out_path(pp, "_depressions" +
+                    pp.make_output_path( "_depressions" +
                              lsdtt::output_extension(vec_fmt));
 
                 std::cout << "Tracing depression outlines...\n";
@@ -1495,7 +1425,7 @@ int main(int argc, char* argv[])
                 ff["hillshade_z_factor"]
             );
 
-            std::string o = out_path(pp, "_hillshade.tif");
+            std::string o = pp.make_output_path( "_hillshade.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(hillshade.get_data(), hillshade.get_meta(),
                               o, out_fmt);
@@ -1529,7 +1459,7 @@ int main(int argc, char* argv[])
                     );
 
                 const std::string vec_out =
-                    out_path(pp, "_clipped_vector" +
+                    pp.make_output_path( "_clipped_vector" +
                              lsdtt::output_extension(vec_fmt));
 
                 std::cout << "Input vector : " << vec_in  << "\n";
@@ -1663,7 +1593,7 @@ int main(int argc, char* argv[])
                     lsdtt::convert_point_to_vector_output_format(pt_fmt);
 
                 const std::string out_file =
-                    out_path(pp, "_sampled_points" +
+                    pp.make_output_path( "_sampled_points" +
                                 lsdtt::output_extension(pt_fmt));
 
                 point_loader.begin_vector_write(

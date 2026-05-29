@@ -26,7 +26,6 @@
 // -----------------------------------------------------------------------------
 
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -47,6 +46,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-channel-extraction";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -64,76 +64,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-channel-extraction <path> <parameter_file>\n"
-                << "       lsdtt-channel-extraction <parameter_file>\n"
-                << "       lsdtt-channel-extraction -h   (this help)\n"
-                << "       lsdtt-channel-extraction -v   (version)\n"
-                << "       lsdtt-channel-extraction -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-channel-extraction version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path — build a full output path from parser + suffix + extension
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -141,7 +71,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -493,7 +424,7 @@ int main(int argc, char* argv[])
     if (bf["write_arcmap_d8_flowdirection_raster"])
     {
         const std::string flowdir_file =
-            out_path(pp, "_arcmap_d8_flowdirection", ".tif");
+            pp.make_output_path( "_arcmap_d8_flowdirection", ".tif");
 
         std::cout << "\n--- Writing ArcMap D8 flow-direction raster ---\n";
         std::cout << "Writing: " << flowdir_file << "\n";
@@ -519,7 +450,7 @@ int main(int argc, char* argv[])
             lsdtt::output_extension(flow_lines_output_format);
 
         const std::string flow_lines_file =
-            out_path(pp, "_flow_lines", flow_lines_extension);
+            pp.make_output_path( "_flow_lines", flow_lines_extension);
 
         std::cout << "\n--- Writing flow lines ---\n";
         std::cout << "Writing: " << flow_lines_file << "\n";
@@ -627,7 +558,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing channel network ---\n";
         const std::string extension =
             lsdtt::output_extension(cn_points_output_format);
-        std::string output_file = out_path(pp, "_channel_network_points", extension);
+        std::string output_file = pp.make_output_path( "_channel_network_points", extension);
         std::cout << "Writing: " << output_file << "\n";
 
         try
@@ -652,7 +583,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing channel network lines ---\n";
         const std::string extension =
             lsdtt::output_extension(cn_lines_output_format);
-        std::string output_file = out_path(pp, "_channel_network_lines", extension);
+        std::string output_file = pp.make_output_path( "_channel_network_lines", extension);
         std::cout << "Writing: " << output_file << "\n";
 
         try
@@ -678,7 +609,7 @@ int main(int argc, char* argv[])
         const std::string extension =
             lsdtt::output_extension(cn_junctions_output_format);
         const std::string output_file =
-            out_path(pp, "_channel_network_junctions", extension);
+            pp.make_output_path( "_channel_network_junctions", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -752,7 +683,7 @@ int main(int argc, char* argv[])
             const std::string ext =
                 lsdtt::output_extension(burned_profiles_fmt);
             const std::string output_file =
-                out_path(pp, "_burned_stream_profiles", ext);
+                pp.make_output_path( "_burned_stream_profiles", ext);
             std::cout << "Writing: " << output_file << "\n";
 
             try

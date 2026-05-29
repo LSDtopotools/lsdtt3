@@ -50,7 +50,6 @@
 
 #include <cmath>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -74,6 +73,7 @@
 
 static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-mountain-front";
 
 static void print_banner()
 {
@@ -88,37 +88,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-        if (is_flag(a, {"-h","--help","help","-H","--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-mountain-front <path> <parameter_file>\n"
-                << "       lsdtt-mountain-front <parameter_file>\n"
-                << "       lsdtt-mountain-front -h\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v","--version","version","-V"}))
-        { std::cout << "lsdtt-mountain-front version " << k_version << "\n"; std::exit(0); }
-        if (is_flag(a, {"-c","--cite","citation","-citation","--citation"}))
-        { std::cout << "Citation: " << k_citation << "\n"; std::exit(0); }
-    }
-    std::string path = "./";
-    std::string fname;
-    if (argc == 1) { std::cerr << "No parameter file. Use -h for help.\n"; std::exit(1); }
-    else if (argc == 2) { fname = argv[1]; }
-    else { path = argv[1]; fname = argv[2]; }
-    return {path, fname};
-}
 static lsdtt::lsdtt_raster_cpu prune_upstream_outlets(
     const lsdtt::lsdtt_raster_cpu& outlets,
     const lsdtt::lsdtt_flow_base&  flow)
@@ -216,7 +185,8 @@ static lsdtt::lsdtt_raster_cpu prune_upstream_outlets(
 int main(int argc, char* argv[])
 {
     print_banner();
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     lsdtt::lsdtt_param_parser pp;
     try { pp = lsdtt::lsdtt_param_parser(path, fname); }

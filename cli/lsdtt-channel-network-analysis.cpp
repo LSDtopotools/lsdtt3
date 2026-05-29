@@ -35,7 +35,6 @@
 
 #include <cctype>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -61,6 +60,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-channel-network-analysis";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -79,77 +79,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-channel-network-analysis <path> <parameter_file>\n"
-                << "       lsdtt-channel-network-analysis <parameter_file>\n"
-                << "       lsdtt-channel-network-analysis -h   (this help)\n"
-                << "       lsdtt-channel-network-analysis -v   (version)\n"
-                << "       lsdtt-channel-network-analysis -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-channel-network-analysis version "
-                      << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -157,7 +86,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -1091,7 +1021,7 @@ int main(int argc, char* argv[])
             lsdtt::output_extension(channel_link_bearings_format);
 
         const std::string output_file =
-            out_path(pp, "_channel_link_bearings", extension);
+            pp.make_output_path( "_channel_link_bearings", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -1121,7 +1051,7 @@ int main(int argc, char* argv[])
             lsdtt::output_extension(channel_link_bearing_vectors_format);
 
         const std::string output_file =
-            out_path(pp, "_channel_link_bearing_vectors", extension);
+            pp.make_output_path( "_channel_link_bearing_vectors", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -1178,7 +1108,7 @@ int main(int argc, char* argv[])
             lsdtt::output_extension(junction_angles_format);
 
         const std::string output_file =
-            out_path(pp, "_junction_angles", extension);
+            pp.make_output_path( "_junction_angles", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -1208,7 +1138,7 @@ int main(int argc, char* argv[])
             lsdtt::output_extension(junction_angle_bearing_vectors_format);
 
         const std::string output_file =
-            out_path(pp, "_junction_angle_bearing_vectors", extension);
+            pp.make_output_path( "_junction_angle_bearing_vectors", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -1280,7 +1210,7 @@ int main(int argc, char* argv[])
                 lsdtt::output_extension(strahler_channels_format);
 
             const std::string output_file =
-                out_path(pp, "_strahler_channels", extension);
+                pp.make_output_path( "_strahler_channels", extension);
 
             std::cout << "Writing: " << output_file << "\n";
 
@@ -1309,7 +1239,7 @@ int main(int argc, char* argv[])
                 lsdtt::output_extension(tokunaga_channels_format);
 
             const std::string output_file =
-                out_path(pp, "_tokunaga_channels", extension);
+                pp.make_output_path( "_tokunaga_channels", extension);
 
             std::cout << "Writing: " << output_file << "\n";
 
@@ -1335,7 +1265,7 @@ int main(int argc, char* argv[])
         if (do_tokunaga_table)
         {
             const std::string output_file =
-                out_path(pp, "_tokunaga_channel_data", ".csv");
+                pp.make_output_path( "_tokunaga_channel_data", ".csv");
 
             std::cout << "Writing: " << output_file << "\n";
 
@@ -1372,7 +1302,7 @@ int main(int argc, char* argv[])
             }
 
             const std::string output_file =
-                out_path(pp, "_tokunaga_summary", ".csv");
+                pp.make_output_path( "_tokunaga_summary", ".csv");
 
             std::cout << "Writing Tokunaga summary tables with prefix: "
                       << output_file << "\n";

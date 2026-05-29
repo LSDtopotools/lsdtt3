@@ -29,7 +29,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -45,6 +44,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-hydraulic-routing";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -61,82 +61,6 @@ static void print_banner()
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
 }
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags)
-        {
-            if (s == f) return true;
-        }
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-hydraulic-routing <path> <parameter_file>\n"
-                << "       lsdtt-hydraulic-routing <parameter_file>\n"
-                << "       lsdtt-hydraulic-routing -h   (this help)\n"
-                << "       lsdtt-hydraulic-routing -v   (version)\n"
-                << "       lsdtt-hydraulic-routing -c   (citation)\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-hydraulic-routing version " << k_version << "\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -144,7 +68,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -727,7 +652,7 @@ int main(int argc, char* argv[])
         if (bf["write_water_depth_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_water_depth", ".tif");
+                pp.make_output_path( "_water_depth", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_water_depth_raster(),
@@ -739,7 +664,7 @@ int main(int argc, char* argv[])
         if (bf["write_water_surface_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_water_surface", ".tif");
+                pp.make_output_path( "_water_surface", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_water_surface_raster(),
@@ -751,7 +676,7 @@ int main(int argc, char* argv[])
         if (bf["write_qin_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_qin", ".tif");
+                pp.make_output_path( "_qin", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_qin_raster(),
@@ -763,7 +688,7 @@ int main(int argc, char* argv[])
         if (bf["write_qout_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_qout", ".tif");
+                pp.make_output_path( "_qout", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_qout_raster(),
@@ -775,7 +700,7 @@ int main(int argc, char* argv[])
         if (bf["write_dhw_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_dhw", ".tif");
+                pp.make_output_path( "_dhw", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_dhw_raster(),
@@ -787,7 +712,7 @@ int main(int argc, char* argv[])
         if (bf["write_bed_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_bed", ".tif");
+                pp.make_output_path( "_bed", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_bed_raster(),
@@ -800,7 +725,7 @@ int main(int argc, char* argv[])
         if (bf["write_hydraulic_slope_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_hydraulic_slope", ".tif");
+                pp.make_output_path( "_hydraulic_slope", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_hydraulic_slope_raster(),
@@ -812,7 +737,7 @@ int main(int argc, char* argv[])
         if (bf["write_specific_discharge_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_specific_discharge", ".tif");
+                pp.make_output_path( "_specific_discharge", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_specific_discharge_raster(),
@@ -824,7 +749,7 @@ int main(int argc, char* argv[])
         if (bf["write_total_discharge_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_total_discharge", ".tif");
+                pp.make_output_path( "_total_discharge", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_total_discharge_raster(),
@@ -843,7 +768,7 @@ int main(int argc, char* argv[])
             }
 
             const std::string out_file =
-                out_path(pp, "_specific_drainage_area", ".tif");
+                pp.make_output_path( "_specific_drainage_area", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_specific_drainage_area_raster(
@@ -857,7 +782,7 @@ int main(int argc, char* argv[])
         if (bf["write_effective_width_raster"])
         {
             const std::string out_file =
-                out_path(pp, "_effective_width", ".tif");
+                pp.make_output_path( "_effective_width", ".tif");
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_effective_width_raster(),

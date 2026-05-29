@@ -46,7 +46,6 @@
 
 #include <cmath>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -72,6 +71,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-stream-burning";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -89,78 +89,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        const std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-stream-burning <path> <parameter_file>\n"
-                << "       lsdtt-stream-burning <parameter_file>\n"
-                << "       lsdtt-stream-burning -h   (this help)\n"
-                << "       lsdtt-stream-burning -v   (version)\n"
-                << "       lsdtt-stream-burning -c   (citation)\n\n"
-                << "Required parameter:\n"
-                << "  stream_vector_path: polyline vector channel file\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-stream-burning version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -168,7 +96,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -520,7 +449,7 @@ int main(int argc, char* argv[])
         }
 
         {
-            const std::string filled_file = out_path(pp, "_filled", ".tif");
+            const std::string filled_file = pp.make_output_path( "_filled", ".tif");
             std::cout << "Writing filled DEM: " << filled_file << "\n";
             try
             {
@@ -610,7 +539,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     {
         const std::string junction_file =
-            out_path(pp, "_vector_junctions", ".fgb");
+            pp.make_output_path( "_vector_junctions", ".fgb");
 
         std::cout << "Writing vector junctions: " << junction_file << "\n";
 
@@ -631,7 +560,7 @@ int main(int argc, char* argv[])
 
     {
         const std::string edge_file =
-            out_path(pp, "_vector_edges", ".fgb");
+            pp.make_output_path( "_vector_edges", ".fgb");
 
         std::cout << "Writing vector edges    : " << edge_file << "\n";
 
@@ -827,7 +756,7 @@ int main(int argc, char* argv[])
         const std::string ext =
             lsdtt::output_extension(vec_src_fmt);
         const std::string vsrc_file =
-            out_path(pp, "_vector_endpoints", ext);
+            pp.make_output_path( "_vector_endpoints", ext);
 
         std::cout << "Writing: " << vsrc_file << "\n";
 
@@ -1007,7 +936,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing DEM network (points) ---\n";
 
         const std::string ext    = lsdtt::output_extension(dem_net_point_fmt);
-        const std::string output = out_path(pp, "_dem_network_points", ext);
+        const std::string output = pp.make_output_path( "_dem_network_points", ext);
         std::cout << "Writing: " << output << "\n";
 
         try
@@ -1032,7 +961,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing DEM network (lines) ---\n";
 
         const std::string ext    = lsdtt::output_extension(dem_net_line_fmt);
-        const std::string output = out_path(pp, "_dem_network_lines", ext);
+        const std::string output = pp.make_output_path( "_dem_network_lines", ext);
         std::cout << "Writing: " << output << "\n";
 
         try
@@ -1057,7 +986,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing DEM network junctions ---\n";
 
         const std::string ext    = lsdtt::output_extension(dem_net_point_fmt);
-        const std::string output = out_path(pp, "_dem_network_junctions", ext);
+        const std::string output = pp.make_output_path( "_dem_network_junctions", ext);
         std::cout << "Writing: " << output << "\n";
 
         try
@@ -1114,7 +1043,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_burned_profiles_csv"])
             {
-                const std::string csv_file = out_path(pp, "_burned_profiles", ".csv");
+                const std::string csv_file = pp.make_output_path( "_burned_profiles", ".csv");
                 std::cout << "Writing: " << csv_file << "\n";
                 try
                 {
@@ -1130,7 +1059,7 @@ int main(int argc, char* argv[])
             if (bf["write_burned_profiles_points"])
             {
                 const std::string ext  = lsdtt::output_extension(burned_prof_fmt);
-                const std::string pfile = out_path(pp, "_burned_profiles", ext);
+                const std::string pfile = pp.make_output_path( "_burned_profiles", ext);
                 std::cout << "Writing: " << pfile << "\n";
                 try
                 {
@@ -1267,7 +1196,7 @@ int main(int argc, char* argv[])
             const std::string ext =
                 lsdtt::output_extension(junc_cmp_fmt);
             const std::string output =
-                out_path(pp, "_candidate_junctions_phase_00", ext);
+                pp.make_output_path( "_candidate_junctions_phase_00", ext);
 
             std::cout << "Writing: " << output << "\n";
 
@@ -1401,7 +1330,7 @@ int main(int argc, char* argv[])
             // Write repair log
             if (bf["write_repair_log"] && !repair_records.empty())
             {
-                const std::string log_file = out_path(pp, "_repair_log", ".csv");
+                const std::string log_file = pp.make_output_path( "_repair_log", ".csv");
                 std::cout << "Writing repair log: " << log_file << "\n";
                 try
                 {
@@ -1417,7 +1346,7 @@ int main(int argc, char* argv[])
             // Write repaired DEM
             if (bf["write_repaired_dem"])
             {
-                const std::string dem_file = out_path(pp, "_repaired", ".tif");
+                const std::string dem_file = pp.make_output_path( "_repaired", ".tif");
                 std::cout << "Writing repaired DEM: " << dem_file << "\n";
                 try
                 {
@@ -1477,7 +1406,7 @@ int main(int argc, char* argv[])
             {
                 const std::string ext    = lsdtt::output_extension(junc_cmp_fmt);
                 const std::string output =
-                    out_path(pp, "_candidate_junctions_post_repair", ext);
+                    pp.make_output_path( "_candidate_junctions_post_repair", ext);
                 std::cout << "Writing: " << output << "\n";
                 try
                 {

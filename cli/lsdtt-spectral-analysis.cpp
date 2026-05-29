@@ -26,7 +26,6 @@
 // -----------------------------------------------------------------------------
 
 #include <fstream>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -40,6 +39,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-spectral-analysis";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -55,80 +55,6 @@ static void print_banner()
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags)
-        {
-            if (s == f) return true;
-        }
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        const std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-spectral-analysis <path> <parameter_file>\n"
-                << "       lsdtt-spectral-analysis <parameter_file>\n"
-                << "       lsdtt-spectral-analysis -h   (this help)\n"
-                << "       lsdtt-spectral-analysis -v   (version)\n"
-                << "       lsdtt-spectral-analysis -c   (citation)\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-spectral-analysis version " << k_version << "\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path — build a full output path from the param parser + suffix
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string&               suffix)
-{
-    return pp.get_full_write_path() + suffix;
 }
 
 // -----------------------------------------------------------------------------
@@ -160,7 +86,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -374,7 +301,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            const std::string o = out_path(pp, "_psd_2d.tif");
+            const std::string o = pp.make_output_path( "_psd_2d.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 result.psd_2d.get_vector(),
@@ -390,7 +317,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            const std::string o = out_path(pp, "_background_psd_2d.tif");
+            const std::string o = pp.make_output_path( "_background_psd_2d.tif");
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 result.background_psd_2d.get_vector(),
@@ -415,7 +342,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            const std::string o = out_path(pp, "_radial_spectrum.csv");
+            const std::string o = pp.make_output_path( "_radial_spectrum.csv");
             std::cout << "Writing: " << o << "\n";
 
             std::ofstream ofs(o);
@@ -459,7 +386,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            const std::string o = out_path(pp, "_significant_frequencies.csv");
+            const std::string o = pp.make_output_path( "_significant_frequencies.csv");
             std::cout << "Writing: " << o << "\n";
 
             std::ofstream ofs(o);

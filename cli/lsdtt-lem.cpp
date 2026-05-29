@@ -32,7 +32,6 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
-#include <initializer_list>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -58,6 +57,7 @@ static const std::string k_citation =
     "Mudd et al. (2023) LSDTopoTools2. "
     "Anand et al. (2020) Env. Modell. Softw. 134:104803. "
     "Carretier et al. (2016) Earth Surf. Dyn. 4:37-55.";
+static const std::string k_tool_name = "lsdtt-lem";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -65,108 +65,14 @@ static const std::string k_citation =
 static void print_banner()
 {
     std::cout
-        << "=========================================================\n"
-        << "|| Welcome to lsdtt-lem                                ||\n"
-        << "|| Landscape evolution model: stream power + Cidre     ||\n"
-        << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
-        << "=========================================================\n"
+        << "================================================================\n"
+        << "|| Welcome to lsdtt-lem                                       ||\n"
+        << "|| This is a simple landscape evolution model                 ||\n"
+        << "|| Part of lsdtt3 by Simon M. Mudd and Rutger Vervoordeldonk  ||\n"
+        << "================================================================\n"
         << "|| Version : " << k_version  << "\n"
+        << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-lem <path> <parameter_file>\n"
-                << "       lsdtt-lem <parameter_file>\n"
-                << "       lsdtt-lem -h   (this help)\n"
-                << "       lsdtt-lem -v   (version)\n"
-                << "       lsdtt-lem -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-lem version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& ext = ".tif")
-{
-    return pp.get_full_write_path() + suffix + ext;
-}
-
-// Overload that picks the right extension from the raster output format.
-// CSV and other non-raster paths should use the string overload with an
-// explicit ".csv" extension rather than calling this.
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    lsdtt::raster_output_format fmt)
-{
-    const std::string ext =
-        (fmt == lsdtt::raster_output_format::png) ? ".png" : ".tif";
-    return pp.get_full_write_path() + suffix + ext;
-}
-
-// -----------------------------------------------------------------------------
-// write_raster
-// -----------------------------------------------------------------------------
-static void write_raster(
-    lsdtt::lsdtt_data_loader&      loader,
-    const lsdtt::lsdtt_raster_cpu& raster,
-    const std::string&             path,
-    lsdtt::raster_output_format    fmt)
-{
-    loader.write_full(raster.get_data(), raster.get_meta(), path, fmt);
 }
 
 // -----------------------------------------------------------------------------
@@ -175,6 +81,11 @@ static void write_raster(
 // Computes a hillshade from the given raster and writes it as a PNG.
 // Always writes PNG regardless of the model's write_output_format setting.
 // -----------------------------------------------------------------------------
+static std::string fmt_ext(lsdtt::raster_output_format fmt)
+{
+    return (fmt == lsdtt::raster_output_format::png) ? ".png" : ".tif";
+}
+
 static void write_hillshade_png(
     lsdtt::lsdtt_data_loader&      loader,
     const lsdtt::lsdtt_raster_cpu& raster,
@@ -231,7 +142,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -887,9 +799,9 @@ int main(int argc, char* argv[])
                   << "  computed_relief: " << ss_result.computed_relief << " m\n"
                   << "  max_unit_height: " << ss_result.max_unit_height << "\n";
 
-        const std::string ss_elev_path = out_path(pp, "_steady_state_elevation", out_fmt);
+        const std::string ss_elev_path = pp.make_output_path("_steady_state_elevation", fmt_ext(out_fmt));
         std::cout << "Writing steady-state elevation: " << ss_elev_path << "\n";
-        try { write_raster(loader, ss_result.elevation, ss_elev_path, out_fmt); }
+        try { loader.write_full(ss_result.elevation.get_data(), ss_result.elevation.get_meta(), ss_elev_path, out_fmt); }
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: writing steady-state elevation failed: " << e.what() << "\n";
@@ -898,7 +810,7 @@ int main(int argc, char* argv[])
 
         if (bf["write_hillshade_png"])
         {
-            const std::string hs_png = out_path(pp, "_steady_state_hillshade", ".png");
+            const std::string hs_png = pp.make_output_path( "_steady_state_hillshade", ".png");
             std::cout << "Writing steady-state hillshade PNG: " << hs_png << "\n";
             try {
                 write_hillshade_png(loader, ss_result.elevation, hs_png,
@@ -914,7 +826,7 @@ int main(int argc, char* argv[])
 
         if (bf["write_elevation_stats_csv"])
         {
-            const std::string ss_csv = out_path(pp, "_steady_state_stats", ".csv");
+            const std::string ss_csv = pp.make_output_path( "_steady_state_stats", ".csv");
             std::cout << "Writing steady-state stats: " << ss_csv << "\n";
             const std::vector<std::string> ss_headers = {
                 "mode", "flow_algorithm", "U", "K_input", "K_used",
@@ -1023,9 +935,9 @@ int main(int argc, char* argv[])
                     std::cerr << "Warning: hillslope solver did not converge within "
                               << hs_opts.max_iterations << " iterations.\n";
 
-                const std::string hs_path = out_path(pp, "_hillslope_steady_state_elevation", out_fmt);
+                const std::string hs_path = pp.make_output_path("_hillslope_steady_state_elevation", fmt_ext(out_fmt));
                 std::cout << "Writing hillslope steady-state elevation: " << hs_path << "\n";
-                try { write_raster(loader, hs_result.elevation, hs_path, out_fmt); }
+                try { loader.write_full(hs_result.elevation.get_data(), hs_result.elevation.get_meta(), hs_path, out_fmt); }
                 catch (const std::exception& e)
                 {
                     std::cerr << "FATAL: writing hillslope elevation failed: "
@@ -1036,7 +948,7 @@ int main(int argc, char* argv[])
                 if (bf["write_hillshade_png"])
                 {
                     const std::string hs_hs_png =
-                        out_path(pp, "_hillslope_steady_state_hillshade", ".png");
+                        pp.make_output_path( "_hillslope_steady_state_hillshade", ".png");
                     std::cout << "Writing hillslope steady-state hillshade PNG: "
                               << hs_hs_png << "\n";
                     try {
@@ -1054,7 +966,7 @@ int main(int argc, char* argv[])
 
                 if (bf["write_elevation_stats_csv"])
                 {
-                    const std::string hs_csv = out_path(pp, "_hillslope_steady_state_stats", ".csv");
+                    const std::string hs_csv = pp.make_output_path( "_hillslope_steady_state_stats", ".csv");
                     std::cout << "Writing hillslope stats: " << hs_csv << "\n";
                     const std::vector<std::string> hs_headers = {
                         "transport_mode", "D", "U", "Sc",
@@ -1090,9 +1002,9 @@ int main(int argc, char* argv[])
     // Write initial topography
     // -------------------------------------------------------------------------
     {
-        const std::string path_init = out_path(pp, "_initial_topography", out_fmt);
+        const std::string path_init = pp.make_output_path("_initial_topography", fmt_ext(out_fmt));
         std::cout << "Writing initial topography: " << path_init << "\n";
-        try { write_raster(loader, dem, path_init, out_fmt); }
+        try { loader.write_full(dem.get_data(), dem.get_meta(), path_init, out_fmt); }
         catch (const std::exception& e)
         {
             std::cerr << "Warning: could not write initial topography: " << e.what() << "\n";
@@ -1108,7 +1020,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Prepare stats CSV
     // -------------------------------------------------------------------------
-    const std::string stats_csv_path = out_path(pp, "_model_elevation_stats", ".csv");
+    const std::string stats_csv_path = pp.make_output_path( "_model_elevation_stats", ".csv");
     std::vector<std::vector<std::string>> stats_rows;
     const std::vector<std::string> stats_headers = {
         "iteration", "time_yr",
@@ -1171,8 +1083,8 @@ int main(int argc, char* argv[])
               // Intermediate raster
             if (write_freq > 0 && iter % write_freq == 0)
             {
-                const std::string p = out_path(pp, "_model_iteration_" + std::to_string(iter), out_fmt);
-                try { write_raster(loader, current, p, out_fmt); }
+                const std::string p = pp.make_output_path( "_model_iteration_" + std::to_string(iter), out_fmt);
+                try { loader.write_full(current.get_data(), current.get_meta(), p, out_fmt); }
                 catch (const std::exception& e)
                 {
                     std::cerr << "Warning: intermediate write failed: " << e.what() << "\n";
@@ -1245,9 +1157,9 @@ int main(int argc, char* argv[])
     // Write final topography
     // -------------------------------------------------------------------------
     {
-        const std::string path_final = out_path(pp, "_modelled_topography", out_fmt);
+        const std::string path_final = pp.make_output_path("_modelled_topography", fmt_ext(out_fmt));
         std::cout << "\nWriting final topography: " << path_final << "\n";
-        try { write_raster(loader, current, path_final, out_fmt); }
+        try { loader.write_full(current.get_data(), current.get_meta(), path_final, out_fmt); }
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: writing final topography failed: " << e.what() << "\n";

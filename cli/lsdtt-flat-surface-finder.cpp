@@ -42,7 +42,6 @@
 
 #include <cmath>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -84,6 +83,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-flat-surface-finder";
 
 static void print_banner()
 {
@@ -97,45 +97,14 @@ static void print_banner()
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
 }
-
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s, std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-        if (is_flag(a, {"-h","--help","help","-H"}))
-        {
-            std::cout << "Usage: lsdtt-flat-surface-finder <path> <parameter_file>\n"
-                      << "       lsdtt-flat-surface-finder <parameter_file>\n"
-                      << "       lsdtt-flat-surface-finder -h\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v","--version","version"}))
-        {
-            std::cout << "lsdtt-flat-surface-finder version " << k_version << "\n";
-            std::exit(0);
-        }
-    }
-    std::string path = "./";
-    std::string fname;
-    if (argc == 1) { std::cerr << "No parameter file. Use -h for help.\n"; std::exit(1); }
-    else if (argc == 2) { fname = argv[1]; }
-    else { path = argv[1]; fname = argv[2]; }
-    return {path, fname};
-}
-
 // =============================================================================
 // main
 // =============================================================================
 int main(int argc, char* argv[])
 {
     print_banner();
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     lsdtt::lsdtt_param_parser pp;
     try { pp = lsdtt::lsdtt_param_parser(path, fname); }

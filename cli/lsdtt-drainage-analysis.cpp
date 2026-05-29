@@ -29,7 +29,6 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -53,6 +52,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-drainage-analysis";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -69,77 +69,6 @@ static void print_banner()
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
 }
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-drainage-analysis <path> <parameter_file>\n"
-                << "       lsdtt-drainage-analysis <parameter_file>\n"
-                << "       lsdtt-drainage-analysis -h   (this help)\n"
-                << "       lsdtt-drainage-analysis -v   (version)\n"
-                << "       lsdtt-drainage-analysis -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-drainage-analysis version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path — build a full output path from parser + suffix + extension
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -147,7 +76,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -580,7 +510,7 @@ int main(int argc, char* argv[])
     if (bf["write_d8_drainage_area_raster"])
     {
         std::cout << "\n--- Writing D8 drainage area ---\n";
-        const std::string out_file = out_path(pp, "_d8_drainage_area", ".tif");
+        const std::string out_file = pp.make_output_path( "_d8_drainage_area", ".tif");
         std::cout << "Writing: " << out_file << "\n";
 
         try
@@ -602,7 +532,7 @@ int main(int argc, char* argv[])
     if (bf["write_dinf_drainage_area_raster"])
     {
         std::cout << "\n--- Writing D-infinity drainage area ---\n";
-        const std::string out_file = out_path(pp, "_dinf_drainage_area", ".tif");
+        const std::string out_file = pp.make_output_path( "_dinf_drainage_area", ".tif");
         std::cout << "Writing: " << out_file << "\n";
 
         try
@@ -624,7 +554,7 @@ int main(int argc, char* argv[])
     if (bf["write_mfd_drainage_area_raster"])
     {
         std::cout << "\n--- Writing MFD drainage area ---\n";
-        const std::string out_file = out_path(pp, "_mfd_drainage_area", ".tif");
+        const std::string out_file = pp.make_output_path( "_mfd_drainage_area", ".tif");
         std::cout << "Writing: " << out_file << "\n";
 
         try
@@ -758,7 +688,7 @@ int main(int argc, char* argv[])
             dem_meta
         );
 
-        const std::string twi_file = out_path(pp, "_twi", ".tif");
+        const std::string twi_file = pp.make_output_path( "_twi", ".tif");
         std::cout << "Writing: " << twi_file << "\n";
 
         try
@@ -872,7 +802,7 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_raster_result ic = lsdtt::compute_connectivity_index(
                 *d8_flow, conn_roughness, conn_slope, conn_area, conn_thresh);
 
-            const std::string ic_file = out_path(pp, "_connectivity_index", ".tif");
+            const std::string ic_file = pp.make_output_path( "_connectivity_index", ".tif");
             std::cout << "Writing: " << ic_file << "\n";
             loader.write_full(ic, ic_file, out_fmt);
 
@@ -880,13 +810,13 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_raster_result W_result =
                 lsdtt::compute_W_raster(conn_roughness);
 
-            const std::string dup_file = out_path(pp, "_connectivity_d_up", ".tif");
+            const std::string dup_file = pp.make_output_path( "_connectivity_d_up", ".tif");
             std::cout << "Writing: " << dup_file << "\n";
             loader.write_full(
                 lsdtt::compute_D_up_raster(*d8_flow, W_result, conn_slope, conn_area),
                 dup_file, out_fmt);
 
-            const std::string ddn_file = out_path(pp, "_connectivity_d_down", ".tif");
+            const std::string ddn_file = pp.make_output_path( "_connectivity_d_down", ".tif");
             std::cout << "Writing: " << ddn_file << "\n";
             loader.write_full(
                 lsdtt::compute_D_down_raster(*d8_flow, W_result, conn_slope,
@@ -920,7 +850,7 @@ int main(int argc, char* argv[])
             );
 
             const std::string hac_file =
-                out_path(pp, "_height_above_channel", ".tif");
+                pp.make_output_path( "_height_above_channel", ".tif");
             std::cout << "Writing: " << hac_file << "\n";
             loader.write_full(hac, hac_file, out_fmt);
         }

@@ -26,7 +26,6 @@
 // -----------------------------------------------------------------------------
 
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -47,6 +46,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation =
+static const std::string k_tool_name = "lsdtt-sediment-routing";
     "d-CASCADE: Battista G. et al. (2022) GMD 15:4227-4267\n"
     "lsdtt3:    https://github.com/LSDtopotools/lsdtt3";
 
@@ -64,54 +64,6 @@ static void print_banner()
         << "=====================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-sediment-routing <path> <parameter_file>\n"
-                << "       lsdtt-sediment-routing <parameter_file>\n"
-                << "       lsdtt-sediment-routing -h   (this help)\n"
-                << "       lsdtt-sediment-routing -v   (version)\n"
-                << "       lsdtt-sediment-routing -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-sediment-routing version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-
-    std::string path = "./";
-    std::string fname;
-    if (argc == 2)        fname = argv[1];
-    else { path = argv[1]; fname = argv[2]; }
-    return {path, fname};
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -119,7 +71,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file

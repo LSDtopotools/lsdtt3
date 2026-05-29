@@ -40,92 +40,12 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-raster-synthetic-tests";
 
 // -----------------------------------------------------------------------------
 // print_banner
 // -----------------------------------------------------------------------------
 static void print_banner()
-{
-    std::cout
-        << "=========================================================\n"
-        << "|| Welcome to lsdtt3 synthetic raster tests           ||\n"
-        << "|| Random surfaces and wavelet quadratic fit testing   ||\n"
-        << "|| Part of lsdtt3 by Simon M. Mudd                    ||\n"
-        << "=========================================================\n"
-        << "|| Version : " << k_version  << "\n"
-        << "|| Citation: " << k_citation << "\n"
-        << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s, std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout << "Usage: lsdtt_raster_synthetic_tests <path> <parameter_file>\n"
-                      << "       lsdtt_raster_synthetic_tests <parameter_file>\n"
-                      << "       lsdtt_raster_synthetic_tests -h   (this help)\n"
-                      << "       lsdtt_raster_synthetic_tests -v   (version)\n"
-                      << "       lsdtt_raster_synthetic_tests -c   (citation)\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt_raster_synthetic_tests version " << k_version << "\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix)
-{
-    return pp.get_full_write_path() + suffix;
-}
-
 // -----------------------------------------------------------------------------
 // coeff_name / coeff_raster
 // -----------------------------------------------------------------------------
@@ -171,24 +91,6 @@ static std::string format_double(double x)
     oss << std::setprecision(17) << x;
     return oss.str();
 }
-
-// -----------------------------------------------------------------------------
-// write_raster
-// -----------------------------------------------------------------------------
-static void write_raster(
-    lsdtt::lsdtt_data_loader&      loader,
-    const lsdtt::lsdtt_raster_cpu& raster,
-    const std::string&             path,
-    lsdtt::raster_output_format    out_fmt)
-{
-    loader.write_full(
-        raster.get_data(),
-        raster.get_meta(),
-        path,
-        out_fmt
-    );
-}
-
 // -----------------------------------------------------------------------------
 // write_coeff_set
 // -----------------------------------------------------------------------------
@@ -201,7 +103,7 @@ static void write_coeff_set(
     for (int k = 0; k < 6; ++k)
     {
         const std::string out = prefix + "_" + coeff_name(k) + ".tif";
-        write_raster(loader, coeff_raster(coeffs, k), out, out_fmt);
+        loader.write_full(coeff_raster(coeffs, k).get_data(), coeff_raster(coeffs, k).get_meta(), out, out_fmt);
     }
 }
 
@@ -395,7 +297,7 @@ static void run_wavelet_test(
             const std::string path = write_prefix
                 + "_" + surface_name
                 + "_wavelet_fitted_" + cn + ".tif";
-            write_raster(loader, fit_coeff, path, out_fmt);
+            loader.write_full(fit_coeff.get_data(), fit_coeff.get_meta(), path, out_fmt);
         }
 
         if (write_residuals)
@@ -431,7 +333,7 @@ static void run_wavelet_test(
             const std::string path = write_prefix
                 + "_" + surface_name
                 + "_wavelet_residual_" + cn + ".tif";
-            write_raster(loader, res_raster, path, out_fmt);
+            loader.write_full(res_raster.get_data(), res_raster.get_meta(), path, out_fmt);
         }
     }
 }
@@ -443,7 +345,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     lsdtt::lsdtt_param_parser pp;
     try
@@ -657,7 +560,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_data_loader loader;
 
     std::vector<std::vector<std::string>> wavelet_summary_rows;
-    const std::string summary_csv = out_path(pp, "_wavelet_test_summary.csv");
+    const std::string summary_csv = pp.make_output_path( "_wavelet_test_summary.csv");
 
     try
     {
@@ -677,7 +580,7 @@ int main(int argc, char* argv[])
                     n_threads
                 );
 
-            write_raster(loader, r, out_path(pp, "_uniform_random.tif"), out_fmt);
+            loader.write_full(r.get_data(), r.get_meta(), pp.make_output_path( "_uniform_random.tif"), out_fmt);
         }
 
         if (bf["write_red_noise_surface"])
@@ -694,7 +597,7 @@ int main(int argc, char* argv[])
                     n_threads
                 );
 
-            write_raster(loader, r, out_path(pp, "_red_noise.tif"), out_fmt);
+            loader.write_full(r.get_data(), r.get_meta(), pp.make_output_path( "_red_noise.tif"), out_fmt);
         }
 
         if (bf["write_blue_noise_surface"])
@@ -711,7 +614,7 @@ int main(int argc, char* argv[])
                     n_threads
                 );
 
-            write_raster(loader, r, out_path(pp, "_blue_noise.tif"), out_fmt);
+            loader.write_full(r.get_data(), r.get_meta(), pp.make_output_path( "_blue_noise.tif"), out_fmt);
         }
 
         if (bf["write_diamond_square_surface"])
@@ -729,7 +632,7 @@ int main(int argc, char* argv[])
                     n_threads
                 );
 
-            write_raster(loader, r, out_path(pp, "_diamond_square.tif"), out_fmt);
+            loader.write_full(r.get_data(), r.get_meta(), pp.make_output_path( "_diamond_square.tif"), out_fmt);
         }
 
         // ---------------------------------------------------------------------
@@ -754,17 +657,12 @@ int main(int argc, char* argv[])
 
             if (bf["write_periodic_wave_surface"])
             {
-                write_raster(
-                    loader,
-                    periodic.dem,
-                    out_path(pp, "_periodic_wave.tif"),
-                    out_fmt
-                );
+                loader.write_full(periodic.dem.get_data(), periodic.dem.get_meta(), pp.make_output_path( "_periodic_wave.tif"), out_fmt);
 
                 write_periodic_components_csv(
                     loader,
                     periodic.components,
-                    out_path(pp, "_periodic_wave_components.csv")
+                    pp.make_output_path( "_periodic_wave_components.csv")
                 );
 
                 if (bf["write_true_coefficient_rasters"])
@@ -772,7 +670,7 @@ int main(int argc, char* argv[])
                     write_coeff_set(
                         loader,
                         periodic.analytic_taylor,
-                        out_path(pp, "_periodic_wave_true"),
+                        pp.make_output_path( "_periodic_wave_true"),
                         out_fmt
                     );
                 }
@@ -817,17 +715,12 @@ int main(int argc, char* argv[])
 
             if (bf["write_global_quadratic_surface"])
             {
-                write_raster(
-                    loader,
-                    quad.dem,
-                    out_path(pp, "_global_quadratic.tif"),
-                    out_fmt
-                );
+                loader.write_full(quad.dem.get_data(), quad.dem.get_meta(), pp.make_output_path( "_global_quadratic.tif"), out_fmt);
 
                 write_global_quadratic_coeffs_csv(
                     loader,
                     quad.global_coeffs,
-                    out_path(pp, "_global_quadratic_coefficients.csv")
+                    pp.make_output_path( "_global_quadratic_coefficients.csv")
                 );
 
                 if (bf["write_true_coefficient_rasters"])
@@ -835,7 +728,7 @@ int main(int argc, char* argv[])
                     write_coeff_set(
                         loader,
                         quad.analytic_taylor,
-                        out_path(pp, "_global_quadratic_true"),
+                        pp.make_output_path( "_global_quadratic_true"),
                         out_fmt
                     );
                 }

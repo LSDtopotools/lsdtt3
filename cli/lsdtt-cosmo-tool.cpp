@@ -45,7 +45,6 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -68,7 +67,10 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-cosmo-tool";
 
+// -----------------------------------------------------------------------------
+// print banner
 // -----------------------------------------------------------------------------
 static void print_banner()
 {
@@ -83,48 +85,15 @@ static void print_banner()
         << "========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        const std::string a = argv[i];
-        if (is_flag(a, {"-h", "--help", "help", "-H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-cosmo-tool <path> <parameter_file>\n"
-                << "       lsdtt-cosmo-tool <parameter_file>\n"
-                << "       lsdtt-cosmo-tool -h   (this help)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version"}))
-        {
-            std::cout << "lsdtt-cosmo-tool version " << k_version << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./", fname = "";
-    if (argc == 3) { path = argv[1]; fname = argv[2]; }
-    else if (argc == 2) { fname = argv[1]; }
-    else { std::cout << "Usage: lsdtt-cosmo-tool <path> <parameter_file>\n"; std::exit(1); }
-
-    return {path, fname};
-}
-
+// =============================================================================
+// main
 // =============================================================================
 int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file

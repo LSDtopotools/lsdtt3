@@ -165,6 +165,17 @@ public:
     // Returns empty string if no dot is found.
     static std::string extension(const std::string& filename);
 
+    // Parse command-line arguments for a standard lsdtt3 CLI.
+    // Handles -h / -v / -c flags (print and exit), then extracts
+    // {path, parameter_file} from argv.  Replaces the boilerplate
+    // parse_args free function that every CLI used to duplicate.
+    static std::pair<std::string, std::string> parse_args(
+        int argc, char* argv[],
+        const std::string& tool_name,
+        const std::string& version,
+        const std::string& citation
+    );
+
     // -------------------------------------------------------------------------
     // Output / diagnostics
     // -------------------------------------------------------------------------
@@ -224,6 +235,17 @@ public:
     std::string get_full_write_path() const
     {
         return write_path_ + write_fname_;
+    }
+
+    // Build a full output path: write_path + write_fname + suffix [+ ext].
+    // Use when suffix already includes the extension:
+    //   pp.make_output_path("_hillshade.tif")
+    // or when suffix and extension are separate:
+    //   pp.make_output_path("_hillshade", ".tif")
+    std::string make_output_path(const std::string& suffix,
+                                 const std::string& ext = "") const
+    {
+        return get_full_write_path() + suffix + ext;
     }
 
     // -------------------------------------------------------------------------

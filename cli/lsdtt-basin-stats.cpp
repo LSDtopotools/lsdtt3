@@ -56,7 +56,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -84,6 +83,7 @@
 
 static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-basin-stats";
 
 // -----------------------------------------------------------------------------
 // Local record types
@@ -205,75 +205,6 @@ static void print_banner()
 }
 
 // -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags)
-        {
-            if (s == f) return true;
-        }
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        const std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-basin-stats <path> <parameter_file>\n"
-                << "       lsdtt-basin-stats <parameter_file>\n"
-                << "       lsdtt-basin-stats -h   (this help)\n"
-                << "       lsdtt-basin-stats -v   (version)\n"
-                << "       lsdtt-basin-stats -c   (citation)\n\n"
-                << "Required parameter:\n"
-                << "  basin_outlet_csv: CSV file with columns latitude,longitude\n"
-                << "  Optional CSV columns: gauge_id, gauge_name\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-basin-stats version " << k_version << "\n";
-            std::exit(0);
-        }
-
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation",
-                        "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-
-// -----------------------------------------------------------------------------
 // join_boundary_conditions
 // -----------------------------------------------------------------------------
 static std::string join_boundary_conditions(
@@ -286,17 +217,6 @@ static std::string join_boundary_conditions(
     }
     return out;
 }
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix)
-{
-    return pp.get_full_write_path() + suffix;
-}
-
 // -----------------------------------------------------------------------------
 // write_basin_stats_csv
 // -----------------------------------------------------------------------------
@@ -416,7 +336,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Load parameter file
@@ -743,7 +664,7 @@ int main(int argc, char* argv[])
                 ff["hillshade_z_factor"]
             );
 
-            const std::string o = out_path(pp, "_hillshade.tif");
+            const std::string o = pp.make_output_path( "_hillshade.tif");
             std::cout << "Writing: " << o << "\n";
 
             loader.write_full(hillshade.get_data(), hillshade.get_meta(),
@@ -1448,7 +1369,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     try
     {
-        const std::string csv_out = out_path(pp, "_basin_stats.csv");
+        const std::string csv_out = pp.make_output_path( "_basin_stats.csv");
         std::cout << "\nWriting basin statistics CSV: " << csv_out << "\n";
         write_basin_stats_csv(csv_out, basin_rows, has_channel_network);
     }

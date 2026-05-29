@@ -558,12 +558,11 @@ CLI source files follow this layout, in order:
 
 1. file-header comment block (copyright, brief description, outputs, usage)
 2. `#include` block
-3. `static const` version and citation strings
+3. `static const` version, citation, and tool-name strings
 4. `print_banner()` — fixed-width box to stdout
-5. `parse_args()` — handles `-h`, `-v`, `-c` flags; returns `{path, fname}`
-6. helper free functions (if unavoidable — see helper rule below)
-7. `main()`:
-   a. call `print_banner()` and `parse_args()`
+5. helper free functions (if unavoidable — see helper rule below)
+6. `main()`:
+   a. call `print_banner()` and `lsdtt_param_parser::parse_args()`
    b. construct `lsdtt_param_parser`
    c. declare all five maps and fill defaults + help (see below)
    d. call `parse_all_parameters`
@@ -867,7 +866,11 @@ Parameter file format: `key: value` (snake_case keys, `#` for comments).
 `get_full_read_path()` returns `read_path + read_fname + read_ext`.
 `get_full_write_path()` returns `write_path + write_fname` (no extension).
 
-**Static helpers:** `stem(filename)`, `extension(filename)` (returns dot + ext).
+**Static helpers:** `stem(filename)`, `extension(filename)` (returns dot + ext),
+`parse_args(argc, argv, tool_name, version, citation)` — handles `-h`/`-v`/`-c` flags
+and returns `{path, parameter_file}`. Every CLI uses this instead of a per-file `parse_args`
+free function. Each CLI declares `static const std::string k_tool_name = "lsdtt-foo";`
+alongside `k_version` and `k_citation`.
 
 ---
 

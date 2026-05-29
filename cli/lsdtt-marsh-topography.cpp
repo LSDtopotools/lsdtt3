@@ -33,7 +33,6 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -55,6 +54,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-marsh-topography";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -72,76 +72,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-marsh-topography <path> <parameter_file>\n"
-                << "       lsdtt-marsh-topography <parameter_file>\n"
-                << "       lsdtt-marsh-topography -h   (this help)\n"
-                << "       lsdtt-marsh-topography -v   (version)\n"
-                << "       lsdtt-marsh-topography -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-marsh-topography version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
-// -----------------------------------------------------------------------------
-// out_path
-// -----------------------------------------------------------------------------
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -149,7 +79,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -1007,7 +938,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.search_space.get_data(),
                 marsh_result.search_space.get_meta(),
-                out_path(pp, "_marsh_search_space", raster_ext),
+                pp.make_output_path( "_marsh_search_space", raster_ext),
                 raster_output_format
             );
         }
@@ -1017,7 +948,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.search_crossover.get_data(),
                 marsh_result.search_crossover.get_meta(),
-                out_path(pp, "_marsh_search_crossover", raster_ext),
+                pp.make_output_path( "_marsh_search_crossover", raster_ext),
                 raster_output_format
             );
         }
@@ -1027,7 +958,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.scarp_seed_mask.get_data(),
                 marsh_result.scarp_seed_mask.get_meta(),
-                out_path(pp, "_marsh_scarp_seed_mask", raster_ext),
+                pp.make_output_path( "_marsh_scarp_seed_mask", raster_ext),
                 raster_output_format
             );
         }
@@ -1037,7 +968,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.scarp_order_raster.get_data(),
                 marsh_result.scarp_order_raster.get_meta(),
-                out_path(pp, "_marsh_scarp_order", raster_ext),
+                pp.make_output_path( "_marsh_scarp_order", raster_ext),
                 raster_output_format
             );
         }
@@ -1047,7 +978,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.scarp_mask.get_data(),
                 marsh_result.scarp_mask.get_meta(),
-                out_path(pp, "_marsh_scarp_mask", raster_ext),
+                pp.make_output_path( "_marsh_scarp_mask", raster_ext),
                 raster_output_format
             );
         }
@@ -1057,7 +988,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.platform_seed_mask.get_data(),
                 marsh_result.platform_seed_mask.get_meta(),
-                out_path(pp, "_marsh_platform_seed_mask", raster_ext),
+                pp.make_output_path( "_marsh_platform_seed_mask", raster_ext),
                 raster_output_format
             );
         }
@@ -1067,7 +998,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.platform_provisional.get_data(),
                 marsh_result.platform_provisional.get_meta(),
-                out_path(pp, "_marsh_platform_provisional", raster_ext),
+                pp.make_output_path( "_marsh_platform_provisional", raster_ext),
                 raster_output_format
             );
         }
@@ -1077,7 +1008,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.platform_mask.get_data(),
                 marsh_result.platform_mask.get_meta(),
-                out_path(pp, "_marsh_platform_mask", raster_ext),
+                pp.make_output_path( "_marsh_platform_mask", raster_ext),
                 raster_output_format
             );
         }
@@ -1087,7 +1018,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 marsh_result.platform_label_raster.get_data(),
                 marsh_result.platform_label_raster.get_meta(),
-                out_path(pp, "_marsh_platform_labels", raster_ext),
+                pp.make_output_path( "_marsh_platform_labels", raster_ext),
                 raster_output_format,
                 marsh_result.platform_label_raster.get_meta().data_type
             );
@@ -1110,7 +1041,7 @@ int main(int argc, char* argv[])
                 lsdtt::trace_labelled_polygons(
                     marsh_result.platform_label_raster,
                     vec_loader,
-                    out_path(pp, "_marsh_platforms", extension),
+                    pp.make_output_path( "_marsh_platforms", extension),
                     vopt
                 );
             }
@@ -1188,7 +1119,7 @@ int main(int argc, char* argv[])
                 out_loader.write_full(
                     tidal_result.median_rasters[i].get_data(),
                     tidal_result.median_rasters[i].get_meta(),
-                    out_path(pp, "_tidal_median_" + idx, raster_ext),
+                    pp.make_output_path( "_tidal_median_" + idx, raster_ext),
                     raster_output_format
                 );
             }
@@ -1198,7 +1129,7 @@ int main(int argc, char* argv[])
                 out_loader.write_full(
                     tidal_result.residual_rasters[i].get_data(),
                     tidal_result.residual_rasters[i].get_meta(),
-                    out_path(pp, "_tidal_residual_" + idx, raster_ext),
+                    pp.make_output_path( "_tidal_residual_" + idx, raster_ext),
                     raster_output_format
                 );
             }
@@ -1208,7 +1139,7 @@ int main(int argc, char* argv[])
                 out_loader.write_full(
                     tidal_result.threshold_masks[i].get_data(),
                     tidal_result.threshold_masks[i].get_meta(),
-                    out_path(pp, "_tidal_threshold_mask_" + idx, raster_ext),
+                    pp.make_output_path( "_tidal_threshold_mask_" + idx, raster_ext),
                     raster_output_format
                 );
             }
@@ -1219,7 +1150,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 tidal_result.channel_mask.get_data(),
                 tidal_result.channel_mask.get_meta(),
-                out_path(pp, "_tidal_channel_mask", raster_ext),
+                pp.make_output_path( "_tidal_channel_mask", raster_ext),
                 raster_output_format
             );
         }
@@ -1229,7 +1160,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 tidal_result.upl.get_data(),
                 tidal_result.upl.get_meta(),
-                out_path(pp, "_tidal_upl", raster_ext),
+                pp.make_output_path( "_tidal_upl", raster_ext),
                 raster_output_format
             );
         }
@@ -1240,7 +1171,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 tidal_result.channel_skeleton.get_data(),
                 tidal_result.channel_skeleton.get_meta(),
-                out_path(pp, "_tidal_channel_skeleton", raster_ext),
+                pp.make_output_path( "_tidal_channel_skeleton", raster_ext),
                 raster_output_format
             );
         }
@@ -1251,7 +1182,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 tidal_result.connected_skeleton.get_data(),
                 tidal_result.connected_skeleton.get_meta(),
-                out_path(pp, "_tidal_connected_skeleton", raster_ext),
+                pp.make_output_path( "_tidal_connected_skeleton", raster_ext),
                 raster_output_format
             );
         }
@@ -1280,7 +1211,7 @@ int main(int argc, char* argv[])
                 lsdtt::trace_labelled_polygons(
                     labels,
                     vec_loader,
-                    out_path(pp, "_tidal_channel_polygons", extension),
+                    pp.make_output_path( "_tidal_channel_polygons", extension),
                     vopt
                 );
             }
@@ -1393,7 +1324,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 metrics_result.node_id_raster.get_data(),
                 metrics_result.node_id_raster.get_meta(),
-                out_path(pp, "_tidal_node_id", raster_ext),
+                pp.make_output_path( "_tidal_node_id", raster_ext),
                 raster_output_format
             );
         }
@@ -1404,7 +1335,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 metrics_result.section_id_raster.get_data(),
                 metrics_result.section_id_raster.get_meta(),
-                out_path(pp, "_tidal_section_id", raster_ext),
+                pp.make_output_path( "_tidal_section_id", raster_ext),
                 raster_output_format
             );
         }
@@ -1415,7 +1346,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 metrics_result.section_strahler_order_raster.get_data(),
                 metrics_result.section_strahler_order_raster.get_meta(),
-                out_path(pp, "_tidal_section_strahler", raster_ext),
+                pp.make_output_path( "_tidal_section_strahler", raster_ext),
                 raster_output_format
             );
         }
@@ -1426,7 +1357,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 metrics_result.section_hack_order_raster.get_data(),
                 metrics_result.section_hack_order_raster.get_meta(),
-                out_path(pp, "_tidal_section_hack", raster_ext),
+                pp.make_output_path( "_tidal_section_hack", raster_ext),
                 raster_output_format
             );
         }
@@ -1437,7 +1368,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 metrics_result.nearest_station_id_raster.get_data(),
                 metrics_result.nearest_station_id_raster.get_meta(),
-                out_path(pp, "_tidal_nearest_station_id", raster_ext),
+                pp.make_output_path( "_tidal_nearest_station_id", raster_ext),
                 raster_output_format
             );
         }
@@ -1448,7 +1379,7 @@ int main(int argc, char* argv[])
             out_loader.write_full(
                 metrics_result.station_downstream_distance_raster.get_data(),
                 metrics_result.station_downstream_distance_raster.get_meta(),
-                out_path(pp, "_tidal_station_downstream_distance", raster_ext),
+                pp.make_output_path( "_tidal_station_downstream_distance", raster_ext),
                 raster_output_format
             );
         }
@@ -1463,7 +1394,7 @@ int main(int argc, char* argv[])
                 lsdtt::write_tidal_skeleton_sections(
                     metrics_result,
                     dem.get_meta(),
-                    out_path(pp, "_tidal_sections", ext),
+                    pp.make_output_path( "_tidal_sections", ext),
                     line_vector_output_format,
                     true,
                     "tidal_sections"
@@ -1487,7 +1418,7 @@ int main(int argc, char* argv[])
                 lsdtt::write_tidal_skeleton_stations(
                     metrics_result,
                     dem.get_meta(),
-                    out_path(pp, "_tidal_stations", ext),
+                    pp.make_output_path( "_tidal_stations", ext),
                     point_vector_output_format,
                     true,
                     "tidal_stations"
@@ -1507,7 +1438,7 @@ int main(int argc, char* argv[])
             {
                 lsdtt::write_tidal_skeleton_station_csv(
                     metrics_result,
-                    out_path(pp, "_tidal_stations", ".csv")
+                    pp.make_output_path( "_tidal_stations", ".csv")
                 );
             }
             catch (const std::exception& e)

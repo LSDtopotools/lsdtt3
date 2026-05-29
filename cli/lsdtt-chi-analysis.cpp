@@ -32,7 +32,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <initializer_list>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -59,6 +58,7 @@
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_tool_name = "lsdtt-chi-analysis";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -75,65 +75,6 @@ static void print_banner()
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// parse_args
-// -----------------------------------------------------------------------------
-static std::pair<std::string, std::string> parse_args(int argc, char* argv[])
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<std::string> flags)
-    {
-        for (const auto& f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: lsdtt-chi-analysis <path> <parameter_file>\n"
-                << "       lsdtt-chi-analysis <parameter_file>\n"
-                << "       lsdtt-chi-analysis -h   (this help)\n"
-                << "       lsdtt-chi-analysis -v   (version)\n"
-                << "       lsdtt-chi-analysis -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << "lsdtt-chi-analysis version " << k_version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << k_citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
 }
 
 // -----------------------------------------------------------------------------
@@ -157,14 +98,6 @@ static std::string mn_suffix(double mn)
         if (c == '-') c = 'm';
     }
     return s;
-}
-
-static std::string out_path(
-    const lsdtt::lsdtt_param_parser& pp,
-    const std::string& suffix,
-    const std::string& extension)
-{
-    return pp.get_full_write_path() + suffix + extension;
 }
 
 static std::vector<double> build_mn_vector(double mn_min, double mn_max, double mn_step)
@@ -372,7 +305,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = parse_args(argc, argv);
+    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+        argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter parsing
@@ -943,11 +877,11 @@ int main(int argc, char* argv[])
                         lsdtt::export_chi_network_fit_segments(fit_results);
 
                     const std::string node_file =
-                        out_path(pp, "_chi_fit_nodes_mn_" + mn_suffix(mn), ".csv");
+                        pp.make_output_path( "_chi_fit_nodes_mn_" + mn_suffix(mn), ".csv");
                     lsdtt::write_chi_network_fit_nodes_csv(node_file, node_table);
 
                     const std::string seg_file =
-                        out_path(pp, "_chi_fit_segments_mn_" + mn_suffix(mn), ".csv");
+                        pp.make_output_path( "_chi_fit_segments_mn_" + mn_suffix(mn), ".csv");
                     lsdtt::write_chi_network_fit_segments_csv(seg_file, seg_table);
 
                     std::cout << "  Fit tables written.\n";
@@ -965,7 +899,7 @@ int main(int argc, char* argv[])
                 try
                 {
                     const std::string seg_lines_file =
-                        out_path(pp, "_chi_fit_segment_lines_mn_" + mn_suffix(mn),
+                        pp.make_output_path( "_chi_fit_segment_lines_mn_" + mn_suffix(mn),
                                  lsdtt::output_extension(chi_fit_lines_fmt));
                     std::cout << "  Writing fit segment lines: " << seg_lines_file << "\n";
                     std::cout.flush();
@@ -1047,7 +981,7 @@ int main(int argc, char* argv[])
                 {
                     if (bf["run_subset_sensitivity"])
                         lsdtt::write_chi_disorder_subset_samples_csv(
-                            out_path(pp,
+                            pp.make_output_path(
                                 "_chi_disorder_subset_samples_mn_" + mn_suffix(mn),
                                 ".csv"),
                             lsdtt::export_chi_branch_subset_sensitivity_samples(
@@ -1055,14 +989,14 @@ int main(int argc, char* argv[])
 
                     if (bf["run_jackknife"])
                         lsdtt::write_chi_disorder_jackknife_csv(
-                            out_path(pp,
+                            pp.make_output_path(
                                 "_chi_disorder_jackknife_mn_" + mn_suffix(mn),
                                 ".csv"),
                             lsdtt::export_chi_disorder_jackknife(jackknife_results));
 
                     if (bf["run_bootstrap"])
                         lsdtt::write_chi_disorder_bootstrap_csv(
-                            out_path(pp,
+                            pp.make_output_path(
                                 "_chi_disorder_bootstrap_mn_" + mn_suffix(mn),
                                 ".csv"),
                             lsdtt::export_chi_disorder_bootstrap(bootstrap_results));
@@ -1124,7 +1058,7 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::write_chi_disorder_sweep_csv(
-                out_path(pp, "_chi_disorder_sweep", ".csv"),
+                pp.make_output_path( "_chi_disorder_sweep", ".csv"),
                 disorder_rows);
         }
         catch (const std::exception& e)
@@ -1168,11 +1102,11 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::write_chi_ksn_inversion_trials_csv(
-                out_path(pp, "_chi_ksn_inversion_trials", ".csv"),
+                pp.make_output_path( "_chi_ksn_inversion_trials", ".csv"),
                 inversion_results);
 
             lsdtt::write_chi_ksn_inversion_best_summary_csv(
-                out_path(pp, "_chi_ksn_inversion_best", ".csv"),
+                pp.make_output_path( "_chi_ksn_inversion_best", ".csv"),
                 inversion_results);
         }
         catch (const std::exception& e)
@@ -1191,14 +1125,14 @@ int main(int argc, char* argv[])
                     loader.write_full(
                         basin.u_star_field.get_data(),
                         basin.u_star_field.get_meta(),
-                        out_path(pp,
+                        pp.make_output_path(
                             "_chi_ksn_u_star_basin_" + std::to_string(i), ".tif"),
                         out_fmt);
 
                     loader.write_full(
                         basin.support_count_field.get_data(),
                         basin.support_count_field.get_meta(),
-                        out_path(pp,
+                        pp.make_output_path(
                             "_chi_ksn_support_count_basin_" + std::to_string(i),
                             ".tif"),
                         out_fmt);
