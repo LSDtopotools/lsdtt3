@@ -971,6 +971,16 @@ private:
         segment.downstream_elevation = z_down;
         segment.upstream_elevation   = z_up;
 
+        const double seg_dchi =
+            static_cast<double>(segment.upstream_chi) -
+            static_cast<double>(segment.downstream_chi);
+        segment.k_sn =
+            (seg_dchi > 0.0)
+                ? static_cast<float>(
+                      (static_cast<double>(z_up) - static_cast<double>(z_down)) /
+                      seg_dchi)
+                : 0.0f;
+
         segment.max_abs_residual = max_abs_residual;
         segment.n_nodes = static_cast<std::int32_t>(up_pos - down_pos + 1);
 
@@ -1169,6 +1179,8 @@ void append_fit_result_to_segment_table(
     table.downstream_elevation.reserve(table.downstream_elevation.size() + n);
     table.upstream_elevation.reserve(table.upstream_elevation.size() + n);
 
+    table.k_sn.reserve(table.k_sn.size() + n);
+
     table.max_abs_residual.reserve(table.max_abs_residual.size() + n);
     table.n_nodes.reserve(table.n_nodes.size() + n);
 
@@ -1189,6 +1201,8 @@ void append_fit_result_to_segment_table(
 
         table.downstream_elevation.push_back(seg.downstream_elevation);
         table.upstream_elevation.push_back(seg.upstream_elevation);
+
+        table.k_sn.push_back(seg.k_sn);
 
         table.max_abs_residual.push_back(seg.max_abs_residual);
         table.n_nodes.push_back(seg.n_nodes);
@@ -1306,7 +1320,7 @@ void write_chi_network_fit_segments_csv(
 
     out << "basin_index,outlet_flat,segment_id,parent_segment_id,branch_id,"
            "downstream_flat,upstream_flat,downstream_chi,upstream_chi,"
-           "downstream_elevation,upstream_elevation,max_abs_residual,n_nodes\n";
+           "downstream_elevation,upstream_elevation,k_sn,max_abs_residual,n_nodes\n";
 
     const std::size_t n = table.segment_id.size();
     for (std::size_t i = 0; i < n; ++i)
@@ -1322,8 +1336,145 @@ void write_chi_network_fit_segments_csv(
             << table.upstream_chi[i] << ','
             << table.downstream_elevation[i] << ','
             << table.upstream_elevation[i] << ','
+            << table.k_sn[i] << ','
             << table.max_abs_residual[i] << ','
             << table.n_nodes[i] << '\n';
+    }
+}
+
+// =============================================================================
+// Per-basin channel-steepness summary
+// =============================================================================
+namespace
+{
+
+double median_of(std::vector<double> values)
+{
+    if (values.empty())
+    {
+        return 0.0;
+    }
+
+    std::sort(values.begin(), values.end());
+
+    const std::size_t mid = values.size() / 2;
+
+    if (values.size() % 2 == 0)
+    {
+        return 0.5 * (values[mid - 1] + values[mid]);
+    }
+
+    return values[mid];
+}
+
+} // unnamed namespace
+
+lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
+    const lsdtt_chi_network_fit_collection_result& fit_results)
+{
+    lsdtt_chi_ksn_basin_summary_table table;
+    table.rows.reserve(fit_results.basins.size());
+
+    for (std::size_t bi = 0; bi < fit_results.basins.size(); ++bi)
+    {
+        const lsdtt_chi_network_fit_result& basin = fit_results.basins[bi];
+
+        lsdtt_chi_ksn_basin_summary_row row;
+        row.basin_index = static_cast<std::int32_t>(bi);
+        row.outlet_flat = basin.outlet_flat;
+        row.n_segments  = static_cast<std::int32_t>(basin.segments.size());
+
+        std::vector<double> all_k_sn;
+        std::vector<double> main_stem_k_sn;
+        all_k_sn.reserve(basin.segments.size());
+
+        double sum_k_sn          = 0.0;
+        double sum_chi_weight     = 0.0;
+        double sum_k_sn_chi       = 0.0;
+        double main_stem_sum_k_sn = 0.0;
+
+        for (const lsdtt_chi_network_fit_segment& seg : basin.segments)
+        {
+            const double dchi =
+                static_cast<double>(seg.upstream_chi) -
+                static_cast<double>(seg.downstream_chi);
+
+            if (dchi <= 0.0)
+            {
+                continue;   // degenerate segment: k_sn undefined
+            }
+
+            const double k_sn = static_cast<double>(seg.k_sn);
+
+            all_k_sn.push_back(k_sn);
+            sum_k_sn        += k_sn;
+            sum_chi_weight  += dchi;
+            sum_k_sn_chi    += k_sn * dchi;
+            row.total_chi_length += dchi;
+
+            if (seg.branch_id == 0)
+            {
+                ++row.n_main_stem_segments;
+                main_stem_k_sn.push_back(k_sn);
+                main_stem_sum_k_sn += k_sn;
+            }
+        }
+
+        if (!all_k_sn.empty())
+        {
+            row.mean_k_sn   = sum_k_sn / static_cast<double>(all_k_sn.size());
+            row.median_k_sn = median_of(all_k_sn);
+            row.min_k_sn =
+                *std::min_element(all_k_sn.begin(), all_k_sn.end());
+            row.max_k_sn =
+                *std::max_element(all_k_sn.begin(), all_k_sn.end());
+        }
+
+        if (sum_chi_weight > 0.0)
+        {
+            row.chi_weighted_mean_k_sn = sum_k_sn_chi / sum_chi_weight;
+        }
+
+        if (!main_stem_k_sn.empty())
+        {
+            row.main_stem_mean_k_sn =
+                main_stem_sum_k_sn / static_cast<double>(main_stem_k_sn.size());
+            row.main_stem_median_k_sn = median_of(main_stem_k_sn);
+        }
+
+        table.rows.push_back(row);
+    }
+
+    return table;
+}
+
+void write_chi_ksn_basin_summary_csv(
+    const std::string& filename,
+    const lsdtt_chi_ksn_basin_summary_table& table)
+{
+    std::ofstream out(filename);
+    if (!out)
+        throw std::runtime_error(
+            "write_chi_ksn_basin_summary_csv: cannot open " + filename);
+
+    out << "basin_index,outlet_flat,n_segments,n_main_stem_segments,"
+           "total_chi_length,mean_k_sn,median_k_sn,min_k_sn,max_k_sn,"
+           "chi_weighted_mean_k_sn,main_stem_mean_k_sn,main_stem_median_k_sn\n";
+
+    for (const lsdtt_chi_ksn_basin_summary_row& row : table.rows)
+    {
+        out << row.basin_index << ','
+            << row.outlet_flat << ','
+            << row.n_segments << ','
+            << row.n_main_stem_segments << ','
+            << row.total_chi_length << ','
+            << row.mean_k_sn << ','
+            << row.median_k_sn << ','
+            << row.min_k_sn << ','
+            << row.max_k_sn << ','
+            << row.chi_weighted_mean_k_sn << ','
+            << row.main_stem_mean_k_sn << ','
+            << row.main_stem_median_k_sn << '\n';
     }
 }
 
@@ -1400,21 +1551,12 @@ void write_chi_network_fit_segments_vector(
 
             if (pts.size() < 2) continue;
 
-            const double dchi =
-                static_cast<double>(seg.upstream_chi) -
-                static_cast<double>(seg.downstream_chi);
-            const double k_sn =
-                (dchi > 0.0)
-                    ? (static_cast<double>(seg.upstream_elevation) -
-                       static_cast<double>(seg.downstream_elevation)) / dchi
-                    : 0.0;
-
             writer.write_line(pts, {
                 static_cast<std::int64_t>(bi),
                 basin.outlet_flat,
                 static_cast<std::int64_t>(seg.segment_id),
                 static_cast<std::int64_t>(seg.branch_id),
-                k_sn,
+                static_cast<double>(seg.k_sn),
                 static_cast<double>(seg.downstream_chi),
                 static_cast<double>(seg.upstream_chi),
                 static_cast<double>(seg.downstream_elevation),

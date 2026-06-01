@@ -60,6 +60,10 @@ struct lsdtt_chi_network_fit_segment
     float downstream_elevation = 0.0f;
     float upstream_elevation   = 0.0f;
 
+    // Channel steepness index of this segment: dz / dchi. Zero when the segment
+    // spans no chi (degenerate).
+    float k_sn = 0.0f;
+
     float max_abs_residual = 0.0f;
     std::int32_t n_nodes   = 0;
 };
@@ -146,9 +150,53 @@ struct lsdtt_chi_network_fit_segment_table
     std::vector<float> downstream_elevation;
     std::vector<float> upstream_elevation;
 
+    std::vector<float> k_sn;
+
     std::vector<float> max_abs_residual;
     std::vector<std::int32_t> n_nodes;
 };
+
+
+// Per-basin channel-steepness (k_sn) summary, one row per fitted basin.
+// k_sn statistics are computed over the basin's fitted segments that span a
+// positive chi interval. chi-weighted statistics weight each segment by its
+// chi length (upstream_chi - downstream_chi). main-stem statistics use only
+// segments on branch_id 0 (the main stem).
+struct lsdtt_chi_ksn_basin_summary_row
+{
+    std::int32_t basin_index = 0;
+    std::int64_t outlet_flat = k_nodata_receiver;
+
+    std::int32_t n_segments            = 0;
+    std::int32_t n_main_stem_segments  = 0;
+
+    double total_chi_length = 0.0;
+
+    double mean_k_sn               = 0.0;
+    double median_k_sn             = 0.0;
+    double min_k_sn                = 0.0;
+    double max_k_sn                = 0.0;
+    double chi_weighted_mean_k_sn  = 0.0;
+
+    double main_stem_mean_k_sn   = 0.0;
+    double main_stem_median_k_sn = 0.0;
+};
+
+struct lsdtt_chi_ksn_basin_summary_table
+{
+    std::vector<lsdtt_chi_ksn_basin_summary_row> rows;
+};
+
+// Summarise channel steepness per basin from a collection of fitted networks.
+[[nodiscard]] lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
+    const lsdtt_chi_network_fit_collection_result& fit_results
+);
+
+// Write a per-basin channel-steepness summary table to CSV.
+void write_chi_ksn_basin_summary_csv(
+    const std::string& filename,
+    const lsdtt_chi_ksn_basin_summary_table& table
+);
 
 // Flatten one fitted chi network to a segment-wise table.
 // basin_index is set to 0 for all rows.

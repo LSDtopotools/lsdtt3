@@ -63,6 +63,8 @@ static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-cosmo-prediction";
 
 // -----------------------------------------------------------------------------
+// print_banner
+// -----------------------------------------------------------------------------
 static void print_banner()
 {
     std::cout
@@ -93,6 +95,8 @@ static lsdtt::lsdtt_raster_cpu make_constant_raster(const lsdtt::lsdtt_raster_cp
     return lsdtt::lsdtt_raster_cpu(std::move(d), std::move(m), meta);
 }
 
+// -----------------------------------------------------------------------------
+// main
 // -----------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {

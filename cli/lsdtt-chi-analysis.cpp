@@ -517,6 +517,14 @@ int main(int argc, char* argv[])
     help_map["write_fit_tables"] = {"bool","true",
         "Write chi network fit node and segment tables to CSV.", ""};
 
+    bool_default_map["write_ksn_basin_summary"] = true;
+    help_map["write_ksn_basin_summary"] = {"bool","true",
+        "Write a per-basin channel-steepness (k_sn) summary CSV.",
+        "One row per fitted basin with the number of segments, number of "
+        "main-stem segments, total chi length, and mean / median / min / max / "
+        "chi-weighted-mean k_sn plus main-stem mean and median k_sn. Written once "
+        "per m/n value tested. Output: <write_fname>_chi_ksn_basin_summary_mn_*.csv."};
+
     bool_default_map["write_chi_fit_segment_lines"] = false;
     help_map["write_chi_fit_segment_lines"] = {"bool","false",
         "Write fitted chi segments as a vector polyline file.",
@@ -943,6 +951,30 @@ int main(int argc, char* argv[])
                 {
                     std::cerr << "Warning: writing fit tables failed for m/n = "
                               << mn << ": " << e.what() << "\n";
+                }
+            }
+
+            if (bf["write_ksn_basin_summary"])
+            {
+                try
+                {
+                    const lsdtt::lsdtt_chi_ksn_basin_summary_table summary =
+                        lsdtt::summarise_chi_ksn_by_basin(fit_results);
+
+                    const std::string summary_file =
+                        pp.make_output_path(
+                            "_chi_ksn_basin_summary_mn_" + mn_suffix(mn), ".csv");
+
+                    lsdtt::write_chi_ksn_basin_summary_csv(summary_file, summary);
+
+                    std::cout << "  Wrote per-basin k_sn summary: "
+                              << summary_file << "\n";
+                    std::cout.flush();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: writing k_sn basin summary failed for "
+                                 "m/n = " << mn << ": " << e.what() << "\n";
                 }
             }
 
