@@ -57,6 +57,18 @@ struct lsdtt_vector_to_junction_network_options
     // If <= 0, defaults to 2.0 * DEM cell_size.
     double minimum_clipped_edge_length_metres = -1.0;
 
+    // Minimum interior penetration for a clipped segment whose BOTH endpoints
+    // lie on the DEM edge (a channel that enters and leaves the raster without
+    // an interior node). Penetration is the furthest any vertex of the segment
+    // gets from the nearest DEM boundary. A channel that merely meanders along
+    // the edge, dipping in and out, has a shallow penetration but can have a
+    // long path; it seeds a spurious edge source (and its paired outlet) and is
+    // dropped when penetration is below this threshold. Genuine channels that
+    // cross the DEM diagonally penetrate deep and are kept. Penetration, not
+    // path length, is the discriminator. If <= 0, defaults to
+    // 100.0 * DEM cell_size.
+    double both_edge_min_penetration_metres = -1.0;
+
 
     // Strictly require one unique downhill receiver edge per junction.
     // If false, the steepest downhill connected edge is chosen when several

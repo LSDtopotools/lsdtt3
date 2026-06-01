@@ -161,6 +161,18 @@ double resolved_minimum_clipped_edge_length(
     return 2.0 * meta.cell_size;
 }
 
+double resolved_both_edge_min_penetration(
+    const lsdtt_vector_to_junction_network_options& options,
+    const lsdtt_raster_meta& meta)
+{
+    if (options.both_edge_min_penetration_metres > 0.0)
+    {
+        return options.both_edge_min_penetration_metres;
+    }
+
+    return 100.0 * meta.cell_size;
+}
+
 double resolved_clip_inset_distance(
     const lsdtt_raster_meta& meta)
 {
@@ -242,6 +254,35 @@ double polyline_length(const std::vector<lsdtt_xy>& xy)
     }
 
     return length;
+}
+
+// Maximum interior penetration of a polyline: the furthest any vertex gets from
+// the nearest DEM boundary. A channel that hugs the DEM edge (meandering in and
+// out) has a long path length but a small penetration; a genuine through- or
+// diagonal channel penetrates deep. This discriminates the two, where
+// polyline_length alone cannot.
+double polyline_interior_penetration(
+    const std::vector<lsdtt_xy>& xy,
+    const lsdtt_raster_meta& meta)
+{
+    const double x_max = meta.x_max();
+    const double y_max = meta.y_max();
+
+    double max_penetration = 0.0;
+
+    for (const auto& p : xy)
+    {
+        const double dist_to_boundary = std::min(
+            std::min(p.x - meta.x_min, x_max - p.x),
+            std::min(p.y - meta.y_min, y_max - p.y));
+
+        if (dist_to_boundary > max_penetration)
+        {
+            max_penetration = dist_to_boundary;
+        }
+    }
+
+    return max_penetration;
 }
 
 void collect_clipped_linestrings(
@@ -553,6 +594,8 @@ void lsdtt_vector_to_junction_network::create(
     const double edge_tol   = resolved_edge_tolerance(options, meta);
     const double min_clipped_edge_length =
         resolved_minimum_clipped_edge_length(options, meta);
+    const double both_edge_min_penetration =
+        resolved_both_edge_min_penetration(options, meta);
     const double clip_inset_metres =
         resolved_clip_inset_distance(meta);
 
@@ -607,6 +650,24 @@ void lsdtt_vector_to_junction_network::create(
             const bool touches_dem_edge = start_on_edge || end_on_edge;
 
             if (touches_dem_edge && len < min_clipped_edge_length)
+            {
+                continue;
+            }
+
+            // Drop pass-in/pass-out fragments: both endpoints sit on the DEM
+            // edge. A channel that merely meanders along the boundary, dipping
+            // in and out, has both endpoints on the edge and seeds a spurious
+            // edge source (plus its paired outlet). These are discriminated
+            // from genuine through-/diagonal channels by interior penetration,
+            // NOT by path length: a boundary meander can have a long path but a
+            // shallow penetration, whereas a genuine crossing penetrates deep.
+            // When penetration is below threshold the whole segment is dropped,
+            // removing BOTH its junctions.
+            const bool both_on_edge = start_on_edge && end_on_edge;
+
+            if (both_on_edge &&
+                polyline_interior_penetration(poly.xy, meta) <
+                    both_edge_min_penetration)
             {
                 continue;
             }

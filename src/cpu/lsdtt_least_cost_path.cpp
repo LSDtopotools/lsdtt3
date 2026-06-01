@@ -272,4 +272,117 @@ void burn_monotonic_path(
         scan(path.rbegin(), path.rend());
 }
 
+// ---------------------------------------------------------------------------
+// burn_capturing_path
+// ---------------------------------------------------------------------------
+void burn_capturing_path(
+    lsdtt_raster_cpu&                   dem,
+    const std::vector<std::int64_t>&    path,
+    double                              min_slope,
+    double                              capture_margin)
+{
+    if (path.size() < 2) return;
+
+    const lsdtt_raster_meta&     meta = dem.get_meta();
+    std::vector<float>&          elev = dem.get_data();
+    const lsdtt_array2d_u8&      mask = dem.get_mask_array();
+
+    const int    n_rows = meta.n_rows;
+    const int    n_cols = meta.n_cols;
+    const double cs      = meta.cell_size;
+    const double cs_diag = cs * 1.4142135623730950488;
+
+    // D8 neighbour offsets, dir 0=N,1=NE,2=E,3=SE,4=S,5=SW,6=W,7=NW.
+    static constexpr int DR[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
+    static constexpr int DC[8] = { 0,  1, 1, 1, 0, -1, -1, -1};
+
+    auto step_length = [&](std::int64_t a, std::int64_t b) -> double
+    {
+        const int dr = std::abs(static_cast<int>(a / n_cols) -
+                                static_cast<int>(b / n_cols));
+        const int dc = std::abs(static_cast<int>(a % n_cols) -
+                                static_cast<int>(b % n_cols));
+        return (dr == 1 && dc == 1) ? cs_diag : cs;
+    };
+
+    // The carve must daylight: it descends to the terminus's NATURAL elevation
+    // and no further, so the terminus keeps its original downhill neighbour and
+    // drains onward into the network instead of becoming a sink. Every interior
+    // cell is floored so a strictly descending profile down to the terminus
+    // remains reachable (avoids creating flats too).
+    const double slope_floor = std::max(0.0, min_slope);
+    const double term_nat = static_cast<double>(
+        elev[static_cast<std::size_t>(path.back())]);
+
+    // The first path cell keeps its elevation; flow enters the carve here.
+    double prev_z = elev[static_cast<std::size_t>(path.front())];
+
+    for (std::size_t k = 1; k < path.size(); ++k)
+    {
+        const std::int64_t pv  = path[k - 1];
+        const std::int64_t cur = path[k];
+        const double L_path = step_length(pv, cur);
+
+        const double cur_nat = static_cast<double>(
+            elev[static_cast<std::size_t>(cur)]);
+
+        // Terminus: leave at natural grade so it daylights into the network.
+        if (k + 1 == path.size())
+        {
+            const double new_z = std::min(cur_nat, prev_z - slope_floor * L_path);
+            elev[static_cast<std::size_t>(cur)] = static_cast<float>(new_z);
+            break;
+        }
+
+        const int pr = static_cast<int>(pv / n_cols);
+        const int pc = static_cast<int>(pv % n_cols);
+
+        // Best competing distance-weighted slope among pv's neighbours,
+        // excluding the intended receiver cur. Cells higher than pv (dz <= 0),
+        // off-raster, or nodata cannot capture flow and are ignored.
+        double best_comp_slope = 0.0;
+        for (int dir = 0; dir < 8; ++dir)
+        {
+            const int nr = pr + DR[dir];
+            const int nc = pc + DC[dir];
+            if (nr < 0 || nr >= n_rows || nc < 0 || nc >= n_cols) continue;
+            if (mask(nr, nc) == 0) continue;
+
+            const std::int64_t nf =
+                static_cast<std::int64_t>(nr) * n_cols + nc;
+            if (nf == cur) continue;
+
+            const double dz = prev_z - static_cast<double>(
+                elev[static_cast<std::size_t>(nf)]);
+            if (dz <= 0.0) continue;
+
+            const double L = (dir % 2 == 0) ? cs : cs_diag;
+            const double s = dz / L;
+            if (s > best_comp_slope) best_comp_slope = s;
+        }
+
+        // Lower cur enough that its slope from pv exceeds best_comp_slope (with
+        // head-room), and that the profile descends by at least min_slope.
+        const double drop   = std::max(
+            best_comp_slope * L_path + capture_margin,
+            slope_floor * L_path);
+        double new_z = std::min(cur_nat, prev_z - drop);
+
+        // Floor: keep enough head-room above the terminus elevation that the
+        // remaining steps can still descend to it without flats or undercut.
+        const std::size_t steps_left = path.size() - 1 - k;
+        const double floor_z =
+            term_nat + static_cast<double>(steps_left) * slope_floor * cs_diag;
+        if (new_z < floor_z) new_z = floor_z;
+
+        // Never raise a cell, and never let the floor push us back up to/above
+        // the previous cell (would break the descent).
+        if (new_z > cur_nat)               new_z = cur_nat;
+        if (new_z >= prev_z)               new_z = prev_z - slope_floor * L_path;
+
+        elev[static_cast<std::size_t>(cur)] = static_cast<float>(new_z);
+        prev_z = new_z;
+    }
+}
+
 } // namespace lsdtt

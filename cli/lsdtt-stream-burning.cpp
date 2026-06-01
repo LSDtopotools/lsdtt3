@@ -62,6 +62,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
+#include "../src/cpu/lsdtt_least_cost_path.hpp"
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -277,6 +278,43 @@ int main(int argc, char* argv[])
         "Minimum downhill slope imposed on carved repair paths (m/m).",
         "Values <= 0 default to fill_min_slope. Set 0 explicitly only if "
         "non-increasing flat burns are desired."};
+
+    // --- snap_to_network: inward carving of edge sources ---
+    bool_default_map["carve_inward_edge_sources"] = true;
+    help_map["carve_inward_edge_sources"] = {"bool","true",
+        "Carve a few DEM pixels inward at vector source junctions on the DEM edge.",
+        "When a vector source sits on the DEM boundary and the DEM's D8 flow at "
+        "that pixel drains back off the raster, the DEM channel cannot be seeded "
+        "inward. If the vector network confirms the source drains inward (its "
+        "downstream junction is lower), the DEM is carved a few pixels along the "
+        "vector path so D8 routes into the DEM. Only used when stream_burn_mode "
+        "is snap_to_network."};
+
+    int_default_map["edge_source_carve_pixels"] = 3;
+    help_map["edge_source_carve_pixels"] = {"int","3",
+        "Minimum pixels to carve inward along the vector path at edge sources.",
+        "The carve extends adaptively beyond this minimum (up to "
+        "edge_source_carve_max_pixels) until the terminus reaches "
+        "edge_source_min_interior_metres from the nearest DEM boundary. Only "
+        "used when carve_inward_edge_sources is true."};
+
+    int_default_map["edge_source_carve_max_pixels"] = 40;
+    help_map["edge_source_carve_max_pixels"] = {"int","40",
+        "Maximum pixels to carve inward along the vector path at edge sources.",
+        "Safety cap on the adaptive carve. The carve normally stops earlier, "
+        "once the terminus reaches edge_source_min_interior_metres from the "
+        "boundary; this cap only binds for channels that approach the edge at a "
+        "very shallow angle. Only used when carve_inward_edge_sources is true."};
+
+    float_default_map["edge_source_min_interior_metres"] = 10.0f;
+    help_map["edge_source_min_interior_metres"] = {"float","10.0",
+        "Perpendicular distance inward [m] the edge-source carve must reach.",
+        "The carve follows the downstream vector edge inward until the terminus "
+        "pixel is at least this far from the nearest DEM boundary, so the seeded "
+        "channel reaches genuine interior terrain rather than hugging the edge. "
+        "A distance test is used rather than a D8-drains-off test because near "
+        "the boundary the DEM flow runs along the edge and may never reach an "
+        "outlet. Only used when carve_inward_edge_sources is true."};
 
     // --- Channel-score guidance for gap repair ---
     float_default_map["channel_score_alpha"] = 2.0f;
@@ -923,6 +961,171 @@ int main(int argc, char* argv[])
         }
     }
 
+
+    // -------------------------------------------------------------------------
+    // Step 5d — Carve inward-draining edge sources
+    //
+    // A vector source on the DEM boundary may sit on a pixel whose D8 flow
+    // drains straight back off the raster, leaving the seeded DEM channel with
+    // nowhere to go. Where the vector network confirms the source drains inward
+    // (its downstream junction is lower) but the DEM flow drains out, carve a
+    // few pixels along the vector path so D8 routes into the DEM. The flow
+    // object is rebuilt afterwards so the seeded network sees the carved DEM.
+    // -------------------------------------------------------------------------
+    if (burn_mode == lsdtt::stream_burn_mode::snap_to_network &&
+        bf["carve_inward_edge_sources"])
+    {
+        const int    carve_px = std::max(1, ifs["edge_source_carve_pixels"]);
+        const int    carve_max_px =
+            std::max(carve_px, ifs["edge_source_carve_max_pixels"]);
+        const double carve_min_slope =
+            (ff["repair_min_slope"] > 0.0f)
+                ? static_cast<double>(ff["repair_min_slope"])
+                : static_cast<double>(ff["fill_min_slope"]);
+
+        const lsdtt::lsdtt_raster_meta& cmeta = routed_dem.get_meta();
+        const lsdtt::lsdtt_array2d_u8&  cmask = routed_dem.get_mask_array();
+
+        auto xy_to_flat = [&](double x, double y) -> std::int64_t
+        {
+            const int col = static_cast<int>(
+                std::floor((x - cmeta.x_min) / cmeta.cell_size));
+            const int row = static_cast<int>(
+                std::floor((cmeta.y_max() - y) / cmeta.cell_size));
+            if (row < 0 || row >= cmeta.n_rows ||
+                col < 0 || col >= cmeta.n_cols ||
+                cmask(row, col) == 0)
+                return -1;
+            return static_cast<std::int64_t>(row) * cmeta.n_cols + col;
+        };
+
+        // Perpendicular distance (m) from cell f to the nearest DEM boundary.
+        auto dist_to_boundary_m = [&](std::int64_t f) -> double
+        {
+            const int row = static_cast<int>(f / cmeta.n_cols);
+            const int col = static_cast<int>(f % cmeta.n_cols);
+            const int cells = std::min(
+                std::min(col, cmeta.n_cols - 1 - col),
+                std::min(row, cmeta.n_rows - 1 - row));
+            return cells * cmeta.cell_size;
+        };
+
+        const double interior_margin_m =
+            static_cast<double>(ff["edge_source_min_interior_metres"]);
+
+        const auto& vjns = vector_network.junctions();
+        const auto& veds = vector_network.edges();
+
+        std::cout << "\n--- Carving inward-draining edge sources ---\n";
+
+        int n_carved = 0;
+        for (std::size_t i = 0; i < source_flats.size(); ++i)
+        {
+            if (valid_source_is_dem_edge[i] == 0) continue;
+
+            const std::int32_t jid = valid_source_junction_ids[i];
+            if (jid < 0 || jid >= vector_network.n_junctions()) continue;
+            const auto& J = vjns[static_cast<std::size_t>(jid)];
+
+            // Guard: the vector network must say this source drains inward,
+            // i.e. its downstream junction is lower than the source.
+            if (J.is_outlet || J.receiver_junction < 0 ||
+                J.downstream_edge_id < 0)
+                continue;
+
+            const double recv_elev =
+                vjns[static_cast<std::size_t>(J.receiver_junction)].elevation;
+            if (!(recv_elev < J.elevation - 1.0e-6)) continue;
+
+            // Build a contiguous carve path: the source pixel followed by
+            // distinct in-DEM cells sampled along the downstream vector edge
+            // (oriented source -> receiver). The carve extends inward until the
+            // terminus is at least interior_margin_m from the nearest DEM
+            // boundary, so the seeded channel reaches genuine interior terrain
+            // rather than hugging the edge; it never carves beyond carve_max_px
+            // cells and always carves at least carve_px cells. A distance test
+            // is used, not a D8-drains-off test, because near the boundary the
+            // DEM flow runs along the edge and may never reach an outlet within
+            // any reasonable hop budget.
+            const auto& E = veds[static_cast<std::size_t>(J.downstream_edge_id)];
+
+            std::vector<std::int64_t> path;
+            path.push_back(source_flats[i]);
+
+            const double step = cmeta.cell_size * 0.5;
+            bool reached_interior = false;
+            for (std::size_t k = 1;
+                 k < E.xy.size() &&
+                 !reached_interior &&
+                 static_cast<int>(path.size()) <= carve_max_px;
+                 ++k)
+            {
+                const auto& a = E.xy[k - 1];
+                const auto& b = E.xy[k];
+                const double seglen = std::hypot(b.x - a.x, b.y - a.y);
+                const int nsteps =
+                    std::max(1, static_cast<int>(seglen / step));
+
+                for (int s = 1;
+                     s <= nsteps &&
+                     !reached_interior &&
+                     static_cast<int>(path.size()) <= carve_max_px;
+                     ++s)
+                {
+                    const double t = static_cast<double>(s) / nsteps;
+                    const std::int64_t f = xy_to_flat(
+                        a.x + t * (b.x - a.x),
+                        a.y + t * (b.y - a.y));
+                    if (f < 0 || f == path.back()) continue;
+                    path.push_back(f);
+
+                    // Stop once we have carved at least the minimum and the
+                    // terminus has reached genuine interior terrain.
+                    if (static_cast<int>(path.size()) > carve_px &&
+                        dist_to_boundary_m(f) >= interior_margin_m)
+                    {
+                        reached_interior = true;
+                    }
+                }
+            }
+
+            if (path.size() < 2) continue;
+
+            lsdtt::burn_capturing_path(routed_dem, path, carve_min_slope);
+            ++n_carved;
+
+            std::cout << "  vector source jid=" << jid
+                      << ": carved " << (path.size() - 1) << " px inward, "
+                      << "terminus " << dist_to_boundary_m(path.back())
+                      << " m from edge"
+                      << (reached_interior
+                              ? " (reached interior margin)"
+                              : " (hit carve_max_pixels cap)")
+                      << "\n";
+        }
+
+        std::cout << "Edge sources carved inward: " << n_carved << "\n";
+
+        if (n_carved > 0)
+        {
+            std::cout << "Rebuilding D8 flow routing after edge-source carving.\n";
+            try
+            {
+                flow = lsdtt::make_flow_base(
+                    routed_dem.get_data_array(),
+                    routed_dem.get_mask_array(),
+                    routed_dem.get_meta(),
+                    fi_opts
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: flow routing rebuild after edge-source "
+                             "carving failed: " << e.what() << "\n";
+                return 1;
+            }
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Step 6 — Build DEM junction network seeded from vector source junctions

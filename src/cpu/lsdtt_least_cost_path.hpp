@@ -154,4 +154,33 @@ void burn_monotonic_path(
     double                              min_slope = 0.0
 );
 
+// ---------------------------------------------------------------------------
+// burn_capturing_path
+//
+// Carves the DEM along path so that D8 flow is *forced* to follow it from the
+// first pixel to the last.  Unlike burn_monotonic_path (which only enforces a
+// gentle monotonic descent and so does not capture flow when a competing
+// neighbour is steeper), this lowers each successive path cell far enough below
+// the previous cell's competing neighbours that the D8 steepest-descent
+// receiver of every interior path cell is the next path cell.
+//
+// D8 selects the receiver by maximum distance-weighted slope
+// (dz / step_length, with diagonal steps = cell_size * sqrt(2)).  For each step
+// the next cell is lowered to beat the best competing slope among the current
+// cell's in-raster, non-nodata neighbours, by at least capture_margin, while
+// also guaranteeing at least a min_slope descent.  The first cell keeps its
+// elevation; cells are only ever lowered, never raised.  dem is modified in
+// place; an empty or single-element path is a no-op.
+//
+// min_slope (m/m): minimum descending gradient imposed along the path.
+// capture_margin (m): extra slope*length head-room added on top of the best
+//   competing slope so the choice survives floating-point ties.
+// ---------------------------------------------------------------------------
+void burn_capturing_path(
+    lsdtt_raster_cpu&                   dem,
+    const std::vector<std::int64_t>&    path,
+    double                              min_slope      = 1.0e-4,
+    double                              capture_margin = 1.0e-3
+);
+
 } // namespace lsdtt
