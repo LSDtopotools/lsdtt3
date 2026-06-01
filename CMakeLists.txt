@@ -266,6 +266,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
     src/cpu/lsdtt_sediment_transport_cpu.cpp
     src/cpu/lsdtt_giuh_cpu.cpp
+    src/cpu/lsdtt_side_tributary_basins_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
