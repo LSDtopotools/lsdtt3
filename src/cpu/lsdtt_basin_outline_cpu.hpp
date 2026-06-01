@@ -73,6 +73,15 @@ public:
   [[nodiscard]] bool is_periodic_ns() const noexcept { return periodic_ns_; }
   [[nodiscard]] bool is_periodic_ew() const noexcept { return periodic_ew_; }
 
+  // Function to get the 4 pixels surrounding a basin outline node, 
+  // distinguishing between pixels in the basin and pixels outside the basin.
+  void get_pixels_around_basin_outline_node(
+      std::size_t outline_node_index,
+      std::vector<std::int64_t>& in_basin,
+      std::vector<std::int64_t>& out_basin
+  ) const;
+
+
   // Functions to write to vector 
 
   // Returns one point feature per outline node.

@@ -562,6 +562,180 @@ lsdtt_junction_basin_manager_cpu::filter_largest()
 }
 
 
+lsdtt_junction_basin_manager_cpu&
+lsdtt_junction_basin_manager_cpu::filter_range_spanning(
+    const std::vector<std::vector<std::int64_t>>& boundary_segments,
+    const std::string& boundary_conditions)
+{
+    if (basins_.empty()) return *this;
+
+    auto to_lower = [](char ch) { 
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(ch))); 
+    };
+
+    // 1. Build lookup for checking where baselevels end up
+    std::unordered_map<std::int64_t, int> flat_to_boundary;
+    for (int b = 0; b < 4; ++b) 
+    {
+        for (const std::int64_t flat : boundary_segments[b]) {
+            flat_to_boundary[flat] = b;
+        }
+    }
+
+    auto get_baselevel = [&](std::int64_t flat) -> std::int64_t {
+        std::int64_t curr = flat;
+        while (true) {
+            std::int64_t rec = flow_->receiver_of_unchecked(curr);
+            if (rec == curr || rec < 0 || rec == lsdtt_flow_base::outlet_receiver) return curr;
+            curr = rec;
+        }
+    };
+
+    std::vector<bool> remove_mask(basins_.size(), false);
+
+    for (std::size_t i = 0; i < basins_.size(); ++i) 
+    {
+        std::int64_t outlet = basins_[i].get_basin_outlet_flat_index();
+
+        // Determine which boundaries the outlet node belongs to
+        std::vector<int> matching_boundaries;
+        for (int b_i = 0; b_i < 4; ++b_i) 
+        {
+            if (std::find(boundary_segments[b_i].begin(), boundary_segments[b_i].end(), outlet) 
+                != boundary_segments[b_i].end()) 
+            {
+                matching_boundaries.push_back(b_i);
+            }
+        }
+
+        // Prioritize "n" boundaries if multiple matches: this can happen on corner
+        // nodes where two boundaries "overlap": i.e. the end of one boundary is the
+        // start of the other. 
+        int boundary_index = -1;
+        for (int idx : matching_boundaries) {
+            if (to_lower(boundary_conditions[idx]) == 'n') {
+                boundary_index = idx;
+                break;
+            }
+        }
+
+        // If no "n" boundary found, fall back to first match
+        if (boundary_index == -1 && !matching_boundaries.empty()) {
+            boundary_index = matching_boundaries[0];
+        }
+
+        // Okay, continue if basin on boundary
+        if (boundary_index == -1) 
+        {
+            remove_mask[i] = true;
+            continue;
+        }
+
+        int opp_b_idx = (boundary_index + 2) % 4;
+
+        // Only continue if opposing boundary pair both have no-flux conditions
+        if (to_lower(boundary_conditions[boundary_index]) != 'n' || 
+            to_lower(boundary_conditions[opp_b_idx]) != 'n') 
+        {
+            remove_mask[i] = true;
+            continue;
+        }
+
+        // Get an LSDBasinOutline for this basin (auto-handles peridocitiy on tracing)
+        lsdtt_basin_outline_cpu BO = basins_[i].get_basin_outline();
+        bool is_range_spanning = false;
+        
+        const auto& outline_nodes = BO.outline_divide_rc();
+
+        // Check for each outline node if a surrounding pixel flows to the opposite
+        // boundary. If this is the case for one or more nodes on the outline,
+        // must be range-spanning.
+        for (std::size_t j = 0; j < outline_nodes.size(); ++j) 
+        {
+            std::vector<std::int64_t> px_in_basin, px_out_basin;
+            BO.get_pixels_around_basin_outline_node(j, px_in_basin, px_out_basin);
+
+            // Loop through the nodes outside the basin. 
+            // Count how many flow to the other side
+            int n_flow_to_opposite_side = 0;
+            for (std::int64_t node : px_out_basin) 
+            {
+                std::int64_t bln_index = get_baselevel(node);
+                
+                auto bl_it = flat_to_boundary.find(bln_index);
+                if (bl_it != flat_to_boundary.end() && bl_it->second == opp_b_idx) {
+                    // Yes! This node that is outside along the basin outline flows
+                    // to the opposite boundary!
+                    n_flow_to_opposite_side++;
+                }
+            }
+
+            // If there are two or more nodes flowing to the opposite side, we have a range 
+            // spanning basin!
+            if (n_flow_to_opposite_side >= 2) 
+            {
+                is_range_spanning = true;
+                break;
+            }
+            // If there is one node flowing to the opposite side, we may or may not 
+            // have a range spanning basin. This depends on whether the identified 
+            // other-side node is separated from the current basin by a diagonal flow edge 
+            // in a different basin on the same side of the MDD as the current basin.
+            else if (n_flow_to_opposite_side == 1) 
+            {
+                // We have such an annoying edge case if
+                // (1) the number of pixels outside the basin is 3 
+                // (2) only one of these pixels flows to the opposite side (we checked that)
+                // (3) the remaining two nodes are diagonally connected by a flow edge
+                bool is_edge_case = false;
+                if (px_out_basin.size() == 3) 
+                {
+                    for (std::int64_t node1 : px_out_basin) 
+                    {
+                        std::int64_t node1rec = flow_->receiver_of_unchecked(node1);
+                        for (std::int64_t node2 : px_out_basin) 
+                        {
+                            if (node1 != node2 && node2 == node1rec) 
+                            {
+                                // OK, found two nodes connected by flow edge. 
+                                // Now check if diagonal.
+                                int r1 = flow_->row_from_flat_unchecked(node1);
+                                int c1 = flow_->col_from_flat_unchecked(node1);
+                                int r2 = flow_->row_from_flat_unchecked(node2);
+                                int c2 = flow_->col_from_flat_unchecked(node2);
+
+                                if (r1 != r2 && c1 != c2) {
+                                    // YES this is an edge case
+                                    is_edge_case = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Flag as range spanning if not edge case
+                if (!is_edge_case) 
+                {
+                    is_range_spanning = true;
+                    break;
+                }
+            }
+        }
+
+        if (!is_range_spanning) remove_mask[i] = true;
+    }
+
+    std::vector<lsdtt_junction_basin_cpu> filtered;
+    filtered.reserve(basins_.size());
+    for (std::size_t i = 0; i < basins_.size(); ++i) 
+    {
+        if (!remove_mask[i]) filtered.push_back(std::move(basins_[i]));
+    }
+    basins_ = std::move(filtered);
+
+    return *this;
+}
+
 // -----------------------------------------------------------------------
 // Accessors
 // -----------------------------------------------------------------------

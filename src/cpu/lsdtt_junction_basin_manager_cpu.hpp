@@ -107,6 +107,13 @@ public:
     // Retains only the single basin with the largest pixel count.
     lsdtt_junction_basin_manager_cpu& filter_largest();
 
+    // Retains only basins that are range-spanning
+    lsdtt_junction_basin_manager_cpu& filter_range_spanning(
+        const std::vector<std::vector<std::int64_t>>& boundary_segments,
+        const std::string& boundary_conditions
+    );
+
+
     // -----------------------------------------------------------------------
     // Per-basin extraction (template — must be defined in header)
     // -----------------------------------------------------------------------

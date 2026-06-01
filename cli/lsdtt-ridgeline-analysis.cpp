@@ -79,6 +79,7 @@
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_binary_array2d_tracing.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -226,6 +227,107 @@ resolve_dem_corners(
 
     return flat_indices;
 }
+
+// =============================================================================
+// extract_boundary_segments
+//
+// Traces the 4-connected boundary of the DEM mask and extracts four contiguous
+// boundary segments using the user-supplied (or DEM-derived) corner nodes.
+// The segments are returned in-order of appearance along the boundary trace as
+// vectors of flat indices.
+// =============================================================================
+static std::vector<std::vector<std::int64_t>>
+extract_boundary_segments(
+    const lsdtt::lsdtt_raster_cpu&          dem,
+    const std::array<std::int64_t, 4>&      corners)
+{
+    std::cout << "\n--- Extracting DEM boundaries (4-connected trace) ---\n";
+
+    // 1. Trace the boundary of the raster mask
+    const auto& mask = dem.get_mask_array();
+    std::vector<lsdtt::lsdtt_pixel_rc> boundary_rc = lsdtt::trace_boundary_pixels(mask, 4);
+
+    if (boundary_rc.empty())
+    {
+        throw std::runtime_error("Found no boundary pixels during tracing.");
+    }
+
+    const int n_cols = dem.get_meta().n_cols;
+
+    // Convert traced row/cols to flat indices
+    std::vector<std::int64_t> boundary_flats;
+    boundary_flats.reserve(boundary_rc.size());
+    for (const auto& rc : boundary_rc)
+    {
+        boundary_flats.push_back(static_cast<std::int64_t>(rc.row) * n_cols + rc.col);
+    }
+
+    // 2. Map corners to the closest position along the continuous boundary trace
+    // Doing a nearest-pixel search protects against CSV coordinates that map 
+    // just slightly inside/outside the 4-connected envelope.
+    std::array<std::size_t, 4> split_indices;
+    for (int i = 0; i < 4; ++i)
+    {
+        const int corner_r = static_cast<int>(corners[i] / n_cols);
+        const int corner_c = static_cast<int>(corners[i] % n_cols);
+
+        std::size_t best_idx = 0;
+        long long best_dist_sq = -1;
+
+        for (std::size_t j = 0; j < boundary_rc.size(); ++j)
+        {
+            long long dr = boundary_rc[j].row - corner_r;
+            long long dc = boundary_rc[j].col - corner_c;
+            long long dist_sq = dr * dr + dc * dc;
+
+            if (best_dist_sq == -1 || dist_sq < best_dist_sq)
+            {
+                best_dist_sq = dist_sq;
+                best_idx = j;
+            }
+        }
+        split_indices[i] = best_idx;
+    }
+
+    // Sort to ensure segments wrap topologically around the trace order
+    std::sort(split_indices.begin(), split_indices.end());
+
+    // 3. Extract the 4 sequential boundary segments
+    std::vector<std::vector<std::int64_t>> boundary_segments(4);
+    for (int i = 0; i < 4; ++i)
+    {
+        std::size_t start_idx = split_indices[i];
+        std::size_t end_idx   = split_indices[(i + 1) % 4];
+
+        if (start_idx <= end_idx)
+        {
+            // Normal sequential segment
+            boundary_segments[i].assign(
+                boundary_flats.begin() + start_idx,
+                boundary_flats.begin() + end_idx
+            );
+        }
+        else
+        {
+            // Segment wraps around the end of the traced vector to the start
+            boundary_segments[i].assign(
+                boundary_flats.begin() + start_idx,
+                boundary_flats.end()
+            );
+            boundary_segments[i].insert(
+                boundary_segments[i].end(),
+                boundary_flats.begin(),
+                boundary_flats.begin() + end_idx
+            );
+        }
+        
+        std::cout << "  Boundary segment " << i << " contains " 
+                  << boundary_segments[i].size() << " pixels.\n";
+    }
+
+    return boundary_segments;
+}
+
 
 // =============================================================================
 // to_lower_copy — local helper
@@ -476,11 +578,6 @@ int main(int argc, char* argv[])
     help_map["write_basins_datamap"] = {"bool","false",
         "Write a CSV datamap listing junction number and outlet flat index per basin.",
         "Useful for debugging basin selection."};
-
-    bool_default_map["write_basin_outlet_points"] = false;
-    help_map["write_basin_outlet_points"] = {"bool","false",
-        "Write the requested basin outlet points to a FlatGeobuf file.",
-        "Useful for verifying outlet locations after coordinate transformation."};
 
     // --- Pathway A — Basin-outline ridgelines ---
     bool_default_map["analyse_basin_outline_ridgelines"] = false;
@@ -1026,53 +1123,6 @@ int main(int argc, char* argv[])
                 if (n_empty   > 0) std::cerr << "Warning: " << n_empty   << " point(s) had empty geometry.\n";
             }
 
-            // Optional: write requested basin outlet points
-            if (bf["write_basin_outlet_points"])
-            {
-                const std::string output_file = pp.make_output_path("_basin_outlet_points", ".fgb");
-                std::cout << "Writing requested basin outlet points: " << output_file << "\n";
-                try
-                {
-                    lsdtt::lsdtt_vector_schema schema;
-                    schema.field_names = {"point_id","status_code","src_lon","src_lat","x","y","row","col","flat"};
-                    schema.field_types = {
-                        lsdtt::lsdtt_vector_field_type::int64_type,
-                        lsdtt::lsdtt_vector_field_type::int64_type,
-                        lsdtt::lsdtt_vector_field_type::double_type,
-                        lsdtt::lsdtt_vector_field_type::double_type,
-                        lsdtt::lsdtt_vector_field_type::double_type,
-                        lsdtt::lsdtt_vector_field_type::double_type,
-                        lsdtt::lsdtt_vector_field_type::int64_type,
-                        lsdtt::lsdtt_vector_field_type::int64_type,
-                        lsdtt::lsdtt_vector_field_type::int64_type
-                    };
-                    lsdtt::lsdtt_data_loader outlet_writer;
-                    outlet_writer.begin_vector_write(
-                        output_file, "basin_outlet_points", schema,
-                        dem.get_meta().crs_wkt, lsdtt::vector_output_format::flatgeobuf,
-                        bf["calculate_spatial_index"]);
-                    for (const auto& pt : requested_outlets)
-                    {
-                        if (pt.status == lsdtt::lsdtt_point_input_status::coordinate_transform_failed)
-                            continue;
-                        outlet_writer.write_point(pt.x, pt.y, {
-                            static_cast<std::int64_t>(pt.point_id),
-                            static_cast<std::int64_t>(pt.status),
-                            pt.has_original_coordinates ? pt.original_x : std::monostate{},
-                            pt.has_original_coordinates ? pt.original_y : std::monostate{},
-                            pt.x, pt.y,
-                            static_cast<std::int64_t>(pt.row),
-                            static_cast<std::int64_t>(pt.col),
-                            pt.flat
-                        });
-                    }
-                    outlet_writer.finish_vector_write();
-                }
-                catch (const std::exception& e)
-                {
-                    std::cerr << "Warning: failed to write basin outlet points: " << e.what() << "\n";
-                }
-            }
 
             // Snap and collect flat indices
             lsdtt::lsdtt_square_snap_options sq_opts;
@@ -1388,19 +1438,14 @@ int main(int argc, char* argv[])
         std::cout << "For range-defined ridgelines I need four boundary segments\n"
                   << "with at least one pair of opposing no-flux (n) boundaries.\n";
 
-        // --- Resolve boundary corners ---
-        // If a corner coordinates CSV is supplied, use it to segment the DEM
-        // outline into four segments.  Otherwise fall back to the four pixel
-        // corners of the DEM.
+                // --- Resolve boundary corners ---
         std::vector<lsdtt::lsdtt_input_point> corner_pts;
         std::array<std::int64_t, 4>           corner_flats{};
-        bool                                  use_csv_corners = false;
 
         const std::string corner_csv = sf["corner_coordinates_csv"];
         if (corner_csv != "NULL" && corner_csv != "Null" && corner_csv != "null"
             && !corner_csv.empty())
         {
-            use_csv_corners = true;
             const std::string full_corner_csv = pp.add_read_path_if_needed(corner_csv);
             try
             {
@@ -1418,6 +1463,13 @@ int main(int argc, char* argv[])
                           << "but got " << corner_pts.size() << ".\n";
                 return 1;
             }
+
+            // Transfer the flat indices from parsed CSV locations
+            for (int i = 0; i < 4; ++i)
+            {
+                corner_flats[i] = corner_pts[i].flat;
+            }
+            std::cout << "Corner points successfully mapped from CSV.\n";
         }
         else
         {
@@ -1435,40 +1487,81 @@ int main(int argc, char* argv[])
             }
         }
 
-        // TODO: implement range-defined ridgeline analysis in lsdtt3.
-        // This block will be filled in when get_Range_Spanning_Basin_Junctions
-        // and the LSDBasinOutline/LSDRidgeline methods are ported to lsdtt3.
-        //
-        // The workflow will be:
-        //   build boundary_rows / boundary_cols from corners (csv or pixel)
-        //   call channel_network equivalent of get_Range_Spanning_Basin_Junctions
-        //   sort range-spanning basins per boundary by order along boundary
-        //   for each boundary:
-        //     for each range-spanning basin:
-        //       [if transverse] extract left transverse divide as ridgeline
-        //       [if mdd] extract MDD portion as ridgeline
-        //   assemble MDD from shared nodes across opposing boundaries
-        //   fit profiles, smooth, derive detrended ridgelines
-        //   print ridgelines / stats / extrema / fft as requested
-
-        std::cout << "\nRange-defined ridgeline analysis is not yet implemented\n"
-                  << "in lsdtt3. This block will be filled in when boundary-segment\n"
-                  << "extraction and range-spanning-basin detection are ported.\n";
-
-        if (use_csv_corners)
+        // --- Extract Boundary Segments ---
+        std::vector<std::vector<std::int64_t>> boundary_segments;
+        try
         {
-            std::cout << "Corner points loaded from CSV (" << corner_pts.size() << " corners).\n";
+            boundary_segments = extract_boundary_segments(routed_dem, corner_flats);
         }
-        else
+        catch(const std::exception& e)
         {
-            std::cout << "Corner flat indices: "
-                      << corner_flats[0] << " (top-left), "
-                      << corner_flats[1] << " (top-right), "
-                      << corner_flats[2] << " (bottom-left), "
-                      << corner_flats[3] << " (bottom-right)\n";
+            std::cerr << "FATAL: Boundary segment tracing failed: " << e.what() << "\n";
+            return 1;
         }
 
-    } // end Pathway B block
+
+        // --- Detect Range-Spanning Basins ---
+        std::cout << "\n--- Range-Spanning Basin Detection ---\n";
+        lsdtt::lsdtt_junction_basin_manager_cpu range_basin_manager(*flow, *channel_network);
+        
+        std::cout << "Selecting all junction basins..." << std::endl;
+        range_basin_manager.select_all_junction_basins();
+        range_basin_manager.filter_incomplete(); 
+
+        std::cout << "Filtering for exact range-spanning basins..." << std::endl;
+        range_basin_manager.filter_range_spanning(boundary_segments, sf["boundary_conditions"]);
+        std::cout << "Retained " << range_basin_manager.size() << " range-spanning basins.\n";
+
+        // Reconstruct the 2D array matching the LSDTT2 pipeline to feed the sorting loop 
+        std::vector<std::vector<int>> range_spanning_basin_juncs(4);
+
+        std::vector<std::int32_t> rs_junctions = range_basin_manager.get_junction_numbers();
+        std::vector<std::int64_t> rs_outlets   = range_basin_manager.get_basin_outlet_flat_indices();
+
+        for (std::size_t i = 0; i < rs_junctions.size(); ++i)
+        {
+            std::vector<int> matching_boundaries;
+            for (int b = 0; b < 4; ++b)
+            {
+                if (std::find(boundary_segments[b].begin(), boundary_segments[b].end(), rs_outlets[i]) 
+                    != boundary_segments[b].end())
+                {
+                    matching_boundaries.push_back(b);
+                }
+            }
+
+            int boundary_index = -1;
+            for (int idx : matching_boundaries)
+            {
+                // Prioritize 'n' boundary string if matched on a corner
+                if (std::tolower(static_cast<unsigned char>(sf["boundary_conditions"][idx])) == 'n') {
+                    boundary_index = idx;
+                    break;
+                }
+            }
+            if (boundary_index == -1 && !matching_boundaries.empty()) {
+                boundary_index = matching_boundaries[0];
+            }
+
+            if(boundary_index != -1) {
+                range_spanning_basin_juncs[boundary_index].push_back(rs_junctions[i]);
+            }
+        }
+
+        // Just output diagnostics
+        for(int b = 0; b < 4; ++b)
+        {
+            std::cout << "  Boundary " << b << " has " 
+                      << range_spanning_basin_juncs[b].size() << " range-spanning basins.\n";
+        }
+
+
+        // TODO: detect range-spanning basins
+        // This block will be filled in once lsdtt3 implementations are available for:
+        //   2. LSDRidgeline processing logic
+
+
+    } // end pathway B block
 
     // =========================================================================
     // Parameter echo

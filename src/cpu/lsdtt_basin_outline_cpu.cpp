@@ -519,6 +519,198 @@ void lsdtt_basin_outline_cpu::edge_tracing_periodic_boundaries_()
 }
 
 // ----------------------------------------------------------------------------
+// Function to get the 4 pixels surrounding a basin outline node, 
+// distinguishing between pixels in the basin and pixels outside the basin.
+// ----------------------------------------------------------------------------
+void lsdtt_basin_outline_cpu::get_pixels_around_basin_outline_node(
+    std::size_t outline_node_index,
+    std::vector<std::int64_t>& in_basin,
+    std::vector<std::int64_t>& out_basin
+) const
+{
+  in_basin.clear();
+  out_basin.clear();
+
+  const int i = static_cast<int>(outline_node_index);
+  const int NNodes_outline = static_cast<int>(outline_divide_rc_.size());
+
+  // Get the nodes of the previous and next outline nodes too
+  int next_i = 0, prev_i = 0;
+  if (i == NNodes_outline - 1) {
+      // Next node is at the start of outline
+      next_i = 0; 
+      // But if diagonal outlet flow, this is actually the same node,
+      // so advance one more.
+      if (same_rc_(outline_divide_rc_[next_i], outline_divide_rc_[i])) {
+          next_i = (next_i + 1) % NNodes_outline;
+      }
+  } else { next_i = i + 1; }
+
+  if (i == 0) {
+      // Previous node is at the back of outline
+      prev_i = NNodes_outline - 1;
+      // But if diagonal outlet flow, this is actually the same node,
+      // so go one further back.
+      if (same_rc_(outline_divide_rc_[i], outline_divide_rc_[prev_i])) {
+          prev_i = (prev_i - 1 + NNodes_outline) % NNodes_outline;
+      }
+  } else { prev_i = i - 1; }
+
+  // Get the row and col of prev_i, i, next_i
+  int prev_i_row = outline_divide_rc_[prev_i].row;
+  int prev_i_col = outline_divide_rc_[prev_i].col;
+  int i_row      = outline_divide_rc_[i].row;
+  int i_col      = outline_divide_rc_[i].col;
+  int next_i_row = outline_divide_rc_[next_i].row;
+  int next_i_col = outline_divide_rc_[next_i].col;
+
+  // Local lambdas for wrapped differences in case of periodic boundaries
+  const int n_rows = meta_.n_rows;
+  const int n_cols = meta_.n_cols;
+
+  auto wrapped_row_diff = [&](int from, int to) -> int {
+      if (!periodic_ns_) return to - from;
+      int diff = to - from;
+      if (diff > n_rows / 2) diff -= n_rows;
+      if (diff < -n_rows / 2) diff += n_rows;
+      return diff;
+  };
+
+  auto wrapped_col_diff = [&](int from, int to) -> int {
+      if (!periodic_ew_) return to - from;
+      int diff = to - from;
+      if (diff > n_cols / 2) diff -= n_cols;
+      if (diff < -n_cols / 2) diff += n_cols;
+      return diff;
+  };
+
+  // Now check if the outline edges coming in and out of i have direction
+  // north (0), east (1), south (2) or west (3).
+  int edge_direction_in = -1, edge_direction_out = -1;
+
+  int d_row_out = wrapped_row_diff(i_row, next_i_row);
+  int d_col_out = wrapped_col_diff(i_col, next_i_col);
+
+  if (d_row_out < 0)      edge_direction_out = 0; // North
+  else if (d_row_out > 0) edge_direction_out = 2; // South
+  else if (d_col_out > 0) edge_direction_out = 1; // East
+  else if (d_col_out < 0) edge_direction_out = 3; // West
+
+  int d_row_in = wrapped_row_diff(prev_i_row, i_row);
+  int d_col_in = wrapped_col_diff(prev_i_col, i_col);
+
+  if (d_row_in < 0)      edge_direction_in = 0; // North
+  else if (d_row_in > 0) edge_direction_in = 2; // South
+  else if (d_col_in > 0) edge_direction_in = 1; // East
+  else if (d_col_in < 0) edge_direction_in = 3; // West
+
+  // Get the x's and y's indices of the 4 pixels of the flow grid
+  int raw_x1 = i_col - 1;
+  int raw_y1 = i_row - 1;
+  int raw_x2 = i_col;
+  int raw_y2 = i_row;
+
+  // Account for periodicity (or bounds)
+  auto wrap_idx = [](int idx, int max_val, bool periodic) -> int {
+      if (periodic) return (idx % max_val + max_val) % max_val;
+      if (idx < 0 || idx >= max_val) return -1;
+      return idx;
+  };
+
+  int x1 = wrap_idx(raw_x1, n_cols, periodic_ew_);
+  int x2 = wrap_idx(raw_x2, n_cols, periodic_ew_);
+  int y1 = wrap_idx(raw_y1, n_rows, periodic_ns_);
+  int y2 = wrap_idx(raw_y2, n_rows, periodic_ns_);
+
+  std::vector<std::int64_t> dem_pixels_in_basin, dem_pixels_out_basin;
+  auto add_unique = [&](std::vector<std::int64_t>& vec, std::int64_t val) {
+      if (val != -1 && std::find(vec.begin(), vec.end(), val) == vec.end()) {
+          vec.push_back(val);
+      }
+  };
+
+  auto get_node = [&](int r, int c) -> std::int64_t {
+      if (r == -1 || c == -1) return -1;
+      std::int64_t flat = static_cast<std::int64_t>(r) * n_cols + c;
+      if (!flow_->is_valid_cell(flat)) return -1;
+      return flat;
+  };
+
+  // Figure out which of the four nodes surrounding the edge are in the 
+  // basin, using the fact that outlines are traced CLOCKWISE
+  std::int64_t pix_inb = -1, pix_outb = -1;
+
+  // Lets start with outgoing node
+  if (edge_direction_out == 0) {
+      // North: (y1,x2) in basin, (y1, x1) out of basin
+      pix_inb  = get_node(y1, x2);
+      pix_outb = get_node(y1, x1);
+  } else if (edge_direction_out == 1) {
+      // East: (y2,x2) in basin, (y1,x2) out of basin
+      pix_inb  = get_node(y2, x2);
+      pix_outb = get_node(y1, x2);
+  } else if (edge_direction_out == 2) {
+      // South: (y2,x1) in basin, (y2,x2) out of basin
+      pix_inb  = get_node(y2, x1);
+      pix_outb = get_node(y2, x2);
+  } else if (edge_direction_out == 3) {
+      // West: (y1,x1) in basin, (y2,x1) out of basin
+      pix_inb  = get_node(y1, x1);
+      pix_outb = get_node(y2, x1);
+  }
+  if (pix_inb != -1)  add_unique(dem_pixels_in_basin, pix_inb);
+  if (pix_outb != -1) add_unique(dem_pixels_out_basin, pix_outb);
+
+  // Now the ingoing node
+  if (edge_direction_in == 0) {
+      pix_inb  = get_node(y2, x2);
+      pix_outb = get_node(y2, x1);
+  } else if (edge_direction_in == 1) {
+      pix_inb  = get_node(y2, x1);
+      pix_outb = get_node(y1, x1);
+  } else if (edge_direction_in == 2) {
+      pix_inb  = get_node(y1, x1);
+      pix_outb = get_node(y1, x2);
+  } else if (edge_direction_in == 3) {
+      pix_inb  = get_node(y1, x2);
+      pix_outb = get_node(y2, x2);
+  }
+  if (pix_inb != -1)  add_unique(dem_pixels_in_basin, pix_inb);
+  if (pix_outb != -1) add_unique(dem_pixels_out_basin, pix_outb);
+
+  // Corner logic with guards
+  if (edge_direction_in != edge_direction_out && edge_direction_in != -1 && edge_direction_out != -1) {
+      auto safe_insert = [&](int y, int x, bool in_b) {
+          std::int64_t corner_pix = get_node(y, x);
+          if (corner_pix != -1) {
+              if (in_b) add_unique(dem_pixels_in_basin, corner_pix);
+              else      add_unique(dem_pixels_out_basin, corner_pix);
+          }
+      };
+      if (edge_direction_in == 0 && edge_direction_out == 1) safe_insert(y1, x1, false);
+      if (edge_direction_in == 0 && edge_direction_out == 3) safe_insert(y1, x2, true);
+      if (edge_direction_in == 1 && edge_direction_out == 0) safe_insert(y2, x2, true);
+      if (edge_direction_in == 1 && edge_direction_out == 2) safe_insert(y1, x2, false);
+      if (edge_direction_in == 2 && edge_direction_out == 1) safe_insert(y2, x1, true);
+      if (edge_direction_in == 2 && edge_direction_out == 3) safe_insert(y2, x2, false);
+      if (edge_direction_in == 3 && edge_direction_out == 2) safe_insert(y1, x1, true);
+      if (edge_direction_in == 3 && edge_direction_out == 0) safe_insert(y2, x1, false);
+  }
+
+  // If the outlet node was accidentally put in the out_basin set,
+  // remove it and ensure it is in the in_basin set.
+  std::int64_t outlet_node = basin_->get_basin_outlet_flat_index();
+  auto it = std::find(dem_pixels_out_basin.begin(), dem_pixels_out_basin.end(), outlet_node);
+  if (it != dem_pixels_out_basin.end()) {
+      dem_pixels_out_basin.erase(it);
+      add_unique(dem_pixels_in_basin, outlet_node);
+  }
+
+  out_basin = dem_pixels_out_basin;
+  in_basin  = dem_pixels_in_basin;
+}
+
+// ----------------------------------------------------------------------------
 // Compute outlet cut corners (LSDBasinOutline::create logic)
 //
 // Uses receiver direction to decide whether this is:
