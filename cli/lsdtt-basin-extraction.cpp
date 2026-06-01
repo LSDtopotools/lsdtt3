@@ -17,7 +17,7 @@
 //   4. Building a compact channel / junction network
 //   5. Optionally writing the channel network
 //   6. Optionally selecting junction-aware basins
-//   7. Preparing for future basin vector / raster output
+//   7. Optionally extracting side-tributary basins from supplied upstream points
 //
 // Usage:
 //   lsdtt-basin-extraction <path> <parameter_file>
@@ -48,6 +48,7 @@
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_side_tributary_basins_cpu.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -148,8 +149,7 @@ int main(int argc, char* argv[])
         "the entire vector layer to sit in memory, preventing feature-by-feature "
         "writes and adding a lot of overhead. In some cases (e.g. large datasets) it "
         "may therefore be preferred to generate vectors without spatial index - "
-        "these can always be calculated later on using e.g. gdal."
-    };
+        "these can always be calculated later on using e.g. gdal."};
 
     // --- Output --- channel network points
     bool_default_map["write_channel_network_points"] = false;
@@ -158,12 +158,11 @@ int main(int argc, char* argv[])
         "is a feature with attribute values, such as drainage_area.",
         "Compared to write_channel_network_lines, this write will be larger "
         "because there are more features, but it does record the drainage "
-        "area at each channel pixel."
-    };
+        "area at each channel pixel."};
 
     string_default_map["channel_network_points_output_format"] = "flatgeobuf";
-    help_map["channel_network_points_output_format"] = {"string","gpkg",
-        "Output format for the exported channel network.",
+    help_map["channel_network_points_output_format"] = {"string","flatgeobuf",
+        "Output format for the exported channel network points.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "
         "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
@@ -177,32 +176,81 @@ int main(int argc, char* argv[])
         "Does not support csv writes, only gpkg and flatgeobuf/fgb. "
         "Compared to write_channel_network as points, the lines filesize "
         "will be smaller (there are fewer features), at the cost of not "
-        "recording drainage area at each channel pixel."
-    };
+        "recording drainage area at each channel pixel."};
 
     string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
     help_map["channel_network_lines_output_format"] = {"string", "flatgeobuf",
-        "Output format for D8 flow-line visualisation.",
+        "Output format for channel network lines.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
-        "GeoPackage may have file I/O issues on some filesystems."
-        "CSV is not allowed for channel network lines."
-    };
+        "GeoPackage may have file I/O issues on some filesystems. "
+        "CSV is not allowed for channel network lines."};
 
     // --- Output --- junctions
     bool_default_map["write_channel_network_junctions"] = false;
     help_map["write_channel_network_junctions"] = {"bool", "false",
-        "Write the channel network junctions as point data",
-        "Contains feature attributes: junction_number, receiver_junction"
-        "and stream_order"
-    };
+        "Write the channel network junctions as point data.",
+        "Contains feature attributes: junction_number, receiver_junction, "
+        "and stream_order."};
 
     string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
-    help_map["channel_network_junctions_output_format"] = {"string","gpkg",
-        "Output format for the exported channel network.",
+    help_map["channel_network_junctions_output_format"] = {"string","flatgeobuf",
+        "Output format for the exported channel network junctions.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "
         "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
 
+    // --- Side-tributary basin extraction from seed points ---
+    bool_default_map["extract_side_tributary_basins_from_points"] = false;
+    help_map["extract_side_tributary_basins_from_points"] = {"bool","false",
+        "Extract side-tributary basins draining into D8 flowlines traced from input points.",
+        "If true, reads a point vector file, traces D8 downstream from each point, "
+        "finds side tributaries entering those traced channels, filters them by "
+        "minimum contributing pixels, rejects incomplete basins if requested, "
+        "and writes side-tributary outlet points and basin outlines."};
+
+    string_default_map["side_tributary_points_fname"] = "NULL";
+    help_map["side_tributary_points_fname"] = {"string","NULL",
+        "Input point vector file for side-tributary extraction.",
+        "Path to a GeoPackage or FlatGeobuf containing upstream seed points. "
+        "If no path separator is present, read_path is prepended. Supported "
+        "formats are those readable by GDAL/OGR."};
+
+    string_default_map["side_tributary_points_layer"] = "";
+    help_map["side_tributary_points_layer"] = {"string","",
+        "Layer name in the side-tributary input point vector.",
+        "If empty, the first layer in the vector dataset is used."};
+
+    int_default_map["side_tributary_minimum_contributing_pixels"] = 1000;
+    help_map["side_tributary_minimum_contributing_pixels"] = {"int","1000",
+        "Minimum contributing-pixel count for a side tributary basin.",
+        "Candidate side tributary outlets are only retained if their D8 upslope "
+        "pixel count, including the outlet pixel itself, is at least this value."};
+
+    bool_default_map["reject_incomplete_side_tributary_basins"] = true;
+    help_map["reject_incomplete_side_tributary_basins"] = {"bool","true",
+        "Reject side basins touching nodata or the raster edge.",
+        "A side basin is incomplete if any pixel in its upslope set is adjacent "
+        "to nodata or an open/out-of-domain edge according to the flow object's "
+        "boundary conditions."};
+
+    bool_default_map["write_side_tributary_outlets"] = true;
+    help_map["write_side_tributary_outlets"] = {"bool","true",
+        "Write accepted side-tributary outlet points.",
+        "The outlets are one pixel upstream from the D8 flowlines traced from "
+        "the input points. Output file: <write_fname>_side_tributary_outlets.fgb "
+        "or .gpkg."};
+
+    bool_default_map["write_side_tributary_basin_outlines"] = true;
+    help_map["write_side_tributary_basin_outlines"] = {"bool","true",
+        "Write accepted side-tributary basin outlines.",
+        "Output file: <write_fname>_side_tributary_basin_outlines.fgb or .gpkg."};
+
+    string_default_map["side_tributary_vector_output_format"] = "flatgeobuf";
+    help_map["side_tributary_vector_output_format"] = {"string","flatgeobuf",
+        "Vector output format for side-tributary outputs.",
+        "Valid options: flatgeobuf, fgb, gpkg. FlatGeobuf is recommended because "
+        "it is a single-file binary GIS format and is more robust than GeoPackage "
+        "on some filesystems."};
 
     // --- Basin outlet input ---
     string_default_map["basin_outlet_file"] = "NULL";
@@ -228,37 +276,32 @@ int main(int argc, char* argv[])
         "none: use the mapped raster pixel directly. "
         "expanding_square: search outward ring-by-ring until a qualifying pixel "
         "is found. downstream: follow the D8 receiver chain until a qualifying "
-        "pixel is found."
-    };
+        "pixel is found."};
 
     int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
     help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used for optional basin outlet snapping.",
         "This is the total number of upslope contributing pixels from the "
-        "flow-routing object, not the number of direct donors to a pixel."
-    };
+        "flow-routing object, not the number of direct donors to a pixel."};
 
     int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
     help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
-        "0 means the mapped input pixel is tested first."
-    };
+        "0 means the mapped input pixel is tested first."};
 
     int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
-        "The search stops at the first radius containing one or more qualifying pixels."
-    };
+        "The search stops at the first radius containing one or more qualifying pixels."};
 
     // --- Basin selection ---
     bool_default_map["select_basins_from_outlets"] = false;
     help_map["select_basins_from_outlets"] = {"bool","false",
         "Select basins from supplied basin outlet points.",
         "Reads basin_outlet_file, optionally snaps the mapped pixels, and then "
-        "constructs one lsdtt_junction_basin per supplied basin outlet."
-    };
+        "constructs one lsdtt_junction_basin per supplied basin outlet."};
 
     bool_default_map["select_basins_from_outlets_nested"] = false;
     help_map["select_basins_from_outlets_nested"] = {"bool","false",
@@ -266,133 +309,98 @@ int main(int argc, char* argv[])
         "Reads basin_outlet_file, optionally snaps the mapped pixels, constructs "
         "one lsdtt_junction_basin per supplied basin outlet, and then expands "
         "selection to include all upstream nested basins from the junction-network "
-        "s_vector."
-    };
+        "s_vector."};
 
     bool_default_map["select_all_basins"] = false;
     help_map["select_all_basins"] = {"bool","false",
         "Select one basin for every junction in the junction network.",
         "Uses the junction network to derive a basin outlet flat index for each "
-        "junction and constructs one lsdtt_junction_basin per junction."
-    };
+        "junction and constructs one lsdtt_junction_basin per junction."};
 
     // --- Basin filtering ---
-    // NOTE: filtering is applied to the selected basins in the order 
-    // that these options are listed!
     bool_default_map["filter_basins_by_stream_order"] = false;
     help_map["filter_basins_by_stream_order"] = {"bool", "false",
-        "This will only keep basins between (and inclusive of) "
-        "basins_min_stream_order and basins_max_stream_order.",
-        "Use the -1 flag for either min/max order to not consider "
-        "min or max bound."
-    };
+        "Keep only basins within a stream-order range.",
+        "Only basins between basins_min_stream_order and basins_max_stream_order "
+        "are kept. Use -1 for either bound to ignore that bound."};
 
     int_default_map["basins_min_stream_order"] = -1;
     help_map["basins_min_stream_order"] = {"int", "-1",
-        "The min stream order (inclusive) to keep, when filtering basins "
-        "by stream order.",
-        "Defaults to -1, which means ignore minimum"
-    };
+        "Minimum stream order to keep when filtering basins.",
+        "Inclusive. Defaults to -1, which means ignore minimum."};
 
     int_default_map["basins_max_stream_order"] = -1;
     help_map["basins_max_stream_order"] = {"int", "-1",
-        "The max stream order (inclusive) to keep, when filtering basins "
-        "by stream order.",
-        "Defaults to -1, which means ignore maximum."
-    };
+        "Maximum stream order to keep when filtering basins.",
+        "Inclusive. Defaults to -1, which means ignore maximum."};
 
     bool_default_map["filter_basins_by_area"] = false;
     help_map["filter_basins_by_area"] = {"bool", "false",
-        "This will only keep basins between (and inclusive of) "
-        "basins_min_area_pixels and basins_max_area_pixels.",
-        "Use the -1 flag for either min/max order to not consider "
-        "min or max bound."
-    };
+        "Keep only basins within an area range in pixels.",
+        "Only basins between basins_min_area_pixels and basins_max_area_pixels "
+        "are kept. Use -1 for either bound to ignore that bound."};
 
     int_default_map["basins_min_area_pixels"] = -1;
-    help_map["basins_min_stream_order"] = {"int", "-1",
-        "The min basin area in pixels (inclusive) to keep, when filtering basins "
-        "by area.",
-        "Defaults to -1, which means ignore minimum"
-    };
+    help_map["basins_min_area_pixels"] = {"int", "-1",
+        "Minimum basin area in pixels to keep when filtering basins by area.",
+        "Inclusive. Defaults to -1, which means ignore minimum."};
 
     int_default_map["basins_max_area_pixels"] = -1;
-    help_map["basins_max_stream_order"] = {"int", "-1",
-        "The max basin area in pixels (inclusive) to keep, when filtering basins "
-        "by area.",
-        "Defaults to -1, which means ignore maximum."
-    };
+    help_map["basins_max_area_pixels"] = {"int", "-1",
+        "Maximum basin area in pixels to keep when filtering basins by area.",
+        "Inclusive. Defaults to -1, which means ignore maximum."};
 
     bool_default_map["filter_incomplete_basins"] = false;
     help_map["filter_incomplete_basins"] = {"bool", "false",
-        "This removes all basins that are incomplete.",
+        "Remove all incomplete basins.",
         "An incomplete basin has at least one DEM pixel that is adjacent "
         "to an invalid pixel. Off-grid neighbours are invalid, unless "
-        "an n or p boundary is supplied."
-    };
+        "an n or p boundary is supplied."};
 
     bool_default_map["filter_all_but_largest_basin"] = false;
     help_map["filter_all_but_largest_basin"] = {"bool", "false",
-        "This only keeps the largest basin.",
-        "Intentionally later on in the filtering order, because it is quite "
-        "likely you will want to pick the largest basin from the set of "
-        "basins that are complete."
-    };
+        "Keep only the largest basin.",
+        "Applied later in the filtering order so it can be used after "
+        "completeness or other filters."};
 
     bool_default_map["filter_nested_basins"] = false;
     help_map["filter_nested_basins"] = {"bool", "false",
-        "This removes any nested basins. So effectively only keeps the largest "
-        "basins that are still in the selection.",
-        "Intentionally later on in the filtering order, because it is quite "
-        "likely you will want to do this after a completeness check."
-    };
+        "Remove nested basins.",
+        "Only the largest non-nested basins in the current selection are retained."};
 
     bool_default_map["filter_nested_by_stream_order"] = false;
-    help_map["filter_nested_basins"] = {"bool", "false",
-        "This filters out nested basins of the same stream order "
-        "so that in a consecutive chain of basins with the same order, "
-        "only the downstream-most is preserved.",
-        "Still allows for nested basins when they are of different orders."
-    };
-
+    help_map["filter_nested_by_stream_order"] = {"bool", "false",
+        "Remove nested basins of the same stream order.",
+        "In a consecutive chain of nested basins with the same order, only the "
+        "downstream-most is preserved. Nested basins of different orders are allowed."};
 
     // --- Basin printing to vector ---
     bool_default_map["write_basin_outlines"] = false;
-    help_map["write_basins_vector"] = {"bool","false",
-        "For each selected basin, this prints the basin outlines "
-        "where each feature is a the outline of one basin.",
+    help_map["write_basin_outlines"] = {"bool","false",
+        "Write selected basin outlines as vector features.",
         "Features are labelled by their junction number. Use "
-        "basin_outlines_output_format to specify outpout format."
-        "To get basin outlines as polygon rather than polyline, "
-        "use the switch write_basin_outlines_as_polygon."
-        "To write basin outlines per stream order, use switch "
-        "write_basin_outlines_per_order."
-    };
+        "basin_outlines_output_format to specify output format. To get basin "
+        "outlines as polygons rather than polylines, use "
+        "write_basin_outlines_as_polygon. To write basin outlines per stream "
+        "order, use write_basin_outlines_per_order."};
 
     bool_default_map["write_basin_outlines_as_polygon"] = false;
     help_map["write_basin_outlines_as_polygon"] = {"bool", "false",
-        "When true, this writes basin outlines as polygons rather "
-        "than polylines.",
-        "Set to true when you want basins printed as areas."    
-    };
+        "Write basin outlines as polygons rather than polylines.",
+        "Set to true when you want basins printed as areas."};
 
     bool_default_map["write_basin_outlines_per_order"] = false;
-    help_map["write_basin_outline_lines_per_order"] = {"bool", "false",
-        "When true, writes basin outlines per order: "
-        "one file with invidividual layers per stream order (in case of "
-        "geopackage) or multiple files, one per stream order (in case of "
-        "flatgeobuf).",
-        "Features are labelled by their junction number. Use "
-        "basin_outlines_output_format to specify outpout format."
-    };
+    help_map["write_basin_outlines_per_order"] = {"bool", "false",
+        "Write basin outlines per stream order.",
+        "For GeoPackage output, this writes individual layers per stream order. "
+        "For FlatGeobuf output, this writes multiple files, one per stream order."};
 
     string_default_map["basin_outlines_output_format"] = "flatgeobuf";
-    help_map["basin_outlines_lines_output_format"] = {"string", "flatgeobuf",
+    help_map["basin_outlines_output_format"] = {"string", "flatgeobuf",
         "Output format for basin outline visualisation.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
-        "GeoPackage may have file I/O issues on some filesystems."
-        "CSV is not allowed for basin outline lines."
-    };
+        "GeoPackage may have file I/O issues on some filesystems. "
+        "CSV is not allowed for basin outline lines."};
 
     bool_default_map["write_basin_outlet_points"] = false;
     help_map["write_basin_outlet_points"] = {"bool","false",
@@ -400,26 +408,20 @@ int main(int argc, char* argv[])
         "Useful for debugging outlet locations after latitude/longitude input has "
         "been transformed into the DEM local/projected coordinate system. "
         "Points that fail coordinate transformation are omitted because they do "
-        "not have valid raster-CRS coordinates."
-    };
+        "not have valid raster-CRS coordinates."};
 
-    
     // --- Basin printing to raster ---
     bool_default_map["write_basins_raster"] = false;
     help_map["write_basins_raster"] = {"bool","false",
-        "Writes the basin raster, labelled by junction number since that "
-        "uniquely identfies extracted basins.",
-        "Basins are printed to the raster from downstream to upstream, so "
-        "basins nested in other basins are printed on top of the parent basin."
-    };
+        "Write the selected basins as a labelled raster.",
+        "Basins are labelled by junction number since that uniquely identifies "
+        "extracted basins. Nested basins are printed on top of parent basins."};
 
-    // --- Basin printing to raster ---
     bool_default_map["write_basins_datamap"] = false;
     help_map["write_basins_datamap"] = {"bool", "false",
-        "Writes the basins datamap. For each basin, there is a row that contains "
-        "the junction number, the outlet flat index."
-        "This can be helpful for debugging etc." 
-    };
+        "Write selected basin datamap as CSV.",
+        "For each basin, there is a row containing the junction number and "
+        "outlet flat index. This can be helpful for debugging."};
 
     // -------------------------------------------------------------------------
     // Parse
@@ -452,6 +454,24 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    if (bf["extract_side_tributary_basins_from_points"])
+    {
+        if (sf["side_tributary_points_fname"] == "NULL" ||
+            sf["side_tributary_points_fname"].empty())
+        {
+            std::cerr << "FATAL: side_tributary_points_fname is required when "
+                      << "extract_side_tributary_basins_from_points is true.\n";
+            return 1;
+        }
+
+        if (ifs["side_tributary_minimum_contributing_pixels"] <= 0)
+        {
+            std::cerr << "FATAL: side_tributary_minimum_contributing_pixels "
+                      << "must be > 0.\n";
+            return 1;
+        }
+    }
+
     lsdtt::point_output_format cn_points_output_format =
         lsdtt::resolve_point_output_format(
             sf["channel_network_points_output_format"]
@@ -461,7 +481,7 @@ int main(int argc, char* argv[])
         lsdtt::resolve_vector_output_format(
             sf["channel_network_lines_output_format"]
         );
-    
+
     lsdtt::point_output_format cn_junctions_output_format =
         lsdtt::resolve_point_output_format(
             sf["channel_network_junctions_output_format"]
@@ -470,6 +490,16 @@ int main(int argc, char* argv[])
     lsdtt::vector_output_format basin_outline_lines_format =
         lsdtt::resolve_vector_output_format(
             sf["basin_outlines_output_format"]
+        );
+
+    lsdtt::vector_output_format side_tributary_vector_format =
+        lsdtt::resolve_vector_output_format(
+            sf["side_tributary_vector_output_format"]
+        );
+
+    lsdtt::point_output_format side_tributary_point_format =
+        lsdtt::resolve_point_output_format(
+            sf["side_tributary_vector_output_format"]
         );
 
     const bool select_basins_from_outlets =
@@ -536,10 +566,12 @@ int main(int argc, char* argv[])
     }
 
     if (!do_basin_selection &&
-        (bf["write_basins_vector"] || bf["write_basins_raster"]))
+        (bf["write_basin_outlines"] ||
+         bf["write_basins_raster"] ||
+         bf["write_basins_datamap"]))
     {
-        std::cerr << "FATAL: write_basins_vector and write_basins_raster "
-                  << "require a basin selection mode to be enabled.\n";
+        std::cerr << "FATAL: basin output switches require a basin selection "
+                  << "mode to be enabled.\n";
         return 1;
     }
 
@@ -583,13 +615,16 @@ int main(int argc, char* argv[])
         }
     }
 
-    if(bf["write_basin_outlines_as_polygon"]){
-        bf["write_basin_outlines"] = true;
-    };
-
-    if(bf["write_basin_outlines_per_order"]){
+    if (bf["write_basin_outlines_as_polygon"])
+    {
         bf["write_basin_outlines"] = true;
     }
+
+    if (bf["write_basin_outlines_per_order"])
+    {
+        bf["write_basin_outlines"] = true;
+    }
+
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
@@ -686,6 +721,118 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Step 2b — Optional side-tributary basin extraction from supplied points
+    // -------------------------------------------------------------------------
+    if (bf["extract_side_tributary_basins_from_points"])
+    {
+        std::cout << "\n--- Side-tributary basin extraction ---\n";
+
+        lsdtt::lsdtt_side_tributary_basin_options side_opts;
+        side_opts.input_points_path =
+            pp.add_read_path_if_needed(sf["side_tributary_points_fname"]);
+        side_opts.input_points_layer =
+            sf["side_tributary_points_layer"];
+        side_opts.minimum_contributing_pixels =
+            ifs["side_tributary_minimum_contributing_pixels"];
+        side_opts.reject_incomplete_basins =
+            bf["reject_incomplete_side_tributary_basins"];
+        side_opts.spatial_index =
+            bf["calculate_spatial_index"];
+
+        std::cout << "Input point file             : "
+                  << side_opts.input_points_path << "\n";
+        std::cout << "Input layer                  : "
+                  << (side_opts.input_points_layer.empty()
+                      ? "(first layer)"
+                      : side_opts.input_points_layer) << "\n";
+        std::cout << "Minimum contributing pixels  : "
+                  << side_opts.minimum_contributing_pixels << "\n";
+        std::cout << "Reject incomplete basins     : "
+                  << (side_opts.reject_incomplete_basins ? "true" : "false")
+                  << "\n";
+
+        lsdtt::lsdtt_side_tributary_basin_result side_result;
+
+        try
+        {
+            side_result =
+                lsdtt::extract_side_tributary_basins(
+                    *flow,
+                    side_opts
+                );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: side-tributary basin extraction failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "Accepted side-tributary basins: "
+                  << side_result.accepted_basins.size() << "\n";
+
+        if (bf["write_side_tributary_outlets"])
+        {
+            const std::string output_file =
+                pp.make_output_path(
+                    "_side_tributary_outlets",
+                    lsdtt::output_extension(side_tributary_point_format)
+                );
+
+            std::cout << "Writing side-tributary outlets: "
+                      << output_file << "\n";
+
+            try
+            {
+                lsdtt::write_side_tributary_outlets(
+                    *flow,
+                    side_result.accepted_basins,
+                    output_file,
+                    side_tributary_point_format,
+                    "side_tributary_outlets",
+                    bf["calculate_spatial_index"]
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing side-tributary outlets failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        if (bf["write_side_tributary_basin_outlines"])
+        {
+            const std::string output_file =
+                pp.make_output_path(
+                    "_side_tributary_basin_outlines",
+                    lsdtt::output_extension(side_tributary_vector_format)
+                );
+
+            std::cout << "Writing side-tributary basin outlines: "
+                      << output_file << "\n";
+
+            try
+            {
+                lsdtt::write_side_tributary_basin_outlines(
+                    *flow,
+                    side_result.accepted_basins,
+                    output_file,
+                    side_tributary_vector_format,
+                    "side_tributary_basin_outlines",
+                    bf["calculate_spatial_index"]
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing side-tributary basin outlines failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Step 3 — Extract source pixels
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source extraction ---\n";
@@ -727,7 +874,8 @@ int main(int argc, char* argv[])
     std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
     try
     {
-        channel_network = lsdtt::make_junction_network_base(*flow, source_flats, jn_opts);
+        channel_network =
+            lsdtt::make_junction_network_base(*flow, source_flats, jn_opts);
     }
     catch (const std::exception& e)
     {
@@ -749,7 +897,7 @@ int main(int argc, char* argv[])
         const std::string extension =
             lsdtt::output_extension(cn_points_output_format);
         const std::string output_file =
-            pp.make_output_path( "_channel_network_points", extension);
+            pp.make_output_path("_channel_network_points", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -776,7 +924,7 @@ int main(int argc, char* argv[])
         const std::string extension =
             lsdtt::output_extension(cn_lines_output_format);
         const std::string output_file =
-            pp.make_output_path( "_channel_network_lines", extension);
+            pp.make_output_path("_channel_network_lines", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -797,14 +945,13 @@ int main(int argc, char* argv[])
         }
     }
 
-
     if (bf["write_channel_network_junctions"])
     {
         std::cout << "\n--- Writing channel network junctions ---\n";
         const std::string extension =
             lsdtt::output_extension(cn_junctions_output_format);
         const std::string output_file =
-            pp.make_output_path( "_channel_network_junctions", extension);
+            pp.make_output_path("_channel_network_junctions", extension);
 
         std::cout << "Writing: " << output_file << "\n";
 
@@ -819,7 +966,7 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "FATAL: writing channel network points failed: "
+            std::cerr << "FATAL: writing channel network junctions failed: "
                       << e.what() << "\n";
             return 1;
         }
@@ -850,8 +997,7 @@ int main(int argc, char* argv[])
                       << basin_outlet_file_path << "\n";
 
             // -----------------------------------------------------------------
-            // Coordinate-system and bounding-box diagnostics (printed before
-            // the load so they appear even if the load throws).
+            // Coordinate-system and bounding-box diagnostics
             // -----------------------------------------------------------------
             {
                 const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
@@ -962,10 +1108,10 @@ int main(int argc, char* argv[])
             if (bf["write_basin_outlet_points"])
             {
                 const std::string output_file =
-                    pp.make_output_path( "_basin_outlet_points", ".fgb");
+                    pp.make_output_path("_basin_outlet_points", ".fgb");
 
                 std::cout << "Writing requested basin outlet points: "
-                        << output_file << "\n";
+                          << output_file << "\n";
 
                 try
                 {
@@ -1005,9 +1151,6 @@ int main(int argc, char* argv[])
 
                     for (const auto& pt : requested_outlets)
                     {
-                        // Only write features that actually have valid raster-CRS x/y.
-                        // For coordinate_transform_failed rows, x/y are not valid local
-                        // coordinates so we omit them from the FlatGeobuf.
                         if (pt.status ==
                             lsdtt::lsdtt_point_input_status::coordinate_transform_failed)
                         {
@@ -1022,8 +1165,8 @@ int main(int argc, char* argv[])
 
                         if (pt.has_original_coordinates)
                         {
-                            fields.emplace_back(pt.original_x);  // longitude
-                            fields.emplace_back(pt.original_y);  // latitude
+                            fields.emplace_back(pt.original_x);
+                            fields.emplace_back(pt.original_y);
                         }
                         else
                         {
@@ -1045,10 +1188,9 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "Warning: failed to write requested basin outlet points: "
-                            << e.what() << "\n";
+                              << e.what() << "\n";
                 }
             }
-
 
             // Per-point projected coordinates and inside/outside status
             {
@@ -1104,16 +1246,12 @@ int main(int argc, char* argv[])
                 {
                     case lsdtt::lsdtt_snap_status::success:
                         return std::string("success");
-
                     case lsdtt::lsdtt_snap_status::input_out_of_bounds:
                         return std::string("input_out_of_bounds");
-
                     case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
                         return std::string("input_invalid_flow_cell");
-
                     case lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window:
                         return std::string("threshold_not_found_in_search_window");
-
                     case lsdtt::lsdtt_snap_status::outlet_reached_before_threshold:
                         return std::string("outlet_reached_before_threshold");
                 }
@@ -1262,51 +1400,67 @@ int main(int argc, char* argv[])
         // ---------------------------------------------------------------------
         // Step 7 — Basin filtering
         // ---------------------------------------------------------------------
-        if(bf["filter_basins_by_stream_order"]){
+        if (bf["filter_basins_by_stream_order"])
+        {
             std::cout << "\n--- Filtering out basins by stream order ---\n";
-            std::cout << "min stream order is: " << ifs["basins_min_stream_order"] << "\n";
-            std::cout << "max stream order is: " << ifs["basins_max_stream_order"] << "\n";
+            std::cout << "min stream order is: "
+                      << ifs["basins_min_stream_order"] << "\n";
+            std::cout << "max stream order is: "
+                      << ifs["basins_max_stream_order"] << "\n";
             basin_manager.filter_by_stream_order(
                 ifs["basins_min_stream_order"],
                 ifs["basins_max_stream_order"]
             );
-            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+            std::cout << "There are now " << basin_manager.size()
+                      << " basins left.\n";
         }
 
-        if(bf["filter_basins_by_area"]){
-            std::cout << "\n--- Filtering out basins by stream order ---\n";
-            std::cout << "min area pixels is: " << ifs["basins_min_area_pixels"] << "\n";
-            std::cout << "max area pixels is: " << ifs["basins_max_area_pixels"] << "\n";
-            basin_manager.filter_by_stream_order(
+        if (bf["filter_basins_by_area"])
+        {
+            std::cout << "\n--- Filtering out basins by area ---\n";
+            std::cout << "min area pixels is: "
+                      << ifs["basins_min_area_pixels"] << "\n";
+            std::cout << "max area pixels is: "
+                      << ifs["basins_max_area_pixels"] << "\n";
+            basin_manager.filter_by_area(
                 ifs["basins_min_area_pixels"],
                 ifs["basins_max_area_pixels"]
             );
-            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+            std::cout << "There are now " << basin_manager.size()
+                      << " basins left.\n";
         }
-        
-        if(bf["filter_incomplete_basins"]){
+
+        if (bf["filter_incomplete_basins"])
+        {
             std::cout << "\n--- Filtering out incomplete basins ---\n";
             basin_manager.filter_incomplete();
-            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+            std::cout << "There are now " << basin_manager.size()
+                      << " basins left.\n";
         }
 
-        if(bf["filter_all_but_largest_basin"]){
+        if (bf["filter_all_but_largest_basin"])
+        {
             std::cout << "\n--- Filtering out all basins, keeping the largest only ---\n";
             basin_manager.filter_largest();
-            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+            std::cout << "There are now " << basin_manager.size()
+                      << " basins left.\n";
         }
 
-        if(bf["filter_nested_basins"]){
+        if (bf["filter_nested_basins"])
+        {
             std::cout << "\n--- Filtering out all nested basins ---\n";
             basin_manager.filter_nested();
-            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
+            std::cout << "There are now " << basin_manager.size()
+                      << " basins left.\n";
         }
 
-        if(bf["filter_nested_by_stream_order"]){
+        if (bf["filter_nested_by_stream_order"])
+        {
             std::cout << "\n--- Filtering out all nested basins by stream order ---\n";
             basin_manager.filter_nested_by_stream_order();
-            std::cout << "There are now " << basin_manager.size() << " basins left.\n";
-        }      
+            std::cout << "There are now " << basin_manager.size()
+                      << " basins left.\n";
+        }
 
         // ---------------------------------------------------------------------
         // Step 8 — Basin writing
@@ -1318,19 +1472,15 @@ int main(int argc, char* argv[])
             const std::string extension =
                 lsdtt::output_extension(basin_outline_lines_format);
 
- 
-
-            // Writing of basin outlines as polylines but not per order
-            if (!bf["write_basin_outlines_as_polygon"] && !bf["write_basin_outlines_per_order"])
+            if (!bf["write_basin_outlines_as_polygon"] &&
+                !bf["write_basin_outlines_per_order"])
             {
-                const std::string output_file = pp.make_output_path( "_junction_basin_outlines", extension);
+                const std::string output_file =
+                    pp.make_output_path("_junction_basin_outlines", extension);
                 std::cout << "Writing: " << output_file << "\n";
 
-                try{
-                    // Writes one line feature per basin outline.
-                    // Schema contains one field:
-                    //   junction_number  (int64)
-                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                try
+                {
                     basin_manager.write_basins_to_vector_lines(
                         output_file,
                         basin_outline_lines_format,
@@ -1341,22 +1491,20 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "FATAL: writing basin outline vectors failed: "
-                            << e.what() << "\n";
+                              << e.what() << "\n";
                     return 1;
                 }
             }
 
-            // Writing of basin outlines as polylines and per order
-            if (!bf["write_basin_outlines_as_polygon"] && bf["write_basin_outlines_per_order"])
+            if (!bf["write_basin_outlines_as_polygon"] &&
+                bf["write_basin_outlines_per_order"])
             {
-                const std::string output_file = pp.make_output_path( "_junction_basin_outlines", extension);
+                const std::string output_file =
+                    pp.make_output_path("_junction_basin_outlines", extension);
                 std::cout << "Writing: " << output_file << "\n";
 
-                try{
-                    // Writes one line feature per basin outline.
-                    // Schema contains one field:
-                    //   junction_number  (int64)
-                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                try
+                {
                     basin_manager.write_basins_to_vector_lines_by_order(
                         output_file,
                         basin_outline_lines_format,
@@ -1367,22 +1515,20 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "FATAL: writing basin outline vectors failed: "
-                            << e.what() << "\n";
+                              << e.what() << "\n";
                     return 1;
                 }
             }
 
-            // Writing of basin outlines as polygon but not per order
-            if (bf["write_basin_outlines_as_polygon"] && !bf["write_basin_outlines_per_order"])
+            if (bf["write_basin_outlines_as_polygon"] &&
+                !bf["write_basin_outlines_per_order"])
             {
-                const std::string output_file = pp.make_output_path( "_junction_basin_polygons", extension);
+                const std::string output_file =
+                    pp.make_output_path("_junction_basin_polygons", extension);
                 std::cout << "Writing: " << output_file << "\n";
 
-                try{
-                    // Writes one polygon feature per basin outline.
-                    // Schema contains one field:
-                    //   junction_number  (int64)
-                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                try
+                {
                     basin_manager.write_basins_to_vector_polygons(
                         output_file,
                         basin_outline_lines_format,
@@ -1393,23 +1539,20 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "FATAL: writing basin outline vectors failed: "
-                            << e.what() << "\n";
+                              << e.what() << "\n";
                     return 1;
                 }
-
             }
 
-            // Writing of basin outlines as polygon and per order
-            if (bf["write_basin_outlines_as_polygon"] && bf["write_basin_outlines_per_order"])
+            if (bf["write_basin_outlines_as_polygon"] &&
+                bf["write_basin_outlines_per_order"])
             {
-                const std::string output_file = pp.make_output_path( "_junction_basin_polygons", extension);
+                const std::string output_file =
+                    pp.make_output_path("_junction_basin_polygons", extension);
                 std::cout << "Writing: " << output_file << "\n";
 
-                try{
-                    // Writes one polygon feature per basin outline.
-                    // Schema contains one field:
-                    //   junction_number  (int64)
-                    // Each feature’s junction_number is taken from lsdtt_junction_basin_cpu.
+                try
+                {
                     basin_manager.write_basins_to_vector_polygons_by_order(
                         output_file,
                         basin_outline_lines_format,
@@ -1420,7 +1563,7 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "FATAL: writing basin outline vectors failed: "
-                            << e.what() << "\n";
+                              << e.what() << "\n";
                     return 1;
                 }
             }
@@ -1431,7 +1574,7 @@ int main(int argc, char* argv[])
             std::cout << "\n--- Basin raster output ---\n";
 
             const std::string output_file =
-                pp.make_output_path( "_junction_basins", ".tif");
+                pp.make_output_path("_junction_basins", ".tif");
 
             std::cout << "Writing: " << output_file << "\n";
 
@@ -1450,7 +1593,7 @@ int main(int argc, char* argv[])
             catch (const std::exception& e)
             {
                 std::cerr << "FATAL: writing basin raster failed: "
-                        << e.what() << "\n";
+                          << e.what() << "\n";
                 return 1;
             }
         }
@@ -1458,42 +1601,40 @@ int main(int argc, char* argv[])
         if (bf["write_basins_datamap"])
         {
             std::cout << "\n--- Basin datamap output ---\n";
- 
+
             const std::string output_file =
-                pp.make_output_path( "_junction_basins_datamap", ".csv");
- 
+                pp.make_output_path("_junction_basins_datamap", ".csv");
+
             std::cout << "Writing: " << output_file << "\n";
- 
+
             try
             {
-                // Build one row per surviving basin.
-                // Columns: junction_number, outlet_flat_index
                 const std::vector<std::string> headers = {
                     "junction_number",
                     "outlet_flat_index"
                 };
- 
+
                 std::vector<std::vector<std::string>> rows;
                 rows.reserve(basin_manager.size());
- 
+
                 for (std::size_t i = 0; i < basin_manager.size(); ++i)
                 {
                     const lsdtt::lsdtt_junction_basin_cpu& basin =
                         basin_manager.basin_at(i);
- 
+
                     rows.push_back({
                         std::to_string(basin.get_junction_number()),
                         std::to_string(basin.get_basin_outlet_flat_index())
                     });
                 }
- 
+
                 lsdtt::lsdtt_data_loader datamap_loader;
                 datamap_loader.write_csv(output_file, headers, rows);
             }
             catch (const std::exception& e)
             {
                 std::cerr << "FATAL: writing basin datamap failed: "
-                        << e.what() << "\n";
+                          << e.what() << "\n";
                 return 1;
             }
         }

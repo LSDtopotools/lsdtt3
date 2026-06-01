@@ -551,6 +551,131 @@ void write_candidate_junction_points(
 );
 
 // ---------------------------------------------------------------------------
+// Per-reach divergence diagnostic
+//
+// Compares each vector edge (between two vector junctions that both match a DEM
+// junction) against the DEM channel actually walked between those matched DEM
+// junctions.  Purely geometric triggers (the road/ditch morphology is NOT used,
+// because a road ditch has a channel-like curvature signature and is not always
+// present); curvature and channel score are recorded for confirmation only.
+// ---------------------------------------------------------------------------
+enum class ReachStatus
+{
+    ok,                  // DEM channel tracks the vector edge closely
+    diverged,            // DEM channel reaches the downstream junction but takes
+                         // a large, sustained lateral detour (road capture etc.)
+    topology_break,      // DEM channel never reaches the downstream matched
+                         // junction (routes to a different outlet)
+    unmatched_endpoint   // one or both vector junctions have no DEM counterpart
+                         // within match_radius (a junction-gap case)
+};
+
+inline const char* reach_status_str(ReachStatus s)
+{
+    switch (s)
+    {
+        case ReachStatus::ok:                 return "ok";
+        case ReachStatus::diverged:           return "diverged";
+        case ReachStatus::topology_break:     return "topology_break";
+        case ReachStatus::unmatched_endpoint: return "unmatched_endpoint";
+    }
+    return "unknown";
+}
+
+struct reach_divergence_params
+{
+    // A vector junction matches a DEM junction only within this radius (m).
+    // <= 0 defaults to 5 * cell_size at resolve time.
+    double match_radius_m = -1.0;
+
+    // Lateral separation (m) above which a DEM pixel counts as "off the vector".
+    // Set above typical digitising offset so a vector that merely fails to sit
+    // exactly on the DEM thalweg does not read as diverged.
+    double separation_threshold_m = 25.0;
+
+    // Geometric flags (a reach is "diverged" if EITHER is exceeded).
+    double diverged_detour_ratio       = 1.5;    // dem_len / vector_len
+    double diverged_min_divergence_m   = 100.0;  // sustained off-vector length
+
+    // Severity = max_separation_m / separation_threshold_m
+    //          + severity_detour_weight * max(0, detour_ratio - 1).
+    double severity_detour_weight = 5.0;
+
+    // Safety cap on the downstream pixel walk before declaring topology_break.
+    std::int64_t max_walk_pixels = 2000000;
+};
+
+// One vector edge / DEM reach comparison.
+struct ReachDivergenceRecord
+{
+    int    vector_edge_id = -1;
+    int    vector_jid_up  = -1;   // upstream vector junction
+    int    vector_jid_dn  = -1;   // downstream (receiver) vector junction
+    int    dem_jid_up     = -1;   // matched DEM junction (upstream)
+    int    dem_jid_dn     = -1;   // matched DEM junction (downstream)
+
+    double match_dist_up_m = -1.0;
+    double match_dist_dn_m = -1.0;
+
+    double vector_length_m   = 0.0;
+    double dem_path_length_m  = 0.0;
+    double detour_ratio       = 0.0;   // dem_path_length / vector_length
+
+    double vector_gradient = 0.0;      // (z_up - z_dn) / vector_length
+    double dem_gradient    = 0.0;      // (z_up - z_dn) / dem_path_length
+    double gradient_ratio  = 0.0;      // dem_gradient / vector_gradient
+
+    double max_separation_m   = 0.0;
+    double mean_separation_m  = 0.0;
+    double divergence_length_m = 0.0;  // DEM length with separation > threshold
+
+    // Dimensionless badness score for ranking/symbolising (0 = on the vector).
+    double severity = 0.0;
+
+    // Logged for confirmation only — never used to classify.
+    double mean_plan_curvature = 0.0;
+    double mean_channel_score  = 0.0;
+
+    ReachStatus status = ReachStatus::ok;
+
+    std::vector<lsdtt_xy> dem_reach_xy;     // walked DEM channel polyline
+    std::vector<lsdtt_xy> vector_reach_xy;  // vector edge polyline
+};
+
+// ---------------------------------------------------------------------------
+// compute_reach_divergence
+//
+// Builds one ReachDivergenceRecord per oriented vector edge.  plan_curvature
+// and channel_score are optional full-raster arrays (row-major, same size as
+// the DEM); pass nullptr to skip (the corresponding means are left at 0).
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::vector<ReachDivergenceRecord>
+compute_reach_divergence(
+    const lsdtt_raster_cpu&                 dem,
+    const lsdtt_flow_base&                  flow,
+    const lsdtt_junction_network_base&      dem_network,
+    const lsdtt_vector_to_junction_network& vector_network,
+    const reach_divergence_params&          params         = {},
+    const std::vector<float>*               plan_curvature = nullptr,
+    const std::vector<float>*               channel_score  = nullptr
+);
+
+// ---------------------------------------------------------------------------
+// write_reach_divergence
+//
+// Writes two line layers (<prefix>_dem_reach + <prefix>_vector_reach) carrying
+// the full metric set, plus a <prefix>.csv table.  fmt selects fgb / gpkg / csv
+// for the vector layers (csv falls back to fgb geometry plus the CSV table).
+// ---------------------------------------------------------------------------
+void write_reach_divergence(
+    const std::vector<ReachDivergenceRecord>& records,
+    const lsdtt_raster_meta&                  meta,
+    const std::string&                        prefix,
+    point_output_format                       fmt,
+    bool                                      spatial_index = false
+);
+
+// ---------------------------------------------------------------------------
 // repair_candidate_junctions
 //
 // Phase-based repair. Repairs the supplied candidate records in order,

@@ -31,6 +31,7 @@
 #include "../core/lsdtt_raster_meta.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
+#include "../utils/lsdtt_linear_algebra.hpp"
 #include "lsdtt_least_cost_path.hpp"
 #include "lsdtt_proximity_cpu.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
@@ -1537,6 +1538,310 @@ void write_candidate_junction_points(
 }
 
 
+// ---------------------------------------------------------------------------
+// compute_reach_divergence
+// ---------------------------------------------------------------------------
+std::vector<ReachDivergenceRecord>
+compute_reach_divergence(
+    const lsdtt_raster_cpu&                 dem,
+    const lsdtt_flow_base&                  flow,
+    const lsdtt_junction_network_base&      dem_network,
+    const lsdtt_vector_to_junction_network& vector_network,
+    const reach_divergence_params&          params,
+    const std::vector<float>*               plan_curvature,
+    const std::vector<float>*               channel_score)
+{
+    std::vector<ReachDivergenceRecord> out;
+
+    const lsdtt_raster_meta&  meta  = dem.get_meta();
+    const std::vector<float>& zdata = dem.get_data();
+    const int    n_cols = meta.n_cols;
+    const double match_radius =
+        (params.match_radius_m > 0.0) ? params.match_radius_m
+                                      : 5.0 * meta.cell_size;
+    const double sep_thresh = params.separation_threshold_m;
+
+    const std::vector<dem_candidate_junction_view> dem_views =
+        build_dem_candidate_junction_views(dem_network, dem);
+
+    auto flat_to_xy = [&](std::int64_t flat) -> lsdtt_xy
+    {
+        const int row = static_cast<int>(flat / n_cols);
+        const int col = static_cast<int>(flat % n_cols);
+        return cell_center_from_row_col(meta, row, col);
+    };
+    auto z_of = [&](std::int64_t flat) -> double
+    {
+        return static_cast<double>(zdata[static_cast<std::size_t>(flat)]);
+    };
+    auto sample = [&](const std::vector<float>* arr, std::int64_t flat) -> double
+    {
+        if (arr == nullptr) return 0.0;
+        if (flat < 0 || flat >= static_cast<std::int64_t>(arr->size())) return 0.0;
+        const float v = (*arr)[static_cast<std::size_t>(flat)];
+        return std::isfinite(v) ? static_cast<double>(v) : 0.0;
+    };
+    auto polyline_len = [](const std::vector<lsdtt_xy>& xy) -> double
+    {
+        double L = 0.0;
+        for (std::size_t i = 1; i < xy.size(); ++i)
+            L += std::hypot(xy[i].x - xy[i - 1].x, xy[i].y - xy[i - 1].y);
+        return L;
+    };
+    // Minimum distance from p to the polyline xy.
+    auto sep_to_polyline = [](const lsdtt_xy& p,
+                              const std::vector<lsdtt_xy>& xy) -> double
+    {
+        if (xy.empty()) return 0.0;
+        if (xy.size() == 1) return std::hypot(p.x - xy[0].x, p.y - xy[0].y);
+        double best = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 1; i < xy.size(); ++i)
+        {
+            const double d = point_to_segment_distance(
+                p.x, p.y, xy[i - 1].x, xy[i - 1].y, xy[i].x, xy[i].y);
+            if (d < best) best = d;
+        }
+        return best;
+    };
+
+    const auto& vjns = vector_network.junctions();
+    const auto& veds = vector_network.edges();
+    const std::int32_t n_vjn = vector_network.n_junctions();
+
+    for (const auto& E : veds)
+    {
+        if (E.upstream_junction < 0 || E.receiver_junction < 0)   continue;
+        if (E.upstream_junction >= n_vjn || E.receiver_junction >= n_vjn) continue;
+        if (E.xy.size() < 2) continue;
+
+        const auto& vj_up = vjns[static_cast<std::size_t>(E.upstream_junction)];
+        const auto& vj_dn = vjns[static_cast<std::size_t>(E.receiver_junction)];
+
+        ReachDivergenceRecord r;
+        r.vector_edge_id  = E.edge_id;
+        r.vector_jid_up   = E.upstream_junction;
+        r.vector_jid_dn   = E.receiver_junction;
+        r.vector_reach_xy = E.xy;
+        r.vector_length_m =
+            (E.length_metres > 0.0) ? E.length_metres : polyline_len(E.xy);
+
+        const double vdrop = vj_up.elevation - vj_dn.elevation;
+        if (r.vector_length_m > 0.0)
+            r.vector_gradient = vdrop / r.vector_length_m;
+
+        // Match both vector endpoints to DEM junctions.
+        const int dj_up = find_nearest_dem_junction(
+            lsdtt_xy{vj_up.x, vj_up.y}, dem_views, r.match_dist_up_m);
+        const int dj_dn = find_nearest_dem_junction(
+            lsdtt_xy{vj_dn.x, vj_dn.y}, dem_views, r.match_dist_dn_m);
+        r.dem_jid_up = dj_up;
+        r.dem_jid_dn = dj_dn;
+
+        if (dj_up < 0 || dj_dn < 0 ||
+            r.match_dist_up_m > match_radius ||
+            r.match_dist_dn_m > match_radius)
+        {
+            r.status = ReachStatus::unmatched_endpoint;
+            out.push_back(std::move(r));
+            continue;
+        }
+
+        // Walk the DEM channel downstream from the upstream matched junction.
+        const std::int64_t up_flat = dem_network.flat_of_junction(dj_up);
+        const std::int64_t dn_flat = dem_network.flat_of_junction(dj_dn);
+
+        std::vector<std::int64_t> walk;
+        walk.push_back(up_flat);
+        std::int64_t cur = up_flat;
+        bool reached = (cur == dn_flat);
+        std::int64_t steps = 0;
+        while (!reached && steps < params.max_walk_pixels)
+        {
+            if (!flow.is_flat_in_range(cur)) break;
+            if (flow.is_outlet(cur))         break;
+            const std::int64_t nxt = flow.receiver_of(cur);
+            if (nxt < 0 || nxt == cur)       break;
+            cur = nxt;
+            walk.push_back(cur);
+            ++steps;
+            if (cur == dn_flat) { reached = true; break; }
+        }
+
+        // Metrics over the walked DEM polyline.
+        double dem_len = 0.0, sum_sep = 0.0, max_sep = 0.0, div_len = 0.0;
+        double sum_curv = 0.0, sum_score = 0.0;
+        r.dem_reach_xy.reserve(walk.size());
+        lsdtt_xy prev_xy{0.0, 0.0};
+        for (std::size_t i = 0; i < walk.size(); ++i)
+        {
+            const lsdtt_xy p = flat_to_xy(walk[i]);
+            r.dem_reach_xy.push_back(p);
+
+            double seg = 0.0;
+            if (i > 0)
+            {
+                seg = std::hypot(p.x - prev_xy.x, p.y - prev_xy.y);
+                dem_len += seg;
+            }
+
+            const double sep = sep_to_polyline(p, E.xy);
+            sum_sep += sep;
+            if (sep > max_sep) max_sep = sep;
+            if (sep > sep_thresh) div_len += seg;
+
+            sum_curv  += sample(plan_curvature, walk[i]);
+            sum_score += sample(channel_score, walk[i]);
+            prev_xy = p;
+        }
+
+        const double n = static_cast<double>(std::max<std::size_t>(walk.size(), 1));
+        r.dem_path_length_m  = dem_len;
+        r.detour_ratio       = (r.vector_length_m > 0.0)
+                                   ? dem_len / r.vector_length_m : 0.0;
+        r.max_separation_m   = max_sep;
+        r.mean_separation_m  = sum_sep / n;
+        r.divergence_length_m = div_len;
+        r.mean_plan_curvature = sum_curv / n;
+        r.mean_channel_score  = sum_score / n;
+
+        const double ddrop = z_of(walk.front()) - z_of(walk.back());
+        if (dem_len > 0.0) r.dem_gradient = ddrop / dem_len;
+        if (std::abs(r.vector_gradient) > 1.0e-12)
+            r.gradient_ratio = r.dem_gradient / r.vector_gradient;
+
+        // Dimensionless severity for ranking/symbolising.
+        const double sep_term = (sep_thresh > 0.0)
+            ? r.max_separation_m / sep_thresh : 0.0;
+        r.severity = sep_term +
+            params.severity_detour_weight * std::max(0.0, r.detour_ratio - 1.0);
+
+        // Classify — geometric only.
+        if (!reached)
+        {
+            r.status = ReachStatus::topology_break;
+        }
+        else if (r.divergence_length_m >= params.diverged_min_divergence_m ||
+                 r.detour_ratio        >= params.diverged_detour_ratio)
+        {
+            r.status = ReachStatus::diverged;
+        }
+        else
+        {
+            r.status = ReachStatus::ok;
+        }
+
+        out.push_back(std::move(r));
+    }
+
+    return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// write_reach_divergence
+// ---------------------------------------------------------------------------
+void write_reach_divergence(
+    const std::vector<ReachDivergenceRecord>& records,
+    const lsdtt_raster_meta&                  meta,
+    const std::string&                        prefix,
+    point_output_format                       fmt,
+    bool                                      spatial_index)
+{
+    if (records.empty()) return;
+
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "edge_id", "v_jid_up", "v_jid_dn", "dem_jid_up", "dem_jid_dn",
+        "match_up_m", "match_dn_m", "vec_len_m", "dem_len_m", "detour_ratio",
+        "vec_grad", "dem_grad", "grad_ratio", "max_sep_m", "mean_sep_m",
+        "diverg_len_m", "severity", "mean_plan_curv", "mean_chan_score",
+        "status"};
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,  lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,  lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,  lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::string_type};
+
+    auto fields = [](const ReachDivergenceRecord& r)
+        -> std::vector<lsdtt_vector_field_value>
+    {
+        return {
+            static_cast<std::int64_t>(r.vector_edge_id),
+            static_cast<std::int64_t>(r.vector_jid_up),
+            static_cast<std::int64_t>(r.vector_jid_dn),
+            static_cast<std::int64_t>(r.dem_jid_up),
+            static_cast<std::int64_t>(r.dem_jid_dn),
+            r.match_dist_up_m, r.match_dist_dn_m,
+            r.vector_length_m, r.dem_path_length_m, r.detour_ratio,
+            r.vector_gradient, r.dem_gradient, r.gradient_ratio,
+            r.max_separation_m, r.mean_separation_m, r.divergence_length_m,
+            r.severity, r.mean_plan_curvature, r.mean_channel_score,
+            std::string(reach_status_str(r.status))};
+    };
+
+    const vector_output_format vfmt =
+        (fmt == point_output_format::csv)
+            ? vector_output_format::flatgeobuf
+            : convert_point_to_vector_output_format(fmt);
+
+    // A bare path without an extension makes GDAL create a directory datasource;
+    // append the format extension so a single file is written.
+    const std::string ext = output_extension(vfmt);
+
+    // DEM-walked reach polylines.
+    {
+        lsdtt_data_loader writer;
+        writer.begin_vector_write(prefix + "_dem_reach" + ext, "dem_reach",
+                                  schema, meta.crs_wkt, vfmt, spatial_index);
+        for (const auto& r : records)
+            if (r.dem_reach_xy.size() >= 2)
+                writer.write_line(r.dem_reach_xy, fields(r));
+        writer.finish_vector_write();
+    }
+
+    // Matched vector edge polylines (same attributes for side-by-side QC).
+    {
+        lsdtt_data_loader writer;
+        writer.begin_vector_write(prefix + "_vector_reach" + ext, "vector_reach",
+                                  schema, meta.crs_wkt, vfmt, spatial_index);
+        for (const auto& r : records)
+            if (r.vector_reach_xy.size() >= 2)
+                writer.write_line(r.vector_reach_xy, fields(r));
+        writer.finish_vector_write();
+    }
+
+    // CSV table (one row per reach).
+    {
+        std::vector<std::string> headers = schema.field_names;
+        std::vector<std::vector<std::string>> rows;
+        rows.reserve(records.size());
+        auto num = [](double v) {
+            std::ostringstream os; os << std::setprecision(8) << v; return os.str();
+        };
+        for (const auto& r : records)
+        {
+            rows.push_back({
+                std::to_string(r.vector_edge_id), std::to_string(r.vector_jid_up),
+                std::to_string(r.vector_jid_dn), std::to_string(r.dem_jid_up),
+                std::to_string(r.dem_jid_dn), num(r.match_dist_up_m),
+                num(r.match_dist_dn_m), num(r.vector_length_m),
+                num(r.dem_path_length_m), num(r.detour_ratio),
+                num(r.vector_gradient), num(r.dem_gradient), num(r.gradient_ratio),
+                num(r.max_separation_m), num(r.mean_separation_m),
+                num(r.divergence_length_m), num(r.severity),
+                num(r.mean_plan_curvature),
+                num(r.mean_channel_score), std::string(reach_status_str(r.status))});
+        }
+        lsdtt_data_loader loader;
+        loader.write_csv(prefix + ".csv", headers, rows);
+    }
+}
 
 
 // ---------------------------------------------------------------------------

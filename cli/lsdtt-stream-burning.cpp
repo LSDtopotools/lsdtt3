@@ -211,6 +211,51 @@ int main(int argc, char* argv[])
         "Output format for the junction comparison point file.",
         "Allowed values: flatgeobuf, fgb, gpkg, csv."};
 
+    bool_default_map["write_reach_divergence"] = false;
+    help_map["write_reach_divergence"] = {"bool","false",
+        "Diagnostic: compare each vector edge with the DEM channel walked "
+        "between the matched DEM junctions.",
+        "For every vector edge whose both endpoints match a DEM junction, walks "
+        "the DEM channel downstream and records geometric divergence metrics "
+        "(detour ratio, lateral separation, gradient ratio) plus the reach "
+        "status: ok / diverged / topology_break / unmatched_endpoint. Writes "
+        "<write_fname>_reach_divergence_dem_reach + _vector_reach line layers and "
+        "_reach_divergence.csv. Detection is purely geometric; mean channel "
+        "score is logged for confirmation only (a road ditch scores like a "
+        "channel). Only used when stream_burn_mode is snap_to_network."};
+
+    float_default_map["reach_divergence_separation_m"] = 25.0f;
+    help_map["reach_divergence_separation_m"] = {"float","25.0",
+        "Lateral separation [m] above which a DEM channel pixel counts as off "
+        "the vector edge.",
+        "Set above typical digitising offset so a vector that merely fails to "
+        "sit on the DEM thalweg is not flagged. Drives divergence_length_m and "
+        "the severity score. Only used when write_reach_divergence is true."};
+
+    float_default_map["reach_divergence_min_length_m"] = 100.0f;
+    help_map["reach_divergence_min_length_m"] = {"float","100.0",
+        "Sustained off-vector length [m] that flags a reach as diverged.",
+        "A reach is 'diverged' if its divergence_length_m exceeds this OR its "
+        "detour ratio exceeds reach_divergence_detour_ratio. Only used when "
+        "write_reach_divergence is true."};
+
+    float_default_map["reach_divergence_detour_ratio"] = 1.5f;
+    help_map["reach_divergence_detour_ratio"] = {"float","1.5",
+        "Detour ratio (DEM path length / vector length) that flags a reach as "
+        "diverged.",
+        "Secondary trigger alongside reach_divergence_min_length_m. Only used "
+        "when write_reach_divergence is true."};
+
+    float_default_map["reach_divergence_match_radius_m"] = 50.0f;
+    help_map["reach_divergence_match_radius_m"] = {"float","50.0",
+        "Max distance [m] for matching a vector junction to a DEM junction in "
+        "the reach diagnostic.",
+        "A vector edge endpoint with no DEM junction within this radius makes "
+        "the reach status 'unmatched_endpoint'. DEM confluences are offset from "
+        "vector vertices, so this is generous by default (cf. "
+        "junction_tolerance_m in the repair). Only used when "
+        "write_reach_divergence is true."};
+
     // --- snap_to_network: junction gap repair ---
     bool_default_map["repair_junction_gaps"] = false;
     help_map["repair_junction_gaps"] = {"bool","false",
@@ -1334,6 +1379,94 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     else if (burn_mode == lsdtt::stream_burn_mode::snap_to_network)
     {
+        // ---------------------------------------------------------------------
+        // Per-reach divergence diagnostic (optional)
+        //
+        // Runs on the as-built DEM network, before any repair, so the metrics
+        // describe the raw routing divergence. Geometric triggers only; the
+        // channel score is logged for confirmation, never to classify.
+        // ---------------------------------------------------------------------
+        if (bf["write_reach_divergence"])
+        {
+            std::cout << "\n--- Reach divergence diagnostic ---\n";
+
+            // Channel score raster (logged only). Reuse find_channel_candidates.
+            std::vector<float> rd_channel_scores;
+            {
+                lsdtt::channel_candidate_request cc_req;
+                const double cs = routed_dem.get_meta().cell_size;
+                cc_req.channel_lambda_min_metres = cs * 3.0;
+                cc_req.channel_lambda_max_metres = cs * 10.0;
+                cc_req.channel_n_scales           = std::max(1, ifs["channel_n_scales"]);
+                cc_req.weight_persistent          = 0.7;
+                cc_req.weight_depth               = 0.3;
+                cc_req.weight_slope               = 0.0;
+                cc_req.use_hessian_filter         = true;
+                cc_req.positive_curvature_is_good = true;
+                try
+                {
+                    lsdtt::channel_candidate_result cc =
+                        lsdtt::find_channel_candidates(routed_dem, cc_req);
+                    rd_channel_scores = cc.score.get_data();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: channel score for reach divergence "
+                                 "failed (" << e.what() << "); logging zeros.\n";
+                }
+            }
+
+            lsdtt::reach_divergence_params rd_params;
+            rd_params.separation_threshold_m =
+                static_cast<double>(ff["reach_divergence_separation_m"]);
+            rd_params.match_radius_m =
+                static_cast<double>(ff["reach_divergence_match_radius_m"]);
+            rd_params.diverged_min_divergence_m =
+                static_cast<double>(ff["reach_divergence_min_length_m"]);
+            rd_params.diverged_detour_ratio =
+                static_cast<double>(ff["reach_divergence_detour_ratio"]);
+
+            std::vector<lsdtt::ReachDivergenceRecord> reaches =
+                lsdtt::compute_reach_divergence(
+                    routed_dem, *flow, *dem_network, vector_network, rd_params,
+                    nullptr,
+                    rd_channel_scores.empty() ? nullptr : &rd_channel_scores);
+
+            int n_ok = 0, n_div = 0, n_break = 0, n_unmatched = 0;
+            for (const auto& r : reaches)
+            {
+                switch (r.status)
+                {
+                    case lsdtt::ReachStatus::ok:                 ++n_ok; break;
+                    case lsdtt::ReachStatus::diverged:           ++n_div; break;
+                    case lsdtt::ReachStatus::topology_break:     ++n_break; break;
+                    case lsdtt::ReachStatus::unmatched_endpoint: ++n_unmatched; break;
+                }
+            }
+            std::cout << "Reaches: " << reaches.size()
+                      << "  (ok=" << n_ok << ", diverged=" << n_div
+                      << ", topology_break=" << n_break
+                      << ", unmatched=" << n_unmatched << ")\n";
+
+            const std::string rd_prefix =
+                pp.get_full_write_path() + "_reach_divergence";
+            lsdtt::point_output_format rd_fmt =
+                lsdtt::resolve_point_output_format(
+                    sf["junction_comparison_output_format"]);
+            try
+            {
+                lsdtt::write_reach_divergence(
+                    reaches, routed_dem.get_meta(), rd_prefix, rd_fmt);
+                std::cout << "Wrote reach divergence diagnostic: "
+                          << rd_prefix << "_dem_reach / _vector_reach / .csv\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: writing reach divergence failed: "
+                          << e.what() << "\n";
+            }
+        }
+
         std::cout << "\n--- Finding candidate junctions (phase 00) ---\n";
 
         lsdtt::candidate_junction_search_params cj_params;
