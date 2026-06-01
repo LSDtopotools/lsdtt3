@@ -1214,8 +1214,7 @@ int main(int argc, char* argv[])
             for (const std::string& method_str : methods)
             {
                 // Build the path to the slope_degrees raster written in Step 3.
-                const std::string input_path =
-                    out_path(pp, polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str));
+                const std::string input_path = pp.make_output_path(polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str));
 
                 std::cout << "\nOpening slope degrees raster: " << input_path << "\n";
 
@@ -1252,7 +1251,7 @@ int main(int argc, char* argv[])
                     const std::string suffix =
                         "_" + method_str + "_slope_threshold_"
                         + std::to_string(static_cast<int>(threshold)) + ".tif";
-                    const std::string o = out_path(pp, suffix);
+                    const std::string o = pp.make_output_path(suffix);
 
                     std::cout << "  Writing: " << o << "\n";
                     slope_loader.write_full(
