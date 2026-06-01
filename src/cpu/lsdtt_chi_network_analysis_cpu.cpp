@@ -770,13 +770,26 @@ private:
         const float z_down =
             result_.fitted_elevation[static_cast<std::size_t>(down_local)];
 
+        const bool up_already_assigned =
+            fitted_assigned_[static_cast<std::size_t>(up_local)] != 0u;
+
         float z_up =
-            fitted_assigned_[static_cast<std::size_t>(up_local)]
+            up_already_assigned
                 ? result_.fitted_elevation[static_cast<std::size_t>(up_local)]
                 : result_.observed_elevation[static_cast<std::size_t>(up_local)];
 
-        // Enforce positive slope: elevation must be non-decreasing upstream.
-        if (z_up < z_down) z_up = z_down;
+        // Enforce positive slope (non-decreasing elevation upstream) only for a
+        // free upstream endpoint. If the endpoint already carries a fitted value
+        // — a split point pinned to its observed elevation, or a junction shared
+        // with another branch — that value is a hard constraint shared across
+        // segments. Clamping it here would overwrite the constraint with a
+        // different value in accept_segment and trip the consistency check. A
+        // segment that must descend to honour such a constraint (because the
+        // downstream anchor's fitted elevation overshoots it) is accepted as-is.
+        if (!up_already_assigned && z_up < z_down)
+        {
+            z_up = z_down;
+        }
 
         const double chi_down =
             static_cast<double>(result_.chi[static_cast<std::size_t>(down_local)]);
