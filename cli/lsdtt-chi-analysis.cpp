@@ -413,6 +413,14 @@ int main(int argc, char* argv[])
         "Contributing-pixel threshold used to define channel heads.",
         "Chi is computed only on pixels upstream of channel heads."};
 
+    int_default_map["minimum_channel_pixels"] = 20;
+    help_map["minimum_channel_pixels"] = {"int","20",
+        "Reject basins whose extracted channel has fewer than this many pixels.",
+        "After chi extraction, any basin with fewer than this number of chi "
+        "network nodes (channel pixels) is discarded before fitting, disorder, "
+        "and inversion. Very short channels cannot be segmented meaningfully and "
+        "can destabilise fitting. Set to 0 or 1 to keep all basins."};
+
     // --- Chi extraction / fitting ---
     bool_default_map["fit_chi_networks"] = false;
     help_map["fit_chi_networks"] = {"bool","false",
@@ -547,6 +555,10 @@ int main(int argc, char* argv[])
 
     const std::string snapping_method =
         to_lower_copy(sf["basin_outlet_snapping_method"]);
+    const std::size_t minimum_channel_pixels =
+        ifs["minimum_channel_pixels"] > 0
+            ? static_cast<std::size_t>(ifs["minimum_channel_pixels"])
+            : std::size_t{0};
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
     const lsdtt::vector_output_format chi_dm_lines_fmt =
@@ -733,15 +745,34 @@ int main(int argc, char* argv[])
         }
 
         std::cout << "  Extracted " << chi_dm.basins.size() << " basin(s).\n";
+
+        if (minimum_channel_pixels > 1)
+        {
+            const std::size_t n_removed =
+                lsdtt::reject_chi_basins_with_few_channel_pixels(
+                    chi_dm, minimum_channel_pixels);
+            std::cout << "  Rejected " << n_removed << " basin(s) with fewer than "
+                      << minimum_channel_pixels << " channel pixels; "
+                      << chi_dm.basins.size() << " basin(s) remain.\n";
+        }
+
         std::cout.flush();
 
-        lsdtt::write_chi_data_maps(
-            chi_dm, *flow, routed_dem,
-            pp.get_full_write_path(),
-            dm_fmt
-        );
+        if (chi_dm.basins.empty())
+        {
+            std::cerr << "Warning: no basins remain after the minimum channel "
+                         "pixel filter; skipping chi data maps.\n";
+        }
+        else
+        {
+            lsdtt::write_chi_data_maps(
+                chi_dm, *flow, routed_dem,
+                pp.get_full_write_path(),
+                dm_fmt
+            );
+        }
 
-        if (bf["write_chi_data_map_lines"])
+        if (bf["write_chi_data_map_lines"] && !chi_dm.basins.empty())
         {
             try
             {
@@ -774,9 +805,20 @@ int main(int argc, char* argv[])
             chi_opts.m_over_n = tested_mn.front();
             chi_opts.A_0 = static_cast<double>(ff["chi_A0"]);
 
-            const lsdtt::lsdtt_chi_collection_result chi_networks =
+            lsdtt::lsdtt_chi_collection_result chi_networks =
                 lsdtt::get_chi_from_outlets_zero_base_threshold(
                     *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
+
+            if (minimum_channel_pixels > 1)
+            {
+                const std::size_t n_removed =
+                    lsdtt::reject_chi_basins_with_few_channel_pixels(
+                        chi_networks, minimum_channel_pixels);
+                std::cout << "  Rejected " << n_removed
+                          << " basin(s) with fewer than " << minimum_channel_pixels
+                          << " channel pixels; " << chi_networks.basins.size()
+                          << " basin(s) remain.\n";
+            }
 
             inversion_networks.reserve(chi_networks.basins.size());
             for (const auto& basin : chi_networks.basins)
@@ -818,6 +860,16 @@ int main(int argc, char* argv[])
 
                 chi_networks = lsdtt::get_chi_from_outlets_zero_base_threshold(
                     *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
+
+                if (minimum_channel_pixels > 1)
+                {
+                    const std::size_t n_removed =
+                        lsdtt::reject_chi_basins_with_few_channel_pixels(
+                            chi_networks, minimum_channel_pixels);
+                    std::cout << "  Rejected " << n_removed
+                              << " basin(s) with fewer than "
+                              << minimum_channel_pixels << " channel pixels.\n";
+                }
 
                 std::cout << "  Chi networks extracted: "
                           << chi_networks.basins.size() << " basin(s)\n";

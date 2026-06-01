@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -59,6 +60,13 @@ struct lsdtt_side_tributary_basin_result
 {
     std::vector<std::uint8_t> traced_channel_mask;
     std::vector<lsdtt_side_tributary_basin_record> accepted_basins;
+
+    // Number of valid seed (source) points that were traced. Zero means no
+    // usable sources were found in the input vector.
+    std::size_t n_seed_points = 0;
+
+    // True if a stopping point was supplied and used to truncate the traces.
+    bool stopping_point_applied = false;
 };
 
 struct lsdtt_side_tributary_basin_options
@@ -68,6 +76,13 @@ struct lsdtt_side_tributary_basin_options
 
     int  minimum_contributing_pixels = 1000;
     bool reject_incomplete_basins    = true;
+
+    // If true, the final point in the input vector is treated as a stopping
+    // point rather than a source. Each downstream trace is truncated when it
+    // first enters a square window of half-width stopping_point_window_pixels
+    // around the stopping point.
+    bool include_stopping_point        = false;
+    int  stopping_point_window_pixels  = 5;
 
     bool spatial_index = true;
 };
@@ -92,6 +107,19 @@ void write_side_tributary_basin_outlines(
     const std::string& out_path,
     vector_output_format format,
     const std::string& layer_name = "side_tributary_basin_outlines",
+    bool spatial_index = true
+);
+
+// Write the traced main channel (the D8 flow paths from the source points down
+// to the outlet or stopping point) as line features. Each traced pixel emits one
+// segment to its receiver, so the result is the full set of channel links from
+// which side tributaries were extracted.
+void write_side_tributary_main_channel(
+    const lsdtt_flow_base& flow,
+    const std::vector<std::uint8_t>& traced_channel_mask,
+    const std::string& out_path,
+    vector_output_format format,
+    const std::string& layer_name = "side_tributary_main_channel",
     bool spatial_index = true
 );
 

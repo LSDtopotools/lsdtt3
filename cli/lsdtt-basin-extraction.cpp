@@ -233,6 +233,32 @@ int main(int argc, char* argv[])
         "to nodata or an open/out-of-domain edge according to the flow object's "
         "boundary conditions."};
 
+    bool_default_map["include_side_tributary_stopping_point"] = false;
+    help_map["include_side_tributary_stopping_point"] = {"bool","false",
+        "Treat the last point in the input vector as a stopping point.",
+        "If true, the final feature in side_tributary_points_fname is not a "
+        "source but a stopping point. Each D8 downstream trace along which side "
+        "tributaries are found is truncated when it first enters a square window "
+        "(half-width side_tributary_stopping_point_window_pixels) around this "
+        "point. This limits side-tributary extraction to the reach upstream of "
+        "the stopping point. The stopping point need not lie exactly on the "
+        "main channel."};
+
+    int_default_map["side_tributary_stopping_point_window_pixels"] = 5;
+    help_map["side_tributary_stopping_point_window_pixels"] = {"int","5",
+        "Half-width in pixels of the square stopping-point window.",
+        "Used only when include_side_tributary_stopping_point is true. A trace "
+        "is truncated at the first pixel within this many pixels (Chebyshev "
+        "distance) of the stopping point. Default 5 gives an 11x11 window."};
+
+    bool_default_map["write_side_tributary_main_channel"] = true;
+    help_map["write_side_tributary_main_channel"] = {"bool","true",
+        "Write the traced main channel as vector lines.",
+        "The main channel is the set of D8 flow paths from the source points "
+        "down to the outlet or stopping point, from which side tributaries are "
+        "extracted. Output file: <write_fname>_side_tributary_main_channel.fgb "
+        "or .gpkg. Uses side_tributary_vector_output_format."};
+
     bool_default_map["write_side_tributary_outlets"] = true;
     help_map["write_side_tributary_outlets"] = {"bool","true",
         "Write accepted side-tributary outlet points.",
@@ -736,6 +762,10 @@ int main(int argc, char* argv[])
             ifs["side_tributary_minimum_contributing_pixels"];
         side_opts.reject_incomplete_basins =
             bf["reject_incomplete_side_tributary_basins"];
+        side_opts.include_stopping_point =
+            bf["include_side_tributary_stopping_point"];
+        side_opts.stopping_point_window_pixels =
+            ifs["side_tributary_stopping_point_window_pixels"];
         side_opts.spatial_index =
             bf["calculate_spatial_index"];
 
@@ -750,6 +780,14 @@ int main(int argc, char* argv[])
         std::cout << "Reject incomplete basins     : "
                   << (side_opts.reject_incomplete_basins ? "true" : "false")
                   << "\n";
+        std::cout << "Include stopping point       : "
+                  << (side_opts.include_stopping_point ? "true" : "false")
+                  << "\n";
+        if (side_opts.include_stopping_point)
+        {
+            std::cout << "Stopping window (pixels)     : "
+                      << side_opts.stopping_point_window_pixels << "\n";
+        }
 
         lsdtt::lsdtt_side_tributary_basin_result side_result;
 
@@ -768,10 +806,61 @@ int main(int argc, char* argv[])
             return 1;
         }
 
+        if (side_result.n_seed_points == 0)
+        {
+            std::cerr << "Warning: no side-tributary source points were found in "
+                      << side_opts.input_points_path
+                      << ". No side-tributary basins will be extracted.\n";
+        }
+
+        std::cout << "Source points traced          : "
+                  << side_result.n_seed_points << "\n";
+        std::cout << "Stopping point applied        : "
+                  << (side_result.stopping_point_applied ? "true" : "false")
+                  << "\n";
         std::cout << "Accepted side-tributary basins: "
                   << side_result.accepted_basins.size() << "\n";
 
-        if (bf["write_side_tributary_outlets"])
+        if (bf["write_side_tributary_main_channel"] &&
+            side_result.n_seed_points > 0)
+        {
+            const std::string output_file =
+                pp.make_output_path(
+                    "_side_tributary_main_channel",
+                    lsdtt::output_extension(side_tributary_vector_format)
+                );
+
+            std::cout << "Writing side-tributary main channel: "
+                      << output_file << "\n";
+
+            try
+            {
+                lsdtt::write_side_tributary_main_channel(
+                    *flow,
+                    side_result.traced_channel_mask,
+                    output_file,
+                    side_tributary_vector_format,
+                    "side_tributary_main_channel",
+                    bf["calculate_spatial_index"]
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing side-tributary main channel failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        if (bf["write_side_tributary_outlets"] &&
+            side_result.accepted_basins.empty())
+        {
+            std::cerr << "Warning: no accepted side-tributary basins; "
+                      << "skipping outlet point output.\n";
+        }
+
+        if (bf["write_side_tributary_outlets"] &&
+            !side_result.accepted_basins.empty())
         {
             const std::string output_file =
                 pp.make_output_path(
@@ -801,7 +890,15 @@ int main(int argc, char* argv[])
             }
         }
 
-        if (bf["write_side_tributary_basin_outlines"])
+        if (bf["write_side_tributary_basin_outlines"] &&
+            side_result.accepted_basins.empty())
+        {
+            std::cerr << "Warning: no accepted side-tributary basins; "
+                      << "skipping basin outline output.\n";
+        }
+
+        if (bf["write_side_tributary_basin_outlines"] &&
+            !side_result.accepted_basins.empty())
         {
             const std::string output_file =
                 pp.make_output_path(

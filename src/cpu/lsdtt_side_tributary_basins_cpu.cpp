@@ -162,9 +162,16 @@ private:
 };
 
 // -----------------------------------------------------------------------------
-// Load point vector and map points to valid flow flats.
+// Load point vector and map points to flow flats, preserving file order.
+//
+// Returns one flat per in-bounds point geometry, in the order the features
+// appear in the layer. Out-of-bounds points and non-point geometries are
+// skipped. Flats are NOT validity-filtered or de-duplicated here: the caller
+// decides how to treat the stopping point (which may sit on a nodata pixel)
+// versus the source seeds. An empty return is allowed and signals that no
+// usable points were found, rather than throwing.
 // -----------------------------------------------------------------------------
-std::vector<std::int64_t> load_point_vector_as_flow_flats(
+std::vector<std::int64_t> load_point_vector_as_ordered_flats(
     const lsdtt_flow_base& flow,
     const std::string&     vector_path,
     const std::string&     requested_layer_name
@@ -240,27 +247,59 @@ std::vector<std::int64_t> load_point_vector_as_flow_flats(
             continue;
         }
 
-        const std::int64_t flat = flow.flat_index_unchecked(row, col);
+        flats.push_back(flow.flat_index_unchecked(row, col));
+    }
 
-        if (!flow.is_valid_cell(flat))
+    return flats;
+}
+
+// -----------------------------------------------------------------------------
+// Build the set of flat indices within a square window (Chebyshev half-width
+// window_pixels) around the supplied stopping-point flat. The stopping point
+// itself need not be a valid flow cell; only its row/col are used.
+// -----------------------------------------------------------------------------
+std::unordered_set<std::int64_t> build_stopping_window(
+    const lsdtt_flow_base& flow,
+    std::int64_t           stopping_flat,
+    int                    window_pixels
+)
+{
+    std::unordered_set<std::int64_t> window;
+
+    if (stopping_flat < 0 || window_pixels < 0)
+    {
+        return window;
+    }
+
+    const int stop_row = flow.row_from_flat_unchecked(stopping_flat);
+    const int stop_col = flow.col_from_flat_unchecked(stopping_flat);
+
+    const int n_rows = flow.meta().n_rows;
+    const int n_cols = flow.meta().n_cols;
+
+    for (int dr = -window_pixels; dr <= window_pixels; ++dr)
+    {
+        const int row = stop_row + dr;
+
+        if (row < 0 || row >= n_rows)
         {
             continue;
         }
 
-        flats.push_back(flat);
+        for (int dc = -window_pixels; dc <= window_pixels; ++dc)
+        {
+            const int col = stop_col + dc;
+
+            if (col < 0 || col >= n_cols)
+            {
+                continue;
+            }
+
+            window.insert(flow.flat_index_unchecked(row, col));
+        }
     }
 
-    std::sort(flats.begin(), flats.end());
-    flats.erase(std::unique(flats.begin(), flats.end()), flats.end());
-
-    if (flats.empty())
-    {
-        throw std::runtime_error(
-            "side tributary basins: no input points mapped to valid DEM cells"
-        );
-    }
-
-    return flats;
+    return window;
 }
 
 // -----------------------------------------------------------------------------
@@ -407,16 +446,63 @@ lsdtt_side_tributary_basin_result extract_side_tributary_basins(
     lsdtt_side_tributary_basin_result result;
     result.traced_channel_mask.assign(n, std::uint8_t{0});
 
-    const std::vector<std::int64_t> seed_flats =
-        load_point_vector_as_flow_flats(
+    std::vector<std::int64_t> ordered_flats =
+        load_point_vector_as_ordered_flats(
             flow,
             opts.input_points_path,
             opts.input_points_layer
         );
 
     // -------------------------------------------------------------------------
+    // Split off the stopping point (the final input point) if requested, then
+    // reduce the remaining points to the unique, valid source seeds.
+    // -------------------------------------------------------------------------
+    std::int64_t stopping_flat = -1;
+
+    if (opts.include_stopping_point && !ordered_flats.empty())
+    {
+        stopping_flat = ordered_flats.back();
+        ordered_flats.pop_back();
+        result.stopping_point_applied = true;
+    }
+
+    std::vector<std::int64_t> seed_flats;
+    seed_flats.reserve(ordered_flats.size());
+
+    for (const std::int64_t flat : ordered_flats)
+    {
+        if (flow.is_valid_cell(flat))
+        {
+            seed_flats.push_back(flat);
+        }
+    }
+
+    std::sort(seed_flats.begin(), seed_flats.end());
+    seed_flats.erase(
+        std::unique(seed_flats.begin(), seed_flats.end()),
+        seed_flats.end()
+    );
+
+    result.n_seed_points = seed_flats.size();
+
+    if (seed_flats.empty())
+    {
+        // No usable sources. Return an empty result so the caller can warn
+        // rather than treating this as a fatal error.
+        return result;
+    }
+
+    const std::unordered_set<std::int64_t> stopping_window =
+        result.stopping_point_applied
+            ? build_stopping_window(
+                  flow, stopping_flat, opts.stopping_point_window_pixels)
+            : std::unordered_set<std::int64_t>{};
+
+    // -------------------------------------------------------------------------
     // Trace D8 downstream from each seed point. If a trace reaches an already
     // traced pixel, stop; all downstream overlap has already been recorded.
+    // When a stopping point is supplied, a trace is also truncated at the first
+    // pixel that falls inside the stopping window.
     // -------------------------------------------------------------------------
     for (const std::int64_t seed : seed_flats)
     {
@@ -442,6 +528,14 @@ lsdtt_side_tributary_basin_result extract_side_tributary_basins(
             }
 
             result.traced_channel_mask[current_idx] = 1u;
+
+            // Truncate the main channel at the first pixel within the
+            // stopping window; this pixel is included as the channel endpoint.
+            if (result.stopping_point_applied &&
+                stopping_window.count(current) != 0)
+            {
+                break;
+            }
 
             if (flow.is_outlet_unchecked(current))
             {
@@ -877,6 +971,115 @@ void write_side_tributary_basin_outlines(
     }
 
     loader.finish_vector_write();
+}
+
+// =============================================================================
+// write_side_tributary_main_channel
+//
+// Emits one line segment per traced pixel, from that pixel's cell centre to its
+// D8 receiver's cell centre, provided the receiver is also part of the traced
+// channel. Each downstream link is therefore written exactly once.
+// =============================================================================
+void write_side_tributary_main_channel(
+    const lsdtt_flow_base& flow,
+    const std::vector<std::uint8_t>& traced_channel_mask,
+    const std::string& out_path,
+    vector_output_format format,
+    const std::string& layer_name,
+    bool spatial_index
+)
+{
+    const std::size_t n = flow.full_grid_size();
+
+    if (traced_channel_mask.size() != n)
+    {
+        throw std::runtime_error(
+            "write_side_tributary_main_channel: traced channel mask size "
+            "does not match flow grid size"
+        );
+    }
+
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "from_flat",
+        "to_flat",
+        "from_row",
+        "from_col"
+    };
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type
+    };
+
+    lsdtt_data_loader loader;
+
+    loader.begin_vector_write(
+        out_path,
+        layer_name,
+        schema,
+        flow.meta().crs_wkt,
+        format,
+        spatial_index
+    );
+
+    std::int64_t n_segments = 0;
+
+    for (std::int64_t flat = 0;
+         flat < static_cast<std::int64_t>(n);
+         ++flat)
+    {
+        if (traced_channel_mask[static_cast<std::size_t>(flat)] == 0)
+        {
+            continue;
+        }
+
+        if (!flow.is_valid_cell(flat))
+        {
+            continue;
+        }
+
+        const std::int64_t receiver = flow.receiver_of_unchecked(flat);
+
+        if (receiver < 0 ||
+            receiver >= static_cast<std::int64_t>(n) ||
+            traced_channel_mask[static_cast<std::size_t>(receiver)] == 0)
+        {
+            continue;
+        }
+
+        const int from_row = flow.row_from_flat_unchecked(flat);
+        const int from_col = flow.col_from_flat_unchecked(flat);
+        const int to_row   = flow.row_from_flat_unchecked(receiver);
+        const int to_col   = flow.col_from_flat_unchecked(receiver);
+
+        const lsdtt_xy from_xy =
+            cell_center_from_row_col(flow.meta(), from_row, from_col);
+        const lsdtt_xy to_xy =
+            cell_center_from_row_col(flow.meta(), to_row, to_col);
+
+        const std::vector<lsdtt_xy> points = { from_xy, to_xy };
+
+        std::vector<lsdtt_vector_field_value> fields = {
+            flat,
+            receiver,
+            static_cast<std::int64_t>(from_row),
+            static_cast<std::int64_t>(from_col)
+        };
+
+        loader.write_line(points, fields);
+        ++n_segments;
+    }
+
+    loader.finish_vector_write();
+
+    if (n_segments == 0)
+    {
+        throw std::runtime_error(
+            "write_side_tributary_main_channel: traced channel is empty"
+        );
+    }
 }
 
 

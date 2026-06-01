@@ -1510,5 +1510,35 @@ lsdtt_chi_collection_result get_chi_from_outlets_inherited_base_junction_network
     return result;
 }
 
+// =============================================================================
+// reject_chi_basins_with_few_channel_pixels
+// =============================================================================
+std::size_t reject_chi_basins_with_few_channel_pixels(
+    lsdtt_chi_collection_result& chi,
+    std::size_t                  min_channel_pixels
+)
+{
+    if (min_channel_pixels <= 1)
+    {
+        return 0;
+    }
+
+    const std::size_t n_before = chi.basins.size();
+
+    chi.basins.erase(
+        std::remove_if(
+            chi.basins.begin(),
+            chi.basins.end(),
+            [min_channel_pixels](const lsdtt_chi_basin_result& basin)
+            {
+                return basin.flats.size() < min_channel_pixels;
+            }
+        ),
+        chi.basins.end()
+    );
+
+    return n_before - chi.basins.size();
+}
+
 
 } // namespace lsdtt

@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -92,6 +93,19 @@ struct lsdtt_chi_collection_result
 {
     std::vector<lsdtt_chi_basin_result> basins;
 };
+
+// -----------------------------------------------------------------------------
+// reject_chi_basins_with_few_channel_pixels
+//
+// Remove every basin whose channel contains fewer than min_channel_pixels
+// chi-network nodes (basin.flats.size()). Very short channels cannot be
+// segmented meaningfully and can destabilise downstream fitting. Returns the
+// number of basins removed.
+// -----------------------------------------------------------------------------
+std::size_t reject_chi_basins_with_few_channel_pixels(
+    lsdtt_chi_collection_result& chi,
+    std::size_t                  min_channel_pixels
+);
 
 // =============================================================================
 // 1) Full-raster chi
