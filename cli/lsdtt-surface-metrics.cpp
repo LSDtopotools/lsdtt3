@@ -47,6 +47,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
@@ -224,6 +225,7 @@ static const std::vector<polyfit_metric_entry>& polyfit_metric_table()
         {"d2zdxdy",                      lsdtt::polyfit_metric::d2zdxdy,                     "_polyfit_d2zdxdy.tif"},
         {"d2zdy2",                       lsdtt::polyfit_metric::d2zdy2,                      "_polyfit_d2zdy2.tif"},
         {"slope",                        lsdtt::polyfit_metric::slope,                       "_polyfit_slope.tif"},
+        {"slope_degrees",                lsdtt::polyfit_metric::slope_degrees,               "_polyfit_slope_degrees.tif"},
         {"aspect_radians",               lsdtt::polyfit_metric::aspect_radians,              "_polyfit_aspect_radians.tif"},
         {"aspect_degrees",               lsdtt::polyfit_metric::aspect_degrees,              "_polyfit_aspect_degrees.tif"},
         {"laplacian",                    lsdtt::polyfit_metric::laplacian,                   "_polyfit_laplacian.tif"},
@@ -301,6 +303,41 @@ static std::vector<lsdtt::polyfit_metric> parse_polyfit_metrics(
 
     return metrics;
 }
+
+// -----------------------------------------------------------------------------
+// parse_slope_thresholds
+// -----------------------------------------------------------------------------
+static std::vector<float> parse_slope_thresholds(const std::string& csv)
+{
+    std::vector<float> values;
+
+    const std::vector<std::string> tokens = split_csv(csv);
+    if (tokens.empty())
+    {
+        return values;
+    }
+
+    values.reserve(tokens.size());
+
+    for (const std::string& token : tokens)
+    {
+        try
+        {
+            // std::stof handles floats and scientific notation
+            float v = std::stof(token);
+            values.push_back(v);
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error(
+                "Invalid slope threshold value: '" + token + "'"
+            );
+        }
+    }
+
+    return values;
+}
+
 
 // -----------------------------------------------------------------------------
 // polyfit_metric_suffix
@@ -445,7 +482,8 @@ int main(int argc, char* argv[])
         "Examples: slope,aspect_degrees,plan_curvature,profile_curvature. "
         "Use all to write every supported metric. "
         "Available metrics: fitted_surface, dzdx, dzdy, d2zdx2, d2zdxdy, "
-        "d2zdy2, slope, aspect_radians, aspect_degrees, laplacian, "
+        "d2zdy2, slope, slope_degrees," 
+        "aspect_radians, aspect_degrees, laplacian, "
         "hessian_determinant, mean_curvature, gaussian_curvature, "
         "maximum_curvature, minimum_curvature, curvedness, shape_index, "
         "profile_curvature, plan_curvature, tangential_curvature, "
@@ -474,6 +512,32 @@ int main(int argc, char* argv[])
         "a timing comparison. "
         "Outputs are prefixed _wavelet_polyfit_* or _direct_polyfit_* "
         "so results from both methods can coexist in the same directory."};
+
+    // --- slope threshold layers --
+    bool_default_map["write_slope_threshold_layers"] = false;
+    help_map["write_slope_threshold_layers"] = {"bool", "false",
+        "Writes layers for each slope threshold where the polyfit metric "
+        "slope_degrees exceeds the threshold",
+        "Thresholds are to be supplied in a comma-separated string under "
+        "the parameter slope_tresholds."
+    };
+
+    bool_default_map["clamp_slope_to_threshold"] = true;
+    help_map["clamp_slope_to_threshold"] = {"bool", "true",
+        "If true, the slope threshold layers will have the value of the "
+        "threshold where the original slope_degrees layer exceeds the "
+        "threshold. If false, slopes from slope_degrees layer are "
+        "preserved where slopes exceed threshold.",
+        "In both cases, nodatavalue below threshold. Defaults to true."
+    };
+
+    string_default_map["slope_thresholds"] = "3,7,12";
+    help_map["slope_threshold_layers"] = {"string", "3,7,12", 
+        "The threshold values for which slope threshold layers are to "
+        "be written.",
+        "Defaults to the categories used by the Environment Agency's "
+        "ALERT tool."
+    };
 
     // --- MADk2 roughness ---
     bool_default_map["write_madk2_rasters"] = false;
@@ -838,6 +902,24 @@ int main(int argc, char* argv[])
         std::cout << "\n";
     }
 
+    // Cross-parameter logic for the slope_threshold_layers
+    if(bf["write_slope_threshold_layers"]){
+        // Make sure that lsdtt::polyfit_metric::slope_degrees is in the 
+        // requested polyfit metrics.
+        const bool has_slope_degrees =
+        std::find(requested_polyfit_metrics.begin(),
+                  requested_polyfit_metrics.end(),
+                  lsdtt::polyfit_metric::slope_degrees)
+        != requested_polyfit_metrics.end();
+
+        if (!has_slope_degrees)
+        {
+            std::cout << "I am adding slope_degrees to requested polyfit metrics "
+                    "because you want me to write_slope_threshold_layers \n";
+            requested_polyfit_metrics.push_back(lsdtt::polyfit_metric::slope_degrees);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
@@ -1102,6 +1184,86 @@ int main(int argc, char* argv[])
         }
     }
 
+
+    // -------------------------------------------------------------------------
+    // Step 3.5 — The slope thresholds layers
+    // -------------------------------------------------------------------------
+    if (bf["write_slope_threshold_layers"])
+    {
+        // Get the slope thresholds, throw error if empty
+        std::vector<float> slope_thresholds = parse_slope_thresholds(sf["slope_thresholds"]);
+        if (slope_thresholds.empty())
+        {
+            std::cerr << "Error: slope_thresholds is empty. Skipping.\n";
+        }
+        else
+        {
+            // Determine which method(s) to read slope_degrees from —
+            // mirrors the methods that ran in Step 3.
+            const std::string polyfit_method = sf["polyfit_method"];
+            std::vector<std::string> methods;
+            if      (polyfit_method == "wavelet") methods = {"wavelet"};
+            else if (polyfit_method == "direct")  methods = {"direct"};
+            else if (polyfit_method == "both")    methods = {"wavelet", "direct"};
+            else
+            {
+                std::cerr << "Warning: unknown polyfit_method '" << polyfit_method
+                          << "' in write_slope_threshold_layers. Skipping.\n";
+            }
+
+            for (const std::string& method_str : methods)
+            {
+                // Build the path to the slope_degrees raster written in Step 3.
+                const std::string input_path =
+                    out_path(pp, polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str));
+
+                std::cout << "\nOpening slope degrees raster: " << input_path << "\n";
+
+                lsdtt::lsdtt_data_loader slope_loader;
+                try
+                {
+                    slope_loader.open_raster(input_path);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Error opening slope degrees raster (" << method_str
+                              << "): " << e.what() << "\n";
+                    continue;  // skip this method, try the next if "both"
+                }
+
+                const lsdtt::lsdtt_raster_cpu slope_raster(slope_loader);
+
+                // Loop through each threshold and write a binary raster.
+                for (const float threshold : slope_thresholds)
+                {
+                    std::cout << "  Computing threshold: " << threshold << " degrees ("
+                              << method_str << ")...\n";
+
+                    lsdtt::lsdtt_raster_cpu binary =
+                    lsdtt::algebra::raster_mask_keep_where_greater_or_eq(
+                        bf["clamp_slope_to_threshold"]
+                            ? lsdtt::algebra::raster_clamp_max(slope_raster, threshold)
+                            : slope_raster,
+                        slope_raster,
+                        threshold
+                    );
+
+                    // Build output suffix, e.g. "_wavelet_slope_threshold_15.0.tif"
+                    const std::string suffix =
+                        "_" + method_str + "_slope_threshold_"
+                        + std::to_string(static_cast<int>(threshold)) + ".tif";
+                    const std::string o = out_path(pp, suffix);
+
+                    std::cout << "  Writing: " << o << "\n";
+                    slope_loader.write_full(
+                        binary.get_data(),
+                        binary.get_meta(),
+                        o, out_fmt
+                    );
+                }
+            }
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Step 4 — MADk2 roughness
