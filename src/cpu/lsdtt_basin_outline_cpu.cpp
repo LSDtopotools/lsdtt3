@@ -1,3 +1,4 @@
+// ignore this comment
 #include "lsdtt_basin_outline_cpu.hpp"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <cmath> 
 
 #include "lsdtt_basin_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
@@ -829,7 +831,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
 
     if (colchange > 0)
     {
-      // flow → E : corners SE then NE
+      // flow â E : corners SE then NE
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row + 1),
         wrap_div_col_(outlet_col + 1)
@@ -841,7 +843,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
     }
     else
     {
-      // flow → W : corners NW then SW
+      // flow â W : corners NW then SW
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row),
         wrap_div_col_(outlet_col)
@@ -862,7 +864,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
 
     if (rowchange > 0)
     {
-      // flow → S : corners SW then SE
+      // flow â S : corners SW then SE
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row + 1),
         wrap_div_col_(outlet_col)
@@ -874,7 +876,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
     }
     else
     {
-      // flow → N : corners NE then NW
+      // flow â N : corners NE then NW
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row),
         wrap_div_col_(outlet_col + 1)
@@ -1029,7 +1031,7 @@ lsdtt_basin_outline_cpu::get_outline_as_polygon_record(std::int32_t basin_id) co
         poly.exterior.push_back(xy);
     }
 
-    // Close the ring — the outline starts at the outlet cut and ends there
+    // Close the ring â the outline starts at the outlet cut and ends there
     // too after rotate_open_outline_to_outlet_cut_, but the closing point
     // is not repeated in outline_divide_rc_ itself.
     poly.exterior.push_back(poly.exterior.front());
@@ -1038,5 +1040,737 @@ lsdtt_basin_outline_cpu::get_outline_as_polygon_record(std::int32_t basin_id) co
     return rec;
 }
 
+
+// ----------------------------------------------------------------------------
+// Ridgeline Generation Methods
+// ----------------------------------------------------------------------------
+
+std::vector<float> lsdtt_basin_outline_cpu::interpolate_pixel_values_on_outline(
+    const lsdtt_raster_cpu& data_raster) const
+{
+  const int NNodes_outline = static_cast<int>(outline_divide_rc_.size());
+  std::vector<float> interpolated_values(NNodes_outline, data_raster.get_meta().no_data_value);
+
+  const int n_rows_data = data_raster.get_meta().n_rows;
+  const int n_cols_data = data_raster.get_meta().n_cols;
+  const auto& data = data_raster.get_data_array();
+  const auto& mask = data_raster.get_mask_array();
+
+  for (int i = 0; i < NNodes_outline; ++i)
+  {
+    float x_interp = static_cast<float>(outline_divide_rc_[i].col) - 0.5f;
+    float y_interp = static_cast<float>(outline_divide_rc_[i].row) - 0.5f;
+
+    int raw_x1 = static_cast<int>(std::floor(x_interp));
+    int raw_y1 = static_cast<int>(std::floor(y_interp));
+    int raw_x2 = raw_x1 + 1;
+    int raw_y2 = raw_y1 + 1;
+
+    int x1 = raw_x1; int x2 = raw_x2;
+    int y1 = raw_y1; int y2 = raw_y2;
+
+    if (periodic_ew_) {
+      x1 = pos_mod_(raw_x1, n_cols_data);
+      x2 = pos_mod_(raw_x2, n_cols_data);
+    } else {
+      if (x1 < 0) x1 = -1;
+      if (x2 >= n_cols_data) x2 = -1;
+    }
+
+    if (periodic_ns_) {
+      y1 = pos_mod_(raw_y1, n_rows_data);
+      y2 = pos_mod_(raw_y2, n_rows_data);
+    } else {
+      if (y1 < 0) y1 = -1;
+      if (y2 >= n_rows_data) y2 = -1;
+    }
+
+    float Q11 = -9999.0f, Q12 = -9999.0f, Q21 = -9999.0f, Q22 = -9999.0f;
+    bool valid_Q11 = (x1 != -1 && y1 != -1 && mask(y1, x1) != 0);
+    bool valid_Q12 = (x1 != -1 && y2 != -1 && mask(y2, x1) != 0);
+    bool valid_Q21 = (x2 != -1 && y1 != -1 && mask(y1, x2) != 0);
+    bool valid_Q22 = (x2 != -1 && y2 != -1 && mask(y2, x2) != 0);
+
+    if (valid_Q11) Q11 = data(y1, x1);
+    if (valid_Q12) Q12 = data(y2, x1);
+    if (valid_Q21) Q21 = data(y1, x2);
+    if (valid_Q22) Q22 = data(y2, x2);
+
+    int valid_count = valid_Q11 + valid_Q12 + valid_Q21 + valid_Q22;
+
+    if (valid_count == 4) {
+      float fxy1 = (Q11*(x2 - x_interp) + Q21*(x_interp - x1)) / (x2 - x1);
+      float fxy2 = (Q12*(x2 - x_interp) + Q22*(x_interp - x1)) / (x2 - x1);
+      interpolated_values[i] = (fxy1*(y2 - y_interp) + fxy2*(y_interp - y1)) / (y2 - y1);
+    }
+    else if (valid_count == 3) {
+      float sum = 0.0f; int count = 0;
+      if (valid_Q11) { sum += Q11; count++; }
+      if (valid_Q12) { sum += Q12; count++; }
+      if (valid_Q21) { sum += Q21; count++; }
+      if (valid_Q22) { sum += Q22; count++; }
+      interpolated_values[i] = sum / count;
+    }
+    else if (valid_count == 2) {
+      if (valid_Q11 && valid_Q21) interpolated_values[i] = (Q11*(x2 - x_interp) + Q21*(x_interp - x1)) / (x2 - x1);
+      else if (valid_Q12 && valid_Q22) interpolated_values[i] = (Q12*(x2 - x_interp) + Q22*(x_interp - x1)) / (x2 - x1);
+      else if (valid_Q11 && valid_Q12) interpolated_values[i] = (Q11*(y2 - y_interp) + Q12*(y_interp - y1)) / (y2 - y1);
+      else if (valid_Q21 && valid_Q22) interpolated_values[i] = (Q21*(y2 - y_interp) + Q22*(y_interp - y1)) / (y2 - y1);
+      else continue;
+    }
+    else if (valid_count == 1) {
+      if (valid_Q11) interpolated_values[i] = Q11;
+      else if (valid_Q12) interpolated_values[i] = Q12;
+      else if (valid_Q21) interpolated_values[i] = Q21;
+      else if (valid_Q22) interpolated_values[i] = Q22;
+    }
+  }
+  return interpolated_values;
+}
+
+lsdtt_ridgeline_cpu lsdtt_basin_outline_cpu::write_outline_portion_to_ridgeline(
+    int start_index, int stop_index, bool write_in_reverse) const
+{
+  std::vector<lsdtt_pixel_rc> rl_nodes;
+  if (!write_in_reverse) {
+    for (int i = start_index; i < stop_index; ++i) {
+      rl_nodes.push_back(outline_divide_rc_[i]);
+    }
+  } else {
+    for (int i = start_index; i >= stop_index + 1; --i) {
+      rl_nodes.push_back(outline_divide_rc_[i]);
+    }
+  }
+  return lsdtt_ridgeline_cpu(std::move(rl_nodes), divide_grid_meta_);
+}
+
+std::vector<lsdtt_ridgeline_cpu> lsdtt_basin_outline_cpu::split_outline_into_ridgelines_by_max_elevation(
+    const lsdtt_raster_cpu& elevation_raster) const
+{
+  std::vector<float> outline_elev = interpolate_pixel_values_on_outline(elevation_raster);
+  auto max_elev_iter = std::max_element(outline_elev.begin(), outline_elev.end());
+  int current_index = static_cast<int>(std::distance(outline_elev.begin(), max_elev_iter));
+
+  std::vector<lsdtt_ridgeline_cpu> ridgelines;
+  ridgelines.push_back(write_outline_portion_to_ridgeline(0, current_index + 1, false));
+  ridgelines.push_back(write_outline_portion_to_ridgeline(static_cast<int>(outline_divide_rc_.size()) - 1, current_index - 1, true));
+  return ridgelines;
+}
+
+std::vector<lsdtt_ridgeline_cpu> lsdtt_basin_outline_cpu::split_outline_into_ridgelines_by_longest_channel(
+    const lsdtt_raster_cpu& dist_from_outlet) const
+{
+  std::int64_t ch_node = -1;
+  float max_dist = -1.0f;
+  std::int64_t outlet_flat = basin_->get_basin_outlet_flat_index();
+  const auto& ddata = dist_from_outlet.get_data_array();
+        
+  for (std::int64_t flat : flow_->upslope_nodes(outlet_flat)) {
+    float dist = ddata.data()[flat];
+    if (dist > max_dist) {
+      max_dist = dist;
+      ch_node = flat;
+    }
+  }
+
+  int ch_row = flow_->row_from_flat_unchecked(ch_node);
+  int ch_col = flow_->col_from_flat_unchecked(ch_node);
+        
+  float current_euclidean_distance = -1.0f;
+  int current_index = 0;
+
+  for (std::size_t i = 0; i < outline_divide_rc_.size(); ++i) {
+    int outline_row = outline_divide_rc_[i].row * 2;
+    int outline_col = outline_divide_rc_[i].col * 2;
+    int mapped_ch_row = ch_row * 2 + 1;
+    int mapped_ch_col = ch_col * 2 + 1;
+
+    float dist = std::sqrt(std::pow(outline_row - mapped_ch_row, 2) + std::pow(outline_col - mapped_ch_col, 2));
+    if (i == 0 || dist < current_euclidean_distance) {
+      current_euclidean_distance = dist;
+      current_index = static_cast<int>(i);
+    }
+  }
+
+  std::vector<lsdtt_ridgeline_cpu> ridgelines;
+  ridgelines.push_back(write_outline_portion_to_ridgeline(0, current_index + 1, false));
+  ridgelines.push_back(write_outline_portion_to_ridgeline(static_cast<int>(outline_divide_rc_.size()) - 1, current_index - 1, true));
+  return ridgelines;
+}
+
+std::vector<lsdtt_ridgeline_cpu> lsdtt_basin_outline_cpu::split_outline_into_ridgelines_by_equal_length() const
+{
+  if (outline_divide_rc_.empty()) return {};
+
+  double total_perimeter = 0.0;
+  std::vector<double> dists(outline_divide_rc_.size(), 0.0);
+  for (std::size_t i = 1; i < outline_divide_rc_.size(); ++i) {
+    lsdtt_xy p1 = cell_center_from_row_col(divide_grid_meta_, outline_divide_rc_[i-1].row, outline_divide_rc_[i-1].col);
+    lsdtt_xy p2 = cell_center_from_row_col(divide_grid_meta_, outline_divide_rc_[i].row, outline_divide_rc_[i].col);
+    double dx = p2.x - p1.x;
+    double dy = p2.y - p1.y;
+    total_perimeter += std::sqrt(dx*dx + dy*dy);
+    dists[i] = total_perimeter;
+  }
+
+  int current_index = 0;
+  while (current_index < static_cast<int>(dists.size()) && dists[current_index] < total_perimeter / 2.0) {
+    current_index++;
+  }
+
+  std::vector<lsdtt_ridgeline_cpu> ridgelines;
+  ridgelines.push_back(write_outline_portion_to_ridgeline(0, current_index + 1, false));
+  ridgelines.push_back(write_outline_portion_to_ridgeline(static_cast<int>(outline_divide_rc_.size()) - 1, current_index, true));
+  return ridgelines;
+}
+
+lsdtt_ridgeline_cpu lsdtt_basin_outline_cpu::get_left_transverse_divide_as_ridgeline(
+    std::int32_t basin_junction,
+    const std::vector<std::int32_t>& rsb_N,
+    const std::vector<std::int32_t>& rsb_S,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  std::vector<int> start_end = find_left_transverse_divide_nodes(basin_junction, rsb_N, rsb_S, junction_network);
+  if (start_end.size() != 2) return lsdtt_ridgeline_cpu();
+  return write_outline_portion_to_ridgeline(start_end[0], start_end[1], false);
+}
+
+lsdtt_ridgeline_cpu lsdtt_basin_outline_cpu::get_right_transverse_divide_as_ridgeline(
+    std::int32_t basin_junction,
+    const std::vector<std::int32_t>& rsb_N,
+    const std::vector<std::int32_t>& rsb_S,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  std::vector<int> start_end = find_right_transverse_divide_nodes(basin_junction, rsb_N, rsb_S, junction_network);
+  if (start_end.size() != 2) return lsdtt_ridgeline_cpu();
+  return write_outline_portion_to_ridgeline(start_end[0], start_end[1], true);
+}
+
+lsdtt_ridgeline_cpu lsdtt_basin_outline_cpu::get_outline_nodes_on_main_drainage_divide_as_ridgeline(
+    std::int32_t basin_junction,
+    const std::vector<std::int32_t>& rsb_N,
+    const std::vector<std::int32_t>& rsb_S,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  std::vector<int> start_end = find_main_drainage_divide_nodes(basin_junction, rsb_N, rsb_S, junction_network);
+  if (start_end.size() != 2) return lsdtt_ridgeline_cpu();
+  return write_outline_portion_to_ridgeline(start_end[0], start_end[1], false);
+}
+
+lsdtt_ridgeline_cpu lsdtt_basin_outline_cpu::get_interfluvial_divide_as_ridgeline(
+    std::int32_t basin_junction,
+    std::int32_t otherBasin_junction_number,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  std::vector<int> start_end = find_interfluvial_divide_nodes(basin_junction, otherBasin_junction_number, junction_network);
+  if (start_end.size() != 2) return lsdtt_ridgeline_cpu();
+  return write_outline_portion_to_ridgeline(start_end[0], start_end[1], false);
+}
+
+// -------------------------------------------------------------------------
+// Internal topological finders for divides
+// -------------------------------------------------------------------------
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//
+// This scans the outline for triple divide junctions where the outline 
+// (potentially) joins and leaves the left transverse divide.
+// By iterating through the outline clockwise (forward).
+//
+// Returns a vector of outline indices.
+// A transverse divide is always at least 1 pixel edge long, so will have a
+// distinct joining and leaving node.
+// If the basin is not range-spanning or if it has no transverse divide on this
+// side, an emtpy vector is returned.
+//
+// RV 26/08/2025 
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+std::vector<int> lsdtt_basin_outline_cpu::find_left_transverse_divide_nodes(
+    std::int32_t basin_junction,
+    const std::vector<std::int32_t>& rsb_N,
+    const std::vector<std::int32_t>& rsb_S,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  // Find out which side the current basin is in by comparing basin_junction_
+  // number to range_spanning_basins_N and range_spanning_basins_S
+  bool basin_is_north = std::find(rsb_N.begin(), rsb_N.end(), basin_junction) != rsb_N.end();
+  bool basin_is_south = std::find(rsb_S.begin(), rsb_S.end(), basin_junction) != rsb_S.end();
+  if (!basin_is_north && !basin_is_south) return {};
+
+  const std::vector<std::int32_t>& rspb_thisside = basin_is_north ? rsb_N : rsb_S;
+
+  auto get_baselevel = [&](std::int64_t flat) -> std::int64_t {
+    std::int64_t curr = flat;
+    while (true) {
+      std::int64_t rec = flow_->receiver_of_unchecked(curr);
+      if (rec == curr || rec < 0 || rec == lsdtt_flow_base::outlet_receiver) return curr;
+      curr = rec;
+    }
+  };
+
+  std::vector<int> nodes_to_return;
+  // Iterate over the nodes in the basin outline, forwards
+  for (std::size_t i = 0; i < outline_divide_rc_.size(); ++i) {
+    std::vector<std::int64_t> px_in_basin, px_out_basin;
+    get_pixels_around_basin_outline_node(i, px_in_basin, px_out_basin);
+
+    int N_pixels_in_adjacent_rsb = 0;
+    std::vector<std::int64_t> outside_nodes_not_in_adjacent_rsb;
+    
+    for (std::int64_t node : px_out_basin) {
+      std::int64_t bln_index = get_baselevel(node);
+      std::int32_t bl_junc = junction_network.junction_of_flat(bln_index);
+      if (std::find(rspb_thisside.begin(), rspb_thisside.end(), bl_junc) != rspb_thisside.end()) {
+        N_pixels_in_adjacent_rsb++;
+      } else {
+        outside_nodes_not_in_adjacent_rsb.push_back(node);
+      }
+    }
+
+    if (nodes_to_return.empty() && N_pixels_in_adjacent_rsb > 0) {
+      bool join = true;
+      // Ok, need to deal with an edge case:
+      // This outline node has a surrounding pixel in a neighbouring range 
+      // spanning basin, but it is separated by a diagonal flow edge that 
+      // is in neither range-spanning basin. 
+      // We can identify such cases as:
+      // (1) 3 pixels outside the basin
+      // (2) one of which in a different range-spanning basin and
+      // (3) the 2 remaining pixels are connected by a 
+      //     diagonal flow edge.
+      if (px_out_basin.size() == 3 && N_pixels_in_adjacent_rsb == 1 && outside_nodes_not_in_adjacent_rsb.size() == 2) {
+        std::int64_t node1 = outside_nodes_not_in_adjacent_rsb[0];
+        std::int64_t node2 = outside_nodes_not_in_adjacent_rsb[1];
+        std::int64_t node1rec = flow_->receiver_of_unchecked(node1);
+        std::int64_t node2rec = flow_->receiver_of_unchecked(node2);
+        
+        if (node1rec == node2 || node2rec == node1) {
+          // Ok, the two nodes outside basin draining same edge
+          // are each others receiver.
+          // Now check if they are diagonally connected.
+          int r1 = flow_->row_from_flat_unchecked(node1);
+          int c1 = flow_->col_from_flat_unchecked(node1);
+          int r2 = flow_->row_from_flat_unchecked(node2);
+          int c2 = flow_->col_from_flat_unchecked(node2);
+          if (r1 != r2 && c1 != c2) {
+            // Diagonally connected. Set join to false.
+            join = false;
+          }
+        }
+      }
+      if (join) nodes_to_return.push_back(static_cast<int>(i));
+    }
+
+    // Stop if the node has a surrounding pixel outside the current
+    // basin that is NOT touching a range-spanning basin
+    // In this case, we have just left the Transverse divide
+    if (nodes_to_return.size() == 1 && N_pixels_in_adjacent_rsb == 0) {
+      nodes_to_return.push_back(static_cast<int>(i));
+      return nodes_to_return;
+    }
+  }
+
+
+  // If not returned previously, a transverse divide was not found
+  // on this side.
+  // This can happen due to it being the first basin along a non-periodic
+  // boundary, or due to interstitial unchanneled space in-between range-spanning
+  // basins (that stretches all the way from mdd to boundary).
+  //cout << "Basin " << basin_junction_number << " I found no left tvd!" << endl;
+  return nodes_to_return;
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//
+// This scans the outline for triple divide junctions where the outline 
+// (potentially) joins and leaves the right transverse divide.
+// By iterating through the outline counter-clockwise.
+//
+// Returns a vector of outline indices.
+// A transverse divide is always at least 1 pixel edge long, so will have a
+// distinct joining and leaving node.
+// If the basin is not range-spanning or if it has no transverse divide on this
+// side, an emtpy vector is returned.
+//
+// RV 26/08/2025 
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+std::vector<int> lsdtt_basin_outline_cpu::find_right_transverse_divide_nodes(
+    std::int32_t basin_junction,
+    const std::vector<std::int32_t>& rsb_N,
+    const std::vector<std::int32_t>& rsb_S,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  // Find out which side the current basin is in by comparing basin_junction_
+  // number to range_spanning_basins_N and range_spanning_basins_S
+  bool basin_is_north = std::find(rsb_N.begin(), rsb_N.end(), basin_junction) != rsb_N.end();
+  bool basin_is_south = std::find(rsb_S.begin(), rsb_S.end(), basin_junction) != rsb_S.end();
+  if (!basin_is_north && !basin_is_south) return {};
+
+  const std::vector<std::int32_t>& rspb_thisside = basin_is_north ? rsb_N : rsb_S;
+
+  auto get_baselevel = [&](std::int64_t flat) -> std::int64_t {
+    std::int64_t curr = flat;
+    while (true) {
+      std::int64_t rec = flow_->receiver_of_unchecked(curr);
+      if (rec == curr || rec < 0 || rec == lsdtt_flow_base::outlet_receiver) return curr;
+      curr = rec;
+    }
+  };
+
+  std::vector<int> nodes_to_return;
+  // Iterate over the nodes in the basin outline, backwards
+  for (int i = static_cast<int>(outline_divide_rc_.size()) - 1; i >= 0; --i) {
+    std::vector<std::int64_t> px_in_basin, px_out_basin;
+    get_pixels_around_basin_outline_node(i, px_in_basin, px_out_basin);
+
+    int N_pixels_in_adjacent_rsb = 0;
+    std::vector<std::int64_t> outside_nodes_not_in_adjacent_rsb;
+    
+    for (std::int64_t node : px_out_basin) {
+      std::int64_t bln_index = get_baselevel(node);
+      std::int32_t bl_junc = junction_network.junction_of_flat(bln_index);
+      if (std::find(rspb_thisside.begin(), rspb_thisside.end(), bl_junc) != rspb_thisside.end()) {
+        N_pixels_in_adjacent_rsb++;
+      } else {
+        outside_nodes_not_in_adjacent_rsb.push_back(node);
+      }
+    }
+
+    if (nodes_to_return.empty() && N_pixels_in_adjacent_rsb > 0) {
+      bool join = true;
+      // Ok, need to deal with an edge case:
+      // This outline node has a surrounding pixel in a neighbouring range 
+      // spanning basin, but it is separated by a diagonal flow edge that 
+      // is in neither range-spanning basin. 
+      // We can identify such cases as:
+      // (1) 3 pixels outside the basin
+      // (2) one of which in a different range-spanning basin and
+      // (3) the 2 remaining pixels are connected by a 
+      //     diagonal flow edge.
+      if (px_out_basin.size() == 3 && N_pixels_in_adjacent_rsb == 1 && outside_nodes_not_in_adjacent_rsb.size() == 2) {
+        std::int64_t node1 = outside_nodes_not_in_adjacent_rsb[0];
+        std::int64_t node2 = outside_nodes_not_in_adjacent_rsb[1];
+        std::int64_t node1rec = flow_->receiver_of_unchecked(node1);
+        std::int64_t node2rec = flow_->receiver_of_unchecked(node2);
+        
+        if (node1rec == node2 || node2rec == node1) {
+          // Ok, the two nodes outside basin draining same edge
+          // are each others receiver.
+          // Now check if they are diagonally connected.
+          int r1 = flow_->row_from_flat_unchecked(node1);
+          int c1 = flow_->col_from_flat_unchecked(node1);
+          int r2 = flow_->row_from_flat_unchecked(node2);
+          int c2 = flow_->col_from_flat_unchecked(node2);
+          if (r1 != r2 && c1 != c2) {
+            // Diagonally connected. Set join to false.
+            join = false;
+          }
+        }
+      }
+      if (join) nodes_to_return.push_back(i);
+    }
+
+    if (nodes_to_return.size() == 1 && N_pixels_in_adjacent_rsb == 0) {
+      nodes_to_return.push_back(i);
+      return nodes_to_return;
+    }
+  }
+  // If not returned previously, a transverse divide was not found
+  // on this side.
+  // This can happen due to it being the first basin along a non-periodic
+  // boundary, or due to interstitial unchanneled space in-between range-spanning
+  // basins (that stretches all the way from mdd to boundary).
+  //cout << "Basin " << basin_junction_number << " I found no left tvd!" << endl;
+  return nodes_to_return;
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// This scans the outline for the points where the outline 
+// (potentially) joins and leaves the main drainage divide.
+//
+// The start/end nodes are returned in a vector. If the returned vector if empty,
+// the basin outline does not touch or stretch along the MDD.
+//
+// RV 26/08/2025 
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+std::vector<int> lsdtt_basin_outline_cpu::find_main_drainage_divide_nodes(
+    std::int32_t basin_junction,
+    const std::vector<std::int32_t>& rsb_N,
+    const std::vector<std::int32_t>& rsb_S,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  // Find out which side the current basin is in by taking the current basin
+  // junction number and tracing it down to the baselevel junction.
+  // Then compare this baselevel junction to range_spanning_basins_N and 
+  // range_spanning_basins_S.
+  auto get_baselevel = [&](std::int64_t flat) -> std::int64_t {
+    std::int64_t curr = flat;
+    while (true) {
+      std::int64_t rec = flow_->receiver_of_unchecked(curr);
+      if (rec == curr || rec < 0 || rec == lsdtt_flow_base::outlet_receiver) return curr;
+      curr = rec;
+    }
+  };
+
+  std::int64_t bl_flat = get_baselevel(junction_network.flat_of_junction(basin_junction));
+  std::int32_t basin_bl_junction = junction_network.junction_of_flat(bl_flat);
+
+  bool basin_is_north = std::find(rsb_N.begin(), rsb_N.end(), basin_bl_junction) != rsb_N.end();
+  bool basin_is_south = std::find(rsb_S.begin(), rsb_S.end(), basin_bl_junction) != rsb_S.end();
+  if (!basin_is_north && !basin_is_south) return {};
+
+  const std::vector<std::int32_t>& rspb_thisside = basin_is_north ? rsb_N : rsb_S;
+  const std::vector<std::int32_t>& rspb_otherside = basin_is_north ? rsb_S : rsb_N;
+
+  // Make a vector for joining indices and leaving indices
+  std::vector<int> join_indices;
+  std::vector<int> leave_indices;
+  bool on_mdd = false;
+
+  // Iterate over the nodes in the basin outline
+  for (std::size_t i = 0; i < outline_divide_rc_.size(); ++i) {
+    // Get the DEM pixels outside of the basin surrounding outline node
+    std::vector<std::int64_t> px_in_basin, px_out_basin;
+    get_pixels_around_basin_outline_node(i, px_in_basin, px_out_basin);
+
+
+    // Loop through the pixels outside of the basin
+    // And get the number of different basins on the same side
+    int N_pixels_draining_opposite_side = 0;
+    std::vector<std::int64_t> nodes_outside_basin_draining_same_side;
+    
+    for (std::int64_t node : px_out_basin) {
+      // Get the baselevel junction of this neighbouring pixel
+      std::int64_t bln_index = get_baselevel(node);
+      std::int32_t bl_junc = junction_network.junction_of_flat(bln_index);
+       // See if any flow to opposite side
+      if (std::find(rspb_otherside.begin(), rspb_otherside.end(), bl_junc) != rspb_otherside.end()) {
+        N_pixels_draining_opposite_side++;
+      }
+      // Identify those drainaing to the same side
+      if (std::find(rspb_thisside.begin(), rspb_thisside.end(), bl_junc) != rspb_thisside.end()) {
+        nodes_outside_basin_draining_same_side.push_back(node);
+      }
+    }
+
+
+    // If we are on the mdd but we find that the 
+    // current node does NOT have any surounding
+    // pixels in a range-spanning basin on the opposite side, we know
+    // that we have left the MDD and found the leaving node (the 
+    // "leaving node" is the first node not on the MDD anymore).
+    if (on_mdd && N_pixels_draining_opposite_side == 0) {
+      int leaving_index = static_cast<int>(i);
+      
+      // Here we need to treat an edge case. If the node before
+      // the leaving node is on the same location as the joining node
+      // then we need to mark the leaving node one earlier.
+      // This becasue it has essentially "lapped back" to the node
+      // where it joins, where a diagonal flow edge connects the basin
+      // pixel. But when lapping back (i.e. visiting the second time)
+      // you actually have that flow edge separating the divide and 
+      // the basin on the other side.
+      if (leaving_index - 1 >= 0 && same_rc_(outline_divide_rc_[leaving_index - 1], outline_divide_rc_[join_indices.back()])) {
+        if (leaving_index - 1 != join_indices.back()) {
+          leaving_index--;
+        }
+      }
+      leave_indices.push_back(leaving_index);
+      on_mdd = false;
+    }
+
+
+    
+    // If we are not on the mdd and
+    // the pixels surrounding the node outside the 
+    // current basin is in a range-spanning basin on the opposite side.
+    // Then, we have found the first TDJ (we are joining the MDD)
+    // Push back this index to the return vector
+    if (!on_mdd && N_pixels_draining_opposite_side > 0) {
+      int joining_index = static_cast<int>(i);
+      bool join = true;
+      
+      // Ok, need to deal with an edge case:
+      // The case where the node has a diagonal flow edge from another
+      // basin on the same side separating the node from the basin on the
+      // opposite side. We can detect these if there are 
+      // (1) 3 pixels outside the basin
+      // (2) one of which is on the other side of the MDD and
+      // (3) the 2 remaining pixels on the same side are connected by a 
+      //     diagonal flow edge.
+      if (px_out_basin.size() == 3 && N_pixels_draining_opposite_side == 1 && nodes_outside_basin_draining_same_side.size() == 2) {
+        std::int64_t node1 = nodes_outside_basin_draining_same_side[0];
+        std::int64_t node2 = nodes_outside_basin_draining_same_side[1];
+        std::int64_t node1rec = flow_->receiver_of_unchecked(node1);
+        std::int64_t node2rec = flow_->receiver_of_unchecked(node2);
+        
+        if (node1rec == node2 || node2rec == node1) {
+          int r1 = flow_->row_from_flat_unchecked(node1);
+          int c1 = flow_->col_from_flat_unchecked(node1);
+          int r2 = flow_->row_from_flat_unchecked(node2);
+          int c2 = flow_->col_from_flat_unchecked(node2);
+          if (r1 != r2 && c1 != c2) join = false;
+        }
+      }
+      if (join) {
+        join_indices.push_back(joining_index);
+        on_mdd = true;
+      }
+    }
+  }
+
+  if (join_indices.empty()) return {};
+  if (leave_indices.empty()) leave_indices.push_back(static_cast<int>(outline_divide_rc_.size()));
+
+  return {join_indices.front(), leave_indices.back()};
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// This scans the outline for the points where the outline 
+// (potentially) joins and leaves the outline of another, specified basin.
+//
+// The start/end nodes are returned in a vector. If the returned vector if empty,
+// the basin outline does not touch or stretch along the outline of another basin.
+//
+// RV 26/08/2025 
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+std::vector<int> lsdtt_basin_outline_cpu::find_interfluvial_divide_nodes(
+    std::int32_t basin_junction,
+    std::int32_t otherBasin_junction_number,
+    const lsdtt_junction_network_base& junction_network) const
+{
+  // Make a vector for joining indices and leaving indices
+  std::vector<int> join_indices;
+  std::vector<int> leave_indices;
+  bool on_interfluvial_divide = false;
+
+  // Check if the otherBasin_junction_number is NOT nested in the current basin junction number, or
+  // vice versa
+  if (junction_network.is_upslope_of(basin_junction, otherBasin_junction_number) ||
+      junction_network.is_upslope_of(otherBasin_junction_number, basin_junction)) {
+    return {};
+  }
+
+      
+  // Iterate over the nodes in the basin outline
+  for (std::size_t i = 0; i < outline_divide_rc_.size(); ++i) {
+    // Get the DEM pixels surrounding the outline node on the outside of the basin
+    std::vector<std::int64_t> px_in_basin, px_out_basin;
+    get_pixels_around_basin_outline_node(i, px_in_basin, px_out_basin);
+
+    // Now check if any of these pixels are in the other basin
+    // and record the nodes that are in neither the current and the other basin.
+    int N_pixels_draining_other_basin = 0;
+    std::vector<std::int64_t> nodes_in_neither_basin;
+
+    for (std::int64_t thisNode : px_out_basin) {
+      // Get the first channelised node down the d8 flow path from thisNode
+      std::int64_t curr = thisNode;
+      bool reached_chan = false;
+      while (true) {
+        if (curr < 0 || curr == lsdtt_flow_base::outlet_receiver) break;
+        if (junction_network.is_channel(curr)) {
+          reached_chan = true; break;
+        }
+        std::int64_t rec = flow_->receiver_of_unchecked(curr);
+        if (rec == curr) break;
+        curr = rec;
+      }
+
+      // Check for the case that there is no channelised node
+      if (!reached_chan) {
+        nodes_in_neither_basin.push_back(thisNode);
+        continue;
+      }
+
+      // Now get the first upstream junction of that channelised node
+      std::int32_t thisNodesJunction = junction_network.junction_upstream_of_flat(curr);
+
+      // And check if this junction is upstream of or equal to the junction number of the other basin            
+      if (junction_network.is_upslope_of(thisNodesJunction, otherBasin_junction_number) || thisNodesJunction == otherBasin_junction_number) {
+        N_pixels_draining_other_basin++;
+      } else {
+        nodes_in_neither_basin.push_back(thisNode);
+      }
+    }
+
+    // If we are on the interfluvial divide between this and the other basin
+    // and the current node deos not have any outside pixels in the other 
+    // basin, then we know that we have left the interfluvial divide and 
+    // record the leaving node. The leaving node is the first node not on the
+    // interfluvial divide anymore.
+    if (on_interfluvial_divide && N_pixels_draining_other_basin == 0) {
+      int leaving_index = static_cast<int>(i);
+      
+      // Here we need to treat an edge case. If the node before
+      // the leaving node is on the same location as the joining node
+      // then we need to mark the leaving node one earlier.
+      // This becasue it has essentially "lapped back" to the node
+      // where it joins, where a diagonal flow edge connects the basin
+      // pixel. But when lapping back (i.e. visiting the second time)
+      // you actually have that flow edge separating the divide and 
+      // the basin on the other side.
+      if (leaving_index - 1 >= 0 && same_rc_(outline_divide_rc_[leaving_index - 1], outline_divide_rc_[join_indices.back()])) {
+        if (leaving_index - 1 != join_indices.back()) {
+          leaving_index--;
+        }
+      }
+      // Push back the leaving index
+      leave_indices.push_back(leaving_index);
+      on_interfluvial_divide = false;
+    }
+
+
+    // If we are not on the interfluvial divide yet and one or more pixels
+    // surrunding the current divide node on the outside is in the other basin, 
+    // then we record this as the leaving node by pushing back this index to 
+    // the return vector.
+    if (!on_interfluvial_divide && N_pixels_draining_other_basin > 0) {
+      int joining_index = static_cast<int>(i);
+      bool join = true;
+      
+      // Ok, need to deal with an edge case:
+      // The case where the node has a diagonal flow edge from another
+      // basin separating the outline node from the other basin. 
+      // We can detect these if there are 
+      // (1) 3 pixels outside the basin
+      // (2) one of which is in the other basin
+      // (3) the 2 remaining pixels on the same side are connected by a 
+      //     diagonal flow edge.
+      if (px_out_basin.size() == 3 && N_pixels_draining_other_basin == 1 && nodes_in_neither_basin.size() == 2) {
+        std::int64_t node1 = nodes_in_neither_basin[0];
+        std::int64_t node2 = nodes_in_neither_basin[1];
+        std::int64_t node1rec = flow_->receiver_of_unchecked(node1);
+        std::int64_t node2rec = flow_->receiver_of_unchecked(node2);
+        
+        if (node1rec == node2 || node2rec == node1) {
+          int r1 = flow_->row_from_flat_unchecked(node1);
+          int c1 = flow_->col_from_flat_unchecked(node1);
+          int r2 = flow_->row_from_flat_unchecked(node2);
+          int c2 = flow_->col_from_flat_unchecked(node2);
+          if (r1 != r2 && c1 != c2) join = false;
+        }
+      }
+      if (join) {
+        join_indices.push_back(joining_index);
+        on_interfluvial_divide = true;
+      }
+    }
+  }
+
+  if (join_indices.size() == 1 && leave_indices.empty()) {
+    leave_indices.push_back(static_cast<int>(outline_divide_rc_.size()));
+  }
+
+  if (join_indices.empty() && leave_indices.empty()) {
+    return {};
+  }
+
+  return {join_indices.front(), leave_indices.back()};
+}
 
 } // namespace lsdtt

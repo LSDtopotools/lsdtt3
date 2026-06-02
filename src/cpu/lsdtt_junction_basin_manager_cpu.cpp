@@ -689,12 +689,12 @@ lsdtt_junction_basin_manager_cpu::filter_range_spanning(
             }
         }
 
-        // Prioritize "n" boundaries if multiple matches: this can happen on corner
+        // Prioritize "o" boundaries if multiple matches: this can happen on corner
         // nodes where two boundaries "overlap": i.e. the end of one boundary is the
         // start of the other. 
         int boundary_index = -1;
         for (int idx : matching_boundaries) {
-            if (to_lower(boundary_conditions[idx]) == 'n') {
+            if (to_lower(boundary_conditions[idx]) == 'o') {
                 boundary_index = idx;
                 break;
             }
@@ -715,8 +715,8 @@ lsdtt_junction_basin_manager_cpu::filter_range_spanning(
         int opp_b_idx = (boundary_index + 2) % 4;
 
         // Only continue if opposing boundary pair both have no-flux conditions
-        if (to_lower(boundary_conditions[boundary_index]) != 'n' || 
-            to_lower(boundary_conditions[opp_b_idx]) != 'n') 
+        if (to_lower(boundary_conditions[boundary_index]) != 'o' || 
+            to_lower(boundary_conditions[opp_b_idx]) != 'o') 
         {
             remove_mask[i] = true;
             continue;
