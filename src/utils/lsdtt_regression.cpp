@@ -7,7 +7,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Linear and orthogonal linear regression for VALID paired numeric samples.
+// Linear, orthogonal, and 2nd-order polynomial regression for VALID paired 
+// numeric samples.
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_regression.hpp"
@@ -52,6 +53,21 @@ double signed_distance_to_line(
     return fit.a * x + fit.b * y + fit.c;
 }
 
+double predict_y(
+    const lsdtt_polynomial2_regression_result& fit,
+    double x
+)
+{
+    if (std::isnan(fit.A) || std::isnan(fit.B) || std::isnan(fit.C))
+    {
+        throw std::runtime_error(
+            "predict_y: 2nd-order polynomial regression does not have valid coefficients"
+        );
+    }
+
+    return fit.A * x * x + fit.B * x + fit.C;
+}
+
 lsdtt_linear_regression_result compute_linear_regression(
     const std::vector<double>& x,
     const std::vector<double>& y
@@ -69,6 +85,17 @@ lsdtt_orthogonal_linear_regression_result compute_orthogonal_linear_regression(
 )
 {
     return compute_orthogonal_linear_regression(
+        x.begin(), x.end(),
+        y.begin(), y.end()
+    );
+}
+
+lsdtt_polynomial2_regression_result compute_polynomial2_regression(
+    const std::vector<double>& x,
+    const std::vector<double>& y
+)
+{
+    return compute_polynomial2_regression(
         x.begin(), x.end(),
         y.begin(), y.end()
     );

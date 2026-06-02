@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Linear and orthogonal linear regression for VALID paired numeric samples.
+// Linear, orthogonal, and polynomial regression for VALID paired numeric samples.
 //
 // IMPORTANT CONTRACT
 // ------------------
@@ -40,10 +40,9 @@
 //     appropriate when both x and y have comparable error or when a geometric
 //     line fit is wanted
 //
-// Notes:
-//   - ordinary linear regression cannot represent a vertical line as y = m x + b
-//   - orthogonal linear regression can represent vertical and near-vertical
-//     lines naturally through its direction and normal vectors
+//   2nd-order polynomial regression:
+//     fits y = A x^2 + B x + C
+//     minimises squared vertical residuals in y
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -55,6 +54,7 @@
 #include <type_traits>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 
 namespace lsdtt
 {
@@ -141,6 +141,25 @@ struct lsdtt_orthogonal_linear_regression_result
     }
 };
 
+struct lsdtt_polynomial2_regression_result
+{
+    std::size_t n_points = 0;
+
+    // Polynomial form:
+    //   y = A*x^2 + B*x + C
+    double A = std::numeric_limits<double>::quiet_NaN();
+    double B = std::numeric_limits<double>::quiet_NaN();
+    double C = std::numeric_limits<double>::quiet_NaN();
+
+    double r_squared = std::numeric_limits<double>::quiet_NaN();
+    double sse       = std::numeric_limits<double>::quiet_NaN();
+
+    bool empty() const noexcept
+    {
+        return n_points == 0;
+    }
+};
+
 // -----------------------------------------------------------------------------
 // Utility functions
 // -----------------------------------------------------------------------------
@@ -156,6 +175,11 @@ double signed_distance_to_line(
     double y
 );
 
+double predict_y(
+    const lsdtt_polynomial2_regression_result& fit,
+    double x
+);
+
 // -----------------------------------------------------------------------------
 // Core double-precision vector API
 // -----------------------------------------------------------------------------
@@ -166,6 +190,11 @@ lsdtt_linear_regression_result compute_linear_regression(
 );
 
 lsdtt_orthogonal_linear_regression_result compute_orthogonal_linear_regression(
+    const std::vector<double>& x,
+    const std::vector<double>& y
+);
+
+lsdtt_polynomial2_regression_result compute_polynomial2_regression(
     const std::vector<double>& x,
     const std::vector<double>& y
 );
@@ -198,6 +227,28 @@ struct regression_accumulator
         sxx += dx * (x - mean_x);
         syy += dy * (y - mean_y);
         sxy += dx * (y - mean_y);
+    }
+};
+
+struct poly2_accumulator
+{
+    std::size_t n = 0;
+    double sx = 0.0, sx2 = 0.0, sx3 = 0.0, sx4 = 0.0;
+    double sy = 0.0, sxy = 0.0, sx2y = 0.0;
+    double syy = 0.0;
+
+    void add(double x, double y)
+    {
+        ++n;
+        const double x2 = x * x;
+        sx += x;
+        sx2 += x2;
+        sx3 += x2 * x;
+        sx4 += x2 * x2;
+        sy += y;
+        sxy += x * y;
+        sx2y += x2 * y;
+        syy += y * y;
     }
 };
 
@@ -248,6 +299,32 @@ regression_accumulator accumulate_xy_pairs(
         );
     }
 
+    return acc;
+}
+
+template<typename InputItX, typename InputItY>
+poly2_accumulator accumulate_xy_pairs_poly2(
+    InputItX x_begin,
+    InputItX x_end,
+    InputItY y_begin,
+    InputItY y_end
+)
+{
+    poly2_accumulator acc;
+    while (x_begin != x_end && y_begin != y_end)
+    {
+        acc.add(
+            static_cast<double>(*x_begin),
+            static_cast<double>(*y_begin)
+        );
+        ++x_begin; ++y_begin;
+    }
+    if (x_begin != x_end || y_begin != y_end)
+    {
+        throw std::invalid_argument(
+            "accumulate_xy_pairs_poly2: x and y ranges must have the same length"
+        );
+    }
     return acc;
 }
 
@@ -402,6 +479,69 @@ make_orthogonal_linear_regression_result_from_accumulator(
     return out;
 }
 
+inline lsdtt_polynomial2_regression_result
+make_poly2_result_from_accumulator(const poly2_accumulator& acc)
+{
+    lsdtt_polynomial2_regression_result out;
+    out.n_points = acc.n;
+
+    if (acc.n < 3) return out;
+
+    // Normal equations formulated in a 3x3 matrix block
+    const double M[3][3] = {
+        {acc.sx4, acc.sx3, acc.sx2},
+        {acc.sx3, acc.sx2, acc.sx },
+        {acc.sx2, acc.sx,  static_cast<double>(acc.n)}
+    };
+    const double rhs[3] = {acc.sx2y, acc.sxy, acc.sy};
+
+    auto det3x3 = [](const double m[3][3]) -> double {
+        return m[0][0]*(m[1][1]*m[2][2] - m[1][2]*m[2][1])
+             - m[0][1]*(m[1][0]*m[2][2] - m[1][2]*m[2][0])
+             + m[0][2]*(m[1][0]*m[2][1] - m[1][1]*m[2][0]);
+    };
+
+    const double D = det3x3(M);
+    if (std::abs(D) < 1e-15) {
+        return out; 
+    }
+
+    const double M_A[3][3] = {
+        {rhs[0], M[0][1], M[0][2]},
+        {rhs[1], M[1][1], M[1][2]},
+        {rhs[2], M[2][1], M[2][2]}
+    };
+    const double M_B[3][3] = {
+        {M[0][0], rhs[0], M[0][2]},
+        {M[1][0], rhs[1], M[1][2]},
+        {M[2][0], rhs[2], M[2][2]}
+    };
+    const double M_C[3][3] = {
+        {M[0][0], M[0][1], rhs[0]},
+        {M[1][0], M[1][1], rhs[1]},
+        {M[2][0], M[2][1], rhs[2]}
+    };
+
+    out.A = det3x3(M_A) / D;
+    out.B = det3x3(M_B) / D;
+    out.C = det3x3(M_C) / D;
+
+    // Exact derivation of Sum of Squared Errors from the available cumulative sums
+    double sse_raw = acc.syy 
+        + out.A * out.A * acc.sx4 + out.B * out.B * acc.sx2 + out.C * out.C * static_cast<double>(acc.n)
+        - 2.0 * out.A * acc.sx2y - 2.0 * out.B * acc.sxy - 2.0 * out.C * acc.sy
+        + 2.0 * out.A * out.B * acc.sx3 + 2.0 * out.A * out.C * acc.sx2 + 2.0 * out.B * out.C * acc.sx;
+    
+    out.sse = std::max(0.0, sse_raw);
+
+    const double y_mean = acc.sy / static_cast<double>(acc.n);
+    const double sst    = acc.syy - static_cast<double>(acc.n) * y_mean * y_mean;
+
+    out.r_squared = (sst > 0.0) ? (1.0 - out.sse / sst) : 0.0;
+
+    return out;
+}
+
 template<typename T>
 using enable_numeric_vector_t = std::enable_if_t<
     std::is_arithmetic_v<T> &&
@@ -471,6 +611,32 @@ lsdtt_orthogonal_linear_regression_result compute_orthogonal_linear_regression(
     );
 }
 
+template<typename T, detail::enable_numeric_vector_t<T> = 0>
+lsdtt_polynomial2_regression_result compute_polynomial2_regression(
+    const std::vector<T>& x,
+    const std::vector<T>& y
+)
+{
+    return compute_polynomial2_regression(
+        x.begin(), x.end(),
+        y.begin(), y.end()
+    );
+}
+
+template<typename X, typename Y,
+         detail::enable_numeric_vector_t<X> = 0,
+         detail::enable_numeric_vector_t<Y> = 0>
+lsdtt_polynomial2_regression_result compute_polynomial2_regression(
+    const std::vector<X>& x,
+    const std::vector<Y>& y
+)
+{
+    return compute_polynomial2_regression(
+        x.begin(), x.end(),
+        y.begin(), y.end()
+    );
+}
+
 // -----------------------------------------------------------------------------
 // Iterator overloads
 //
@@ -504,6 +670,19 @@ lsdtt_orthogonal_linear_regression_result compute_orthogonal_linear_regression(
         detail::accumulate_xy_pairs(x_begin, x_end, y_begin, y_end);
 
     return detail::make_orthogonal_linear_regression_result_from_accumulator(acc);
+}
+
+template<typename InputItX, typename InputItY>
+lsdtt_polynomial2_regression_result compute_polynomial2_regression(
+    InputItX x_begin,
+    InputItX x_end,
+    InputItY y_begin,
+    InputItY y_end
+)
+{
+    const detail::poly2_accumulator acc =
+        detail::accumulate_xy_pairs_poly2(x_begin, x_end, y_begin, y_end);
+    return detail::make_poly2_result_from_accumulator(acc);
 }
 
 } // namespace lsdtt

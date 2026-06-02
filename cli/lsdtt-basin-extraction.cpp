@@ -428,6 +428,13 @@ int main(int argc, char* argv[])
         "GeoPackage may have file I/O issues on some filesystems. "
         "CSV is not allowed for basin outline lines."};
 
+    bool_default_map["write_basin_outlines_to_csv"] = false;
+    help_map["write_basin_outlines_to_csv"] = {"bool", "false",
+        "Write basin outlines as a point CSV with distance and elevation.",
+        "Outputs a _basin_outlines.csv file containing points for all basins."
+    };
+
+
     bool_default_map["write_basin_outlet_points"] = false;
     help_map["write_basin_outlet_points"] = {"bool","false",
         "Write requested basin outlet points to FlatGeobuf in the raster CRS.",
@@ -1665,6 +1672,23 @@ int main(int argc, char* argv[])
                 }
             }
         }
+
+        if (bf["write_basin_outlines_to_csv"]) 
+        {
+            const std::string output_file = pp.make_output_path( "_basin_outlines", ".csv");
+            std::cout << "Writing CSV: " << output_file << "\n";
+
+            try 
+            {
+                basin_manager.write_basin_outlines_to_csv(output_file, dem);
+            }
+            catch (const std::exception& e) 
+            {
+                std::cerr << "FATAL: writing basin outlines to CSV failed: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
 
         if (bf["write_basins_raster"])
         {

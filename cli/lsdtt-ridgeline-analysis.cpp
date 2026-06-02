@@ -25,7 +25,7 @@
 //
 //   PATHWAY B — Range-defined ridgelines (requires boundary conditions)
 //   -------------------------------------------------------------------
-//   Identifies range-spanning basins that drain to opposing no-flux
+//   Identifies range-spanning basins that drain to opposing open (o)
 //   boundaries (mountain fronts) and extracts:
 //       - transverse divides (between adjacent range-spanning basins)
 //       - the main drainage divide (MDD)
@@ -33,11 +33,12 @@
 //       analyse_transverse_divide_ridgelines: true
 //       analyse_mdd_ridgeline: true
 //   Requires exactly four boundary segments with at least one pair of
-//   opposing no-flux (n) boundaries.  Corner coordinates for segmenting
-//   the DEM boundary can be supplied via corner_coordinates_csv; if that
-//   parameter is NULL and range-defined ridgelines are requested, the
-//   four corners of the DEM are used directly (the DEM must be square
-//   with no nodata at its corners).
+//   opposing open (o) boundaries (mountain fronts).  NOTE: lsdtt3 flowinfo
+//   does not support no-flux (n) boundaries — use open (o) instead.
+//   Corner coordinates for segmenting the DEM boundary can be supplied
+//   via corner_coordinates_csv; if that parameter is NULL and range-defined
+//   ridgelines are requested, the four corners of the DEM are used directly
+//   (the DEM must be square with no nodata at its corners).
 //
 // Workflow (in both pathways):
 //   1. Open DEM
@@ -384,10 +385,11 @@ int main(int argc, char* argv[])
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Four-character boundary condition string (N, E, S, W).",
-        "o = open, n = no-flux, p = periodic. "
-        "Required for Pathway B (range-defined ridgelines). "
-        "At least one pair of opposing boundaries must be 'n' for range-"
-        "defined ridgelines to work."};
+        "o = open, p = periodic. NOTE: lsdtt3 flowinfo does not support no-flux (n) "
+        "boundaries. For Pathway B (range-defined ridgelines), mountain fronts are "
+        "defined by open (o) boundaries. Supply at least one pair of opposing 'o' "
+        "boundaries. All-open (oooo) is the default and works for a standard rectangular "
+        "DEM where all four sides are open outlets/mountain fronts."};
 
     // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
@@ -567,6 +569,13 @@ int main(int argc, char* argv[])
     help_map["basin_outlines_output_format"] = {"string","flatgeobuf",
         "Output format for basin outline vectors.",
         "flatgeobuf, fgb or gpkg."};
+    
+    bool_default_map["write_basin_outlines_to_csv"] = false;
+    help_map["write_basin_outlines_to_csv"] = {"bool", "false",
+        "Write basin outlines as a point CSV with distance and elevation.",
+        "Outputs a _basin_outlines.csv file containing points for all basins."
+    };
+
 
     // --- Basin raster output ---
     bool_default_map["write_basins_raster"] = false;
@@ -626,13 +635,17 @@ int main(int argc, char* argv[])
         "[Pathway B] Analyse ridgelines along transverse divides.",
         "Transverse divides separate adjacent range-spanning basins on the "
         "same side of the main drainage divide. Requires at least one pair "
-        "of opposing no-flux boundary conditions."};
+        "of opposing open (o) boundary conditions (mountain fronts). "
+        "NOTE: lsdtt3 flowinfo does not support no-flux (n) boundaries; "
+        "use open (o) for mountain fronts instead."};
 
     bool_default_map["analyse_mdd_ridgeline"] = false;
     help_map["analyse_mdd_ridgeline"] = {"bool","false",
         "[Pathway B] Analyse the main drainage divide (MDD) ridgeline.",
         "Extracts the continuous crest of the range from opposing sides. "
-        "Requires at least one pair of opposing no-flux boundary conditions."};
+        "Requires at least one pair of opposing open (o) boundary conditions "
+        "(mountain fronts). NOTE: lsdtt3 flowinfo does not support no-flux (n) "
+        "boundaries; use open (o) for mountain fronts instead."};
 
     bool_default_map["use_constant_fit_for_mdd_ridgeline"] = false;
     help_map["use_constant_fit_for_mdd_ridgeline"] = {"bool","false",
@@ -1345,6 +1358,23 @@ int main(int argc, char* argv[])
             }
         }
 
+        if (bf["write_basin_outlines_to_csv"])
+        {
+            std::cout << "\n--- Writing basin outlines to CSV ---\n";
+            const std::string out = pp.make_output_path("_basin_outlines", ".csv");
+            std::cout << "Writing: " << out << "\n";
+            try
+            {
+                basin_manager.write_basin_outlines_to_csv(out, dem);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing basin outlines to CSV failed: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
+
         if (bf["write_basins_raster"])
         {
             std::cout << "\n--- Writing basin raster ---\n";
@@ -1436,7 +1466,10 @@ int main(int argc, char* argv[])
             << "=========================================================\n";
 
         std::cout << "For range-defined ridgelines I need four boundary segments\n"
-                  << "with at least one pair of opposing no-flux (n) boundaries.\n";
+                  << "with at least one pair of opposing open (o) boundaries,\n"
+                  << "which are interpreted as mountain fronts.\n"
+                  << "NOTE: in lsdtt3, flowinfo does not support no-flux (n) boundaries.\n"
+                  << "Use open (o) for mountain fronts and no-flux conditions are not needed.\n";
 
                 // --- Resolve boundary corners ---
         std::vector<lsdtt::lsdtt_input_point> corner_pts;
@@ -1506,62 +1539,247 @@ int main(int argc, char* argv[])
         
         std::cout << "Selecting all junction basins..." << std::endl;
         range_basin_manager.select_all_junction_basins();
-        range_basin_manager.filter_incomplete(); 
 
         std::cout << "Filtering for exact range-spanning basins..." << std::endl;
         range_basin_manager.filter_range_spanning(boundary_segments, sf["boundary_conditions"]);
-        std::cout << "Retained " << range_basin_manager.size() << " range-spanning basins.\n";
+                std::cout << "Retained " << range_basin_manager.size() << " range-spanning basins.\n";
+        // Note: these don't have to be pruned for edge draining
+        // because the purpose is to derive either transverse divides or the
+        // main drainage divide (or both) and in both cases this does not
+        // matter
 
-        // Reconstruct the 2D array matching the LSDTT2 pipeline to feed the sorting loop 
-        std::vector<std::vector<int>> range_spanning_basin_juncs(4);
+        // ---------------------------------------------------------------------
+        // Group and Sort range-spanning basins per boundary
+        // ---------------------------------------------------------------------
+        std::cout << "\n--- Grouping and sorting range-spanning basins per boundary ---\n";
+        std::cout << "Grouping and sorting these basins by order of occurence along "
+                  << "each DEM boundary (mountain front)...\n";
 
+        // This will store the sorted junction numbers per boundary (N=0, E=1, S=2, W=3)
+        std::vector<std::vector<std::int32_t>> sorted_junctions_per_boundary(4);
+
+        if (range_basin_manager.empty()) {
+            std::cout << "WARNING: I could not find any range-spanning basins.\n";
+        }
+
+        // To map back and forth, grab all outlets and junctions
         std::vector<std::int32_t> rs_junctions = range_basin_manager.get_junction_numbers();
         std::vector<std::int64_t> rs_outlets   = range_basin_manager.get_basin_outlet_flat_indices();
 
-        for (std::size_t i = 0; i < rs_junctions.size(); ++i)
+        for (int b = 0; b < 4; ++b)
         {
-            std::vector<int> matching_boundaries;
-            for (int b = 0; b < 4; ++b)
+            const std::vector<std::int64_t>& b_flats = boundary_segments[b];
+            
+            // Map outlet node to its position along the boundary
+            // pair<index_in_boundary, junction_id>
+            std::vector<std::pair<int, std::int32_t>> outlet_positions;
+            
+            for (std::size_t i = 0; i < rs_junctions.size(); ++i)
             {
-                if (std::find(boundary_segments[b].begin(), boundary_segments[b].end(), rs_outlets[i]) 
-                    != boundary_segments[b].end())
+                auto it = std::find(b_flats.begin(), b_flats.end(), rs_outlets[i]);
+                if (it != b_flats.end())
                 {
-                    matching_boundaries.push_back(b);
+                    // To resolve ties where a corner pixel belongs to two boundaries,
+                    // we must ensure we ONLY assign it to the boundary marked 'o' (open).
+                    // In lsdtt3, mountain fronts must be 'o'.
+                    char bc_char = static_cast<char>(std::tolower(static_cast<unsigned char>(sf["boundary_conditions"][b])));
+                    if (bc_char == 'o')
+                    {
+                        int idx = static_cast<int>(std::distance(b_flats.begin(), it));
+                        outlet_positions.emplace_back(idx, rs_junctions[i]);
+                    }
                 }
             }
 
-            int boundary_index = -1;
-            for (int idx : matching_boundaries)
+            // Sort basins by order of occurrence along the boundary trace
+            std::sort(outlet_positions.begin(), outlet_positions.end());
+
+            for (const auto& p : outlet_positions)
             {
-                // Prioritize 'n' boundary string if matched on a corner
-                if (std::tolower(static_cast<unsigned char>(sf["boundary_conditions"][idx])) == 'n') {
-                    boundary_index = idx;
-                    break;
+                sorted_junctions_per_boundary[b].push_back(p.second);
+            }
+
+            std::cout << "  Boundary " << b << " has " 
+                      << sorted_junctions_per_boundary[b].size() << " range-spanning basins.\n";
+        }
+
+        // =====================================================================
+        // Extract Transverse and Main Drainage Divides
+        // =====================================================================
+
+        // We are holding these divides as lsdtt_ridgeline_cpu.
+        // It really is just an object that can hold a segment of drainage divide.
+        std::vector<lsdtt::lsdtt_ridgeline_cpu> transverse_ridgelines;
+        std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_ridgelines;
+
+        // This is to store junction numbers associated with the transverse
+        // divides (if we are including transverse divides, below).
+        std::vector<std::int32_t> left_basins, right_basins;
+
+        // Decide which ones we need
+        // "Combining" extraction of these divides reduces the number of times
+        // we have to trace the same basin outline.
+        const bool get_transverse_divides   = bf["analyse_transverse_divide_ridgelines"];
+        const bool get_main_drainage_divide = bf["analyse_mdd_ridgeline"];
+
+        // Helper lambda to fetch the basin from the manager by junction_id
+        auto get_basin_by_junction = [&](std::int32_t jid) -> const lsdtt::lsdtt_junction_basin_cpu* {
+            for (std::size_t i = 0; i < range_basin_manager.size(); ++i) {
+                if (range_basin_manager.basin_at(i).get_junction_number() == jid) {
+                    return &range_basin_manager.basin_at(i);
                 }
             }
-            if (boundary_index == -1 && !matching_boundaries.empty()) {
-                boundary_index = matching_boundaries[0];
-            }
+            return nullptr;
+        };
 
-            if(boundary_index != -1) {
-                range_spanning_basin_juncs[boundary_index].push_back(rs_junctions[i]);
-            }
-        }
+        // Note on transverse divide extraction:
+        // The DEM is traced clockwise to get the DEM boundaries
+        // And the basins along these boundaries are in-order of the tracing
+        // direction, due to the sorting step above. 
+        // So if we take the transverse divide to the left of each basin along 
+        // a boundary, excluding the final basin, we avoid duplicates of the 
+        // same transverse divide.
+        // BUT we should not exclude the final basin if the next boundary is periodic.
 
-        // Just output diagnostics
-        for(int b = 0; b < 4; ++b)
+        // Note on main drainage divide extraction:
+        // We go along each boundary, take the mdd-portions of each range
+        // spanning basin, which should result in a continuous mdd when pasted
+        // together (it is geometrically not possible for two adjacent range
+        // spanning basins to not have a shared triple divide on the MDD).
+        // We do this for each boundary and then keep only the nodes that are
+        // shared between each dummy-mdd.
+
+        // This will hold the MDD segments for each boundary before merging
+        std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_for_each_boundary(4);
+
+        std::cout << "\n--- Tracing divides for range-spanning basins ---\n";
+        for (int b = 0; b < 4; ++b)
         {
-            std::cout << "  Boundary " << b << " has " 
-                      << range_spanning_basin_juncs[b].size() << " range-spanning basins.\n";
+            const std::vector<std::int32_t>& junctions = sorted_junctions_per_boundary[b];
+            if (junctions.empty()) continue;
+
+            // Determine if the next boundary is periodic
+            std::size_t final_basin_for_tvd_finding = junctions.size() - 1;
+            char next_bc = static_cast<char>(std::tolower(static_cast<unsigned char>(sf["boundary_conditions"][(b + 1) % 4])));
+            if (next_bc != 'p' && final_basin_for_tvd_finding > 0)
+            {
+                final_basin_for_tvd_finding--;
+            }
+
+            std::vector<lsdtt::lsdtt_ridgeline_cpu> dummy_mdd;
+            const int NJunctions = static_cast<int>(junctions.size());
+
+            for (int bsn = 0; bsn < NJunctions; ++bsn)
+            {
+                std::int32_t jid = junctions[bsn];
+                const lsdtt::lsdtt_junction_basin_cpu* basin_ptr = get_basin_by_junction(jid);
+                if (!basin_ptr) continue;
+
+                // Get the basin outline (auto-handles periodicity on tracing)
+                lsdtt::lsdtt_basin_outline_cpu BO = basin_ptr->get_basin_outline();
+
+                // Transverse Divides
+                if (get_transverse_divides && static_cast<std::size_t>(bsn) <= final_basin_for_tvd_finding)
+                {
+                    lsdtt::lsdtt_ridgeline_cpu tvd = BO.get_left_transverse_divide_as_ridgeline(
+                        jid,
+                        sorted_junctions_per_boundary[b],            // this side
+                        sorted_junctions_per_boundary[(b + 2) % 4],  // opposite
+                        *channel_network
+                    );
+
+                    // If not an empty ridgeline
+                    // (Which can happen due to interstitial unchannelled space
+                    // in-between range-spanning basins)
+                    if (!tvd.empty())
+                    {
+                        transverse_ridgelines.push_back(std::move(tvd));
+                        
+                        // Left basin is the next one in the junctions list, note wrapping
+                        // when due to periodic boundaries the current basin is already the final one.
+                        left_basins.push_back(junctions[(bsn + 1) % NJunctions]);
+                        right_basins.push_back(jid);
+                    }
+                }
+
+                // Main Drainage Divide
+                if (get_main_drainage_divide)
+                {
+                    lsdtt::lsdtt_ridgeline_cpu mdd_part = BO.get_outline_nodes_on_main_drainage_divide_as_ridgeline(
+                        jid,
+                        sorted_junctions_per_boundary[b],            // this side
+                        sorted_junctions_per_boundary[(b + 2) % 4],  // opposite
+                        *channel_network
+                    );
+
+                    // The nodes are traced clockwise around the basin outline, 
+                    // but we are going basin-by-basin along the DEM boundary clockwise too. 
+                    // To get the dummy-MDD flowing in the same general direction as the 
+                    // DEM boundary, we must reverse this segment.
+                    if (!mdd_part.empty()) {
+                        mdd_part.reverse();
+                        dummy_mdd.push_back(std::move(mdd_part));
+                    }
+                }
+            }
+
+            if (get_main_drainage_divide && !dummy_mdd.empty())
+            {
+                lsdtt::lsdtt_ridgeline_cpu this_boundary_mdd = std::move(dummy_mdd[0]);
+                for (std::size_t m = 1; m < dummy_mdd.size(); ++m)
+                {
+                    this_boundary_mdd.append_without_check(dummy_mdd[m]);
+                }
+                mdd_for_each_boundary[b] = std::move(this_boundary_mdd);
+            }
         }
 
+        if (get_main_drainage_divide)
+        {
+            std::cout << "Pulling together the main drainage divide...\n";
+            std::vector<int> boundary_indices;
+            for (int i = 0; i < 4; ++i)
+            {
+                if (!mdd_for_each_boundary[i].empty())
+                {
+                    boundary_indices.push_back(i);
+                }
+            }
 
-        // TODO: detect range-spanning basins
-        // This block will be filled in once lsdtt3 implementations are available for:
-        //   2. LSDRidgeline processing logic
+            if (boundary_indices.size() == 4)
+            {
+                std::cout << "Notice: Range-spanning basins on all 4 boundaries meeting at a quadruple divide.\n"
+                          << "Skipping MDD assembly for this rare singular node case.\n\n";
+            }
+            else if (boundary_indices.size() == 2)
+            {
+                int b_idx = boundary_indices[0];
+                int opp_b_idx = boundary_indices[1];
 
+                // Reverse the opposing boundary's MDD so it goes in the same direction
+                mdd_for_each_boundary[opp_b_idx].reverse();
+
+                mdd_ridgelines = mdd_for_each_boundary[b_idx].extract_contiguous_shared_ridgelines(
+                    mdd_for_each_boundary[opp_b_idx]
+                );
+            }
+            else
+            {
+                std::cout << "Warning: Unexpected number of MDD-touching boundaries. Cannot stitch MDD reliably.\n";
+            }
+        }
+
+        if (get_main_drainage_divide) {
+            std::cout << "I got " << mdd_ridgelines.size() << " main drainage divide segment(s)!\n";
+        }
+        if (get_transverse_divides) {
+            std::cout << "I got " << transverse_ridgelines.size() << " transverse divide segment(s)!\n";
+        }
+
+      
 
     } // end pathway B block
+
 
     // =========================================================================
     // Parameter echo

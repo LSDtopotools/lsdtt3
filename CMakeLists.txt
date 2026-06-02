@@ -184,6 +184,7 @@ set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_splines.cpp
     src/utils/lsdtt_regression.cpp
     src/utils/lsdtt_binary_array2d_tracing.cpp
+    src/utils/lsdtt_signal1d.cpp
 )
 
 add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
@@ -267,6 +268,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_sediment_transport_cpu.cpp
     src/cpu/lsdtt_giuh_cpu.cpp
     src/cpu/lsdtt_side_tributary_basins_cpu.cpp
+    src/cpu/lsdtt_ridgeline_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)

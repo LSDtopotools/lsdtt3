@@ -1,3 +1,4 @@
+// ignore this comment
 #pragma once
 
 // lsdtt_basin_outline_cpu
@@ -30,6 +31,10 @@
 #include "../core/lsdtt_types.hpp"
 #include "../core/lsdtt_data_loader.hpp"     
 #include "../utils/lsdtt_raster_geometry.hpp" 
+
+#include "../core/lsdtt_junction_network_base.hpp"
+#include "lsdtt_ridgeline_cpu.hpp"
+#include "lsdtt_raster_cpu.hpp"
 
 
 namespace lsdtt
@@ -98,6 +103,83 @@ public:
   // Will have field values only for basin_id (passed on)
   // This can be used to make an lsdtt_vector_layer by higher-level code.
   [[nodiscard]] lsdtt_vector_record get_outline_as_polygon_record(std::int32_t basin_id) const;
+
+
+  // -------------------------------------------------------------------------
+  // Ridgeline generation methods
+  // -------------------------------------------------------------------------
+
+  // Interpolates values from a DEM raster onto the pixel-corner divide grid
+  [[nodiscard]] std::vector<float> interpolate_pixel_values_on_outline(
+      const lsdtt_raster_cpu& data_raster) const;
+
+  // Writes a defined segment of the outline to an lsdtt_ridgeline_cpu object
+  [[nodiscard]] lsdtt_ridgeline_cpu write_outline_portion_to_ridgeline(
+      int start_index, int stop_index, bool write_in_reverse) const;
+
+  // Splits the outline into two ridgelines at the point of maximum elevation
+  [[nodiscard]] std::vector<lsdtt_ridgeline_cpu> split_outline_into_ridgelines_by_max_elevation(
+      const lsdtt_raster_cpu& elevation_raster) const;
+
+  // Splits the outline into two ridgelines at the longest internal channel's head
+  [[nodiscard]] std::vector<lsdtt_ridgeline_cpu> split_outline_into_ridgelines_by_longest_channel(
+      const lsdtt_raster_cpu& dist_from_outlet) const;
+
+  // Splits the outline exactly in half by perimeter length
+  [[nodiscard]] std::vector<lsdtt_ridgeline_cpu> split_outline_into_ridgelines_by_equal_length() const;
+
+  // Extracts the left transverse divide (range-spanning basin boundaries)
+  [[nodiscard]] lsdtt_ridgeline_cpu get_left_transverse_divide_as_ridgeline(
+      std::int32_t basin_junction,
+      const std::vector<std::int32_t>& range_spanning_basins_N,
+      const std::vector<std::int32_t>& range_spanning_basins_S,
+      const lsdtt_junction_network_base& junction_network) const;
+
+  // Extracts the right transverse divide (range-spanning basin boundaries)
+  [[nodiscard]] lsdtt_ridgeline_cpu get_right_transverse_divide_as_ridgeline(
+      std::int32_t basin_junction,
+      const std::vector<std::int32_t>& range_spanning_basins_N,
+      const std::vector<std::int32_t>& range_spanning_basins_S,
+      const lsdtt_junction_network_base& junction_network) const;
+
+  // Extracts the specific outline segment lining the Main Drainage Divide
+  [[nodiscard]] lsdtt_ridgeline_cpu get_outline_nodes_on_main_drainage_divide_as_ridgeline(
+      std::int32_t basin_junction,
+      const std::vector<std::int32_t>& range_spanning_basins_N,
+      const std::vector<std::int32_t>& range_spanning_basins_S,
+      const lsdtt_junction_network_base& junction_network) const;
+
+  // Extracts the boundary segment shared between two distinct target basins
+  [[nodiscard]] lsdtt_ridgeline_cpu get_interfluvial_divide_as_ridgeline(
+      std::int32_t basin_junction,
+      std::int32_t otherBasin_junction_number,
+      const lsdtt_junction_network_base& junction_network) const;
+
+  // -------------------------------------------------------------------------
+  // Internal topological finders for divides
+  // -------------------------------------------------------------------------
+  [[nodiscard]] std::vector<int> find_left_transverse_divide_nodes(
+      std::int32_t basin_junction,
+      const std::vector<std::int32_t>& range_spanning_basins_N,
+      const std::vector<std::int32_t>& range_spanning_basins_S,
+      const lsdtt_junction_network_base& junction_network) const;
+
+  [[nodiscard]] std::vector<int> find_right_transverse_divide_nodes(
+      std::int32_t basin_junction,
+      const std::vector<std::int32_t>& range_spanning_basins_N,
+      const std::vector<std::int32_t>& range_spanning_basins_S,
+      const lsdtt_junction_network_base& junction_network) const;
+
+  [[nodiscard]] std::vector<int> find_main_drainage_divide_nodes(
+      std::int32_t basin_junction,
+      const std::vector<std::int32_t>& range_spanning_basins_N,
+      const std::vector<std::int32_t>& range_spanning_basins_S,
+      const lsdtt_junction_network_base& junction_network) const;
+
+  [[nodiscard]] std::vector<int> find_interfluvial_divide_nodes(
+      std::int32_t basin_junction,
+      std::int32_t otherBasin_junction_number,
+      const lsdtt_junction_network_base& junction_network) const;
 
 
 private:
