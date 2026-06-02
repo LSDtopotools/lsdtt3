@@ -567,6 +567,13 @@ int main(int argc, char* argv[])
     help_map["basin_outlines_output_format"] = {"string","flatgeobuf",
         "Output format for basin outline vectors.",
         "flatgeobuf, fgb or gpkg."};
+    
+    bool_default_map["write_basin_outlines_to_csv"] = false;
+    help_map["write_basin_outlines_to_csv"] = {"bool", "false",
+        "Write basin outlines as a point CSV with distance and elevation.",
+        "Outputs a _basin_outlines.csv file containing points for all basins."
+    };
+
 
     // --- Basin raster output ---
     bool_default_map["write_basins_raster"] = false;
@@ -1344,6 +1351,23 @@ int main(int argc, char* argv[])
                 return 1;
             }
         }
+
+        if (bf["write_basin_outlines_to_csv"])
+        {
+            std::cout << "\n--- Writing basin outlines to CSV ---\n";
+            const std::string out = pp.make_output_path("_basin_outlines", ".csv");
+            std::cout << "Writing: " << out << "\n";
+            try
+            {
+                basin_manager.write_basin_outlines_to_csv(out, dem);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing basin outlines to CSV failed: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
 
         if (bf["write_basins_raster"])
         {

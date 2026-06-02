@@ -5,6 +5,9 @@
 
 #include "lsdtt_junction_basin_manager_cpu.hpp"
 #include "lsdtt_basin_outline_cpu.hpp"
+#include "../core/lsdtt_vector_utils.hpp"
+#include "lsdtt_raster_cpu.hpp"
+
 
 #include <algorithm>
 #include <stdexcept>
@@ -13,8 +16,86 @@
 #include <vector>
 #include <numeric>
 
+
+
+
 namespace lsdtt
 {
+
+namespace
+{
+    // Helper to split coordinates of periodic basins that jump across the DEM.
+    template <typename PointType>
+    std::vector<std::vector<PointType>> split_periodic_points(
+        const std::vector<PointType>& points,
+        double max_dx,
+        double max_dy,
+        bool is_polygon)
+    {
+        if (points.empty()) return {};
+
+        std::vector<std::vector<PointType>> paths;
+        std::vector<PointType> current_path;
+        current_path.push_back(points[0]);
+
+        for (std::size_t i = 1; i < points.size(); ++i)
+        {
+            double dx = std::abs(points[i].x - points[i - 1].x);
+            double dy = std::abs(points[i].y - points[i - 1].y);
+
+            // A jump across the domain means it's crossing a periodic boundary
+            if (dx > max_dx || dy > max_dy)
+            {
+                paths.push_back(current_path);
+                current_path.clear();
+            }
+            current_path.push_back(points[i]);
+        }
+        
+        if (!current_path.empty())
+        {
+            paths.push_back(current_path);
+        }
+
+        if (paths.size() > 1 && is_polygon)
+        {
+            // For polygons, the first and last paths connect seamlessly
+            // in unwrapped space since it's a closed ring. Stitch them here.
+            auto& first_path = paths.front();
+            auto& last_path  = paths.back();
+            
+            double dx_close = std::abs(last_path.back().x - first_path.front().x);
+            double dy_close = std::abs(last_path.back().y - first_path.front().y);
+            
+            // Pop the last duplicate point to prevent sequential duplicates
+            if (dx_close < 1e-4 && dy_close < 1e-4)
+            {
+                last_path.pop_back(); 
+            }
+            
+            last_path.insert(last_path.end(), first_path.begin(), first_path.end());
+            paths.erase(paths.begin());
+
+            // Because these are now disjoint areas snapped to the DEM edge,
+            // visually close the polygon edge rings.
+            for (auto& path : paths)
+            {
+                if (path.size() >= 3)
+                {
+                    double d_end_x = std::abs(path.front().x - path.back().x);
+                    double d_end_y = std::abs(path.front().y - path.back().y);
+                    
+                    if (d_end_x > 1e-4 || d_end_y > 1e-4)
+                    {
+                        path.push_back(path.front());
+                    }
+                }
+            }
+        }
+        
+        return paths;
+    }
+} // namespace
 
 // -----------------------------------------------------------------------
 // Construction
@@ -893,6 +974,9 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines(
         spatial_index
     );
 
+    const double max_dx = std::abs(flow_->meta().cell_size) * flow_->meta().n_cols * 0.5;
+    const double max_dy = std::abs(flow_->meta().cell_size) * flow_->meta().n_rows * 0.5;
+
     // One polyline per basin
     for (const lsdtt_junction_basin_cpu& basin : basins_)
     {
@@ -902,7 +986,6 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines(
         lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
 
         // Convert to vector record (geometry + field values)
-        // Assumes outline method signature: get_outline_as_line_record(basin_id)
         const lsdtt_vector_record rec =
             outline.get_outline_as_line_record(junc);
 
@@ -918,20 +1001,27 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines(
             continue;
         }
 
-        // Write feature (field_values must match schema order)
-        loader.write_line(line.points, rec.field_values);
+        // Deal with periodic wrap points
+        if (outline.is_periodic_ew() || outline.is_periodic_ns())
+        {
+            auto paths = split_periodic_points(line.points, max_dx, max_dy, false);
+            for (const auto& path : paths)
+            {
+                if (path.size() >= 2)
+                {
+                    loader.write_line(path, rec.field_values);
+                }
+            }
+        }
+        else
+        {
+            loader.write_line(line.points, rec.field_values);
+        }
     }
 
     loader.finish_vector_write();
 }
 
-
-// Write basins grouped by Strahler stream order, one layer per order.
-// Format notes:
-//   - GeoPackage (.gpkg): supports multiple layers natively — each stream
-//     order becomes a separate layer in the same file.
-//   - FlatGeobuf (.fgb): single-layer format only. One file is written
-//     per stream order, named  <out_path>_order_<N>.fgb.
 void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines_by_order(
     const std::string& out_path,
     vector_output_format format,
@@ -964,14 +1054,8 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines_by_order(
         by_order[basin.get_stream_order()].push_back(&basin);
     }
 
-    // -----------------------------------------------------------------------
-    // For GeoPackage: one loader, multiple begin/finish cycles (one per layer).
-    // For FlatGeobuf: one loader per order, separate output files.
-    // -----------------------------------------------------------------------
     const bool is_gpkg = (format == vector_output_format::gpkg);
 
-    // Strip any existing extension from out_path so we can rebuild it cleanly.
-    // e.g. "/results/basins.gpkg" -> "/results/basins"
     const std::string ext      = output_extension(format);
     std::string       base_path = out_path;
     if (base_path.size() >= ext.size() &&
@@ -980,11 +1064,10 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines_by_order(
         base_path.erase(base_path.size() - ext.size());
     }
 
-    lsdtt_data_loader gpkg_loader; // only used for the gpkg path
+    lsdtt_data_loader gpkg_loader;
 
     if (is_gpkg)
     {
-        // Single loader, single file, one begin/finish per order (layer).
         lsdtt_data_loader loader;
 
         for (const auto& [order, basin_ptrs] : by_order)
@@ -1040,6 +1123,9 @@ void lsdtt_junction_basin_manager_cpu::write_order_features_(
     const std::vector<const lsdtt_junction_basin_cpu*>& basin_ptrs
 ) const
 {
+    const double max_dx = std::abs(flow_->meta().cell_size) * flow_->meta().n_cols * 0.5;
+    const double max_dy = std::abs(flow_->meta().cell_size) * flow_->meta().n_rows * 0.5;
+
     for (const lsdtt_junction_basin_cpu* basin : basin_ptrs)
     {
         const std::int32_t junc  = basin->get_junction_number();
@@ -1055,12 +1141,29 @@ void lsdtt_junction_basin_manager_cpu::write_order_features_(
         if (line.points.size() < 2)
             continue;
 
-        // field_values must match schema order: { junction_number, stream_order }
-        loader.write_line(
-            line.points,
-            { static_cast<std::int64_t>(junc),
-              static_cast<std::int64_t>(order) }
-        );
+        if (outline.is_periodic_ew() || outline.is_periodic_ns())
+        {
+            auto paths = split_periodic_points(line.points, max_dx, max_dy, false);
+            for (const auto& path : paths)
+            {
+                if (path.size() >= 2)
+                {
+                    loader.write_line(
+                        path,
+                        { static_cast<std::int64_t>(junc),
+                          static_cast<std::int64_t>(order) }
+                    );
+                }
+            }
+        }
+        else
+        {
+            loader.write_line(
+                line.points,
+                { static_cast<std::int64_t>(junc),
+                  static_cast<std::int64_t>(order) }
+            );
+        }
     }
 }
 
@@ -1093,6 +1196,9 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_polygons(
         spatial_index
     );
 
+    const double max_dx = std::abs(flow_->meta().cell_size) * flow_->meta().n_cols * 0.5;
+    const double max_dy = std::abs(flow_->meta().cell_size) * flow_->meta().n_rows * 0.5;
+
     for (const lsdtt_junction_basin_cpu& basin : basins_)
     {
         const std::int32_t junc = basin.get_junction_number();
@@ -1104,10 +1210,24 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_polygons(
             continue;
 
         const lsdtt_polygon_geom& poly = std::get<lsdtt_polygon_geom>(rec.geometry);
-        if (poly.exterior.size() < 4)  // need at least 3 unique points + closing
+        if (poly.exterior.size() < 4)  
             continue;
 
-        loader.write_polygon(poly.exterior, rec.field_values);
+        if (outline.is_periodic_ew() || outline.is_periodic_ns())
+        {
+            auto paths = split_periodic_points(poly.exterior, max_dx, max_dy, true);
+            for (const auto& path : paths)
+            {
+                if (path.size() >= 4)
+                {
+                    loader.write_polygon(path, rec.field_values);
+                }
+            }
+        }
+        else
+        {
+            loader.write_polygon(poly.exterior, rec.field_values);
+        }
     }
 
     loader.finish_vector_write();
@@ -1206,6 +1326,9 @@ void lsdtt_junction_basin_manager_cpu::write_order_polygon_features_(
     const std::vector<const lsdtt_junction_basin_cpu*>& basin_ptrs
 ) const
 {
+    const double max_dx = std::abs(flow_->meta().cell_size) * flow_->meta().n_cols * 0.5;
+    const double max_dy = std::abs(flow_->meta().cell_size) * flow_->meta().n_rows * 0.5;
+
     for (const lsdtt_junction_basin_cpu* basin : basin_ptrs)
     {
         const std::int32_t junc  = basin->get_junction_number();
@@ -1221,12 +1344,145 @@ void lsdtt_junction_basin_manager_cpu::write_order_polygon_features_(
         if (poly.exterior.size() < 4)
             continue;
 
-        loader.write_polygon(
-            poly.exterior,
-            { static_cast<std::int64_t>(junc),
-              static_cast<std::int64_t>(order) }
+        if (outline.is_periodic_ew() || outline.is_periodic_ns())
+        {
+            auto paths = split_periodic_points(poly.exterior, max_dx, max_dy, true);
+            for (const auto& path : paths)
+            {
+                if (path.size() >= 4)
+                {
+                    loader.write_polygon(
+                        path,
+                        { static_cast<std::int64_t>(junc),
+                          static_cast<std::int64_t>(order) }
+                    );
+                }
+            }
+        }
+        else
+        {
+            loader.write_polygon(
+                poly.exterior,
+                { static_cast<std::int64_t>(junc),
+                  static_cast<std::int64_t>(order) }
+            );
+        }
+    }
+}
+
+void lsdtt_junction_basin_manager_cpu::write_basin_outlines_to_csv(
+    const std::string& out_path,
+    const lsdtt_raster_cpu& dem
+) const
+{
+    if (basins_.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_junction_basin_manager_cpu::write_basin_outlines_to_csv: "
+            "no basins have been selected"
         );
     }
+
+    std::vector<std::string> headers = {
+        "junction_number",
+        "basin_outlet_flat_index",
+        "latitude",
+        "longitude",
+        "cw_distance_from_outlet",
+        "ccw_distance_from_outlet",
+        "elevation"
+    };
+
+    std::vector<std::vector<std::string>> rows;
+
+    // Use a coordinate transformer to EPSG 4326 (Lat/Lon)
+    lsdtt_coordinate_transform transformer;
+    bool has_crs = !dem.get_meta().crs_wkt.empty();
+    if (has_crs)
+    {
+        transformer.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
+    }
+
+    const double max_dx = std::abs(dem.get_meta().cell_size) * dem.get_meta().n_cols * 0.5;
+    const double max_dy = std::abs(dem.get_meta().cell_size) * dem.get_meta().n_rows * 0.5;
+    const auto& d_data = dem.get_data_array();
+    const auto& d_mask = dem.get_mask_array();
+    const float ndv = dem.get_meta().no_data_value;
+
+    for (const lsdtt_junction_basin_cpu& basin : basins_)
+    {
+        const std::int32_t junc = basin.get_junction_number();
+        const std::int64_t flat = basin.get_basin_outlet_flat_index();
+
+        lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
+        const auto& outline_rc = outline.outline_divide_rc();
+        
+        if (outline_rc.empty()) continue;
+
+        // Precalculate Euclidean distance (CW length around the loop)
+        std::vector<double> cw_dists(outline_rc.size(), 0.0);
+        double current_dist = 0.0;
+        const auto& div_meta = outline.divide_grid_meta();
+
+        for (std::size_t i = 1; i < outline_rc.size(); ++i)
+        {
+            lsdtt_xy p1 = cell_center_from_row_col(div_meta, outline_rc[i-1].row, outline_rc[i-1].col);
+            lsdtt_xy p2 = cell_center_from_row_col(div_meta, outline_rc[i].row, outline_rc[i].col);
+            
+            double dx = std::abs(p2.x - p1.x);
+            double dy = std::abs(p2.y - p1.y);
+
+            // Wrap handling for periodicity distance jumps
+            if (dx > max_dx) dx = std::abs(dem.get_meta().cell_size);
+            if (dy > max_dy) dy = std::abs(dem.get_meta().cell_size);
+
+            current_dist += std::sqrt(dx * dx + dy * dy);
+            cw_dists[i] = current_dist;
+        }
+
+        double total_length = cw_dists.back();
+
+        // Write out points
+        for (std::size_t i = 0; i < outline_rc.size(); ++i)
+        {
+            lsdtt_xy xy = cell_center_from_row_col(div_meta, outline_rc[i].row, outline_rc[i].col);
+
+            double lat = xy.y;
+            double lon = xy.x;
+            if (transformer.is_initialised())
+            {
+                lsdtt_lonlat ll = xy_to_lonlat(xy.x, xy.y, transformer);
+                lat = ll.latitude;
+                lon = ll.longitude;
+            }
+
+            // Map divide geometry to parent DEM pixel
+            int dem_row = static_cast<int>(std::floor((dem.get_meta().y_max() - xy.y) / std::abs(dem.get_meta().cell_size)));
+            int dem_col = static_cast<int>(std::floor((xy.x - dem.get_meta().x_min) / std::abs(dem.get_meta().cell_size)));
+            
+            dem_row = std::clamp(dem_row, 0, dem.get_meta().n_rows - 1);
+            dem_col = std::clamp(dem_col, 0, dem.get_meta().n_cols - 1);
+
+            float elev = ndv;
+            if (d_mask(dem_row, dem_col)) 
+                elev = d_data(dem_row, dem_col);
+
+            double ccw_dist = total_length - cw_dists[i];
+
+            rows.push_back({
+                std::to_string(junc),
+                std::to_string(flat),
+                std::to_string(lat),
+                std::to_string(lon),
+                std::to_string(cw_dists[i]),
+                std::to_string(ccw_dist),
+                std::to_string(elev)
+            });
+        }
+    }
+
+    lsdtt_data_loader loader;
+    loader.write_csv(out_path, headers, rows);
 }
 
 

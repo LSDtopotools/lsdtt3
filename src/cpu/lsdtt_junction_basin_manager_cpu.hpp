@@ -19,6 +19,9 @@
 #include <type_traits>
 #include <vector>
 
+// Forward declaration
+class lsdtt_raster_cpu;
+
 namespace lsdtt
 {
 
@@ -205,6 +208,14 @@ public:
         const std::string& layer_name_prefix = "basins",
         bool spatial_index = false
     ) const;
+
+
+    // Write out all basin outlines as a single point CSV with coordinates, distance and elevation
+    void write_basin_outlines_to_csv(
+        const std::string& out_path,
+        const lsdtt_raster_cpu& dem
+    ) const;
+
 
     // Private:
     void write_order_polygon_features_(
