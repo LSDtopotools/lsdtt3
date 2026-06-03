@@ -10,44 +10,32 @@
 // lsdtt-ridgeline-analysis
 //
 // Analyses drainage divides and their elevation profiles (ridgelines).
-// Ported from LSDTopoTools2 lsdtt-ridgeline-analysis and adapted for lsdtt3.
+// 
+// There are three primary modes (set via ridgeline_analysis_mode):
 //
-// There are two distinct ridgeline analysis pathways:
+//   1. basin_outline_ridgelines (default)
+//      Extracts basin outlines and splits them into left/right ridgelines.
+//      Requires basin selection.
 //
-//   PATHWAY A — Basin-outline ridgelines (requires basin selection)
-//   ---------------------------------------------------------------
-//   Extracts basin outlines, splits them into left/right ridgelines,
-//   and optionally identifies interfluvial divides shared between pairs
-//   of selected basins.  Controlled by:
-//       analyse_basin_outline_ridgelines: true
-//       analyse_interfluvial_divide_ridgelines: true
-//   Requires at least one basin selection mode to be active.
+//   2. interfluvial_divide_ridgelines
+//      Identifies interfluvial divides shared between pairs of selected basins.
+//      Requires basin selection.
 //
-//   PATHWAY B — Range-defined ridgelines (requires boundary conditions)
-//   -------------------------------------------------------------------
-//   Identifies range-spanning basins that drain to opposing open (o)
-//   boundaries (mountain fronts) and extracts:
-//       - transverse divides (between adjacent range-spanning basins)
-//       - the main drainage divide (MDD)
-//   Controlled by:
-//       analyse_transverse_divide_ridgelines: true
-//       analyse_mdd_ridgeline: true
-//   Requires exactly four boundary segments with at least one pair of
-//   opposing open (o) boundaries (mountain fronts).  NOTE: lsdtt3 flowinfo
-//   does not support no-flux (n) boundaries — use open (o) instead.
-//   Corner coordinates for segmenting the DEM boundary can be supplied
-//   via corner_coordinates_csv; if that parameter is NULL and range-defined
-//   ridgelines are requested, the four corners of the DEM are used directly
-//   (the DEM must be square with no nodata at its corners).
+//   3. range_defined_ridgelines
+//      Identifies range-spanning basins that drain to opposing open (o)
+//      boundaries (mountain fronts) and extracts transverse divides and the 
+//      Main Drainage Divide (MDD). Requires 4 boundary segments with at least 
+//      one opposing pair of open (o) conditions.
 //
-// Workflow (in both pathways):
-//   1. Open DEM
-//   2. Pit-fill if needed
-//   3. Build D8 flow routing (with optional boundary conditions)
-//   4. Extract channel network from contributing-pixel threshold
-//   5. [Pathway A] Select and filter basins  →  basin outline ridgelines
-//   6. [Pathway B] Find range-spanning basins  →  range-defined ridgelines
-//   7. Print ridgelines, statistics, extrema, FFT profiles as requested
+// Workflow:
+//   1. Parse parameters & initialize lsdtt_data_loader
+//   2. Open DEM and optionally pit-fill
+//   3. Build D8 flow routing and junction network
+//   4. Basin Selection (from outlets, all, or range-spanning detection)
+//   5. Write Basin Vectors/Rasters (Unified for all basin types)
+//   6. Extract Ridgelines (delegates to the 3 mode-specific strategies)
+//   7. Process Ridgelines (Elevations, Detrending, Snout-segmentation)
+//   8. Write Unified CSV Outputs (Extrema, Points, Stats)
 //
 // Usage:
 //   lsdtt-ridgeline-analysis <path> <parameter_file>
@@ -60,31 +48,59 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <utility>
 #include <vector>
-#include <variant>
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_ridgeline_cpu.hpp"
 #include "../src/utils/lsdtt_binary_array2d_tracing.hpp"
 
-static const std::string k_version   = "0.1.0";
+static const std::string k_version   = "0.3.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-ridgeline-analysis";
+
+// -----------------------------------------------------------------------------
+// Unified Ridgeline Structure
+// -----------------------------------------------------------------------------
+struct lsdtt_ridgeline_record {
+    lsdtt::lsdtt_ridgeline_cpu ridgeline;
+    int                        ridgeline_number;
+    int                        primary_id;      // Basin Junction (or Left Junc)
+    int                        secondary_id;    // Right Junc (-1 if n/a)
+    std::string                feature_type;    // e.g "left_ridgeline", "mdd"
+    std::string                file_prefix;     // e.g "_basin_outline_ridgelines"
+    bool                       is_dual_basin;   // Distinguishes print layouts
+    float                      area_left;       // Flow drainage area (negative if NA)
+    float                      area_right;      // Flow drainage area (negative if NA)
+};
+
+// -----------------------------------------------------------------------------
+// Formatting Helper
+// -----------------------------------------------------------------------------
+static std::string to_lower_copy(std::string s) 
+{
+    for (char& ch : s) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return s;
+}
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -93,12 +109,9 @@ static void print_banner()
 {
     std::cout
         << "=========================================================\n"
-        << "|| Welcome to lsdtt-ridgeline-analysis                 ||\n"
-        << "|| I analyse drainage divides and their ridgelines      ||\n"
-        << "|| Two pathways are available:                          ||\n"
-        << "||   A: Basin-outline ridgelines (requires basins)      ||\n"
-        << "||   B: Range-defined ridgelines (requires boundaries)  ||\n"
-        << "|| Part of lsdtt3 — Vervoordeldonk & Mudd               ||\n"
+        << "|| Welcome to the LSDTopoTools ridgeline analysis tool!||\n"
+        << "|| I analyse drainage divides and their ridgelines.    ||\n"
+        << "|| Part of lsdtt3 by Vervoordeldonk & Mudd             ||\n"
         << "=========================================================\n"
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
@@ -107,102 +120,65 @@ static void print_banner()
 
 // =============================================================================
 // parse_corner_coordinates_csv
-//
-// Reads a CSV of corner coordinates (lat/lon) and transforms them into
-// raster-CRS coordinates, then maps them to raster row/col pairs.
-// Returns the mapped pixel positions in input order.
-// Any point that fails transformation or falls outside the raster is
-// reported as a warning and omitted from the returned vector.
 // =============================================================================
 static std::vector<lsdtt::lsdtt_input_point>
 parse_corner_coordinates_csv(
-    const std::string&            csv_path,
+    const std::string&              csv_path,
     const lsdtt::lsdtt_raster_meta& meta)
 {
     std::cout << "\n--- Reading corner coordinates ---\n";
     std::cout << "File: " << csv_path << "\n";
 
     std::vector<lsdtt::lsdtt_input_point> corners;
-    try
+    try 
     {
         corners = lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
-            csv_path, meta,
-            /*latitude_field*/  "latitude",
-            /*longitude_field*/ "longitude",
-            /*keep_outside*/    true
+            csv_path, meta, "latitude", "longitude", true
         );
-    }
-    catch (const std::exception& e)
+    } 
+    catch (const std::exception& e) 
     {
         throw std::runtime_error(
             std::string("Failed to read corner coordinates CSV: ") + e.what()
         );
     }
 
-    std::cout << "Read " << corners.size() << " corner point(s).\n";
-
-    // Report any failures
     std::vector<lsdtt::lsdtt_input_point> valid_corners;
-    for (const auto& pt : corners)
+    for (const auto& pt : corners) 
     {
-        if (pt.status == lsdtt::lsdtt_point_input_status::success)
-        {
+        if (pt.status == lsdtt::lsdtt_point_input_status::success) {
             valid_corners.push_back(pt);
-        }
-        else
-        {
+        } else {
             std::cerr << "Warning: corner point " << pt.point_id
-                      << " could not be mapped onto the raster "
-                      << "(status=" << static_cast<int>(pt.status) << "); skipping.\n";
+                      << " mapping failed (status=" 
+                      << static_cast<int>(pt.status) << ").\n";
         }
     }
-
-    std::cout << valid_corners.size() << " corner(s) mapped successfully.\n";
     return valid_corners;
 }
 
 // =============================================================================
 // resolve_dem_corners
-//
-// When no corner coordinates CSV is supplied and range-defined ridgelines are
-// requested, use the four corner pixels of the DEM directly.
-//
-// The four corners are: top-left (0,0), top-right (0, n_cols-1),
-// bottom-left (n_rows-1, 0), bottom-right (n_rows-1, n_cols-1).
-//
-// Requirements:
-//   - The DEM must have data at all four corner pixels (mask value != 0).
-//     If any corner pixel is nodata, an error is thrown — either the DEM is
-//     not rectangular or has clipped edges.
-//
-// Returns the four corner flat indices in the order:
-//   top-left, top-right, bottom-left, bottom-right
 // =============================================================================
-static std::array<std::int64_t, 4>
-resolve_dem_corners(
+static std::array<std::int64_t, 4> resolve_dem_corners(
     const lsdtt::lsdtt_raster_cpu& dem)
 {
-    std::cout << "\n--- Resolving DEM corners for boundary segmentation ---\n";
+    std::cout << "\n--- Resolving DEM corners for segmenting boundaries ---\n";
 
     const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
     const int n_rows = m.n_rows;
     const int n_cols = m.n_cols;
 
-    // Corner (row, col) pairs
     const std::array<std::pair<int,int>, 4> corners = {{
-        {0,        0       },   // top-left
-        {0,        n_cols-1},   // top-right
-        {n_rows-1, 0       },   // bottom-left
-        {n_rows-1, n_cols-1}    // bottom-right
-    }};
-
-    static const std::array<const char*, 4> corner_names = {{
-        "top-left", "top-right", "bottom-left", "bottom-right"
+        {0,        0       },
+        {0,        n_cols-1},
+        {n_rows-1, 0       },
+        {n_rows-1, n_cols-1}
     }};
 
     const auto& mask = dem.get_mask_array();
-
     std::array<std::int64_t, 4> flat_indices{};
+
     for (int i = 0; i < 4; ++i)
     {
         const int row = corners[i].first;
@@ -211,61 +187,41 @@ resolve_dem_corners(
         if (mask(row, col) == 0)
         {
             throw std::runtime_error(
-                std::string("DEM corner pixel (") + corner_names[i] +
-                ") is nodata. The DEM must be rectangular with valid data "
-                "at all four corners to automatically segment DEM boundaries "
-                "for range-defined ridgeline analysis. Either supply "
-                "corner_coordinates_csv or use a rectangular DEM."
+                "DEM corner pixel is nodata. Either supply corner_coordinates_csv "
+                "or use a purely rectangular DEM without clipped corners."
             );
         }
-
-        // Flat index = row * n_cols + col
         flat_indices[i] = static_cast<std::int64_t>(row) * n_cols + col;
-        std::cout << "  " << corner_names[i] << ": row=" << row
-                  << " col=" << col
-                  << " flat=" << flat_indices[i] << "\n";
     }
-
     return flat_indices;
 }
 
 // =============================================================================
 // extract_boundary_segments
-//
-// Traces the 4-connected boundary of the DEM mask and extracts four contiguous
-// boundary segments using the user-supplied (or DEM-derived) corner nodes.
-// The segments are returned in-order of appearance along the boundary trace as
-// vectors of flat indices.
 // =============================================================================
-static std::vector<std::vector<std::int64_t>>
-extract_boundary_segments(
-    const lsdtt::lsdtt_raster_cpu&          dem,
-    const std::array<std::int64_t, 4>&      corners)
+static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
+    const lsdtt::lsdtt_raster_cpu&      dem,
+    const std::array<std::int64_t, 4>&  corners)
 {
     std::cout << "\n--- Extracting DEM boundaries (4-connected trace) ---\n";
-
-    // 1. Trace the boundary of the raster mask
     const auto& mask = dem.get_mask_array();
-    std::vector<lsdtt::lsdtt_pixel_rc> boundary_rc = lsdtt::trace_boundary_pixels(mask, 4);
-
-    if (boundary_rc.empty())
-    {
-        throw std::runtime_error("Found no boundary pixels during tracing.");
+    
+    std::vector<lsdtt::lsdtt_pixel_rc> boundary_rc = 
+        lsdtt::trace_boundary_pixels(mask, 4);
+        
+    if (boundary_rc.empty()) {
+        throw std::runtime_error("Found no boundary pixels.");
     }
 
     const int n_cols = dem.get_meta().n_cols;
-
-    // Convert traced row/cols to flat indices
     std::vector<std::int64_t> boundary_flats;
     boundary_flats.reserve(boundary_rc.size());
-    for (const auto& rc : boundary_rc)
-    {
-        boundary_flats.push_back(static_cast<std::int64_t>(rc.row) * n_cols + rc.col);
+    for (const auto& rc : boundary_rc) {
+        boundary_flats.push_back(
+            static_cast<std::int64_t>(rc.row) * n_cols + rc.col
+        );
     }
 
-    // 2. Map corners to the closest position along the continuous boundary trace
-    // Doing a nearest-pixel search protects against CSV coordinates that map 
-    // just slightly inside/outside the 4-connected envelope.
     std::array<std::size_t, 4> split_indices;
     for (int i = 0; i < 4; ++i)
     {
@@ -281,63 +237,42 @@ extract_boundary_segments(
             long long dc = boundary_rc[j].col - corner_c;
             long long dist_sq = dr * dr + dc * dc;
 
-            if (best_dist_sq == -1 || dist_sq < best_dist_sq)
-            {
+            if (best_dist_sq == -1 || dist_sq < best_dist_sq) {
                 best_dist_sq = dist_sq;
                 best_idx = j;
             }
         }
         split_indices[i] = best_idx;
+        std::cout << "  Boundary segment " << i << " assigned to pixel row/col "
+                  << corner_r << "/" << corner_c << ".\n";
     }
 
-    // Sort to ensure segments wrap topologically around the trace order
     std::sort(split_indices.begin(), split_indices.end());
 
-    // 3. Extract the 4 sequential boundary segments
     std::vector<std::vector<std::int64_t>> boundary_segments(4);
     for (int i = 0; i < 4; ++i)
     {
         std::size_t start_idx = split_indices[i];
         std::size_t end_idx   = split_indices[(i + 1) % 4];
 
-        if (start_idx <= end_idx)
-        {
-            // Normal sequential segment
+        if (start_idx <= end_idx) {
             boundary_segments[i].assign(
-                boundary_flats.begin() + start_idx,
+                boundary_flats.begin() + start_idx, 
                 boundary_flats.begin() + end_idx
             );
-        }
-        else
-        {
-            // Segment wraps around the end of the traced vector to the start
+        } else {
             boundary_segments[i].assign(
-                boundary_flats.begin() + start_idx,
+                boundary_flats.begin() + start_idx, 
                 boundary_flats.end()
             );
             boundary_segments[i].insert(
-                boundary_segments[i].end(),
-                boundary_flats.begin(),
+                boundary_segments[i].end(), 
+                boundary_flats.begin(), 
                 boundary_flats.begin() + end_idx
             );
         }
-        
-        std::cout << "  Boundary segment " << i << " contains " 
-                  << boundary_segments[i].size() << " pixels.\n";
     }
-
     return boundary_segments;
-}
-
-
-// =============================================================================
-// to_lower_copy — local helper
-// =============================================================================
-static std::string to_lower_copy(std::string s)
-{
-    for (char& ch : s)
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return s;
 }
 
 // =============================================================================
@@ -350,25 +285,16 @@ int main(int argc, char* argv[])
     auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    // -------------------------------------------------------------------------
-    // Parameter file
-    // -------------------------------------------------------------------------
     lsdtt::lsdtt_param_parser pp;
-    try
-    {
+    try {
         pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
+    } catch (const std::exception& e) {
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
 
     // =========================================================================
-    // Parameter declarations
-    //
-    // Parameters are grouped by workflow step / pathway.
-    // help_map entry format: { type, default, short_desc, long_desc }
+    // Parameters declarations (Matching LSDTT basin extraction & ridgelines)
     // =========================================================================
     std::map<std::string, bool>                     bool_default_map;
     std::map<std::string, float>                    float_default_map;
@@ -376,1416 +302,959 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string>              string_default_map;
     std::map<std::string, std::vector<std::string>> help_map;
 
-    // --- Threading / routing ---
+    // --- Threading / Routing ---
     int_default_map["n_threads"] = 0;
-    help_map["n_threads"] = {"int","0",
-        "Number of OpenMP threads.",
+    help_map["n_threads"] = {"int", "0", 
+        "Number of OpenMP threads.", 
         "0 = use all available hardware threads."};
 
     string_default_map["boundary_conditions"] = "oooo";
-    help_map["boundary_conditions"] = {"string","oooo",
-        "Four-character boundary condition string (N, E, S, W).",
-        "o = open, p = periodic. NOTE: lsdtt3 flowinfo does not support no-flux (n) "
-        "boundaries. For Pathway B (range-defined ridgelines), mountain fronts are "
-        "defined by open (o) boundaries. Supply at least one pair of opposing 'o' "
-        "boundaries. All-open (oooo) is the default and works for a standard rectangular "
-        "DEM where all four sides are open outlets/mountain fronts."};
+    help_map["boundary_conditions"] = {"string", "oooo",
+        "Boundary conditions for flow routing.",
+        "Four-character string (N, E, S, W). o = open, p = periodic. Note "
+        "that range_defined_ridgelines relies on open boundaries (o) being "
+        "interpreted as mountain fronts."};
 
-    // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled.",
-        "If false (default), the CLI calls fill_pits() before flow routing."};
+    help_map["raster_is_filled"] = {"bool", "false", 
+        "Whether the input raster is already pit-filled.", 
+        "If false, the CLI calls fill_pits() before building flow routing."};
 
     float_default_map["fill_min_slope"] = 0.0001f;
-    help_map["fill_min_slope"] = {"float","0.0001",
-        "Minimum slope imposed by pit filling.",
-        "Used only when raster_is_filled is false."};
+    help_map["fill_min_slope"] = {"float", "0.0001", 
+        "Minimum slope imposed by pit filling.", 
+        "Used when raster_is_filled is false."};
 
-    // --- Channel network ---
     int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define channel heads.",
-        "Reduce to extract a denser channel network."};
+    help_map["source_pixels_threshold"] = {"int", "1000", 
+        "Contributing-pixel threshold defining channel heads.", 
+        "Reduce for denser channels."};
 
-    // --- Output — general ---
-    bool_default_map["calculate_spatial_index"] = true;
-    help_map["calculate_spatial_index"] = {"bool","true",
-        "Whether to calculate a spatial index for vector outputs.",
-        "Helps GIS spatial queries but requires buffering all features in memory."};
+    // --- Workflow mode ---
+    string_default_map["ridgeline_analysis_mode"] = "basin_outline_ridgelines";
+    help_map["ridgeline_analysis_mode"] = {"string", "basin_outline_ridgelines",
+        "Main ridgeline analysis mode.",
+        "Allowed values: basin_outline_ridgelines, "
+        "interfluvial_divide_ridgelines, range_defined_ridgelines."};
 
-    bool_default_map["convert_csv_to_geojson"] = false;
-    help_map["convert_csv_to_geojson"] = {"bool","false",
-        "(Legacy) Convert CSV outputs to GeoJSON.",
-        "Retained for backward compatibility. Prefer flatgeobuf outputs instead."};
+    // --- Range-defined boundaries ---
+    string_default_map["corner_coordinates_csv"] = "NULL";
+    help_map["corner_coordinates_csv"] = {"string", "NULL",
+        "CSV of DEM corner coordinates for boundary segmentation.",
+        "Required for range_defined_ridgelines if the DEM is not rectangular."};
 
-    // --- Channel network printing ---
-    bool_default_map["write_channel_network_points"] = false;
-    help_map["write_channel_network_points"] = {"bool","false",
-        "Write the channel network as point data.",
-        "Each channel pixel is a feature with drainage_area attribute."};
-
-    string_default_map["channel_network_points_output_format"] = "flatgeobuf";
-    help_map["channel_network_points_output_format"] = {"string","flatgeobuf",
-        "Output format for channel network points.",
-        "csv, gpkg, flatgeobuf or fgb."};
-
-    bool_default_map["write_channel_network_lines"] = false;
-    help_map["write_channel_network_lines"] = {"bool","false",
-        "Write the channel network as vector lines.",
-        "One feature per channel link. Does not support CSV output."};
-
-    string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
-    help_map["channel_network_lines_output_format"] = {"string","flatgeobuf",
-        "Output format for channel network lines.",
-        "flatgeobuf, fgb or gpkg."};
-
-    bool_default_map["write_channel_network_junctions"] = false;
-    help_map["write_channel_network_junctions"] = {"bool","false",
-        "Write channel network junctions as point data.",
-        "Attributes: junction_number, receiver_junction, stream_order."};
-
-    string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
-    help_map["channel_network_junctions_output_format"] = {"string","flatgeobuf",
-        "Output format for channel network junctions.",
-        "csv, gpkg, flatgeobuf or fgb."};
-
-    // ==========================================================================
-    // PATHWAY A — Basin-outline and interfluvial-divide ridgelines
-    // ==========================================================================
-
-    // --- Basin outlet input ---
+    // --- Basin Selection ---
     string_default_map["basin_outlet_file"] = "NULL";
     help_map["basin_outlet_file"] = {"string","NULL",
         "File of requested basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "Required when select_basins_from_outlets or "
-        "select_basins_from_outlets_nested is true."};
+        "select_basins_from_outlets_nested is true. "
+        "Format is auto-detected from the file extension: "
+        "*.csv is read as a text file with latitude and longitude columns "
+        "(WGS84 / EPSG:4326 decimal degrees); "
+        "*.fgb or *.gpkg is read as a point vector layer in its own CRS, "
+        "which is then transformed to the raster CRS. "
+        "For CSV inputs the file must contain columns named exactly "
+        "'latitude' and 'longitude'. "
+        "For vector inputs all features must be point geometry."};
 
-    string_default_map["basin_outlet_snapping_method"] = "downstream";
-    help_map["basin_outlet_snapping_method"] = {"string","downstream",
-        "Optional snapping of basin outlet points to qualifying pixels.",
-        "Allowed values: none, expanding_square, downstream."};
-
-    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
-    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used for basin outlet snapping.",
-        "Used only when basin_outlet_snapping_method is not none."};
-
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
-        "Minimum expanding-square snapping search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square."};
-
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
-        "Maximum expanding-square snapping search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square."};
-
-    // --- Basin selection ---
     bool_default_map["select_basins_from_outlets"] = false;
     help_map["select_basins_from_outlets"] = {"bool","false",
-        "Select basins from supplied outlet points.",
-        "Reads basin_outlet_file and constructs one basin per outlet."};
+        "Select basins from supplied basin outlet points.",
+        "Reads basin_outlet_file, optionally snaps the mapped pixels, and then "
+        "constructs one lsdtt_junction_basin per supplied basin outlet."};
 
     bool_default_map["select_basins_from_outlets_nested"] = false;
     help_map["select_basins_from_outlets_nested"] = {"bool","false",
-        "Select supplied basins and all nested upstream basins.",
-        "Expands selection to include all upstream junctions."};
+        "Select supplied basin outlets and all nested upstream basins.",
+        "Reads basin_outlet_file, optionally snaps the mapped pixels, constructs "
+        "one lsdtt_junction_basin per supplied basin outlet, and then expands "
+        "selection to include all upstream nested basins from the junction-network "
+        "s_vector."};
 
     bool_default_map["select_all_basins"] = false;
     help_map["select_all_basins"] = {"bool","false",
         "Select one basin for every junction in the junction network.",
-        "Usually combined with basin filtering parameters."};
+        "Uses the junction network to derive a basin outlet flat index for each "
+        "junction and constructs one lsdtt_junction_basin per junction."};
 
-    // --- Basin filtering ---
-    bool_default_map["filter_basins_by_stream_order"] = false;
-    help_map["filter_basins_by_stream_order"] = {"bool","false",
-        "Keep only basins within [basins_min_stream_order, basins_max_stream_order].",
-        "Use -1 for either bound to leave that end open."};
+    // --- Basin Outline Snapping / Filtering ---
+    string_default_map["basin_outlet_snapping_method"] = "downstream";
+    help_map["basin_outlet_snapping_method"] = {"string","downstream",
+        "Optional snapping of basin outlet CSV points to pixels that exceed "
+        "a contributing-pixel threshold.",
+        "Allowed values: none, expanding_square, downstream. "
+        "none: use the mapped raster pixel directly. "
+        "expanding_square: search outward ring-by-ring until a qualifying pixel "
+        "is found. downstream: follow the D8 receiver chain until a qualifying "
+        "pixel is found."};
+
+    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
+        "Contributing-pixel threshold used for optional basin outlet snapping.",
+        "This is the total number of upslope contributing pixels from the "
+        "flow-routing object, not the number of direct donors to a pixel."};
+
+    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_min_search_radius_pixels"] = {"int", "0", 
+        "Minimum expanding-square snapping search radius in pixels.", 
+        "Used only when basin_outlet_snapping_method is expanding_square. "
+        "0 means the mapped input pixel is tested first."};
+
+    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_max_search_radius_pixels"] = {"int", "25", 
+        "Maximum expanding-square snapping search radius in pixels.", 
+        "Used only when basin_outlet_snapping_method is expanding_square. "
+        "The search stops at the first radius containing one or more qualifying pixels."};
 
     int_default_map["basins_min_stream_order"] = -1;
-    help_map["basins_min_stream_order"] = {"int","-1",
-        "Minimum stream order (inclusive) to keep.",
-        "Defaults to -1 (ignore minimum)."};
+    help_map["basins_min_stream_order"] = {"int", "-1", 
+        "Minimum stream order to keep when filtering basins.", 
+        "Inclusive. Defaults to -1, which means ignore minimum."};
 
     int_default_map["basins_max_stream_order"] = -1;
-    help_map["basins_max_stream_order"] = {"int","-1",
-        "Maximum stream order (inclusive) to keep.",
-        "Defaults to -1 (ignore maximum)."};
-
-    bool_default_map["filter_basins_by_area"] = false;
-    help_map["filter_basins_by_area"] = {"bool","false",
-        "Keep only basins within [basins_min_area_pixels, basins_max_area_pixels].",
-        "Use -1 for either bound to leave that end open."};
+    help_map["basins_max_stream_order"] = {"int", "-1", 
+        "Maximum stream order to keep when filtering basins.", 
+        "Inclusive. Defaults to -1, which means ignore maximum."};
 
     int_default_map["basins_min_area_pixels"] = -1;
-    help_map["basins_min_area_pixels"] = {"int","-1",
-        "Minimum basin area in pixels (inclusive).",
-        "Defaults to -1 (ignore minimum)."};
+    help_map["basins_min_area_pixels"] = {"int", "-1", 
+        "Minimum basin area in pixels to keep when filtering basins by area.", 
+        "Inclusive. Defaults to -1, which means ignore minimum."};
 
     int_default_map["basins_max_area_pixels"] = -1;
-    help_map["basins_max_area_pixels"] = {"int","-1",
-        "Maximum basin area in pixels (inclusive).",
-        "Defaults to -1 (ignore maximum)."};
+    help_map["basins_max_area_pixels"] = {"int", "-1", 
+        "Maximum basin area in pixels to keep when filtering basins by area.", 
+        "Inclusive. Defaults to -1, which means ignore maximum."};
 
     bool_default_map["filter_incomplete_basins"] = false;
-    help_map["filter_incomplete_basins"] = {"bool","false",
-        "Remove basins that are hydrologically incomplete.",
-        "An incomplete basin has at least one pixel adjacent to nodata or "
-        "an open boundary."};
+    help_map["filter_incomplete_basins"] = {"bool", "false", 
+        "Remove all incomplete basins.", 
+        "An incomplete basin has at least one DEM pixel that is adjacent "
+        "to an invalid pixel. Off-grid neighbours are invalid, unless "
+        "an n or p boundary is supplied."};
 
     bool_default_map["filter_all_but_largest_basin"] = false;
-    help_map["filter_all_but_largest_basin"] = {"bool","false",
-        "Keep only the largest basin.",
-        "Applied after other filters."};
+    help_map["filter_all_but_largest_basin"] = {"bool", "false", 
+        "Keep only the largest basin.", 
+        "Applied later in the filtering order so it can be used after "
+        "completeness or other filters."};
 
     bool_default_map["filter_nested_basins"] = false;
-    help_map["filter_nested_basins"] = {"bool","false",
-        "Remove all nested basins.",
-        "Retains only the outermost (largest) basins."};
-
-    bool_default_map["filter_nested_by_stream_order"] = false;
-    help_map["filter_nested_by_stream_order"] = {"bool","false",
-        "Remove nested basins of the same stream order.",
-        "Keeps the downstream-most basin in a consecutive same-order chain."};
-
-    // --- Basin outline output ---
+    help_map["filter_nested_basins"] = {"bool", "false", 
+        "Remove nested basins.", 
+        "Only the largest non-nested basins in the current selection are retained."};
+    
+    // --- Basin Output Prints ---
     bool_default_map["write_basin_outlines"] = false;
-    help_map["write_basin_outlines"] = {"bool","false",
-        "Write basin outlines as vector lines.",
-        "Required for any basin-outline-based ridgeline analysis."};
+    help_map["write_basin_outlines"] = {"bool", "false", 
+        "Write selected basin outlines as vector features.", 
+        "Features are labelled by their junction number."};
 
     bool_default_map["write_basin_outlines_as_polygon"] = false;
-    help_map["write_basin_outlines_as_polygon"] = {"bool","false",
-        "Write basin outlines as polygons rather than polylines.",
-        "Set to true when you want basins printed as filled areas."};
-
-    bool_default_map["write_basin_outlines_per_order"] = false;
-    help_map["write_basin_outlines_per_order"] = {"bool","false",
-        "Write basin outlines split into separate layers/files per stream order.",
-        "GeoPackage: one layer per order; FlatGeobuf: one file per order."};
+    help_map["write_basin_outlines_as_polygon"] = {"bool", "false", 
+        "Write basin outlines as polygons rather than polylines.", 
+        "Set to true when you want basins printed as areas."};
 
     string_default_map["basin_outlines_output_format"] = "flatgeobuf";
-    help_map["basin_outlines_output_format"] = {"string","flatgeobuf",
-        "Output format for basin outline vectors.",
-        "flatgeobuf, fgb or gpkg."};
-    
+    help_map["basin_outlines_output_format"] = {"string", "flatgeobuf", 
+        "Output format for basin outline visualisation.", 
+        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default."};
+
     bool_default_map["write_basin_outlines_to_csv"] = false;
-    help_map["write_basin_outlines_to_csv"] = {"bool", "false",
-        "Write basin outlines as a point CSV with distance and elevation.",
-        "Outputs a _basin_outlines.csv file containing points for all basins."
-    };
+    help_map["write_basin_outlines_to_csv"] = {"bool", "false", 
+        "Write basin outlines as a point CSV with distance and elevation.", 
+        "Outputs a _basin_outlines.csv file containing points for all basins."};
 
-
-    // --- Basin raster output ---
     bool_default_map["write_basins_raster"] = false;
-    help_map["write_basins_raster"] = {"bool","false",
-        "Write the selected basins labelled by junction number to a raster.",
-        "Nested basins are painted on top of their parents."};
+    help_map["write_basins_raster"] = {"bool", "false", 
+        "Write the selected basins as a labelled raster.", 
+        "Basins are labelled by junction number."};
 
-    bool_default_map["write_basins_datamap"] = false;
-    help_map["write_basins_datamap"] = {"bool","false",
-        "Write a CSV datamap listing junction number and outlet flat index per basin.",
-        "Useful for debugging basin selection."};
-
-    // --- Pathway A — Basin-outline ridgelines ---
-    bool_default_map["analyse_basin_outline_ridgelines"] = false;
-    help_map["analyse_basin_outline_ridgelines"] = {"bool","false",
-        "[Pathway A] Analyse ridgelines extracted from basin outlines.",
-        "Requires basin selection. Split method is controlled by "
-        "outline_splitting_method. Nothing is printed unless at least one of "
-        "print_ridgelines, print_ridgeline_stats, print_ridgeline_extrema is true."};
-
-    string_default_map["outline_splitting_method"] = "max_elevation";
-    help_map["outline_splitting_method"] = {"string","max_elevation",
-        "[Pathway A] Method for splitting a basin outline into two ridgelines.",
-        "Options: max_elevation, equal_length, longest_channel."};
+    // --- Ridgeline Algorithms ---
+    string_default_map["outline_splitting_method"] = "longest_channel";
+    help_map["outline_splitting_method"] = {"string", "longest_channel", 
+        "Determines how basin outlines are split into two ridgelines: max_elevation, longest_channel or equal_length.", 
+        "Only used if ridgeline_analysis_mode is basin_outline_ridgelines."};
 
     float_default_map["ridgeline_smoothing_window_fraction"] = 0.05f;
-    help_map["ridgeline_smoothing_window_fraction"] = {"float","0.05",
-        "[Pathway A] Lowess smoothing window as a fraction of total ridgeline length.",
-        "Used when segmenting ridge snouts by maximum curvature "
-        "(Robinson et al. 2025 / Satopaa et al. 2011). Range 0–1."};
-
-    // --- Pathway A — Interfluvial divide ridgelines ---
-    bool_default_map["analyse_interfluvial_divide_ridgelines"] = false;
-    help_map["analyse_interfluvial_divide_ridgelines"] = {"bool","false",
-        "[Pathway A] Analyse ridgelines along interfluvial divides.",
-        "For each pair of selected non-nested basins that share a boundary "
-        "segment, that shared segment is extracted as an interfluvial divide "
-        "ridgeline. Nothing is printed unless at least one of print_ridgelines, "
-        "print_ridgeline_stats, print_ridgeline_extrema is true."};
-
-    // ==========================================================================
-    // PATHWAY B — Range-defined ridgelines
-    // ==========================================================================
-
-    // --- Corner coordinates for boundary segmentation ---
-    string_default_map["corner_coordinates_csv"] = "NULL";
-    help_map["corner_coordinates_csv"] = {"string","NULL",
-        "[Pathway B] CSV of corner coordinates (latitude/longitude) for "
-        "segmenting the DEM boundary into four segments.",
-        "If NULL and range-defined ridgelines are requested, the four "
-        "pixel-corners of the DEM are used directly (DEM must be rectangular "
-        "with no nodata at its corners)."};
-
-    // --- Pathway B — Transverse and main drainage divide ridgelines ---
-    bool_default_map["analyse_transverse_divide_ridgelines"] = false;
-    help_map["analyse_transverse_divide_ridgelines"] = {"bool","false",
-        "[Pathway B] Analyse ridgelines along transverse divides.",
-        "Transverse divides separate adjacent range-spanning basins on the "
-        "same side of the main drainage divide. Requires at least one pair "
-        "of opposing open (o) boundary conditions (mountain fronts). "
-        "NOTE: lsdtt3 flowinfo does not support no-flux (n) boundaries; "
-        "use open (o) for mountain fronts instead."};
-
-    bool_default_map["analyse_mdd_ridgeline"] = false;
-    help_map["analyse_mdd_ridgeline"] = {"bool","false",
-        "[Pathway B] Analyse the main drainage divide (MDD) ridgeline.",
-        "Extracts the continuous crest of the range from opposing sides. "
-        "Requires at least one pair of opposing open (o) boundary conditions "
-        "(mountain fronts). NOTE: lsdtt3 flowinfo does not support no-flux (n) "
-        "boundaries; use open (o) for mountain fronts instead."};
-
-    bool_default_map["use_constant_fit_for_mdd_ridgeline"] = false;
-    help_map["use_constant_fit_for_mdd_ridgeline"] = {"bool","false",
-        "[Pathway B] Detrend the MDD ridgeline with a constant (z = mean) fit.",
-        "Overrides both the linear and polynomial fits for the MDD only."};
-
-    // ==========================================================================
-    // Ridgeline analysis options (shared by both pathways)
-    // ==========================================================================
-
-    bool_default_map["print_ridgelines"] = false;
-    help_map["print_ridgelines"] = {"bool","false",
-        "Print ridgeline point data (lat, lon, distance, elevation, …) to CSV.",
-        "One file for basin-outline ridgelines, one for range-defined ridgelines."};
-
-    bool_default_map["print_ridgeline_stats"] = false;
-    help_map["print_ridgeline_stats"] = {"bool","false",
-        "Print ridgeline summary statistics to CSV.",
-        "Includes slope, R², normalised steepness, polynomial fit coefficients."};
-
-    float_default_map["m_over_n"] = 0.5f;
-    help_map["m_over_n"] = {"float","0.5",
-        "Concavity index for normalised ridgeline steepness (chi-analysis theta).",
-        "Constrain using lsdtt-chi-mapping and supply the result here."};
-
-    bool_default_map["print_ridgeline_extrema"] = false;
-    help_map["print_ridgeline_extrema"] = {"bool","false",
-        "Print ridgeline local extrema (maxima / minima) to CSV.",
-        "Includes distance to next extremum, relief, and distance to triple divide."};
+    help_map["ridgeline_smoothing_window_fraction"] = {"float", "0.05", 
+        "When analysing the ridgelines along basin outlines, it is necessary to segment the ridge snouts.", 
+        "When segmenting the snout based on max curvature (following Robinson et al. 2025), lowess smoothing is required first with a smoothing window as parameter. This defines the smoothing window as a fraction (0-1) of total ridgeline distance."};
 
     int_default_map["ridgeline_pixels_smoothing_window"] = 1;
-    help_map["ridgeline_pixels_smoothing_window"] = {"int","1",
-        "Moving-average pixel window for smoothing the detrended ridgeline "
-        "before extremum extraction.",
-        "Window of 1 means no smoothing. Distinct from "
-        "ridgeline_smoothing_window_fraction used for snout segmentation."};
+    help_map["ridgeline_pixels_smoothing_window"] = {"int", "1", 
+        "The pixel window to smooth the detrended ridgeline with when extracting ridgeline extrema. Using a very simple moving average.", 
+        "A pixel window of 1 (default) effectively means no smoothing happens. Note this is NOT the same as ridgeline_smoothing_window_fraction which is used for ridge-snout segmentation."};
 
     bool_default_map["use_polynomial_fit_for_ridgeline"] = false;
-    help_map["use_polynomial_fit_for_ridgeline"] = {"bool","false",
-        "Detrend the ridgeline with a second-order polynomial fit.",
-        "The linear fit is always computed; this adds a polynomial option. "
-        "Overridden by use_constant_fit_for_mdd_ridgeline for the MDD."};
+    help_map["use_polynomial_fit_for_ridgeline"] = {"bool", "false", 
+        "When set to true, detrends the ridgeline with a polynomial fit.", 
+        "Ridgeline slope and steepness always calculated with linear fit, "
+        "but this alters the detrended elevation outputs."};
 
-    bool_default_map["print_fft_detrended_ridgeline_elevation"] = false;
-    help_map["print_fft_detrended_ridgeline_elevation"] = {"bool","false",
-        "Perform FFT on detrended ridgeline elevation profiles and print results.",
-        "Outputs wave number, wavelength, magnitude, and phase per ridgeline."};
+    bool_default_map["use_constant_fit_for_mdd_ridgeline"] = false;
+    help_map["use_constant_fit_for_mdd_ridgeline"] = {"bool", "false", 
+        "When set to true, it will fit a z = constant line through the main drainage divide for detrendeing.", 
+        "Overrules the default linear fit and the optional polynomial fit. Only applicable if ridgeline_analysis_mode is range_defined_ridgelines."};
+
+    float_default_map["m_over_n"] = 0.5f;
+    help_map["m_over_n"] = {"float", "0.5", 
+        "The concavity index for calculating ridgeline steepness. Usually denoted as the Greek symbol theta.", 
+        "Default is 0.5, can be constrained for the DEM using the lsdtt-chi-mapping program and supply the result here."};
+
+    // --- Ridgeline CSV Outputs ---
+    bool_default_map["print_ridgelines"] = false;
+    help_map["print_ridgelines"] = {"bool", "false", 
+        "This triggers ridgeline printing to csv.", 
+        "NOTE for any ridgeline to print, you must select an analysis mode."};
+
+    bool_default_map["print_ridgeline_stats"] = false;
+    help_map["print_ridgeline_stats"] = {"bool", "false", 
+        "This triggers printing of ridgeline statistics (including ridgeline steepness) to csv.", 
+        "Includes slope, R2, normalized steepness, and polynomial coeffs."};
+
+    bool_default_map["print_ridgeline_extrema"] = false;
+    help_map["print_ridgeline_extrema"] = {"bool", "false", 
+        "This triggers printing of ridgeline extrema to csv.", 
+        "Includes distance to next extremum, relief, and distance to TDJ."};
+
 
     // =========================================================================
-    // Parse parameters
+    // Core Setup & Validations
     // =========================================================================
-    pp.parse_all_parameters(float_default_map, int_default_map,
-                            bool_default_map, string_default_map);
-
+    pp.parse_all_parameters(
+        float_default_map, int_default_map, bool_default_map, string_default_map
+    );
+    
     auto bf  = pp.get_bool_parameters();
     auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    // =========================================================================
-    // Cross-parameter validation
-    // =========================================================================
-
-    // --- Source pixels ---
-    if (ifs["source_pixels_threshold"] <= 0)
-    {
+    if (ifs["source_pixels_threshold"] <= 0) {
         std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
         return 1;
     }
 
-    // --- Output format resolution ---
-    lsdtt::point_output_format cn_points_output_format =
-        lsdtt::resolve_point_output_format(sf["channel_network_points_output_format"]);
+    std::string analysis_mode = to_lower_copy(sf["ridgeline_analysis_mode"]);
+    if (analysis_mode != "basin_outline_ridgelines"       &&
+        analysis_mode != "interfluvial_divide_ridgelines" &&
+        analysis_mode != "range_defined_ridgelines")
+    {
+        std::cerr << "FATAL: unrecognized ridgeline_analysis_mode: " 
+                  << analysis_mode << "\n";
+        return 1;
+    }
 
-    lsdtt::vector_output_format cn_lines_output_format =
-        lsdtt::resolve_vector_output_format(sf["channel_network_lines_output_format"]);
+    const int n_selection_modes = 
+        static_cast<int>(bf["select_basins_from_outlets"]) +
+        static_cast<int>(bf["select_basins_from_outlets_nested"]) +
+        static_cast<int>(bf["select_all_basins"]);
+    
+    if (analysis_mode != "range_defined_ridgelines" && n_selection_modes != 1) 
+    {
+        std::cerr << "FATAL: Mode " << analysis_mode 
+                  << " requires choosing exactly one basin selection method.\n";
+        return 1;
+    }
 
-    lsdtt::point_output_format cn_junctions_output_format =
-        lsdtt::resolve_point_output_format(sf["channel_network_junctions_output_format"]);
-
-    lsdtt::vector_output_format basin_outline_lines_format =
+    lsdtt::vector_output_format basin_outline_format = 
         lsdtt::resolve_vector_output_format(sf["basin_outlines_output_format"]);
 
-    // --- Pathway A: basin selection ---
-    const bool select_basins_from_outlets        = bf["select_basins_from_outlets"];
-    const bool select_basins_from_outlets_nested = bf["select_basins_from_outlets_nested"];
-    const bool select_all_basins                 = bf["select_all_basins"];
-
-    const int n_selection_modes =
-        static_cast<int>(select_basins_from_outlets) +
-        static_cast<int>(select_basins_from_outlets_nested) +
-        static_cast<int>(select_all_basins);
-
-    if (n_selection_modes > 1)
-    {
-        std::cerr << "FATAL: choose only one of: select_basins_from_outlets, "
-                  << "select_basins_from_outlets_nested, select_all_basins.\n";
-        return 1;
-    }
-
-    const bool do_basin_selection = (n_selection_modes == 1);
-
-    // --- Pathway A: basin-outline ridgeline analysis needs basin selection ---
-    const bool pathway_a_active =
-        bf["analyse_basin_outline_ridgelines"] ||
-        bf["analyse_interfluvial_divide_ridgelines"];
-
-    if (pathway_a_active && !do_basin_selection)
-    {
-        std::cerr << "FATAL: analyse_basin_outline_ridgelines and/or "
-                  << "analyse_interfluvial_divide_ridgelines require basin "
-                  << "selection. Enable one of: select_basins_from_outlets, "
-                  << "select_basins_from_outlets_nested, select_all_basins.\n";
-        return 1;
-    }
-
-    // --- Pathway B: range-defined ridgelines ---
-    const bool pathway_b_active =
-        bf["analyse_transverse_divide_ridgelines"] ||
-        bf["analyse_mdd_ridgeline"];
-
-    // --- Snapping ---
-    const std::string basin_outlet_snapping_method =
-        to_lower_copy(sf["basin_outlet_snapping_method"]);
-
-    if (basin_outlet_snapping_method != "none"          &&
-        basin_outlet_snapping_method != "expanding_square" &&
-        basin_outlet_snapping_method != "downstream")
-    {
-        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
-                  << "none, expanding_square, downstream.\n";
-        return 1;
-    }
-
-    if (ifs["basin_outlet_contributing_pixels_threshold"] <= 0)
-    {
-        std::cerr << "FATAL: basin_outlet_contributing_pixels_threshold must be > 0.\n";
-        return 1;
-    }
-
-    if (ifs["basin_outlet_max_search_radius_pixels"] <
-        ifs["basin_outlet_min_search_radius_pixels"])
-    {
-        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
-                  << "basin_outlet_min_search_radius_pixels.\n";
-        return 1;
-    }
-
-    if ((select_basins_from_outlets || select_basins_from_outlets_nested) &&
-        (sf["basin_outlet_file"] == "NULL" || sf["basin_outlet_file"].empty()))
-    {
-        std::cerr << "FATAL: basin_outlet_file is required when selecting "
-                  << "basins from supplied outlet points.\n";
-        return 1;
-    }
-
-    // --- Outline splitting method validation ---
-    const std::string splitting_method = sf["outline_splitting_method"];
-    if (bf["analyse_basin_outline_ridgelines"])
-    {
-        if (splitting_method != "max_elevation" &&
-            splitting_method != "equal_length"  &&
-            splitting_method != "longest_channel")
-        {
-            std::cerr << "FATAL: outline_splitting_method must be one of: "
-                      << "max_elevation, equal_length, longest_channel. "
-                      << "Got: " << splitting_method << "\n";
-            return 1;
-        }
-    }
-
-    // write_basin_outlines auto-enables when polygon or per-order options are set
-    if (bf["write_basin_outlines_as_polygon"]) bf["write_basin_outlines"] = true;
-    if (bf["write_basin_outlines_per_order"])  bf["write_basin_outlines"] = true;
-
-    // Print a summary of active pathways
-    std::cout << "\n--- Analysis pathways ---\n";
-    if (pathway_a_active)
-    {
-        std::cout << "Pathway A (basin-outline ridgelines): ACTIVE\n";
-        if (bf["analyse_basin_outline_ridgelines"])
-            std::cout << "  - Basin-outline ridgelines\n";
-        if (bf["analyse_interfluvial_divide_ridgelines"])
-            std::cout << "  - Interfluvial divide ridgelines\n";
-    }
-    else
-    {
-        std::cout << "Pathway A (basin-outline ridgelines): inactive\n";
-    }
-    if (pathway_b_active)
-    {
-        std::cout << "Pathway B (range-defined ridgelines): ACTIVE\n";
-        if (bf["analyse_transverse_divide_ridgelines"])
-            std::cout << "  - Transverse divide ridgelines\n";
-        if (bf["analyse_mdd_ridgeline"])
-            std::cout << "  - Main drainage divide ridgeline\n";
-    }
-    else
-    {
-        std::cout << "Pathway B (range-defined ridgelines): inactive\n";
-    }
-    std::cout << "\n";
-
-    if (!pathway_a_active && !pathway_b_active)
-    {
-        std::cerr << "Warning: no ridgeline analysis pathway is active. "
-                  << "Set at least one of:\n"
-                  << "  analyse_basin_outline_ridgelines\n"
-                  << "  analyse_interfluvial_divide_ridgelines\n"
-                  << "  analyse_transverse_divide_ridgelines\n"
-                  << "  analyse_mdd_ridgeline\n";
-    }
 
     // =========================================================================
-    // Open DEM
+    // Phase 1 - Open Data and Prepare Raster
     // =========================================================================
     const std::string input_path = pp.get_full_read_path();
-    std::cout << "Opening DEM: " << input_path << "\n";
+    std::cout << "\nOpening DEM: " << input_path << "\n";
 
     lsdtt::lsdtt_data_loader loader;
-    try
+    try 
     {
         loader.open_raster(input_path);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error opening DEM: " << e.what() << "\n";
-        return 1;
-    }
-
-    loader.print_raster_info();
-
-    try
-    {
         loader.get_meta().check_projected_metres();
     }
     catch (const std::exception& e)
     {
-        std::cerr << "\nFATAL: " << e.what() << "\n";
+        std::cerr << "Fatal Error loading DEM: " << e.what() << "\n";
         return 1;
     }
 
-    // =========================================================================
-    // Load into CPU raster
-    // =========================================================================
     lsdtt::lsdtt_raster_cpu dem(loader);
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
-    // =========================================================================
-    // Step 1 — Pit filling
-    // =========================================================================
-    if (!bf["raster_is_filled"])
-    {
+    if (!bf["raster_is_filled"]) {
         std::cout << "\n--- Pit filling ---\n";
-        std::cout << "Minimum slope: " << ff["fill_min_slope"] << "\n";
-        try
-        {
-            routed_dem = lsdtt::fill_pits(dem, ff["fill_min_slope"], ifs["n_threads"]);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
+        try {
+            routed_dem = lsdtt::fill_pits(
+                dem, ff["fill_min_slope"], ifs["n_threads"]
+            );
+        } catch (const std::exception& e) {
+            std::cerr << "Fatal Error during pit filling: " << e.what() << "\n";
             return 1;
         }
-    }
-    else
-    {
-        std::cout << "\nRaster is marked as already filled. Skipping fill step.\n";
+    } else {
+        std::cout << "\nRaster is marked as already filled. Skipping fill.\n";
     }
 
     // =========================================================================
-    // Step 2 — D8 flow routing
+    // Phase 2 - Build D8 Routing and Junction Network
     // =========================================================================
-    std::cout << "\n--- Flow routing ---\n";
-    std::cout << "Boundary conditions: " << sf["boundary_conditions"] << "\n";
-    std::cout << "Threads            : " << ifs["n_threads"] << "\n";
-
+    std::cout << "\n--- Flow routing and network abstraction ---\n";
+    
     lsdtt::lsdtt_flowinfo_options fi_opts;
     fi_opts.boundary_conditions       = sf["boundary_conditions"];
     fi_opts.interior_nodata_is_outlet = true;
-    fi_opts.require_acyclic_graph     = true;
     fi_opts.build_topological_order   = true;
     fi_opts.build_s_vector            = true;
     fi_opts.n_threads                 = ifs["n_threads"];
 
     std::unique_ptr<lsdtt::lsdtt_flow_base> flow;
-    try
-    {
+    try {
         flow = lsdtt::make_flow_base(
-            routed_dem.get_data_array(),
-            routed_dem.get_mask_array(),
-            routed_dem.get_meta(),
+            routed_dem.get_data_array(), 
+            routed_dem.get_mask_array(), 
+            routed_dem.get_meta(), 
             fi_opts
         );
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "FATAL: flow routing failed: " << e.what() << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal Error in flow base creation: " << e.what() << "\n";
         return 1;
     }
 
-    // =========================================================================
-    // Step 3 — Channel network
-    // =========================================================================
-    std::cout << "\n--- Source extraction ---\n";
-    std::cout << "Contributing-pixel threshold: " << ifs["source_pixels_threshold"] << "\n";
-
-    std::vector<std::int64_t> source_flats;
-    try
-    {
-        source_flats = flow->get_sources_index_threshold(ifs["source_pixels_threshold"]);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "FATAL: source extraction failed: " << e.what() << "\n";
-        return 1;
-    }
-
-    if (source_flats.empty())
-    {
-        std::cerr << "FATAL: no source pixels found. "
-                  << "Try lowering source_pixels_threshold.\n";
-        return 1;
-    }
-    std::cout << "Number of source pixels: " << source_flats.size() << "\n";
-
-    std::cout << "\n--- Channel network construction ---\n";
     lsdtt::lsdtt_junction_network_options jn_opts;
     jn_opts.build_topological_order = true;
     jn_opts.build_s_vector          = true;
-
-    std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
-    try
-    {
-        channel_network = lsdtt::make_junction_network_base(*flow, source_flats, jn_opts);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "FATAL: channel-network construction failed: " << e.what() << "\n";
+    
+    lsdtt::lsdtt_junction_network_cpu junction_network;
+    try {
+        std::vector<std::int64_t> source_flats = 
+            flow->get_sources_index_threshold(ifs["source_pixels_threshold"]);
+        junction_network.create(*flow, source_flats, jn_opts);
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal Error in junction network: " << e.what() << "\n";
         return 1;
     }
 
-    std::cout << "Channel cells : " << channel_network->n_channel_cells() << "\n";
-    std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
-    std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
 
     // =========================================================================
-    // Step 4 — Optional channel network output
+    // Phase 3 - Basin Selection & Management (Unified)
     // =========================================================================
-    if (bf["write_channel_network_points"])
+    std::cout << "\n--- Basin Selection (" << analysis_mode << ") ---\n";
+    
+    lsdtt::lsdtt_junction_basin_manager_cpu basin_manager(
+        *flow, junction_network
+    );
+    std::vector<std::vector<std::int32_t>> sorted_range_basins; 
+
+    try 
     {
-        std::cout << "\n--- Writing channel network points ---\n";
-        const std::string output_file =
-            pp.make_output_path("_channel_network_points",
-                                lsdtt::output_extension(cn_points_output_format));
-        std::cout << "Writing: " << output_file << "\n";
-        try
+        if (analysis_mode == "range_defined_ridgelines")
         {
-            channel_network->write_channel_network_points(
-                output_file, cn_points_output_format,
-                "channel_network_points", bf["calculate_spatial_index"]);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: writing channel network points failed: " << e.what() << "\n";
-            return 1;
-        }
-    }
+            std::cout << "I am going to select range-spanning basins for your!\n";
+            std::cout << "For this to work, you MUST have exactly 4 boundary conditions specified with at least one pair of opposing no-flux boundaries (interpreted as the mountain fronts.)\n";
 
-    if (bf["write_channel_network_lines"])
-    {
-        std::cout << "\n--- Writing channel network lines ---\n";
-        const std::string output_file =
-            pp.make_output_path("_channel_network_lines",
-                                lsdtt::output_extension(cn_lines_output_format));
-        std::cout << "Writing: " << output_file << "\n";
-        try
-        {
-            channel_network->write_channel_network_lines(
-                output_file, cn_lines_output_format,
-                "channel_network_lines", bf["calculate_spatial_index"]);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: writing channel network lines failed: " << e.what() << "\n";
-            return 1;
-        }
-    }
-
-    if (bf["write_channel_network_junctions"])
-    {
-        std::cout << "\n--- Writing channel network junctions ---\n";
-        const std::string output_file =
-            pp.make_output_path("_channel_network_junctions",
-                                lsdtt::output_extension(cn_junctions_output_format));
-        std::cout << "Writing: " << output_file << "\n";
-        try
-        {
-            channel_network->write_junction_network_points(
-                output_file, cn_junctions_output_format,
-                "channel_network_junctions", bf["calculate_spatial_index"]);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: writing channel network junctions failed: " << e.what() << "\n";
-            return 1;
-        }
-    }
-
-    // =========================================================================
-    // PATHWAY A — Basin selection and basin-outline / interfluvial ridgelines
-    // =========================================================================
-    if (do_basin_selection || pathway_a_active || bf["write_basin_outlines"] ||
-        bf["write_basins_raster"] || bf["write_basins_datamap"])
-    {
-        std::cout
-            << "\n=========================================================\n"
-            << "  PATHWAY A: Basin selection\n"
-            << "=========================================================\n";
-
-        lsdtt::lsdtt_junction_basin_manager_cpu basin_manager(*flow, *channel_network);
-
-        // --- Basin selection ---
-        if (select_all_basins)
-        {
-            std::cout << "Basin selection mode: select_all_basins\n";
-            basin_manager.select_all_junction_basins();
-        }
-        else
-        {
-            // Outlet-based selection
-            const std::string basin_outlet_file_path =
-                pp.add_read_path_if_needed(sf["basin_outlet_file"]);
-
-            std::cout << "Basin selection mode: "
-                      << (select_basins_from_outlets_nested
-                              ? "select_basins_from_outlets_nested"
-                              : "select_basins_from_outlets") << "\n";
-            std::cout << "Basin outlet file   : " << basin_outlet_file_path << "\n";
-            std::cout << "Snapping method     : " << basin_outlet_snapping_method << "\n";
-
-            // Coordinate diagnostics
+            std::vector<lsdtt::lsdtt_input_point> corner_pts;
+            std::array<std::int64_t, 4>           corner_flats{};
+            
+            if (sf["corner_coordinates_csv"] != "NULL" && 
+                !sf["corner_coordinates_csv"].empty()) 
             {
-                const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
-                std::cout << "\n--- Basin outlet coordinate diagnostics ---\n";
-                std::cout << "Raster CRS          : ";
-                if (m.epsg_code != 0)
-                    std::cout << "EPSG:" << m.epsg_code;
-                else if (!m.crs_wkt.empty())
-                    std::cout << m.crs_wkt.substr(0, 80)
-                              << (m.crs_wkt.size() > 80 ? "..." : "");
-                else
-                    std::cout << "(undefined)";
-                std::cout << "\n";
-                std::cout << "Raster bounding box : "
-                          << "x [" << m.x_min << ", " << m.x_max() << "]  "
-                          << "y [" << m.y_min << ", " << m.y_max() << "]\n";
-            }
-
-            std::vector<lsdtt::lsdtt_input_point> requested_outlets;
-            try
-            {
-                requested_outlets = lsdtt::load_points_in_raster_crs(
-                    basin_outlet_file_path, dem.get_meta());
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: " << e.what() << "\n";
-                return 1;
-            }
-            std::cout << "Read " << requested_outlets.size()
-                      << " basin outlet point(s).\n";
-
-            // Per-point status warnings
-            {
-                int n_failed = 0, n_outside = 0, n_empty = 0;
-                for (const auto& pt : requested_outlets)
-                {
-                    if (pt.status == lsdtt::lsdtt_point_input_status::coordinate_transform_failed)
-                        ++n_failed;
-                    else if (pt.status == lsdtt::lsdtt_point_input_status::outside_raster_extent)
-                        ++n_outside;
-                    else if (pt.status == lsdtt::lsdtt_point_input_status::empty_geometry)
-                        ++n_empty;
-                }
-                if (n_failed  > 0) std::cerr << "Warning: " << n_failed  << " point(s) failed coordinate transformation.\n";
-                if (n_outside > 0) std::cout << "Note: "    << n_outside << " point(s) fall outside the raster extent.\n";
-                if (n_empty   > 0) std::cerr << "Warning: " << n_empty   << " point(s) had empty geometry.\n";
-            }
-
-
-            // Snap and collect flat indices
-            lsdtt::lsdtt_square_snap_options sq_opts;
-            sq_opts.contributing_pixels_threshold =
-                static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
-            sq_opts.min_search_radius_pixels = ifs["basin_outlet_min_search_radius_pixels"];
-            sq_opts.max_search_radius_pixels = ifs["basin_outlet_max_search_radius_pixels"];
-
-            lsdtt::lsdtt_downstream_snap_options ds_opts;
-            ds_opts.contributing_pixels_threshold =
-                static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
-
-            std::vector<std::int64_t> basin_outlet_flat_indices;
-            basin_outlet_flat_indices.reserve(requested_outlets.size());
-
-            for (const auto& outlet : requested_outlets)
-            {
-                if (outlet.status != lsdtt::lsdtt_point_input_status::success)
-                {
-                    std::cerr << "Warning: basin outlet " << outlet.point_id
-                              << " did not map to a valid raster pixel; skipping.\n";
-                    continue;
-                }
-
-                int row = outlet.row;
-                int col = outlet.col;
-                std::int64_t flat = outlet.flat;
-
-                try
-                {
-                    if (basin_outlet_snapping_method == "expanding_square")
-                    {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                                *flow, row, col, sq_opts);
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                        {
-                            std::cerr << "Warning: expanding_square snap failed for outlet "
-                                      << outlet.point_id << "; skipping.\n";
-                            continue;
-                        }
-                        row  = snapped.snapped_row;
-                        col  = snapped.snapped_col;
-                        flat = snapped.snapped_flat;
-                        std::cout << "  Outlet " << outlet.point_id << " snapped: row=" << row
-                                  << " col=" << col
-                                  << " contributing_pixels=" << snapped.snapped_contributing_pixels << "\n";
-                    }
-                    else if (basin_outlet_snapping_method == "downstream")
-                    {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                                *flow, row, col, ds_opts);
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                        {
-                            std::cerr << "Warning: downstream snap failed for outlet "
-                                      << outlet.point_id << "; skipping.\n";
-                            continue;
-                        }
-                        row  = snapped.snapped_row;
-                        col  = snapped.snapped_col;
-                        flat = snapped.snapped_flat;
-                        std::cout << "  Outlet " << outlet.point_id << " snapped: row=" << row
-                                  << " col=" << col
-                                  << " contributing_pixels=" << snapped.snapped_contributing_pixels << "\n";
-                    }
-                    else // "none"
-                    {
-                        if (!flow->is_valid_cell(flat))
-                        {
-                            std::cerr << "Warning: outlet " << outlet.point_id
-                                      << " maps to a nodata pixel; skipping.\n";
-                            continue;
-                        }
-                    }
-                    basin_outlet_flat_indices.push_back(flat);
-                }
-                catch (const std::exception& e)
-                {
-                    std::cerr << "Warning: failed to process outlet "
-                              << outlet.point_id << ": " << e.what() << "\n";
-                }
-            }
-
-            if (basin_outlet_flat_indices.empty())
-            {
-                std::cerr << "FATAL: no valid basin outlet flat indices produced.\n";
-                return 1;
-            }
-            std::cout << "Usable basin outlet flat indices: "
-                      << basin_outlet_flat_indices.size() << "\n";
-
-            if (select_basins_from_outlets)
-            {
-                basin_manager.select_junction_basins_from_basin_outlets(basin_outlet_flat_indices);
-            }
-            else // select_basins_from_outlets_nested
-            {
-                basin_manager.select_junction_basins_from_basin_outlets_nested(basin_outlet_flat_indices);
-            }
-        }
-
-        if (basin_manager.empty())
-        {
-            std::cerr << "FATAL: basin selection produced no basins.\n";
-            return 1;
-        }
-        std::cout << "Selected basins: " << basin_manager.size() << "\n";
-
-        // --- Basin filtering ---
-        std::cout << "\n--- Basin filtering ---\n";
-
-        if (bf["filter_basins_by_stream_order"])
-        {
-            std::cout << "Filtering by stream order ["
-                      << ifs["basins_min_stream_order"] << ", "
-                      << ifs["basins_max_stream_order"] << "]\n";
-            basin_manager.filter_by_stream_order(
-                ifs["basins_min_stream_order"],
-                ifs["basins_max_stream_order"]);
-            std::cout << "Remaining basins: " << basin_manager.size() << "\n";
-        }
-
-        if (bf["filter_basins_by_area"])
-        {
-            std::cout << "Filtering by area ["
-                      << ifs["basins_min_area_pixels"] << ", "
-                      << ifs["basins_max_area_pixels"] << "] pixels\n";
-            basin_manager.filter_by_area(
-                ifs["basins_min_area_pixels"],
-                ifs["basins_max_area_pixels"]);
-            std::cout << "Remaining basins: " << basin_manager.size() << "\n";
-        }
-
-        if (bf["filter_incomplete_basins"])
-        {
-            std::cout << "Filtering incomplete basins.\n";
-            basin_manager.filter_incomplete();
-            std::cout << "Remaining basins: " << basin_manager.size() << "\n";
-        }
-
-        if (bf["filter_all_but_largest_basin"])
-        {
-            std::cout << "Keeping largest basin only.\n";
-            basin_manager.filter_largest();
-            std::cout << "Remaining basins: " << basin_manager.size() << "\n";
-        }
-
-        if (bf["filter_nested_basins"])
-        {
-            std::cout << "Filtering nested basins.\n";
-            basin_manager.filter_nested();
-            std::cout << "Remaining basins: " << basin_manager.size() << "\n";
-        }
-
-        if (bf["filter_nested_by_stream_order"])
-        {
-            std::cout << "Filtering nested basins by stream order.\n";
-            basin_manager.filter_nested_by_stream_order();
-            std::cout << "Remaining basins: " << basin_manager.size() << "\n";
-        }
-
-        if (basin_manager.empty())
-        {
-            std::cerr << "FATAL: no basins remain after filtering.\n";
-            return 1;
-        }
-
-        std::cout << "\nFinal basin count: " << basin_manager.size() << "\n";
-        std::cout << "Junction numbers  : ";
-        for (const auto jn : basin_manager.get_junction_numbers())
-            std::cout << jn << " ";
-        std::cout << "\n";
-
-        // --- Basin vector / raster output ---
-        if (bf["write_basin_outlines"])
-        {
-            std::cout << "\n--- Writing basin outlines ---\n";
-            const std::string ext = lsdtt::output_extension(basin_outline_lines_format);
-
-            try
-            {
-                if (!bf["write_basin_outlines_as_polygon"] && !bf["write_basin_outlines_per_order"])
-                {
-                    const std::string out = pp.make_output_path("_junction_basin_outlines", ext);
-                    std::cout << "Writing: " << out << "\n";
-                    basin_manager.write_basins_to_vector_lines(
-                        out, basin_outline_lines_format,
-                        "junction_basin_outlines", bf["calculate_spatial_index"]);
-                }
-                else if (!bf["write_basin_outlines_as_polygon"] && bf["write_basin_outlines_per_order"])
-                {
-                    const std::string out = pp.make_output_path("_junction_basin_outlines", ext);
-                    std::cout << "Writing (per order): " << out << "\n";
-                    basin_manager.write_basins_to_vector_lines_by_order(
-                        out, basin_outline_lines_format,
-                        "junction_basin_outlines", bf["calculate_spatial_index"]);
-                }
-                else if (bf["write_basin_outlines_as_polygon"] && !bf["write_basin_outlines_per_order"])
-                {
-                    const std::string out = pp.make_output_path("_junction_basin_polygons", ext);
-                    std::cout << "Writing (polygons): " << out << "\n";
-                    basin_manager.write_basins_to_vector_polygons(
-                        out, basin_outline_lines_format,
-                        "junction_basin_polygons", bf["calculate_spatial_index"]);
-                }
-                else // polygon + per order
-                {
-                    const std::string out = pp.make_output_path("_junction_basin_polygons", ext);
-                    std::cout << "Writing (polygons per order): " << out << "\n";
-                    basin_manager.write_basins_to_vector_polygons_by_order(
-                        out, basin_outline_lines_format,
-                        "junction_basin_polygons", bf["calculate_spatial_index"]);
-                }
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: writing basin outlines failed: " << e.what() << "\n";
-                return 1;
-            }
-        }
-
-        if (bf["write_basin_outlines_to_csv"])
-        {
-            std::cout << "\n--- Writing basin outlines to CSV ---\n";
-            const std::string out = pp.make_output_path("_basin_outlines", ".csv");
-            std::cout << "Writing: " << out << "\n";
-            try
-            {
-                basin_manager.write_basin_outlines_to_csv(out, dem);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: writing basin outlines to CSV failed: " << e.what() << "\n";
-                return 1;
-            }
-        }
-
-
-        if (bf["write_basins_raster"])
-        {
-            std::cout << "\n--- Writing basin raster ---\n";
-            const std::string out = pp.make_output_path("_junction_basins", ".tif");
-            std::cout << "Writing: " << out << "\n";
-            try
-            {
-                lsdtt::lsdtt_raster_result basin_raster =
-                    basin_manager.get_junction_basins_raster();
-                lsdtt::lsdtt_data_loader basin_loader;
-                basin_loader.write_full(basin_raster, out, lsdtt::raster_output_format::cog);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: writing basin raster failed: " << e.what() << "\n";
-                return 1;
-            }
-        }
-
-        if (bf["write_basins_datamap"])
-        {
-            std::cout << "\n--- Writing basin datamap ---\n";
-            const std::string out = pp.make_output_path("_junction_basins_datamap", ".csv");
-            std::cout << "Writing: " << out << "\n";
-            try
-            {
-                const std::vector<std::string> headers = {"junction_number","outlet_flat_index"};
-                std::vector<std::vector<std::string>> rows;
-                rows.reserve(basin_manager.size());
-                for (std::size_t i = 0; i < basin_manager.size(); ++i)
-                {
-                    const lsdtt::lsdtt_junction_basin_cpu& b = basin_manager.basin_at(i);
-                    rows.push_back({
-                        std::to_string(b.get_junction_number()),
-                        std::to_string(b.get_basin_outlet_flat_index())
-                    });
-                }
-                lsdtt::lsdtt_data_loader dm_loader;
-                dm_loader.write_csv(out, headers, rows);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: writing basin datamap failed: " << e.what() << "\n";
-                return 1;
-            }
-        }
-
-        // --- Pathway A: Basin-outline ridgelines ---
-        if (bf["analyse_basin_outline_ridgelines"] || bf["analyse_interfluvial_divide_ridgelines"])
-        {
-            std::cout
-                << "\n=========================================================\n"
-                << "  PATHWAY A: Basin-outline / interfluvial ridgeline analysis\n"
-                << "=========================================================\n";
-
-            // TODO: implement LSDRidgeline / LSDBasinOutline equivalents in lsdtt3.
-            // This block will be filled in once the basin-outline tracing and
-            // ridgeline objects have been ported to lsdtt3.
-            //
-            // The workflow will be:
-            //   for each basin in basin_manager:
-            //     get LSDBasinOutline equivalent  (lsdtt_basin_outline_cpu)
-            //     fill elevation onto outline
-            //     [if analyse_basin_outline_ridgelines]
-            //       split into left/right ridgelines (by splitting_method)
-            //       segment snout by curvature
-            //       fit profile, smooth, derive detrended ridgeline
-            //     [if analyse_interfluvial_divide_ridgelines]
-            //       for each pair of non-nested basins:
-            //         find shared outline segment → interfluvial ridgeline
-            //         fit profile, smooth, derive detrended ridgeline
-            //   print ridgelines / stats / extrema / fft as requested
-
-            std::cout << "Basin-outline / interfluvial ridgeline analysis is not yet\n"
-                      << "implemented in lsdtt3. This block will be filled in when\n"
-                      << "lsdtt_basin_outline_cpu and LSDRidgeline are ported.\n";
-        }
-
-    } // end Pathway A block
-
-    // =========================================================================
-    // PATHWAY B — Range-defined ridgelines
-    // =========================================================================
-    if (pathway_b_active)
-    {
-        std::cout
-            << "\n=========================================================\n"
-            << "  PATHWAY B: Range-defined ridgeline analysis\n"
-            << "=========================================================\n";
-
-        std::cout << "For range-defined ridgelines I need four boundary segments\n"
-                  << "with at least one pair of opposing open (o) boundaries,\n"
-                  << "which are interpreted as mountain fronts.\n"
-                  << "NOTE: in lsdtt3, flowinfo does not support no-flux (n) boundaries.\n"
-                  << "Use open (o) for mountain fronts and no-flux conditions are not needed.\n";
-
-                // --- Resolve boundary corners ---
-        std::vector<lsdtt::lsdtt_input_point> corner_pts;
-        std::array<std::int64_t, 4>           corner_flats{};
-
-        const std::string corner_csv = sf["corner_coordinates_csv"];
-        if (corner_csv != "NULL" && corner_csv != "Null" && corner_csv != "null"
-            && !corner_csv.empty())
-        {
-            const std::string full_corner_csv = pp.add_read_path_if_needed(corner_csv);
-            try
-            {
-                corner_pts = parse_corner_coordinates_csv(full_corner_csv, dem.get_meta());
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: " << e.what() << "\n";
-                return 1;
-            }
-
-            if (corner_pts.size() != 4)
-            {
-                std::cerr << "FATAL: expected exactly 4 valid corner points, "
-                          << "but got " << corner_pts.size() << ".\n";
-                return 1;
-            }
-
-            // Transfer the flat indices from parsed CSV locations
-            for (int i = 0; i < 4; ++i)
-            {
-                corner_flats[i] = corner_pts[i].flat;
-            }
-            std::cout << "Corner points successfully mapped from CSV.\n";
-        }
-        else
-        {
-            // Fall back to DEM pixel corners
-            std::cout << "No corner_coordinates_csv supplied. "
-                      << "Using the four DEM pixel corners.\n";
-            try
-            {
+                corner_pts = parse_corner_coordinates_csv(
+                    pp.add_read_path_if_needed(sf["corner_coordinates_csv"]), 
+                    dem.get_meta()
+                );
+                for (int i = 0; i < 4; ++i) corner_flats[i] = corner_pts[i].flat;
+            } else {
+                std::cout << "No corner_coordinates_csv supplied. "
+                          << "Using the four DEM pixel corners.\n";
                 corner_flats = resolve_dem_corners(routed_dem);
             }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: " << e.what() << "\n";
-                return 1;
-            }
-        }
 
-        // --- Extract Boundary Segments ---
-        std::vector<std::vector<std::int64_t>> boundary_segments;
-        try
-        {
-            boundary_segments = extract_boundary_segments(routed_dem, corner_flats);
-        }
-        catch(const std::exception& e)
-        {
-            std::cerr << "FATAL: Boundary segment tracing failed: " << e.what() << "\n";
-            return 1;
-        }
+            auto boundary_segments = extract_boundary_segments(
+                routed_dem, corner_flats
+            );
 
+            basin_manager.select_all_junction_basins();
+            basin_manager.filter_range_spanning(
+                boundary_segments, sf["boundary_conditions"]
+            );
+            std::cout << "Retained " << basin_manager.size() 
+                      << " range-spanning basins.\n";
 
-        // --- Detect Range-Spanning Basins ---
-        std::cout << "\n--- Range-Spanning Basin Detection ---\n";
-        lsdtt::lsdtt_junction_basin_manager_cpu range_basin_manager(*flow, *channel_network);
-        
-        std::cout << "Selecting all junction basins..." << std::endl;
-        range_basin_manager.select_all_junction_basins();
+            sorted_range_basins.resize(4);
+            std::vector<std::int32_t> rs_junctions = 
+                basin_manager.get_junction_numbers();
+            std::vector<std::int64_t> rs_outlets   = 
+                basin_manager.get_basin_outlet_flat_indices();
 
-        std::cout << "Filtering for exact range-spanning basins..." << std::endl;
-        range_basin_manager.filter_range_spanning(boundary_segments, sf["boundary_conditions"]);
-                std::cout << "Retained " << range_basin_manager.size() << " range-spanning basins.\n";
-        // Note: these don't have to be pruned for edge draining
-        // because the purpose is to derive either transverse divides or the
-        // main drainage divide (or both) and in both cases this does not
-        // matter
-
-        // ---------------------------------------------------------------------
-        // Group and Sort range-spanning basins per boundary
-        // ---------------------------------------------------------------------
-        std::cout << "\n--- Grouping and sorting range-spanning basins per boundary ---\n";
-        std::cout << "Grouping and sorting these basins by order of occurence along "
-                  << "each DEM boundary (mountain front)...\n";
-
-        // This will store the sorted junction numbers per boundary (N=0, E=1, S=2, W=3)
-        std::vector<std::vector<std::int32_t>> sorted_junctions_per_boundary(4);
-
-        if (range_basin_manager.empty()) {
-            std::cout << "WARNING: I could not find any range-spanning basins.\n";
-        }
-
-        // To map back and forth, grab all outlets and junctions
-        std::vector<std::int32_t> rs_junctions = range_basin_manager.get_junction_numbers();
-        std::vector<std::int64_t> rs_outlets   = range_basin_manager.get_basin_outlet_flat_indices();
-
-        for (int b = 0; b < 4; ++b)
-        {
-            const std::vector<std::int64_t>& b_flats = boundary_segments[b];
-            
-            // Map outlet node to its position along the boundary
-            // pair<index_in_boundary, junction_id>
-            std::vector<std::pair<int, std::int32_t>> outlet_positions;
-            
-            for (std::size_t i = 0; i < rs_junctions.size(); ++i)
-            {
-                auto it = std::find(b_flats.begin(), b_flats.end(), rs_outlets[i]);
-                if (it != b_flats.end())
-                {
-                    // To resolve ties where a corner pixel belongs to two boundaries,
-                    // we must ensure we ONLY assign it to the boundary marked 'o' (open).
-                    // In lsdtt3, mountain fronts must be 'o'.
-                    char bc_char = static_cast<char>(std::tolower(static_cast<unsigned char>(sf["boundary_conditions"][b])));
-                    if (bc_char == 'o')
-                    {
-                        int idx = static_cast<int>(std::distance(b_flats.begin(), it));
-                        outlet_positions.emplace_back(idx, rs_junctions[i]);
+            std::cout << "Sorting basins by trace order along boundary...\n";
+            for (int b = 0; b < 4; ++b) {
+                const auto& b_flats = boundary_segments[b];
+                std::vector<std::pair<int, std::int32_t>> outlet_positions;
+                
+                for (std::size_t i = 0; i < rs_junctions.size(); ++i) {
+                    auto it = std::find(
+                        b_flats.begin(), b_flats.end(), rs_outlets[i]
+                    );
+                    if (it != b_flats.end()) {
+                        char bc_char = static_cast<char>(std::tolower(
+                            static_cast<unsigned char>(sf["boundary_conditions"][b])
+                        ));
+                        if (bc_char == 'o') {
+                            outlet_positions.emplace_back(
+                                static_cast<int>(std::distance(b_flats.begin(), it)),
+                                rs_junctions[i]
+                            );
+                        }
                     }
                 }
+                std::sort(outlet_positions.begin(), outlet_positions.end());
+                for (const auto& p : outlet_positions) {
+                    sorted_range_basins[b].push_back(p.second);
+                }
             }
+        } 
+        else 
+        {
+            if (bf["select_all_basins"]) {
+                std::cout << "Basin selection mode: select_all_basins\n";
+                basin_manager.select_all_junction_basins();
+            } else {
+                std::cout << "I am going to get basins from lat-long coordinates.\n";
+                std::vector<lsdtt::lsdtt_input_point> req_outlets = 
+                    lsdtt::load_points_in_raster_crs(
+                        pp.add_read_path_if_needed(sf["basin_outlet_file"]), 
+                        dem.get_meta()
+                    );
+                
+                std::cout << "Read " << req_outlets.size() << " requested outlet points.\n";
 
-            // Sort basins by order of occurrence along the boundary trace
-            std::sort(outlet_positions.begin(), outlet_positions.end());
+                lsdtt::lsdtt_downstream_snap_options ds_opts;
+                ds_opts.contributing_pixels_threshold = 
+                    ifs["basin_outlet_contributing_pixels_threshold"];
 
-            for (const auto& p : outlet_positions)
-            {
-                sorted_junctions_per_boundary[b].push_back(p.second);
+                std::vector<std::int64_t> out_flats;
+                for (const auto& pt : req_outlets) {
+                    if (pt.status == lsdtt::lsdtt_point_input_status::success) {
+                        if (sf["basin_outlet_snapping_method"] == "downstream") {
+                            auto snap = lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
+                                *flow, pt.row, pt.col, ds_opts
+                            );
+                            if (snap.status == lsdtt::lsdtt_snap_status::success) {
+                                out_flats.push_back(snap.snapped_flat);
+                            }
+                        } else {
+                            out_flats.push_back(pt.flat);
+                        }
+                    }
+                }
+
+                if (bf["select_basins_from_outlets"]) {
+                    basin_manager.select_junction_basins_from_basin_outlets(out_flats);
+                } else { 
+                    basin_manager.select_junction_basins_from_basin_outlets_nested(out_flats);
+                }
             }
+            
+            // Standard filters
+            std::cout << "Filtering initial selection (" << basin_manager.size() << " basins)...\n";
 
-            std::cout << "  Boundary " << b << " has " 
-                      << sorted_junctions_per_boundary[b].size() << " range-spanning basins.\n";
+            if (bf["filter_basins_by_stream_order"]) {
+                basin_manager.filter_by_stream_order(
+                    ifs["basins_min_stream_order"], ifs["basins_max_stream_order"]
+                );
+            }
+            if (bf["filter_basins_by_area"]) {
+                basin_manager.filter_by_area(
+                    ifs["basins_min_area_pixels"], ifs["basins_max_area_pixels"]
+                );
+            }
+            if (bf["filter_incomplete_basins"]) {
+                std::cout << "I am pruning junctions that are influenced by the edge of the DEM!\n";
+                std::cout << "This is necessary because basins draining to the edge will have incorrect chi values.\n";
+                basin_manager.filter_incomplete();
+            }
+            if (bf["filter_all_but_largest_basin"]) {
+                std::cout << "I am only going to take the largest basin.\n";
+                basin_manager.filter_largest();
+            }
+            if (bf["filter_nested_basins"]) basin_manager.filter_nested();
+
+            std::cout << "Basin filtering complete. " << basin_manager.size() << " left.\n";
+        }
+    } 
+    catch (const std::exception& e) 
+    {
+        std::cerr << "Fatal Error during basin selection: " << e.what() << "\n";
+        return 1;
+    }
+
+    if (basin_manager.empty()) {
+        std::cout << "I am stopping here since I don't have any basins to analyse.\n";
+        return 1;
+    }
+
+    // =========================================================================
+    // Phase 4 - Basin Vectors/Rasters (Unified)
+    // =========================================================================
+    try 
+    {
+        if (bf["write_basin_outlines"] || bf["write_basin_outlines_as_polygon"]) {
+            std::cout << "\n--- Writing basin shapes ---\n";
+            const std::string ext = lsdtt::output_extension(basin_outline_format);
+            if (bf["write_basin_outlines_as_polygon"]) {
+                basin_manager.write_basins_to_vector_polygons(
+                    pp.make_output_path("_junction_basin_polygons", ext), 
+                    basin_outline_format, "polygons", true
+                );
+            } else {
+                basin_manager.write_basins_to_vector_lines(
+                    pp.make_output_path("_junction_basin_outlines", ext), 
+                    basin_outline_format, "lines", true
+                );
+            }
         }
 
-        // =====================================================================
-        // Extract Transverse and Main Drainage Divides
-        // =====================================================================
+        if (bf["write_basin_outlines_to_csv"]) {
+            std::cout << "\n--- Writing basin outlines to CSV ---\n";
+            const std::string out = pp.make_output_path("_basin_outlines", ".csv");
+            std::cout << "Writing CSV: " << out << "\n";
+            basin_manager.write_basin_outlines_to_csv(out, dem);
+        }
 
-        // We are holding these divides as lsdtt_ridgeline_cpu.
-        // It really is just an object that can hold a segment of drainage divide.
-        std::vector<lsdtt::lsdtt_ridgeline_cpu> transverse_ridgelines;
-        std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_ridgelines;
+        if (bf["write_basins_raster"]) {
+            std::cout << "\n--- Writing basin raster ---\n";
+            lsdtt::lsdtt_data_loader bl;
+            bl.write_full(
+                basin_manager.get_junction_basins_raster(), 
+                pp.make_output_path("_junction_basins", ".tif"), 
+                lsdtt::raster_output_format::cog
+            );
+        }
+    }
+    catch (const std::exception& e) 
+    {
+        std::cerr << "Warning: Failed writing basin outlines/rasters: " 
+                  << e.what() << "\n";
+    }
 
-        // This is to store junction numbers associated with the transverse
-        // divides (if we are including transverse divides, below).
-        std::vector<std::int32_t> left_basins, right_basins;
+    // =========================================================================
+    // Phase 5 - Extract Ridgelines Based on Topology
+    // =========================================================================
+    std::cout << "\n--- Extracting Ridgelines (" << analysis_mode << ") ---\n";
+    std::vector<lsdtt_ridgeline_record> all_ridgelines;
+    const float nan_f = std::numeric_limits<float>::quiet_NaN();
 
-        // Decide which ones we need
-        // "Combining" extraction of these divides reduces the number of times
-        // we have to trace the same basin outline.
-        const bool get_transverse_divides   = bf["analyse_transverse_divide_ridgelines"];
-        const bool get_main_drainage_divide = bf["analyse_mdd_ridgeline"];
+    int ridgeline_counter = 0; // Universal identifier
 
-        // Helper lambda to fetch the basin from the manager by junction_id
+    try 
+    {
+        // Helper lambda to fetch basin from manager by junction ID
         auto get_basin_by_junction = [&](std::int32_t jid) -> const lsdtt::lsdtt_junction_basin_cpu* {
-            for (std::size_t i = 0; i < range_basin_manager.size(); ++i) {
-                if (range_basin_manager.basin_at(i).get_junction_number() == jid) {
-                    return &range_basin_manager.basin_at(i);
+            for (std::size_t i = 0; i < basin_manager.size(); ++i) {
+                if (basin_manager.basin_at(i).get_junction_number() == jid) {
+                    return &basin_manager.basin_at(i);
                 }
             }
             return nullptr;
         };
 
-        // Note on transverse divide extraction:
-        // The DEM is traced clockwise to get the DEM boundaries
-        // And the basins along these boundaries are in-order of the tracing
-        // direction, due to the sorting step above. 
-        // So if we take the transverse divide to the left of each basin along 
-        // a boundary, excluding the final basin, we avoid duplicates of the 
-        // same transverse divide.
-        // BUT we should not exclude the final basin if the next boundary is periodic.
+        // Helper lambda to compute drainage area
+        auto get_drainage_area = [&](std::int64_t flat) -> float {
+            return static_cast<float>(
+                flow->s_vector_size(flat) * flow->cell_size() * flow->cell_size()
+            );
+        };
 
-        // Note on main drainage divide extraction:
-        // We go along each boundary, take the mdd-portions of each range
-        // spanning basin, which should result in a continuous mdd when pasted
-        // together (it is geometrically not possible for two adjacent range
-        // spanning basins to not have a shared triple divide on the MDD).
-        // We do this for each boundary and then keep only the nodes that are
-        // shared between each dummy-mdd.
-
-        // This will hold the MDD segments for each boundary before merging
-        std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_for_each_boundary(4);
-
-        std::cout << "\n--- Tracing divides for range-spanning basins ---\n";
-        for (int b = 0; b < 4; ++b)
+        if (analysis_mode == "range_defined_ridgelines")
         {
-            const std::vector<std::int32_t>& junctions = sorted_junctions_per_boundary[b];
-            if (junctions.empty()) continue;
+            std::cout << "\nYou selected an analysis option that requires finding drainage divides defined by mountain range boundaries, for example transverse divides or the main drainage divide.\n";
+            std::cout << "For this to work, you must have exactly four boundary conditions with at least one pair of opposing no-flux boundaries. I am going to interpret these no-flux boundaries as mountain fronts.\n\n";
 
-            // Determine if the next boundary is periodic
-            std::size_t final_basin_for_tvd_finding = junctions.size() - 1;
-            char next_bc = static_cast<char>(std::tolower(static_cast<unsigned char>(sf["boundary_conditions"][(b + 1) % 4])));
-            if (next_bc != 'p' && final_basin_for_tvd_finding > 0)
+            std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_for_each_boundary(4);
+
+            for (int b = 0; b < 4; ++b) 
             {
-                final_basin_for_tvd_finding--;
-            }
+                const auto& junctions = sorted_range_basins[b];
+                if (junctions.empty()) continue;
 
-            std::vector<lsdtt::lsdtt_ridgeline_cpu> dummy_mdd;
-            const int NJunctions = static_cast<int>(junctions.size());
-
-            for (int bsn = 0; bsn < NJunctions; ++bsn)
-            {
-                std::int32_t jid = junctions[bsn];
-                const lsdtt::lsdtt_junction_basin_cpu* basin_ptr = get_basin_by_junction(jid);
-                if (!basin_ptr) continue;
-
-                // Get the basin outline (auto-handles periodicity on tracing)
-                lsdtt::lsdtt_basin_outline_cpu BO = basin_ptr->get_basin_outline();
-
-                // Transverse Divides
-                if (get_transverse_divides && static_cast<std::size_t>(bsn) <= final_basin_for_tvd_finding)
-                {
-                    lsdtt::lsdtt_ridgeline_cpu tvd = BO.get_left_transverse_divide_as_ridgeline(
-                        jid,
-                        sorted_junctions_per_boundary[b],            // this side
-                        sorted_junctions_per_boundary[(b + 2) % 4],  // opposite
-                        *channel_network
-                    );
-
-                    // If not an empty ridgeline
-                    // (Which can happen due to interstitial unchannelled space
-                    // in-between range-spanning basins)
-                    if (!tvd.empty())
-                    {
-                        transverse_ridgelines.push_back(std::move(tvd));
-                        
-                        // Left basin is the next one in the junctions list, note wrapping
-                        // when due to periodic boundaries the current basin is already the final one.
-                        left_basins.push_back(junctions[(bsn + 1) % NJunctions]);
-                        right_basins.push_back(jid);
-                    }
+                std::size_t final_basin_for_tvd = junctions.size() - 1;
+                char next_bc = static_cast<char>(std::tolower(
+                    static_cast<unsigned char>(sf["boundary_conditions"][(b + 1) % 4])
+                ));
+                if (next_bc != 'p' && final_basin_for_tvd > 0) {
+                    final_basin_for_tvd--;
                 }
 
-                // Main Drainage Divide
-                if (get_main_drainage_divide)
+                std::vector<lsdtt::lsdtt_ridgeline_cpu> dummy_mdd;
+                const int N_junctions = static_cast<int>(junctions.size());
+
+                for (int bsn = 0; bsn < N_junctions; ++bsn) 
                 {
-                    lsdtt::lsdtt_ridgeline_cpu mdd_part = BO.get_outline_nodes_on_main_drainage_divide_as_ridgeline(
-                        jid,
-                        sorted_junctions_per_boundary[b],            // this side
-                        sorted_junctions_per_boundary[(b + 2) % 4],  // opposite
-                        *channel_network
+                    std::int32_t jid = junctions[bsn];
+                    const auto* basin_ptr = get_basin_by_junction(jid);
+                    if (!basin_ptr) continue;
+
+                    auto BO = basin_ptr->get_basin_outline();
+                    float area_right = get_drainage_area(
+                        basin_ptr->get_basin_outlet_flat_index()
                     );
 
-                    // The nodes are traced clockwise around the basin outline, 
-                    // but we are going basin-by-basin along the DEM boundary clockwise too. 
-                    // To get the dummy-MDD flowing in the same general direction as the 
-                    // DEM boundary, we must reverse this segment.
-                    if (!mdd_part.empty()) {
+                    // 1. Transverse Divides (Left)
+                    if (static_cast<std::size_t>(bsn) <= final_basin_for_tvd)
+                    {
+                        std::cout << "   I am getting its left transverse divide: ";
+                        auto tvd = BO.get_left_transverse_divide_as_ridgeline(
+                            jid, sorted_range_basins[b], sorted_range_basins[(b + 2) % 4], junction_network
+                        );
+
+                        if (!tvd.empty()) 
+                        {
+                            std::cout << tvd.size() << " nodes.\n";
+
+                            std::int32_t adj_jid = junctions[(bsn + 1) % N_junctions];
+                            const auto* adj_basin_ptr = get_basin_by_junction(adj_jid);
+                            
+                            float area_left = nan_f;
+                            if (adj_basin_ptr) {
+                                area_left = get_drainage_area(
+                                    adj_basin_ptr->get_basin_outlet_flat_index()
+                                );
+                            }
+
+                            all_ridgelines.push_back({
+                                std::move(tvd),
+                                ridgeline_counter++,
+                                adj_jid, jid,
+                                "transverse_divide", "_range_defined_ridgelines", 
+                                true, area_left, area_right
+                            });
+                        }
+                    }
+
+                    // 2. Main Drainage Divide segment
+                    std::cout << "   I am getting its portion along the MDD: ";
+                    auto mdd_part = BO.get_outline_nodes_on_main_drainage_divide_as_ridgeline(
+                        jid, sorted_range_basins[b], sorted_range_basins[(b + 2) % 4], junction_network
+                    );
+
+                    if (!mdd_part.empty()) 
+                    {
+                        std::cout << mdd_part.size() << " nodes.\n";
                         mdd_part.reverse();
                         dummy_mdd.push_back(std::move(mdd_part));
                     }
                 }
             }
-
-            if (get_main_drainage_divide && !dummy_mdd.empty())
-            {
-                lsdtt::lsdtt_ridgeline_cpu this_boundary_mdd = std::move(dummy_mdd[0]);
-                for (std::size_t m = 1; m < dummy_mdd.size(); ++m)
-                {
-                    this_boundary_mdd.append_without_check(dummy_mdd[m]);
-                }
-                mdd_for_each_boundary[b] = std::move(this_boundary_mdd);
-            }
-        }
-
-        if (get_main_drainage_divide)
-        {
-            std::cout << "Pulling together the main drainage divide...\n";
+            // 3. Assemble the final Main Drainage Divide
+            std::cout << "\nPulling together the main drainage divide.\n";
             std::vector<int> boundary_indices;
-            for (int i = 0; i < 4; ++i)
-            {
-                if (!mdd_for_each_boundary[i].empty())
-                {
-                    boundary_indices.push_back(i);
-                }
+            for (int i = 0; i < 4; ++i) {
+                if (!mdd_for_each_boundary[i].empty()) boundary_indices.push_back(i);
             }
 
-            if (boundary_indices.size() == 4)
+            if (boundary_indices.size() == 4) 
             {
-                std::cout << "Notice: Range-spanning basins on all 4 boundaries meeting at a quadruple divide.\n"
-                          << "Skipping MDD assembly for this rare singular node case.\n\n";
+                std::cout << "You just made it to the end-game of topographic analysis: you supplied a DEM with range-spanning basins on all four DEM boundaries touching each other at exactly one divide-node! This is extremely rare.\nI am not going to analyse this mdd because analysis of only one node is not that useful.\n\n";
             }
-            else if (boundary_indices.size() == 2)
+            else if (boundary_indices.size() == 2) 
             {
                 int b_idx = boundary_indices[0];
                 int opp_b_idx = boundary_indices[1];
 
-                // Reverse the opposing boundary's MDD so it goes in the same direction
                 mdd_for_each_boundary[opp_b_idx].reverse();
+                auto mdd_segments = mdd_for_each_boundary[b_idx]
+                    .extract_contiguous_shared_ridgelines(mdd_for_each_boundary[opp_b_idx]);
 
-                mdd_ridgelines = mdd_for_each_boundary[b_idx].extract_contiguous_shared_ridgelines(
-                    mdd_for_each_boundary[opp_b_idx]
+                for (auto& seg : mdd_segments) 
+                {
+                    all_ridgelines.push_back({
+                        std::move(seg),
+                        ridgeline_counter++,
+                        -1, -1, 
+                        "main_drainage_divide", "_range_defined_ridgelines", 
+                        true, nan_f, nan_f
+                    });
+                }
+            }
+        }
+        else if (analysis_mode == "basin_outline_ridgelines")
+        {
+            std::cout << "Going to split each basin outline into two ridgelines based on: " << sf["outline_splitting_method"] << "\n";
+            if (sf["outline_splitting_method"] == "max_elevation") {
+                std::cout << "max_elevation: the maximum elevation on each basin outline\n";
+            } else if (sf["outline_splitting_method"] == "equal_length") {
+                std::cout << "equal length: the halfway-distance point on each outline.\n";
+            } else if (sf["outline_splitting_method"] == "longest_channel") {
+                std::cout << "longest_channel: the point on the basin outline nearest the channel head of the longest channel.\n";
+            }
+
+            std::cout << "I am also going to segment off the ridge-snouts according to the method of Robinson et al. (2025). This is based on the first point of maximum curvature identified by the Kneed algorithm of Satopaa et al. (2011). I will use a smoothing window of " << ff["ridgeline_smoothing_window_fraction"] << " times the total length of each ridgeline.\n\n";
+
+            lsdtt::lsdtt_raster_cpu dist_raster;
+            if (sf["outline_splitting_method"] == "longest_channel") {
+                dist_raster = lsdtt::lsdtt_raster_cpu(
+                    std::move(flow->get_distance_from_outlet_raster())
                 );
             }
-            else
+
+            for (std::size_t i = 0; i < basin_manager.size(); ++i) 
             {
-                std::cout << "Warning: Unexpected number of MDD-touching boundaries. Cannot stitch MDD reliably.\n";
+                std::int32_t jid = basin_manager.basin_at(i).get_junction_number();
+                std::int64_t flat = basin_manager.basin_at(i).get_basin_outlet_flat_index();
+                float d_area = get_drainage_area(flat);
+                
+                auto BO = basin_manager.basin_at(i).get_basin_outline();
+                std::vector<lsdtt::lsdtt_ridgeline_cpu> rls;
+
+                if (sf["outline_splitting_method"] == "longest_channel") {
+                    rls = BO.split_outline_into_ridgelines_by_longest_channel(dist_raster);
+                } else if (sf["outline_splitting_method"] == "equal_length") {
+                    rls = BO.split_outline_into_ridgelines_by_equal_length();
+                } else { 
+                    rls = BO.split_outline_into_ridgelines_by_max_elevation(dem);
+                }
+
+                if (rls.size() == 2) 
+                {
+                    all_ridgelines.push_back({
+                        std::move(rls[0]), ridgeline_counter++,
+                        jid, -1, 
+                        "left_ridgeline", "_basin_outline_ridgelines", 
+                        false, d_area, nan_f
+                    });
+                    
+                    all_ridgelines.push_back({
+                        std::move(rls[1]), ridgeline_counter++,
+                        jid, -1, 
+                        "right_ridgeline", "_basin_outline_ridgelines", 
+                        false, d_area, nan_f
+                    });
+                }
+            }
+        }
+        else if (analysis_mode == "interfluvial_divide_ridgelines")
+        {
+            std::cout << "\nYou selected an analysis option that requires finding interfluvial divides.\n";
+            std::cout << "An interfluvial divide is the portion of a basin outline shared between any pair of two selected basins that are not nested.\n\n";
+            
+            for (std::size_t i = 0; i < basin_manager.size(); ++i) 
+            {
+                std::int32_t junc_i = basin_manager.basin_at(i).get_junction_number();
+                std::int64_t flat_i = basin_manager.basin_at(i).get_basin_outlet_flat_index();
+                auto BO_i = basin_manager.basin_at(i).get_basin_outline();
+                
+                float area_i = get_drainage_area(flat_i);
+
+                for (std::size_t j = i + 1; j < basin_manager.size(); ++j) 
+                {
+                    std::int32_t junc_j = basin_manager.basin_at(j).get_junction_number();
+                    std::int64_t flat_j = basin_manager.basin_at(j).get_basin_outlet_flat_index();
+
+                    if (!flow->is_upslope_of(flat_i, flat_j) && !flow->is_upslope_of(flat_j, flat_i))
+                    {
+                        std::cout << "Going to check if basins " << junc_i << " and " << junc_j << " share an interfluvial divide..\n";
+
+                        auto shared_divide = BO_i.get_interfluvial_divide_as_ridgeline(
+                            junc_i, junc_j, junction_network
+                        );
+
+                        if (!shared_divide.empty()) 
+                        {
+                            std::cout << "Interfluvial divide detected between basin " << junc_i << " and basin " << junc_j << "!\n";
+
+                            float area_j = get_drainage_area(flat_j);
+
+                            all_ridgelines.push_back({
+                                std::move(shared_divide),
+                                ridgeline_counter++,
+                                junc_i, junc_j,
+                                "interfluvial_divide", "_interfluvial_ridgelines", 
+                                true, area_i, area_j
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch (const std::exception& e) 
+    {
+        std::cerr << "Fatal Error during extraction: " << e.what() << "\n";
+        return 1;
+    }
+
+    // =========================================================================
+    // Phase 6 - Unified Ridgeline Processing (Elevations, Detrending, Smoothing)
+    // =========================================================================
+    std::cout << "\n--- Processing " << all_ridgelines.size() << " Ridgeline segments ---\n";
+    try 
+    {
+        for (auto& record : all_ridgelines)
+        {
+            record.ridgeline.fill_elevation(dem);
+            
+            if (analysis_mode == "basin_outline_ridgelines") {
+                record.ridgeline.segment_ridgeline_snout_by_curvature(
+                    ff["ridgeline_smoothing_window_fraction"]
+                );
+            }
+            
+            bool is_mdd = (record.feature_type == "main_drainage_divide");
+            bool use_const = is_mdd && bf["use_constant_fit_for_mdd_ridgeline"];
+            bool use_poly  = bf["use_polynomial_fit_for_ridgeline"];
+            
+            record.ridgeline.fit_ridgeline_profile(use_poly, use_const);
+            
+            record.ridgeline.smoothen_and_derive_detrended_ridgeline(
+                ifs["ridgeline_pixels_smoothing_window"]
+            );
+        }
+    }
+    catch (const std::exception& e) 
+    {
+        std::cerr << "Fatal Error processing ridgelines: " << e.what() << "\n";
+        return 1;
+    }
+
+    // =========================================================================
+    // Phase 7 - Write Unified CSV Outputs
+    // =========================================================================
+    if (all_ridgelines.empty() && 
+       (bf["print_ridgelines"] || bf["print_ridgeline_stats"] || 
+        bf["print_ridgeline_extrema"]))
+    {
+        std::cout << "\nNote: No extracted ridgelines exist right now, "
+                  << "skipping CSV prints.\n";
+    }
+    else if (bf["print_ridgelines"] || bf["print_ridgeline_stats"] || 
+             bf["print_ridgeline_extrema"])
+    {
+        std::cout << "\n--- Writing CSV Outputs ---\n";
+        
+        lsdtt::lsdtt_coordinate_transform transform;
+        transform.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
+
+        std::map<std::string, std::vector<std::vector<std::string>>> pt_map;
+        std::map<std::string, std::vector<std::vector<std::string>>> stats_map;
+        std::map<std::string, std::vector<std::vector<std::string>>> ext_map;
+
+        const std::vector<std::string> points_headers_single = {
+            "basin_junction_number", "latitude", "longitude", "ridgeline_type", "distance", 
+            "elevation", "fitted_elevation", "detrended_elevation", 
+            "smoothed_detrended_elevation", "smoothed_detrended_slope"
+        };
+        const std::vector<std::string> points_headers_dual = {
+            "ridgeline_number", "latitude", "longitude", "ridgeline_type", "distance", 
+            "elevation", "fitted_elevation", "detrended_elevation", 
+            "smoothed_detrended_elevation", "smoothed_detrended_slope"
+        };
+
+        const std::vector<std::string> stats_headers_single = {
+            "basin_junction_number", "ridgeline_type", "basin_drainage_area", 
+            "fitted_ridgeline_slope", "R2_linear_fit", "normalised_ridgeline_steepness", 
+            "polynomial_R2", "polynomial_A", "polynomial_B", "polynomial_C"
+        };
+        const std::vector<std::string> stats_headers_dual = {
+            "ridgeline_number", "ridgeline_type", "left_basin_junction_number", 
+            "right_basin_junction_number", "left_basin_drainage_area", "right_basin_drainage_area", 
+            "fitted_ridgeline_slope", "R2_linear_fit", "left_normalised_ridgeline_steepness", 
+            "right_normalised_ridgeline_steepness", "polynomial_R2", "polynomial_A", 
+            "polynomial_B", "polynomial_C"
+        };
+
+        const std::vector<std::string> extrema_headers_single = {
+            "basin_junction_number", "ridgeline_type", "latitude", "longitude", "distance", 
+            "extremum_type", "distance_to_next_extremum", "relief_to_next_extremum", "distance_to_triple_divide"
+        };
+        const std::vector<std::string> extrema_headers_dual = {
+            "ridgeline_number", "ridgeline_type", "latitude", "longitude", "distance", 
+            "extremum_type", "distance_to_next_extremum", "relief_to_next_extremum", "distance_to_triple_divide"
+        };
+
+        if (bf["print_ridgelines"]) {
+            std::cout << "\nPrinting " << analysis_mode << " ridgelines to file: \n";
+        }
+        if (bf["print_ridgeline_stats"]) {
+            std::cout << "\nPrinting " << analysis_mode << " ridgeline stats to file:\n";
+            std::cout << "I am going to use a concavity of " << ff["m_over_n"] << " to calculate ridgeline steepness. You can constrain concavity using lsdtt-chi-mapping and supply the constrained concavity to this program by setting the parameter m_over_n.\n";
+        }
+        if (bf["print_ridgeline_extrema"]) {
+            std::cout << "\nPrinting " << analysis_mode << " ridgeline extrema to file:\n";
+        }
+
+        for (const auto& rec : all_ridgelines)
+        {
+            const auto& rl = rec.ridgeline;
+            std::string id_str = rec.is_dual_basin ? std::to_string(rec.ridgeline_number) 
+                                                   : std::to_string(rec.primary_id);
+
+            if (bf["print_ridgelines"]) {
+                auto rows = rl.get_ridgeline_csv_rows(id_str, rec.feature_type, transform);
+                pt_map[rec.file_prefix].insert(
+                    pt_map[rec.file_prefix].end(), rows.begin(), rows.end()
+                );
+            }
+
+            if (bf["print_ridgeline_stats"]) {
+                std::vector<std::string> stats_row;
+                if (!rec.is_dual_basin) {
+                    stats_row = rl.get_stats_csv_row_single_basin(
+                        rec.primary_id, rec.feature_type, rec.area_left, ff["m_over_n"]
+                    );
+                } else {
+                    stats_row = rl.get_stats_csv_row_dual_basin(
+                        rec.ridgeline_number, rec.feature_type, rec.primary_id, rec.secondary_id,
+                        rec.area_left, rec.area_right, ff["m_over_n"]
+                    );
+                }
+                stats_map[rec.file_prefix].push_back(std::move(stats_row));
+            }
+
+            if (bf["print_ridgeline_extrema"]) {
+                auto ext = rl.get_ridgeline_extrema(*flow, junction_network);
+                auto rows = rl.get_extrema_csv_rows(id_str, rec.feature_type, ext, transform);
+                ext_map[rec.file_prefix].insert(
+                    ext_map[rec.file_prefix].end(), rows.begin(), rows.end()
+                );
             }
         }
 
-        if (get_main_drainage_divide) {
-            std::cout << "I got " << mdd_ridgelines.size() << " main drainage divide segment(s)!\n";
+        try 
+        {
+            lsdtt::lsdtt_data_loader csv_loader;
+
+            bool headers_are_dual = (analysis_mode != "basin_outline_ridgelines");
+
+            for (const auto& [pf, rows] : pt_map) {
+                const auto& hdrs = headers_are_dual ? points_headers_dual : points_headers_single;
+                csv_loader.write_csv(pp.make_output_path(pf, ".csv"), hdrs, rows);
+            }
+            for (const auto& [pf, rows] : stats_map) {
+                const auto& hdrs = headers_are_dual ? stats_headers_dual : stats_headers_single;
+                csv_loader.write_csv(pp.make_output_path(pf + "_stats", ".csv"), hdrs, rows);
+            }
+            for (const auto& [pf, rows] : ext_map) {
+                const auto& hdrs = headers_are_dual ? extrema_headers_dual : extrema_headers_single;
+                csv_loader.write_csv(pp.make_output_path(pf + "_extrema", ".csv"), hdrs, rows);
+            }
         }
-        if (get_transverse_divides) {
-            std::cout << "I got " << transverse_ridgelines.size() << " transverse divide segment(s)!\n";
+        catch (const std::exception& e) 
+        {
+            std::cerr << "Fatal Error writing CSV outputs: " << e.what() << "\n";
+            return 1;
         }
-
-      
-
-    } // end pathway B block
-
+    }
 
     // =========================================================================
-    // Parameter echo
+    // Finalize
     // =========================================================================
+    std::cout << "\n--- Finalizing ---\n";
     pp.print_parameters();
-
+    
     std::cout << "\nlsdtt-ridgeline-analysis: done.\n";
+    std::cout << "I am all finished! Have a nice day.\n";
     return 0;
 }
