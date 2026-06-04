@@ -1202,7 +1202,6 @@ void lsdtt_junction_network_cpu::build_channel_mask_from_sources()
 // =============================================================================
 // direct donor helpers
 // =============================================================================
-
 void lsdtt_junction_network_cpu::collect_direct_channel_donors(
     std::int64_t flat,
     std::vector<std::int64_t>& donors
@@ -1212,13 +1211,17 @@ void lsdtt_junction_network_cpu::collect_direct_channel_donors(
 
     const int row = flow_->row_from_flat_unchecked(flat);
     const int col = flow_->col_from_flat_unchecked(flat);
+    const int n_rows = flow_->n_rows();
+    const int n_cols = flow_->n_cols();
 
     for (int dir = 0; dir < 8; ++dir)
     {
-        const int nr = row + d8_row[dir];
-        const int nc = col + d8_col[dir];
-
-        if (!flow_->in_bounds(nr, nc)) continue;
+        // Use modulo arithmetic to wrap coordinates across the grid boundaries.
+        // If the grid isn't periodic, the underlying flow object won't list the  
+        // wrapped coordinate as a donor, allowing us to safely scan all boundaries 
+        // without knowing the explicit boundary condition.
+        const int nr = (row + d8_row[dir] + n_rows) % n_rows;
+        const int nc = (col + d8_col[dir] + n_cols) % n_cols;
 
         const std::int64_t nflat = flow_->flat_index_unchecked(nr, nc);
 
@@ -1227,7 +1230,12 @@ void lsdtt_junction_network_cpu::collect_direct_channel_donors(
 
         if (flow_->receiver_of_unchecked(nflat) == flat)
         {
-            donors.push_back(nflat);
+            // Protect against duplicates in pathological cases 
+            // (e.g., extremely small periodic grids wrapping multi-directionally)
+            if (std::find(donors.begin(), donors.end(), nflat) == donors.end())
+            {
+                donors.push_back(nflat);
+            }
         }
     }
 

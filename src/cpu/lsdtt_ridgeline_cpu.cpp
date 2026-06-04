@@ -443,91 +443,99 @@ std::vector<lsdtt_ridgeline_extremum> lsdtt_ridgeline_cpu::get_ridgeline_extrema
 }
 
 float lsdtt_ridgeline_cpu::find_distance_to_closest_tdj(
-    int                                node_index, 
+    int                                node_index,
     const lsdtt_flow_base&             flow,
     const lsdtt_junction_network_base& junction_network
 ) const
 {
-    float dist_to_tdj = divide_grid_meta_.no_data_value;
+    // Safe fallback tracking (no NaN == NaN issues)
+    float distance_to_tdj = -9999.0f;
+    bool  found_tdj       = false;
 
-    if (node_index < 0 || static_cast<std::size_t>(node_index) >= nodes_.size()) return dist_to_tdj;
-
-    std::string bc = "oooo"; 
-    if (const auto* fi = dynamic_cast<const lsdtt_flowinfo*>(&flow))
+    // Bounds check on the ridgeline node index
+    if (node_index < 0 || static_cast<std::size_t>(node_index) >= distances_.size()) 
     {
-        bc = fi->boundary_conditions();
+        return -9999.0f;
     }
 
-    bool periodic_ns = (bc.size() == 4 && std::tolower(static_cast<unsigned char>(bc[0])) == 'p' && std::tolower(static_cast<unsigned char>(bc[2])) == 'p');
-    bool periodic_ew = (bc.size() == 4 && std::tolower(static_cast<unsigned char>(bc[1])) == 'p' && std::tolower(static_cast<unsigned char>(bc[3])) == 'p');
-    
-    int n_rows = flow.n_rows();
-    int n_cols = flow.n_cols();
+    const float distance_at_node = static_cast<float>(distances_[node_index]);
 
-    auto wrap_idx = [](int idx, int max_size, bool is_periodic) -> int {
-        if (is_periodic) return (idx % max_size + max_size) % max_size;
-        return (idx >= 0 && idx < max_size) ? idx : -1;
+    // Helper lambda: Safely retrieves the upstream junction ID for any given DEM pixel
+    auto get_basin_junc = [&](int r, int c) -> std::int32_t 
+    {
+        // Must stay inside DEM bounds
+        if (!flow.in_bounds(r, c)) return -1;
+        
+        std::int64_t current = flow.flat_index_unchecked(r, c);
+
+        // Discard invalid / masked cells entirely
+        if (!flow.is_valid_cell(current)) return -1;
+
+        // Route strictly downstream until we hit the channel network (or exit the DEM)
+        while (!flow.is_outlet_unchecked(current) && !junction_network.is_channel(current)) 
+        {
+            current = flow.receiver_of_unchecked(current);
+
+            // Catch disconnected/faulty topology loops just in case
+            if (current < 0) break; 
+        }
+
+        // If we securely landed on an active channel link, grab its upstream basin junction
+        if (current >= 0 && junction_network.is_channel(current)) 
+        {
+            return junction_network.junction_upstream_of_flat(current); 
+        }
+        
+        return -1;
     };
 
-    auto check_node_for_tdj = [&](int current_index) -> bool 
+    // Helper lambda: Scans forward or backward along the ridgeline
+    auto scan_tdj = [&](int start_idx, int end_idx, int step) 
     {
-        int divrow = nodes_[current_index].row;
-        int divcol = nodes_[current_index].col;
-
-        int raw_xs[2] = {divcol - 1, divcol};
-        int raw_ys[2] = {divrow - 1, divrow};
-
-        std::set<std::int32_t> basin_junctions;
-
-        for (int x : raw_xs)
+        for (int i = start_idx; i != end_idx; i += step) 
         {
-            for (int y : raw_ys)
-            {
-                int r = wrap_idx(y, n_rows, periodic_ns);
-                int c = wrap_idx(x, n_cols, periodic_ew);
+            const lsdtt_pixel_rc& rc = nodes_[i];
+            std::unordered_set<std::int32_t> basin_juncs;
 
-                if (r != -1 && c != -1 && flow.is_valid_cell(r, c))
+            // Divide-grid node (R,C) sits geometrically between 4 DEM pixels: 
+            // (R-1, C-1), (R-1, C), (R, C-1), (R, C)
+            const int r_offsets[2] = {rc.row - 1, rc.row};
+            const int c_offsets[2] = {rc.col - 1, rc.col};
+
+            for (int dr : r_offsets) 
+            {
+                for (int dc : c_offsets) 
                 {
-                    std::int64_t flat = flow.flat_index_unchecked(r, c);
-                    std::int64_t curr = flat;
-                    
-                    while (curr != lsdtt_flow_base::nodata_receiver && curr != lsdtt_flow_base::outlet_receiver)
+                    std::int32_t bj = get_basin_junc(dr, dc);
+                    if (bj >= 0) 
                     {
-                        if (junction_network.is_channel(curr))
-                        {
-                            std::int32_t j_idx = junction_network.junction_of_flat(curr);
-                            if (j_idx >= 0) basin_junctions.insert(j_idx);
-                            break;
-                        }
-                        curr = flow.receiver_of_unchecked(curr);
+                        basin_juncs.insert(bj);
                     }
                 }
             }
-        }
 
-        if (basin_junctions.size() > 2)
-        {
-            float current_tdj_dist = static_cast<float>(std::abs(distances_[current_index] - distances_[node_index]));
-            if (std::isnan(dist_to_tdj) || current_tdj_dist < dist_to_tdj)
+            // A Triple (or Quadruple) Divide Junction is detected if 3+ unique basins meet here
+            if (basin_juncs.size() > 2) 
             {
-                dist_to_tdj = current_tdj_dist;
+                const float thisdist = std::abs(static_cast<float>(distances_[i]) - distance_at_node);
+                if (!found_tdj || thisdist < distance_to_tdj) 
+                {
+                    distance_to_tdj = thisdist;
+                    found_tdj = true;
+                }
+                break; // Stop looking further in this direction, we found the closest TDJ
             }
-            return true;
         }
-        return false;
     };
 
-    for (std::size_t i = node_index; i < nodes_.size(); ++i)
-    {
-        if (check_node_for_tdj(static_cast<int>(i))) break;
-    }
+    // Scan sequentially Forwards
+    scan_tdj(node_index, static_cast<int>(distances_.size()), 1);
+    
+    // Scan sequentially Backwards
+    scan_tdj(node_index, -1, -1);
 
-    for (int i = node_index; i >= 0; --i)
-    {
-        if (check_node_for_tdj(i)) break;
-    }
-
-    return dist_to_tdj;
+    // Return the minimum found distance, or default to -9999.0
+    return found_tdj ? distance_to_tdj : -9999.0f;
 }
 
 
