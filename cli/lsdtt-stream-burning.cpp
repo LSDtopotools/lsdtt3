@@ -266,6 +266,17 @@ int main(int argc, char* argv[])
         "under the input vector where no terrain path can be found (tunnels). "
         "Only used when stream_burn_mode is snap_to_network."};
 
+    bool_default_map["repair_reach_divergence"] = false;
+    help_map["repair_reach_divergence"] = {"bool","false",
+        "After topological junction repairs, repair reaches the junction matcher "
+        "misses: a DEM channel captured by a road/ditch that detours a long way "
+        "before rejoining the correct channel (status diverged or topology_break "
+        "from the reach-divergence diagnostic).",
+        "Reuses the same channel-guided narrows repair as the junction gaps, "
+        "anchored on the reach's downstream DEM confluence; the vector supplies "
+        "topology only. Requires channel guidance; only used when "
+        "repair_junction_gaps is true and stream_burn_mode is snap_to_network."};
+
     float_default_map["junction_tolerance_m"] = 50.0f;
     help_map["junction_tolerance_m"] = {"float","50",
         "Minimum junction-pair distance (m) to trigger gap repair.",
@@ -1977,6 +1988,122 @@ int main(int argc, char* argv[])
                 {
                     std::cout << "All basins complete after phase " << phase << ".\n";
                     break;
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // Divergence-triggered repair (topology has priority, so this runs
+            // AFTER the junction loop). Recompute reaches on the repaired
+            // network and fix diverged / topology_break reaches with the same
+            // channel-guided narrows machinery, anchored on each reach's
+            // downstream DEM confluence.
+            // -----------------------------------------------------------------
+            if (bf["repair_reach_divergence"] && !channel_scores.empty())
+            {
+                std::cout << "\n--- Divergence-triggered repair ---\n";
+
+                lsdtt::reach_divergence_params rd_rep_params;
+                rd_rep_params.separation_threshold_m =
+                    static_cast<double>(ff["reach_divergence_separation_m"]);
+                rd_rep_params.match_radius_m =
+                    static_cast<double>(ff["reach_divergence_match_radius_m"]);
+                rd_rep_params.diverged_min_divergence_m =
+                    static_cast<double>(ff["reach_divergence_min_length_m"]);
+                rd_rep_params.diverged_detour_ratio =
+                    static_cast<double>(ff["reach_divergence_detour_ratio"]);
+
+                std::vector<lsdtt::ReachDivergenceRecord> rep_reaches =
+                    lsdtt::compute_reach_divergence(
+                        routed_dem, *flow, *dem_network, vector_network,
+                        rd_rep_params, nullptr, &channel_scores);
+
+                int n_targets = 0;
+                for (const auto& r : rep_reaches)
+                    if (r.status == lsdtt::ReachStatus::diverged ||
+                        r.status == lsdtt::ReachStatus::topology_break)
+                        ++n_targets;
+                std::cout << "Diverged/topology_break reaches to repair: "
+                          << n_targets << "\n";
+
+                if (n_targets > 0)
+                {
+                    try
+                    {
+                        std::vector<lsdtt::JunctionRepairRecord> div_records =
+                            lsdtt::repair_diverged_reaches(
+                                routed_dem,
+                                vector_network,
+                                stream_vector_path,
+                                rep_reaches,
+                                source_flats,
+                                flow,
+                                dem_network,
+                                fi_opts,
+                                jn_opts,
+                                repair_params,
+                                /*phase=*/90,
+                                static_cast<int>(all_repair_records.size()),
+                                channel_scores.empty() ? nullptr : &channel_scores);
+
+                        // Burned-path line layer for the divergence repairs so
+                        // they can be inspected in QGIS (the per-phase segment
+                        // writer only covers the topological loop).
+                        const lsdtt::lsdtt_raster_meta& dmeta = routed_dem.get_meta();
+                        const std::string seg_file =
+                            pp.make_output_path("_divergence_repair_segments", ".fgb");
+                        try
+                        {
+                            lsdtt::lsdtt_vector_schema schema;
+                            schema.field_names = {"repair_index","vector_junction_id",
+                                                  "fix_type","n_burned","max_climb_m"};
+                            schema.field_types = {
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::string_type,
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::double_type};
+                            lsdtt::lsdtt_data_loader seg_writer;
+                            seg_writer.begin_vector_write(
+                                seg_file, "divergence_repair_segments", schema,
+                                dmeta.crs_wkt,
+                                lsdtt::vector_output_format::flatgeobuf, false);
+                            int n_lines = 0;
+                            for (const auto& rec : div_records)
+                            {
+                                if (rec.burned_path.size() < 2) continue;
+                                std::vector<lsdtt::lsdtt_xy> line;
+                                line.reserve(rec.burned_path.size());
+                                for (std::int64_t f : rec.burned_path)
+                                    line.push_back(lsdtt::cell_center_from_row_col(
+                                        dmeta,
+                                        static_cast<int>(f / dmeta.n_cols),
+                                        static_cast<int>(f % dmeta.n_cols)));
+                                seg_writer.write_line(line, {
+                                    static_cast<std::int64_t>(rec.repair_index),
+                                    static_cast<std::int64_t>(rec.vector_junction_id),
+                                    std::string(lsdtt::gap_fix_type_str(rec.fix_type)),
+                                    static_cast<std::int64_t>(rec.n_burned),
+                                    rec.max_climb_m});
+                                ++n_lines;
+                            }
+                            seg_writer.finish_vector_write();
+                            std::cout << "Wrote divergence repair segments ("
+                                      << n_lines << "): " << seg_file << "\n";
+                        }
+                        catch (const std::exception& e)
+                        {
+                            std::cerr << "Warning: could not write divergence repair "
+                                         "segments: " << e.what() << "\n";
+                        }
+
+                        for (auto& r : div_records)
+                            all_repair_records.push_back(std::move(r));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: divergence repair failed: "
+                                  << e.what() << "\n";
+                    }
                 }
             }
 

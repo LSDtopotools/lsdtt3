@@ -1637,18 +1637,28 @@ compute_reach_divergence(
         r.dem_jid_up = dj_up;
         r.dem_jid_dn = dj_dn;
 
-        if (dj_up < 0 || dj_dn < 0 ||
-            r.match_dist_up_m > match_radius ||
-            r.match_dist_dn_m > match_radius)
+        const bool up_matched = (dj_up >= 0 && r.match_dist_up_m <= match_radius);
+        const bool dn_matched = (dj_dn >= 0 && r.match_dist_dn_m <= match_radius);
+        r.endpoint_unmatched = !(up_matched && dn_matched);
+
+        // We still need a DEM junction to start the walk. If even the nearest
+        // upstream DEM junction does not exist (no DEM network here at all),
+        // there is nothing to draw or repair.
+        if (dj_up < 0)
         {
             r.status = ReachStatus::unmatched_endpoint;
             out.push_back(std::move(r));
             continue;
         }
 
-        // Walk the DEM channel downstream from the upstream matched junction.
+        // Walk the DEM channel downstream from the (nearest) upstream DEM
+        // junction. We do this even when an endpoint is beyond match_radius:
+        // the walk follows where the DEM channel actually goes (to the real
+        // downstream junction, an outlet, or off the DEM edge), and that
+        // divergent/off-edge path is exactly what a topology repair needs.
         const std::int64_t up_flat = dem_network.flat_of_junction(dj_up);
-        const std::int64_t dn_flat = dem_network.flat_of_junction(dj_dn);
+        const std::int64_t dn_flat =
+            (dj_dn >= 0) ? dem_network.flat_of_junction(dj_dn) : -1;
 
         std::vector<std::int64_t> walk;
         walk.push_back(up_flat);
@@ -1687,7 +1697,16 @@ compute_reach_divergence(
             const double sep = sep_to_polyline(p, E.xy);
             sum_sep += sep;
             if (sep > max_sep) max_sep = sep;
-            if (sep > sep_thresh) div_len += seg;
+            if (sep > sep_thresh)
+            {
+                div_len += seg;
+                if (!r.has_divergence_point)
+                {
+                    r.has_divergence_point  = true;
+                    r.divergence_point_xy   = p;
+                    r.divergence_point_flat = walk[i];
+                }
+            }
 
             sum_curv  += sample(plan_curvature, walk[i]);
             sum_score += sample(channel_score, walk[i]);
@@ -1715,8 +1734,16 @@ compute_reach_divergence(
         r.severity = sep_term +
             params.severity_detour_weight * std::max(0.0, r.detour_ratio - 1.0);
 
-        // Classify — geometric only.
-        if (!reached)
+        // Classify — geometric only. (Geometry is retained for every reach
+        // above, including the unmatched ones, so they register in QGIS.)
+        if (r.endpoint_unmatched)
+        {
+            // A vector endpoint has no DEM junction within match_radius: a
+            // junction gap, the topological (LCA) repair's territory rather
+            // than the divergence repair's.
+            r.status = ReachStatus::unmatched_endpoint;
+        }
+        else if (!reached)
         {
             r.status = ReachStatus::topology_break;
         }
@@ -1755,7 +1782,7 @@ void write_reach_divergence(
         "match_up_m", "match_dn_m", "vec_len_m", "dem_len_m", "detour_ratio",
         "vec_grad", "dem_grad", "grad_ratio", "max_sep_m", "mean_sep_m",
         "diverg_len_m", "severity", "mean_plan_curv", "mean_chan_score",
-        "status"};
+        "status", "endpt_unm"};
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,  lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,  lsdtt_vector_field_type::int64_type,
@@ -1766,7 +1793,8 @@ void write_reach_divergence(
         lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
         lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
         lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::double_type,
-        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::string_type};
+        lsdtt_vector_field_type::double_type, lsdtt_vector_field_type::string_type,
+        lsdtt_vector_field_type::int64_type};
 
     auto fields = [](const ReachDivergenceRecord& r)
         -> std::vector<lsdtt_vector_field_value>
@@ -1782,7 +1810,8 @@ void write_reach_divergence(
             r.vector_gradient, r.dem_gradient, r.gradient_ratio,
             r.max_separation_m, r.mean_separation_m, r.divergence_length_m,
             r.severity, r.mean_plan_curvature, r.mean_channel_score,
-            std::string(reach_status_str(r.status))};
+            std::string(reach_status_str(r.status)),
+            static_cast<std::int64_t>(r.endpoint_unmatched ? 1 : 0)};
     };
 
     const vector_output_format vfmt =
@@ -1836,7 +1865,8 @@ void write_reach_divergence(
                 num(r.max_separation_m), num(r.mean_separation_m),
                 num(r.divergence_length_m), num(r.severity),
                 num(r.mean_plan_curvature),
-                num(r.mean_channel_score), std::string(reach_status_str(r.status))});
+                num(r.mean_channel_score), std::string(reach_status_str(r.status)),
+                std::to_string(r.endpoint_unmatched ? 1 : 0)});
         }
         lsdtt_data_loader loader;
         loader.write_csv(prefix + ".csv", headers, rows);
@@ -2687,10 +2717,19 @@ static repair_attempt_result repair_junction_parallel_channels(
     double                                      gap_distance_m,
     double                                      match_radius_m,
     const std::vector<float>&                   channel_score_data,
-    const junction_repair_params&               params)
+    const junction_repair_params&               params,
+    const lsdtt_xy*                             breach_anchor_override = nullptr)
 {
     repair_attempt_result out;
     out.fix_type = GapFixType::unresolved;
+
+    // Branch classification (which donor is the wrong vs correct valley) always
+    // uses the true vector junction. The BREACH search can be re-anchored: for a
+    // diverged-but-rejoining reach we anchor it at the divergence point (where
+    // the channel leaves the correct valley) so flow is pulled back THERE, not
+    // at the downstream confluence. Null override = anchor at the vector junction.
+    const lsdtt_xy breach_anchor =
+        breach_anchor_override ? *breach_anchor_override : vector_junction_xy;
 
     const lsdtt_raster_meta& meta  = dem.get_meta();
     const double  cs    = meta.cell_size;
@@ -2837,8 +2876,8 @@ static repair_attempt_result repair_junction_parallel_channels(
         for (std::int64_t f : channel_a)
         {
             const lsdtt_xy xy = cell_center_from_row_col(meta, to_row(f), to_col(f));
-            const double dx = xy.x - vector_junction_xy.x;
-            const double dy = xy.y - vector_junction_xy.y;
+            const double dx = xy.x - breach_anchor.x;
+            const double dy = xy.y - breach_anchor.y;
             const double d2 = dx*dx + dy*dy;
             if (d2 < best_d2) { best_d2 = d2; a_near_vj = f; }
         }
@@ -2860,9 +2899,10 @@ static repair_attempt_result repair_junction_parallel_channels(
     //   f) The endpoint closest to a Branch B pixel is the breach start.
     //      If no suitable endpoint is found, fall back to a_near_vj.
 
-    // Search window around the vector junction
-    const int vj_r = static_cast<int>((meta.y_max() - vector_junction_xy.y) / cs);
-    const int vj_c = static_cast<int>((vector_junction_xy.x - meta.x_min) / cs);
+    // Search window around the breach anchor (vector junction, or the
+    // divergence point for a re-anchored diverged reach).
+    const int vj_r = static_cast<int>((meta.y_max() - breach_anchor.y) / cs);
+    const int vj_c = static_cast<int>((breach_anchor.x - meta.x_min) / cs);
     const int win_px = static_cast<int>(std::ceil(gap_distance_m / cs)) + 20;
 
     const int w_r0 = std::max(0,    vj_r - win_px);
@@ -3148,8 +3188,8 @@ static repair_attempt_result repair_junction_parallel_channels(
         // (3)(4) join point must lie within the search radius of the junction
         const lsdtt_xy join_xy =
             cell_center_from_row_col(meta, to_row(join_flat), to_col(join_flat));
-        const double jdx = join_xy.x - vector_junction_xy.x;
-        const double jdy = join_xy.y - vector_junction_xy.y;
+        const double jdx = join_xy.x - breach_anchor.x;
+        const double jdy = join_xy.y - breach_anchor.y;
         const double join_d2 = jdx*jdx + jdy*jdy;
         if (join_d2 > radius2) continue;
 
@@ -3803,6 +3843,416 @@ repair_candidate_junctions(
         else
         {
             rec.post_distance_m = c.match_distance_m;
+            rec.success = false;
+            std::cout << "    repair unresolved\n";
+        }
+
+        records.push_back(rec);
+    }
+
+    return records;
+}
+
+// ===========================================================================
+// repair_diverged_reach_capture
+//
+// Capturing-burn repair for a diverged-but-rejoining reach (road/ditch capture
+// where the parallel-channel col-finder fails because the road sits high on the
+// valley side, not at a col). The vector edge is lower-resolution (off by
+// 10-20 m) and must NOT be burned under; it is used only as a CORRIDOR guide.
+// Inside a narrow corridor around the vector edge (narrower than the road's
+// separation, so the road is excluded) we trace the local DEM thalweg (lowest
+// ground) from the divergence point down to a DEM channel near the downstream
+// junction, then burn_capturing_path along it so D8 leaves the road and follows
+// the true valley. Every burned pixel is a DEM pixel (a local low), never
+// vector geometry. burn_capturing_path daylights at the terminus, so no sink.
+// ===========================================================================
+static repair_attempt_result repair_diverged_reach_capture(
+    lsdtt_raster_cpu&                  dem,
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& dem_network,
+    const ReachDivergenceRecord&       reach,
+    const lsdtt_xy&                    downstream_vector_xy,
+    double                             corridor_half_width_m,
+    const std::vector<float>&          channel_score_data,
+    const junction_repair_params&      params)
+{
+    repair_attempt_result out;
+    out.fix_type = GapFixType::unresolved;
+    if (!reach.has_divergence_point) return out;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const double cs = meta.cell_size;
+    const int    nr = meta.n_rows;
+    const int    nc = meta.n_cols;
+    const std::int64_t ncols64 = nc;
+    const auto& mask = dem.get_mask();
+
+    auto to_row  = [&](std::int64_t f){ return static_cast<int>(f / ncols64); };
+    auto to_col  = [&](std::int64_t f){ return static_cast<int>(f % ncols64); };
+    auto to_flat = [&](int r,int c){ return static_cast<std::int64_t>(r)*ncols64 + c; };
+    auto valid   = [&](int r,int c){
+        return r>=0 && r<nr && c>=0 && c<nc &&
+               mask[static_cast<std::size_t>(to_flat(r,c))]!=0; };
+    auto rc_of_xy = [&](const lsdtt_xy& p, int& r, int& c){
+        c = static_cast<int>(std::floor((p.x - meta.x_min)/cs));
+        r = static_cast<int>(std::floor((meta.y_max() - p.y)/cs)); };
+
+    // Start = divergence-point pixel.
+    int sr, sc; rc_of_xy(reach.divergence_point_xy, sr, sc);
+    if (!valid(sr,sc)) return out;
+    const std::int64_t start_flat = to_flat(sr,sc);
+
+    int gr0, gc0; rc_of_xy(downstream_vector_xy, gr0, gc0);
+
+    // Road pixels: the D8 channel the diverged reach currently follows from the
+    // divergence point (to an outlet). Temporarily raising these forces the
+    // least-cost path to breach OFF the road instead of re-following it.
+    std::vector<std::int64_t> road;
+    {
+        std::int64_t cur = start_flat; int steps=0; const int maxs = nr+nc+1;
+        while (steps++ < maxs){
+            road.push_back(cur);
+            if (flow.is_outlet(cur)) break;
+            const std::int64_t nxt = flow.receiver_of(cur);
+            if (nxt<0 || nxt==cur) break;
+            cur = nxt;
+        }
+    }
+    std::unordered_set<std::int64_t> road_set(road.begin(), road.end());
+
+    // Corridor window: around the vector edge from the divergence point to the
+    // downstream junction, padded by the corridor half-width.
+    const int corr_px = std::max(4, static_cast<int>(std::ceil(corridor_half_width_m/cs)));
+    int r_min=std::min(sr,gr0), r_max=std::max(sr,gr0);
+    int c_min=std::min(sc,gc0), c_max=std::max(sc,gc0);
+    for (const auto& p : reach.vector_reach_xy){
+        int pr,pc; rc_of_xy(p,pr,pc);
+        r_min=std::min(r_min,pr); r_max=std::max(r_max,pr);
+        c_min=std::min(c_min,pc); c_max=std::max(c_max,pc);
+    }
+    const int pad = corr_px + 4;
+    const int wr_min=std::max(0,r_min-pad), wr_max=std::min(nr-1,r_max+pad);
+    const int wc_min=std::max(0,c_min-pad), wc_max=std::min(nc-1,c_max+pad);
+
+    // Goal = the nearest non-road DEM channel pixel to the downstream vector
+    // junction (the correct channel where the reach should rejoin). A single far
+    // goal (rather than "any channel pixel", which let the path bail onto a tiny
+    // adjacent fragment and corrupt the network) anchors the rejoin; the
+    // channel-score weighting below makes the path ride the strong channel to
+    // get there instead of running along the hillslope.
+    std::int64_t goal_flat=-1; double gbest=std::numeric_limits<double>::max();
+    for (int r=wr_min;r<=wr_max;++r)
+    for (int c=wc_min;c<=wc_max;++c){
+        if(!valid(r,c)) continue;
+        const std::int64_t f=to_flat(r,c);
+        if(road_set.count(f)) continue;
+        if(!dem_network.is_channel(f)) continue;
+        const double d=std::hypot(static_cast<double>(r-gr0),
+                                  static_cast<double>(c-gc0));
+        if(d<gbest){ gbest=d; goal_flat=f; } }
+    if (goal_flat<0){
+        std::cout << "    capture: no non-road channel in corridor\n"; return out; }
+
+    lcp_params lcp;
+    lcp.uphill_mult         = params.uphill_mult;
+    lcp.channel_score       = &channel_score_data;
+    lcp.channel_score_alpha = params.channel_score_alpha;
+    lcp.goal_flats          = std::vector<std::int64_t>{ goal_flat };
+    lcp.r_min = wr_min; lcp.r_max = wr_max;
+    lcp.c_min = wc_min; lcp.c_max = wc_max;
+
+    // Temporarily raise the road pixels (keep the start usable) so the LCP avoids
+    // them, run the LCP, then restore the DEM before burning.
+    std::vector<float>& dat = dem.get_data_array().get_vector();
+    std::vector<std::pair<std::int64_t,float>> saved;
+    saved.reserve(road.size());
+    const float bump = 1.0e4f;
+    for (std::int64_t f : road){
+        if (f==start_flat) continue;
+        saved.emplace_back(f, dat[static_cast<std::size_t>(f)]);
+        dat[static_cast<std::size_t>(f)] += bump;
+    }
+
+    lcp_result lcp_res;
+    bool found=false;
+    try { lcp_res = raster_least_cost_path(dem, sr, sc, gr0, gc0, lcp);
+          found = lcp_res.found; }
+    catch (const std::exception& e){
+        std::cerr << "    capture: LCP failed: " << e.what() << "\n"; }
+
+    for (const auto& pr : saved) dat[static_cast<std::size_t>(pr.first)] = pr.second;
+
+    if (!found || lcp_res.path.size()<2){
+        std::cout << "    capture: no corridor path found\n";
+        return out;
+    }
+
+    // If the best path still has to climb over the raised road (max_climb near
+    // the bump) there is no clean true-valley route — leave the reach unrepaired
+    // rather than carve a path across the road.
+    if (lcp_res.max_climb > params.max_climb_m){
+        std::cout << "    capture: best corridor path climbs "
+                  << lcp_res.max_climb << " m (> " << params.max_climb_m
+                  << " m); no clean valley route, leaving unresolved\n";
+        return out;
+    }
+
+    // Capturing burn daylights at the terminus (a channel pixel), so no sink.
+    try { burn_capturing_path(dem, lcp_res.path, std::max(params.repair_min_slope,1.0e-4)); }
+    catch (const std::exception& e){
+        std::cerr << "    capture: burn failed: " << e.what() << "\n"; return out; }
+
+    out.burned_path   = lcp_res.path;
+    out.n_burned      = static_cast<int>(lcp_res.path.size());
+    out.max_climb_m   = lcp_res.max_climb;
+    out.total_cost    = lcp_res.total_cost;
+    out.fix_type      = GapFixType::channel_guided_bridge;
+    out.divergence_xy = cell_center_from_row_col(meta, sr, sc);
+    {
+        const std::int64_t endf = lcp_res.path.back();
+        out.target_xy = cell_center_from_row_col(meta, to_row(endf), to_col(endf));
+    }
+    std::cout << "    capture: corridor LCP burned " << lcp_res.path.size()
+              << " px (max_climb=" << lcp_res.max_climb
+              << " m) into channel\n";
+    return out;
+}
+
+// ===========================================================================
+// repair_diverged_reaches
+//
+// Reach-driven repair for the road-capture-then-rejoin case the junction-LCA
+// matcher misses. A diverged reach is repaired with a corridor capturing burn
+// (repair_diverged_reach_capture) anchored at its divergence point; a
+// topology_break is reconnected at its downstream DEM confluence
+// (repair_junction_parallel_channels). The anchor confluence is
+// re-matched from the downstream vector junction against the CURRENT network so
+// it stays correct across reflows.
+// ===========================================================================
+std::vector<JunctionRepairRecord>
+repair_diverged_reaches(
+    lsdtt_raster_cpu&                             dem,
+    const lsdtt_vector_to_junction_network&       vector_network,
+    const std::string&                            vector_path,
+    const std::vector<ReachDivergenceRecord>&     reaches,
+    const std::vector<std::int64_t>&              source_flats,
+    std::unique_ptr<lsdtt_flow_base>&             flow,
+    std::unique_ptr<lsdtt_junction_network_base>& dem_network,
+    const lsdtt_flowinfo_options&                 fi_opts,
+    const lsdtt_junction_network_options&         jn_opts,
+    const junction_repair_params&                 params_in,
+    int                                           phase,
+    int                                           repair_index_offset,
+    const std::vector<float>*                     precomputed_channel_scores)
+{
+    std::vector<JunctionRepairRecord> records;
+    if (reaches.empty()) return records;
+
+    junction_repair_params params = params_in;
+    params.diagnostic_phase = phase;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+
+    // Channel scores are required for the narrows-finding repair. Reuse the
+    // caller's precomputed scores (same as repair_candidate_junctions); without
+    // them the parallel-channel / channel-guided repairs cannot run.
+    std::vector<float> channel_score_data;
+    bool have_channel_scores = false;
+    if (precomputed_channel_scores && !precomputed_channel_scores->empty())
+    {
+        channel_score_data  = *precomputed_channel_scores;
+        have_channel_scores = true;
+        std::cout << "repair_diverged_reaches: using precomputed channel scores\n";
+    }
+    else
+    {
+        std::cerr << "repair_diverged_reaches: no channel scores supplied; "
+                  << "skipping divergence repairs\n";
+        return records;
+    }
+
+    const auto& vjns = vector_network.junctions();
+    const std::int32_t n_vjn = vector_network.n_junctions();
+
+    // Window scale must not run away on topology_break reaches, whose channel
+    // diverts to a different basin so max_separation_m can be kilometres. Cap
+    // it: the narrows we want is the local col near the confluence.
+    const double max_gap_scale_m = 200.0;
+
+    // Dedup: a topology_break is keyed by its downstream confluence (one repair
+    // per confluence); a diverged reach is keyed by its divergence point.
+    std::unordered_set<int>          handled_break_vjid;
+    std::unordered_set<std::int64_t> handled_div_points;
+
+    // Corridor half-width for the diverged capturing burn: narrower than the
+    // road's separation so the road is excluded, but wide enough to span the
+    // vector's own 10-20 m offset to the true thalweg.
+    const double corridor_half_width_m = 20.0;
+
+    int repair_index = repair_index_offset;
+
+    for (const ReachDivergenceRecord& r : reaches)
+    {
+        const bool is_div = (r.status == ReachStatus::diverged);
+        const bool is_brk = (r.status == ReachStatus::topology_break);
+        if (!is_div && !is_brk) continue;
+        if (r.vector_jid_dn < 0 || r.vector_jid_dn >= n_vjn) continue;
+
+        if (is_brk)
+        {
+            if (!handled_break_vjid.insert(r.vector_jid_dn).second) continue;
+        }
+        else
+        {
+            if (!r.has_divergence_point) continue;
+            if (!handled_div_points.insert(r.divergence_point_flat).second) continue;
+        }
+
+        const auto& vj_dn = vjns[static_cast<std::size_t>(r.vector_jid_dn)];
+        const lsdtt_xy vxy_dn{vj_dn.x, vj_dn.y};
+
+        JunctionRepairRecord rec;
+        rec.repair_index       = repair_index++;
+        rec.phase              = phase;
+        rec.vector_junction_id = r.vector_jid_dn;
+        rec.vector_xy          = is_div ? r.divergence_point_xy : vxy_dn;
+        rec.distance_m         = r.max_separation_m;
+        rec.mismatch_reason    = std::string("reach_") + reach_status_str(r.status);
+        rec.fix_type           = GapFixType::unresolved;
+
+        // Snapshot the DEM so a burn whose reflow fails (leaves an unresolved
+        // sink) can be rolled back instead of aborting the run.
+        lsdtt_array2d_f dem_backup = dem.get_data_array();
+        repair_attempt_result attempt;
+
+        if (is_div)
+        {
+            // Diverged-but-rejoining: corridor capturing burn at the divergence
+            // point (the parallel col-finder fails here — the road is high on
+            // the valley side, not at a col).
+            std::cout << "  repairing diverged reach edge=" << r.vector_edge_id
+                      << " v_jid_dn=" << r.vector_jid_dn
+                      << " max_sep=" << r.max_separation_m
+                      << " m capture@(" << r.divergence_point_xy.x << ","
+                      << r.divergence_point_xy.y << ")\n";
+            try
+            {
+                attempt = repair_diverged_reach_capture(
+                    dem, *flow, *dem_network, r, vxy_dn,
+                    corridor_half_width_m, channel_score_data, params);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "    capture exception: " << e.what() << "\n";
+                attempt.fix_type = GapFixType::unresolved;
+            }
+        }
+        else
+        {
+            // topology_break: reconnect at the downstream DEM confluence,
+            // re-matched against the CURRENT network (reflow may have renumbered
+            // junctions since the reach diagnostic ran).
+            const std::vector<dem_candidate_junction_view> dem_views =
+                build_dem_candidate_junction_views(*dem_network, dem);
+            double anchor_dist = 0.0;
+            const int anchor_jid =
+                find_nearest_dem_junction(vxy_dn, dem_views, anchor_dist);
+            rec.dem_junction_id = anchor_jid;
+
+            if (anchor_jid < 0)
+            {
+                std::cout << "  topology_break reach edge=" << r.vector_edge_id
+                          << ": no DEM confluence near downstream vector junction; "
+                          << "skipping\n";
+                records.push_back(rec);
+                continue;
+            }
+            rec.dem_xy = cell_center_from_row_col(
+                meta,
+                dem_network->row_of_junction(static_cast<std::int32_t>(anchor_jid)),
+                dem_network->col_of_junction(static_cast<std::int32_t>(anchor_jid)));
+            const std::int64_t dem_junc_flat =
+                dem_network->flat_of_junction(static_cast<std::int32_t>(anchor_jid));
+            const double gap_scale = std::clamp(
+                r.max_separation_m, params.min_gap_m, max_gap_scale_m);
+
+            std::cout << "  repairing topology_break reach edge=" << r.vector_edge_id
+                      << " v_jid_dn=" << r.vector_jid_dn
+                      << " anchor_dem_jid=" << anchor_jid
+                      << " max_sep=" << r.max_separation_m << " m\n";
+            try
+            {
+                attempt = repair_junction_parallel_channels(
+                    dem, *flow, *dem_network,
+                    dem_junc_flat, vxy_dn,
+                    r.vector_jid_dn, vector_network,
+                    gap_scale, params.min_gap_m,
+                    channel_score_data, params);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "    parallel channel repair exception: "
+                          << e.what() << "\n";
+                attempt.fix_type = GapFixType::unresolved;
+            }
+        }
+
+        rec.fix_type         = attempt.fix_type;
+        rec.n_burned         = attempt.n_burned;
+        rec.max_climb_m      = attempt.max_climb_m;
+        rec.total_cost       = attempt.total_cost;
+        rec.n_landing_pixels = attempt.n_landing_pixels;
+        rec.divergence_xy    = attempt.divergence_xy;
+        rec.target_xy        = attempt.target_xy;
+        rec.burned_path      = std::move(attempt.burned_path);
+
+        if (attempt.fix_type != GapFixType::unresolved &&
+            attempt.fix_type != GapFixType::ok)
+        {
+            // Reflow single-threaded so an "unresolved sink" exception from a
+            // non-daylighting burn is thrown on THIS thread (the multithreaded
+            // flow builder would otherwise terminate the process) and we can
+            // roll the burn back.
+            lsdtt_flowinfo_options fi_single = fi_opts;
+            fi_single.n_threads = 1;
+
+            bool reflow_ok = true;
+            try
+            {
+                flow = make_flow_base(
+                    dem.get_data_array(), dem.get_mask_array(), meta, fi_single);
+                dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
+            }
+            catch (const std::exception& e)
+            {
+                // The burn left an unresolved sink/flat. Roll the DEM back and
+                // rebuild from the clean state; report this reach as unresolved.
+                reflow_ok = false;
+                dem.get_data_array() = dem_backup;
+                flow = make_flow_base(
+                    dem.get_data_array(), dem.get_mask_array(), meta, fi_single);
+                dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
+                rec.fix_type = GapFixType::unresolved;
+                rec.success  = false;
+                std::cerr << "    reverted divergence burn for edge="
+                          << r.vector_edge_id << " (reflow failed: "
+                          << e.what() << ")\n";
+            }
+
+            if (reflow_ok)
+            {
+                int nearest_j = -1;
+                rec.post_distance_m = nearest_junction_distance_to_xy(
+                    *dem_network, meta, vxy_dn, &nearest_j);
+                rec.success = true;
+                std::cout << "    result: " << gap_fix_type_str(rec.fix_type)
+                          << " burned=" << rec.n_burned << "\n";
+            }
+        }
+        else
+        {
+            rec.post_distance_m = r.max_separation_m;
             rec.success = false;
             std::cout << "    repair unresolved\n";
         }

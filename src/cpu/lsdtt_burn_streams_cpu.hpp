@@ -638,6 +638,22 @@ struct ReachDivergenceRecord
 
     ReachStatus status = ReachStatus::ok;
 
+    // True when an endpoint vector junction had no DEM junction within
+    // match_radius. The DEM reach is still walked and retained (so it
+    // registers and can drive a topology repair) — this flag preserves the
+    // "junction gap" story that status==unmatched_endpoint used to carry.
+    bool endpoint_unmatched = false;
+
+    // First DEM pixel (walking downstream from dem_jid_up) whose lateral
+    // separation from the vector edge exceeds separation_threshold_m — i.e.
+    // where the channel leaves the correct valley. Used to anchor the breach
+    // for a diverged (rejoining) reach so flow is pulled back BEFORE the
+    // detour, rather than at the downstream confluence. has_divergence_point
+    // is false for reaches that never separate.
+    bool         has_divergence_point  = false;
+    lsdtt_xy     divergence_point_xy;
+    std::int64_t divergence_point_flat = -1;
+
     std::vector<lsdtt_xy> dem_reach_xy;     // walked DEM channel polyline
     std::vector<lsdtt_xy> vector_reach_xy;  // vector edge polyline
 };
@@ -693,6 +709,42 @@ repair_candidate_junctions(
     const lsdtt_vector_to_junction_network&       vector_network,
     const std::string&                            vector_path,
     const std::vector<CandidateJunctionRecord>&   candidates,
+    const std::vector<std::int64_t>&              source_flats,
+    std::unique_ptr<lsdtt_flow_base>&             flow,
+    std::unique_ptr<lsdtt_junction_network_base>& dem_network,
+    const lsdtt_flowinfo_options&                 fi_opts,
+    const lsdtt_junction_network_options&         jn_opts,
+    const junction_repair_params&                 params,
+    int                                           phase = 0,
+    int                                           repair_index_offset = 0,
+    const std::vector<float>*                     precomputed_channel_scores = nullptr
+);
+
+
+// ---------------------------------------------------------------------------
+// repair_diverged_reaches
+//
+// Reach-driven sibling of repair_candidate_junctions. The reach-divergence
+// diagnostic (compute_reach_divergence) catches errors the junction-LCA
+// matcher misses: a DEM channel that detours a long way (road/ditch capture)
+// before rejoining the correct channel — the confluence topology looks fine
+// but the path is wrong. Each reach with status diverged or topology_break is
+// repaired with the SAME channel-guided narrows machinery
+// (repair_junction_parallel_channels, then the channel-guided fallback),
+// anchored on the reach's downstream DEM confluence (dem_jid_dn). The vector
+// supplies topology only; endpoints are DEM channel pixels.
+//
+// Reflow-safe: the anchor DEM junction is re-matched from the downstream
+// vector-junction location against the CURRENT dem_network at repair time, so
+// stale junction ids after an intervening reflow are not used. Updates dem,
+// flow, and dem_network in place; rebuilds flow/network after each burn.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::vector<JunctionRepairRecord>
+repair_diverged_reaches(
+    lsdtt_raster_cpu&                             dem,
+    const lsdtt_vector_to_junction_network&       vector_network,
+    const std::string&                            vector_path,
+    const std::vector<ReachDivergenceRecord>&     reaches,
     const std::vector<std::int64_t>&              source_flats,
     std::unique_ptr<lsdtt_flow_base>&             flow,
     std::unique_ptr<lsdtt_junction_network_base>& dem_network,
