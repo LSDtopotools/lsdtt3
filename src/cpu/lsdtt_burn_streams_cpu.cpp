@@ -37,6 +37,7 @@
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_feature_finder_cpu.hpp"
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 
 namespace lsdtt
 {
@@ -3935,87 +3936,269 @@ static repair_attempt_result repair_diverged_reach_capture(
     const int wr_min=std::max(0,r_min-pad), wr_max=std::min(nr-1,r_max+pad);
     const int wc_min=std::max(0,c_min-pad), wc_max=std::min(nc-1,c_max+pad);
 
-    // Goal = the nearest non-road DEM channel pixel to the downstream vector
-    // junction (the correct channel where the reach should rejoin). A single far
-    // goal (rather than "any channel pixel", which let the path bail onto a tiny
-    // adjacent fragment and corrupt the network) anchors the rejoin; the
-    // channel-score weighting below makes the path ride the strong channel to
-    // get there instead of running along the hillslope.
-    std::int64_t goal_flat=-1; double gbest=std::numeric_limits<double>::max();
-    for (int r=wr_min;r<=wr_max;++r)
-    for (int c=wc_min;c<=wc_max;++c){
-        if(!valid(r,c)) continue;
-        const std::int64_t f=to_flat(r,c);
-        if(road_set.count(f)) continue;
-        if(!dem_network.is_channel(f)) continue;
-        const double d=std::hypot(static_cast<double>(r-gr0),
-                                  static_cast<double>(c-gc0));
-        if(d<gbest){ gbest=d; goal_flat=f; } }
-    if (goal_flat<0){
-        std::cout << "    capture: no non-road channel in corridor\n"; return out; }
-
-    lcp_params lcp;
-    lcp.uphill_mult         = params.uphill_mult;
-    lcp.channel_score       = &channel_score_data;
-    lcp.channel_score_alpha = params.channel_score_alpha;
-    lcp.goal_flats          = std::vector<std::int64_t>{ goal_flat };
-    lcp.r_min = wr_min; lcp.r_max = wr_max;
-    lcp.c_min = wc_min; lcp.c_max = wc_max;
-
-    // Temporarily raise the road pixels (keep the start usable) so the LCP avoids
-    // them, run the LCP, then restore the DEM before burning.
-    std::vector<float>& dat = dem.get_data_array().get_vector();
-    std::vector<std::pair<std::int64_t,float>> saved;
-    saved.reserve(road.size());
-    const float bump = 1.0e4f;
-    for (std::int64_t f : road){
-        if (f==start_flat) continue;
-        saved.emplace_back(f, dat[static_cast<std::size_t>(f)]);
-        dat[static_cast<std::size_t>(f)] += bump;
+    // --- Channel-score SKELETON of the window (the obvious channel, even where
+    // DEM flow went down the road). We extract segments, keep those PROXIMATE to
+    // the vector channel (this drops road-side ditches, which run with the road
+    // away from the vector), bridge the ~50 m breaks, then route the connected
+    // proximate channel from the divergence point to the junction. ---
+    lsdtt_raster_cpu skel(
+        lsdtt_array2d<float>(nr, nc, 0.0f),
+        lsdtt_array2d<uint8_t>(dem.get_mask_array()), meta);
+    {
+        const std::int64_t nflat = static_cast<std::int64_t>(nr)*ncols64;
+        std::vector<float> netsc;
+        for (std::int64_t f=0; f<nflat; ++f){
+            const std::size_t idx=static_cast<std::size_t>(f);
+            if (mask[idx] && dem_network.is_channel(f) && channel_score_data[idx]>0.0f)
+                netsc.push_back(channel_score_data[idx]);
+        }
+        float thr=0.0f;
+        if(!netsc.empty()){ std::sort(netsc.begin(),netsc.end());
+            thr=netsc[netsc.size()/2]; }   // median: keep the channel complete,
+                                           // D8-bridging below handles the gaps
+        lsdtt_raster_cpu score_bin(
+            lsdtt_array2d<float>(nr, nc, 0.0f),
+            lsdtt_array2d<uint8_t>(dem.get_mask_array()), meta);
+        {
+            auto& sb=score_bin.get_data();
+            for(int r=wr_min;r<=wr_max;++r) for(int c=wc_min;c<=wc_max;++c){
+                const std::size_t idx=static_cast<std::size_t>(to_flat(r,c));
+                if(mask[idx] && channel_score_data[idx]>0.0f && channel_score_data[idx]>=thr)
+                    sb[idx]=1.0f;
+            }
+        }
+        lsdtt_raster_cpu filt=filter_binary_components_by_size(score_bin,3);
+        filt=binary_fill_holes(filt);
+        skel=thin_distance_guided(filt,1.0);
+        skel=prune_skeleton_spurs(skel,2);
+        skel=prune_terminal_loops(skel,30);
+        std::cout << "    capture: skeleton score threshold=" << thr << "\n";
     }
 
-    lcp_result lcp_res;
-    bool found=false;
-    try { lcp_res = raster_least_cost_path(dem, sr, sc, gr0, gc0, lcp);
-          found = lcp_res.found; }
-    catch (const std::exception& e){
-        std::cerr << "    capture: LCP failed: " << e.what() << "\n"; }
+    const std::vector<float>& elevd = dem.get_data();
 
-    for (const auto& pr : saved) dat[static_cast<std::size_t>(pr.first)] = pr.second;
+    // Distance from (x,y) to the vector edge polyline.
+    auto sep_to_poly=[&](double x,double y)->double{
+        const auto& P=reach.vector_reach_xy;
+        double best=std::numeric_limits<double>::max();
+        for(std::size_t i=1;i<P.size();++i){
+            const double d=point_to_segment_distance(x,y,P[i-1].x,P[i-1].y,P[i].x,P[i].y);
+            if(d<best) best=d;
+        }
+        return best;
+    };
 
-    if (!found || lcp_res.path.size()<2){
-        std::cout << "    capture: no corridor path found\n";
-        return out;
+    // Correct-draining test: D8 from a pixel reaches the downstream-junction
+    // vicinity WITHOUT passing through the road (joins the correct side).
+    const int join_r = std::max(8, static_cast<int>(std::ceil(40.0/cs)));
+    auto drains_correctly = [&](std::int64_t f)->bool{
+        std::int64_t cur=f; int steps=0; const int maxs=nr+nc+1;
+        while (steps++ < maxs){
+            if (road_set.count(cur)) return false;
+            if (std::abs(to_row(cur)-gr0) <= join_r &&
+                std::abs(to_col(cur)-gc0) <= join_r) return true;
+            if (flow.is_outlet(cur)) return false;
+            const std::int64_t nxt=flow.receiver_of(cur);
+            if (nxt<0||nxt==cur) return false;
+            cur=nxt;
+        }
+        return false;
+    };
+
+    // Keep only segments PROXIMATE to the vector channel (drops the road ditch).
+    const double prox_thresh_m = 50.0;
+    lsdtt_raster_cpu prox(
+        lsdtt_array2d<float>(nr, nc, 0.0f),
+        lsdtt_array2d<uint8_t>(dem.get_mask_array()), meta);
+    int n_seg=0, n_keep=0;
+    {
+        const std::vector<skeleton_segment> segs = extract_skeleton_segments(skel);
+        n_seg=static_cast<int>(segs.size());
+        auto& pd=prox.get_data();
+        for(const auto& s: segs){
+            if(s.pixels.empty()) continue;
+            double sum=0.0; int n=0;
+            for(const auto& px: s.pixels){
+                const lsdtt_xy xy=cell_center_from_row_col(meta,px.row,px.col);
+                sum+=sep_to_poly(xy.x,xy.y); ++n;
+            }
+            if(n==0 || sum/n > prox_thresh_m) continue;
+            ++n_keep;
+            for(const auto& px: s.pixels)
+                pd[static_cast<std::size_t>(to_flat(px.row,px.col))]=1.0f;
+        }
+    }
+    std::cout << "    capture: skeleton segments=" << n_seg
+              << " kept(proximate to vector, <" << prox_thresh_m << " m)="
+              << n_keep << "\n";
+
+    // Bridge the ~50 m breaks among the proximate segments (tangent-based).
+    lsdtt_raster_cpu conn = prox;
+    try {
+        std::vector<skeleton_segment> psegs = extract_skeleton_segments(prox);
+        std::vector<skeleton_endpoint_tangent> tans =
+            estimate_skeleton_endpoint_tangents(psegs, 6.0, 2);
+        endpoint_pair_request req;
+        req.max_gap_pixels = std::max(60.0, std::ceil(70.0/cs));   // ~70 m
+        req.max_facing_angle_degrees = 70.0;        // relax: channels bend at gaps
+        req.max_heading_misalignment_degrees = 80.0;
+        req.reject_same_component = true;
+        std::vector<skeleton_endpoint_pair_candidate> cands =
+            find_skeleton_endpoint_pair_candidates(psegs, tans, req);
+        std::vector<skeleton_endpoint_pair_candidate> acc =
+            select_skeleton_endpoint_pairs(cands, tans.size(),
+                                           endpoint_pair_selection_request());
+        conn = rasterise_skeleton_endpoint_bridges(prox, acc).connected_skeleton;
+        std::cout << "    capture: bridged " << acc.size() << " gap(s)\n";
+    } catch (const std::exception& e){
+        std::cerr << "    capture: bridging failed: " << e.what() << "\n";
     }
 
-    // If the best path still has to climb over the raised road (max_climb near
-    // the bump) there is no clean true-valley route — leave the reach unrepaired
-    // rather than carve a path across the road.
-    if (lcp_res.max_climb > params.max_climb_m){
-        std::cout << "    capture: best corridor path climbs "
-                  << lcp_res.max_climb << " m (> " << params.max_climb_m
-                  << " m); no clean valley route, leaving unresolved\n";
-        return out;
+    if (!params.diagnostic_prefix.empty()){
+        try {
+            lsdtt_data_loader w;
+            const std::string base = params.diagnostic_prefix + "_diverged_skeleton_edge"
+                + std::to_string(reach.vector_edge_id);
+            w.write_full(skel.get_data(), meta, base + ".tif");
+            w.write_full(conn.get_data(), meta, base + "_proximate.tif");
+        } catch (...) {}
     }
 
-    // Capturing burn daylights at the terminus (a channel pixel), so no sink.
-    try { burn_capturing_path(dem, lcp_res.path, std::max(params.repair_min_slope,1.0e-4)); }
+    // Connected proximate skeleton pixel set.
+    std::unordered_set<std::int64_t> conn_set;
+    {
+        const auto& cd=conn.get_data();
+        const std::int64_t nflat=static_cast<std::int64_t>(nr)*ncols64;
+        for(std::int64_t f=0; f<nflat; ++f)
+            if(cd[static_cast<std::size_t>(f)]>0.5f) conn_set.insert(f);
+    }
+    if (conn_set.empty()){
+        std::cout << "    capture: no proximate skeleton in window\n"; return out; }
+
+    // Augment connectivity with D8 flow (Simon's idea): where flow from one
+    // proximate skeleton pixel reaches another within a gap budget WITHOUT
+    // passing through the road, add the D8 path. This bridges the fragmented
+    // skeleton along the real drainage; bridges that would run into the road are
+    // rejected (those are the capture points the breach itself must cross).
+    {
+        const int maxgap = std::max(20, static_cast<int>(std::ceil(60.0/cs)));
+        const std::vector<std::int64_t> seeds(conn_set.begin(), conn_set.end());
+        std::vector<std::int64_t> add;
+        for (std::int64_t f : seeds){
+            std::int64_t cur=f; std::vector<std::int64_t> seg; int steps=0;
+            bool bridged=false;
+            while (steps++ < maxgap){
+                if (flow.is_outlet(cur)) break;
+                const std::int64_t nxt=flow.receiver_of(cur);
+                if (nxt<0 || nxt==cur || road_set.count(nxt)) break;
+                cur=nxt;
+                if (conn_set.count(cur)){ bridged=true; break; }
+                seg.push_back(cur);
+            }
+            if (bridged) add.insert(add.end(), seg.begin(), seg.end());
+        }
+        for (std::int64_t p : add) conn_set.insert(p);
+        std::cout << "    capture: connected proximate skeleton pixels="
+                  << conn_set.size() << " (+ " << add.size() << " D8-bridge px)\n";
+    }
+
+    // head = conn pixel nearest the divergence point; goalc = nearest the junction.
+    std::int64_t head=-1, goalc=-1; double hb=1e18, gb=1e18;
+    for(std::int64_t f: conn_set){
+        const double dh=std::hypot(double(to_row(f)-sr),double(to_col(f)-sc));
+        if(dh<hb){hb=dh;head=f;}
+        const double dg=std::hypot(double(to_row(f)-gr0),double(to_col(f)-gc0));
+        if(dg<gb){gb=dg;goalc=f;}
+    }
+    const double max_head_px=std::max(double(corr_px)*2.0,80.0);
+    if(head<0 || hb>max_head_px){
+        std::cout << "    capture: no proximate skeleton head within "
+                  << max_head_px << " px of the divergence point (nearest="
+                  << hb << ")\n"; return out; }
+
+    // BFS along the connected proximate skeleton from head to goalc (robust to
+    // the meanders that broke the steepest-descent walk).
+    std::vector<std::int64_t> bfspath;
+    {
+        std::unordered_map<std::int64_t,std::int64_t> par;
+        std::vector<std::int64_t> q; q.push_back(head); par[head]=head;
+        std::size_t qh=0; bool found=false;
+        while(qh<q.size()){
+            const std::int64_t cur=q[qh++];
+            if(cur==goalc){found=true;break;}
+            const int cr=to_row(cur),cc=to_col(cur);
+            for(int dr=-1;dr<=1;++dr)for(int dc=-1;dc<=1;++dc){
+                if(!dr&&!dc) continue;
+                const int r=cr+dr,c=cc+dc; if(!valid(r,c))continue;
+                const std::int64_t nf=to_flat(r,c);
+                if(!conn_set.count(nf)||par.count(nf)) continue;
+                par[nf]=cur; q.push_back(nf);
+            }
+        }
+        if(!found){
+            std::cout << "    capture: proximate skeleton not connected "
+                         "divergence-point -> junction; leaving unresolved\n";
+            return out;
+        }
+        std::int64_t cur=goalc;
+        while(cur!=head){ bfspath.push_back(cur); cur=par[cur]; }
+        bfspath.push_back(head);
+        std::reverse(bfspath.begin(), bfspath.end());
+    }
+
+    // Landing: nearest correct-draining DEM channel to the junction end.
+    std::int64_t landing=-1; double lb=1e18;
+    {
+        const int tr=to_row(goalc), tc=to_col(goalc);
+        const int rad=std::max(join_r,20);
+        for(int dr=-rad;dr<=rad;++dr) for(int dc=-rad;dc<=rad;++dc){
+            const int r=tr+dr,c=tc+dc; if(!valid(r,c))continue;
+            const std::int64_t f=to_flat(r,c);
+            if(road_set.count(f)||!dem_network.is_channel(f))continue;
+            if(!drains_correctly(f))continue;
+            const double d=std::hypot(double(dr),double(dc));
+            if(d<lb){lb=d;landing=f;}
+        }
+    }
+    if(landing<0){
+        std::cout << "    capture: no correct-draining channel near the junction "
+                     "end of the skeleton; leaving unresolved\n"; return out;
+    }
+
+    // Burn: divergence point -> head (across the divide) + BFS along the proximate
+    // channel + goalc -> landing (into the draining channel).
+    auto bres = [&](std::int64_t f0,std::int64_t f1,std::vector<std::int64_t>& p){
+        int r0=to_row(f0),c0=to_col(f0),r1=to_row(f1),c1=to_col(f1);
+        const int dr=std::abs(r1-r0),dc=std::abs(c1-c0);
+        const int srr=r0<r1?1:-1,scc=c0<c1?1:-1; int err=dc-dr,r=r0,c=c0;
+        while(true){
+            if(valid(r,c)){ const std::int64_t f=to_flat(r,c);
+                if(p.empty()||p.back()!=f) p.push_back(f); }
+            if(r==r1&&c==c1) break; const int e2=2*err;
+            if(e2>-dr){err-=dr;c+=scc;} if(e2<dc){err+=dc;r+=srr;}
+        } };
+    std::vector<std::int64_t> route;
+    bres(start_flat, head, route);
+    for (std::int64_t f : bfspath) if (route.empty()||route.back()!=f) route.push_back(f);
+    bres(goalc, landing, route);
+    if (route.size()<2){ std::cout<<"    capture: degenerate route\n"; return out; }
+
+    // Burn the WHOLE route as one capturing path. burn_capturing_path runs a
+    // running-minimum from the higher (upstream) end, so the result is globally
+    // monotone-descending — it cuts the road embankment and the small noise lips
+    // and daylights at the downstream channel (which the profile confirms sits
+    // well below the upstream side). fill_pits in the reflow mops up any residual.
+    try { burn_capturing_path(dem, route, std::max(params.repair_min_slope,1.0e-4)); }
     catch (const std::exception& e){
         std::cerr << "    capture: burn failed: " << e.what() << "\n"; return out; }
 
-    out.burned_path   = lcp_res.path;
-    out.n_burned      = static_cast<int>(lcp_res.path.size());
-    out.max_climb_m   = lcp_res.max_climb;
-    out.total_cost    = lcp_res.total_cost;
+    out.burned_path   = route;
+    out.n_burned      = static_cast<int>(route.size());
     out.fix_type      = GapFixType::channel_guided_bridge;
     out.divergence_xy = cell_center_from_row_col(meta, sr, sc);
-    {
-        const std::int64_t endf = lcp_res.path.back();
-        out.target_xy = cell_center_from_row_col(meta, to_row(endf), to_col(endf));
-    }
-    std::cout << "    capture: corridor LCP burned " << lcp_res.path.size()
-              << " px (max_climb=" << lcp_res.max_climb
-              << " m) into channel\n";
+    out.target_xy     = cell_center_from_row_col(meta, to_row(route.back()), to_col(route.back()));
+    std::cout << "    capture: burned whole route " << route.size()
+              << " px (head " << hb << " px from divergence pt)\n";
     return out;
 }
 
@@ -4210,26 +4393,32 @@ repair_diverged_reaches(
         if (attempt.fix_type != GapFixType::unresolved &&
             attempt.fix_type != GapFixType::ok)
         {
-            // Reflow single-threaded so an "unresolved sink" exception from a
-            // non-daylighting burn is thrown on THIS thread (the multithreaded
-            // flow builder would otherwise terminate the process) and we can
-            // roll the burn back.
+            // make_flow_base is OpenMP and TERMINATES the process on an
+            // unresolved sink (even single-threaded), so we cannot catch our way
+            // out. FILL any residual pit the burn left BEFORE reflowing — a
+            // capturing burn that daylights is unchanged by the fill; one that
+            // accidentally pitted is resolved instead of crashing.
             lsdtt_flowinfo_options fi_single = fi_opts;
             fi_single.n_threads = 1;
+            const float fill_slope = (params.repair_min_slope > 0.0)
+                ? static_cast<float>(params.repair_min_slope) : 1.0e-4f;
 
             bool reflow_ok = true;
             try
             {
+                lsdtt_raster_cpu filled = fill_pits(dem, fill_slope, fi_opts.n_threads);
+                dem.get_data_array() = filled.get_data_array();
                 flow = make_flow_base(
                     dem.get_data_array(), dem.get_mask_array(), meta, fi_single);
                 dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
             }
             catch (const std::exception& e)
             {
-                // The burn left an unresolved sink/flat. Roll the DEM back and
-                // rebuild from the clean state; report this reach as unresolved.
+                // Should not happen now (fill resolves sinks); roll back to be safe.
                 reflow_ok = false;
                 dem.get_data_array() = dem_backup;
+                lsdtt_raster_cpu filled = fill_pits(dem, fill_slope, fi_opts.n_threads);
+                dem.get_data_array() = filled.get_data_array();
                 flow = make_flow_base(
                     dem.get_data_array(), dem.get_mask_array(), meta, fi_single);
                 dem_network = make_junction_network_base(*flow, source_flats, jn_opts);
