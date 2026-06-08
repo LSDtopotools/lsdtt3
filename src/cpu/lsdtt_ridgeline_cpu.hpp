@@ -99,6 +99,9 @@ public:
     // Sample DEM elevation at each divide-grid node and store in elevations_.
     void fill_elevation(const lsdtt_raster_cpu& dem);
 
+    // Sample continuous data attributes from any input raster over divide-nodes.
+    [[nodiscard]] std::vector<float> sample_raster_values(const lsdtt_raster_cpu& raster) const;
+
     // -------------------------------------------------------------------------
     // Mutating operations
     // -------------------------------------------------------------------------

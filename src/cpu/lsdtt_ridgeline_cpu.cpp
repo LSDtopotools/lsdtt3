@@ -139,6 +139,43 @@ void lsdtt_ridgeline_cpu::fill_elevation(const lsdtt_raster_cpu& dem)
     }
 }
 
+std::vector<float> lsdtt_ridgeline_cpu::sample_raster_values(const lsdtt_raster_cpu& raster) const
+{
+    std::vector<float> sampled_vals;
+    sampled_vals.reserve(nodes_.size());
+
+    const lsdtt_raster_meta& raster_meta = raster.get_meta();
+    const auto& data = raster.get_data_array();
+    const auto& mask = raster.get_mask_array();
+    const float ndv  = raster_meta.no_data_value;
+
+    const int nrows = raster_meta.n_rows;
+    const int ncols = raster_meta.n_cols;
+
+    for (const lsdtt_pixel_rc& dg_rc : nodes_)
+    {
+        float sum_val = 0.0f;
+        int   n_valid = 0;
+
+        const int offsets[4][2] = { {-1,-1}, {-1, 0}, {0,-1}, {0, 0} };
+
+        for (const auto& off : offsets)
+        {
+            const int r = dg_rc.row + off[0];
+            const int c = dg_rc.col + off[1];
+
+            if (r < 0 || r >= nrows || c < 0 || c >= ncols) continue;
+            if (mask(r, c) == 0) continue;
+
+            sum_val += data(r, c);
+            ++n_valid;
+        }
+
+        sampled_vals.push_back(n_valid > 0 ? (sum_val / static_cast<float>(n_valid)) : ndv);
+    }
+    return sampled_vals;
+}
+
 // =============================================================================
 // Mutating operations
 // =============================================================================

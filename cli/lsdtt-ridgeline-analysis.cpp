@@ -36,6 +36,7 @@
 //   6. Extract Ridgelines (delegates to the 3 mode-specific strategies)
 //   7. Process Ridgelines (Elevations, Detrending, Snout-segmentation)
 //   8. Write Unified CSV Outputs (Extrema, Points, Stats)
+//   9. Polynomial Surface Fit & Ridgeline Mapping
 //
 // Usage:
 //   lsdtt-ridgeline-analysis <path> <parameter_file>
@@ -46,12 +47,14 @@
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <iostream>
 #include <iomanip>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <sstream>
@@ -70,6 +73,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_ridgeline_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_binary_array2d_tracing.hpp"
 
 static const std::string k_version   = "0.3.0";
@@ -100,6 +104,159 @@ static std::string to_lower_copy(std::string s)
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
     return s;
+}
+
+static std::string trim_copy(const std::string& s)
+{
+    std::size_t start = 0;
+    while (start < s.size() &&
+           std::isspace(static_cast<unsigned char>(s[start])))
+    {
+        ++start;
+    }
+
+    std::size_t end = s.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(s[end - 1])))
+    {
+        --end;
+    }
+
+    return s.substr(start, end - start);
+}
+
+static std::vector<std::string> split_csv(const std::string& csv)
+{
+    std::vector<std::string> out;
+    std::string current;
+
+    for (char ch : csv)
+    {
+        if (ch == ',')
+        {
+            std::string token = trim_copy(current);
+            if (!token.empty())
+            {
+                out.push_back(token);
+            }
+            current.clear();
+        }
+        else
+        {
+            current.push_back(ch);
+        }
+    }
+
+    std::string token = trim_copy(current);
+    if (!token.empty())
+    {
+        out.push_back(token);
+    }
+
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// Polyfit Helper Configs
+// -----------------------------------------------------------------------------
+struct polyfit_metric_entry
+{
+    const char*           name;
+    lsdtt::polyfit_metric metric;
+    const char*           suffix;
+};
+
+static const std::vector<polyfit_metric_entry>& polyfit_metric_table()
+{
+    static const std::vector<polyfit_metric_entry> table =
+    {
+        {"fitted_surface",               lsdtt::polyfit_metric::fitted_surface,              "_polyfit_fitted_surface.tif"},
+        {"dzdx",                         lsdtt::polyfit_metric::dzdx,                        "_polyfit_dzdx.tif"},
+        {"dzdy",                         lsdtt::polyfit_metric::dzdy,                        "_polyfit_dzdy.tif"},
+        {"d2zdx2",                       lsdtt::polyfit_metric::d2zdx2,                      "_polyfit_d2zdx2.tif"},
+        {"d2zdxdy",                      lsdtt::polyfit_metric::d2zdxdy,                     "_polyfit_d2zdxdy.tif"},
+        {"d2zdy2",                       lsdtt::polyfit_metric::d2zdy2,                      "_polyfit_d2zdy2.tif"},
+        {"slope",                        lsdtt::polyfit_metric::slope,                       "_polyfit_slope.tif"},
+        {"slope_degrees",                lsdtt::polyfit_metric::slope_degrees,               "_polyfit_slope_degrees.tif"},
+        {"aspect_radians",               lsdtt::polyfit_metric::aspect_radians,              "_polyfit_aspect_radians.tif"},
+        {"aspect_degrees",               lsdtt::polyfit_metric::aspect_degrees,              "_polyfit_aspect_degrees.tif"},
+        {"laplacian",                    lsdtt::polyfit_metric::laplacian,                   "_polyfit_laplacian.tif"},
+        {"hessian_determinant",          lsdtt::polyfit_metric::hessian_determinant,         "_polyfit_hessian_determinant.tif"},
+        {"mean_curvature",               lsdtt::polyfit_metric::mean_curvature,              "_polyfit_mean_curvature.tif"},
+        {"gaussian_curvature",           lsdtt::polyfit_metric::gaussian_curvature,          "_polyfit_gaussian_curvature.tif"},
+        {"maximum_curvature",            lsdtt::polyfit_metric::maximum_curvature,           "_polyfit_maximum_curvature.tif"},
+        {"minimum_curvature",            lsdtt::polyfit_metric::minimum_curvature,           "_polyfit_minimum_curvature.tif"},
+        {"curvedness",                   lsdtt::polyfit_metric::curvedness,                  "_polyfit_curvedness.tif"},
+        {"shape_index",                  lsdtt::polyfit_metric::shape_index,                 "_polyfit_shape_index.tif"},
+        {"profile_curvature",            lsdtt::polyfit_metric::profile_curvature,           "_polyfit_profile_curvature.tif"},
+        {"plan_curvature",               lsdtt::polyfit_metric::plan_curvature,              "_polyfit_plan_curvature.tif"},
+        {"tangential_curvature",         lsdtt::polyfit_metric::tangential_curvature,        "_polyfit_tangential_curvature.tif"},
+        {"difference_curvature",         lsdtt::polyfit_metric::difference_curvature,        "_polyfit_difference_curvature.tif"},
+        {"horizontal_excess_curvature",  lsdtt::polyfit_metric::horizontal_excess_curvature, "_polyfit_horizontal_excess_curvature.tif"},
+        {"vertical_excess_curvature",    lsdtt::polyfit_metric::vertical_excess_curvature,   "_polyfit_vertical_excess_curvature.tif"},
+        {"accumulation_curvature",       lsdtt::polyfit_metric::accumulation_curvature,      "_polyfit_accumulation_curvature.tif"},
+        {"ring_curvature",               lsdtt::polyfit_metric::ring_curvature,              "_polyfit_ring_curvature.tif"},
+        {"rotor",                        lsdtt::polyfit_metric::rotor,                       "_polyfit_rotor.tif"}
+    };
+    return table;
+}
+
+static std::vector<lsdtt::polyfit_metric> parse_polyfit_metrics(const std::string& csv)
+{
+    std::vector<lsdtt::polyfit_metric> metrics;
+    std::set<lsdtt::polyfit_metric>    seen;
+
+    const std::vector<std::string> tokens = split_csv(csv);
+    if (tokens.empty()) return metrics;
+
+    for (const std::string& token : tokens)
+    {
+        if (token == "all")
+        {
+            for (const auto& entry : polyfit_metric_table())
+            {
+                if (seen.insert(entry.metric).second)
+                {
+                    metrics.push_back(entry.metric);
+                }
+            }
+            continue;
+        }
+
+        bool found = false;
+        for (const auto& entry : polyfit_metric_table())
+        {
+            if (token == entry.name)
+            {
+                found = true;
+                if (seen.insert(entry.metric).second)
+                {
+                    metrics.push_back(entry.metric);
+                }
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            throw std::runtime_error("Unknown polyfit metric: " + token);
+        }
+    }
+    return metrics;
+}
+
+static std::string polyfit_metric_suffix(
+    lsdtt::polyfit_metric metric,
+    const std::string&    method = "wavelet")
+{
+    for (const auto& entry : polyfit_metric_table())
+    {
+        if (entry.metric == metric)
+        {
+            return std::string("_") + method + entry.suffix;
+        }
+    }
+    throw std::runtime_error("No output suffix defined for requested polyfit metric.");
 }
 
 // -----------------------------------------------------------------------------
@@ -503,6 +660,55 @@ int main(int argc, char* argv[])
         "The concavity index for calculating ridgeline steepness. Usually denoted as the Greek symbol theta.", 
         "Default is 0.5, can be constrained for the DEM using the lsdtt-chi-mapping program and supply the result here."};
 
+    // --- Polynomial surface fit ---
+    bool_default_map["write_polyfit_rasters"] = false;
+    help_map["write_polyfit_rasters"] = {"bool","false",
+        "Write the six quadratic polynomial fit coefficient rasters.",
+        "Computes a, b, c, d, e, f where z = ax^2 + by^2 + cxy + dx + ey + f "
+        "over a moving window controlled by polyfit_lambda."};
+
+    float_default_map["polyfit_lambda_metres"] = 70.0f;
+    help_map["polyfit_lambda_metres"] = {"float","70.0",
+        "Characteristic lengthscale (metres) for the wavelet quadratic fit.",
+        "Controls the size of the moving window. Default (70 m) is tuned for "
+        "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m)."};
+
+    string_default_map["polyfit_metrics"] = "";
+    help_map["polyfit_metrics"] = {"string","",
+        "Comma-separated list of derived polyfit metrics to write.",
+        "Examples: slope,aspect_degrees,plan_curvature,profile_curvature. "
+        "Use all to write every supported metric. "
+        "Available metrics: fitted_surface, dzdx, dzdy, d2zdx2, d2zdxdy, "
+        "d2zdy2, slope, slope_degrees," 
+        "aspect_radians, aspect_degrees, laplacian, "
+        "hessian_determinant, mean_curvature, gaussian_curvature, "
+        "maximum_curvature, minimum_curvature, curvedness, shape_index, "
+        "profile_curvature, plan_curvature, tangential_curvature, "
+        "difference_curvature, horizontal_excess_curvature, "
+        "vertical_excess_curvature, accumulation_curvature, "
+        "ring_curvature, rotor."};
+
+    float_default_map["polyfit_z_factor"] = 1.0f;
+    help_map["polyfit_z_factor"] = {"float","1.0",
+        "Vertical scaling applied before interpreting polyfit derivatives.",
+        "Scales first and second derivatives consistently in the "
+        "polyfit metric engine."};
+
+    float_default_map["polyfit_flat_slope_tolerance"] = 1e-12f;
+    help_map["polyfit_flat_slope_tolerance"] = {"float","1e-12",
+        "Slope tolerance below which direction-dependent polyfit metrics are nodata.",
+        "Applies to aspect, plan curvature, tangential curvature, "
+        "profile curvature, and rotor."};
+
+    string_default_map["polyfit_method"] = "direct";
+    help_map["polyfit_method"] = {"string","wavelet",
+        "Algorithm used for the quadratic polynomial fit.",
+        "wavelet: FFT-based Gaussian wavelet fit (requires FFTW). "
+        "direct: separable rolling-moment O(n) fit (no FFTW needed). "
+        "both: run both methods and map outputs from each. "
+        "Outputs are prefixed _wavelet_* or _direct_*."};
+
+
     // --- Ridgeline CSV Outputs ---
     bool_default_map["print_ridgelines"] = false;
     help_map["print_ridgelines"] = {"bool", "false", 
@@ -562,6 +768,13 @@ int main(int argc, char* argv[])
     lsdtt::vector_output_format basin_outline_format = 
         lsdtt::resolve_vector_output_format(sf["basin_outlines_output_format"]);
 
+    std::vector<lsdtt::polyfit_metric> requested_polyfit_metrics;
+    try {
+        requested_polyfit_metrics = parse_polyfit_metrics(sf["polyfit_metrics"]);
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing polyfit_metrics: " << e.what() << "\n";
+        return 1;
+    }
 
     // =========================================================================
     // Phase 1 - Open Data and Prepare Raster
@@ -1119,9 +1332,26 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Setup transform mappings needed by Phase 7 and Phase 9
+    lsdtt::lsdtt_coordinate_transform transform;
+    transform.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
+
+    const std::vector<std::string> points_headers_single = {
+        "basin_junction_number", "latitude", "longitude", "ridgeline_type", "distance", 
+        "elevation", "fitted_elevation", "detrended_elevation", 
+        "smoothed_detrended_elevation", "smoothed_detrended_slope"
+    };
+    const std::vector<std::string> points_headers_dual = {
+        "ridgeline_number", "latitude", "longitude", "ridgeline_type", "distance", 
+        "elevation", "fitted_elevation", "detrended_elevation", 
+        "smoothed_detrended_elevation", "smoothed_detrended_slope"
+    };
+
     // =========================================================================
     // Phase 7 - Write Unified CSV Outputs
     // =========================================================================
+    bool headers_are_dual = (analysis_mode != "basin_outline_ridgelines");
+
     if (all_ridgelines.empty() && 
        (bf["print_ridgelines"] || bf["print_ridgeline_stats"] || 
         bf["print_ridgeline_extrema"]))
@@ -1134,23 +1364,9 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Writing CSV Outputs ---\n";
         
-        lsdtt::lsdtt_coordinate_transform transform;
-        transform.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
-
         std::map<std::string, std::vector<std::vector<std::string>>> pt_map;
         std::map<std::string, std::vector<std::vector<std::string>>> stats_map;
         std::map<std::string, std::vector<std::vector<std::string>>> ext_map;
-
-        const std::vector<std::string> points_headers_single = {
-            "basin_junction_number", "latitude", "longitude", "ridgeline_type", "distance", 
-            "elevation", "fitted_elevation", "detrended_elevation", 
-            "smoothed_detrended_elevation", "smoothed_detrended_slope"
-        };
-        const std::vector<std::string> points_headers_dual = {
-            "ridgeline_number", "latitude", "longitude", "ridgeline_type", "distance", 
-            "elevation", "fitted_elevation", "detrended_elevation", 
-            "smoothed_detrended_elevation", "smoothed_detrended_slope"
-        };
 
         const std::vector<std::string> stats_headers_single = {
             "basin_junction_number", "ridgeline_type", "basin_drainage_area", 
@@ -1226,8 +1442,6 @@ int main(int argc, char* argv[])
         {
             lsdtt::lsdtt_data_loader csv_loader;
 
-            bool headers_are_dual = (analysis_mode != "basin_outline_ridgelines");
-
             for (const auto& [pf, rows] : pt_map) {
                 const auto& hdrs = headers_are_dual ? points_headers_dual : points_headers_single;
                 csv_loader.write_csv(pp.make_output_path(pf, ".csv"), hdrs, rows);
@@ -1245,6 +1459,139 @@ int main(int argc, char* argv[])
         {
             std::cerr << "Fatal Error writing CSV outputs: " << e.what() << "\n";
             return 1;
+        }
+    }
+
+    // =========================================================================
+    // Phase 9 - Polynomial Surface Fit & Ridgeline Mapping
+    // =========================================================================
+    if (bf["write_polyfit_rasters"] || !requested_polyfit_metrics.empty())
+    {
+        std::cout << "\n--- Phase 9 - Polynomial Surface Fit & Ridgeline Mapping ---\n";
+        std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda_metres"] << " m\n";
+        std::cout << "Method: " << sf["polyfit_method"] << "\n";
+
+        const std::string polyfit_method = sf["polyfit_method"];
+        std::vector<std::string> methods_to_run;
+        if (polyfit_method == "wavelet" || polyfit_method == "both") methods_to_run.push_back("wavelet");
+        if (polyfit_method == "direct" || polyfit_method == "both")  methods_to_run.push_back("direct");
+
+        if (methods_to_run.empty()) {
+            std::cerr << "Warning: unknown polyfit_method '" << polyfit_method << "'. expected wavelet, direct, or both. Skipping.\n";
+        }
+
+        // Setup base extended headers
+        std::vector<std::string> extended_headers = headers_are_dual ? points_headers_dual : points_headers_single;
+        std::vector<std::string> active_metric_names;
+
+        for (auto m : requested_polyfit_metrics) {
+            for (const auto& entry : polyfit_metric_table()) {
+                if (entry.metric == m) {
+                    active_metric_names.push_back(entry.name);
+                    break;
+                }
+            }
+        }
+
+        for (const auto& name : active_metric_names) {
+            extended_headers.push_back(name);
+        }
+
+        for (const std::string& method : methods_to_run)
+        {
+            std::cout << "  Running " << method << " polyfit..." << std::flush;
+            
+            lsdtt::poly_fit_coeffs fitted;
+            try {
+                if (method == "wavelet") fitted = lsdtt::wavelet_quadratic_fit(dem, ff["polyfit_lambda_metres"], ifs["n_threads"]);
+                else                     fitted = lsdtt::direct_polyfit(dem, ff["polyfit_lambda_metres"], ifs["n_threads"]);
+                std::cout << " done\n";
+            } catch (const std::exception& e) {
+                std::cerr << "\nWarning: " << method << " polynomial fit failed: " << e.what() << "\n";
+                continue;
+            }
+
+            // Write coefficient rasters if requested
+            if (bf["write_polyfit_rasters"])
+            {
+                struct coeff_entry { const lsdtt::lsdtt_raster_cpu& raster; std::string suffix; };
+                const coeff_entry entries[] = {
+                    {fitted.a, "_" + method + "_polyfit_a.tif"},
+                    {fitted.b, "_" + method + "_polyfit_b.tif"},
+                    {fitted.c, "_" + method + "_polyfit_c.tif"},
+                    {fitted.d, "_" + method + "_polyfit_d.tif"},
+                    {fitted.e, "_" + method + "_polyfit_e.tif"},
+                    {fitted.f, "_" + method + "_polyfit_f.tif"}
+                };
+                for (const auto& entry : entries) {
+                    std::cout << "  Writing: " << pp.make_output_path(entry.suffix) << "\n";
+                    loader.write_full(entry.raster.get_data(), entry.raster.get_meta(), pp.make_output_path(entry.suffix), lsdtt::raster_output_format::cog);
+                }
+            }
+
+            if (!requested_polyfit_metrics.empty())
+            {
+                lsdtt::polyfit_metric_request req;
+                req.metrics = requested_polyfit_metrics;
+                req.z_factor = static_cast<double>(ff["polyfit_z_factor"]);
+                req.flat_slope_tolerance = static_cast<double>(ff["polyfit_flat_slope_tolerance"]);
+                req.n_threads = ifs["n_threads"];
+
+                lsdtt::polyfit_metric_result metric_result = lsdtt::compute_polyfit_metrics(fitted, req);
+
+                if (bf["write_polyfit_rasters"]) {
+                    for (const auto& metric : requested_polyfit_metrics) {
+                        if (!metric_result.has(metric)) continue;
+                        std::string out_path = pp.make_output_path(polyfit_metric_suffix(metric, method));
+                        std::cout << "  Writing: " << out_path << "\n";
+                        loader.write_full(metric_result.at(metric).get_data(), metric_result.at(metric).get_meta(), out_path, lsdtt::raster_output_format::cog);
+                    }
+                }
+
+                if (!all_ridgelines.empty())
+                {
+                    std::cout << "  Mapping polyfit metrics onto ridgelines (" << method << ")...\n";
+                    std::map<std::string, std::vector<std::vector<std::string>>> extended_csv_map;
+
+                    for (const auto& rec : all_ridgelines)
+                    {
+                        std::string id_str = rec.is_dual_basin ? std::to_string(rec.ridgeline_number) 
+                                                               : std::to_string(rec.primary_id);
+
+                        auto base_rows = rec.ridgeline.get_ridgeline_csv_rows(id_str, rec.feature_type, transform);
+
+                        std::vector<std::vector<float>> sampled_metrics;
+                        for (auto m : requested_polyfit_metrics) {
+                            sampled_metrics.push_back(rec.ridgeline.sample_raster_values(metric_result.at(m)));
+                        }
+
+                        for (std::size_t i = 0; i < base_rows.size(); ++i) {
+                            for (std::size_t m_idx = 0; m_idx < requested_polyfit_metrics.size(); ++m_idx) {
+                                float val = sampled_metrics[m_idx][i];
+                                if (std::isnan(val)) {
+                                    base_rows[i].push_back("NaN");
+                                } else {
+                                    std::ostringstream oss;
+                                    oss << std::fixed << std::setprecision(9) << val;
+                                    base_rows[i].push_back(oss.str());
+                                }
+                            }
+                        }
+
+                        extended_csv_map[rec.file_prefix].insert(
+                            extended_csv_map[rec.file_prefix].end(), base_rows.begin(), base_rows.end()
+                        );
+                    }
+
+                    lsdtt::lsdtt_data_loader csv_loader;
+                    for (const auto& [pf, rows] : extended_csv_map) {
+                        std::string out_path = pp.make_output_path("_" + method + pf + "_with_polyfit", ".csv");
+                        csv_loader.write_csv(out_path, extended_headers, rows);
+                    }
+                } else {
+                    std::cout << "  Note: No ridgelines available for polyfit mapping.\n";
+                }
+            }
         }
     }
 
