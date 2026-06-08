@@ -513,4 +513,124 @@ polyfit_metric_result compute_polyfit_metrics(
     const polyfit_metric_request& request
 );
 
+// -----------------------------------------------------------------------------
+// surface_shape_class
+//
+// Morphological surface-shape classification (SMAP) following the
+// differential-geometry scheme used in the TopoCurve approach
+// (Klema & Karlstrom). Each pixel is labelled by the signs of Gaussian
+// curvature (KG = k1*k2) and mean curvature (KM = 0.5*(k1+k2)), formed from the
+// two principal curvatures after an optional threshold kt is applied to each
+// principal curvature.
+//
+// Sign convention (the same one used throughout lsdtt3):
+//   convex-up  terrain (ridge, peak, nose) -> negative mean curvature (KM < 0)
+//   concave-up terrain (channel, basin)    -> positive mean curvature (KM > 0)
+//
+// Integer codes are stored as float32 in the shape_class raster. They follow the
+// original TopoCurve SMAP encoding so existing colour ramps keep working:
+// -----------------------------------------------------------------------------
+enum class surface_shape_class : int
+{
+    perfect_saddle    = -4,   // KG < 0,  KM == 0
+    basin             = -3,   // KG > 0,  KM > 0   (concave bowl)
+    synformal_saddle  = -2,   // KG < 0,  KM > 0
+    synform           = -1,   // KG == 0, KM > 0   (cylindrical valley)
+    plane             =  0,   // KG == 0, KM == 0
+    antiform          =  1,   // KG == 0, KM < 0   (cylindrical ridge)
+    antiformal_saddle =  2,   // KG < 0,  KM < 0
+    peak              =  3    // KG > 0,  KM < 0   (convex dome)
+};
+
+// -----------------------------------------------------------------------------
+// surface_shape_result
+//
+// shape_class:        SMAP integer codes (see surface_shape_class) as float32.
+// gaussian_curvature: KG = k1*k2 after the kt threshold (consistent with SMAP).
+// mean_curvature:     KM = 0.5*(k1+k2) after the kt threshold.
+// -----------------------------------------------------------------------------
+struct surface_shape_result
+{
+    lsdtt_raster_cpu shape_class;
+    lsdtt_raster_cpu gaussian_curvature;
+    lsdtt_raster_cpu mean_curvature;
+};
+
+// -----------------------------------------------------------------------------
+// classify_surface_shape
+//
+// Reproduces the CurveCalc shape classification (SMAP) of the TopoCurve MATLAB
+// code from two principal-curvature rasters.
+//
+// maximum_curvature, minimum_curvature:
+//   The principal curvatures k1 (= k_max) and k2 (= k_min), e.g. the
+//   maximum_curvature and minimum_curvature outputs of compute_polyfit_metrics.
+//   The two rasters must share identical row/col dimensions.
+//
+// kt:
+//   Curvature-magnitude threshold. Any principal curvature with |k| <= kt is
+//   set to zero before KG and KM are formed, so weak/long-wavelength structure
+//   (e.g. a background basin) collapses toward planar/cylindrical classes.
+//   kt = 0 keeps every pixel in a non-planar class. Units: 1/m. Must be >= 0.
+//
+// A pixel is classified only where both inputs are valid. The returned KG/KM
+// rasters carry the post-threshold values so they stay consistent with the
+// shape_class labels.
+// -----------------------------------------------------------------------------
+surface_shape_result classify_surface_shape(
+    const lsdtt_raster_cpu& maximum_curvature,
+    const lsdtt_raster_cpu& minimum_curvature,
+    double kt = 0.0
+);
+
+// -----------------------------------------------------------------------------
+// principal_curvatures
+//
+// The two principal curvatures of a surface, as a pair of rasters:
+//   maximum_curvature — k_max (the larger principal curvature)
+//   minimum_curvature — k_min (the smaller principal curvature)
+// Suitable as the k_max / k_min inputs to classify_surface_shape.
+// -----------------------------------------------------------------------------
+struct principal_curvatures
+{
+    lsdtt_raster_cpu maximum_curvature;
+    lsdtt_raster_cpu minimum_curvature;
+};
+
+// -----------------------------------------------------------------------------
+// fundamental_form_principal_curvatures
+//
+// Principal curvatures computed by the differential-geometry method of the
+// TopoCurve CurveCalc routine — an alternative source of k_max / k_min to the
+// polynomial-fit principal curvatures from compute_polyfit_metrics.
+//
+// The elevation surface is treated as a parametric (Monge) surface
+// S(x,y) = (x, y, Z). First and second fundamental forms are built from
+// central-difference gradients of Z and of the unit surface normal field:
+//
+//   tangents     SU = (1, 0, Zx),  SV = (0, 1, Zy)         [y positive north]
+//   1st form     E = SU.SU, F = SU.SV, G = SV.SV
+//   unit normal  N = (SU x SV)/|SU x SV| = (-Zx, -Zy, 1)/W
+//   2nd form     e = -SU.N_x, f = -0.5(SU.N_y + SV.N_x), g = -SV.N_y
+//   principal    a k^2 + b k + c = 0, with
+//   curvatures     a = EG - F^2, b = -(eG - 2fF + gE), c = eg - f^2
+//
+// Sign convention: this uses the upward normal and the standard quadratic root
+// k = (-b +/- sqrt(b^2 - 4ac)) / (2a), so convex-up terrain (ridge / peak)
+// yields negative mean curvature — consistent with lsdtt3 and with
+// compute_polyfit_metrics. (That is the negation of the literal MATLAB K1/K2;
+// Gaussian curvature k_max*k_min is sign-identical either way.)
+//
+// Two derivative passes are taken, so a pixel is valid only where it and its
+// four cardinal neighbours (and their neighbours) carry valid data; raster
+// edges and pixels adjoining nodata become nodata. The input is normally a
+// smoothed surface (e.g. the polyfit fitted_surface), not the raw DEM.
+//
+// Throws std::runtime_error on invalid or non-projected metadata.
+// -----------------------------------------------------------------------------
+principal_curvatures fundamental_form_principal_curvatures(
+    const lsdtt_raster_cpu& raster,
+    int n_threads = 0
+);
+
 } // namespace lsdtt

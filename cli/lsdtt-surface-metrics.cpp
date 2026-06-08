@@ -15,8 +15,9 @@
 // Pipeline:
 //   1. Hillshade
 //   2. Local relief
-//   3. Polynomial surface fit (wavelet quadratic)
+//   3. Polynomial surface fit (direct or wavelet quadratic)
 //   4. Polyfit-derived surface metrics
+//   4b. Surface shape classification (SMAP, TopoCurve-style)
 //   5. MADk2 roughness
 //   6. Frangi filter
 //   7. Otsu threshold segmentation (requires OpenCV)
@@ -38,6 +39,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -410,8 +412,8 @@ int main(int argc, char* argv[])
     help_map["n_threads"] = {"int","1",
         "Number of OpenMP threads.",
         "0 = use all hardware threads. 1 = serial (default). "
-        "Applies to the wavelet quadratic fit, polyfit metric engine, "
-        "and OpenCV normalisation passes."};
+        "Applies to the direct and wavelet quadratic fits, polyfit metric "
+        "engine, and OpenCV normalisation passes."};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -472,7 +474,7 @@ int main(int argc, char* argv[])
 
     float_default_map["polyfit_lambda_metres"] = 70.0f;
     help_map["polyfit_lambda_metres"] = {"float","70.0",
-        "Characteristic lengthscale (metres) for the wavelet quadratic fit.",
+        "Characteristic lengthscale (metres) for the quadratic polynomial fit.",
         "Controls the size of the moving window. Default (70 m) is tuned for "
         "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m)."};
 
@@ -503,11 +505,12 @@ int main(int argc, char* argv[])
         "Applies to aspect, plan curvature, tangential curvature, "
         "profile curvature, and rotor."};
 
-    string_default_map["polyfit_method"] = "wavelet";
-    help_map["polyfit_method"] = {"string","wavelet",
+    string_default_map["polyfit_method"] = "direct";
+    help_map["polyfit_method"] = {"string","direct",
         "Algorithm used for the quadratic polynomial fit.",
+        "direct: separable rolling-moment O(n) fit (no FFTW needed). Default "
+        "and preferred: faster and better at resolving fine-scale features. "
         "wavelet: FFT-based Gaussian wavelet fit (requires FFTW). "
-        "direct: separable rolling-moment O(n) fit (no FFTW needed). "
         "both: run both methods and write outputs from each; also prints "
         "a timing comparison. "
         "Outputs are prefixed _wavelet_polyfit_* or _direct_polyfit_* "
@@ -532,12 +535,59 @@ int main(int argc, char* argv[])
     };
 
     string_default_map["slope_thresholds"] = "3,7,12";
-    help_map["slope_threshold_layers"] = {"string", "3,7,12", 
+    help_map["slope_threshold_layers"] = {"string", "3,7,12",
         "The threshold values for which slope threshold layers are to "
         "be written.",
         "Defaults to the categories used by the Environment Agency's "
         "ALERT tool."
     };
+
+    // --- Surface shape classification (SMAP, TopoCurve-style) ---
+    bool_default_map["write_shape_classification"] = false;
+    help_map["write_shape_classification"] = {"bool","false",
+        "Write the morphological surface-shape classification raster (SMAP).",
+        "Reproduces the differential-geometry shape classification of the "
+        "TopoCurve approach. Each pixel is labelled by the signs of Gaussian "
+        "and mean curvature derived from the polyfit principal curvatures: "
+        "peak (3), antiformal saddle (2), antiform (1), plane (0), "
+        "synform (-1), synformal saddle (-2), basin (-3), perfect saddle (-4). "
+        "Requires the polynomial fit; maximum_curvature and minimum_curvature "
+        "are added to the requested metrics automatically. "
+        "Output: _<method>_shape_class.tif."};
+
+    string_default_map["shape_curvature_method"] = "polyfit";
+    help_map["shape_curvature_method"] = {"string","polyfit",
+        "Source of the principal curvatures used for the shape classification.",
+        "polyfit: principal curvatures from the polynomial fit "
+        "(compute_polyfit_metrics maximum/minimum_curvature). Default. "
+        "fundamental_form: the differential-geometry method ported from "
+        "TopoCurve CurveCalc, computed from the fitted surface via the first "
+        "and second fundamental forms (gradients of the surface and of its "
+        "unit normal field). Both feed the same classifier. With "
+        "fundamental_form the polyfit fitted_surface is used as the smoothed "
+        "input (smoothing scale set by polyfit_lambda_metres), and the "
+        "fundamental-form principal curvatures are written as "
+        "_<method>_ff_maximum_curvature.tif / _<method>_ff_minimum_curvature.tif."};
+
+    float_default_map["shape_curvature_threshold"] = 0.0f;
+    help_map["shape_curvature_threshold"] = {"float","0.0",
+        "Curvature threshold (kt) applied to each principal curvature before "
+        "shape classification.",
+        "Principal curvatures with magnitude <= kt are set to zero, so KG and "
+        "KM collapse toward planar/cylindrical classes. Increase to remove "
+        "low-amplitude, long-wavelength structure (e.g. a background basin) "
+        "from the classification. Units: 1/m. Default 0 keeps every pixel in a "
+        "non-planar class."};
+
+    bool_default_map["write_shape_curvature_rasters"] = false;
+    help_map["write_shape_curvature_rasters"] = {"bool","false",
+        "Write the post-threshold Gaussian and mean curvature rasters used for "
+        "the shape classification.",
+        "These differ from the raw gaussian_curvature/mean_curvature polyfit "
+        "metrics because they reflect shape_curvature_threshold (kt). "
+        "Outputs: _<method>_shape_gaussian_curvature.tif, "
+        "_<method>_shape_mean_curvature.tif. "
+        "Only active when write_shape_classification = true."};
 
     // --- MADk2 roughness ---
     bool_default_map["write_madk2_rasters"] = false;
@@ -920,6 +970,42 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Cross-parameter logic for the surface shape classification (SMAP).
+    // The classifier needs the two principal curvatures. With the polyfit
+    // method they come straight from the polyfit metrics; with the
+    // fundamental_form method they are computed from the polyfit fitted_surface.
+    if (bf["write_shape_classification"])
+    {
+        auto ensure_metric = [&](lsdtt::polyfit_metric m)
+        {
+            const bool already_requested =
+                std::find(requested_polyfit_metrics.begin(),
+                          requested_polyfit_metrics.end(), m)
+                != requested_polyfit_metrics.end();
+            if (!already_requested)
+            {
+                requested_polyfit_metrics.push_back(m);
+            }
+        };
+
+        if (sf["shape_curvature_method"] == "fundamental_form")
+        {
+            ensure_metric(lsdtt::polyfit_metric::fitted_surface);
+            std::cout << "I am adding fitted_surface to the requested polyfit "
+                         "metrics because write_shape_classification uses the "
+                         "fundamental_form curvature method (smoothed surface "
+                         "input).\n";
+        }
+        else
+        {
+            ensure_metric(lsdtt::polyfit_metric::maximum_curvature);
+            ensure_metric(lsdtt::polyfit_metric::minimum_curvature);
+            std::cout << "I am adding maximum_curvature and minimum_curvature to "
+                         "the requested polyfit metrics because you want me to "
+                         "write_shape_classification \n";
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
@@ -1111,6 +1197,104 @@ int main(int argc, char* argv[])
                         metric_result.at(metric).get_meta(),
                         o, out_fmt
                     );
+                }
+
+                // --- Surface shape classification (SMAP) ---
+                // The two principal curvatures come either from the polyfit
+                // metrics, or (fundamental_form method) from the CurveCalc port
+                // applied to the polyfit fitted_surface. The cross-parameter
+                // logic above guarantees the needed metrics were requested.
+                if (bf["write_shape_classification"])
+                {
+                    const bool use_ff =
+                        (sf["shape_curvature_method"] == "fundamental_form");
+
+                    std::optional<lsdtt::principal_curvatures> ff_pc;
+                    const lsdtt::lsdtt_raster_cpu* kmax_r = nullptr;
+                    const lsdtt::lsdtt_raster_cpu* kmin_r = nullptr;
+
+                    if (use_ff)
+                    {
+                        if (metric_result.has(lsdtt::polyfit_metric::fitted_surface))
+                        {
+                            std::cout << "  Computing fundamental-form principal "
+                                         "curvatures (TopoCurve CurveCalc)...\n";
+                            ff_pc = lsdtt::fundamental_form_principal_curvatures(
+                                metric_result.at(lsdtt::polyfit_metric::fitted_surface),
+                                n_threads
+                            );
+                            kmax_r = &ff_pc->maximum_curvature;
+                            kmin_r = &ff_pc->minimum_curvature;
+
+                            // Write the fundamental-form principal curvatures —
+                            // the alternative k_max / k_min this method produces.
+                            const std::string o_kmax = pp.make_output_path(
+                                "_" + method_str + "_ff_maximum_curvature.tif");
+                            std::cout << "Writing: " << o_kmax << "\n";
+                            loader.write_full(
+                                kmax_r->get_data(), kmax_r->get_meta(),
+                                o_kmax, out_fmt
+                            );
+
+                            const std::string o_kmin = pp.make_output_path(
+                                "_" + method_str + "_ff_minimum_curvature.tif");
+                            std::cout << "Writing: " << o_kmin << "\n";
+                            loader.write_full(
+                                kmin_r->get_data(), kmin_r->get_meta(),
+                                o_kmin, out_fmt
+                            );
+                        }
+                    }
+                    else if (metric_result.has(lsdtt::polyfit_metric::maximum_curvature) &&
+                             metric_result.has(lsdtt::polyfit_metric::minimum_curvature))
+                    {
+                        kmax_r = &metric_result.at(lsdtt::polyfit_metric::maximum_curvature);
+                        kmin_r = &metric_result.at(lsdtt::polyfit_metric::minimum_curvature);
+                    }
+
+                    if (kmax_r != nullptr && kmin_r != nullptr)
+                    {
+                    std::cout << "  Classifying surface shapes (method="
+                              << sf["shape_curvature_method"] << ", kt="
+                              << ff["shape_curvature_threshold"] << ")...\n";
+
+                    lsdtt::surface_shape_result shape =
+                        lsdtt::classify_surface_shape(
+                            *kmax_r,
+                            *kmin_r,
+                            static_cast<double>(ff["shape_curvature_threshold"])
+                        );
+
+                    const std::string o_class =
+                        pp.make_output_path("_" + method_str + "_shape_class.tif");
+                    std::cout << "Writing: " << o_class << "\n";
+                    loader.write_full(
+                        shape.shape_class.get_data(),
+                        shape.shape_class.get_meta(),
+                        o_class, out_fmt
+                    );
+
+                    if (bf["write_shape_curvature_rasters"])
+                    {
+                        const std::string o_kg = pp.make_output_path(
+                            "_" + method_str + "_shape_gaussian_curvature.tif");
+                        std::cout << "Writing: " << o_kg << "\n";
+                        loader.write_full(
+                            shape.gaussian_curvature.get_data(),
+                            shape.gaussian_curvature.get_meta(),
+                            o_kg, out_fmt
+                        );
+
+                        const std::string o_km = pp.make_output_path(
+                            "_" + method_str + "_shape_mean_curvature.tif");
+                        std::cout << "Writing: " << o_km << "\n";
+                        loader.write_full(
+                            shape.mean_curvature.get_data(),
+                            shape.mean_curvature.get_meta(),
+                            o_km, out_fmt
+                        );
+                    }
+                    }
                 }
             }
         };

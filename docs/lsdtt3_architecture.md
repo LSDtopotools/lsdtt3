@@ -92,7 +92,7 @@ lsdtt3/
 │   │   ├── lsdtt_junction_basin_manager_cpu.hpp/.cpp         — basin selection and management
 │   │   ├── lsdtt_basin_outline_cpu.hpp/.cpp                  — basin outline/polygon extraction
 │   │   ├── lsdtt_raster_algebra.hpp/.cpp                     — element-wise raster algebra
-│   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp         — hillshade, moving window, polyfit metrics
+│   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp         — hillshade, moving window, polyfit metrics, surface-shape (SMAP) classification
 │   │   ├── lsdtt_surface_texture_cpu.hpp/.cpp                — MADk2, moving_window_iqr, NVD roughness metrics
 │   │   ├── lsdtt_raster_surface_fitting_cpu.hpp/.cpp         — plane and polynomial surface fitting to masks
 │   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp      — fill, breach, nodata
@@ -441,7 +441,12 @@ Current CLI programs are:
 
 - **`lsdtt-surface-metrics.cpp`**  
   Surface-analysis workflow that does not require flow routing: hillshade,
-  polynomial surface fit, Otsu segmentation, Hough line extraction.
+  polynomial surface fit, Otsu segmentation, Hough line extraction. Also writes
+  a TopoCurve-style morphological surface-shape classification (SMAP) via
+  `classify_surface_shape`: the polyfit principal curvatures are thresholded by
+  `shape_curvature_threshold` (kt) and each pixel is labelled by the signs of
+  Gaussian and mean curvature (peak / saddle / antiform / synform / basin /
+  plane). Output: `_<method>_shape_class.tif`.
 
 - **`lsdtt-drainage-analysis.cpp`**  
   Computes drainage-related rasters: optionally fills pits, then computes drainage

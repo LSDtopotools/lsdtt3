@@ -28,6 +28,7 @@ key: value
 | 1. Hillshade | `write_hillshade_raster: true` |
 | 2. Local relief | `write_local_relief_raster: true` |
 | 3. Polynomial surface fit + derived metrics | `write_polyfit_rasters: true` or `polyfit_metrics` is non-empty |
+| 3b. Surface shape classification (SMAP) | `write_shape_classification: true` |
 | 4. MADk2 roughness | `write_madk2_rasters: true` |
 | 5. Frangi filter | `write_frangi_raster: true` or `write_frangi_scale_raster: true` |
 | 6. Otsu threshold segmentation *(requires OpenCV)* | `write_otsu_raster: true` |
@@ -94,7 +95,7 @@ Fits a quadratic polynomial `z = ax² + by² + cxy + dx + ey + f` over a moving 
 |---|---|---|---|
 | `write_polyfit_rasters` | bool | `false` | Write the six raw coefficient rasters (`a`–`f`) for the fitted surface. |
 | `polyfit_lambda_metres` | float | `70.0` | Characteristic lengthscale in metres controlling the moving window size. Default (70 m) is tuned for Copernicus 30 m data. Reduce for lidar (e.g. 10–30 m). |
-| `polyfit_method` | string | `wavelet` | Algorithm for the fit. `wavelet`: FFT-based Gaussian wavelet fit (requires FFTW). `direct`: separable rolling-moment O(n) fit (no FFTW needed). `both`: run both algorithms and print a timing comparison. Output files are prefixed `_wavelet_polyfit_*` or `_direct_polyfit_*` so both sets coexist. |
+| `polyfit_method` | string | `direct` | Algorithm for the fit. `direct` (default, preferred): separable rolling-moment O(n) fit (no FFTW needed); faster and better at resolving fine-scale features. `wavelet`: FFT-based Gaussian wavelet fit (requires FFTW). `both`: run both algorithms and print a timing comparison. Output files are prefixed `_wavelet_polyfit_*` or `_direct_polyfit_*` so both sets coexist. |
 | `polyfit_z_factor` | float | `1.0` | Vertical scaling applied before interpreting derivatives. Scales first and second derivatives consistently in the metric engine. |
 | `polyfit_flat_slope_tolerance` | float | `1e-12` | Slope magnitude below which direction-dependent metrics (aspect, plan curvature, profile curvature, tangential curvature, rotor) are set to nodata. |
 
@@ -117,6 +118,7 @@ Available metric names and their output suffixes:
 | `d2zdxdy` | `_<method>_polyfit_d2zdxdy.tif` |
 | `d2zdy2` | `_<method>_polyfit_d2zdy2.tif` |
 | `slope` | `_<method>_polyfit_slope.tif` |
+| `slope_degrees` | `_<method>_polyfit_slope_degrees.tif` |
 | `aspect_radians` | `_<method>_polyfit_aspect_radians.tif` |
 | `aspect_degrees` | `_<method>_polyfit_aspect_degrees.tif` |
 | `laplacian` | `_<method>_polyfit_laplacian.tif` |
@@ -138,6 +140,52 @@ Available metric names and their output suffixes:
 | `rotor` | `_<method>_polyfit_rotor.tif` |
 
 Where `<method>` is `wavelet` or `direct` depending on `polyfit_method`.
+
+---
+
+## Step 3b: Surface shape classification (SMAP)
+
+Output: `<write_fname>_<method>_shape_class.tif`
+
+A morphological surface-shape classification ported from the differential-geometry approach of TopoCurve (`CurveObj.m` / `CurveCalc`). Each pixel is labelled by the signs of Gaussian curvature (`KG = k₁·k₂`) and mean curvature (`KM = ½(k₁+k₂)`) formed from the two principal curvatures, after an optional threshold `kt` is applied to each principal curvature. This step builds on the polynomial fit, so it runs whenever `write_shape_classification: true` (the polyfit is triggered automatically and the required curvature metrics are added to `polyfit_metrics` for you).
+
+The classification uses the lsdtt3 curvature sign convention: **convex-up terrain (ridge, peak) → negative mean curvature; concave-up terrain (channel, basin) → positive mean curvature.**
+
+### Class codes
+
+The `shape_class` raster stores these integer codes (as float32; nodata elsewhere):
+
+| Code | Class | KG | KM | Character |
+|---|---|---|---|---|
+| `3` | Peak / dome | > 0 | < 0 | Convex in all directions |
+| `2` | Antiformal saddle | < 0 | < 0 | Saddle, net convex |
+| `1` | Antiform | = 0 | < 0 | Cylindrical ridge |
+| `0` | Plane | = 0 | = 0 | Flat |
+| `-1` | Synform | = 0 | > 0 | Cylindrical valley |
+| `-2` | Synformal saddle | < 0 | > 0 | Saddle, net concave |
+| `-3` | Basin | > 0 | > 0 | Concave in all directions |
+| `-4` | Perfect saddle | < 0 | = 0 | Symmetric saddle |
+
+With `kt = 0` only the four generic classes (`3`, `2`, `-2`, `-3`) appear, because the cylindrical/planar classes require a principal curvature of exactly zero. Increasing `kt` zeroes weak principal curvatures and so introduces the `1`, `-1`, and `0` classes — use it to suppress low-amplitude, long-wavelength structure (e.g. a background basin).
+
+### Curvature method
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_shape_classification` | bool | `false` | Enable the shape classification. Requires the polynomial fit; `maximum_curvature`/`minimum_curvature` (polyfit method) or `fitted_surface` (fundamental_form method) are added to `polyfit_metrics` automatically. |
+| `shape_curvature_method` | string | `polyfit` | Source of the principal curvatures. `polyfit`: analytic principal curvatures from the polynomial fit. `fundamental_form`: differential-geometry curvatures ported from TopoCurve `CurveCalc`, computed from the polyfit `fitted_surface` via the first and second fundamental forms (gradients of the surface and of its unit normal field). The smoothing scale is set by `polyfit_lambda_metres`. |
+| `shape_curvature_threshold` | float | `0.0` | Curvature threshold `kt` (units: 1/m). Principal curvatures with magnitude ≤ `kt` are set to zero before `KG`/`KM` are formed. |
+| `write_shape_curvature_rasters` | bool | `false` | Also write the post-threshold Gaussian and mean curvature rasters used for the classification. These differ from the raw `gaussian_curvature`/`mean_curvature` polyfit metrics because they reflect `kt`. |
+
+### Outputs
+
+| File | When |
+|---|---|
+| `_<method>_shape_class.tif` | Always (SMAP integer codes) |
+| `_<method>_ff_maximum_curvature.tif`, `_<method>_ff_minimum_curvature.tif` | `shape_curvature_method: fundamental_form` (the fundamental-form principal curvatures) |
+| `_<method>_shape_gaussian_curvature.tif`, `_<method>_shape_mean_curvature.tif` | `write_shape_curvature_rasters: true` (post-threshold KG/KM) |
+
+Here `<method>` is `wavelet` or `direct` (the `polyfit_method`); for `fundamental_form` it denotes the polyfit method used to produce the smoothed `fitted_surface`.
 
 ---
 
@@ -271,8 +319,14 @@ hillshade_z_factor:     1.0
 
 # Polynomial surface fit — slope and curvatures at 30 m scale
 polyfit_lambda_metres: 70.0
-polyfit_method:        wavelet
+polyfit_method:        direct
 polyfit_metrics:       slope, plan_curvature, profile_curvature, vertical_excess_curvature
+
+# Surface shape classification (SMAP)
+write_shape_classification:    true
+shape_curvature_method:        fundamental_form
+shape_curvature_threshold:     0.0
+write_shape_curvature_rasters: true
 
 # MADk2 roughness
 write_madk2_rasters:          true

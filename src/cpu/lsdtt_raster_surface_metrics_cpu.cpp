@@ -2707,4 +2707,290 @@ poly_fit_coeffs direct_polyfit(
     return result;
 }
 
+// =============================================================================
+// classify_surface_shape
+//
+// Ports the CurveCalc shape-classification (SMAP) step of the TopoCurve MATLAB
+// code. Given the two principal curvatures k1 (k_max) and k2 (k_min), each is
+// thresholded by kt, then Gaussian (KG = k1*k2) and mean (KM = 0.5*(k1+k2))
+// curvature are reformed and the pixel is labelled by their signs.
+//
+// The sign convention matches lsdtt3 (convex-up = negative mean curvature), so
+// the labels carry over directly from the original code without a flip.
+// =============================================================================
+surface_shape_result classify_surface_shape(
+    const lsdtt_raster_cpu& maximum_curvature,
+    const lsdtt_raster_cpu& minimum_curvature,
+    double kt)
+{
+    const lsdtt_raster_meta& meta = maximum_curvature.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::classify_surface_shape: invalid raster metadata"
+        );
+    }
+
+    const lsdtt_raster_meta& meta_min = minimum_curvature.get_meta();
+    if (meta.n_rows != meta_min.n_rows || meta.n_cols != meta_min.n_cols)
+    {
+        throw std::runtime_error(
+            "lsdtt::classify_surface_shape: principal-curvature rasters differ in size"
+        );
+    }
+
+    if (!std::isfinite(kt) || kt < 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::classify_surface_shape: kt must be finite and >= 0"
+        );
+    }
+
+    const int         nrows  = meta.n_rows;
+    const int         ncols  = meta.n_cols;
+    const std::size_t npix   =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+    const float       nodata = static_cast<float>(meta.no_data_value);
+
+    const std::vector<float>&   kmax_data = maximum_curvature.get_data();
+    const std::vector<float>&   kmin_data = minimum_curvature.get_data();
+    const std::vector<uint8_t>& kmax_mask = maximum_curvature.get_mask();
+    const std::vector<uint8_t>& kmin_mask = minimum_curvature.get_mask();
+
+    std::vector<float>   shape_data(npix, nodata);
+    std::vector<uint8_t> shape_mask(npix, uint8_t{0});
+    std::vector<float>   kg_data(npix, nodata);
+    std::vector<uint8_t> kg_mask(npix, uint8_t{0});
+    std::vector<float>   km_data(npix, nodata);
+    std::vector<uint8_t> km_mask(npix, uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols)
+                + static_cast<std::size_t>(col);
+
+            if (kmax_mask[idx] == 0 || kmin_mask[idx] == 0) continue;
+            if (meta.is_nodata(kmax_data[idx]) ||
+                meta.is_nodata(kmin_data[idx])) continue;
+            if (!std::isfinite(kmax_data[idx]) ||
+                !std::isfinite(kmin_data[idx])) continue;
+
+            double k1 = static_cast<double>(kmax_data[idx]);   // k_max
+            double k2 = static_cast<double>(kmin_data[idx]);   // k_min
+
+            // Curvature threshold: zero out principal curvatures below kt.
+            if (std::abs(k1) <= kt) k1 = 0.0;
+            if (std::abs(k2) <= kt) k2 = 0.0;
+
+            const double KG = k1 * k2;          // Gaussian curvature
+            const double KM = 0.5 * (k1 + k2);  // mean curvature
+
+            // Post-threshold KG/KM are always valid where the inputs were.
+            kg_data[idx] = static_cast<float>(KG);
+            kg_mask[idx] = uint8_t{1};
+            km_data[idx] = static_cast<float>(KM);
+            km_mask[idx] = uint8_t{1};
+
+            // Classify by the signs of KG and KM. The eight reachable cells of
+            // the (sign KG, sign KM) table map to the SMAP codes; the ninth
+            // cell (KG > 0, KM == 0) is geometrically impossible and is left
+            // unclassified (nodata).
+            int  shape      = 0;
+            bool classified = true;
+
+            if      (KG <  0.0 && KM == 0.0) shape = -4;  // perfect saddle
+            else if (KG >  0.0 && KM <  0.0) shape =  3;  // peak
+            else if (KG <  0.0 && KM <  0.0) shape =  2;  // antiformal saddle
+            else if (KG == 0.0 && KM <  0.0) shape =  1;  // antiform
+            else if (KG == 0.0 && KM == 0.0) shape =  0;  // plane
+            else if (KG == 0.0 && KM >  0.0) shape = -1;  // synform
+            else if (KG <  0.0 && KM >  0.0) shape = -2;  // synformal saddle
+            else if (KG >  0.0 && KM >  0.0) shape = -3;  // basin
+            else                             classified = false;
+
+            if (classified)
+            {
+                shape_data[idx] = static_cast<float>(shape);
+                shape_mask[idx] = uint8_t{1};
+            }
+        }
+    }
+
+    return surface_shape_result{
+        lsdtt_raster_cpu(std::move(shape_data), std::move(shape_mask), meta),
+        lsdtt_raster_cpu(std::move(kg_data),    std::move(kg_mask),    meta),
+        lsdtt_raster_cpu(std::move(km_data),    std::move(km_mask),    meta)
+    };
+}
+
+// =============================================================================
+// fundamental_form_principal_curvatures
+//
+// Port of the TopoCurve CurveCalc principal-curvature computation. Two passes:
+//   Pass A — central-difference gradients of Z, and the unit normal field N.
+//   Pass B — central-difference gradients of N give the second fundamental
+//            form (e, f, g); the principal curvatures follow from the
+//            fundamental-form quadratic.
+//
+// Sign convention is anchored to lsdtt3 (convex-up -> negative mean curvature)
+// via the upward normal and the standard quadratic root; see the header.
+// =============================================================================
+principal_curvatures fundamental_form_principal_curvatures(
+    const lsdtt_raster_cpu& raster,
+    int n_threads)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::fundamental_form_principal_curvatures: invalid raster metadata"
+        );
+    }
+
+    meta.check_projected_metres();
+
+    const int         nrows  = meta.n_rows;
+    const int         ncols  = meta.n_cols;
+    const double      L      = meta.cell_size;
+    const double      inv_2L = 1.0 / (2.0 * L);
+    const float       nodata = static_cast<float>(meta.no_data_value);
+    const std::size_t npix   =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    lsdtt_array2d<float>   dem  = data_view(raster);
+    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+
+    const int threads = resolve_thread_count(n_threads);
+    (void)threads;   // suppresses unused-variable warning when OpenMP absent
+
+    // -------------------------------------------------------------------------
+    // Pass A — surface gradients (Zx, Zy) and the unit normal field (NX,NY,NZ).
+    // A pixel is valid here when it and its four cardinal neighbours hold data
+    // (central differences need the east/west and north/south neighbours).
+    // -------------------------------------------------------------------------
+    std::vector<double>  Zx(npix, 0.0), Zy(npix, 0.0);
+    std::vector<double>  NX(npix, 0.0), NY(npix, 0.0), NZ(npix, 0.0);
+    std::vector<uint8_t> validA(npix, 0);
+
+    auto pixel_ok = [&](int r, int c) -> bool
+    {
+        return mask(r, c) != 0 && !meta.is_nodata(dem(r, c));
+    };
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 1; row < nrows - 1; ++row)
+    {
+        for (int col = 1; col < ncols - 1; ++col)
+        {
+            if (!pixel_ok(row, col))     continue;
+            if (!pixel_ok(row - 1, col)) continue;   // north
+            if (!pixel_ok(row + 1, col)) continue;   // south
+            if (!pixel_ok(row, col + 1)) continue;   // east
+            if (!pixel_ok(row, col - 1)) continue;   // west
+
+            // y is positive north, matching the rest of lsdtt3.
+            const double zx =
+                (static_cast<double>(dem(row, col + 1)) -
+                 static_cast<double>(dem(row, col - 1))) * inv_2L;
+            const double zy =
+                (static_cast<double>(dem(row - 1, col)) -
+                 static_cast<double>(dem(row + 1, col))) * inv_2L;
+
+            const double w = std::sqrt(1.0 + zx * zx + zy * zy);
+
+            const std::size_t idx = flat_index(row, col, ncols);
+            Zx[idx] = zx;
+            Zy[idx] = zy;
+            NX[idx] = -zx / w;
+            NY[idx] = -zy / w;
+            NZ[idx] =  1.0 / w;
+            validA[idx] = 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pass B — normal-field gradients -> second fundamental form -> principal
+    // curvatures. Needs the pixel and its four cardinal neighbours valid in
+    // pass A (one more ring of erosion).
+    // -------------------------------------------------------------------------
+    std::vector<float>   kmax_data(npix, nodata);
+    std::vector<float>   kmin_data(npix, nodata);
+    std::vector<uint8_t> out_mask(npix, 0);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 1; row < nrows - 1; ++row)
+    {
+        for (int col = 1; col < ncols - 1; ++col)
+        {
+            const std::size_t idx = flat_index(row, col, ncols);
+            if (!validA[idx]) continue;
+
+            const std::size_t idx_n = flat_index(row - 1, col, ncols);
+            const std::size_t idx_s = flat_index(row + 1, col, ncols);
+            const std::size_t idx_e = flat_index(row, col + 1, ncols);
+            const std::size_t idx_w = flat_index(row, col - 1, ncols);
+
+            if (!validA[idx_n] || !validA[idx_s] ||
+                !validA[idx_e] || !validA[idx_w]) continue;
+
+            const double zx = Zx[idx];
+            const double zy = Zy[idx];
+
+            // First fundamental form.
+            const double E = 1.0 + zx * zx;
+            const double F = zx * zy;
+            const double G = 1.0 + zy * zy;
+
+            // Normal-field gradients (y positive north).
+            const double nxx = (NX[idx_e] - NX[idx_w]) * inv_2L;
+            const double nxy = (NX[idx_n] - NX[idx_s]) * inv_2L;
+            const double nyx = (NY[idx_e] - NY[idx_w]) * inv_2L;
+            const double nyy = (NY[idx_n] - NY[idx_s]) * inv_2L;
+            const double nzx = (NZ[idx_e] - NZ[idx_w]) * inv_2L;
+            const double nzy = (NZ[idx_n] - NZ[idx_s]) * inv_2L;
+
+            // Second fundamental form.
+            //   e = -SU.N_x,  SU = (1, 0, zx)
+            //   g = -SV.N_y,  SV = (0, 1, zy)
+            //   f = -0.5 (SU.N_y + SV.N_x)
+            const double e = -(nxx + nzx * zx);
+            const double g = -(nyy + nzy * zy);
+            const double f = -0.5 * ((nxy + nzy * zx) + (nyx + nzx * zy));
+
+            // Principal curvatures from a k^2 + b k + c = 0.
+            // a = EG - F^2 = 1 + zx^2 + zy^2 = w^2 > 0.
+            const double a = E * G - F * F;
+            const double b = -(e * G - 2.0 * f * F + g * E);
+            const double c = e * g - f * f;
+
+            const double disc = std::max(0.0, b * b - 4.0 * a * c);
+            const double root = std::sqrt(disc);
+
+            const double k1 = (-b + root) / (2.0 * a);
+            const double k2 = (-b - root) / (2.0 * a);
+
+            kmax_data[idx] = static_cast<float>(std::max(k1, k2));
+            kmin_data[idx] = static_cast<float>(std::min(k1, k2));
+            out_mask[idx]  = 1;
+        }
+    }
+
+    return principal_curvatures{
+        lsdtt_raster_cpu(std::move(kmax_data), std::vector<uint8_t>(out_mask), meta),
+        lsdtt_raster_cpu(std::move(kmin_data), std::move(out_mask),            meta)
+    };
+}
+
 } // namespace lsdtt
