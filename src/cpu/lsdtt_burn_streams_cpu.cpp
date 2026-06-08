@@ -4102,18 +4102,31 @@ static repair_attempt_result repair_diverged_reach_capture(
                   << conn_set.size() << " (+ " << add.size() << " D8-bridge px)\n";
     }
 
-    // head = conn pixel nearest the divergence point; goalc = nearest the junction.
+    // Source = upstream end of the reach (the dem_jid_up channel head). The
+    // repair burn STARTS at the source, snaps onto the nearest proximate-skeleton
+    // segment, follows the skeleton across the road, and STOPS at the first
+    // correct-draining DEM channel it meets (truncation below) — no straight
+    // diagonal off the divergence point, no overshoot loop to the junction.
+    std::int64_t src_flat = start_flat;
+    if (!reach.dem_reach_xy.empty()){
+        int rr,cc; rc_of_xy(reach.dem_reach_xy.front(), rr, cc);
+        if (valid(rr,cc)) src_flat = to_flat(rr,cc);
+    }
+    const int srcr=to_row(src_flat), srcc=to_col(src_flat);
+
+    // head = conn pixel nearest the SOURCE (snap the source onto the skeleton);
+    // goalc = conn pixel nearest the junction (BFS target down the skeleton).
     std::int64_t head=-1, goalc=-1; double hb=1e18, gb=1e18;
     for(std::int64_t f: conn_set){
-        const double dh=std::hypot(double(to_row(f)-sr),double(to_col(f)-sc));
+        const double dh=std::hypot(double(to_row(f)-srcr),double(to_col(f)-srcc));
         if(dh<hb){hb=dh;head=f;}
         const double dg=std::hypot(double(to_row(f)-gr0),double(to_col(f)-gc0));
         if(dg<gb){gb=dg;goalc=f;}
     }
-    const double max_head_px=std::max(double(corr_px)*2.0,80.0);
+    const double max_head_px=std::max(double(corr_px)*3.0,120.0);
     if(head<0 || hb>max_head_px){
-        std::cout << "    capture: no proximate skeleton head within "
-                  << max_head_px << " px of the divergence point (nearest="
+        std::cout << "    capture: no proximate skeleton within "
+                  << max_head_px << " px of the source (nearest="
                   << hb << ")\n"; return out; }
 
     // BFS along the connected proximate skeleton from head to goalc (robust to
@@ -4146,27 +4159,6 @@ static repair_attempt_result repair_diverged_reach_capture(
         std::reverse(bfspath.begin(), bfspath.end());
     }
 
-    // Landing: nearest correct-draining DEM channel to the junction end.
-    std::int64_t landing=-1; double lb=1e18;
-    {
-        const int tr=to_row(goalc), tc=to_col(goalc);
-        const int rad=std::max(join_r,20);
-        for(int dr=-rad;dr<=rad;++dr) for(int dc=-rad;dc<=rad;++dc){
-            const int r=tr+dr,c=tc+dc; if(!valid(r,c))continue;
-            const std::int64_t f=to_flat(r,c);
-            if(road_set.count(f)||!dem_network.is_channel(f))continue;
-            if(!drains_correctly(f))continue;
-            const double d=std::hypot(double(dr),double(dc));
-            if(d<lb){lb=d;landing=f;}
-        }
-    }
-    if(landing<0){
-        std::cout << "    capture: no correct-draining channel near the junction "
-                     "end of the skeleton; leaving unresolved\n"; return out;
-    }
-
-    // Burn: divergence point -> head (across the divide) + BFS along the proximate
-    // channel + goalc -> landing (into the draining channel).
     auto bres = [&](std::int64_t f0,std::int64_t f1,std::vector<std::int64_t>& p){
         int r0=to_row(f0),c0=to_col(f0),r1=to_row(f1),c1=to_col(f1);
         const int dr=std::abs(r1-r0),dc=std::abs(c1-c0);
@@ -4174,14 +4166,104 @@ static repair_attempt_result repair_diverged_reach_capture(
         while(true){
             if(valid(r,c)){ const std::int64_t f=to_flat(r,c);
                 if(p.empty()||p.back()!=f) p.push_back(f); }
-            if(r==r1&&c==c1) break; const int e2=2*err;
-            if(e2>-dr){err-=dr;c+=scc;} if(e2<dc){err+=dc;r+=srr;}
+            if(r==r1&&c==c1) break;
+            const int e2=2*err;
+            if(e2>-dr){err-=dr;c+=scc;}
+            if(e2<dc){err+=dc;r+=srr;}
         } };
+    auto chev=[&](std::int64_t a,std::int64_t b){
+        return std::max(std::abs(to_row(a)-to_row(b)),std::abs(to_col(a)-to_col(b))); };
+
+    // The skeleton (from the curvature channel indicator) marks WHERE the valley
+    // channel is, but its ridge of peak indicator is NOT on the D8 flow line. So
+    // the repaired channel must FLOW ON D8 wherever a channel exists, using the
+    // skeleton only as a corridor guide, and cut straight only across the road.
+    const std::vector<float> area = flow.get_n_contributing_pixels_raster().data;
+
+    // Snap a pixel to the highest-contributing-area pixel within snap_r, but only
+    // when it has MUCH greater area (>= snap_factor x) — i.e. a genuine D8 channel
+    // is nearby. Across the road area is uniformly small, so the pixel stays put.
+    const int    snap_r      = std::max(3, static_cast<int>(std::ceil(10.0/cs)));
+    const double snap_factor = 3.0;
+    auto snap_to_d8 = [&](std::int64_t f)->std::int64_t{
+        const int r0=to_row(f), c0=to_col(f);
+        const float a0 = area.empty()?0.0f:area[static_cast<std::size_t>(f)];
+        float best=a0; std::int64_t bestf=f;
+        for(int dr=-snap_r;dr<=snap_r;++dr) for(int dc=-snap_r;dc<=snap_r;++dc){
+            const int r=r0+dr,c=c0+dc; if(!valid(r,c))continue;
+            const std::int64_t g=to_flat(r,c);
+            const float a=area[static_cast<std::size_t>(g)];
+            if(a>best){best=a;bestf=g;}
+        }
+        return (best >= snap_factor*std::max(a0,1.0f)) ? bestf : f;
+    };
+
+    // Breach anchors = source + BFS skeleton path, each snapped to the D8 channel,
+    // in corridor order (source -> junction). Used ONLY when a forward D8 walk is
+    // blocked by the road, to step across to the channel on the far side.
+    std::vector<std::int64_t> anchors;
+    {
+        std::vector<std::int64_t> guide; guide.push_back(src_flat);
+        for(std::int64_t f: bfspath) guide.push_back(f);
+        for(std::int64_t g: guide){
+            const std::int64_t s=snap_to_d8(g);
+            if(anchors.empty()||anchors.back()!=s) anchors.push_back(s);
+        }
+    }
+
+    // Pixels belonging to THIS reach (its source channel + the road it follows).
+    // A "foreign" channel is any DEM channel outside this set; we stop the route at
+    // the first foreign channel that DRAINS CORRECTLY (D8 to the downstream junction
+    // without the road) — the upper valley channel drains down the road, so it is
+    // skipped, and we stop only when we reach the true downstream channel.
+    std::unordered_set<std::int64_t> own_set(road_set.begin(), road_set.end());
+    for(const auto& xy: reach.dem_reach_xy){
+        int rr,cc; rc_of_xy(xy,rr,cc);
+        if(valid(rr,cc)) own_set.insert(to_flat(rr,cc));
+    }
+    auto join_here=[&](std::int64_t f){
+        return dem_network.is_channel(f) && !own_set.count(f) && drains_correctly(f); };
+
+    // ONE forward pass: ride D8 down the valley; where D8 would run into the road
+    // (the obstruction) BREACH straight to the next downstream snapped anchor and
+    // resume D8; stop at the first correct-draining downstream channel. A single
+    // forward walk (D8 is acyclic) — no retracing, no overlapping pathways.
     std::vector<std::int64_t> route;
-    bres(start_flat, head, route);
-    for (std::int64_t f : bfspath) if (route.empty()||route.back()!=f) route.push_back(f);
-    bres(goalc, landing, route);
+    const int max_breach = std::max(20, static_cast<int>(std::ceil(120.0/cs)));
+    {
+        std::int64_t cur = snap_to_d8(head);
+        bres(src_flat, cur, route);
+        std::size_t gi = 0;
+        const int cap = 4*(nr+nc);
+        for(int step=0; step<cap; ++step){
+            if(route.empty()||route.back()!=cur) route.push_back(cur);
+            if(route.size()>3 && join_here(cur)) break;     // reached the channel
+            if(!flow.is_outlet(cur)){
+                const std::int64_t nxt = flow.receiver_of(cur);
+                if(nxt>=0 && nxt!=cur && !road_set.count(nxt)){ cur=nxt; continue; }
+            }
+            // blocked by the road / an outlet: breach to the next downstream anchor
+            std::int64_t tgt=-1; const int dcur = chev(cur, goalc);
+            while(gi+1 < anchors.size()){
+                ++gi; const std::int64_t a=anchors[gi];
+                if(road_set.count(a))            continue;
+                if(chev(cur,a) > max_breach)     continue;
+                if(chev(a, goalc) >= dcur)       continue;   // must make progress
+                tgt=a; break;
+            }
+            if(tgt<0) break;
+            bres(cur, tgt, route);
+            cur = tgt;
+        }
+    }
     if (route.size()<2){ std::cout<<"    capture: degenerate route\n"; return out; }
+
+    // Final guard: trim anything past the first correct-draining channel contact
+    // (never cross a DEM reach and loop back).
+    for(std::size_t k=0;k<route.size();++k){
+        if(route.size()>3 && join_here(route[k])){ route.resize(k+1); break; }
+    }
+    if (route.size()<2){ std::cout<<"    capture: degenerate route after truncation\n"; return out; }
 
     // Burn the WHOLE route as one capturing path. burn_capturing_path runs a
     // running-minimum from the higher (upstream) end, so the result is globally
@@ -4198,7 +4280,7 @@ static repair_attempt_result repair_diverged_reach_capture(
     out.divergence_xy = cell_center_from_row_col(meta, sr, sc);
     out.target_xy     = cell_center_from_row_col(meta, to_row(route.back()), to_col(route.back()));
     std::cout << "    capture: burned whole route " << route.size()
-              << " px (head " << hb << " px from divergence pt)\n";
+              << " px (head " << hb << " px from source)\n";
     return out;
 }
 
