@@ -12,6 +12,14 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <numeric>
+
+#if LSDTT_HAS_FFTW
+#include <fftw3.h>
+#include <complex>
+#endif
+
+
 namespace lsdtt
 {
 
@@ -259,5 +267,78 @@ std::vector<std::size_t> find_knees(
     }
     return knees;
 }
+
+// -----------------------------------------------------------------------------
+// Spectral Analysis
+// -----------------------------------------------------------------------------
+
+std::vector<power_spectrum_bin> compute_power_spectrum(
+    const std::vector<double>& y,
+    double dx)
+{
+#if LSDTT_HAS_FFTW
+    const int N = static_cast<int>(y.size());
+    if (N < 3) return {};
+
+    // 1. Linear detrending (Ordinary Least Squares)
+    double sum_x = 0.0, sum_y = 0.0, sum_xx = 0.0, sum_xy = 0.0;
+    for (int i = 0; i < N; ++i) {
+        double xi = i * dx;
+        sum_x  += xi;
+        sum_y  += y[i];
+        sum_xx += xi * xi;
+        sum_xy += xi * y[i];
+    }
+    
+    double denominator = (static_cast<double>(N) * sum_xx) - (sum_x * sum_x);
+    double m = 0.0, c = 0.0;
+    if (std::abs(denominator) > 1e-15) {
+        m = (static_cast<double>(N) * sum_xy - sum_x * sum_y) / denominator;
+        c = (sum_y - m * sum_x) / static_cast<double>(N);
+    } else {
+        c = sum_y / static_cast<double>(N);
+    }
+
+    // 2. Detrend and apply Hann window
+    std::vector<double> signal(N);
+    for (int i = 0; i < N; ++i) {
+        double xi = i * dx;
+        double detrended_y = y[i] - (m * xi + c);
+        
+        // Hann window: 0.5 * (1 - cos(2 * pi * i / (N - 1)))
+        double hann = 0.5 * (1.0 - std::cos(2.0 * M_PI * i / static_cast<double>(N - 1)));
+        signal[i] = detrended_y * hann;
+    }
+
+    // 3. FFT setup and execution
+    std::vector<std::complex<double>> out(N / 2 + 1);
+    fftw_plan plan = fftw_plan_dft_r2c_1d(
+        N, signal.data(), reinterpret_cast<fftw_complex*>(out.data()), FFTW_ESTIMATE
+    );
+    
+    fftw_execute(plan);
+    fftw_destroy_plan(plan);
+
+    // 4. Extract bins (skip DC bin k=0)
+    std::vector<power_spectrum_bin> spectrum;
+    spectrum.reserve(N / 2);
+    
+    for (int k = 1; k < N / 2 + 1; ++k) {
+        power_spectrum_bin bin;
+        bin.index = k;
+        bin.frequency = static_cast<double>(k) / (static_cast<double>(N) * dx);
+        bin.wavelength = 1.0 / bin.frequency;
+        
+        // Raw sequence power normalized structurally by N^2
+        bin.power = std::norm(out[k]) / (static_cast<double>(N) * static_cast<double>(N));
+        spectrum.push_back(bin);
+    }
+    
+    return spectrum;
+#else
+    throw std::runtime_error("compute_power_spectrum requires FFTW3. Compile with LSDTT_HAS_FFTW=1.");
+#endif
+}
+
 
 } // namespace lsdtt

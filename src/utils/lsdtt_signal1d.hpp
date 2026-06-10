@@ -63,6 +63,26 @@ std::vector<std::size_t> find_knees(
 );
 
 // -----------------------------------------------------------------------------
+// Spectral Analysis
+// -----------------------------------------------------------------------------
+
+struct power_spectrum_bin {
+    int    index;
+    double frequency;
+    double wavelength;
+    double power;
+};
+
+// Computes the 1D power spectrum of a uniformly spaced signal using FFTW.
+// Automatically linearly detrends the input and applies a Hann window.
+// Throws a runtime_error if compiled without FFTW support.
+std::vector<power_spectrum_bin> compute_power_spectrum(
+    const std::vector<double>& y,
+    double dx
+);
+
+
+// -----------------------------------------------------------------------------
 // Iterator and Wrapper Overloads
 // -----------------------------------------------------------------------------
 
