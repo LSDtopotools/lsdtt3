@@ -3186,6 +3186,14 @@ static repair_attempt_result repair_junction_parallel_channels(
         const int which = trace_to_channel(ep_flat, join_flat);
         if (which != 0) continue;         // no channel, or drains to the upper channel
 
+        // (3)(4) Proximity gate. Normally the JOIN (where the tip's D8 reaches the
+        // lower channel) must lie within the search radius of the target junction.
+        // BUT for a diverged reach the valley below the obstruction is DRY by
+        // definition of being an obstruction, so its re-established channel — and
+        // hence the join — is far downstream. There we instead require the TIP itself
+        // (where the breach lands) to be near the obstruction (the breach anchor): the
+        // burn notches the obstruction onto the dry-valley skeleton and D8 then carries
+        // the flow down to the re-established channel (the join, wherever it is).
         // (3)(4) join point must lie within the search radius of the junction
         const lsdtt_xy join_xy =
             cell_center_from_row_col(meta, to_row(join_flat), to_col(join_flat));
@@ -4136,27 +4144,11 @@ static repair_attempt_result repair_diverged_reach_capture(
               <<" divergent span idx ["<<i_div0<<","<<i_div1<<"] sep_thresh="
               <<sep_thresh<<" m\n";
 
-    // The carve's downstream END must land on the existing DEM-extracted D8 channel,
-    // NOT the vector junction (which is offset ~15 m from the real DEM channel). So
-    // find the REJOIN = nearest existing foreign DEM channel pixel (not the road) to
-    // the vector junction, and aim everything downstream at THAT.
-    std::int64_t rejoin_target=-1; double rjb=1e18;
-    {
-        const int rr=std::max(8, static_cast<int>(std::ceil(80.0/cs)));
-        for(int dr=-rr;dr<=rr;++dr) for(int dc=-rr;dc<=rr;++dc){
-            const int r=gr0+dr,c=gc0+dc; if(!valid(r,c)) continue;
-            const std::int64_t f=to_flat(r,c);
-            if(!dem_network.is_channel(f) || road_set.count(f)) continue;
-            const double d=std::hypot(double(dr),double(dc));
-            if(d<rjb){rjb=d;rejoin_target=f;}
-        }
-    }
-    // head = conn pixel nearest the span ENTRY; goalc = conn pixel nearest the REJOIN
-    // (the DEM channel). The BFS routes the skeleton across the detour toward the
-    // real DEM channel.
+    // head = conn pixel nearest the span ENTRY (where the reach leaves the valley);
+    // goalc = conn pixel nearest the span EXIT (where it rejoins). The BFS then
+    // routes ONLY across the detour, along the skeleton (true valley).
     const int er=to_row(span_entry), ec=to_col(span_entry);
-    const int xr=(rejoin_target>=0?to_row(rejoin_target):(span_exit<0?gr0:to_row(span_exit)));
-    const int xc=(rejoin_target>=0?to_col(rejoin_target):(span_exit<0?gc0:to_col(span_exit)));
+    const int xr=(span_exit<0?gr0:to_row(span_exit)), xc=(span_exit<0?gc0:to_col(span_exit));
     std::int64_t head=-1, goalc=-1; double hb=1e18, gb=1e18;
     for(std::int64_t f: conn_set){
         const double dh=std::hypot(double(to_row(f)-er),double(to_col(f)-ec));
@@ -4170,19 +4162,16 @@ static repair_attempt_result repair_diverged_reach_capture(
                   << max_head_px << " px of the span entry (nearest="
                   << hb << ")\n"; return out; }
 
-    // BFS along the connected proximate skeleton from head to goalc. NON-FATAL: the
-    // band-confined LCP below (over the DILATED conn_set) is the primary carve and
-    // bridges skeleton fragmentation gaps on its own, so a disconnected skeleton no
-    // longer aborts the repair — bfspath is only the fallback if the LCP fails.
+    // BFS along the connected proximate skeleton from head to goalc (robust to
+    // the meanders that broke the steepest-descent walk).
     std::vector<std::int64_t> bfspath;
-    bool bfs_connected=false;
     {
         std::unordered_map<std::int64_t,std::int64_t> par;
         std::vector<std::int64_t> q; q.push_back(head); par[head]=head;
-        std::size_t qh=0;
+        std::size_t qh=0; bool found=false;
         while(qh<q.size()){
             const std::int64_t cur=q[qh++];
-            if(cur==goalc){bfs_connected=true;break;}
+            if(cur==goalc){found=true;break;}
             const int cr=to_row(cur),cc=to_col(cur);
             for(int dr=-1;dr<=1;++dr)for(int dc=-1;dc<=1;++dc){
                 if(!dr&&!dc) continue;
@@ -4192,15 +4181,15 @@ static repair_attempt_result repair_diverged_reach_capture(
                 par[nf]=cur; q.push_back(nf);
             }
         }
-        if(bfs_connected){
-            std::int64_t cur=goalc;
-            while(cur!=head){ bfspath.push_back(cur); cur=par[cur]; }
-            bfspath.push_back(head);
-            std::reverse(bfspath.begin(), bfspath.end());
-        } else {
-            std::cout << "    capture: proximate skeleton not connected across the "
-                         "divergent span; relying on the band-confined LCP\n";
+        if(!found){
+            std::cout << "    capture: proximate skeleton not connected "
+                         "across the divergent span; leaving unresolved\n";
+            return out;
         }
+        std::int64_t cur=goalc;
+        while(cur!=head){ bfspath.push_back(cur); cur=par[cur]; }
+        bfspath.push_back(head);
+        std::reverse(bfspath.begin(), bfspath.end());
     }
 
     auto bres = [&](std::int64_t f0,std::int64_t f1,std::vector<std::int64_t>& p){
@@ -4215,38 +4204,29 @@ static repair_attempt_result repair_diverged_reach_capture(
             if(e2>-dr){err-=dr;c+=scc;}
             if(e2<dc){err+=dc;r+=srr;}
         } };
-    // Carve the divergent span along the valley SKELETON, starting at the span ENTRY
-    // on the kept D8 reach. Simon's model: ONE repair fixes ONE obstruction (the
-    // road) and ENDS on the existing DEM-extracted D8 channel (the rejoin), handing
-    // everything downstream to unmodified DEM flow.
+    // Carve the divergent span along the valley skeleton: start at the span ENTRY
+    // (on the D8 reach), follow the BFS skeleton path to goalc, and finish at the
+    // span EXIT (back on the D8 reach). This recarves ONLY the road-capture detour,
+    // along the true valley.
     std::vector<std::int64_t> carve;
     {
-        bres(span_entry, head, carve);          // entry -> skeleton
-        for(std::int64_t f: bfspath)            // along the valley skeleton to goalc
+        bres(span_entry, head, carve);            // span entry -> skeleton
+        for(std::int64_t f: bfspath)              // along the valley skeleton
             if(carve.empty()||carve.back()!=f) carve.push_back(f);
-    }
-    if(rejoin_target>=0){
-        // The skeleton is offset from the valley and overshoots PAST its nearest
-        // point to the DEM channel; truncate at that nearest point (kills the
-        // residual hook), then run straight onto the rejoin pixel and STOP there.
-        std::size_t best=carve.size()-1; double bd=1e18;
-        for(std::size_t k=0;k<carve.size();++k){
-            const double d=std::hypot(double(to_row(carve[k])-to_row(rejoin_target)),
-                                      double(to_col(carve[k])-to_col(rejoin_target)));
-            if(d<bd){bd=d;best=k;}
-        }
-        carve.resize(best+1);
-        bres(carve.back(), rejoin_target, carve);   // land ON the DEM channel
+        if(span_exit>=0) bres(goalc, span_exit, carve);  // skeleton -> span exit
     }
 
-    // Assemble: kept upstream D8 reach [0..entry_idx] + the valley carve. Nothing
-    // downstream of the carve — unmodified DEM flow owns the rest.
+    // Assemble the final route: kept upstream D8 reach [0..entry_idx] + the valley
+    // carve + kept downstream D8 reach [exit_idx..end]. The downstream reach already
+    // tracks the vector and ends at the trunk confluence ~15 m from the vector
+    // junction, so no synthetic stop is needed — we keep the real D8 channel.
     std::vector<std::int64_t> route;
     auto push=[&](std::int64_t f){
         if(f>=0 && (route.empty()||route.back()!=f)) route.push_back(f); };
     if(entry_idx>=0){ for(int i=0;i<=entry_idx;++i) push(reach_flats[i]); }
     else            { push(src_flat); }
     for(std::int64_t f: carve) push(f);
+    if(exit_idx>=0){ for(int i=exit_idx;i<(int)reach_flats.size();++i) push(reach_flats[i]); }
     if (route.size()<2){ std::cout<<"    capture: degenerate route\n"; return out; }
 
     // Burn the WHOLE route as one capturing path. burn_capturing_path runs a
@@ -4377,9 +4357,8 @@ repair_diverged_reaches(
 
         if (is_div)
         {
-            // Diverged-but-rejoining: corridor capturing burn at the divergence
-            // point (the parallel col-finder fails here — the road is high on
-            // the valley side, not at a col).
+            // Diverged-but-rejoining: follow the D8 reach, recarve only the divergent
+            // span along the valley skeleton (repair_diverged_reach_capture).
             std::cout << "  repairing diverged reach edge=" << r.vector_edge_id
                       << " v_jid_dn=" << r.vector_jid_dn
                       << " max_sep=" << r.max_separation_m
