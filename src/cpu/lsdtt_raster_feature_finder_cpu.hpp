@@ -260,4 +260,249 @@ lsdtt_raster_cpu compute_relief_ratio(
     double                  long_radius_metres  = 8.0
 );
 
+// -----------------------------------------------------------------------------
+// valley_request
+//
+// Controls broad-valley detection via the SMAP surface-shape classifier.
+//
+// Workflow:
+//   1. Smooth the DEM with a quadratic polyfit at smoothing_window_metres
+//      (the fit window IS the smoothing scale; default 50 m picks out broad
+//      valley forms rather than fine channels).
+//   2. Take the principal curvatures (k_max, k_min) from the fit.
+//   3. classify_surface_shape() with curvature_threshold (kt) labels each
+//      pixel by the signs of Gaussian and mean curvature.
+//   4. A valley mask is built from the concave-up classes (mean curvature > 0):
+//      basin (-3), synformal saddle (-2), synform (-1). Which of these count
+//      as "valley" is configurable.
+//
+// A larger smoothing_window_metres suppresses small channels/gullies and
+// retains only broad valley-floor and valley-flank concavities.
+// -----------------------------------------------------------------------------
+struct valley_request
+{
+    double smoothing_window_metres = 50.0;   // polyfit lambda = smoothing scale
+    double curvature_threshold     = 0.0;    // kt passed to classify_surface_shape
+    double polyfit_z_factor        = 1.0;
+    double flat_slope_tolerance    = 1e-12;
+    bool   use_direct_polyfit      = true;
+    int    n_threads               = 0;
+
+    // Concave-up SMAP classes to flag in the valley mask.
+    bool   include_basin            = true;  // -3, concave bowl
+    bool   include_synformal_saddle = true;  // -2
+    bool   include_synform          = true;  // -1, cylindrical valley
+};
+
+// -----------------------------------------------------------------------------
+// valley_result
+// -----------------------------------------------------------------------------
+struct valley_result
+{
+    lsdtt_raster_cpu shape_class;          // SMAP integer codes (float32)
+    lsdtt_raster_cpu valley_mask;          // 1 = selected valley class, else 0
+    lsdtt_raster_cpu fitted_surface;       // smoothed surface used for curvature
+    lsdtt_raster_cpu maximum_curvature;    // k_max
+    lsdtt_raster_cpu minimum_curvature;    // k_min
+    lsdtt_raster_cpu gaussian_curvature;   // post-kt KG used by the classifier
+    lsdtt_raster_cpu mean_curvature;       // post-kt KM used by the classifier
+};
+
+// -----------------------------------------------------------------------------
+// find_valleys
+//
+// Broad-valley detector based on the SMAP surface-shape classification of a
+// smoothed DEM. See valley_request for the workflow.
+//
+// Throws std::runtime_error on invalid metadata or invalid request values.
+// -----------------------------------------------------------------------------
+valley_result find_valleys(
+    const lsdtt_raster_cpu& raster,
+    const valley_request&   request
+);
+
+// -----------------------------------------------------------------------------
+// road_request
+//
+// Controls hillside-road / bench detection.
+//
+// Idea:
+//   Roads cut into a hillslope form an elongated low-curvature bench whose
+//   long axis runs roughly ALONG the contour, bounded by a cut and a fill edge
+//   that are themselves curvature lines running along the contour. Channels, by
+//   contrast, run DOWN-slope (their long axis is roughly perpendicular to the
+//   contour). The discriminator is therefore the angle between the local
+//   linear-feature orientation and the contour direction.
+//
+// Per pixel, from a quadratic polyfit at smoothing_window_metres:
+//   - Hessian H = [[z_xx, z_xy],[z_xy, z_yy]] is eigen-decomposed.
+//   - The "cross-feature" direction is the eigenvector of the larger-magnitude
+//     eigenvalue; the perpendicular "along-feature" direction is the eigenvector
+//     of the smaller-magnitude eigenvalue.
+//   - elongation = (|lam_major| - |lam_minor|) / (|lam_major| + |lam_minor|)
+//     measures line-likeness (1 = perfectly linear curvature signature).
+//   - contour_alignment = |along_feature . contour_unit|, where the contour
+//     direction is perpendicular to the gradient (p, q). ~1 for along-contour
+//     features (roads/benches), ~0 for down-slope features (channels).
+//   - edge_strength = |lam_major| / (|lam_major| + curvature_half_saturation),
+//     a saturating weight that suppresses gentle, cylindrical natural hillslopes
+//     (small cross-curvature) and rewards the sharp cut/fill curvature breaks of
+//     a real road bench.
+//   - score = elongation * contour_alignment * edge_strength, gated by slope and
+//     (optionally) by the cross-feature curvature magnitude so deeply incised
+//     channels and cliffs can be excluded.
+//   - bench test (optional, on by default): a road is a NARROW flat ribbon, so
+//     the slope is sampled a short distance to each side ALONG the cross-feature
+//     direction; both flanks must be steeper than the (flat) tread. This rejects
+//     valley-floor / floodplain margins, which look like an along-contour
+//     curvature line but are flat on the valley-floor side (one flat flank).
+//
+// Note on limitations:
+//   Natural hillslopes are locally cylindrical, so elongation and contour
+//   alignment alone are NOT selective for roads — the edge_strength term, the
+//   curvature gates, and especially the bench test are what isolate engineered
+//   benches. Expect to tune curvature_half_saturation, min_cross_curvature,
+//   the bench parameters, and the score threshold.
+// -----------------------------------------------------------------------------
+struct road_request
+{
+    double smoothing_window_metres = 8.0;    // polyfit lambda (roads are narrow)
+    double polyfit_z_factor        = 1.0;
+    double flat_slope_tolerance    = 1e-4;   // |gradient| below which aspect is undefined
+    bool   use_direct_polyfit      = true;
+    int    n_threads               = 0;
+
+    double min_elongation          = 0.3;    // minimum Hessian line-likeness
+    double min_contour_alignment   = 0.7;    // minimum |along . contour|
+    double curvature_half_saturation = 0.1;  // 1/m; edge_strength = |k|/(|k|+this)
+    double min_cross_curvature     = 0.05;   // |lam_major| floor (1/m), 0 = off
+    double max_cross_curvature     = 0.0;    // |lam_major| cap  (1/m), 0 = off
+    double score_threshold         = 0.5;
+
+    // Bench test — reject wide flat areas (floodplains, valley floors).
+    bool   use_bench_test          = true;
+    double bench_half_width_metres = 6.0;    // cross-feature sampling distance
+    double bench_flank_slope_ratio = 1.5;    // flank slope >= ratio * tread slope
+    double bench_min_flank_slope   = 0.15;   // and flank slope >= this (tan; ~8.5 deg)
+};
+
+// -----------------------------------------------------------------------------
+// road_result
+// -----------------------------------------------------------------------------
+struct road_result
+{
+    lsdtt_raster_cpu score;                  // elongation * contour_alignment
+    lsdtt_raster_cpu mask;                   // 1 = score >= threshold (and gates pass)
+    lsdtt_raster_cpu contour_alignment;      // |along_feature . contour| in [0,1]
+    lsdtt_raster_cpu hessian_elongation;     // line-likeness in [0,1]
+    lsdtt_raster_cpu cross_curvature;        // signed major-magnitude eigenvalue (1/m)
+    lsdtt_raster_cpu feature_orientation_deg;// along-feature azimuth from north [0,180)
+    lsdtt_raster_cpu slope;                  // |gradient| = sqrt(p^2 + q^2)
+};
+
+// -----------------------------------------------------------------------------
+// find_roads
+//
+// Hillside-road / bench detector. See road_request for the method.
+//
+// Throws std::runtime_error on invalid metadata or invalid request values.
+// -----------------------------------------------------------------------------
+road_result find_roads(
+    const lsdtt_raster_cpu& raster,
+    const road_request&     request
+);
+
+// -----------------------------------------------------------------------------
+// road_flow_request
+//
+// Flow-pathway-based road/channel discrimination. Builds a regional slope field
+// and a D8 flow network and contrasts, per pixel, the direction water actually
+// runs against the regional fall line — plus short-wavelength gradient,
+// curvature and roughness. The intent is a diagnostic suite the user combines:
+//
+//   1. Regional slope vector: a heavily smoothed quadratic fit
+//      (regional_smoothing_metres, default 100 m) gives the regional downslope
+//      bearing and gradient.
+//   2. D8 flow network: contributing-area threshold
+//      (flow_accumulation_threshold_pixels, default 1000) defines channels.
+//   3. Flow-path bearing: along each flow path, the bearing of the segment from
+//      flow_path_half_window pixels upstream to the same number downstream
+//      (default 5 + 5 = an 11-pixel window) is compared to the regional
+//      downslope bearing. Channels follow the fall line (small angle);
+//      flow routed along a road/ditch diverges (large angle).
+//   4. Short-wavelength (3x3) gradient magnitude and total curvature: roads have
+//      low gradient and low curvature; channels and rough ground do not.
+//   5. Local roughness: roads are smoother than the surrounding landscape.
+//
+// The flow network is built on a pit-filled DEM (filled internally unless
+// dem_is_filled is set). The short-wavelength and roughness metrics are taken
+// from the ORIGINAL (unfilled) surface.
+// -----------------------------------------------------------------------------
+struct road_flow_request
+{
+    double regional_smoothing_metres          = 100.0; // regional slope fit window
+    int    flow_accumulation_threshold_pixels = 1000;  // channel definition
+    int    flow_path_half_window              = 5;     // pixels up and down the path
+    double short_curvature_radius_metres      = 0.0;   // 0 -> 1 px (3x3 stencil)
+    double roughness_radius_metres            = 2.5;   // local roughness window
+    bool   dem_is_filled                      = false; // skip internal pit fill
+    std::string boundary_conditions           = "oooo";
+    int    n_threads                          = 0;
+
+    // Regional-bearing-contrast / valley-axis buffer. Where the regional slope
+    // bearing flips (two valley sides facing each other, or a ridge crest), the
+    // local mean resultant length of the bearing is low, so contrast = 1 - R is
+    // high. The thresholded contrast is buffered to mark valley-axis zones where
+    // flow-path bearings are expected to be ambiguous (not road misdirection).
+    double bearing_contrast_window_metres     = 10.0;  // window for 1 - R
+    double bearing_contrast_threshold         = 0.4;   // contrast >= this -> axis
+    double valley_buffer_radius_metres        = 10.0;  // dilation buffer
+};
+
+// -----------------------------------------------------------------------------
+// road_flow_result
+//
+// regional_slope_bearing: regional DOWNSLOPE azimuth (deg from north) at the
+//                         regional smoothing scale.
+// regional_slope:         regional gradient magnitude.
+// contributing_pixels:    D8 upslope pixel count per cell.
+// channel_mask:           1 where contributing_pixels >= threshold.
+// flow_path_bearing:      downstream azimuth (deg) of the 11-pixel flow segment,
+//                         valid on channel pixels only.
+// flow_vs_slope_angle:    angular difference (deg, [0,180]) between
+//                         flow_path_bearing and regional_slope_bearing, on
+//                         channel pixels. Small = channel; large = along-contour.
+// short_gradient:         3x3 gradient magnitude of the original surface.
+// short_total_curvature:  short-wavelength total curvature (Laplacian).
+// roughness:              local elevation standard deviation (roughness).
+// -----------------------------------------------------------------------------
+struct road_flow_result
+{
+    lsdtt_raster_cpu regional_slope_bearing;
+    lsdtt_raster_cpu regional_slope;
+    lsdtt_raster_cpu contributing_pixels;
+    lsdtt_raster_cpu channel_mask;
+    lsdtt_raster_cpu flow_path_bearing;
+    lsdtt_raster_cpu flow_vs_slope_angle;
+    lsdtt_raster_cpu short_gradient;
+    lsdtt_raster_cpu short_total_curvature;
+    lsdtt_raster_cpu roughness;
+
+    // Regional bearing contrast (1 - mean resultant length) and the buffered
+    // valley-axis mask (1 inside the buffer around bearing-contrast zones).
+    lsdtt_raster_cpu regional_bearing_contrast;
+    lsdtt_raster_cpu valley_axis_buffer_mask;
+};
+
+// -----------------------------------------------------------------------------
+// find_road_flow_discrimination
+//
+// See road_flow_request for the method. Throws std::runtime_error on invalid
+// metadata or invalid request values.
+// -----------------------------------------------------------------------------
+road_flow_result find_road_flow_discrimination(
+    const lsdtt_raster_cpu&  raster,
+    const road_flow_request& request
+);
+
 } // namespace lsdtt

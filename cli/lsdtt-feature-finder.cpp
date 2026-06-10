@@ -36,6 +36,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
+#include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -184,7 +185,8 @@ int main(int argc, char* argv[])
     string_default_map["feature_type"] = "channel_candidates";
     help_map["feature_type"] = {"string","channel_candidates",
         "Feature mode to run.",
-        "Supported values: channel_candidates, find_drains, relief_ratio."};
+        "Supported values: channel_candidates, find_drains, relief_ratio, "
+        "find_valleys, find_roads, flow_road_discrimination."};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -428,6 +430,228 @@ int main(int argc, char* argv[])
         "Pixels above this value are removed from the thresholded Frangi candidates."};
 
 
+    // --- Valley finder (SMAP shape classifier on a smoothed DEM) ---
+    float_default_map["valley_smoothing_window_metres"] = 50.0f;
+    help_map["valley_smoothing_window_metres"] = {"float","50.0",
+        "Smoothing window (polyfit lengthscale) applied before shape classification, in metres.",
+        "The quadratic-fit window IS the smoothing scale. Larger values (e.g. 50 m) "
+        "suppress fine channels and retain broad valley forms; smaller values resolve "
+        "narrower valleys."};
+
+    float_default_map["valley_curvature_threshold"] = 0.0f;
+    help_map["valley_curvature_threshold"] = {"float","0.0",
+        "Curvature threshold (kt) passed to the SMAP classifier, in 1/m.",
+        "Principal curvatures with magnitude <= kt are set to zero before "
+        "classification, collapsing weak/long-wavelength structure toward planar "
+        "or cylindrical classes. 0 keeps every pixel in a non-planar class."};
+
+    bool_default_map["valley_include_basin"] = true;
+    help_map["valley_include_basin"] = {"bool","true",
+        "Include the basin class (SMAP -3, concave bowl) in the valley mask.",
+        "Concave-up class with mean curvature > 0."};
+
+    bool_default_map["valley_include_synformal_saddle"] = true;
+    help_map["valley_include_synformal_saddle"] = {"bool","true",
+        "Include the synformal-saddle class (SMAP -2) in the valley mask.",
+        "Concave-up class with mean curvature > 0 and negative Gaussian curvature."};
+
+    bool_default_map["valley_include_synform"] = true;
+    help_map["valley_include_synform"] = {"bool","true",
+        "Include the synform class (SMAP -1, cylindrical valley) in the valley mask.",
+        "The canonical broad-valley form: concave across the contour, straight along it."};
+
+    bool_default_map["write_valley_mask_raster"] = true;
+    help_map["write_valley_mask_raster"] = {"bool","true",
+        "Write the binary valley mask.",
+        "1 indicates a pixel in one of the selected concave-up SMAP classes."};
+
+    bool_default_map["write_valley_shape_class_raster"] = true;
+    help_map["write_valley_shape_class_raster"] = {"bool","true",
+        "Write the full SMAP shape-class raster.",
+        "Integer codes -4..3 stored as float32 (see surface_shape_class)."};
+
+    bool_default_map["write_valley_diagnostics"] = false;
+    help_map["write_valley_diagnostics"] = {"bool","false",
+        "Write valley-finder diagnostic rasters.",
+        "Includes the smoothed fitted surface, the principal curvatures, and the "
+        "post-threshold Gaussian and mean curvatures used by the classifier."};
+
+
+    // --- Road finder (along-contour bench detector) ---
+    float_default_map["road_smoothing_window_metres"] = 8.0f;
+    help_map["road_smoothing_window_metres"] = {"float","8.0",
+        "Smoothing window (polyfit lengthscale) for road detection, in metres.",
+        "Roads are narrow, so use a small window matched to the bench width "
+        "(cut-to-fill cross-section). Larger values blur the bench edges."};
+
+    float_default_map["road_flat_slope_tolerance"] = 1e-4f;
+    help_map["road_flat_slope_tolerance"] = {"float","1e-4",
+        "Gradient magnitude below which the local aspect is treated as undefined.",
+        "On near-flat ground the contour direction is meaningless, so such pixels "
+        "are gated out of the road score."};
+
+    float_default_map["road_min_elongation"] = 0.3f;
+    help_map["road_min_elongation"] = {"float","0.3",
+        "Minimum Hessian line-likeness for retained road pixels.",
+        "elongation = (|lam_major| - |lam_minor|) / (|lam_major| + |lam_minor|). "
+        "Higher values demand a more strongly linear curvature signature."};
+
+    float_default_map["road_min_contour_alignment"] = 0.7f;
+    help_map["road_min_contour_alignment"] = {"float","0.7",
+        "Minimum alignment between the feature's long axis and the contour direction.",
+        "|along_feature . contour_unit| in [0,1]. ~1 for along-contour features "
+        "(roads/benches); ~0 for down-slope features (channels). Raise to be stricter."};
+
+    float_default_map["road_curvature_half_saturation"] = 0.1f;
+    help_map["road_curvature_half_saturation"] = {"float","0.1",
+        "Half-saturation curvature (1/m) for the edge-strength weight in the road score.",
+        "edge_strength = |cross_curvature| / (|cross_curvature| + this). Smaller values "
+        "let gentler curvature breaks score highly; larger values demand sharper edges. "
+        "Set to 0 to disable the edge-strength weighting entirely."};
+
+    float_default_map["road_min_cross_curvature"] = 0.05f;
+    help_map["road_min_cross_curvature"] = {"float","0.05",
+        "Minimum cross-feature curvature magnitude (1/m) for retained road pixels.",
+        "0 disables the floor. Use to suppress featureless slopes with no real edge."};
+
+    float_default_map["road_max_cross_curvature"] = 0.0f;
+    help_map["road_max_cross_curvature"] = {"float","0.0",
+        "Maximum cross-feature curvature magnitude (1/m) for retained road pixels.",
+        "0 disables the cap. Use to exclude deeply incised channels and cliffs that "
+        "have very high cross-curvature."};
+
+    float_default_map["road_score_threshold"] = 0.5f;
+    help_map["road_score_threshold"] = {"float","0.5",
+        "Threshold applied to the road score to make a binary mask.",
+        "score = elongation * contour_alignment * edge_strength. Lower is more inclusive."};
+
+    bool_default_map["road_use_bench_test"] = true;
+    help_map["road_use_bench_test"] = {"bool","true",
+        "Require road pixels to be a narrow flat ribbon (bench) on a slope.",
+        "Samples slope a short distance to each side along the cross-feature "
+        "direction; both flanks must be steeper than the tread. This is what "
+        "rejects floodplains and valley floors, which are flat on one flank."};
+
+    float_default_map["road_bench_half_width_metres"] = 6.0f;
+    help_map["road_bench_half_width_metres"] = {"float","6.0",
+        "Cross-feature sampling distance for the bench test, in metres.",
+        "Set a little larger than the road half-width plus its cut/fill batter so "
+        "the samples land on the flanking slopes, not on the tread."};
+
+    float_default_map["road_bench_flank_slope_ratio"] = 1.5f;
+    help_map["road_bench_flank_slope_ratio"] = {"float","1.5",
+        "Bench test: required ratio of flank slope to tread slope.",
+        "Both flanks must have slope >= ratio * tread_slope (and >= "
+        "road_bench_min_flank_slope). Higher demands a flatter tread relative to "
+        "its flanks."};
+
+    float_default_map["road_bench_min_flank_slope"] = 0.15f;
+    help_map["road_bench_min_flank_slope"] = {"float","0.15",
+        "Bench test: minimum absolute flank slope (tan of slope angle).",
+        "Both flanks must be at least this steep (0.15 ~ 8.5 degrees). Guards "
+        "against near-flat terrain passing the ratio test when the tread slope "
+        "is ~0."};
+
+    bool_default_map["write_road_score_raster"] = true;
+    help_map["write_road_score_raster"] = {"bool","true",
+        "Write the continuous road score raster.",
+        "score = elongation * contour_alignment, gated by slope/curvature."};
+
+    bool_default_map["write_road_mask_raster"] = true;
+    help_map["write_road_mask_raster"] = {"bool","true",
+        "Write the thresholded binary road mask.",
+        "1 indicates a plausible along-contour bench/road pixel."};
+
+    bool_default_map["write_road_diagnostics"] = false;
+    help_map["write_road_diagnostics"] = {"bool","false",
+        "Write road-finder diagnostic rasters.",
+        "Includes contour alignment, Hessian elongation, cross-feature curvature, "
+        "along-feature orientation (azimuth from north), and slope."};
+
+
+    // --- Flow-pathway road/channel discrimination ---
+    float_default_map["flow_regional_smoothing_metres"] = 100.0f;
+    help_map["flow_regional_smoothing_metres"] = {"float","100.0",
+        "Smoothing window (polyfit lengthscale) for the regional slope vector, in metres.",
+        "A large window (e.g. 100 m) gives the regional fall-line bearing that flow "
+        "paths are compared against."};
+
+    int_default_map["flow_accumulation_threshold_pixels"] = 1000;
+    help_map["flow_accumulation_threshold_pixels"] = {"int","1000",
+        "Contributing-pixel threshold that defines the D8 channel network.",
+        "Pixels with at least this many upslope pixels are treated as channels."};
+
+    int_default_map["flow_path_half_window"] = 5;
+    help_map["flow_path_half_window"] = {"int","5",
+        "Number of pixels traced up- and downstream when measuring the flow-path bearing.",
+        "The bearing is taken over a window of (2*this + 1) pixels along the D8 path "
+        "(default 5 gives an 11-pixel segment)."};
+
+    float_default_map["flow_short_curvature_radius_metres"] = 0.0f;
+    help_map["flow_short_curvature_radius_metres"] = {"float","0.0",
+        "Window radius for the short-wavelength total curvature, in metres.",
+        "0 uses a 1-pixel radius (3x3 stencil), i.e. the ~3-pixel short wavelength."};
+
+    float_default_map["flow_roughness_radius_metres"] = 2.5f;
+    help_map["flow_roughness_radius_metres"] = {"float","2.5",
+        "Window radius for the local roughness (elevation standard deviation), in metres.",
+        "Roads are smoother than the surrounding landscape, so they show low roughness."};
+
+    bool_default_map["flow_dem_is_filled"] = false;
+    help_map["flow_dem_is_filled"] = {"bool","false",
+        "Treat the input DEM as already pit-filled (skip internal fill).",
+        "Set true when supplying a pre-filled DEM (e.g. sd_fill.tif) to save time."};
+
+    bool_default_map["write_flow_discrimination_rasters"] = true;
+    help_map["write_flow_discrimination_rasters"] = {"bool","true",
+        "Write the flow-pathway discrimination diagnostic rasters.",
+        "Outputs: regional slope bearing and gradient, contributing pixels, channel "
+        "mask, flow-path bearing, flow-vs-slope angle, short gradient, short total "
+        "curvature, roughness, bearing contrast, and the valley-axis buffer mask."};
+
+    float_default_map["flow_bearing_contrast_window_metres"] = 10.0f;
+    help_map["flow_bearing_contrast_window_metres"] = {"float","10.0",
+        "Window radius for the regional-bearing-contrast metric, in metres.",
+        "contrast = 1 - |mean unit-vector of the regional bearing| over this window. "
+        "High where the bearing flips, e.g. two valley sides facing each other."};
+
+    float_default_map["flow_bearing_contrast_threshold"] = 0.4f;
+    help_map["flow_bearing_contrast_threshold"] = {"float","0.4",
+        "Bearing-contrast value above which a pixel is flagged as a valley/ridge axis.",
+        "0 (no contrast) to 1 (opposing bearings). 0.4 captures clear facing-slope axes."};
+
+    float_default_map["flow_valley_buffer_radius_metres"] = 10.0f;
+    help_map["flow_valley_buffer_radius_metres"] = {"float","10.0",
+        "Dilation buffer applied around bearing-contrast axes, in metres.",
+        "Marks the valley-axis zone where flow-path bearings are expected to be "
+        "ambiguous (not road misdirection)."};
+
+    int_default_map["flow_big_channel_threshold_pixels"] = 5000;
+    help_map["flow_big_channel_threshold_pixels"] = {"int","5000",
+        "Contributing-pixel threshold for the valley-channel point export.",
+        "Channel pixels with more than this many upslope pixels that fall inside the "
+        "valley-axis buffer are exported to a FlatGeobuf point layer."};
+
+    float_default_map["flow_divergent_export_min_angle"] = 0.0f;
+    help_map["flow_divergent_export_min_angle"] = {"float","0.0",
+        "Minimum flow-vs-slope angle (deg) for a channel pixel to be exported as a point.",
+        "0 exports every channel pixel (with its angle attribute) so it can be styled "
+        "in a GIS; raise to export only the divergent (road-like) pixels."};
+
+    bool_default_map["write_flow_divergent_points_fgb"] = true;
+    help_map["write_flow_divergent_points_fgb"] = {"bool","true",
+        "Export channel pixels (with flow-vs-slope angle) to a FlatGeobuf point layer.",
+        "Output: <write_fname>_flow_divergent_points.fgb. Attributes: row, col, "
+        "contributing_px, flow_vs_slope_angle, flow_bearing, regional_bearing."};
+
+    bool_default_map["write_flow_valley_channel_points_fgb"] = true;
+    help_map["write_flow_valley_channel_points_fgb"] = {"bool","true",
+        "Export large channel pixels inside the valley-axis buffer to a FlatGeobuf point layer.",
+        "Output: <write_fname>_flow_valley_channel_points.fgb. Selects channel pixels "
+        "with contributing pixels > flow_big_channel_threshold_pixels that lie within "
+        "the bearing-contrast buffer. Attributes: row, col, contributing_px, "
+        "flow_vs_slope_angle, bearing_contrast."};
+
 
     // -------------------------------------------------------------------------
     // Parse parameters
@@ -456,10 +680,74 @@ int main(int argc, char* argv[])
     lsdtt::raster_output_format out_fmt;
     lsdtt::channel_candidate_request cc_request;
     lsdtt::drain_request drain_request;
+    lsdtt::valley_request valley_request;
+    lsdtt::road_request road_request;
+    lsdtt::road_flow_request road_flow_request;
 
     try
     {
         out_fmt = resolve_output_format(sf.at("write_output_format"));
+
+        road_flow_request.regional_smoothing_metres =
+            static_cast<double>(ff.at("flow_regional_smoothing_metres"));
+        road_flow_request.flow_accumulation_threshold_pixels =
+            ifs.at("flow_accumulation_threshold_pixels");
+        road_flow_request.flow_path_half_window =
+            ifs.at("flow_path_half_window");
+        road_flow_request.short_curvature_radius_metres =
+            static_cast<double>(ff.at("flow_short_curvature_radius_metres"));
+        road_flow_request.roughness_radius_metres =
+            static_cast<double>(ff.at("flow_roughness_radius_metres"));
+        road_flow_request.dem_is_filled = bf.at("flow_dem_is_filled");
+        road_flow_request.n_threads = n_threads;
+        road_flow_request.bearing_contrast_window_metres =
+            static_cast<double>(ff.at("flow_bearing_contrast_window_metres"));
+        road_flow_request.bearing_contrast_threshold =
+            static_cast<double>(ff.at("flow_bearing_contrast_threshold"));
+        road_flow_request.valley_buffer_radius_metres =
+            static_cast<double>(ff.at("flow_valley_buffer_radius_metres"));
+
+        valley_request.smoothing_window_metres =
+            static_cast<double>(ff.at("valley_smoothing_window_metres"));
+        valley_request.curvature_threshold =
+            static_cast<double>(ff.at("valley_curvature_threshold"));
+        valley_request.polyfit_z_factor =
+            static_cast<double>(ff.at("polyfit_z_factor"));
+        valley_request.flat_slope_tolerance =
+            static_cast<double>(ff.at("polyfit_flat_slope_tolerance"));
+        valley_request.use_direct_polyfit = (sf.at("polyfit_method") != "wavelet");
+        valley_request.n_threads = n_threads;
+        valley_request.include_basin            = bf.at("valley_include_basin");
+        valley_request.include_synformal_saddle = bf.at("valley_include_synformal_saddle");
+        valley_request.include_synform          = bf.at("valley_include_synform");
+
+        road_request.smoothing_window_metres =
+            static_cast<double>(ff.at("road_smoothing_window_metres"));
+        road_request.polyfit_z_factor =
+            static_cast<double>(ff.at("polyfit_z_factor"));
+        road_request.flat_slope_tolerance =
+            static_cast<double>(ff.at("road_flat_slope_tolerance"));
+        road_request.use_direct_polyfit = (sf.at("polyfit_method") != "wavelet");
+        road_request.n_threads = n_threads;
+        road_request.min_elongation =
+            static_cast<double>(ff.at("road_min_elongation"));
+        road_request.min_contour_alignment =
+            static_cast<double>(ff.at("road_min_contour_alignment"));
+        road_request.curvature_half_saturation =
+            static_cast<double>(ff.at("road_curvature_half_saturation"));
+        road_request.min_cross_curvature =
+            static_cast<double>(ff.at("road_min_cross_curvature"));
+        road_request.max_cross_curvature =
+            static_cast<double>(ff.at("road_max_cross_curvature"));
+        road_request.score_threshold =
+            static_cast<double>(ff.at("road_score_threshold"));
+        road_request.use_bench_test = bf.at("road_use_bench_test");
+        road_request.bench_half_width_metres =
+            static_cast<double>(ff.at("road_bench_half_width_metres"));
+        road_request.bench_flank_slope_ratio =
+            static_cast<double>(ff.at("road_bench_flank_slope_ratio"));
+        road_request.bench_min_flank_slope =
+            static_cast<double>(ff.at("road_bench_min_flank_slope"));
 
         cc_request.channel_lambda_min_metres =
             static_cast<double>(ff.at("channel_lambda_min_metres"));
@@ -537,11 +825,16 @@ int main(int argc, char* argv[])
 
     if (feature_type != "channel_candidates" &&
         feature_type != "find_drains" &&
-        feature_type != "relief_ratio"
+        feature_type != "relief_ratio" &&
+        feature_type != "find_valleys" &&
+        feature_type != "find_roads" &&
+        feature_type != "flow_road_discrimination"
     )
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
-                  << "'. Supported values are channel_candidates, find_drains, relief_ratio.\n";
+                  << "'. Supported values are channel_candidates, find_drains, "
+                     "relief_ratio, find_valleys, find_roads, "
+                     "flow_road_discrimination.\n";
         return 1;
     }
 
@@ -787,6 +1080,278 @@ int main(int argc, char* argv[])
                 const std::string o = pp.make_output_path( "_relief_ratio.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(relief_ratio.get_data(), relief_ratio.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "find_valleys")
+        {
+            std::cout << "\n--- Valley finder (SMAP shape classifier) ---\n";
+            std::cout << "Smoothing window     : "
+                      << valley_request.smoothing_window_metres << " m\n";
+            std::cout << "Curvature threshold  : "
+                      << valley_request.curvature_threshold << " 1/m\n";
+            std::cout << "Polyfit method       : " << sf.at("polyfit_method") << "\n";
+            std::cout << "Valley classes       :"
+                      << (valley_request.include_basin            ? " basin"            : "")
+                      << (valley_request.include_synformal_saddle ? " synformal_saddle" : "")
+                      << (valley_request.include_synform          ? " synform"          : "")
+                      << "\n";
+
+            lsdtt::valley_result result =
+                lsdtt::find_valleys(dem, valley_request);
+
+            if (bf.at("write_valley_mask_raster"))
+            {
+                const std::string o = pp.make_output_path( "_valley_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.valley_mask.get_data(), result.valley_mask.get_meta(), o, out_fmt);
+            }
+
+            if (bf.at("write_valley_shape_class_raster"))
+            {
+                const std::string o = pp.make_output_path( "_valley_shape_class.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.shape_class.get_data(), result.shape_class.get_meta(), o, out_fmt);
+            }
+
+            if (bf.at("write_valley_diagnostics"))
+            {
+                const std::string o1 = pp.make_output_path( "_valley_fitted_surface.tif");
+                const std::string o2 = pp.make_output_path( "_valley_maximum_curvature.tif");
+                const std::string o3 = pp.make_output_path( "_valley_minimum_curvature.tif");
+                const std::string o4 = pp.make_output_path( "_valley_gaussian_curvature.tif");
+                const std::string o5 = pp.make_output_path( "_valley_mean_curvature.tif");
+
+                std::cout << "Writing: " << o1 << "\n";
+                loader.write_full(result.fitted_surface.get_data(), result.fitted_surface.get_meta(), o1, out_fmt);
+                std::cout << "Writing: " << o2 << "\n";
+                loader.write_full(result.maximum_curvature.get_data(), result.maximum_curvature.get_meta(), o2, out_fmt);
+                std::cout << "Writing: " << o3 << "\n";
+                loader.write_full(result.minimum_curvature.get_data(), result.minimum_curvature.get_meta(), o3, out_fmt);
+                std::cout << "Writing: " << o4 << "\n";
+                loader.write_full(result.gaussian_curvature.get_data(), result.gaussian_curvature.get_meta(), o4, out_fmt);
+                std::cout << "Writing: " << o5 << "\n";
+                loader.write_full(result.mean_curvature.get_data(), result.mean_curvature.get_meta(), o5, out_fmt);
+            }
+        }
+        else if (feature_type == "find_roads")
+        {
+            std::cout << "\n--- Road finder (along-contour bench detector) ---\n";
+            std::cout << "Smoothing window     : "
+                      << road_request.smoothing_window_metres << " m\n";
+            std::cout << "Polyfit method       : " << sf.at("polyfit_method") << "\n";
+            std::cout << "Min elongation       : " << road_request.min_elongation << "\n";
+            std::cout << "Min contour alignment: " << road_request.min_contour_alignment << "\n";
+            std::cout << "Min cross curvature  : " << road_request.min_cross_curvature << " 1/m\n";
+            std::cout << "Max cross curvature  : " << road_request.max_cross_curvature << " 1/m\n";
+            std::cout << "Bench test           : " << (road_request.use_bench_test ? "on" : "off") << "\n";
+            if (road_request.use_bench_test)
+            {
+                std::cout << "Bench half width     : " << road_request.bench_half_width_metres << " m\n";
+                std::cout << "Bench flank ratio    : " << road_request.bench_flank_slope_ratio << "\n";
+                std::cout << "Bench min flank slope: " << road_request.bench_min_flank_slope << "\n";
+            }
+            std::cout << "Score threshold      : " << road_request.score_threshold << "\n";
+
+            lsdtt::road_result result =
+                lsdtt::find_roads(dem, road_request);
+
+            if (bf.at("write_road_score_raster"))
+            {
+                const std::string o = pp.make_output_path( "_road_score.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.score.get_data(), result.score.get_meta(), o, out_fmt);
+            }
+
+            if (bf.at("write_road_mask_raster"))
+            {
+                const std::string o = pp.make_output_path( "_road_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
+            }
+
+            if (bf.at("write_road_diagnostics"))
+            {
+                const std::string o1 = pp.make_output_path( "_road_contour_alignment.tif");
+                const std::string o2 = pp.make_output_path( "_road_hessian_elongation.tif");
+                const std::string o3 = pp.make_output_path( "_road_cross_curvature.tif");
+                const std::string o4 = pp.make_output_path( "_road_orientation_deg.tif");
+                const std::string o5 = pp.make_output_path( "_road_slope.tif");
+
+                std::cout << "Writing: " << o1 << "\n";
+                loader.write_full(result.contour_alignment.get_data(), result.contour_alignment.get_meta(), o1, out_fmt);
+                std::cout << "Writing: " << o2 << "\n";
+                loader.write_full(result.hessian_elongation.get_data(), result.hessian_elongation.get_meta(), o2, out_fmt);
+                std::cout << "Writing: " << o3 << "\n";
+                loader.write_full(result.cross_curvature.get_data(), result.cross_curvature.get_meta(), o3, out_fmt);
+                std::cout << "Writing: " << o4 << "\n";
+                loader.write_full(result.feature_orientation_deg.get_data(), result.feature_orientation_deg.get_meta(), o4, out_fmt);
+                std::cout << "Writing: " << o5 << "\n";
+                loader.write_full(result.slope.get_data(), result.slope.get_meta(), o5, out_fmt);
+            }
+        }
+        else if (feature_type == "flow_road_discrimination")
+        {
+            std::cout << "\n--- Flow-pathway road/channel discrimination ---\n";
+            std::cout << "Regional smoothing   : "
+                      << road_flow_request.regional_smoothing_metres << " m\n";
+            std::cout << "Accum. threshold     : "
+                      << road_flow_request.flow_accumulation_threshold_pixels << " px\n";
+            std::cout << "Flow-path half window: "
+                      << road_flow_request.flow_path_half_window << " px\n";
+            std::cout << "Roughness radius     : "
+                      << road_flow_request.roughness_radius_metres << " m\n";
+            std::cout << "DEM is filled        : "
+                      << (road_flow_request.dem_is_filled ? "yes" : "no") << "\n";
+
+            lsdtt::road_flow_result result =
+                lsdtt::find_road_flow_discrimination(dem, road_flow_request);
+
+            if (bf.at("write_flow_discrimination_rasters"))
+            {
+                struct out_entry
+                {
+                    const lsdtt::lsdtt_raster_cpu& raster;
+                    const char*                    suffix;
+                };
+                const out_entry entries[] =
+                {
+                    {result.regional_slope_bearing, "_flow_regional_slope_bearing.tif"},
+                    {result.regional_slope,         "_flow_regional_slope.tif"},
+                    {result.contributing_pixels,    "_flow_contributing_pixels.tif"},
+                    {result.channel_mask,           "_flow_channel_mask.tif"},
+                    {result.flow_path_bearing,      "_flow_path_bearing.tif"},
+                    {result.flow_vs_slope_angle,    "_flow_vs_slope_angle.tif"},
+                    {result.short_gradient,         "_flow_short_gradient.tif"},
+                    {result.short_total_curvature,  "_flow_short_total_curvature.tif"},
+                    {result.roughness,              "_flow_roughness.tif"},
+                    {result.regional_bearing_contrast, "_flow_bearing_contrast.tif"},
+                    {result.valley_axis_buffer_mask,   "_flow_valley_axis_buffer.tif"}
+                };
+                for (const auto& e : entries)
+                {
+                    const std::string o = pp.make_output_path(e.suffix);
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(e.raster.get_data(), e.raster.get_meta(), o, out_fmt);
+                }
+            }
+
+            // --- FGB: channel pixels with flow-vs-slope angle (divergent map) ---
+            const lsdtt::lsdtt_raster_meta& fmeta = result.contributing_pixels.get_meta();
+            const int frows = fmeta.n_rows;
+            const int fcols = fmeta.n_cols;
+
+            if (bf.at("write_flow_divergent_points_fgb"))
+            {
+                const auto& cp   = result.contributing_pixels.get_data();
+                const auto& chm  = result.channel_mask.get_data();
+                const auto& ang  = result.flow_vs_slope_angle.get_data();
+                const auto& angm = result.flow_vs_slope_angle.get_mask();
+                const auto& brg  = result.flow_path_bearing.get_data();
+                const auto& rb   = result.regional_slope_bearing.get_data();
+                const double min_ang =
+                    static_cast<double>(ff.at("flow_divergent_export_min_angle"));
+
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"row","col","contributing_px",
+                                      "flow_vs_slope_angle","flow_bearing","regional_bearing"};
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::double_type};
+
+                const std::string o = pp.make_output_path("_flow_divergent_points.fgb");
+                std::cout << "Writing: " << o << "\n";
+                lsdtt::lsdtt_data_loader vwriter;
+                vwriter.begin_vector_write(o, "flow_divergent_points", schema,
+                    fmeta.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
+
+                std::size_t n_pts = 0;
+                for (int r = 0; r < frows; ++r)
+                {
+                    for (int c = 0; c < fcols; ++c)
+                    {
+                        const std::size_t idx =
+                            static_cast<std::size_t>(r) * fcols + c;
+                        if (chm[idx] < 0.5f) continue;
+                        if (!angm[idx]) continue;
+                        if (static_cast<double>(ang[idx]) < min_ang) continue;
+
+                        const lsdtt::lsdtt_xy xy =
+                            lsdtt::cell_center_from_row_col(fmeta, r, c);
+                        vwriter.write_point(xy.x, xy.y, {
+                            static_cast<std::int64_t>(r),
+                            static_cast<std::int64_t>(c),
+                            static_cast<std::int64_t>(cp[idx]),
+                            static_cast<double>(ang[idx]),
+                            static_cast<double>(brg[idx]),
+                            static_cast<double>(rb[idx])
+                        });
+                        ++n_pts;
+                    }
+                }
+                vwriter.finish_vector_write();
+                std::cout << "  " << n_pts << " divergent channel points written.\n";
+            }
+
+            // --- FGB: big channel pixels inside the valley-axis buffer ---
+            if (bf.at("write_flow_valley_channel_points_fgb"))
+            {
+                const auto& cp   = result.contributing_pixels.get_data();
+                const auto& chm  = result.channel_mask.get_data();
+                const auto& ang  = result.flow_vs_slope_angle.get_data();
+                const auto& angm = result.flow_vs_slope_angle.get_mask();
+                const auto& buf  = result.valley_axis_buffer_mask.get_data();
+                const auto& bufm = result.valley_axis_buffer_mask.get_mask();
+                const auto& con  = result.regional_bearing_contrast.get_data();
+                const std::int64_t big_thr =
+                    static_cast<std::int64_t>(ifs.at("flow_big_channel_threshold_pixels"));
+
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"row","col","contributing_px",
+                                      "flow_vs_slope_angle","bearing_contrast"};
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::double_type};
+
+                const std::string o = pp.make_output_path("_flow_valley_channel_points.fgb");
+                std::cout << "Writing: " << o << "\n";
+                lsdtt::lsdtt_data_loader vwriter;
+                vwriter.begin_vector_write(o, "flow_valley_channel_points", schema,
+                    fmeta.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
+
+                std::size_t n_pts = 0;
+                for (int r = 0; r < frows; ++r)
+                {
+                    for (int c = 0; c < fcols; ++c)
+                    {
+                        const std::size_t idx =
+                            static_cast<std::size_t>(r) * fcols + c;
+                        if (chm[idx] < 0.5f) continue;
+                        if (static_cast<std::int64_t>(cp[idx]) <= big_thr) continue;
+                        if (!bufm[idx] || buf[idx] < 0.5f) continue;
+
+                        const lsdtt::lsdtt_xy xy =
+                            lsdtt::cell_center_from_row_col(fmeta, r, c);
+                        const double angle_val =
+                            angm[idx] ? static_cast<double>(ang[idx]) : 0.0;
+                        vwriter.write_point(xy.x, xy.y, {
+                            static_cast<std::int64_t>(r),
+                            static_cast<std::int64_t>(c),
+                            static_cast<std::int64_t>(cp[idx]),
+                            angle_val,
+                            static_cast<double>(con[idx])
+                        });
+                        ++n_pts;
+                    }
+                }
+                vwriter.finish_vector_write();
+                std::cout << "  " << n_pts << " valley-axis big-channel points written.\n";
             }
         }
         else

@@ -11,11 +11,15 @@
 #include "lsdtt_raster_algebra.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "../core/lsdtt_flow_base.hpp"
 #include "../utils/lsdtt_binary_array2d_tracing.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -1592,5 +1596,621 @@ drain_result find_drains(
 
 
 
+
+// =============================================================================
+// find_valleys
+//
+// Broad-valley detection via the SMAP surface-shape classifier applied to a
+// DEM smoothed by a quadratic polyfit (the fit window is the smoothing scale).
+// =============================================================================
+valley_result find_valleys(
+    const lsdtt_raster_cpu& raster,
+    const valley_request&   request)
+{
+    if (request.smoothing_window_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "find_valleys: smoothing_window_metres must be > 0.");
+    }
+
+    const lsdtt_raster_meta& meta   = raster.get_meta();
+    const float              nodata = static_cast<float>(meta.no_data_value);
+
+    // 1. Smoothed quadratic fit. The window width is the smoothing scale.
+    poly_fit_coeffs coeffs =
+        request.use_direct_polyfit
+        ? direct_polyfit(raster, request.smoothing_window_metres, request.n_threads)
+        : wavelet_quadratic_fit(raster, request.smoothing_window_metres, request.n_threads);
+
+    // 2. Principal curvatures (and the fitted surface for diagnostics).
+    polyfit_metric_request mreq;
+    mreq.metrics =
+    {
+        polyfit_metric::fitted_surface,
+        polyfit_metric::maximum_curvature,
+        polyfit_metric::minimum_curvature
+    };
+    mreq.z_factor             = request.polyfit_z_factor;
+    mreq.flat_slope_tolerance = request.flat_slope_tolerance;
+    mreq.n_threads            = request.n_threads;
+
+    polyfit_metric_result metrics = compute_polyfit_metrics(coeffs, mreq);
+
+    // 3. SMAP shape classification.
+    surface_shape_result shape =
+        classify_surface_shape(
+            metrics.at(polyfit_metric::maximum_curvature),
+            metrics.at(polyfit_metric::minimum_curvature),
+            request.curvature_threshold
+        );
+
+    // 4. Valley mask from the selected concave-up classes.
+    const auto&       sc_data = shape.shape_class.get_data();
+    const auto&       sc_mask = shape.shape_class.get_mask();
+    const std::size_t npix    = sc_data.size();
+
+    std::vector<float>   vm_data(npix, nodata);
+    std::vector<uint8_t> vm_mask(npix, 0u);
+
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!sc_mask[k]) continue;
+
+        const int cls = static_cast<int>(std::lround(sc_data[k]));
+        bool is_valley = false;
+        if (request.include_basin &&
+            cls == static_cast<int>(surface_shape_class::basin))
+            is_valley = true;
+        if (request.include_synformal_saddle &&
+            cls == static_cast<int>(surface_shape_class::synformal_saddle))
+            is_valley = true;
+        if (request.include_synform &&
+            cls == static_cast<int>(surface_shape_class::synform))
+            is_valley = true;
+
+        vm_mask[k] = 1u;
+        vm_data[k] = is_valley ? 1.0f : 0.0f;
+    }
+
+    valley_result out;
+    out.valley_mask       = lsdtt_raster_cpu(std::move(vm_data), std::move(vm_mask), meta);
+    out.shape_class       = std::move(shape.shape_class);
+    out.gaussian_curvature = std::move(shape.gaussian_curvature);
+    out.mean_curvature    = std::move(shape.mean_curvature);
+    out.fitted_surface    = metrics.at(polyfit_metric::fitted_surface);
+    out.maximum_curvature = metrics.at(polyfit_metric::maximum_curvature);
+    out.minimum_curvature = metrics.at(polyfit_metric::minimum_curvature);
+    return out;
+}
+
+// =============================================================================
+// find_roads
+//
+// Hillside-road / bench detector. Linear curvature features whose long axis
+// runs along the contour (perpendicular to the gradient) score highly; channels
+// running down-slope score low.
+// =============================================================================
+road_result find_roads(
+    const lsdtt_raster_cpu& raster,
+    const road_request&     request)
+{
+    if (request.smoothing_window_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "find_roads: smoothing_window_metres must be > 0.");
+    }
+
+    const lsdtt_raster_meta& meta   = raster.get_meta();
+    const float              nodata = static_cast<float>(meta.no_data_value);
+
+    poly_fit_coeffs coeffs =
+        request.use_direct_polyfit
+        ? direct_polyfit(raster, request.smoothing_window_metres, request.n_threads)
+        : wavelet_quadratic_fit(raster, request.smoothing_window_metres, request.n_threads);
+
+    // Raw derivatives: p = z_x, q = z_y, r = z_xx, s = z_xy, t = z_yy.
+    polyfit_metric_request mreq;
+    mreq.metrics =
+    {
+        polyfit_metric::dzdx,
+        polyfit_metric::dzdy,
+        polyfit_metric::d2zdx2,
+        polyfit_metric::d2zdxdy,
+        polyfit_metric::d2zdy2
+    };
+    mreq.z_factor             = request.polyfit_z_factor;
+    mreq.flat_slope_tolerance = request.flat_slope_tolerance;
+    mreq.n_threads            = request.n_threads;
+
+    polyfit_metric_result m = compute_polyfit_metrics(coeffs, mreq);
+
+    const auto& p_d = m.at(polyfit_metric::dzdx).get_data();
+    const auto& p_m = m.at(polyfit_metric::dzdx).get_mask();
+    const auto& q_d = m.at(polyfit_metric::dzdy).get_data();
+    const auto& q_m = m.at(polyfit_metric::dzdy).get_mask();
+    const auto& r_d = m.at(polyfit_metric::d2zdx2).get_data();
+    const auto& r_m = m.at(polyfit_metric::d2zdx2).get_mask();
+    const auto& s_d = m.at(polyfit_metric::d2zdxdy).get_data();
+    const auto& s_m = m.at(polyfit_metric::d2zdxdy).get_mask();
+    const auto& t_d = m.at(polyfit_metric::d2zdy2).get_data();
+    const auto& t_m = m.at(polyfit_metric::d2zdy2).get_mask();
+
+    const std::size_t npix = p_d.size();
+    const int    nrows     = meta.n_rows;
+    const int    ncols     = meta.n_cols;
+    const double cell_size = meta.cell_size;
+
+    std::vector<float>   score_d(npix, nodata),  align_d(npix, nodata);
+    std::vector<float>   elong_d(npix, nodata),  cross_d(npix, nodata);
+    std::vector<float>   orient_d(npix, nodata), slope_d(npix, nodata);
+    std::vector<uint8_t> valid_m(npix, 0u);
+    std::vector<uint8_t> mask_m(npix, 0u);
+    std::vector<float>   mask_d(npix, nodata);
+
+    // The elongation ratio is ill-conditioned where curvature is near zero, so
+    // the diagnostic is masked to nodata below the min_cross_curvature floor.
+    // This removes the salt-and-pepper noise on flat/smooth ground while keeping
+    // the real, high-curvature road/channel signatures.
+    std::vector<uint8_t> elong_m(npix, 0u);
+
+    // Cross-feature unit direction (east, north) per pixel, for the bench test.
+    std::vector<float>   cross_dir_x(npix, 0.0f);
+    std::vector<float>   cross_dir_y(npix, 0.0f);
+
+    const double eps = 1e-12;
+
+    // -------------------------------------------------------------------------
+    // Pass 1 — per-pixel curvature geometry, slope, contour alignment,
+    // line-likeness, and the cross-feature direction. No scoring yet: the bench
+    // test in pass 2 needs the completed slope field.
+    // -------------------------------------------------------------------------
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!(p_m[k] && q_m[k] && r_m[k] && s_m[k] && t_m[k])) continue;
+
+        const double p = static_cast<double>(p_d[k]);
+        const double q = static_cast<double>(q_d[k]);
+        const double r = static_cast<double>(r_d[k]);
+        const double s = static_cast<double>(s_d[k]);
+        const double t = static_cast<double>(t_d[k]);
+
+        const double slope = std::sqrt(p * p + q * q);
+
+        valid_m[k]  = 1u;
+        slope_d[k]  = static_cast<float>(slope);
+
+        // Eigen-decomposition of the symmetric Hessian [[r, s], [s, t]].
+        const double mean = 0.5 * (r + t);
+        const double diff = 0.5 * (r - t);
+        const double disc = std::sqrt(diff * diff + s * s);
+        const double lam1 = mean + disc;   // one eigenvalue
+        const double lam2 = mean - disc;   // the other
+
+        // Major = larger magnitude (cross-feature), minor = along-feature.
+        double lam_major, lam_minor;
+        if (std::abs(lam1) >= std::abs(lam2)) { lam_major = lam1; lam_minor = lam2; }
+        else                                  { lam_major = lam2; lam_minor = lam1; }
+
+        // Eigenvector of lam_major in (east, north): (s, lam_major - r),
+        // falling back to a cardinal axis when s ~ 0.
+        double mvx, mvy;
+        if (std::abs(s) > eps)
+        {
+            mvx = s;
+            mvy = lam_major - r;
+        }
+        else
+        {
+            // Diagonal Hessian: principal axes are x and y.
+            if (std::abs(r) >= std::abs(t)) { mvx = 1.0; mvy = 0.0; }
+            else                            { mvx = 0.0; mvy = 1.0; }
+        }
+        const double mvn = std::sqrt(mvx * mvx + mvy * mvy);
+        if (mvn <= eps) { mvx = 1.0; mvy = 0.0; }
+        else            { mvx /= mvn; mvy /= mvn; }
+
+        cross_dir_x[k] = static_cast<float>(mvx);
+        cross_dir_y[k] = static_cast<float>(mvy);
+
+        // Along-feature direction is perpendicular to the major eigenvector.
+        const double avx = -mvy;
+        const double avy =  mvx;
+
+        // Line-likeness from the eigenvalue magnitudes.
+        const double abs_major = std::abs(lam_major);
+        const double abs_minor = std::abs(lam_minor);
+        const double elong =
+            (abs_major - abs_minor) / (abs_major + abs_minor + eps);
+
+        cross_d[k]  = static_cast<float>(lam_major);
+
+        // Gate the elongation diagnostic by the curvature floor so the noisy,
+        // near-zero-curvature ratio is suppressed (see elong_m comment above).
+        if (request.min_cross_curvature <= 0.0 ||
+            abs_major >= request.min_cross_curvature)
+        {
+            elong_d[k] = static_cast<float>(elong);
+            elong_m[k] = 1u;
+        }
+
+        // Along-feature azimuth from north, folded to [0, 180).
+        double az = std::atan2(avx, avy) * (180.0 / M_PI);   // east, north
+        if (az < 0.0)   az += 180.0;
+        if (az >= 180.0) az -= 180.0;
+        orient_d[k] = static_cast<float>(az);
+
+        // Contour alignment: |along_feature . contour_unit|.
+        // contour direction is perpendicular to the gradient (p, q): (-q, p).
+        double alignment = 0.0;
+        if (slope > request.flat_slope_tolerance)
+        {
+            const double cx = -q / slope;
+            const double cy =  p / slope;
+            alignment = std::abs(avx * cx + avy * cy);
+        }
+        align_d[k] = static_cast<float>(alignment);
+    }
+
+    // -------------------------------------------------------------------------
+    // Pass 2 — edge strength, bench test, score and mask.
+    // -------------------------------------------------------------------------
+    const double half_sat = std::max(0.0, request.curvature_half_saturation);
+    const bool   do_bench = request.use_bench_test &&
+                            request.bench_half_width_metres > 0.0 &&
+                            cell_size > 0.0;
+    const double bench_steps =
+        do_bench ? (request.bench_half_width_metres / cell_size) : 0.0;
+
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!valid_m[k]) continue;
+
+        const double slope     = static_cast<double>(slope_d[k]);
+        const double alignment = static_cast<double>(align_d[k]);
+        const double elong     = static_cast<double>(elong_d[k]);
+        const double abs_major = std::abs(static_cast<double>(cross_d[k]));
+
+        // Edge strength: saturating weight on cross-feature curvature magnitude,
+        // so gentle cylindrical hillslopes (small |lam_major|) are suppressed and
+        // sharp cut/fill curvature breaks are rewarded.
+        const double edge_strength =
+            (half_sat > 0.0) ? abs_major / (abs_major + half_sat) : 1.0;
+
+        double score = elong * alignment * edge_strength;
+
+        bool gated_out = false;
+        if (slope <= request.flat_slope_tolerance)            gated_out = true;
+        if (elong < request.min_elongation)                   gated_out = true;
+        if (alignment < request.min_contour_alignment)        gated_out = true;
+        if (request.min_cross_curvature > 0.0 &&
+            abs_major < request.min_cross_curvature)          gated_out = true;
+        if (request.max_cross_curvature > 0.0 &&
+            abs_major > request.max_cross_curvature)          gated_out = true;
+
+        // Bench test: a road is a narrow flat ribbon. Sample slope a short
+        // distance to each side along the cross-feature direction; both flanks
+        // must be steeper than the (flat) tread. Rejects floodplain / valley-
+        // floor margins, which are flat on one (valley-floor) flank.
+        if (!gated_out && do_bench)
+        {
+            const int row = static_cast<int>(k / static_cast<std::size_t>(ncols));
+            const int col = static_cast<int>(k % static_cast<std::size_t>(ncols));
+
+            // Cross-feature (east, north) -> (drow, dcol); north = -row.
+            const double dx = static_cast<double>(cross_dir_x[k]);   // east
+            const double dy = static_cast<double>(cross_dir_y[k]);   // north
+            const int    drow = static_cast<int>(std::lround(-dy * bench_steps));
+            const int    dcol = static_cast<int>(std::lround( dx * bench_steps));
+
+            const int rp = row + drow, cp = col + dcol;
+            const int rm = row - drow, cm = col - dcol;
+
+            bool flanks_ok = false;
+            if (rp >= 0 && rp < nrows && cp >= 0 && cp < ncols &&
+                rm >= 0 && rm < nrows && cm >= 0 && cm < ncols)
+            {
+                const std::size_t kp =
+                    static_cast<std::size_t>(rp) * static_cast<std::size_t>(ncols) + cp;
+                const std::size_t km =
+                    static_cast<std::size_t>(rm) * static_cast<std::size_t>(ncols) + cm;
+                if (valid_m[kp] && valid_m[km])
+                {
+                    const double sp = static_cast<double>(slope_d[kp]);
+                    const double sm = static_cast<double>(slope_d[km]);
+                    const double flank_min = std::min(sp, sm);
+                    const double need =
+                        std::max(slope * request.bench_flank_slope_ratio,
+                                 request.bench_min_flank_slope);
+                    flanks_ok = (flank_min >= need);
+                }
+            }
+            if (!flanks_ok) gated_out = true;
+        }
+
+        if (gated_out) score = 0.0;
+        score_d[k] = static_cast<float>(score);
+        mask_d[k]  = (!gated_out && score >= request.score_threshold) ? 1.0f : 0.0f;
+        mask_m[k]  = 1u;
+    }
+
+    road_result out;
+    out.score                   = lsdtt_raster_cpu(std::move(score_d),  std::vector<uint8_t>(valid_m), meta);
+    out.mask                    = lsdtt_raster_cpu(std::move(mask_d),   std::move(mask_m),  meta);
+    out.contour_alignment       = lsdtt_raster_cpu(std::move(align_d),  std::vector<uint8_t>(valid_m), meta);
+    out.hessian_elongation      = lsdtt_raster_cpu(std::move(elong_d),  std::move(elong_m), meta);
+    out.cross_curvature         = lsdtt_raster_cpu(std::move(cross_d),  std::vector<uint8_t>(valid_m), meta);
+    out.feature_orientation_deg = lsdtt_raster_cpu(std::move(orient_d), std::vector<uint8_t>(valid_m), meta);
+    out.slope                   = lsdtt_raster_cpu(std::move(slope_d),  std::move(valid_m), meta);
+    return out;
+}
+
+// =============================================================================
+// find_road_flow_discrimination
+//
+// Regional slope vs flow-path bearing, plus short-wavelength gradient/curvature
+// and local roughness. See road_flow_request for the rationale.
+// =============================================================================
+road_flow_result find_road_flow_discrimination(
+    const lsdtt_raster_cpu&  raster,
+    const road_flow_request& request)
+{
+    if (request.regional_smoothing_metres <= 0.0)
+    {
+        throw std::runtime_error(
+            "find_road_flow_discrimination: regional_smoothing_metres must be > 0.");
+    }
+    if (request.flow_path_half_window < 1)
+    {
+        throw std::runtime_error(
+            "find_road_flow_discrimination: flow_path_half_window must be >= 1.");
+    }
+
+    const lsdtt_raster_meta& meta      = raster.get_meta();
+    const float              nodata    = static_cast<float>(meta.no_data_value);
+    const int                nrows     = meta.n_rows;
+    const int                ncols     = meta.n_cols;
+    const double             cell_size = meta.cell_size;
+    const std::size_t        npix      =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    // -------------------------------------------------------------------------
+    // 1. Regional slope field from a heavily smoothed quadratic fit.
+    //    aspect_degrees from the metric engine is the UPHILL azimuth; the
+    //    downslope (flow) bearing is that + 180 degrees.
+    // -------------------------------------------------------------------------
+    poly_fit_coeffs regional_coeffs =
+        direct_polyfit(raster, request.regional_smoothing_metres, request.n_threads);
+
+    polyfit_metric_request rreq;
+    rreq.metrics   = { polyfit_metric::aspect_degrees, polyfit_metric::slope };
+    rreq.n_threads = request.n_threads;
+    polyfit_metric_result rmetrics = compute_polyfit_metrics(regional_coeffs, rreq);
+
+    const lsdtt_raster_cpu& aspect_uphill = rmetrics.at(polyfit_metric::aspect_degrees);
+    const auto& asp_d = aspect_uphill.get_data();
+    const auto& asp_m = aspect_uphill.get_mask();
+
+    std::vector<float>   downslope_d(npix, nodata);
+    std::vector<uint8_t> downslope_m(npix, 0u);
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!asp_m[k]) continue;
+        double b = static_cast<double>(asp_d[k]) + 180.0;
+        b = std::fmod(b, 360.0);
+        if (b < 0.0) b += 360.0;
+        downslope_d[k] = static_cast<float>(b);
+        downslope_m[k] = 1u;
+    }
+    lsdtt_raster_cpu regional_slope_bearing(
+        std::move(downslope_d), std::vector<uint8_t>(downslope_m), meta);
+    const auto& bearing_ref = regional_slope_bearing.get_data();
+
+    // -------------------------------------------------------------------------
+    // 1b. Regional bearing contrast and buffered valley-axis mask.
+    //     contrast = 1 - |mean unit-vector of bearing| over a moving window.
+    //     High where the bearing flips (facing valley sides / ridge crests).
+    // -------------------------------------------------------------------------
+    std::vector<float>   cos_d(npix, nodata), sin_d(npix, nodata);
+    std::vector<uint8_t> trig_m(npix, 0u);
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!downslope_m[k]) continue;
+        const double a = static_cast<double>(bearing_ref[k]) * (M_PI / 180.0);
+        cos_d[k]  = static_cast<float>(std::cos(a));
+        sin_d[k]  = static_cast<float>(std::sin(a));
+        trig_m[k] = 1u;
+    }
+    lsdtt_raster_cpu cos_r(std::move(cos_d), std::vector<uint8_t>(trig_m), meta);
+    lsdtt_raster_cpu sin_r(std::move(sin_d), std::move(trig_m), meta);
+
+    lsdtt_raster_cpu mean_cos =
+        moving_window_mean(cos_r, request.bearing_contrast_window_metres, window_shape::circular);
+    lsdtt_raster_cpu mean_sin =
+        moving_window_mean(sin_r, request.bearing_contrast_window_metres, window_shape::circular);
+
+    const auto& mcd = mean_cos.get_data();  const auto& mcm = mean_cos.get_mask();
+    const auto& msd = mean_sin.get_data();  const auto& msm = mean_sin.get_mask();
+
+    std::vector<float>   contrast_d(npix, nodata);
+    std::vector<uint8_t> contrast_m(npix, 0u);
+    std::vector<float>   axis_d(npix, nodata);
+    std::vector<uint8_t> axis_m(npix, 0u);
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!(mcm[k] && msm[k])) continue;
+        const double R =
+            std::sqrt(static_cast<double>(mcd[k]) * mcd[k] +
+                      static_cast<double>(msd[k]) * msd[k]);
+        const double contrast = 1.0 - R;
+        contrast_d[k] = static_cast<float>(contrast);
+        contrast_m[k] = 1u;
+        axis_d[k] = (contrast >= request.bearing_contrast_threshold) ? 1.0f : 0.0f;
+        axis_m[k] = 1u;
+    }
+    lsdtt_raster_cpu regional_bearing_contrast(
+        std::move(contrast_d), std::move(contrast_m), meta);
+    lsdtt_raster_cpu valley_axis_mask(std::move(axis_d), std::move(axis_m), meta);
+
+    lsdtt_raster_cpu valley_axis_buffer =
+        binary_morphological_dilation(
+            valley_axis_mask, request.valley_buffer_radius_metres, window_shape::circular);
+
+    // -------------------------------------------------------------------------
+    // 2. D8 flow network on a pit-filled DEM.
+    // -------------------------------------------------------------------------
+    const lsdtt_raster_cpu* dem_for_flow = &raster;
+    lsdtt_raster_cpu        filled;
+    if (!request.dem_is_filled)
+    {
+        filled = fill_pits(raster, 0.0001f, request.n_threads);
+        dem_for_flow = &filled;
+    }
+
+    lsdtt_flowinfo_options fopts;
+    fopts.boundary_conditions = request.boundary_conditions;
+    fopts.build_s_vector      = true;
+    fopts.n_threads           = request.n_threads;
+
+    std::unique_ptr<lsdtt_flow_base> flow = make_flow_base(
+        dem_for_flow->get_data_array(),
+        dem_for_flow->get_mask_array(),
+        meta,
+        fopts);
+
+    // Contributing-pixel count and channel mask.
+    std::vector<float>   contrib_d(npix, nodata);
+    std::vector<uint8_t> contrib_m(npix, 0u);
+    std::vector<float>   channel_d(npix, nodata);
+    std::vector<uint8_t> channel_m(npix, 0u);
+
+    const std::int64_t thr =
+        static_cast<std::int64_t>(request.flow_accumulation_threshold_pixels);
+
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        const std::int64_t flat = static_cast<std::int64_t>(k);
+        if (!flow->is_valid_cell(flat)) continue;
+        const std::int64_t cp =
+            static_cast<std::int64_t>(flow->s_vector_size_unchecked(flat));
+        contrib_d[k] = static_cast<float>(cp);
+        contrib_m[k] = 1u;
+        channel_d[k] = (cp >= thr) ? 1.0f : 0.0f;
+        channel_m[k] = 1u;
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Flow-path bearing and angle vs regional downslope, on channel pixels.
+    //    Walk half_window steps downstream (single D8 receiver) and upstream
+    //    (largest-drainage donor among the 8 neighbours), then take the bearing
+    //    of the segment from the upstream end to the downstream end.
+    // -------------------------------------------------------------------------
+    static const int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    static const int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+    std::vector<float>   bearing_d(npix, nodata);
+    std::vector<uint8_t> bearing_m(npix, 0u);
+    std::vector<float>   angle_d(npix, nodata);
+    std::vector<uint8_t> angle_m(npix, 0u);
+
+    const int hw = request.flow_path_half_window;
+
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!channel_m[k] || channel_d[k] < 0.5f) continue;
+
+        const std::int64_t start = static_cast<std::int64_t>(k);
+
+        // Walk downstream.
+        std::int64_t down = start;
+        for (int step = 0; step < hw; ++step)
+        {
+            if (flow->is_outlet_unchecked(down)) break;
+            const std::int64_t rec = flow->receiver_of_unchecked(down);
+            if (rec < 0 || !flow->is_valid_cell(rec)) break;
+            down = rec;
+        }
+
+        // Walk upstream along the main stem (largest-drainage donor).
+        std::int64_t up = start;
+        for (int step = 0; step < hw; ++step)
+        {
+            const int cr = flow->row_from_flat_unchecked(up);
+            const int cc = flow->col_from_flat_unchecked(up);
+            std::int64_t best = -1;
+            std::uint64_t best_area = 0;
+            for (int n = 0; n < 8; ++n)
+            {
+                const int nr = cr + DR[n];
+                const int nc = cc + DC[n];
+                if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
+                const std::int64_t nf = flow->flat_index_unchecked(nr, nc);
+                if (!flow->is_valid_cell(nf)) continue;
+                if (flow->receiver_of_unchecked(nf) != up) continue;
+                const std::uint64_t area = flow->s_vector_size_unchecked(nf);
+                if (best < 0 || area > best_area) { best = nf; best_area = area; }
+            }
+            if (best < 0) break;
+            up = best;
+        }
+
+        if (up == down) continue;   // no usable segment
+
+        const int ur = flow->row_from_flat_unchecked(up);
+        const int uc = flow->col_from_flat_unchecked(up);
+        const int dr = flow->row_from_flat_unchecked(down);
+        const int dc = flow->col_from_flat_unchecked(down);
+
+        // Bearing of the upstream->downstream segment (azimuth from north).
+        const double east  = static_cast<double>(dc - uc);
+        const double north = static_cast<double>(ur - dr);   // north = -row
+        double bearing = std::atan2(east, north) * (180.0 / M_PI);
+        if (bearing < 0.0) bearing += 360.0;
+        bearing_d[k] = static_cast<float>(bearing);
+        bearing_m[k] = 1u;
+
+        // Angular difference to the regional downslope bearing.
+        if (downslope_m[k])
+        {
+            double diff = std::fabs(bearing - static_cast<double>(regional_slope_bearing.get_data()[k]));
+            diff = std::fmod(diff, 360.0);
+            if (diff > 180.0) diff = 360.0 - diff;
+            angle_d[k] = static_cast<float>(diff);
+            angle_m[k] = 1u;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Short-wavelength gradient, total curvature, and local roughness, from
+    //    the ORIGINAL (unfilled) surface.
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu short_gradient = compute_gradient_magnitude_3x3_square(raster);
+
+    const double curv_radius =
+        (request.short_curvature_radius_metres > 0.0)
+        ? request.short_curvature_radius_metres
+        : cell_size;   // 1 px -> 3x3 stencil
+    lsdtt_raster_cpu short_curv =
+        moving_window_total_curvature(raster, curv_radius, window_shape::square);
+
+    lsdtt_raster_cpu roughness =
+        moving_window_stddev(raster, request.roughness_radius_metres, window_shape::circular);
+
+    // -------------------------------------------------------------------------
+    // Assemble result.
+    // -------------------------------------------------------------------------
+    road_flow_result out;
+    out.regional_slope_bearing = std::move(regional_slope_bearing);
+    out.regional_slope         = rmetrics.at(polyfit_metric::slope);
+    out.contributing_pixels    = lsdtt_raster_cpu(std::move(contrib_d),  std::move(contrib_m),  meta);
+    out.channel_mask           = lsdtt_raster_cpu(std::move(channel_d),  std::move(channel_m),  meta);
+    out.flow_path_bearing      = lsdtt_raster_cpu(std::move(bearing_d),  std::move(bearing_m),  meta);
+    out.flow_vs_slope_angle    = lsdtt_raster_cpu(std::move(angle_d),    std::move(angle_m),    meta);
+    out.short_gradient         = std::move(short_gradient);
+    out.short_total_curvature  = std::move(short_curv);
+    out.roughness              = std::move(roughness);
+    out.regional_bearing_contrast = std::move(regional_bearing_contrast);
+    out.valley_axis_buffer_mask   = std::move(valley_axis_buffer);
+    return out;
+}
 
 } // namespace lsdtt
