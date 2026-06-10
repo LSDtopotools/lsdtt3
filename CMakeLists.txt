@@ -303,9 +303,15 @@ if(OpenMP_CXX_FOUND)
 endif()
 
 if(LSDTT_HAS_FFTW)
+    # Give FFTW to the CPU library
     target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_FFTW=1)
     target_include_directories(lsdtt3_cpu PUBLIC ${FFTW3_INCLUDE_DIRS})
     target_link_libraries(lsdtt3_cpu PUBLIC ${FFTW3_LIBRARIES})
+
+    # Give FFTW to the Utils library (where signal1d code lives)
+    target_compile_definitions(lsdtt3_utils PUBLIC LSDTT_HAS_FFTW=1)
+    target_include_directories(lsdtt3_utils PUBLIC ${FFTW3_INCLUDE_DIRS})
+    target_link_libraries(lsdtt3_utils PUBLIC ${FFTW3_LIBRARIES})
 endif()
 
 if(LSDTT_HAS_NETCDF)
