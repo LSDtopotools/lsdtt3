@@ -340,5 +340,85 @@ std::vector<power_spectrum_bin> compute_power_spectrum(
 #endif
 }
 
+// -----------------------------------------------------------------------------
+// Spatial Autocorrelation & Spacing
+// -----------------------------------------------------------------------------
+
+double compute_characteristic_spacing(const std::vector<double>& y, double dx)
+{
+    const int N = static_cast<int>(y.size());
+    if (N < 5) return 0.0; // Trace is too short
+
+    // 1. Linear detrending (OLS) 
+    double sum_x = 0.0, sum_y = 0.0, sum_xx = 0.0, sum_xy = 0.0;
+    for (int i = 0; i < N; ++i) {
+        double xi = i * dx;
+        sum_x += xi;
+        sum_y += y[i];
+        sum_xx += xi * xi;
+        sum_xy += xi * y[i];
+    }
+    
+    double denom = (static_cast<double>(N) * sum_xx) - (sum_x * sum_x);
+    double m = 0.0, c = 0.0;
+    if (std::abs(denom) > 1e-15) {
+        m = (static_cast<double>(N) * sum_xy - sum_x * sum_y) / denom;
+        c = (sum_y - m * sum_x) / static_cast<double>(N);
+    } else {
+        c = sum_y / static_cast<double>(N);
+    }
+
+    std::vector<double> detrended(N);
+    double total_variance = 0.0;
+    for (int i = 0; i < N; ++i) {
+        detrended[i] = y[i] - (m * (i * dx) + c);
+        total_variance += detrended[i] * detrended[i];
+    }
+
+    // If the signal is perfectly flat (variance is zero), it has no spacing
+    if (total_variance < 1e-12) return 0.0;
+
+    // 2. Compute Autocorrelation up to max lag = N / 2
+    // We stop at N/2 because higher lags have too few points and become statistically noisy
+    int max_lag = N / 2;
+    std::vector<double> autocorr(max_lag, 0.0);
+    
+    for (int k = 0; k < max_lag; ++k) {
+        double sum_cov = 0.0;
+        for (int i = 0; i < N - k; ++i) {
+            sum_cov += detrended[i] * detrended[i + k];
+        }
+        autocorr[k] = sum_cov / total_variance;
+    }
+
+    // 3. Find the first valley (drop off)
+    // We must ignore the peak at lag=0, so we wait until correlation stops dropping
+    int first_valley = -1;
+    for (int k = 1; k < max_lag - 1; ++k) {
+        if (autocorr[k] < autocorr[k - 1] && autocorr[k] < autocorr[k + 1]) {
+            first_valley = k;
+            break;
+        }
+    }
+
+    // If it never drops into a valley, there is no repeating signal
+    if (first_valley == -1) return 0.0;
+
+    // 4. Find the first local maximum after the valley
+    int first_peak = -1;
+    for (int k = first_valley + 1; k < max_lag - 1; ++k) {
+        if (autocorr[k] > autocorr[k - 1] && autocorr[k] > autocorr[k + 1]) {
+            first_peak = k;
+            break;
+        }
+    }
+
+    if (first_peak == -1) return 0.0;
+
+    // The lag index multiplied by dx is the physical characteristic spacing!
+    return first_peak * dx;
+}
+
+
 
 } // namespace lsdtt

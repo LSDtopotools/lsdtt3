@@ -108,7 +108,8 @@ static void write_hillshade_png(
 // on open boundaries.
 // -----------------------------------------------------------------------------
 static std::vector<std::int64_t> build_boundary_flats(
-    const lsdtt::lsdtt_raster_cpu& dem)
+    const lsdtt::lsdtt_raster_cpu& dem,
+    const std::string& bc)
 {
     const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
     const int nr = meta.n_rows;
@@ -125,10 +126,19 @@ static std::vector<std::int64_t> build_boundary_flats(
             out.push_back(flat);
     };
 
-    for (int c = 0; c < nc; ++c) { add(0, c);      add(nr - 1, c); }
-    for (int r = 1; r < nr - 1; ++r) { add(r, 0);  add(r, nc - 1); }
+    // Determine which edges are fixed baselevels ('o' or 'b')
+    // String is ordered NESW
+    bool fix_n = (bc.length() > 0 && (bc[0] == 'o' || bc[0] == 'b'));
+    bool fix_e = (bc.length() > 1 && (bc[1] == 'o' || bc[1] == 'b'));
+    bool fix_s = (bc.length() > 2 && (bc[2] == 'o' || bc[2] == 'b'));
+    bool fix_w = (bc.length() > 3 && (bc[3] == 'o' || bc[3] == 'b'));
 
-    // Deduplicate (corner pixels appear twice)
+    if (fix_n) for (int c = 0; c < nc; ++c) add(0, c);
+    if (fix_s) for (int c = 0; c < nc; ++c) add(nr - 1, c);
+    if (fix_w) for (int r = 0; r < nr; ++r) add(r, 0); 
+    if (fix_e) for (int r = 0; r < nr; ++r) add(r, nc - 1);
+
+    // Deduplicate (corner pixels appear twice if adjacent edges are both fixed)
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
 
@@ -271,7 +281,7 @@ int main(int argc, char* argv[])
 
     string_default_map["hillslope_model"] = "cidre";
     help_map["hillslope_model"] = {"string","cidre",
-        "Hillslope transport model: linear, roering, or cidre.",
+        "Hillslope transport model: linear, roering, or cidre, or adi.",
         "linear: explicit FD of D·∇²z on the regular 4-connected grid (stable at any "
         "typical LEM dt; no flow graph needed beyond channel ID). "
         "roering: explicit FD of the Roering (1999) nonlinear law D·∇·[∇z/(1-(|∇z|/Sc)²)]; "
@@ -279,6 +289,7 @@ int main(int argc, char* argv[])
         "must be true or it reduces to linear FD. "
         "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
         "unconditionally stable near Sc via slope-restoration. "
+        "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps."
         "Requires enable_hillslope_transport."};
 
     bool_default_map["enable_uplift"] = true;
@@ -1014,8 +1025,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Identify boundary pixels (held at fixed elevation)
     // -------------------------------------------------------------------------
-    std::vector<std::int64_t> boundary_flats = build_boundary_flats(dem);
+    std::vector<std::int64_t> boundary_flats = build_boundary_flats(dem, opts.boundary_conditions);
     std::cout << "Boundary pixels: " << boundary_flats.size() << "\n";
+
 
     // -------------------------------------------------------------------------
     // Prepare stats CSV

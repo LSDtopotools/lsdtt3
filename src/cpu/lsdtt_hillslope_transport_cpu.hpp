@@ -126,4 +126,18 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
     int   n_threads = 0
 );
 
+// -----------------------------------------------------------------------------
+// compute_adi_hillslope_transport
+//
+// Iterates uncoupled linear hillslope diffusion using the Crank-Nicolson method 
+// and Alternating Direction Implicit (ADI) sweeps via the Thomas algorithm.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_adi_hillslope_transport(
+    const lsdtt_raster_cpu& dem,
+    float kappa,
+    float dt,
+    const std::string& boundary_conditions
+);
+
+
 } // namespace lsdtt

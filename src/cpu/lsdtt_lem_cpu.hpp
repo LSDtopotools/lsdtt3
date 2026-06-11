@@ -53,6 +53,7 @@ struct lsdtt_lem_options
     float critical_hillslope_slope        = 0.6f;
     bool  deposit_on_hillslope_baselevels = true;
     // "linear" = explicit FD D·∇²z,  "roering" = explicit FD Roering 1999,  "cidre" = Carretier 2016
+    // "adi" = alternating directions implicit for linear hillslope diffusion only
     std::string hillslope_transport_model = "cidre";
 
     // Uplift

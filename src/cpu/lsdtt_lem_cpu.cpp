@@ -113,67 +113,83 @@ run_lem_step(
     // -------------------------------------------------------------------------
     if (opts.enable_hillslope_transport)
     {
-        lsdtt_flowgraph_options fg_opts;
-        fg_opts.boundary_conditions       = opts.boundary_conditions;
-        fg_opts.interior_nodata_is_outlet = true;
-        fg_opts.method                    = lsdtt_flowgraph_method::d_infinity;
-        fg_opts.n_threads                 = opts.n_threads;
 
-        lsdtt_flowgraph_cpu flow_hillslope(
-            current.get_data_array(),
-            current.get_mask_array(),
-            current.get_meta(),
-            fg_opts
-        );
-
-        if (opts.hillslope_transport_model == "linear" ||
-            opts.hillslope_transport_model == "roering")
+        if (opts.hillslope_transport_model == "adi") 
         {
-            // Explicit FD on the regular grid — flow graph used only for channel ID.
-            const std::int64_t n_hs =
-                static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
-            const float dx = static_cast<float>(meta.cell_size);
-            std::vector<uint8_t> is_channel(static_cast<std::size_t>(n_hs), 0);
-
-            if (opts.incision_threshold_area > 0.0f)
-            {
-                std::vector<double> area = flow_hillslope.accumulate();
-                for (std::int64_t flat = 0; flat < n_hs; ++flat)
-                {
-                    if (!flow_hillslope.is_valid_flat(flat)) continue;
-                    double a = area[static_cast<std::size_t>(flat)];
-                    if (opts.divide_area_by_dx) a /= static_cast<double>(dx);
-                    if (a >= static_cast<double>(opts.incision_threshold_area))
-                        is_channel[static_cast<std::size_t>(flat)] = 1;
-                }
-            }
-
-            const bool nl = (opts.hillslope_transport_model == "roering")
-                            && opts.enable_nonlinear_hillslopes;
-
-            current = compute_roering_hillslope_transport(
+            // Alternating directions implicit does not need to build a flow graph
+            current = compute_adi_hillslope_transport(
                 current,
-                is_channel,
                 opts.hillslope_diffusivity,
                 opts.timestep,
-                nl,
-                opts.critical_hillslope_slope,
-                opts.n_threads
+                opts.boundary_conditions
             );
         }
-        else  // "cidre"
+        else 
         {
-            current = compute_cidre_hillslope_transport(
-                current, flow_hillslope,
-                opts.hillslope_diffusivity,
-                opts.timestep,
-                opts.enable_nonlinear_hillslopes,
-                opts.critical_hillslope_slope,
-                opts.incision_threshold_area,
-                opts.divide_area_by_dx,
-                opts.deposit_on_hillslope_baselevels,
-                opts.n_threads
+            // The linear/roering and cidre hillslope options require a flow
+            // graph to be made.
+            lsdtt_flowgraph_options fg_opts;
+            fg_opts.boundary_conditions       = opts.boundary_conditions;
+            fg_opts.interior_nodata_is_outlet = true;
+            fg_opts.method                    = lsdtt_flowgraph_method::d_infinity;
+            fg_opts.n_threads                 = opts.n_threads;
+
+            lsdtt_flowgraph_cpu flow_hillslope(
+                current.get_data_array(),
+                current.get_mask_array(),
+                current.get_meta(),
+                fg_opts
             );
+
+            if (opts.hillslope_transport_model == "linear" ||
+                opts.hillslope_transport_model == "roering")
+            {
+                // Explicit FD on the regular grid — flow graph used only for channel ID.
+                const std::int64_t n_hs =
+                    static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
+                const float dx = static_cast<float>(meta.cell_size);
+                std::vector<uint8_t> is_channel(static_cast<std::size_t>(n_hs), 0);
+
+                if (opts.incision_threshold_area > 0.0f)
+                {
+                    std::vector<double> area = flow_hillslope.accumulate();
+                    for (std::int64_t flat = 0; flat < n_hs; ++flat)
+                    {
+                        if (!flow_hillslope.is_valid_flat(flat)) continue;
+                        double a = area[static_cast<std::size_t>(flat)];
+                        if (opts.divide_area_by_dx) a /= static_cast<double>(dx);
+                        if (a >= static_cast<double>(opts.incision_threshold_area))
+                            is_channel[static_cast<std::size_t>(flat)] = 1;
+                    }
+                }
+
+                const bool nl = (opts.hillslope_transport_model == "roering")
+                                && opts.enable_nonlinear_hillslopes;
+
+                current = compute_roering_hillslope_transport(
+                    current,
+                    is_channel,
+                    opts.hillslope_diffusivity,
+                    opts.timestep,
+                    nl,
+                    opts.critical_hillslope_slope,
+                    opts.n_threads
+                );
+            }
+            else  // "cidre"
+            {
+                current = compute_cidre_hillslope_transport(
+                    current, flow_hillslope,
+                    opts.hillslope_diffusivity,
+                    opts.timestep,
+                    opts.enable_nonlinear_hillslopes,
+                    opts.critical_hillslope_slope,
+                    opts.incision_threshold_area,
+                    opts.divide_area_by_dx,
+                    opts.deposit_on_hillslope_baselevels,
+                    opts.n_threads
+                );
+            }
         }
     }
 
