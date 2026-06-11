@@ -61,6 +61,7 @@ nav:
       - Channel network analysis: cli_reference_lsdtt_channel_network_analysis.md
       - Chi analysis: cli_reference_lsdtt_chi_analysis.md
       - Cross sections: cli_reference_lsdtt_cross_sections.md
+      - Ridgeline analysis: cli_reference_lsdtt_ridgeline_analysis.md
     - Tidal / marsh:
       - Marsh topography: cli_reference_lsdtt_marsh_topography.md
     - Cosmogenic nuclides:
