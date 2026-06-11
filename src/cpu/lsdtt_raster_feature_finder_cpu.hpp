@@ -443,17 +443,32 @@ struct road_flow_request
     double regional_smoothing_metres          = 100.0; // regional slope fit window
     int    flow_accumulation_threshold_pixels = 1000;  // channel definition
     int    flow_path_half_window              = 5;     // pixels up and down the path
-    double short_curvature_radius_metres      = 0.0;   // 0 -> 1 px (3x3 stencil)
+    double short_curvature_radius_metres      = 0.0;   // 0 -> ~3 px short polyfit
+    double intermediate_window_metres         = 15.0;  // intermediate polyfit window
     double roughness_radius_metres            = 2.5;   // local roughness window
     bool   dem_is_filled                      = false; // skip internal pit fill
     std::string boundary_conditions           = "oooo";
     int    n_threads                          = 0;
 
-    // Regional-bearing-contrast / valley-axis buffer. Where the regional slope
-    // bearing flips (two valley sides facing each other, or a ridge crest), the
-    // local mean resultant length of the bearing is low, so contrast = 1 - R is
-    // high. The thresholded contrast is buffered to mark valley-axis zones where
-    // flow-path bearings are expected to be ambiguous (not road misdirection).
+    // Valley-axis buffer. The valley zone is taken from a curvature of the
+    // heavily smoothed (regional) surface. The default is TANGENTIAL curvature
+    // (the cross-slope / contour curvature, i.e. flow convergence): it is
+    // positive in valleys (concave across the slope) but ~zero at a footslope
+    // slope break, whose concavity is down-slope (profile) only and whose
+    // contour runs straight. Convex ridges are excluded by sign. Using the
+    // laplacian instead would also flag slope breaks; mean curvature behaves
+    // like the laplacian. The thresholded concavity is buffered to mark the
+    // valley-axis zone where flow-path bearings are expected to be ambiguous
+    // (not road misdirection).
+    //
+    // The regional bearing contrast (1 - mean resultant length over
+    // bearing_contrast_window_metres) is retained as a diagnostic and as an
+    // OPTIONAL extra gate; it is not required by default because, on its own, it
+    // only fires on sharp bearing flips (missing broad valleys) and cannot
+    // separate valleys from ridges.
+    polyfit_metric valley_curvature_metric    = polyfit_metric::tangential_curvature;
+    double valley_curvature_threshold         = 0.0;   // curvature >= this -> valley
+    bool   valley_require_bearing_contrast    = false; // also require contrast gate
     double bearing_contrast_window_metres     = 10.0;  // window for 1 - R
     double bearing_contrast_threshold         = 0.4;   // contrast >= this -> axis
     double valley_buffer_radius_metres        = 10.0;  // dilation buffer
@@ -472,9 +487,11 @@ struct road_flow_request
 // flow_vs_slope_angle:    angular difference (deg, [0,180]) between
 //                         flow_path_bearing and regional_slope_bearing, on
 //                         channel pixels. Small = channel; large = along-contour.
-// short_gradient:         3x3 gradient magnitude of the original surface.
-// short_total_curvature:  short-wavelength total curvature (Laplacian).
-// roughness:              local elevation standard deviation (roughness).
+// short_gradient:             3x3 gradient magnitude of the original surface.
+// short_tangential_curvature: short-wavelength tangential (contour) curvature.
+// intermediate_*_curvature:   tangential / minimum / maximum curvature from a
+//                             polyfit at intermediate_window_metres (default 15 m).
+// roughness:                  local elevation standard deviation (roughness).
 // -----------------------------------------------------------------------------
 struct road_flow_result
 {
@@ -484,12 +501,18 @@ struct road_flow_result
     lsdtt_raster_cpu channel_mask;
     lsdtt_raster_cpu flow_path_bearing;
     lsdtt_raster_cpu flow_vs_slope_angle;
+    lsdtt_raster_cpu inflated_flow_path_divergence;
     lsdtt_raster_cpu short_gradient;
-    lsdtt_raster_cpu short_total_curvature;
+    lsdtt_raster_cpu short_tangential_curvature;
+    lsdtt_raster_cpu intermediate_tangential_curvature;
+    lsdtt_raster_cpu intermediate_minimum_curvature;
+    lsdtt_raster_cpu intermediate_maximum_curvature;
     lsdtt_raster_cpu roughness;
 
-    // Regional bearing contrast (1 - mean resultant length) and the buffered
-    // valley-axis mask (1 inside the buffer around bearing-contrast zones).
+    // Regional (heavily smoothed) curvature used to define the valley zone
+    // (concave = valley, convex = ridge), the regional bearing contrast
+    // diagnostic, and the buffered valley-axis mask.
+    lsdtt_raster_cpu regional_valley_curvature;
     lsdtt_raster_cpu regional_bearing_contrast;
     lsdtt_raster_cpu valley_axis_buffer_mask;
 };

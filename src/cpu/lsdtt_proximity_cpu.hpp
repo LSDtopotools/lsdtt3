@@ -114,6 +114,36 @@ lsdtt_raster_cpu difference_to_nearest_true_mask_value(
 
 
 // =============================================================================
+// inflate_values_to_nearest_source
+//
+// Region-grows ("inflates") a sparse value raster into a surrounding domain:
+// every domain pixel takes the value of the NEAREST source pixel.
+//
+//   source_values — sources are the pixels where source_values.mask == 1; their
+//                   data value is what gets propagated.
+//   priority      — defines the fill domain (pixels where priority.mask == 1) and
+//                   supplies the tie-break weight. When two sources are the same
+//                   distance from a pixel, the source with the GREATER priority
+//                   value wins (e.g. flow accumulation / contributing pixels).
+//
+// Distance is grid (Dijkstra) distance: cardinal step = cell_size, diagonal step
+// = cell_size * sqrt(2), which closely approximates Euclidean distance. Source
+// pixels keep their own value. Pixels outside the domain (priority.mask == 0)
+// are nodata in the output; domain pixels with no reachable source are nodata.
+//
+// Output: Float32 raster co-registered with the inputs.
+//
+// Throws:
+//   std::runtime_error if metadata is invalid/not projected in metres or if the
+//   two rasters are not co-registered.
+// =============================================================================
+lsdtt_raster_cpu inflate_values_to_nearest_source(
+    const lsdtt_raster_cpu& source_values,
+    const lsdtt_raster_cpu& priority,
+    int                     n_threads = 0
+);
+
+// =============================================================================
 // swath_distances
 // =============================================================================
 struct swath_distances

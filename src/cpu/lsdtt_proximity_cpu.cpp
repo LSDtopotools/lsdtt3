@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <deque>
 #include <limits>
+#include <queue>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -367,6 +368,127 @@ lsdtt_raster_cpu euclidean_distance_transform(
     }
 
     return lsdtt_raster_cpu(std::move(out), std::move(omsk), meta);
+}
+
+// =============================================================================
+// inflate_values_to_nearest_source
+//
+// Multi-source grid Dijkstra. Each pixel is claimed by the source reachable at
+// the smallest grid distance; equal-distance ties go to the larger priority
+// (flow accumulation) value.
+// =============================================================================
+lsdtt_raster_cpu inflate_values_to_nearest_source(
+    const lsdtt_raster_cpu& source_values,
+    const lsdtt_raster_cpu& priority,
+    int                     n_threads)
+{
+    (void)n_threads;   // serial Dijkstra
+
+    const lsdtt_raster_meta& meta = source_values.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::inflate_values_to_nearest_source: invalid raster metadata");
+    meta.check_projected_metres();
+
+    const lsdtt_raster_meta& pmeta = priority.get_meta();
+    if (pmeta.n_rows != meta.n_rows || pmeta.n_cols != meta.n_cols)
+        throw std::runtime_error(
+            "lsdtt::inflate_values_to_nearest_source: rasters are not co-registered");
+
+    const int         nr   = meta.n_rows;
+    const int         nc   = meta.n_cols;
+    const std::size_t npix = static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
+    const double      cell = meta.cell_size;
+    const float       ndv  = static_cast<float>(meta.no_data_value);
+
+    const std::vector<float>&   val_data = source_values.get_data();
+    const std::vector<uint8_t>& val_mask = source_values.get_mask();
+    const std::vector<float>&   pri_data = priority.get_data();
+    const std::vector<uint8_t>& pri_mask = priority.get_mask();
+
+    const double INF = std::numeric_limits<double>::infinity();
+
+    std::vector<double>  best_dist(npix, INF);
+    std::vector<float>   best_pri (npix, 0.0f);
+    std::vector<float>   out_val  (npix, ndv);
+    std::vector<uint8_t> finalised(npix, 0u);
+
+    // Priority queue entry: order by distance ascending, then by source priority
+    // descending (larger accumulation wins ties).
+    struct node
+    {
+        double       dist;
+        float        src_pri;
+        float        src_val;
+        std::int64_t flat;
+    };
+    struct node_cmp
+    {
+        bool operator()(const node& a, const node& b) const
+        {
+            if (a.dist != b.dist) return a.dist > b.dist;   // min-dist first
+            return a.src_pri < b.src_pri;                   // max-priority first
+        }
+    };
+    std::priority_queue<node, std::vector<node>, node_cmp> pq;
+
+    // Seed the queue with every source pixel that lies in the domain.
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (val_mask[i] == 0) continue;          // not a source
+        if (pri_mask[i] == 0) continue;          // source not in domain
+        const float pv = pri_data[i];
+        best_dist[i] = 0.0;
+        best_pri[i]  = pv;
+        pq.push(node{0.0, pv, val_data[i], static_cast<std::int64_t>(i)});
+    }
+
+    static const int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+    static const int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    const double diag = cell * std::sqrt(2.0);
+
+    while (!pq.empty())
+    {
+        const node cur = pq.top();
+        pq.pop();
+
+        const std::int64_t idx = cur.flat;
+        if (finalised[idx]) continue;
+
+        finalised[idx] = 1u;
+        out_val[idx]   = cur.src_val;
+        best_dist[idx] = cur.dist;
+        best_pri[idx]  = cur.src_pri;
+
+        const int r = static_cast<int>(idx / nc);
+        const int c = static_cast<int>(idx % nc);
+
+        for (int n = 0; n < 8; ++n)
+        {
+            const int nr2 = r + DR[n];
+            const int nc2 = c + DC[n];
+            if (nr2 < 0 || nr2 >= nr || nc2 < 0 || nc2 >= nc) continue;
+
+            const std::size_t nidx =
+                static_cast<std::size_t>(nr2) * static_cast<std::size_t>(nc) + nc2;
+            if (pri_mask[nidx] == 0) continue;   // outside fill domain
+            if (finalised[nidx]) continue;
+
+            const double step = (DR[n] != 0 && DC[n] != 0) ? diag : cell;
+            const double nd   = cur.dist + step;
+
+            if (nd < best_dist[nidx] ||
+                (nd == best_dist[nidx] && cur.src_pri > best_pri[nidx]))
+            {
+                best_dist[nidx] = nd;
+                best_pri[nidx]  = cur.src_pri;
+                pq.push(node{nd, cur.src_pri, cur.src_val,
+                             static_cast<std::int64_t>(nidx)});
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_val), std::move(finalised), meta);
 }
 
 // =============================================================================

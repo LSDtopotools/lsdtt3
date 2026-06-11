@@ -13,6 +13,7 @@
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "lsdtt_proximity_cpu.hpp"
 #include "../core/lsdtt_flow_base.hpp"
 #include "../utils/lsdtt_binary_array2d_tracing.hpp"
 
@@ -1982,7 +1983,9 @@ road_flow_result find_road_flow_discrimination(
         direct_polyfit(raster, request.regional_smoothing_metres, request.n_threads);
 
     polyfit_metric_request rreq;
-    rreq.metrics   = { polyfit_metric::aspect_degrees, polyfit_metric::slope };
+    rreq.metrics   = { polyfit_metric::aspect_degrees,
+                       polyfit_metric::slope,
+                       request.valley_curvature_metric };
     rreq.n_threads = request.n_threads;
     polyfit_metric_result rmetrics = compute_polyfit_metrics(regional_coeffs, rreq);
 
@@ -2033,22 +2036,45 @@ road_flow_result find_road_flow_discrimination(
 
     std::vector<float>   contrast_d(npix, nodata);
     std::vector<uint8_t> contrast_m(npix, 0u);
-    std::vector<float>   axis_d(npix, nodata);
-    std::vector<uint8_t> axis_m(npix, 0u);
     for (std::size_t k = 0; k < npix; ++k)
     {
         if (!(mcm[k] && msm[k])) continue;
         const double R =
             std::sqrt(static_cast<double>(mcd[k]) * mcd[k] +
                       static_cast<double>(msd[k]) * msd[k]);
-        const double contrast = 1.0 - R;
-        contrast_d[k] = static_cast<float>(contrast);
+        contrast_d[k] = static_cast<float>(1.0 - R);
         contrast_m[k] = 1u;
-        axis_d[k] = (contrast >= request.bearing_contrast_threshold) ? 1.0f : 0.0f;
-        axis_m[k] = 1u;
     }
     lsdtt_raster_cpu regional_bearing_contrast(
-        std::move(contrast_d), std::move(contrast_m), meta);
+        std::move(contrast_d), std::vector<uint8_t>(contrast_m), meta);
+    const auto& con_ref = regional_bearing_contrast.get_data();
+
+    // Valley zone = concave-up regional curvature (>= threshold), which spans
+    // the whole valley and excludes convex ridges. With tangential curvature
+    // (default) it also excludes pure down-slope footslope breaks. Optionally
+    // also require the bearing-contrast gate.
+    const lsdtt_raster_cpu& regional_curv =
+        rmetrics.at(request.valley_curvature_metric);
+    const auto& lap_d = regional_curv.get_data();
+    const auto& lap_m = regional_curv.get_mask();
+
+    std::vector<float>   axis_d(npix, nodata);
+    std::vector<uint8_t> axis_m(npix, 0u);
+    for (std::size_t k = 0; k < npix; ++k)
+    {
+        if (!lap_m[k]) continue;
+        bool is_valley =
+            (static_cast<double>(lap_d[k]) >= request.valley_curvature_threshold);
+        if (is_valley && request.valley_require_bearing_contrast)
+        {
+            const bool contrast_ok =
+                contrast_m[k] &&
+                static_cast<double>(con_ref[k]) >= request.bearing_contrast_threshold;
+            is_valley = contrast_ok;
+        }
+        axis_d[k] = is_valley ? 1.0f : 0.0f;
+        axis_m[k] = 1u;
+    }
     lsdtt_raster_cpu valley_axis_mask(std::move(axis_d), std::move(axis_m), meta);
 
     lsdtt_raster_cpu valley_axis_buffer =
@@ -2180,17 +2206,38 @@ road_flow_result find_road_flow_discrimination(
     }
 
     // -------------------------------------------------------------------------
-    // 4. Short-wavelength gradient, total curvature, and local roughness, from
-    //    the ORIGINAL (unfilled) surface.
+    // 4. Short-wavelength gradient + tangential curvature, intermediate-window
+    //    (default 15 m) tangential / minimum / maximum curvature, and local
+    //    roughness, all from the ORIGINAL (unfilled) surface.
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu short_gradient = compute_gradient_magnitude_3x3_square(raster);
 
-    const double curv_radius =
+    // Short tangential curvature from a short polyfit. The half-wavelength is
+    // 2 * radius (or ~3 px when radius <= 0).
+    const double short_lambda =
         (request.short_curvature_radius_metres > 0.0)
-        ? request.short_curvature_radius_metres
-        : cell_size;   // 1 px -> 3x3 stencil
-    lsdtt_raster_cpu short_curv =
-        moving_window_total_curvature(raster, curv_radius, window_shape::square);
+        ? 2.0 * request.short_curvature_radius_metres
+        : 2.0 * cell_size;
+    poly_fit_coeffs short_coeffs =
+        direct_polyfit(raster, short_lambda, request.n_threads);
+    polyfit_metric_request short_req;
+    short_req.metrics   = { polyfit_metric::tangential_curvature };
+    short_req.n_threads = request.n_threads;
+    polyfit_metric_result short_metrics =
+        compute_polyfit_metrics(short_coeffs, short_req);
+    lsdtt_raster_cpu short_tangential =
+        short_metrics.at(polyfit_metric::tangential_curvature);
+
+    // Intermediate-window curvatures.
+    poly_fit_coeffs inter_coeffs =
+        direct_polyfit(raster, request.intermediate_window_metres, request.n_threads);
+    polyfit_metric_request inter_req;
+    inter_req.metrics   = { polyfit_metric::tangential_curvature,
+                            polyfit_metric::minimum_curvature,
+                            polyfit_metric::maximum_curvature };
+    inter_req.n_threads = request.n_threads;
+    polyfit_metric_result inter_metrics =
+        compute_polyfit_metrics(inter_coeffs, inter_req);
 
     lsdtt_raster_cpu roughness =
         moving_window_stddev(raster, request.roughness_radius_metres, window_shape::circular);
@@ -2198,16 +2245,35 @@ road_flow_result find_road_flow_discrimination(
     // -------------------------------------------------------------------------
     // Assemble result.
     // -------------------------------------------------------------------------
+    lsdtt_raster_cpu contributing_raster(std::move(contrib_d), std::move(contrib_m), meta);
+    lsdtt_raster_cpu flow_vs_slope_raster(std::move(angle_d),  std::move(angle_m),   meta);
+
+    // Inflate the (channel-only) flow-vs-slope angle into the surrounding domain:
+    // every pixel takes the angle of the nearest channel pixel, ties broken by
+    // greater flow accumulation. Roads show long divergent stretches, so this
+    // spreads their high-angle signature across the neighbourhood.
+    lsdtt_raster_cpu inflated_divergence =
+        inflate_values_to_nearest_source(
+            flow_vs_slope_raster, contributing_raster, request.n_threads);
+
     road_flow_result out;
     out.regional_slope_bearing = std::move(regional_slope_bearing);
     out.regional_slope         = rmetrics.at(polyfit_metric::slope);
-    out.contributing_pixels    = lsdtt_raster_cpu(std::move(contrib_d),  std::move(contrib_m),  meta);
+    out.contributing_pixels    = std::move(contributing_raster);
     out.channel_mask           = lsdtt_raster_cpu(std::move(channel_d),  std::move(channel_m),  meta);
     out.flow_path_bearing      = lsdtt_raster_cpu(std::move(bearing_d),  std::move(bearing_m),  meta);
-    out.flow_vs_slope_angle    = lsdtt_raster_cpu(std::move(angle_d),    std::move(angle_m),    meta);
-    out.short_gradient         = std::move(short_gradient);
-    out.short_total_curvature  = std::move(short_curv);
+    out.flow_vs_slope_angle    = std::move(flow_vs_slope_raster);
+    out.inflated_flow_path_divergence = std::move(inflated_divergence);
+    out.short_gradient              = std::move(short_gradient);
+    out.short_tangential_curvature  = std::move(short_tangential);
+    out.intermediate_tangential_curvature =
+        inter_metrics.at(polyfit_metric::tangential_curvature);
+    out.intermediate_minimum_curvature =
+        inter_metrics.at(polyfit_metric::minimum_curvature);
+    out.intermediate_maximum_curvature =
+        inter_metrics.at(polyfit_metric::maximum_curvature);
     out.roughness              = std::move(roughness);
+    out.regional_valley_curvature = rmetrics.at(request.valley_curvature_metric);
     out.regional_bearing_contrast = std::move(regional_bearing_contrast);
     out.valley_axis_buffer_mask   = std::move(valley_axis_buffer);
     return out;

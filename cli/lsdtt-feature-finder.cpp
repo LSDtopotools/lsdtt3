@@ -121,6 +121,10 @@ static lsdtt::polyfit_metric resolve_curvature_metric(const std::string& s)
     {
         return lsdtt::polyfit_metric::mean_curvature;
     }
+    if (s == "laplacian")
+    {
+        return lsdtt::polyfit_metric::laplacian;
+    }
     if (s == "maximum_curvature")
     {
         return lsdtt::polyfit_metric::maximum_curvature;
@@ -589,8 +593,17 @@ int main(int argc, char* argv[])
 
     float_default_map["flow_short_curvature_radius_metres"] = 0.0f;
     help_map["flow_short_curvature_radius_metres"] = {"float","0.0",
-        "Window radius for the short-wavelength total curvature, in metres.",
-        "0 uses a 1-pixel radius (3x3 stencil), i.e. the ~3-pixel short wavelength."};
+        "Radius for the short-wavelength tangential curvature, in metres.",
+        "The short polyfit half-wavelength is 2 * this radius; 0 uses ~3 pixels. "
+        "Output: _flow_short_tangential_curvature.tif."};
+
+    float_default_map["flow_intermediate_window_metres"] = 15.0f;
+    help_map["flow_intermediate_window_metres"] = {"float","15.0",
+        "Polyfit window (lengthscale) for the intermediate curvature rasters, in metres.",
+        "Produces tangential, minimum, and maximum curvature at this scale. "
+        "Outputs: _flow_intermediate_tangential_curvature.tif, "
+        "_flow_intermediate_minimum_curvature.tif, "
+        "_flow_intermediate_maximum_curvature.tif."};
 
     float_default_map["flow_roughness_radius_metres"] = 2.5f;
     help_map["flow_roughness_radius_metres"] = {"float","2.5",
@@ -608,6 +621,29 @@ int main(int argc, char* argv[])
         "Outputs: regional slope bearing and gradient, contributing pixels, channel "
         "mask, flow-path bearing, flow-vs-slope angle, short gradient, short total "
         "curvature, roughness, bearing contrast, and the valley-axis buffer mask."};
+
+    string_default_map["flow_valley_curvature_metric"] = "tangential_curvature";
+    help_map["flow_valley_curvature_metric"] = {"string","tangential_curvature",
+        "Regional curvature used to define the valley zone.",
+        "tangential_curvature (default): cross-slope/contour curvature (flow "
+        "convergence) — picks valleys but NOT footslope slope breaks (those are "
+        "concave down-slope only). plan_curvature: similar but normalised differently. "
+        "laplacian or mean_curvature: total concavity — also flags slope breaks. "
+        "Positive = concave; ridges (convex) are always excluded by sign."};
+
+    float_default_map["flow_valley_curvature_threshold"] = 0.0f;
+    help_map["flow_valley_curvature_threshold"] = {"float","0.0",
+        "Regional (smoothed) curvature above which a pixel is in the valley zone, in 1/m.",
+        "Uses flow_valley_curvature_metric of the heavily smoothed surface: concave-up "
+        "(>= this) is the valley zone and convex-up (ridges) is excluded. 0 keeps every "
+        "concave pixel; raise to restrict to stronger valley convergence."};
+
+    bool_default_map["flow_valley_require_bearing_contrast"] = false;
+    help_map["flow_valley_require_bearing_contrast"] = {"bool","false",
+        "Also require the bearing-contrast gate when building the valley-axis mask.",
+        "Off by default. On its own, bearing contrast only fires on sharp bearing flips "
+        "(missing broad valleys) and cannot separate valleys from ridges; the regional "
+        "curvature does that. Enable only to further restrict the valley zone."};
 
     float_default_map["flow_bearing_contrast_window_metres"] = 10.0f;
     help_map["flow_bearing_contrast_window_metres"] = {"float","10.0",
@@ -696,10 +732,18 @@ int main(int argc, char* argv[])
             ifs.at("flow_path_half_window");
         road_flow_request.short_curvature_radius_metres =
             static_cast<double>(ff.at("flow_short_curvature_radius_metres"));
+        road_flow_request.intermediate_window_metres =
+            static_cast<double>(ff.at("flow_intermediate_window_metres"));
         road_flow_request.roughness_radius_metres =
             static_cast<double>(ff.at("flow_roughness_radius_metres"));
         road_flow_request.dem_is_filled = bf.at("flow_dem_is_filled");
         road_flow_request.n_threads = n_threads;
+        road_flow_request.valley_curvature_metric =
+            resolve_curvature_metric(sf.at("flow_valley_curvature_metric"));
+        road_flow_request.valley_curvature_threshold =
+            static_cast<double>(ff.at("flow_valley_curvature_threshold"));
+        road_flow_request.valley_require_bearing_contrast =
+            bf.at("flow_valley_require_bearing_contrast");
         road_flow_request.bearing_contrast_window_metres =
             static_cast<double>(ff.at("flow_bearing_contrast_window_metres"));
         road_flow_request.bearing_contrast_threshold =
@@ -1221,9 +1265,14 @@ int main(int argc, char* argv[])
                     {result.channel_mask,           "_flow_channel_mask.tif"},
                     {result.flow_path_bearing,      "_flow_path_bearing.tif"},
                     {result.flow_vs_slope_angle,    "_flow_vs_slope_angle.tif"},
-                    {result.short_gradient,         "_flow_short_gradient.tif"},
-                    {result.short_total_curvature,  "_flow_short_total_curvature.tif"},
+                    {result.inflated_flow_path_divergence, "_inflated_flow_path_divergence.tif"},
+                    {result.short_gradient,             "_flow_short_gradient.tif"},
+                    {result.short_tangential_curvature, "_flow_short_tangential_curvature.tif"},
+                    {result.intermediate_tangential_curvature, "_flow_intermediate_tangential_curvature.tif"},
+                    {result.intermediate_minimum_curvature,    "_flow_intermediate_minimum_curvature.tif"},
+                    {result.intermediate_maximum_curvature,    "_flow_intermediate_maximum_curvature.tif"},
                     {result.roughness,              "_flow_roughness.tif"},
+                    {result.regional_valley_curvature, "_flow_regional_valley_curvature.tif"},
                     {result.regional_bearing_contrast, "_flow_bearing_contrast.tif"},
                     {result.valley_axis_buffer_mask,   "_flow_valley_axis_buffer.tif"}
                 };
