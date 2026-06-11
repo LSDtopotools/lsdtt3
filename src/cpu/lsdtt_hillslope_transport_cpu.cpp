@@ -350,4 +350,196 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
     );
 }
 
+// -----------------------------------------------------------------------------
+// compute_adi_hillslope_transport
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_adi_hillslope_transport(
+    const lsdtt_raster_cpu& dem,
+    float kappa,
+    float dt,
+    const std::string& boundary_conditions)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const float h   = static_cast<float>(meta.cell_size);
+
+    const std::vector<uint8_t>& mask = dem.get_mask();
+
+    std::vector<float> z_old = dem.get_data();
+    std::vector<float> z_half(z_old.size(), 0.0f);
+    std::vector<float> z_new(z_old.size(), 0.0f);
+
+    const bool per_n = (boundary_conditions.size() > 0 && boundary_conditions[0] == 'p');
+    const bool per_e = (boundary_conditions.size() > 1 && boundary_conditions[1] == 'p');
+    const bool per_s = (boundary_conditions.size() > 2 && boundary_conditions[2] == 'p');
+    const bool per_w = (boundary_conditions.size() > 3 && boundary_conditions[3] == 'p');
+
+    // Safe neighbour Z fetch using reflection logic for boundary edges and masked cells
+    auto nbr_z = [&](int r, int c, int dr, int dc, const std::vector<float>& arr) -> float
+    {
+        int nr = r + dr;
+        int nc = c + dc;
+
+        if (nr < 0) { if (per_n) nr = nrows - 1; else nr = std::max(0, r - dr); }
+        else if (nr >= nrows) { if (per_s) nr = 0; else nr = std::min(nrows - 1, r - dr); }
+
+        if (nc < 0) { if (per_w) nc = ncols - 1; else nc = std::max(0, c - dc); }
+        else if (nc >= ncols) { if (per_e) nc = 0; else nc = std::min(ncols - 1, c - dc); }
+
+        std::size_t nidx = static_cast<std::size_t>(nr * ncols + nc);
+        if (!mask[nidx]) 
+        {
+            int ir = std::max(0, std::min(nrows - 1, r - dr));
+            int ic = std::max(0, std::min(ncols - 1, c - dc));
+            return arr[static_cast<std::size_t>(ir * ncols + ic)];
+        }
+        return arr[nidx];
+    };
+
+    auto is_valid = [&](int r, int c) -> bool {
+        if (r < 0 || r >= nrows || c < 0 || c >= ncols) return false;
+        return mask[static_cast<std::size_t>(r * ncols + c)] > 0;
+    };
+
+    float base_gamma = kappa * dt / (2.0f * h * h);
+    int max_dim = std::max(nrows, ncols);
+    
+    std::vector<float> A(max_dim), B(max_dim), C_arr(max_dim), D(max_dim);
+    std::vector<float> c_prime(max_dim), d_prime(max_dim), x_res(max_dim);
+
+    // -----------------------------------------------------------------
+    // Sweep 1: Implicit X-direction, Explicit Y-direction
+    // -----------------------------------------------------------------
+    for (int r = 0; r < nrows; ++r)
+    {
+        for (int c = 0; c < ncols; ++c)
+        {
+            std::size_t idx = static_cast<std::size_t>(r * ncols + c);
+            if (!mask[idx])
+            {
+                A[c] = 0.0f; B[c] = 1.0f; C_arr[c] = 0.0f; D[c] = z_old[idx];
+            }
+            else
+            {
+                float gN = base_gamma, gS = base_gamma;
+                float gE = base_gamma, gW = base_gamma;
+
+                // Reduce flux to zero at open boundaries and mask borders
+                if (!per_n && !is_valid(r - 1, c)) gN = 0.0f;
+                if (!per_s && !is_valid(r + 1, c)) gS = 0.0f;
+                if (!per_e && !is_valid(r, c + 1)) gE = 0.0f;
+                if (!per_w && !is_valid(r, c - 1)) gW = 0.0f;
+
+                // For periodic bounds, push wrapped element to explicit terms to keep tridiagonal matrix intact
+                if (per_w && c == 0) gW = 0.0f;
+                if (per_e && c == ncols - 1) gE = 0.0f;
+
+                A[c] = -gW;
+                C_arr[c] = -gE;
+                B[c] = 1.0f + gW + gE;
+
+                float zC = z_old[idx];
+                float zN = nbr_z(r, c, -1, 0, z_old);
+                float zS = nbr_z(r, c, +1, 0, z_old);
+                
+                D[c] = zC + gN * (zN - zC) + gS * (zS - zC);
+                
+                // Explictly inject wrap connections
+                if (per_w && c == 0) D[c] += base_gamma * (nbr_z(r, c, 0, -1, z_old) - zC);
+                if (per_e && c == ncols - 1) D[c] += base_gamma * (nbr_z(r, c, 0, +1, z_old) - zC);
+            }
+        }
+
+        // Thomas Algorithm (TDMA)
+        c_prime[0] = C_arr[0] / B[0];
+        d_prime[0] = D[0] / B[0];
+        for (int i = 1; i < ncols; ++i)
+        {
+            float m = 1.0f / (B[i] - A[i] * c_prime[i-1]);
+            c_prime[i] = C_arr[i] * m;
+            d_prime[i] = (D[i] - A[i] * d_prime[i-1]) * m;
+        }
+        x_res[ncols - 1] = d_prime[ncols - 1];
+        for (int i = ncols - 2; i >= 0; --i)
+        {
+            x_res[i] = d_prime[i] - c_prime[i] * x_res[i + 1];
+        }
+
+        for (int c = 0; c < ncols; ++c) {
+            z_half[static_cast<std::size_t>(r * ncols + c)] = x_res[c];
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Sweep 2: Implicit Y-direction, Explicit X-direction
+    // -----------------------------------------------------------------
+    for (int c = 0; c < ncols; ++c)
+    {
+        for (int r = 0; r < nrows; ++r)
+        {
+            std::size_t idx = static_cast<std::size_t>(r * ncols + c);
+            if (!mask[idx])
+            {
+                A[r] = 0.0f; B[r] = 1.0f; C_arr[r] = 0.0f; D[r] = z_half[idx];
+            }
+            else
+            {
+                float gN = base_gamma, gS = base_gamma;
+                float gE = base_gamma, gW = base_gamma;
+
+                // Reduce flux to zero at open boundaries and mask borders
+                if (!per_n && !is_valid(r - 1, c)) gN = 0.0f;
+                if (!per_s && !is_valid(r + 1, c)) gS = 0.0f;
+                if (!per_e && !is_valid(r, c + 1)) gE = 0.0f;
+                if (!per_w && !is_valid(r, c - 1)) gW = 0.0f;
+
+                // For periodic bounds, push wrapped element to explicit terms
+                if (per_n && r == 0) gN = 0.0f;
+                if (per_s && r == nrows - 1) gS = 0.0f;
+
+                A[r] = -gN;
+                C_arr[r] = -gS;
+                B[r] = 1.0f + gN + gS;
+
+                float zC = z_half[idx];
+                float zE = nbr_z(r, c, 0, +1, z_half);
+                float zW = nbr_z(r, c, 0, -1, z_half);
+                
+                D[r] = zC + gE * (zE - zC) + gW * (zW - zC);
+
+                // Explictly inject wrap connections
+                if (per_n && r == 0) D[r] += base_gamma * (nbr_z(r, c, -1, 0, z_half) - zC);
+                if (per_s && r == nrows - 1) D[r] += base_gamma * (nbr_z(r, c, +1, 0, z_half) - zC);
+            }
+        }
+
+        // Thomas Algorithm (TDMA)
+        c_prime[0] = C_arr[0] / B[0];
+        d_prime[0] = D[0] / B[0];
+        for (int i = 1; i < nrows; ++i)
+        {
+            float m = 1.0f / (B[i] - A[i] * c_prime[i-1]);
+            c_prime[i] = C_arr[i] * m;
+            d_prime[i] = (D[i] - A[i] * d_prime[i-1]) * m;
+        }
+        x_res[nrows - 1] = d_prime[nrows - 1];
+        for (int i = nrows - 2; i >= 0; --i)
+        {
+            x_res[i] = d_prime[i] - c_prime[i] * x_res[i + 1];
+        }
+
+        for (int r = 0; r < nrows; ++r) {
+            z_new[static_cast<std::size_t>(r * ncols + c)] = x_res[r];
+        }
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(z_new),
+        std::vector<uint8_t>(mask),
+        meta
+    );
+}
+
+
 } // namespace lsdtt

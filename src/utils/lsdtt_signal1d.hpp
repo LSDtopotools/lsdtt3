@@ -63,6 +63,16 @@ std::vector<std::size_t> find_knees(
 );
 
 // -----------------------------------------------------------------------------
+// Spatial Autocorrelation & Spacing
+// -----------------------------------------------------------------------------
+
+// Computes the characteristic spacing (dominant wavelength) of a 1D spatial signal.
+// This relies on OLS detrending followed by finding the first local maximum 
+// of the autocorrelation function. Returns 0.0 if no periodic spacing is found.
+double compute_characteristic_spacing(const std::vector<double>& y, double dx);
+
+
+// -----------------------------------------------------------------------------
 // Spectral Analysis
 // -----------------------------------------------------------------------------
 
