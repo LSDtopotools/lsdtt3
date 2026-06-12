@@ -336,22 +336,33 @@ endif()
 
 # =============================================================================
 # lsdtt3_gpu  (static library, LSDTT_GPU=ON only)
+#
+# GPU compute kernels for the selective-dispatch path (currently the surface-
+# fitting kernels). Self-contained: a plain-C++ POD interface (lsdtt_surface_gpu
+# .hpp) backed by CUDA implementations, with no GDAL or lsdtt3_core dependency.
+#
+# This is the GPU *compute kernel* axis (LSDTT_GPU_KERNELS), distinct from the
+# future GPU *raster-engine backend* used by make_raster_engine().
 # =============================================================================
 if(LSDTT_GPU)
     set(LSDTT3_GPU_SOURCES
-        src/gpu/lsdtt_raster_gpu.cu
+        src/gpu/lsdtt_surface_gpu.cu
     )
     add_library(lsdtt3_gpu STATIC ${LSDTT3_GPU_SOURCES})
     target_include_directories(lsdtt3_gpu
         PUBLIC
             ${CMAKE_SOURCE_DIR}/src
-            ${GDAL_INCLUDE_DIRS}
     )
     target_link_libraries(lsdtt3_gpu
         PUBLIC
-            lsdtt3_core
             CUDA::cudart
     )
+
+    # The dispatch seam lives in lsdtt3_cpu (e.g. direct_polyfit). Enable the
+    # GPU branch there and link the kernel library so its symbols resolve and
+    # propagate to every CLI that links lsdtt3_cpu.
+    target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_GPU_KERNELS=1)
+    target_link_libraries(lsdtt3_cpu PUBLIC lsdtt3_gpu)
 endif()
 
 # =============================================================================

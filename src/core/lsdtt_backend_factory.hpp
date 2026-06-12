@@ -84,6 +84,37 @@ std::unique_ptr<lsdtt_raster_base> make_raster_engine(
 bool gpu_available();
 
 // -----------------------------------------------------------------------------
+// Global compute-backend preference (selective-dispatch compute kernels)
+//
+// This is a *preference*, not a hard mode switch. It is consulted by the small
+// set of heavy per-pixel compute functions that have a GPU implementation
+// (currently direct_polyfit, with more roughness/polyfit kernels to follow).
+// Each such function dispatches as:
+//
+//     if (preference != cpu) AND (a GPU kernel exists for this function)
+//        AND (a device is present)  ->  run the GPU kernel
+//     else                          ->  run the CPU implementation
+//
+// Functions with no GPU implementation ignore the preference entirely and run
+// on the CPU. File I/O (lsdtt_data_loader) is never affected. A typical "GPU"
+// run is therefore a mix: CPU does all I/O and orchestration, GPU runs the
+// ported kernels, and anything unported stays on the CPU automatically.
+//
+// This toggle is independent of the GPU *raster-engine backend* selected by
+// make_raster_engine(): that is a separate (future) axis. set_compute_backend()
+// has no effect when lsdtt3 was built without GPU kernel support.
+//
+// Note: the preference is process-wide global state. Set it once at start-up
+// (e.g. from a CLI parameter); do not flip it from multiple threads while a
+// dispatched compute function is running.
+//
+// Default: backend_type::auto_detect (use the GPU when kernels and a device
+// are both available, otherwise CPU).
+// -----------------------------------------------------------------------------
+void         set_compute_backend(backend_type backend);
+backend_type get_compute_backend();
+
+// -----------------------------------------------------------------------------
 // backend_name
 //
 // Returns a human-readable string for a backend_type value.

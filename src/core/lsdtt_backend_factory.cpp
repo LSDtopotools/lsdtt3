@@ -35,6 +35,27 @@ bool gpu_available()
 }
 
 // -----------------------------------------------------------------------------
+// Global compute-backend preference
+//
+// Pure host-side state. No CUDA here: whether a GPU is actually used is decided
+// at each dispatch site (in lsdtt3_cpu) by combining this preference with the
+// runtime device check lsdtt::gpu::gpu_available() from the GPU kernel library.
+// -----------------------------------------------------------------------------
+namespace {
+backend_type g_compute_backend = backend_type::auto_detect;
+}
+
+void set_compute_backend(backend_type backend)
+{
+    g_compute_backend = backend;
+}
+
+backend_type get_compute_backend()
+{
+    return g_compute_backend;
+}
+
+// -----------------------------------------------------------------------------
 // backend_name
 // -----------------------------------------------------------------------------
 

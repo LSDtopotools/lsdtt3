@@ -48,6 +48,7 @@
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_backend_factory.hpp"   // compute-backend toggle
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
@@ -516,6 +517,16 @@ int main(int argc, char* argv[])
         "Outputs are prefixed _wavelet_polyfit_* or _direct_polyfit_* "
         "so results from both methods can coexist in the same directory."};
 
+    string_default_map["compute_backend"] = "auto";
+    help_map["compute_backend"] = {"string","auto",
+        "Preferred compute backend for kernels that have a GPU port.",
+        "auto: use the GPU when a device and GPU kernels are both available, "
+        "otherwise CPU (default). cpu: force CPU. gpu: prefer the GPU, falling "
+        "back to CPU per-function when no GPU kernel exists or no device is "
+        "present. Currently only direct_polyfit has a GPU port; all other "
+        "metrics run on the CPU regardless of this setting. Has no effect in a "
+        "build without GPU support (-DLSDTT_GPU=OFF)."};
+
     // --- slope threshold layers --
     bool_default_map["write_slope_threshold_layers"] = false;
     help_map["write_slope_threshold_layers"] = {"bool", "false",
@@ -934,6 +945,26 @@ int main(int argc, char* argv[])
         resolve_output_format(sf["write_output_format"]);
 
     std::cout << "Output format: " << sf["write_output_format"] << "\n";
+
+    // Apply the global compute-backend preference. Dispatched kernels (e.g.
+    // direct_polyfit) read this; everything without a GPU port stays on CPU.
+    {
+        std::string cb = sf["compute_backend"];
+        std::transform(cb.begin(), cb.end(), cb.begin(),
+                       [](unsigned char ch){ return std::tolower(ch); });
+        if (cb == "cpu")
+            lsdtt::set_compute_backend(lsdtt::backend_type::cpu);
+        else if (cb == "gpu")
+            lsdtt::set_compute_backend(lsdtt::backend_type::gpu);
+        else if (cb == "auto")
+            lsdtt::set_compute_backend(lsdtt::backend_type::auto_detect);
+        else
+            std::cerr << "Warning: unknown compute_backend '" << cb
+                      << "', using auto.\n";
+        std::cout << "Compute backend preference: " << cb
+                  << " (GPU used per-kernel only where a port and a device "
+                     "exist; otherwise CPU)\n";
+    }
 
     if (!requested_polyfit_metrics.empty())
     {

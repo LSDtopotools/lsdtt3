@@ -9,10 +9,17 @@
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"    // need this for the polyfit struct
 #include "../cpu/lsdtt_raster_cpu.hpp"
+#include "../core/lsdtt_backend_factory.hpp"  // compute-backend toggle
 #include "../utils/lsdtt_array2d.hpp"
 #include "../utils/lsdtt_linear_algebra.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
+
+// GPU surface kernels are compiled into lsdtt3_gpu and only available when the
+// build was configured with -DLSDTT_GPU=ON (which defines LSDTT_GPU_KERNELS).
+#ifdef LSDTT_GPU_KERNELS
+#include "../gpu/lsdtt_surface_gpu.hpp"
+#endif
 
 #include <map>
 #include <array>
@@ -2416,6 +2423,46 @@ poly_fit_coeffs direct_polyfit(
     const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
     const std::vector<float>&   src = raster.get_data();
     const std::vector<uint8_t>& msk = raster.get_mask();
+
+    // -------------------------------------------------------------------------
+    // GPU dispatch.
+    //
+    // When GPU kernels were compiled in and the global compute-backend
+    // preference is not "cpu" and a device is present, run the GPU port. The
+    // launcher returns false on any failure (no device, allocation error,
+    // CUDA fault); in that case we fall through to the CPU implementation
+    // below, so correctness never depends on the GPU path succeeding.
+    // -------------------------------------------------------------------------
+#ifdef LSDTT_GPU_KERNELS
+    if (get_compute_backend() != backend_type::cpu && gpu::gpu_available())
+    {
+        std::vector<float>   g_a(npix, nodata_f);
+        std::vector<float>   g_b(npix, nodata_f);
+        std::vector<float>   g_c(npix, nodata_f);
+        std::vector<float>   g_d(npix, nodata_f);
+        std::vector<float>   g_e(npix, nodata_f);
+        std::vector<float>   g_f(npix, nodata_f);
+        std::vector<uint8_t> g_mask(npix, uint8_t{0});
+
+        const bool ok = gpu::direct_polyfit_gpu(
+            src.data(), msk.data(), nrows, ncols, d, meta.no_data_value, W,
+            g_a.data(), g_b.data(), g_c.data(),
+            g_d.data(), g_e.data(), g_f.data(), g_mask.data());
+
+        if (ok)
+        {
+            poly_fit_coeffs result;
+            result.a = lsdtt_raster_cpu(std::move(g_a), std::vector<uint8_t>(g_mask), meta);
+            result.b = lsdtt_raster_cpu(std::move(g_b), std::vector<uint8_t>(g_mask), meta);
+            result.c = lsdtt_raster_cpu(std::move(g_c), std::vector<uint8_t>(g_mask), meta);
+            result.d = lsdtt_raster_cpu(std::move(g_d), std::vector<uint8_t>(g_mask), meta);
+            result.e = lsdtt_raster_cpu(std::move(g_e), std::vector<uint8_t>(g_mask), meta);
+            result.f = lsdtt_raster_cpu(std::move(g_f), std::move(g_mask),            meta);
+            return result;
+        }
+        // GPU path failed — fall through to the CPU implementation.
+    }
+#endif
 
     // -------------------------------------------------------------------------
     // Precompute constant normal-matrix quantities for a (2W+1)×(2W+1) window.

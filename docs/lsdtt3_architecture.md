@@ -355,6 +355,66 @@ In short: **rasters stay concrete and selectively dispatched; stateful engines
 use narrow abstract bases and factories.**
 
 
+### GPU compute kernels (selective dispatch)
+
+The selective-dispatch pattern (#1 above) is realised for GPU offload of heavy
+per-pixel free functions. The first ported kernel is `direct_polyfit`; more
+surface-fitting / roughness kernels follow the same template. Full design notes
+are in `docs/gpu_compute.md`; the essentials:
+
+**Two independent GPU axes — do not conflate them:**
+
+| Axis | Macro | What it is | Status |
+|---|---|---|---|
+| GPU **compute kernels** | `LSDTT_GPU_KERNELS` | dispatch kernels for heavy free functions (`direct_polyfit`, future roughness metrics) | being built |
+| GPU **raster-engine backend** | `LSDTT_GPU_ENABLED` | full `lsdtt_raster_base` GPU impl returned by `make_raster_engine()` | future, not built |
+
+Both are gated by the single CMake option `-DLSDTT_GPU=ON`, but currently only
+the kernel library (`lsdtt3_gpu`) is built and only `LSDTT_GPU_KERNELS` is
+defined.
+
+**Global toggle (a preference, not a mode):**
+`set_compute_backend()` / `get_compute_backend()` live in
+`src/core/lsdtt_backend_factory.{hpp,cpp}` as pure host state (no CUDA in core).
+Each dispatched function resolves it as:
+
+```
+if (preference != cpu) AND (a GPU kernel exists for THIS function)
+   AND (a device is present)   ->  run the GPU kernel
+else                           ->  run the CPU implementation
+```
+
+Functions without a GPU port ignore the toggle and run on CPU; file I/O
+(`lsdtt_data_loader`) never consults it; a failed GPU launch falls back to CPU
+automatically, so correctness never depends on the GPU path.
+
+**Dependency direction and seam placement:**
+
+```
+src/gpu/lsdtt_surface_gpu.hpp    POD launcher interface (raw pointers + dims,
+                                 no CUDA types, no lsdtt_raster_cpu, no GDAL)
+src/gpu/lsdtt_surface_gpu.cu     CUDA kernels + launchers   (lib lsdtt3_gpu)
+src/cpu/..._surface_metrics_cpu.cpp
+                                 direct_polyfit(): #ifdef LSDTT_GPU_KERNELS
+                                 dispatch block at top, else CPU body
+```
+
+The dispatch decision is made in `lsdtt3_cpu` (which links `lsdtt3_gpu`), keeping
+`src/core/` CUDA-free. The kernel interface is plain POD pointers, so the
+one-way dependency is `lsdtt3_cpu → lsdtt3_gpu` with no reverse coupling.
+
+**Parity rule:** GPU kernels accumulate OLS / reduction moments in **double**
+and reuse the CPU's exact algebra (e.g. the symmetric-window decoupled normal
+equations). A tolerance-based CPU-vs-GPU comparison test must pass on hardware
+before a GPU kernel is trusted. The `.cu` is design-ahead until then; the default
+`-DLSDTT_GPU=OFF` build compiles no CUDA.
+
+**Porting another kernel:** add a POD launcher (`.hpp`) + kernel (`.cu`), add an
+`#ifdef LSDTT_GPU_KERNELS` dispatch block at the top of the CPU free function,
+add a parity test. No CMake change (the kernel joins the existing `lsdtt3_gpu`
+sources).
+
+
 ### Returning rasters from core-layer engine objects
 
 **Problem:** abstract base classes in `src/core/` sometimes need to return a
@@ -2060,4 +2120,12 @@ The `graphflood/` directory contains third-party header-only graph-based flood r
     Do not include them from other lsdtt3 sources.
 25. `src/utils/lsdtt_linear_algebra.hpp` and `lsdtt_thread_utils.hpp` are header-only
     with no lsdtt3 or GDAL dependencies — safe to include anywhere in the project.
+26. GPU compute kernels use selective dispatch, not the raster backend. The
+    `LSDTT_GPU_KERNELS` axis (kernels for heavy free functions, e.g. `direct_polyfit`)
+    is separate from the future `LSDTT_GPU_ENABLED` raster-engine backend. The
+    global toggle `set/get_compute_backend()` lives in core as pure host state;
+    the dispatch decision and the `lsdtt3_cpu → lsdtt3_gpu` link live in `src/cpu`,
+    so `src/core` stays CUDA-free. GPU kernels take POD pointers only (no
+    `lsdtt_raster_cpu`/GDAL), accumulate in double for CPU parity, and always have
+    a CPU fallback. See `docs/gpu_compute.md`.
 
