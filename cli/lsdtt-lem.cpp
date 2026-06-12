@@ -101,11 +101,88 @@ static void write_hillshade_png(
 }
 
 // -----------------------------------------------------------------------------
+// apply_sinuous_mask
+//
+// Subsets the rectangular domain into a sinuous active area with independent
+// controls for the North and South boundaries.
+// -----------------------------------------------------------------------------
+static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
+    const lsdtt::lsdtt_raster_cpu& dem,
+    bool enable_n, float amp_n_frac, int waves_n, float phase_n,
+    bool enable_s, float amp_s_frac, int waves_s, float phase_s)
+{
+    if (amp_n_frac < 0.0f || amp_n_frac >= 0.5f || amp_s_frac < 0.0f || amp_s_frac >= 0.5f)
+    {
+        throw std::runtime_error("sinuous amplitude fractions must be in [0, 0.5)");
+    }
+
+    const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
+    const int nr = meta.n_rows;
+    const int nc = meta.n_cols;
+    const double dx = meta.cell_size;
+
+    const double Lx = static_cast<double>(nc) * dx;
+    const double Ly = static_cast<double>(nr) * dx;
+    
+    const double A_n  = Ly * static_cast<double>(amp_n_frac);
+    const double A_s  = Ly * static_cast<double>(amp_s_frac);
+
+    std::vector<float> data = dem.get_data();
+    std::vector<uint8_t> mask = dem.get_mask();
+
+    const double k_pi = 3.14159265358979323846;
+
+    for (int r = 0; r < nr; ++r)
+    {
+        // Physical y coordinate (y=0 at the south boundary, y=Ly at the north boundary)
+        const double y = static_cast<double>(nr - 1 - r) * dx; 
+
+        for (int c = 0; c < nc; ++c)
+        {
+            // Physical x coordinate
+            const double x = static_cast<double>(c) * dx;
+            bool mask_out = false;
+            
+            // Handle South Boundary
+            if (enable_s)
+            {
+                const double shift_s = A_s * std::sin(
+                    2.0 * k_pi * static_cast<double>(waves_s) * (x / Lx) + 
+                    2.0 * k_pi * static_cast<double>(phase_s)
+                );
+                const double y_min = A_s + shift_s - 1e-4 * dx;
+                if (y < y_min) mask_out = true;
+            }
+            
+            // Handle North Boundary
+            if (enable_n && !mask_out)
+            {
+                const double shift_n = A_n * std::sin(
+                    2.0 * k_pi * static_cast<double>(waves_n) * (x / Lx) + 
+                    2.0 * k_pi * static_cast<double>(phase_n)
+                );
+                const double y_max = Ly - A_n + shift_n + 1e-4 * dx;
+                if (y > y_max) mask_out = true;
+            }
+
+            if (mask_out)
+            {
+                const std::size_t idx = static_cast<std::size_t>(r) * nc + c;
+                data[idx] = 0.0f;
+                mask[idx] = 0;
+            }
+        }
+    }
+    
+    return lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+}
+
+
+// -----------------------------------------------------------------------------
 // build_boundary_flats
 //
-// Returns flat indices of all outer-edge pixels (row 0, row N-1, col 0,
-// col M-1) that are valid (in mask). These are the fixed-elevation baselevels
-// on open boundaries.
+// Returns flat indices of all outer-edge pixels that are valid (in mask). 
+// Dynamically adjusts to interior non-rectangular boundaries (e.g. sinuous)
 // -----------------------------------------------------------------------------
 static std::vector<std::int64_t> build_boundary_flats(
     const lsdtt::lsdtt_raster_cpu& dem,
@@ -117,14 +194,6 @@ static std::vector<std::int64_t> build_boundary_flats(
     const std::vector<uint8_t>& mask = dem.get_mask();
 
     std::vector<std::int64_t> out;
-    out.reserve(static_cast<std::size_t>(2 * nr + 2 * nc));
-
-    auto add = [&](int r, int c)
-    {
-        const std::int64_t flat = static_cast<std::int64_t>(r) * nc + c;
-        if (mask[static_cast<std::size_t>(flat)])
-            out.push_back(flat);
-    };
 
     // Determine which edges are fixed baselevels ('o' or 'b')
     // String is ordered NESW
@@ -133,14 +202,32 @@ static std::vector<std::int64_t> build_boundary_flats(
     bool fix_s = (bc.length() > 2 && (bc[2] == 'o' || bc[2] == 'b'));
     bool fix_w = (bc.length() > 3 && (bc[3] == 'o' || bc[3] == 'b'));
 
-    if (fix_n) for (int c = 0; c < nc; ++c) add(0, c);
-    if (fix_s) for (int c = 0; c < nc; ++c) add(nr - 1, c);
-    if (fix_w) for (int r = 0; r < nr; ++r) add(r, 0); 
-    if (fix_e) for (int r = 0; r < nr; ++r) add(r, nc - 1);
+    for (int r = 0; r < nr; ++r)
+    {
+        for (int c = 0; c < nc; ++c)
+        {
+            const std::int64_t flat = static_cast<std::int64_t>(r) * nc + c;
+            
+            // We only care about baselevelling pixels inside the physical domain
+            if (!mask[static_cast<std::size_t>(flat)]) 
+                continue;
 
-    // Deduplicate (corner pixels appear twice if adjacent edges are both fixed)
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
+            // Check if the current pixel borders an invalid area 
+            // (or the absolute array boundary itself) in each cardinal direction
+            bool is_n_edge = (r == 0)      || (mask[static_cast<std::size_t>(flat - nc)] == 0);
+            bool is_s_edge = (r == nr - 1) || (mask[static_cast<std::size_t>(flat + nc)] == 0);
+            bool is_w_edge = (c == 0)      || (mask[static_cast<std::size_t>(flat - 1)] == 0);
+            bool is_e_edge = (c == nc - 1) || (mask[static_cast<std::size_t>(flat + 1)] == 0);
+
+            if ((is_n_edge && fix_n) || 
+                (is_s_edge && fix_s) || 
+                (is_w_edge && fix_w) || 
+                (is_e_edge && fix_e))
+            {
+                out.push_back(flat);
+            }
+        }
+    }
 
     return out;
 }
@@ -255,6 +342,40 @@ int main(int argc, char* argv[])
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
         "Used when fill_initial_surface is true."};
+
+    // --- Sinuous Boundaries ---
+    bool_default_map["enable_sinuous_n_boundary"] = false;
+    help_map["enable_sinuous_n_boundary"] = {"bool","false",
+        "Apply a sinuous (sine wave) mask to the North domain boundary.", ""};
+
+    float_default_map["sinuous_n_amplitude_fraction"] = 0.25f;
+    help_map["sinuous_n_amplitude_fraction"] = {"float","0.25",
+        "Amplitude of the North sinuous boundary as a fraction of total N-S domain length.", ""};
+
+    int_default_map["sinuous_n_n_waves"] = 1;
+    help_map["sinuous_n_n_waves"] = {"int","1",
+        "Number of complete sine waves along the North boundary.", ""};
+
+    float_default_map["sinuous_n_phase_offset"] = 0.0f;
+    help_map["sinuous_n_phase_offset"] = {"float","0.0",
+        "Phase offset of the North sinuous boundary as a fractional value [0, 1].", ""};
+
+    bool_default_map["enable_sinuous_s_boundary"] = false;
+    help_map["enable_sinuous_s_boundary"] = {"bool","false",
+        "Apply a sinuous (sine wave) mask to the South domain boundary.", ""};
+
+    float_default_map["sinuous_s_amplitude_fraction"] = 0.25f;
+    help_map["sinuous_s_amplitude_fraction"] = {"float","0.25",
+        "Amplitude of the South sinuous boundary as a fraction of total N-S domain length.", ""};
+
+    int_default_map["sinuous_s_n_waves"] = 1;
+    help_map["sinuous_s_n_waves"] = {"int","1",
+        "Number of complete sine waves along the South boundary.", ""};
+
+    float_default_map["sinuous_s_phase_offset"] = 0.0f;
+    help_map["sinuous_s_phase_offset"] = {"float","0.0",
+        "Phase offset of the South sinuous boundary as a fractional value [0, 1].", ""};
+
 
     // --- Process switches ---
     bool_default_map["enable_d8_fluvial_erosion"] = true;
@@ -639,6 +760,47 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Apply Sinuous Boundary Mask (if enabled)
+    // Runs before secondary conditionings so that boundary states are respected.
+    // -------------------------------------------------------------------------
+    if (bf["enable_sinuous_n_boundary"] || bf["enable_sinuous_s_boundary"])
+    {
+        std::cout << "\nApplying sinuous boundaries...\n";
+        try
+        {
+            dem = apply_sinuous_mask(
+                dem, 
+                bf["enable_sinuous_n_boundary"], ff["sinuous_n_amplitude_fraction"], ifs["sinuous_n_n_waves"], ff["sinuous_n_phase_offset"],
+                bf["enable_sinuous_s_boundary"], ff["sinuous_s_amplitude_fraction"], ifs["sinuous_s_n_waves"], ff["sinuous_s_phase_offset"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: applying sinuous boundary failed: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Identify boundary pixels and explicitly bind them to baselevel
+    // -------------------------------------------------------------------------
+    std::vector<std::int64_t> boundary_flats = build_boundary_flats(dem, opts.boundary_conditions);
+    std::cout << "Boundary pixels identified: " << boundary_flats.size() << "\n";
+
+    // Lambda to snap all boundary pixels to user-defined baselevel elevation
+    auto enforce_baselevel = [&]() {
+        const float base_z = ff["baselevel_elevation"];
+        std::vector<float>& z_ref = dem.get_data();
+        for (std::int64_t flat : boundary_flats)
+        {
+            z_ref[static_cast<std::size_t>(flat)] = base_z;
+        }
+    };
+
+    enforce_baselevel(); // Clear off any white/red/fractal noise immediately
+
+
+    // -------------------------------------------------------------------------
     // Initial surface conditioning (random surfaces only):
     //   1. Superimpose N-S parabola     (if parabola_relief > 0)
     //   2. Breach depressions           (if either conditioning param > 0)
@@ -662,6 +824,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "Superimposing N-S parabola (peak=" << ff["parabola_relief"] << " m)...\n";
         dem = lsdtt::superimpose_ns_parabola(dem, ff["parabola_relief"]);
+        enforce_baselevel();  // Re-pin boundaries in case the parabola lifted them
     }
 
     if (do_breach)
@@ -700,6 +863,8 @@ int main(int argc, char* argv[])
             std::move(zd),
             std::vector<uint8_t>(md),
             meta_d);
+            
+        enforce_baselevel(); // Re-pin boundaries to wipe off final noise layer
     }
 
     // Optionally pit-fill the initial surface (applied after conditioning)
@@ -1021,13 +1186,6 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: could not write initial topography: " << e.what() << "\n";
         }
     }
-
-    // -------------------------------------------------------------------------
-    // Identify boundary pixels (held at fixed elevation)
-    // -------------------------------------------------------------------------
-    std::vector<std::int64_t> boundary_flats = build_boundary_flats(dem, opts.boundary_conditions);
-    std::cout << "Boundary pixels: " << boundary_flats.size() << "\n";
-
 
     // -------------------------------------------------------------------------
     // Prepare stats CSV
