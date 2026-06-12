@@ -103,13 +103,14 @@ static void write_hillshade_png(
 // -----------------------------------------------------------------------------
 // apply_sinuous_mask
 //
-// Subsets the rectangular domain into a sinuous active area with independent
-// controls for the North and South boundaries.
+// Subsets the rectangular domain into a sinuous active area. Omits pixels 
+// are set to mathematically flat base_elev levels to prevent gradient blowups.
 // -----------------------------------------------------------------------------
 static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
     const lsdtt::lsdtt_raster_cpu& dem,
     bool enable_n, float amp_n_frac, int waves_n, float phase_n,
-    bool enable_s, float amp_s_frac, int waves_s, float phase_s)
+    bool enable_s, float amp_s_frac, int waves_s, float phase_s,
+    float baselevel_elev)
 {
     if (amp_n_frac < 0.0f || amp_n_frac >= 0.5f || amp_s_frac < 0.0f || amp_s_frac >= 0.5f)
     {
@@ -134,16 +135,13 @@ static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
 
     for (int r = 0; r < nr; ++r)
     {
-        // Physical y coordinate (y=0 at the south boundary, y=Ly at the north boundary)
         const double y = static_cast<double>(nr - 1 - r) * dx; 
 
         for (int c = 0; c < nc; ++c)
         {
-            // Physical x coordinate
             const double x = static_cast<double>(c) * dx;
             bool mask_out = false;
             
-            // Handle South Boundary
             if (enable_s)
             {
                 const double shift_s = A_s * std::sin(
@@ -154,7 +152,6 @@ static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
                 if (y < y_min) mask_out = true;
             }
             
-            // Handle North Boundary
             if (enable_n && !mask_out)
             {
                 const double shift_n = A_n * std::sin(
@@ -168,7 +165,7 @@ static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
             if (mask_out)
             {
                 const std::size_t idx = static_cast<std::size_t>(r) * nc + c;
-                data[idx] = 0.0f;
+                data[idx] = baselevel_elev; // Mathematically flat placeholder for stability
                 mask[idx] = 0;
             }
         }
@@ -181,8 +178,8 @@ static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
 // -----------------------------------------------------------------------------
 // build_boundary_flats
 //
-// Returns flat indices of all outer-edge pixels that are valid (in mask). 
-// Dynamically adjusts to interior non-rectangular boundaries (e.g. sinuous)
+// Extracts all D8-connected structural boundaries, ensuring sinuous staircase
+// corners are perfectly matched depending on the specific boundary (o, n, p).
 // -----------------------------------------------------------------------------
 static std::vector<std::int64_t> build_boundary_flats(
     const lsdtt::lsdtt_raster_cpu& dem,
@@ -195,8 +192,6 @@ static std::vector<std::int64_t> build_boundary_flats(
 
     std::vector<std::int64_t> out;
 
-    // Determine which edges are fixed baselevels ('o' or 'b')
-    // String is ordered NESW
     bool fix_n = (bc.length() > 0 && (bc[0] == 'o' || bc[0] == 'b'));
     bool fix_e = (bc.length() > 1 && (bc[1] == 'o' || bc[1] == 'b'));
     bool fix_s = (bc.length() > 2 && (bc[2] == 'o' || bc[2] == 'b'));
@@ -208,24 +203,45 @@ static std::vector<std::int64_t> build_boundary_flats(
         {
             const std::int64_t flat = static_cast<std::int64_t>(r) * nc + c;
             
-            // We only care about baselevelling pixels inside the physical domain
-            if (!mask[static_cast<std::size_t>(flat)]) 
-                continue;
+            if (!mask[static_cast<std::size_t>(flat)]) continue;
 
-            // Check if the current pixel borders an invalid area 
-            // (or the absolute array boundary itself) in each cardinal direction
-            bool is_n_edge = (r == 0)      || (mask[static_cast<std::size_t>(flat - nc)] == 0);
-            bool is_s_edge = (r == nr - 1) || (mask[static_cast<std::size_t>(flat + nc)] == 0);
-            bool is_w_edge = (c == 0)      || (mask[static_cast<std::size_t>(flat - 1)] == 0);
-            bool is_e_edge = (c == nc - 1) || (mask[static_cast<std::size_t>(flat + 1)] == 0);
+            bool is_edge = false;
 
-            if ((is_n_edge && fix_n) || 
-                (is_s_edge && fix_s) || 
-                (is_w_edge && fix_w) || 
-                (is_e_edge && fix_e))
+            // D8 connectivity to find boundaries securely
+            for (int dr = -1; dr <= 1 && !is_edge; ++dr)
             {
-                out.push_back(flat);
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    if (dr == 0 && dc == 0) continue;
+                    
+                    int nr2 = r + dr;
+                    int nc2 = c + dc;
+
+                    // Check outer rectangular bounds
+                    if (nr2 < 0)              { if (fix_n) is_edge = true; }
+                    else if (nr2 >= nr)       { if (fix_s) is_edge = true; }
+                    else if (nc2 < 0)         { if (fix_w) is_edge = true; }
+                    else if (nc2 >= nc)       { if (fix_e) is_edge = true; }
+                    else 
+                    {
+                        // Any valid pixel that touches a mask == 0 void area 
+                        if (mask[static_cast<std::size_t>(nr2 * nc + nc2)] == 0) 
+                        {
+                            bool fix_dir = false;
+                            if (dr == -1 && fix_n) fix_dir = true;
+                            if (dr == 1  && fix_s) fix_dir = true;
+                            if (dc == -1 && fix_w) fix_dir = true;
+                            if (dc == 1  && fix_e) fix_dir = true;
+                            
+                            if (fix_dir) {
+                                is_edge = true;
+                            }
+                        }
+                    }
+                }
             }
+
+            if (is_edge) out.push_back(flat);
         }
     }
 
@@ -286,6 +302,12 @@ int main(int argc, char* argv[])
     help_map["grid_resolution"] = {"float","30",
         "Cell size in metres.",
         "Used when read_initial_dem is false."};
+    
+    string_default_map["synthetic_crs_wkt"] = "";
+    help_map["synthetic_crs_wkt"] = {"string","",
+        "Coordinate Reference System WKT string for synthetic surfaces.",
+        "If left empty (the default), this automatically assigns EPSG:32601 (UTM Zone 1N) "
+        "and places the lower-left corner at 500000E, 0N."};
 
     // --- Initial conditions ---
     string_default_map["initial_surface_type"] = "flat";
@@ -643,6 +665,31 @@ int main(int argc, char* argv[])
     opts.n_threads                       = ifs["n_threads"];
 
     // -------------------------------------------------------------------------
+    // Safe output writing wrappers allowing NoData export without breaking
+    // the stable zero-baseline math needed by explicit PDE solvers
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_raster_cpu dem;
+    lsdtt::lsdtt_data_loader loader;
+
+    const float base_elev = ff["baselevel_elevation"];
+    
+    auto safe_write = [&](lsdtt::lsdtt_raster_cpu& raster, const std::string& out_path) {
+        std::vector<float>& d = raster.get_data();
+        const std::vector<uint8_t>& m = raster.get_mask();
+        const float ndv = static_cast<float>(raster.get_meta().no_data_value);
+        
+        for (std::size_t i = 0; i < d.size(); ++i) {
+            if (m[i] == 0) d[i] = ndv;
+        }
+        
+        loader.write_full(raster.get_data(), raster.get_meta(), out_path, out_fmt);
+        
+        for (std::size_t i = 0; i < d.size(); ++i) {
+            if (m[i] == 0) d[i] = base_elev;
+        }
+    };
+
+    // -------------------------------------------------------------------------
     // Print settings summary
     // -------------------------------------------------------------------------
     std::cout << "\n--- Model configuration ---\n";
@@ -670,8 +717,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Build or load initial DEM
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_raster_cpu dem;
-    lsdtt::lsdtt_data_loader loader;
+    
 
     const bool load_from_file = bf["read_initial_dem"];
 
@@ -699,15 +745,42 @@ int main(int argc, char* argv[])
         const int   nc   = ifs["ncols"];
         const float dx   = ff["grid_resolution"];
 
+        // Check if user provided WKT, otherwise fallback to EPSG:32601
+        std::string crs_wkt = sf["synthetic_crs_wkt"];
+        double x_origin = 0.0;
+        double y_origin = 0.0;
+
+        if (crs_wkt.empty())
+        {
+            // Hardcoded WKT string for WGS 84 / UTM zone 1N (EPSG:32601)
+            crs_wkt = "PROJCS[\"WGS 84 / UTM zone 1N\",GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AUTHORITY[\"EPSG\",\"4326\"]],PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",-177],PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",500000],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH],AUTHORITY[\"EPSG\",\"32601\"]]";
+            x_origin = 500000.0;
+            y_origin = 0.0;
+        }
+
+        // Build the shared meta object
+        lsdtt::lsdtt_raster_meta syn_meta;
+        syn_meta.n_rows        = nr;
+        syn_meta.n_cols        = nc;
+        syn_meta.cell_size     = static_cast<double>(dx);
+        syn_meta.x_min         = x_origin; 
+        syn_meta.y_min         = y_origin;
+        syn_meta.no_data_value = -9999.0;
+        syn_meta.crs_wkt       = crs_wkt;
+
         const std::string surf_type = sf["initial_surface_type"];
         std::cout << "\nBuilding synthetic " << surf_type << " surface: "
                   << nr << " x " << nc << " @ " << dx << " m\n";
+        
+        if (!crs_wkt.empty()) {
+            std::cout << "Assigned projection to synthetic raster.\n";
+        }
 
         if (surf_type == "white_noise")
         {
-            std::cout << "I'm building an initial white noise surface." << std:: endl;
+            std::cout << "I'm building an initial white noise surface." << std::endl;
             dem = lsdtt::generate_uniform_random_noise_surface(
-                nr, nc, static_cast<double>(dx),
+                syn_meta,
                 ifs["random_seed"],
                 0.0,
                 static_cast<double>(ff["max_initial_elevation"]),
@@ -716,9 +789,9 @@ int main(int argc, char* argv[])
         }
         else if (surf_type == "red_noise")
         {
-            std::cout << "I'm building an initial red noise surface." << std:: endl;
+            std::cout << "I'm building an initial red noise surface." << std::endl;
             dem = lsdtt::generate_red_noise_surface(
-                nr, nc, static_cast<double>(dx),
+                syn_meta,
                 ifs["random_seed"],
                 0.0,
                 static_cast<double>(ff["noise_target_stddev"]),
@@ -728,9 +801,9 @@ int main(int argc, char* argv[])
         }
         else if (surf_type == "diamond_square")
         {
-            std::cout << "I'm building an initial diamond square surface." << std:: endl;
+            std::cout << "I'm building an initial diamond square surface." << std::endl;
             dem = lsdtt::generate_diamond_square_surface(
-                nr, nc, static_cast<double>(dx),
+                syn_meta,
                 ifs["random_seed"],
                 static_cast<double>(ff["diamond_square_roughness"]),
                 1.0,
@@ -741,23 +814,17 @@ int main(int argc, char* argv[])
         }
         else
         {
-            // flat (default) — all zeros
-            lsdtt::lsdtt_raster_meta meta;
-            meta.n_rows        = nr;
-            meta.n_cols        = nc;
-            meta.cell_size     = static_cast<double>(dx);
-            meta.x_min         = 0.0;
-            meta.y_min         = 0.0;
-            meta.no_data_value = -9999.0;
-
+            // flat (default) – all zeros
             const std::size_t n = static_cast<std::size_t>(nr) * nc;
             std::vector<float>   data(n, 0.0f);
             std::vector<uint8_t> mask(n, 1);
 
             dem = lsdtt::lsdtt_raster_cpu(
-                std::move(data), std::move(mask), meta);
+                std::move(data), std::move(mask), syn_meta);
         }
     }
+
+
 
     // -------------------------------------------------------------------------
     // Apply Sinuous Boundary Mask (if enabled)
@@ -771,7 +838,8 @@ int main(int argc, char* argv[])
             dem = apply_sinuous_mask(
                 dem, 
                 bf["enable_sinuous_n_boundary"], ff["sinuous_n_amplitude_fraction"], ifs["sinuous_n_n_waves"], ff["sinuous_n_phase_offset"],
-                bf["enable_sinuous_s_boundary"], ff["sinuous_s_amplitude_fraction"], ifs["sinuous_s_n_waves"], ff["sinuous_s_phase_offset"]
+                bf["enable_sinuous_s_boundary"], ff["sinuous_s_amplitude_fraction"], ifs["sinuous_s_n_waves"], ff["sinuous_s_phase_offset"],
+                base_elev
             );
         }
         catch (const std::exception& e)
@@ -787,13 +855,12 @@ int main(int argc, char* argv[])
     std::vector<std::int64_t> boundary_flats = build_boundary_flats(dem, opts.boundary_conditions);
     std::cout << "Boundary pixels identified: " << boundary_flats.size() << "\n";
 
-    // Lambda to snap all boundary pixels to user-defined baselevel elevation
+    // Lambda to snap all structurally-sound boundary pixels to user-defined baselevel elevation
     auto enforce_baselevel = [&]() {
-        const float base_z = ff["baselevel_elevation"];
         std::vector<float>& z_ref = dem.get_data();
         for (std::int64_t flat : boundary_flats)
         {
-            z_ref[static_cast<std::size_t>(flat)] = base_z;
+            z_ref[static_cast<std::size_t>(flat)] = base_elev;
         }
     };
 
@@ -977,7 +1044,9 @@ int main(int argc, char* argv[])
 
         const std::string ss_elev_path = pp.make_output_path("_steady_state_elevation", fmt_ext(out_fmt));
         std::cout << "Writing steady-state elevation: " << ss_elev_path << "\n";
-        try { loader.write_full(ss_result.elevation.get_data(), ss_result.elevation.get_meta(), ss_elev_path, out_fmt); }
+        try { 
+            safe_write(ss_result.elevation, ss_elev_path);
+        }
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: writing steady-state elevation failed: " << e.what() << "\n";
@@ -1113,7 +1182,9 @@ int main(int argc, char* argv[])
 
                 const std::string hs_path = pp.make_output_path("_hillslope_steady_state_elevation", fmt_ext(out_fmt));
                 std::cout << "Writing hillslope steady-state elevation: " << hs_path << "\n";
-                try { loader.write_full(hs_result.elevation.get_data(), hs_result.elevation.get_meta(), hs_path, out_fmt); }
+                try { 
+                    safe_write(hs_result.elevation, hs_path);
+                }
                 catch (const std::exception& e)
                 {
                     std::cerr << "FATAL: writing hillslope elevation failed: "
@@ -1180,12 +1251,15 @@ int main(int argc, char* argv[])
     {
         const std::string path_init = pp.make_output_path("_initial_topography", fmt_ext(out_fmt));
         std::cout << "Writing initial topography: " << path_init << "\n";
-        try { loader.write_full(dem.get_data(), dem.get_meta(), path_init, out_fmt); }
+        try { 
+            safe_write(dem, path_init); 
+        }
         catch (const std::exception& e)
         {
             std::cerr << "Warning: could not write initial topography: " << e.what() << "\n";
         }
     }
+
 
     // -------------------------------------------------------------------------
     // Prepare stats CSV
@@ -1254,7 +1328,9 @@ int main(int argc, char* argv[])
             if (write_freq > 0 && iter % write_freq == 0)
             {
                 const std::string p = pp.make_output_path("_model_iteration_" + std::to_string(iter), fmt_ext(out_fmt));
-                try { loader.write_full(current.get_data(), current.get_meta(), p, out_fmt); }
+                try { 
+                    safe_write(current, p); 
+                }
                 catch (const std::exception& e)
                 {
                     std::cerr << "Warning: intermediate write failed: " << e.what() << "\n";
@@ -1329,7 +1405,9 @@ int main(int argc, char* argv[])
     {
         const std::string path_final = pp.make_output_path("_modelled_topography", fmt_ext(out_fmt));
         std::cout << "\nWriting final topography: " << path_final << "\n";
-        try { loader.write_full(current.get_data(), current.get_meta(), path_final, out_fmt); }
+        try { 
+            safe_write(current, path_final); 
+        }
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: writing final topography failed: " << e.what() << "\n";

@@ -349,7 +349,7 @@ void lsdtt_ridgeline_cpu::smoothen_and_derive_detrended_ridgeline(int smoothing_
     std::vector<double> rl_elev;
 
     bool periodic = false;
-    if (nodes_[snoutidx_].row == nodes_.back().row && nodes_[snoutidx_].col == nodes_.back().col)
+    if (nodes_.size() > 1 && nodes_[snoutidx_].row == nodes_.back().row && nodes_[snoutidx_].col == nodes_.back().col)
     {
         periodic = true;
     }

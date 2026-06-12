@@ -318,6 +318,10 @@ parse_corner_coordinates_csv(
 
 // =============================================================================
 // resolve_dem_corners
+//
+// Automatically finds the 4 corners of the active DEM mask. This supports both
+// strictly rectangular grids AND internal sinuous/non-rectangular domains 
+// efficiently without needing external CSVs.
 // =============================================================================
 static std::array<std::int64_t, 4> resolve_dem_corners(
     const lsdtt::lsdtt_raster_cpu& dem)
@@ -327,33 +331,52 @@ static std::array<std::int64_t, 4> resolve_dem_corners(
     const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
     const int n_rows = m.n_rows;
     const int n_cols = m.n_cols;
+    const auto& mask = dem.get_mask_array();
+
+    int nw_row = -1, ne_row = -1, sw_row = -1, se_row = -1;
+
+    // Scan column 0 for NW (top to bottom)
+    for (int r = 0; r < n_rows; ++r) {
+        if (mask(r, 0) != 0) { nw_row = r; break; }
+    }
+    // Scan column n_cols-1 for NE (top to bottom)
+    for (int r = 0; r < n_rows; ++r) {
+        if (mask(r, n_cols - 1) != 0) { ne_row = r; break; }
+    }
+    // Scan column 0 for SW (bottom to top)
+    for (int r = n_rows - 1; r >= 0; --r) {
+        if (mask(r, 0) != 0) { sw_row = r; break; }
+    }
+    // Scan column n_cols-1 for SE (bottom to top)
+    for (int r = n_rows - 1; r >= 0; --r) {
+        if (mask(r, n_cols - 1) != 0) { se_row = r; break; }
+    }
+
+    if (nw_row == -1 || ne_row == -1 || sw_row == -1 || se_row == -1) {
+        throw std::runtime_error(
+            "Could not find 4 valid corners on the left and right edges of the active mask. "
+            "Are your boundary pixels masked completely off the edge?"
+        );
+    }
 
     const std::array<std::pair<int,int>, 4> corners = {{
-        {0,        0       },
-        {0,        n_cols-1},
-        {n_rows-1, 0       },
-        {n_rows-1, n_cols-1}
+        {nw_row, 0       },
+        {ne_row, n_cols-1},
+        {sw_row, 0       },
+        {se_row, n_cols-1}
     }};
 
-    const auto& mask = dem.get_mask_array();
     std::array<std::int64_t, 4> flat_indices{};
-
     for (int i = 0; i < 4; ++i)
     {
-        const int row = corners[i].first;
-        const int col = corners[i].second;
-
-        if (mask(row, col) == 0)
-        {
-            throw std::runtime_error(
-                "DEM corner pixel is nodata. Either supply corner_coordinates_csv "
-                "or use a purely rectangular DEM without clipped corners."
-            );
-        }
-        flat_indices[i] = static_cast<std::int64_t>(row) * n_cols + col;
+        flat_indices[i] = static_cast<std::int64_t>(corners[i].first) * n_cols + corners[i].second;
+        std::cout << "  Detected corner " << i << " at row/col " 
+                  << corners[i].first << "/" << corners[i].second << ".\n";
     }
     return flat_indices;
 }
+
+
 
 // =============================================================================
 // extract_boundary_segments
@@ -381,7 +404,8 @@ static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
         );
     }
 
-    std::array<std::size_t, 4> split_indices;
+    // Pair traces nearest-pixel-index with its structural Corner ID (0=NW, 1=NE, 2=SW, 3=SE)
+    std::vector<std::pair<std::size_t, int>> ordered_corners;
     for (int i = 0; i < 4; ++i)
     {
         const int corner_r = static_cast<int>(corners[i] / n_cols);
@@ -401,37 +425,53 @@ static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
                 best_idx = j;
             }
         }
-        split_indices[i] = best_idx;
-        std::cout << "  Boundary segment " << i << " assigned to pixel row/col "
+        ordered_corners.push_back({best_idx, i});
+        std::cout << "  Boundary segment corner " << i << " assigned to pixel row/col "
                   << corner_r << "/" << corner_c << ".\n";
     }
 
-    std::sort(split_indices.begin(), split_indices.end());
+    // Sort corners sequentially by the order they appear in the trace loop
+    std::sort(ordered_corners.begin(), ordered_corners.end());
 
     std::vector<std::vector<std::int64_t>> boundary_segments(4);
     for (int i = 0; i < 4; ++i)
     {
-        std::size_t start_idx = split_indices[i];
-        std::size_t end_idx   = split_indices[(i + 1) % 4];
+        std::size_t start_idx = ordered_corners[i].first;
+        std::size_t end_idx   = ordered_corners[(i + 1) % 4].first;
+        
+        int corner_A = ordered_corners[i].second;
+        int corner_B = ordered_corners[(i + 1) % 4].second;
 
-        if (start_idx <= end_idx) {
-            boundary_segments[i].assign(
-                boundary_flats.begin() + start_idx, 
-                boundary_flats.begin() + end_idx
-            );
-        } else {
-            boundary_segments[i].assign(
-                boundary_flats.begin() + start_idx, 
-                boundary_flats.end()
-            );
-            boundary_segments[i].insert(
-                boundary_segments[i].end(), 
-                boundary_flats.begin(), 
-                boundary_flats.begin() + end_idx
-            );
+        // Definitively lock the segment to its true geographical side
+        // Corner IDs: 0=NW, 1=NE, 2=SW, 3=SE
+        int boundary_id = -1; 
+        if ((corner_A == 0 && corner_B == 1) || (corner_A == 1 && corner_B == 0)) boundary_id = 0; // North
+        else if ((corner_A == 1 && corner_B == 3) || (corner_A == 3 && corner_B == 1)) boundary_id = 1; // East
+        else if ((corner_A == 3 && corner_B == 2) || (corner_A == 2 && corner_B == 3)) boundary_id = 2; // South
+        else if ((corner_A == 2 && corner_B == 0) || (corner_A == 0 && corner_B == 2)) boundary_id = 3; // West
+
+        if (boundary_id != -1) {
+            if (start_idx <= end_idx) {
+                boundary_segments[boundary_id].assign(
+                    boundary_flats.begin() + start_idx, 
+                    boundary_flats.begin() + end_idx
+                );
+            } else {
+                // Segment wraps perfectly around the end of the trace array
+                boundary_segments[boundary_id].assign(
+                    boundary_flats.begin() + start_idx, 
+                    boundary_flats.end()
+                );
+                boundary_segments[boundary_id].insert(
+                    boundary_segments[boundary_id].end(), 
+                    boundary_flats.begin(), 
+                    boundary_flats.begin() + end_idx
+                );
+            }
         }
     }
     return boundary_segments;
+
 }
 
 // =============================================================================
@@ -495,6 +535,11 @@ int main(int argc, char* argv[])
         "Main ridgeline analysis mode.",
         "Allowed values: basin_outline_ridgelines, "
         "interfluvial_divide_ridgelines, range_defined_ridgelines."};
+
+    bool_default_map["extract_only_mdd"] = false;
+    help_map["extract_only_mdd"] = {"bool", "false", 
+        "If true, skips the transverse divides and only extracts the main drainage divide.", 
+        "Only applies when ridgeline_analysis_mode is range_defined_ridgelines."};
 
     // --- Range-defined boundaries ---
     string_default_map["corner_coordinates_csv"] = "NULL";
@@ -881,7 +926,7 @@ int main(int argc, char* argv[])
         if (analysis_mode == "range_defined_ridgelines")
         {
             std::cout << "I am going to select range-spanning basins for your!\n";
-            std::cout << "For this to work, you MUST have exactly 4 boundary conditions specified with at least one pair of opposing no-flux boundaries (interpreted as the mountain fronts.)\n";
+            std::cout << "For this to work, you MUST have exactly 4 boundary conditions specified with at least one pair of opposing open boundaries (interpreted as the mountain fronts.)\n";
 
             std::vector<lsdtt::lsdtt_input_point> corner_pts;
             std::array<std::int64_t, 4>           corner_flats{};
@@ -1099,7 +1144,7 @@ int main(int argc, char* argv[])
         if (analysis_mode == "range_defined_ridgelines")
         {
             std::cout << "\nYou selected an analysis option that requires finding drainage divides defined by mountain range boundaries, for example transverse divides or the main drainage divide.\n";
-            std::cout << "For this to work, you must have exactly four boundary conditions with at least one pair of opposing no-flux boundaries. I am going to interpret these no-flux boundaries as mountain fronts.\n\n";
+            std::cout << "For this to work, you must have exactly four boundary conditions with at least one pair of opposing open boundaries. I am going to interpret these open boundaries as mountain fronts.\n\n";
 
             std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_for_each_boundary(4);
 
@@ -1131,12 +1176,13 @@ int main(int argc, char* argv[])
                     );
 
                     // 1. Transverse Divides (Left)
-                    if (static_cast<std::size_t>(bsn) <= final_basin_for_tvd)
+                    if (!bf["extract_only_mdd"] && static_cast<std::size_t>(bsn) <= final_basin_for_tvd)
                     {
                         std::cout << "   I am getting its left transverse divide: ";
                         auto tvd = BO.get_left_transverse_divide_as_ridgeline(
                             jid, sorted_range_basins[b], sorted_range_basins[(b + 2) % 4], junction_network
                         );
+
 
                         if (!tvd.empty()) 
                         {
@@ -1173,6 +1219,15 @@ int main(int argc, char* argv[])
                         std::cout << mdd_part.size() << " nodes.\n";
                         mdd_part.reverse();
                         dummy_mdd.push_back(std::move(mdd_part));
+                    }
+                }
+
+                // Properly merge the dummy_mdd parts back into the persistant boundary array,
+                // inheriting the correct metadata from the first valid segment.
+                if (!dummy_mdd.empty()) {
+                    mdd_for_each_boundary[b] = std::move(dummy_mdd.front());
+                    for (std::size_t i = 1; i < dummy_mdd.size(); ++i) {
+                        mdd_for_each_boundary[b].append_without_check(dummy_mdd[i]);
                     }
                 }
             }
