@@ -36,6 +36,8 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_version  = "0.2.0";
@@ -190,7 +192,7 @@ int main(int argc, char* argv[])
     help_map["feature_type"] = {"string","channel_candidates",
         "Feature mode to run.",
         "Supported values: channel_candidates, find_drains, relief_ratio, "
-        "find_valleys, find_roads, flow_road_discrimination."};
+        "find_valleys, find_roads, flow_road_discrimination, path_opening."};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -689,6 +691,395 @@ int main(int argc, char* argv[])
         "flow_vs_slope_angle, bearing_contrast."};
 
 
+    // --- Path opening (generic curvilinear-feature filter) ---
+    int_default_map["path_min_length_pixels"] = 15;
+    help_map["path_min_length_pixels"] = {"int","15",
+        "Minimum path length L, in pixels, for the grayscale path opening.",
+        "A pixel is kept only if it lies on a connected, near-straight path of "
+        "at least L pixels in the input response. Set near the shortest real "
+        "road/channel segment to keep; larger L removes more isolated speckle "
+        "but also drops short fragments."};
+
+    int_default_map["path_quantization_levels"] = 256;
+    help_map["path_quantization_levels"] = {"int","256",
+        "Number of grayscale threshold levels for the path opening.",
+        "Higher values preserve the input value range more finely at higher "
+        "cost. 256 is usually plenty for a continuous response raster."};
+
+    int_default_map["path_trim_border_pixels"] = 0;
+    help_map["path_trim_border_pixels"] = {"int","0",
+        "Trim this many pixels in from the valid-data boundary before the path "
+        "opening (0 = no trim).",
+        "Removes the boundary-margin artefacts that polyfit/flow/FFT response "
+        "rasters carry. Because those artefacts are laterally continuous they "
+        "otherwise survive the path opening and masquerade as features. Trims "
+        "from both the grid edge and any irregular nodata footprint."};
+
+    bool_default_map["path_do_closing"] = false;
+    help_map["path_do_closing"] = {"bool","false",
+        "Run a path closing instead of a path opening.",
+        "A closing fills short dark breaks across an otherwise continuous bright "
+        "thread (e.g. a one-pixel gap in a road). Opening (default) suppresses "
+        "isolated bright speckle that lies on no long path."};
+
+    bool_default_map["write_path_opened_raster"] = true;
+    help_map["write_path_opened_raster"] = {"bool","true",
+        "Write the path-opened (or path-closed) response raster.",
+        "Output: <write_fname>_path_opened.tif."};
+
+    bool_default_map["write_path_tophat_raster"] = true;
+    help_map["write_path_tophat_raster"] = {"bool","true",
+        "Write the white top-hat residual (input minus path opening).",
+        "The path OPENING (_path_opened.tif) is the detector: it retains the "
+        "long, laterally continuous bright threads (roads/channels) and "
+        "suppresses isolated speckle. The top-hat is the complement: high where "
+        "bright detail was REMOVED, i.e. the short-scale speckle and blobs that "
+        "do NOT lie on a length-L path. Useful as a rejected-noise map or to "
+        "flatten background before thresholding. Output: <write_fname>_path_tophat.tif. "
+        "Only meaningful for a path opening (not a closing)."};
+
+    // --- Structure-tensor coherence (orientation / line-likeness) ---
+    float_default_map["coherence_derivative_radius_metres"] = 0.0f;
+    help_map["coherence_derivative_radius_metres"] = {"float","0.0",
+        "Pre-smoothing radius for the gradient in the structure tensor, in metres.",
+        "0 = no pre-smoothing (central difference on the raw field). Use a small "
+        "value (~1 pixel) to suppress gradient noise on speckly inputs."};
+
+    float_default_map["coherence_integration_radius_metres"] = 2.5f;
+    help_map["coherence_integration_radius_metres"] = {"float","2.5",
+        "Tensor-averaging (integration) radius for the structure tensor, in metres.",
+        "THE key scale: the neighbourhood over which the gradient outer product "
+        "is pooled. Set near the feature half-width plus a few pixels. Larger "
+        "values give smoother, more confident coherence but blur close features."};
+
+    bool_default_map["write_coherence_raster"] = true;
+    help_map["write_coherence_raster"] = {"bool","true",
+        "Write the structure-tensor coherence raster (line-likeness, [0,1]).",
+        "Output: <write_fname>_coherence.tif."};
+
+    bool_default_map["write_orientation_raster"] = true;
+    help_map["write_orientation_raster"] = {"bool","true",
+        "Write the structure-tensor orientation raster (feature azimuth, [0,180) deg).",
+        "Azimuth clockwise from north along which the feature runs. Meaningful "
+        "only where coherence is high. Output: <write_fname>_orientation_deg.tif."};
+
+    bool_default_map["write_energy_raster"] = false;
+    help_map["write_energy_raster"] = {"bool","false",
+        "Write the structure-tensor energy raster (gradient energy, lam1+lam2).",
+        "Distinguishes strong from faint oriented structure. "
+        "Output: <write_fname>_energy.tif."};
+
+    // --- Track spacing (local directional periodicity) ---
+    int_default_map["spacing_window_pixels"] = 64;
+    help_map["spacing_window_pixels"] = {"int","64",
+        "Analysis window side length for the spacing detector, in pixels.",
+        "Must span several periods of the largest spacing of interest "
+        "(a few times spacing_max_metres / cell_size)."};
+
+    int_default_map["spacing_step_pixels"] = 32;
+    help_map["spacing_step_pixels"] = {"int","32",
+        "Window stride for the spacing detector, in pixels.",
+        "Smaller = smoother and slower; typically half the window size."};
+
+    float_default_map["spacing_min_metres"] = 5.0f;
+    help_map["spacing_min_metres"] = {"float","5.0",
+        "Shortest repeat spacing to search for, in metres.",
+        "Must be >= 2 * cell_size (Nyquist)."};
+
+    float_default_map["spacing_max_metres"] = 30.0f;
+    help_map["spacing_max_metres"] = {"float","30.0",
+        "Longest repeat spacing to search for, in metres.",
+        "Must be <= spacing_window_pixels * cell_size."};
+
+    float_default_map["spacing_min_valid_fraction"] = 0.6f;
+    help_map["spacing_min_valid_fraction"] = {"float","0.6",
+        "Minimum fraction of valid pixels for a window to be analysed.",
+        "Windows with more nodata than this are skipped."};
+
+    bool_default_map["write_spacing_strength_raster"] = true;
+    help_map["write_spacing_strength_raster"] = {"bool","true",
+        "Write the periodicity strength (peak prominence) raster.",
+        "High where a sharp regular spacing dominates. "
+        "Output: <write_fname>_spacing_strength.tif."};
+
+    bool_default_map["write_spacing_raster"] = true;
+    help_map["write_spacing_raster"] = {"bool","true",
+        "Write the dominant spacing raster, in metres.",
+        "Use to classify feature families (ditches vs tracks vs wave dams). "
+        "Output: <write_fname>_spacing_metres.tif."};
+
+    bool_default_map["write_spacing_orientation_raster"] = false;
+    help_map["write_spacing_orientation_raster"] = {"bool","false",
+        "Write the spacing orientation raster (line azimuth, [0,180) deg).",
+        "Output: <write_fname>_spacing_orientation_deg.tif."};
+
+    // --- Ridge lines (oriented NMS + hysteresis) ---
+    float_default_map["ridge_high_threshold"] = 40.0f;
+    help_map["ridge_high_threshold"] = {"float","40.0",
+        "Strong-seed threshold (in input response units) for ridge hysteresis.",
+        "Thinned-response pixels at or above this start a retained centreline. "
+        "Set relative to the input raster's value range."};
+
+    float_default_map["ridge_low_threshold"] = 20.0f;
+    help_map["ridge_low_threshold"] = {"float","20.0",
+        "Weak-link threshold (in input response units) for ridge hysteresis.",
+        "Thinned pixels at or above this are kept only if connected to a strong "
+        "seed. Must be <= ridge_high_threshold."};
+
+    float_default_map["ridge_min_coherence"] = 0.0f;
+    help_map["ridge_min_coherence"] = {"float","0.0",
+        "Minimum structure-tensor coherence to admit a pixel to the ridge response.",
+        "Pixels with coherence below this are zeroed before NMS, removing ridge "
+        "maxima that sit in incoherent speckle. 0 disables the gate. Uses the "
+        "coherence_*_radius_metres parameters for the tensor scale."};
+
+    bool_default_map["write_ridge_thinned_raster"] = true;
+    help_map["write_ridge_thinned_raster"] = {"bool","true",
+        "Write the NMS-thinned ridge response (1-pixel centrelines, response-valued).",
+        "Output: <write_fname>_ridge_thinned.tif."};
+
+    bool_default_map["write_ridge_mask_raster"] = true;
+    help_map["write_ridge_mask_raster"] = {"bool","true",
+        "Write the binary hysteresis-linked ridge centreline mask.",
+        "Output: <write_fname>_ridge_mask.tif."};
+
+    // --- Thin-line extractor (separate lines from blobs/speckle) ---
+    float_default_map["thin_threshold"] = 20.0f;
+    help_map["thin_threshold"] = {"float","20.0",
+        "Threshold to binarise the input response (keep response >= this).",""};
+
+    int_default_map["thin_directional_closing_length_pixels"] = 0;
+    help_map["thin_directional_closing_length_pixels"] = {"int","0",
+        "Line length (pixels) for directional closing to bridge gaps along lines (0 = skip).",
+        "Reconnects fragmented features before component analysis."};
+
+    int_default_map["thin_path_length_pixels"] = 40;
+    help_map["thin_path_length_pixels"] = {"int","40",
+        "Binary path-opening length L (pixels); 0 = skip.",
+        "THE primary thin-vs-blob/speckle tool: keeps pixels on a connected thin "
+        "path of at least L pixels (handles curves); removes speckle and any blob "
+        "lacking such a path. Set near the shortest road to keep."};
+
+    float_default_map["thin_blob_removal_radius_metres"] = 0.0f;
+    help_map["thin_blob_removal_radius_metres"] = {"float","0.0",
+        "Disk-opening top-hat radius (metres) to remove blobs wider than this (0 = skip).",
+        "THE thin-vs-blob filter: features wider than ~2x this radius (blobs, "
+        "wide patches) are removed; thinner ribbons (roads) survive. Set a little "
+        "above the widest real road half-width."};
+
+    int_default_map["thin_min_component_pixels"] = 40;
+    help_map["thin_min_component_pixels"] = {"int","40",
+        "Minimum connected-component size (pixels).",""};
+
+    float_default_map["thin_min_major_axis_pixels"] = 0.0f;
+    help_map["thin_min_major_axis_pixels"] = {"float","0.0",
+        "Minimum component major-axis length (pixels); 0 = skip.",""};
+
+    float_default_map["thin_min_elongation"] = 1.0f;
+    help_map["thin_min_elongation"] = {"float","1.0",
+        "Minimum component elongation = major/minor axis; 1 = skip.",
+        "Raise (e.g. 3) to keep only clearly linear components and drop compact residue."};
+
+    int_default_map["thin_trim_border_pixels"] = 0;
+    help_map["thin_trim_border_pixels"] = {"int","0",
+        "Trim this many pixels from the final mask border (0 = none).",
+        "Removes linear edge artefacts that survive the elongation filter."};
+
+    bool_default_map["write_thin_mask_raster"] = true;
+    help_map["write_thin_mask_raster"] = {"bool","true",
+        "Write the final thin-line mask.",
+        "Output: <write_fname>_thin_mask.tif."};
+
+    bool_default_map["write_thin_diagnostics"] = false;
+    help_map["write_thin_diagnostics"] = {"bool","false",
+        "Write the thresholded binary and the blob-removed intermediate.",""};
+
+    // --- Generic roughness / consistency of an input raster ---
+    float_default_map["roughness_input_radius_metres"] = 5.0f;
+    help_map["roughness_input_radius_metres"] = {"float","5.0",
+        "Moving-window radius for the roughness/consistency metric, in metres.",
+        "Larger windows pool more context (smoother result)."};
+
+    bool_default_map["roughness_circular"] = false;
+    help_map["roughness_circular"] = {"bool","false",
+        "Treat the input as a circular angle in degrees (e.g. a flow bearing).",
+        "When true, computes circular consistency R = |mean unit-vector| over the "
+        "window (1 = perfectly consistent direction, e.g. flow channelled along a "
+        "road; 0 = directions cancel). Writes consistency (R) and roughness (1-R). "
+        "When false, computes the linear moving-window standard deviation."};
+
+    bool_default_map["write_roughness_raster"] = true;
+    help_map["write_roughness_raster"] = {"bool","true",
+        "Write the roughness raster (stddev, or 1-R for circular input).",
+        "Output: <write_fname>_input_roughness.tif."};
+
+    bool_default_map["write_consistency_raster"] = true;
+    help_map["write_consistency_raster"] = {"bool","true",
+        "Write the circular consistency raster R (only for roughness_circular=true).",
+        "High where the angle is locally consistent. Output: "
+        "<write_fname>_input_consistency.tif."};
+
+    // --- Smoothness road extractor (roads = smooth ribbons) ---
+    float_default_map["smooth_roughness_radius_metres"] = 1.5f;
+    help_map["smooth_roughness_radius_metres"] = {"float","1.5",
+        "Window radius for the local-relief roughness, in metres.",
+        "Match to the hillslope speckle scale. Roads are smooth (low roughness) "
+        "ribbons; the surrounding terrain is rough."};
+
+    float_default_map["smooth_roughness_half_saturation"] = 0.1f;
+    help_map["smooth_roughness_half_saturation"] = {"float","0.1",
+        "Roughness half-saturation (metres) for smoothness = 1/(1+roughness/h).",
+        "Roughness equal to this gives smoothness 0.5. Lower = more selective for "
+        "very smooth surfaces; set near the road-vs-hillslope roughness boundary."};
+
+    int_default_map["smooth_trim_border_pixels"] = 10;
+    help_map["smooth_trim_border_pixels"] = {"int","10",
+        "Border trim applied before extraction (0 = none).",""};
+
+    int_default_map["smooth_path_min_length_pixels"] = 40;
+    help_map["smooth_path_min_length_pixels"] = {"int","40",
+        "Minimum path length L (pixels) for the smoothness path opening.",
+        "Keeps smooth ribbons at least this long; drops short smooth patches."};
+
+    float_default_map["smooth_threshold"] = 0.5f;
+    help_map["smooth_threshold"] = {"float","0.5",
+        "Threshold on the path-opened smoothness to make the binary ribbon mask.",
+        "Higher = only the smoothest ribbons; lower = more inclusive."};
+
+    int_default_map["smooth_min_component_pixels"] = 40;
+    help_map["smooth_min_component_pixels"] = {"int","40",
+        "Minimum connected-component size (pixels) for a retained road.",""};
+
+    float_default_map["smooth_min_major_axis_pixels"] = 0.0f;
+    help_map["smooth_min_major_axis_pixels"] = {"float","0.0",
+        "Minimum component major-axis length (pixels); 0 = skip.",
+        "Use to demand a minimum linear span."};
+
+    float_default_map["smooth_min_elongation"] = 1.0f;
+    help_map["smooth_min_elongation"] = {"float","1.0",
+        "Minimum component elongation = major/minor axis; 1 = skip.",
+        "Raise (e.g. 3) to reject smooth blobs (fields) and keep thin roads."};
+
+    bool_default_map["write_smooth_road_mask_raster"] = true;
+    help_map["write_smooth_road_mask_raster"] = {"bool","true",
+        "Write the final smoothness-based road mask.",
+        "Output: <write_fname>_smooth_road_mask.tif."};
+
+    bool_default_map["write_smooth_diagnostics"] = false;
+    help_map["write_smooth_diagnostics"] = {"bool","false",
+        "Write roughness, smoothness, and path-opened smoothness diagnostics.",""};
+
+    // --- Road extractor (composed pipeline) ---
+    int_default_map["road_trim_border_pixels"] = 15;
+    help_map["road_trim_border_pixels"] = {"int","15",
+        "Border trim applied to the response before road extraction (0 = none).",
+        "Removes boundary-margin artefacts that otherwise survive as linear "
+        "features."};
+
+    float_default_map["road_min_coherence"] = 0.5f;
+    help_map["road_min_coherence"] = {"float","0.5",
+        "Minimum structure-tensor coherence to admit a pixel to the ridge response.",
+        "Pixels below this are zeroed before NMS, removing ridge maxima in "
+        "incoherent speckle. 0 disables the gate."};
+
+    int_default_map["road_min_component_pixels"] = 30;
+    help_map["road_min_component_pixels"] = {"int","30",
+        "Minimum connected-component size (pixels) for a retained road.",
+        "Drops short speckle fragments left by the ridge detector while keeping "
+        "long road chains. Set near the shortest real road length in pixels."};
+
+    string_default_map["road_valley_curvature_fname"] = "";
+    help_map["road_valley_curvature_fname"] = {"string","",
+        "Optional regional-curvature raster for the valley veto (relative to read path).",
+        "Typically <prefix>_flow_regional_valley_curvature.tif from "
+        "flow_road_discrimination. Empty = no valley veto. Centreline pixels "
+        "where this raster >= road_valley_curvature_veto_threshold are removed."};
+
+    float_default_map["road_valley_curvature_veto_threshold"] = 0.0f;
+    help_map["road_valley_curvature_veto_threshold"] = {"float","0.0",
+        "Curvature threshold for the valley veto (sign per the supplied raster).",
+        "Centreline pixels with regional curvature >= this (concave-up valley "
+        "zone) are dropped, removing the in-valley channel false positive."};
+
+    bool_default_map["road_classify_spacing"] = false;
+    help_map["road_classify_spacing"] = {"bool","false",
+        "Classify each extracted component as road (1) or regularly-spaced track (2).",
+        "Runs the directional-periodicity detector on the response and labels a "
+        "component a track when at least road_track_min_fraction of its pixels lie "
+        "in a field with periodicity strength >= road_track_min_strength. Uses the "
+        "spacing_* parameters. Output: <write_fname>_road_extract_classified.tif."};
+
+    float_default_map["road_track_min_strength"] = 6.0f;
+    help_map["road_track_min_strength"] = {"float","6.0",
+        "Periodicity strength above which a pixel counts as 'in a regular field'.",
+        "See track_spacing strength (whitened directional anisotropy). Raise to "
+        "demand stronger regularity before calling a component a track."};
+
+    float_default_map["road_track_min_fraction"] = 0.5f;
+    help_map["road_track_min_fraction"] = {"float","0.5",
+        "Fraction of a component's pixels that must be 'in a regular field' to label it a track.",
+        "Higher = stricter (only components mostly inside a regular field become tracks). "
+        "Ignored when road_classify_per_pixel is true."};
+
+    bool_default_map["road_classify_per_pixel"] = false;
+    help_map["road_classify_per_pixel"] = {"bool","false",
+        "Classify per pixel instead of per connected component.",
+        "false (default): whole component voted road/track (consistent per feature "
+        "but diluted where roads and tracks connect). true: each pixel is a track "
+        "where its local periodicity strength >= road_track_min_strength (no "
+        "dilution; road_track_min_fraction is ignored)."};
+
+    bool_default_map["write_road_extract_mask_raster"] = true;
+    help_map["write_road_extract_mask_raster"] = {"bool","true",
+        "Write the final extracted road mask.",
+        "Output: <write_fname>_road_extract_mask.tif."};
+
+    bool_default_map["write_road_extract_diagnostics"] = false;
+    help_map["write_road_extract_diagnostics"] = {"bool","false",
+        "Write road-extractor intermediate rasters.",
+        "Diffused response, coherence, NMS-thinned ridge, and the pre-cleanup "
+        "ridge mask."};
+
+    // --- Coherence-enhancing diffusion ---
+    int_default_map["ced_iterations"] = 10;
+    help_map["ced_iterations"] = {"int","10",
+        "Number of coherence-enhancing diffusion iterations.",
+        "More iterations bridge longer gaps and smooth more strongly along "
+        "feature orientation."};
+
+    float_default_map["ced_time_step"] = 0.15f;
+    help_map["ced_time_step"] = {"float","0.15",
+        "Explicit diffusion time step (tau).",
+        "Must be in (0, 0.25] for stability. 0.15 is a safe default."};
+
+    float_default_map["ced_derivative_radius_metres"] = 0.5f;
+    help_map["ced_derivative_radius_metres"] = {"float","0.5",
+        "Gradient pre-smoothing radius for the diffusion structure tensor, in metres.",
+        "0 = none. A small value steadies the orientation estimate on noisy input."};
+
+    float_default_map["ced_integration_radius_metres"] = 3.0f;
+    help_map["ced_integration_radius_metres"] = {"float","3.0",
+        "Structure-tensor integration radius for the diffusion, in metres.",
+        "Sets the scale over which a coherent orientation is detected before "
+        "smoothing along it."};
+
+    float_default_map["ced_contrast"] = 0.2f;
+    help_map["ced_contrast"] = {"float","0.2",
+        "Coherence contrast (C) controlling along-feature smoothing selectivity.",
+        "Uses normalised coherence in [0,1], so C is scale-invariant. Higher = "
+        "smooth only the most coherent threads; lower = smooth more of the field."};
+
+    float_default_map["ced_min_diffusivity"] = 0.001f;
+    help_map["ced_min_diffusivity"] = {"float","0.001",
+        "Floor (across-feature) diffusivity for the diffusion tensor.",
+        "Small value in (0,1); controls the tiny amount of smoothing allowed "
+        "across the feature."};
+
+    bool_default_map["write_diffused_raster"] = true;
+    help_map["write_diffused_raster"] = {"bool","true",
+        "Write the coherence-enhanced (diffused) raster.",
+        "Output: <write_fname>_diffused.tif."};
+
     // -------------------------------------------------------------------------
     // Parse parameters
     // -------------------------------------------------------------------------
@@ -872,13 +1263,24 @@ int main(int argc, char* argv[])
         feature_type != "relief_ratio" &&
         feature_type != "find_valleys" &&
         feature_type != "find_roads" &&
-        feature_type != "flow_road_discrimination"
+        feature_type != "flow_road_discrimination" &&
+        feature_type != "path_opening" &&
+        feature_type != "structure_tensor" &&
+        feature_type != "diffusion" &&
+        feature_type != "ridge_lines" &&
+        feature_type != "track_spacing" &&
+        feature_type != "extract_roads" &&
+        feature_type != "extract_roads_smooth" &&
+        feature_type != "roughness" &&
+        feature_type != "thin_lines"
     )
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
                   << "'. Supported values are channel_candidates, find_drains, "
                      "relief_ratio, find_valleys, find_roads, "
-                     "flow_road_discrimination.\n";
+                     "flow_road_discrimination, path_opening, structure_tensor, "
+                     "diffusion, ridge_lines, track_spacing, extract_roads, "
+                     "extract_roads_smooth, roughness, thin_lines.\n";
         return 1;
     }
 
@@ -1401,6 +1803,463 @@ int main(int argc, char* argv[])
                 }
                 vwriter.finish_vector_write();
                 std::cout << "  " << n_pts << " valley-axis big-channel points written.\n";
+            }
+        }
+        else if (feature_type == "path_opening")
+        {
+            const int  L           = ifs.at("path_min_length_pixels");
+            const int  n_levels     = ifs.at("path_quantization_levels");
+            const int  trim_border  = ifs.at("path_trim_border_pixels");
+            const bool do_closing   = bf.at("path_do_closing");
+
+            std::cout << "\n--- Path "
+                      << (do_closing ? "closing" : "opening")
+                      << " (curvilinear-feature filter) ---\n";
+            std::cout << "Min path length      : " << L << " px\n";
+            std::cout << "Quantization levels  : " << n_levels << "\n";
+            std::cout << "Border trim          : " << trim_border << " px\n";
+
+            if (trim_border > 0)
+            {
+                dem = lsdtt::trim_valid_border(dem, trim_border);
+            }
+
+            lsdtt::lsdtt_raster_cpu opened = do_closing
+                ? lsdtt::grayscale_path_closing(dem, L, n_levels, n_threads)
+                : lsdtt::grayscale_path_opening(dem, L, n_levels, n_threads);
+
+            if (bf.at("write_path_opened_raster"))
+            {
+                const std::string o = pp.make_output_path("_path_opened.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(opened.get_data(), opened.get_meta(), o, out_fmt);
+            }
+
+            // Top-hat residual = input - opening (only meaningful for an opening).
+            if (bf.at("write_path_tophat_raster") && !do_closing)
+            {
+                const auto& din = dem.get_data();
+                const auto& min = dem.get_mask();
+                const auto& dop = opened.get_data();
+                const lsdtt::lsdtt_raster_meta& tmeta = dem.get_meta();
+
+                std::vector<float>        th_data(din.size(),
+                    static_cast<float>(tmeta.no_data_value));
+                std::vector<std::uint8_t> th_mask(din.size(), std::uint8_t{0});
+                for (std::size_t i = 0; i < din.size(); ++i)
+                {
+                    if (min[i] != 0 && !tmeta.is_nodata(din[i]) &&
+                        std::isfinite(din[i]) && std::isfinite(dop[i]))
+                    {
+                        th_data[i] = din[i] - dop[i];
+                        th_mask[i] = std::uint8_t{1};
+                    }
+                }
+                lsdtt::lsdtt_raster_cpu tophat(
+                    std::move(th_data), std::move(th_mask), tmeta);
+
+                const std::string o = pp.make_output_path("_path_tophat.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(tophat.get_data(), tophat.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "structure_tensor")
+        {
+            const double deriv_r =
+                static_cast<double>(ff.at("coherence_derivative_radius_metres"));
+            const double integ_r =
+                static_cast<double>(ff.at("coherence_integration_radius_metres"));
+
+            std::cout << "\n--- Structure-tensor coherence ---\n";
+            std::cout << "Derivative radius    : " << deriv_r << " m\n";
+            std::cout << "Integration radius   : " << integ_r << " m\n";
+
+            lsdtt::structure_tensor_result st =
+                lsdtt::compute_structure_tensor_coherence(
+                    dem, deriv_r, integ_r, n_threads);
+
+            if (bf.at("write_coherence_raster"))
+            {
+                const std::string o = pp.make_output_path("_coherence.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(st.coherence.get_data(), st.coherence.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_orientation_raster"))
+            {
+                const std::string o = pp.make_output_path("_orientation_deg.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(st.orientation_deg.get_data(), st.orientation_deg.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_energy_raster"))
+            {
+                const std::string o = pp.make_output_path("_energy.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(st.energy.get_data(), st.energy.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "diffusion")
+        {
+            const int    iters   = ifs.at("ced_iterations");
+            const double tau     = static_cast<double>(ff.at("ced_time_step"));
+            const double deriv_r = static_cast<double>(ff.at("ced_derivative_radius_metres"));
+            const double integ_r = static_cast<double>(ff.at("ced_integration_radius_metres"));
+            const double contrast= static_cast<double>(ff.at("ced_contrast"));
+            const double min_d   = static_cast<double>(ff.at("ced_min_diffusivity"));
+
+            std::cout << "\n--- Coherence-enhancing diffusion ---\n";
+            std::cout << "Iterations           : " << iters << "\n";
+            std::cout << "Time step (tau)      : " << tau << "\n";
+            std::cout << "Derivative radius    : " << deriv_r << " m\n";
+            std::cout << "Integration radius   : " << integ_r << " m\n";
+            std::cout << "Contrast (C)         : " << contrast << "\n";
+
+            lsdtt::lsdtt_raster_cpu diffused =
+                lsdtt::coherence_enhancing_diffusion(
+                    dem, iters, tau, deriv_r, integ_r, contrast, min_d, n_threads);
+
+            if (bf.at("write_diffused_raster"))
+            {
+                const std::string o = pp.make_output_path("_diffused.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(diffused.get_data(), diffused.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "ridge_lines")
+        {
+            const double deriv_r =
+                static_cast<double>(ff.at("coherence_derivative_radius_metres"));
+            const double integ_r =
+                static_cast<double>(ff.at("coherence_integration_radius_metres"));
+            const double high    = static_cast<double>(ff.at("ridge_high_threshold"));
+            const double low     = static_cast<double>(ff.at("ridge_low_threshold"));
+            const double min_coh = static_cast<double>(ff.at("ridge_min_coherence"));
+
+            std::cout << "\n--- Ridge lines (oriented NMS + hysteresis) ---\n";
+            std::cout << "Integration radius   : " << integ_r << " m\n";
+            std::cout << "High threshold       : " << high << "\n";
+            std::cout << "Low threshold        : " << low << "\n";
+            std::cout << "Min coherence        : " << min_coh << "\n";
+
+            lsdtt::structure_tensor_result st =
+                lsdtt::compute_structure_tensor_coherence(
+                    dem, deriv_r, integ_r, n_threads);
+
+            // Response = input field, optionally gated by coherence.
+            lsdtt::lsdtt_raster_cpu gated = dem;
+            if (min_coh > 0.0)
+            {
+                std::vector<float>&       gd  = gated.get_data();
+                const auto&               km  = st.coherence.get_mask();
+                const auto&               kd  = st.coherence.get_data();
+                const lsdtt::lsdtt_raster_meta& gm = gated.get_meta();
+                for (std::size_t i = 0; i < gd.size(); ++i)
+                {
+                    if (km[i] != 0 && !gm.is_nodata(kd[i]) &&
+                        static_cast<double>(kd[i]) < min_coh)
+                    {
+                        gd[i] = 0.0f;
+                    }
+                }
+            }
+
+            lsdtt::oriented_ridge_result rr =
+                lsdtt::oriented_nms_hysteresis(
+                    gated, st.orientation_deg, high, low, n_threads);
+
+            if (bf.at("write_ridge_thinned_raster"))
+            {
+                const std::string o = pp.make_output_path("_ridge_thinned.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(rr.thinned.get_data(), rr.thinned.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_ridge_mask_raster"))
+            {
+                const std::string o = pp.make_output_path("_ridge_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(rr.mask.get_data(), rr.mask.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "track_spacing")
+        {
+            const int    win   = ifs.at("spacing_window_pixels");
+            const int    step  = ifs.at("spacing_step_pixels");
+            const double smin  = static_cast<double>(ff.at("spacing_min_metres"));
+            const double smax  = static_cast<double>(ff.at("spacing_max_metres"));
+            const double minvf = static_cast<double>(ff.at("spacing_min_valid_fraction"));
+
+            std::cout << "\n--- Track spacing (directional periodicity) ---\n";
+            std::cout << "Window / step        : " << win << " / " << step << " px\n";
+            std::cout << "Spacing band         : " << smin << " - " << smax << " m\n";
+
+            lsdtt::directional_periodicity_result sp =
+                lsdtt::detect_directional_periodicity(
+                    dem, win, step, smin, smax, minvf, n_threads);
+
+            if (bf.at("write_spacing_strength_raster"))
+            {
+                const std::string o = pp.make_output_path("_spacing_strength.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(sp.strength.get_data(), sp.strength.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_spacing_raster"))
+            {
+                const std::string o = pp.make_output_path("_spacing_metres.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(sp.spacing_metres.get_data(), sp.spacing_metres.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_spacing_orientation_raster"))
+            {
+                const std::string o = pp.make_output_path("_spacing_orientation_deg.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(sp.orientation_deg.get_data(), sp.orientation_deg.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "extract_roads")
+        {
+            lsdtt::road_extract_request req;
+            req.trim_border_pixels   = ifs.at("road_trim_border_pixels");
+            req.ced_iterations       = ifs.at("ced_iterations");
+            req.ced_time_step        = static_cast<double>(ff.at("ced_time_step"));
+            req.ced_derivative_radius_metres =
+                static_cast<double>(ff.at("ced_derivative_radius_metres"));
+            req.ced_integration_radius_metres =
+                static_cast<double>(ff.at("ced_integration_radius_metres"));
+            req.ced_contrast         = static_cast<double>(ff.at("ced_contrast"));
+            req.coherence_derivative_radius_metres =
+                static_cast<double>(ff.at("coherence_derivative_radius_metres"));
+            req.coherence_integration_radius_metres =
+                static_cast<double>(ff.at("coherence_integration_radius_metres"));
+            req.min_coherence        = static_cast<double>(ff.at("road_min_coherence"));
+            req.ridge_high_threshold = static_cast<double>(ff.at("ridge_high_threshold"));
+            req.ridge_low_threshold  = static_cast<double>(ff.at("ridge_low_threshold"));
+            req.valley_curvature_veto_threshold =
+                static_cast<double>(ff.at("road_valley_curvature_veto_threshold"));
+            req.min_component_pixels = ifs.at("road_min_component_pixels");
+            req.classify_spacing     = bf.at("road_classify_spacing");
+            req.spacing_window_pixels = ifs.at("spacing_window_pixels");
+            req.spacing_step_pixels   = ifs.at("spacing_step_pixels");
+            req.spacing_min_metres    = static_cast<double>(ff.at("spacing_min_metres"));
+            req.spacing_max_metres    = static_cast<double>(ff.at("spacing_max_metres"));
+            req.spacing_min_valid_fraction =
+                static_cast<double>(ff.at("spacing_min_valid_fraction"));
+            req.track_min_strength    = static_cast<double>(ff.at("road_track_min_strength"));
+            req.track_min_fraction    = static_cast<double>(ff.at("road_track_min_fraction"));
+            req.classify_per_pixel    = bf.at("road_classify_per_pixel");
+            req.n_threads            = n_threads;
+
+            std::cout << "\n--- Road extractor (composed pipeline) ---\n";
+            std::cout << "Border trim          : " << req.trim_border_pixels << " px\n";
+            std::cout << "CED iterations       : " << req.ced_iterations << "\n";
+            std::cout << "Min coherence        : " << req.min_coherence << "\n";
+            std::cout << "Ridge high / low     : " << req.ridge_high_threshold
+                      << " / " << req.ridge_low_threshold << "\n";
+            std::cout << "Min component pixels : " << req.min_component_pixels << "\n";
+            std::cout << "Spacing classifier   : " << (req.classify_spacing ? "on" : "off") << "\n";
+
+            // Optional valley-curvature veto raster.
+            const std::string veto_fname = sf.at("road_valley_curvature_fname");
+            lsdtt::lsdtt_data_loader veto_loader;
+            lsdtt::lsdtt_raster_cpu  veto_raster;
+            const lsdtt::lsdtt_raster_cpu* veto_ptr = nullptr;
+            if (!veto_fname.empty())
+            {
+                const std::string veto_path =
+                    pp.add_read_path_if_needed(veto_fname);
+                std::cout << "Valley veto raster   : " << veto_path << "\n";
+                veto_loader.open_raster(veto_path);
+                veto_raster = lsdtt::lsdtt_raster_cpu(veto_loader);
+                veto_ptr = &veto_raster;
+            }
+
+            lsdtt::road_extract_result result =
+                lsdtt::extract_roads(dem, veto_ptr, req);
+
+            if (bf.at("write_road_extract_mask_raster"))
+            {
+                const std::string o = pp.make_output_path("_road_extract_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.road_mask.get_data(), result.road_mask.get_meta(), o, out_fmt);
+            }
+            if (req.classify_spacing)
+            {
+                const std::string o = pp.make_output_path("_road_extract_classified.tif");
+                std::cout << "Writing: " << o << " (1=road, 2=track)\n";
+                loader.write_full(result.classified.get_data(), result.classified.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_road_extract_diagnostics"))
+            {
+                const std::string o1 = pp.make_output_path("_road_extract_diffused.tif");
+                const std::string o2 = pp.make_output_path("_road_extract_coherence.tif");
+                const std::string o3 = pp.make_output_path("_road_extract_ridge_thinned.tif");
+                const std::string o4 = pp.make_output_path("_road_extract_ridge_mask.tif");
+                std::cout << "Writing: " << o1 << "\n";
+                loader.write_full(result.diffused.get_data(), result.diffused.get_meta(), o1, out_fmt);
+                std::cout << "Writing: " << o2 << "\n";
+                loader.write_full(result.coherence.get_data(), result.coherence.get_meta(), o2, out_fmt);
+                std::cout << "Writing: " << o3 << "\n";
+                loader.write_full(result.ridge_thinned.get_data(), result.ridge_thinned.get_meta(), o3, out_fmt);
+                std::cout << "Writing: " << o4 << "\n";
+                loader.write_full(result.ridge_mask.get_data(), result.ridge_mask.get_meta(), o4, out_fmt);
+            }
+        }
+        else if (feature_type == "extract_roads_smooth")
+        {
+            lsdtt::road_smoothness_request req;
+            req.roughness_radius_metres =
+                static_cast<double>(ff.at("smooth_roughness_radius_metres"));
+            req.roughness_half_saturation =
+                static_cast<double>(ff.at("smooth_roughness_half_saturation"));
+            req.trim_border_pixels      = ifs.at("smooth_trim_border_pixels");
+            req.path_min_length_pixels  = ifs.at("smooth_path_min_length_pixels");
+            req.smoothness_threshold    = static_cast<double>(ff.at("smooth_threshold"));
+            req.min_component_pixels    = ifs.at("smooth_min_component_pixels");
+            req.min_major_axis_pixels   = static_cast<double>(ff.at("smooth_min_major_axis_pixels"));
+            req.min_elongation          = static_cast<double>(ff.at("smooth_min_elongation"));
+            req.n_threads               = n_threads;
+
+            std::cout << "\n--- Smoothness road extractor ---\n";
+            std::cout << "Roughness radius     : " << req.roughness_radius_metres << " m\n";
+            std::cout << "Roughness half-sat   : " << req.roughness_half_saturation << " m\n";
+            std::cout << "Path min length      : " << req.path_min_length_pixels << " px\n";
+            std::cout << "Smoothness threshold : " << req.smoothness_threshold << "\n";
+            std::cout << "Min component pixels : " << req.min_component_pixels << "\n";
+            std::cout << "Min elongation       : " << req.min_elongation << "\n";
+
+            lsdtt::road_smoothness_result result =
+                lsdtt::extract_roads_smooth(dem, req);
+
+            if (bf.at("write_smooth_road_mask_raster"))
+            {
+                const std::string o = pp.make_output_path("_smooth_road_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.road_mask.get_data(), result.road_mask.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_smooth_diagnostics"))
+            {
+                const std::string o1 = pp.make_output_path("_smooth_roughness.tif");
+                const std::string o2 = pp.make_output_path("_smooth_smoothness.tif");
+                const std::string o3 = pp.make_output_path("_smooth_path_opened.tif");
+                std::cout << "Writing: " << o1 << "\n";
+                loader.write_full(result.roughness.get_data(), result.roughness.get_meta(), o1, out_fmt);
+                std::cout << "Writing: " << o2 << "\n";
+                loader.write_full(result.smoothness.get_data(), result.smoothness.get_meta(), o2, out_fmt);
+                std::cout << "Writing: " << o3 << "\n";
+                loader.write_full(result.path_opened.get_data(), result.path_opened.get_meta(), o3, out_fmt);
+            }
+        }
+        else if (feature_type == "roughness")
+        {
+            const double radius = static_cast<double>(ff.at("roughness_input_radius_metres"));
+            const bool   circular = bf.at("roughness_circular");
+
+            std::cout << "\n--- Roughness / consistency ---\n";
+            std::cout << "Window radius        : " << radius << " m\n";
+            std::cout << "Circular (angle)     : " << (circular ? "yes" : "no") << "\n";
+
+            if (circular)
+            {
+                // Circular consistency R = |mean unit-vector| over the window.
+                const auto& din = dem.get_data();
+                const auto& min = dem.get_mask();
+                const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+                std::vector<float> cosd(din.size(), static_cast<float>(m.no_data_value));
+                std::vector<float> sind(din.size(), static_cast<float>(m.no_data_value));
+                std::vector<std::uint8_t> cm(din.size(), std::uint8_t{0});
+                const double d2r = 0.017453292519943295;
+                for (std::size_t i = 0; i < din.size(); ++i)
+                {
+                    if (min[i] == 0 || m.is_nodata(din[i]) || !std::isfinite(din[i])) continue;
+                    const double a = static_cast<double>(din[i]) * d2r;
+                    cosd[i] = static_cast<float>(std::cos(a));
+                    sind[i] = static_cast<float>(std::sin(a));
+                    cm[i] = std::uint8_t{1};
+                }
+                lsdtt::lsdtt_raster_cpu cosr(std::move(cosd), std::vector<std::uint8_t>(cm), m);
+                lsdtt::lsdtt_raster_cpu sinr(std::move(sind), std::move(cm), m);
+                lsdtt::lsdtt_raster_cpu mc = lsdtt::moving_window_mean(cosr, radius, lsdtt::window_shape::circular);
+                lsdtt::lsdtt_raster_cpu ms = lsdtt::moving_window_mean(sinr, radius, lsdtt::window_shape::circular);
+
+                const auto& mcd = mc.get_data(); const auto& mcm = mc.get_mask();
+                const auto& msd = ms.get_data();
+                std::vector<float> rdat(din.size(), static_cast<float>(m.no_data_value));
+                std::vector<float> roughd(din.size(), static_cast<float>(m.no_data_value));
+                std::vector<std::uint8_t> rmk(din.size(), std::uint8_t{0});
+                for (std::size_t i = 0; i < din.size(); ++i)
+                {
+                    if (mcm[i] == 0 || m.is_nodata(mcd[i])) continue;
+                    const double R = std::sqrt(static_cast<double>(mcd[i])*mcd[i] +
+                                               static_cast<double>(msd[i])*msd[i]);
+                    rdat[i]   = static_cast<float>(R);
+                    roughd[i] = static_cast<float>(1.0 - R);
+                    rmk[i] = std::uint8_t{1};
+                }
+                if (bf.at("write_consistency_raster"))
+                {
+                    lsdtt::lsdtt_raster_cpu cons(std::move(rdat), std::vector<std::uint8_t>(rmk), m);
+                    const std::string o = pp.make_output_path("_input_consistency.tif");
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(cons.get_data(), cons.get_meta(), o, out_fmt);
+                }
+                if (bf.at("write_roughness_raster"))
+                {
+                    lsdtt::lsdtt_raster_cpu rough(std::move(roughd), std::move(rmk), m);
+                    const std::string o = pp.make_output_path("_input_roughness.tif");
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(rough.get_data(), rough.get_meta(), o, out_fmt);
+                }
+            }
+            else
+            {
+                lsdtt::lsdtt_raster_cpu rough =
+                    lsdtt::moving_window_stddev(dem, radius, lsdtt::window_shape::circular);
+                if (bf.at("write_roughness_raster"))
+                {
+                    const std::string o = pp.make_output_path("_input_roughness.tif");
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(rough.get_data(), rough.get_meta(), o, out_fmt);
+                }
+            }
+        }
+        else if (feature_type == "thin_lines")
+        {
+            lsdtt::thin_lines_request req;
+            req.threshold = static_cast<double>(ff.at("thin_threshold"));
+            req.directional_closing_length_pixels =
+                ifs.at("thin_directional_closing_length_pixels");
+            req.path_length_pixels = ifs.at("thin_path_length_pixels");
+            req.blob_removal_radius_metres =
+                static_cast<double>(ff.at("thin_blob_removal_radius_metres"));
+            req.min_component_pixels  = ifs.at("thin_min_component_pixels");
+            req.min_major_axis_pixels = static_cast<double>(ff.at("thin_min_major_axis_pixels"));
+            req.min_elongation        = static_cast<double>(ff.at("thin_min_elongation"));
+            req.trim_border_pixels    = ifs.at("thin_trim_border_pixels");
+            req.n_threads             = n_threads;
+
+            std::cout << "\n--- Thin-line extractor ---\n";
+            std::cout << "Threshold            : " << req.threshold << "\n";
+            std::cout << "Directional closing  : " << req.directional_closing_length_pixels << " px\n";
+            std::cout << "Path opening length  : " << req.path_length_pixels << " px\n";
+            std::cout << "Blob removal radius  : " << req.blob_removal_radius_metres << " m\n";
+            std::cout << "Min component pixels : " << req.min_component_pixels << "\n";
+            std::cout << "Min elongation       : " << req.min_elongation << "\n";
+
+            lsdtt::thin_lines_result result =
+                lsdtt::extract_thin_lines(dem, req);
+
+            if (bf.at("write_thin_mask_raster"))
+            {
+                const std::string o = pp.make_output_path("_thin_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_thin_diagnostics"))
+            {
+                const std::string o1 = pp.make_output_path("_thin_binary.tif");
+                const std::string o2 = pp.make_output_path("_thin_blob_free.tif");
+                std::cout << "Writing: " << o1 << "\n";
+                loader.write_full(result.binary.get_data(), result.binary.get_meta(), o1, out_fmt);
+                std::cout << "Writing: " << o2 << "\n";
+                loader.write_full(result.blob_free.get_data(), result.blob_free.get_meta(), o2, out_fmt);
             }
         }
         else

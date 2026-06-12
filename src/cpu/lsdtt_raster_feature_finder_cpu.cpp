@@ -13,6 +13,7 @@
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "lsdtt_raster_linear_features_cpu.hpp"
 #include "lsdtt_proximity_cpu.hpp"
 #include "../core/lsdtt_flow_base.hpp"
 #include "../utils/lsdtt_binary_array2d_tracing.hpp"
@@ -2276,6 +2277,380 @@ road_flow_result find_road_flow_discrimination(
     out.regional_valley_curvature = rmetrics.at(request.valley_curvature_metric);
     out.regional_bearing_contrast = std::move(regional_bearing_contrast);
     out.valley_axis_buffer_mask   = std::move(valley_axis_buffer);
+    return out;
+}
+
+
+// =============================================================================
+// extract_roads
+// =============================================================================
+road_extract_result extract_roads(
+    const lsdtt_raster_cpu&     response,
+    const lsdtt_raster_cpu*     valley_curvature,
+    const road_extract_request& request)
+{
+    const lsdtt_raster_meta& meta = response.get_meta();
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "extract_roads: input response metadata is invalid.");
+    }
+    if (valley_curvature != nullptr)
+    {
+        const lsdtt_raster_meta& vm = valley_curvature->get_meta();
+        if (vm.n_rows != meta.n_rows || vm.n_cols != meta.n_cols)
+        {
+            throw std::runtime_error(
+                "extract_roads: valley_curvature dimensions differ from the "
+                "response raster.");
+        }
+    }
+
+    const int nthreads = request.n_threads;
+
+    // 1. Border trim (drop boundary artefacts that survive as linear features).
+    lsdtt_raster_cpu trimmed = (request.trim_border_pixels > 0)
+        ? trim_valid_border(response, request.trim_border_pixels)
+        : response;
+
+    // 2. Coherence-enhancing diffusion (bridge/denoise along orientation).
+    lsdtt_raster_cpu diffused = (request.ced_iterations > 0)
+        ? coherence_enhancing_diffusion(
+              trimmed, request.ced_iterations, request.ced_time_step,
+              request.ced_derivative_radius_metres,
+              request.ced_integration_radius_metres,
+              request.ced_contrast, 0.001, nthreads)
+        : trimmed;
+
+    // 3. Structure tensor: line evidence (coherence) + orientation field.
+    structure_tensor_result st = compute_structure_tensor_coherence(
+        diffused,
+        request.coherence_derivative_radius_metres,
+        request.coherence_integration_radius_metres,
+        nthreads);
+
+    // 4. Coherence-gated response: zero where the field is not line-like.
+    lsdtt_raster_cpu gated = diffused;
+    if (request.min_coherence > 0.0)
+    {
+        std::vector<float>&              gd = gated.get_data();
+        const std::vector<float>&        kd = st.coherence.get_data();
+        const std::vector<std::uint8_t>& km = st.coherence.get_mask();
+        const lsdtt_raster_meta&         gm = gated.get_meta();
+        for (std::size_t i = 0; i < gd.size(); ++i)
+        {
+            if (km[i] != 0 && !gm.is_nodata(kd[i]) &&
+                static_cast<double>(kd[i]) < request.min_coherence)
+            {
+                gd[i] = 0.0f;
+            }
+        }
+    }
+
+    // 5. Oriented NMS + hysteresis -> linked 1-px centrelines.
+    oriented_ridge_result ridge = oriented_nms_hysteresis(
+        gated, st.orientation_deg,
+        request.ridge_high_threshold, request.ridge_low_threshold, nthreads);
+
+    // 6. Optional valley-curvature veto: drop centreline pixels inside the
+    //    concave-up valley zone (where the in-valley channel masquerades).
+    lsdtt_raster_cpu vetoed = ridge.mask;
+    if (valley_curvature != nullptr)
+    {
+        std::vector<float>&              md = vetoed.get_data();
+        const std::vector<std::uint8_t>& mm = vetoed.get_mask();
+        const std::vector<float>&        cd = valley_curvature->get_data();
+        const std::vector<std::uint8_t>& cm = valley_curvature->get_mask();
+        const lsdtt_raster_meta&         cmeta = valley_curvature->get_meta();
+        for (std::size_t i = 0; i < md.size(); ++i)
+        {
+            if (mm[i] == 0) continue;
+            if (cm[i] != 0 && !cmeta.is_nodata(cd[i]) &&
+                static_cast<double>(cd[i]) >= request.valley_curvature_veto_threshold)
+            {
+                md[i] = 0.0f;
+            }
+        }
+    }
+
+    // 7. Cleanup: drop short speckle fragments, keep long road chains.
+    lsdtt_raster_cpu road_mask = (request.min_component_pixels > 1)
+        ? filter_binary_components_by_size(
+              vetoed, request.min_component_pixels, pixel_connectivity::d8)
+        : vetoed;
+
+    // 8. Trim the FINAL mask: the derivative / NMS stages regenerate boundary
+    //    artefacts at the data edge regardless of any input trim, so the
+    //    decisive border removal must happen here. Long perpendicular edge
+    //    "comb" ticks survive the component filter otherwise.
+    if (request.trim_border_pixels > 0)
+    {
+        road_mask = trim_valid_border(road_mask, request.trim_border_pixels);
+    }
+
+    road_extract_result out;
+
+    // 9. Optional spacing classifier: label each retained component road (1) or
+    //    regularly-spaced track (2) by how much of it sits in a periodic field.
+    if (request.classify_spacing)
+    {
+        directional_periodicity_result per = detect_directional_periodicity(
+            response,
+            request.spacing_window_pixels, request.spacing_step_pixels,
+            request.spacing_min_metres, request.spacing_max_metres,
+            request.spacing_min_valid_fraction, nthreads);
+
+        const std::vector<float>&        str = per.strength.get_data();
+        const std::vector<std::uint8_t>& smk = per.strength.get_mask();
+        const lsdtt_raster_meta&         pm  = per.strength.get_meta();
+        const std::vector<float>&        rdat = road_mask.get_data();
+        const std::vector<std::uint8_t>& rmk  = road_mask.get_mask();
+
+        auto pixel_is_periodic = [&](std::size_t i) -> bool
+        {
+            return smk[i] != 0 && !pm.is_nodata(str[i]) &&
+                   static_cast<double>(str[i]) >= request.track_min_strength;
+        };
+
+        std::vector<float>        cls_data(rdat.size(),
+            static_cast<float>(meta.no_data_value));
+        std::vector<std::uint8_t> cls_mask(rdat.size(), std::uint8_t{0});
+
+        if (request.classify_per_pixel)
+        {
+            // Per pixel: each road pixel is a track where the local periodicity
+            // strength clears the threshold. No component dilution.
+            for (std::size_t i = 0; i < rdat.size(); ++i)
+            {
+                if (rmk[i] == 0) continue;
+                cls_mask[i] = std::uint8_t{1};
+                if (rdat[i] < 0.5f) { cls_data[i] = 0.0f; continue; }  // background
+                cls_data[i] = pixel_is_periodic(i) ? 2.0f : 1.0f;
+            }
+        }
+        else
+        {
+            // Per component: vote over each connected component.
+            lsdtt_raster_cpu labels = label_binary_components_by_size(
+                road_mask, 1, pixel_connectivity::d8);
+            const std::vector<float>&        lab = labels.get_data();
+            const std::vector<std::uint8_t>& lmk = labels.get_mask();
+
+            std::size_t max_label = 0;
+            for (std::size_t i = 0; i < lab.size(); ++i)
+                if (lmk[i] != 0)
+                    max_label = std::max(max_label,
+                        static_cast<std::size_t>(std::lround(lab[i])));
+
+            std::vector<std::int64_t> total(max_label + 1, 0);
+            std::vector<std::int64_t> periodic(max_label + 1, 0);
+            for (std::size_t i = 0; i < lab.size(); ++i)
+            {
+                if (lmk[i] == 0) continue;
+                const std::size_t id =
+                    static_cast<std::size_t>(std::lround(lab[i]));
+                if (id == 0 || id > max_label) continue;
+                ++total[id];
+                if (pixel_is_periodic(i)) ++periodic[id];
+            }
+
+            std::vector<std::uint8_t> is_track(max_label + 1, 0);
+            for (std::size_t id = 1; id <= max_label; ++id)
+            {
+                if (total[id] == 0) continue;
+                const double frac = static_cast<double>(periodic[id]) /
+                                    static_cast<double>(total[id]);
+                is_track[id] = (frac >= request.track_min_fraction)
+                    ? std::uint8_t{1} : std::uint8_t{0};
+            }
+
+            for (std::size_t i = 0; i < lab.size(); ++i)
+            {
+                if (rmk[i] == 0) continue;
+                cls_mask[i] = std::uint8_t{1};
+                if (lmk[i] == 0) { cls_data[i] = 0.0f; continue; }  // background
+                const std::size_t id =
+                    static_cast<std::size_t>(std::lround(lab[i]));
+                cls_data[i] = (id >= 1 && id <= max_label && is_track[id])
+                    ? 2.0f : 1.0f;
+            }
+        }
+
+        out.spacing_strength = std::move(per.strength);
+        out.classified =
+            lsdtt_raster_cpu(std::move(cls_data), std::move(cls_mask), meta);
+    }
+
+    out.diffused      = std::move(diffused);
+    out.coherence     = std::move(st.coherence);
+    out.ridge_thinned = std::move(ridge.thinned);
+    out.ridge_mask    = std::move(ridge.mask);
+    out.road_mask     = std::move(road_mask);
+    return out;
+}
+
+
+// =============================================================================
+// extract_roads_smooth
+// =============================================================================
+road_smoothness_result extract_roads_smooth(
+    const lsdtt_raster_cpu&        dem,
+    const road_smoothness_request& request)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "extract_roads_smooth: input DEM metadata is invalid.");
+    if (request.roughness_radius_metres <= 0.0)
+        throw std::invalid_argument(
+            "extract_roads_smooth: roughness_radius_metres must be > 0.");
+    if (request.roughness_half_saturation <= 0.0)
+        throw std::invalid_argument(
+            "extract_roads_smooth: roughness_half_saturation must be > 0.");
+    if (request.path_min_length_pixels < 2)
+        throw std::invalid_argument(
+            "extract_roads_smooth: path_min_length_pixels must be >= 2.");
+
+    // 1. Roughness = local elevation range (max - min) over a small window.
+    lsdtt_raster_cpu roughness = moving_window_local_relief(
+        dem, request.roughness_radius_metres, window_shape::square);
+
+    // 2. Smoothness = 1 / (1 + roughness/h): roads (low roughness) -> ~1.
+    const std::vector<float>&        rd = roughness.get_data();
+    const std::vector<std::uint8_t>& rm = roughness.get_mask();
+    const double h = request.roughness_half_saturation;
+    std::vector<float>        sd(rd.size(),
+        static_cast<float>(meta.no_data_value));
+    std::vector<std::uint8_t> sm(rd.size(), std::uint8_t{0});
+    for (std::size_t i = 0; i < rd.size(); ++i)
+    {
+        if (rm[i] == 0 || meta.is_nodata(rd[i]) || !std::isfinite(rd[i]))
+            continue;
+        sd[i] = static_cast<float>(1.0 / (1.0 + static_cast<double>(rd[i]) / h));
+        sm[i] = std::uint8_t{1};
+    }
+    lsdtt_raster_cpu smoothness(std::move(sd), std::move(sm), meta);
+
+    // 3. Trim boundary artefacts.
+    lsdtt_raster_cpu trimmed = (request.trim_border_pixels > 0)
+        ? trim_valid_border(smoothness, request.trim_border_pixels)
+        : smoothness;
+
+    // 4. Path opening: keep smooth ribbons of length >= L, drop short blobs.
+    lsdtt_raster_cpu opened = grayscale_path_opening(
+        trimmed, request.path_min_length_pixels,
+        request.path_quantization_levels, request.n_threads);
+
+    // 5. Threshold the path-opened smoothness to a binary ribbon mask.
+    const std::vector<float>&        od = opened.get_data();
+    const std::vector<std::uint8_t>& om = opened.get_mask();
+    std::vector<float>        bd(od.size(),
+        static_cast<float>(meta.no_data_value));
+    std::vector<std::uint8_t> bm(od.size(), std::uint8_t{0});
+    for (std::size_t i = 0; i < od.size(); ++i)
+    {
+        if (om[i] == 0 || meta.is_nodata(od[i])) continue;
+        bm[i] = std::uint8_t{1};
+        bd[i] = (static_cast<double>(od[i]) >= request.smoothness_threshold)
+            ? 1.0f : 0.0f;
+    }
+    lsdtt_raster_cpu mask(std::move(bd), std::move(bm), meta);
+
+    // 6. Component cleanup: size + (optional) major-axis / elongation shape
+    //    filter to keep long thin roads and reject smooth blobs (fields).
+    lsdtt_raster_cpu road_mask =
+        (request.min_major_axis_pixels > 0.0 || request.min_elongation > 1.0)
+        ? filter_binary_components_by_shape(
+              mask, request.min_component_pixels,
+              request.min_major_axis_pixels, request.min_elongation)
+        : filter_binary_components_by_size(
+              mask, request.min_component_pixels, pixel_connectivity::d8);
+
+    road_smoothness_result out;
+    out.roughness   = std::move(roughness);
+    out.smoothness  = std::move(smoothness);
+    out.path_opened = std::move(opened);
+    out.road_mask   = std::move(road_mask);
+    return out;
+}
+
+
+// =============================================================================
+// extract_thin_lines
+// =============================================================================
+thin_lines_result extract_thin_lines(
+    const lsdtt_raster_cpu&   response,
+    const thin_lines_request& request)
+{
+    const lsdtt_raster_meta& meta = response.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "extract_thin_lines: input metadata is invalid.");
+
+    // 1. GRAYSCALE path opening on the raw response FIRST. Because a road has
+    //    consistently high values along its length, its min-along-path stays
+    //    high; speckle (alternating high/low) collapses to its low min. This is
+    //    what lets the subsequent threshold separate roads from a hillslope that
+    //    has similar PEAK values but is inconsistent. Done before binarising so
+    //    we exploit value consistency, not just connectivity.
+    lsdtt_raster_cpu opened_gray = (request.path_length_pixels >= 2)
+        ? grayscale_path_opening(response, request.path_length_pixels, 256,
+                                 request.n_threads)
+        : response;
+
+    const std::vector<float>&        rd = opened_gray.get_data();
+    const std::vector<std::uint8_t>& rm = opened_gray.get_mask();
+
+    // 2. Threshold the path-opened response -> binary 0/1.
+    std::vector<float>        bd(rd.size(), static_cast<float>(meta.no_data_value));
+    std::vector<std::uint8_t> bm(rd.size(), std::uint8_t{0});
+    for (std::size_t i = 0; i < rd.size(); ++i)
+    {
+        if (rm[i] == 0 || meta.is_nodata(rd[i]) || !std::isfinite(rd[i])) continue;
+        bm[i] = std::uint8_t{1};
+        bd[i] = (static_cast<double>(rd[i]) >= request.threshold) ? 1.0f : 0.0f;
+    }
+    lsdtt_raster_cpu binary(std::move(bd), std::move(bm), meta);
+
+    // 3. Optional directional closing to bridge gaps along the lines.
+    if (request.directional_closing_length_pixels >= 3)
+    {
+        binary = binary_directional_closing(
+            binary, request.directional_closing_length_pixels,
+            request.directional_closing_n_angles);
+    }
+
+    lsdtt_raster_cpu blob_free = binary;
+
+    // 3b. Optional morphological OPENING (erosion then dilation) with a disk.
+    //     Erases thin filaments (the hillslope "lacework" web that connects
+    //     everything) and DISCONNECTS solid roads from it, while solid road
+    //     cores wider than the disk survive. This is what lets the subsequent
+    //     component elongation filter treat each road as its own component.
+    if (request.blob_removal_radius_metres > 0.0)
+    {
+        blob_free = binary_morphological_opening(
+            blob_free, request.blob_removal_radius_metres, window_shape::circular);
+    }
+
+    // 4. Component cleanup: size + (optional) elongation/major-axis shape filter.
+    lsdtt_raster_cpu mask =
+        (request.min_major_axis_pixels > 0.0 || request.min_elongation > 1.0)
+        ? filter_binary_components_by_shape(
+              blob_free, request.min_component_pixels,
+              request.min_major_axis_pixels, request.min_elongation)
+        : filter_binary_components_by_size(
+              blob_free, request.min_component_pixels, pixel_connectivity::d8);
+
+    // 5. Trim the final mask border (edge artefacts are linear and survive the
+    //    elongation filter, so the decisive removal is here).
+    if (request.trim_border_pixels > 0)
+        mask = trim_valid_border(mask, request.trim_border_pixels);
+
+    thin_lines_result out;
+    out.binary    = std::move(binary);
+    out.blob_free = std::move(blob_free);
+    out.mask      = std::move(mask);
     return out;
 }
 

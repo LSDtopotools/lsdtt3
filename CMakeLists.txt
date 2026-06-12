@@ -246,6 +246,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_skeleton_graph_cpu.cpp
     src/cpu/lsdtt_raster_binary_mask_vectorise_cpu.cpp
     src/cpu/lsdtt_raster_binary_mask_cpu.cpp
+    src/cpu/lsdtt_raster_linear_features_cpu.cpp
     src/cpu/lsdtt_burn_streams_cpu.cpp
     src/cpu/lsdtt_least_cost_path.cpp
     src/cpu/lsdtt_terrace_edge_tracer_cpu.cpp

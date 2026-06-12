@@ -376,4 +376,81 @@ lsdtt_raster_cpu fftw2D_masked_surface_recovery(
     int                  n_threads = 0
 );
 
+
+// -----------------------------------------------------------------------------
+// directional_periodicity_result
+//
+// Per-pixel outputs of the local directional-periodicity (regular-spacing)
+// detector. Each pixel inherits the result of the most confident overlapping
+// analysis window covering it.
+//
+//   strength       — peak prominence of the dominant spectral peak within the
+//                    searched spacing band: peak power / mean band power.
+//                    ~1 = no periodicity (peak no stronger than background);
+//                    large = a sharp, regular spacing. The score to threshold
+//                    when deciding "is this a regularly-spaced field".
+//   spacing_metres — dominant repeat spacing (1 / peak frequency), in metres.
+//                    THE classifier: ditches, forest tracks, and wave dams each
+//                    occupy a distinctive spacing band.
+//   orientation_deg— azimuth ALONG which the parallel features run (perpendicular
+//                    to the spacing direction), in [0,180) deg clockwise from
+//                    north.
+// -----------------------------------------------------------------------------
+struct directional_periodicity_result
+{
+    lsdtt_raster_cpu strength;
+    lsdtt_raster_cpu spacing_metres;
+    lsdtt_raster_cpu orientation_deg;
+};
+
+// -----------------------------------------------------------------------------
+// detect_directional_periodicity
+//
+// Finds families of regularly-spaced parallel features (ditches, forest tracks,
+// "wave dams", cultivation ridges) by their characteristic spacing. A set of
+// equally spaced parallel lines produces a sharp off-DC peak in the 2D power
+// spectrum at frequency 1/spacing, oriented perpendicular to the lines. The
+// detector slides an analysis window over the raster, and in each window:
+//
+//   1. subtract the window mean and apply a Hann taper (reduce spectral leakage);
+//   2. take the 2D FFT and form the power spectrum;
+//   3. within the frequency annulus corresponding to spacings in
+//      [min_spacing_metres, max_spacing_metres], find the strongest peak;
+//   4. record peak prominence (peak / mean band power), spacing (1/peak freq),
+//      and the perpendicular line orientation.
+//
+// Windows overlap (stride = step_pixels); each pixel keeps the result of the
+// window in which it scored the highest prominence.
+//
+// Parameters
+// ----------
+//   field               — input raster (e.g. a filled DEM such as sd_fill.tif,
+//                         or a curvature/divergence response).
+//   window_size_pixels  — analysis window side length. Must comfortably span
+//                         several periods of the largest spacing of interest
+//                         (a few * max_spacing_metres / cell_size). >= 8.
+//   step_pixels         — window stride; smaller = smoother, slower. Typically
+//                         window_size_pixels / 2. >= 1.
+//   min_spacing_metres  — shortest spacing to search for (> 2*cell_size).
+//   max_spacing_metres  — longest spacing to search for (< window extent).
+//   min_valid_fraction  — minimum fraction of valid pixels for a window to be
+//                         analysed (default 0.6); sparser windows are skipped.
+//   n_threads           — OpenMP thread count; 0 = all available.
+//
+// Throws
+// ------
+//   std::runtime_error    if FFTW is not available, metadata is invalid, or the
+//                         spacing band is empty for the given window.
+//   std::invalid_argument on out-of-range parameters.
+// -----------------------------------------------------------------------------
+directional_periodicity_result detect_directional_periodicity(
+    const lsdtt_raster_cpu& field,
+    int                     window_size_pixels,
+    int                     step_pixels,
+    double                  min_spacing_metres,
+    double                  max_spacing_metres,
+    double                  min_valid_fraction = 0.6,
+    int                     n_threads          = 0
+);
+
 } // namespace lsdtt

@@ -114,6 +114,13 @@ lsdtt_raster_cpu fftw2D_masked_surface_recovery(
                              + k_no_fftw_msg);
 }
 
+directional_periodicity_result detect_directional_periodicity(
+    const lsdtt_raster_cpu&, int, int, double, double, double, int)
+{
+    throw std::runtime_error(std::string("lsdtt::detect_directional_periodicity: ")
+                             + k_no_fftw_msg);
+}
+
 
 
 #else
@@ -3304,6 +3311,272 @@ lsdtt_raster_cpu fftw2D_masked_surface_recovery(
     }
 
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+
+// -----------------------------------------------------------------------------
+// detect_directional_periodicity
+// -----------------------------------------------------------------------------
+directional_periodicity_result detect_directional_periodicity(
+    const lsdtt_raster_cpu& field,
+    int                     window_size_pixels,
+    int                     step_pixels,
+    double                  min_spacing_metres,
+    double                  max_spacing_metres,
+    double                  min_valid_fraction,
+    int                     n_threads)
+{
+    const lsdtt_raster_meta& meta = field.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "detect_directional_periodicity: invalid raster metadata.");
+    if (window_size_pixels < 8)
+        throw std::invalid_argument(
+            "detect_directional_periodicity: window_size_pixels must be >= 8.");
+    if (step_pixels < 1)
+        throw std::invalid_argument(
+            "detect_directional_periodicity: step_pixels must be >= 1.");
+    if (min_spacing_metres <= 0.0 || max_spacing_metres <= min_spacing_metres)
+        throw std::invalid_argument(
+            "detect_directional_periodicity: require 0 < min_spacing < max_spacing.");
+
+    const int    nrows = meta.n_rows;
+    const int    ncols = meta.n_cols;
+    const int    W     = window_size_pixels;
+    const double cell  = meta.cell_size;
+    const float  nd    = static_cast<float>(meta.no_data_value);
+    const std::size_t npix =
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+
+    if (W > nrows || W > ncols)
+        throw std::invalid_argument(
+            "detect_directional_periodicity: window larger than raster.");
+    if (min_spacing_metres < 2.0 * cell)
+        throw std::invalid_argument(
+            "detect_directional_periodicity: min_spacing_metres must be "
+            ">= 2 * cell_size (Nyquist).");
+    if (max_spacing_metres > W * cell)
+        throw std::invalid_argument(
+            "detect_directional_periodicity: max_spacing_metres must be "
+            "<= window_size_pixels * cell_size.");
+
+    const double f_band_lo = 1.0 / max_spacing_metres;   // cycles / m
+    const double f_band_hi = 1.0 / min_spacing_metres;
+    const double df        = 1.0 / (static_cast<double>(W) * cell);  // bin width
+
+#ifdef _OPENMP
+    const int nthreads = (n_threads <= 0) ? omp_get_max_threads() : n_threads;
+#else
+    const int nthreads = 1;
+#endif
+
+    const std::vector<float>&        fd = field.get_data();
+    const std::vector<std::uint8_t>& fm = field.get_mask();
+    auto fvalid = [&](std::size_t idx) -> bool
+    {
+        return fm[idx] != 0 && !meta.is_nodata(fd[idx]) &&
+               std::isfinite(fd[idx]);
+    };
+
+    // Hann window for the analysis patch.
+    const std::vector<double> hann =
+        build_2d_window(W, W, spectral_window_type::hann);
+
+    // Window origins (cover the bottom/right edge by clamping the last origin).
+    std::vector<std::pair<int,int>> origins;
+    for (int r0 = 0; ; r0 += step_pixels)
+    {
+        const int rr = std::min(r0, nrows - W);
+        for (int c0 = 0; ; c0 += step_pixels)
+        {
+            const int cc = std::min(c0, ncols - W);
+            origins.emplace_back(rr, cc);
+            if (cc == ncols - W) break;
+        }
+        if (rr == nrows - W) break;
+    }
+    const std::size_t n_win = origins.size();
+
+    struct win_result { float prom; float spacing; float orient; };
+    std::vector<win_result> results(n_win,
+        win_result{-1.0f, nd, nd});
+
+    // One FFTW plan, reused across windows via fftw_execute_dft (thread-safe
+    // execution; planning is serial here).
+    const int WW = W * W;
+    fftw_complex* scratch_in  =
+        static_cast<fftw_complex*>(fftw_malloc(sizeof(fftw_complex) * WW));
+    fftw_complex* scratch_out =
+        static_cast<fftw_complex*>(fftw_malloc(sizeof(fftw_complex) * WW));
+    fftw_plan_handle plan(W, W, scratch_in, scratch_out,
+                          FFTW_FORWARD, FFTW_ESTIMATE,
+                          "detect_directional_periodicity");
+
+#ifdef _OPENMP
+    #pragma omp parallel num_threads(nthreads)
+#endif
+    {
+        fftw_complex* in  =
+            static_cast<fftw_complex*>(fftw_malloc(sizeof(fftw_complex) * WW));
+        fftw_complex* out =
+            static_cast<fftw_complex*>(fftw_malloc(sizeof(fftw_complex) * WW));
+
+#ifdef _OPENMP
+        #pragma omp for schedule(dynamic)
+#endif
+        for (std::size_t w = 0; w < n_win; ++w)
+        {
+            const int r0 = origins[w].first;
+            const int c0 = origins[w].second;
+
+            // Mean of valid pixels in the window.
+            double sum = 0.0; int nvalid = 0;
+            for (int i = 0; i < W; ++i)
+                for (int j = 0; j < W; ++j)
+                {
+                    const std::size_t idx =
+                        static_cast<std::size_t>(r0 + i) * ncols + (c0 + j);
+                    if (fvalid(idx)) { sum += fd[idx]; ++nvalid; }
+                }
+            if (static_cast<double>(nvalid) <
+                min_valid_fraction * static_cast<double>(WW))
+                continue;   // result stays invalid (prom = -1)
+            const double mean = sum / static_cast<double>(nvalid);
+
+            // Detrend (subtract mean, zero nodata) and apply the Hann taper.
+            for (int i = 0; i < W; ++i)
+                for (int j = 0; j < W; ++j)
+                {
+                    const std::size_t k =
+                        static_cast<std::size_t>(i) * W + j;
+                    const std::size_t idx =
+                        static_cast<std::size_t>(r0 + i) * ncols + (c0 + j);
+                    const double v = fvalid(idx)
+                        ? (static_cast<double>(fd[idx]) - mean) : 0.0;
+                    in[k][0] = v * hann[k];
+                    in[k][1] = 0.0;
+                }
+
+            fftw_execute_dft(plan.get(), in, out);
+
+            // Radial background: mean power as a function of |f|, averaged over
+            // ALL orientations. Dividing by this whitens the red-noise spectral
+            // slope so a peak is judged against its own ring, not the band.
+            const int nrad = W;   // safe upper bound on radial bin index
+            std::vector<double> rad_sum(nrad, 0.0);
+            std::vector<int>    rad_cnt(nrad, 0);
+            for (int a = 0; a < W; ++a)
+            {
+                const int ia = (a <= W / 2) ? a : a - W;
+                const double fy = ia * df;
+                for (int b = 0; b < W; ++b)
+                {
+                    if (a == 0 && b == 0) continue;
+                    const int ib = (b <= W / 2) ? b : b - W;
+                    const double fx = ib * df;
+                    const int kr = static_cast<int>(
+                        std::lround(std::sqrt(fx * fx + fy * fy) / df));
+                    if (kr <= 0 || kr >= nrad) continue;
+                    const std::size_t k = static_cast<std::size_t>(a) * W + b;
+                    rad_sum[kr] += out[k][0] * out[k][0] + out[k][1] * out[k][1];
+                    rad_cnt[kr] += 1;
+                }
+            }
+
+            // Scan the spacing band. Locate the peak by RAW power (robust to
+            // high-frequency noise), then score it by the whitened ratio
+            // peak / ring_mean (robust to the red-noise spectral slope). A
+            // window only earns a high strength when a real periodic peak
+            // actually dominates its band, in which case its spacing is reliable.
+            double peak_raw = -1.0;
+            double pfx = 0.0, pfy = 0.0; int pkr = -1;
+            for (int a = 0; a < W; ++a)
+            {
+                const int ia = (a <= W / 2) ? a : a - W;
+                const double fy = ia * df;
+                for (int b = 0; b < W; ++b)
+                {
+                    if (a == 0 && b == 0) continue;
+                    const int ib = (b <= W / 2) ? b : b - W;
+                    const double fx = ib * df;
+                    const double f  = std::sqrt(fx * fx + fy * fy);
+                    if (f < f_band_lo || f > f_band_hi) continue;
+                    const int kr = static_cast<int>(std::lround(f / df));
+                    if (kr <= 0 || kr >= nrad || rad_cnt[kr] == 0) continue;
+                    const std::size_t k = static_cast<std::size_t>(a) * W + b;
+                    const double p = out[k][0] * out[k][0] +
+                                     out[k][1] * out[k][1];
+                    if (p > peak_raw) { peak_raw = p; pfx = fx; pfy = fy; pkr = kr; }
+                }
+            }
+            if (peak_raw <= 0.0 || pkr < 0) continue;
+
+            const double ring_mean =
+                rad_sum[pkr] / static_cast<double>(rad_cnt[pkr]);
+            const double prom = peak_raw / (ring_mean + 1e-30);
+            const double fpeak = std::sqrt(pfx * pfx + pfy * pfy);
+            const double spacing = (fpeak > 0.0) ? (1.0 / fpeak) : nd;
+
+            // Lines run perpendicular to the spectral peak vector (fx east,
+            // fy south). Azimuth clockwise from north of the line direction.
+            double az = std::atan2(-pfy, -pfx) * (180.0 / k_pi);
+            az = std::fmod(az, 180.0);
+            if (az < 0.0) az += 180.0;
+
+            results[w] = win_result{
+                static_cast<float>(prom),
+                static_cast<float>(spacing),
+                static_cast<float>(az)};
+        }
+
+        fftw_free(in);
+        fftw_free(out);
+    }
+
+    fftw_free(scratch_in);
+    fftw_free(scratch_out);
+
+    // Assign each pixel the result of its most-confident covering window.
+    std::vector<float>        best_prom(npix, -1.0f);
+    std::vector<float>        sp_data  (npix, nd);
+    std::vector<float>        or_data  (npix, nd);
+    std::vector<std::uint8_t> out_mask (npix, std::uint8_t{0});
+
+    for (std::size_t w = 0; w < n_win; ++w)
+    {
+        const win_result& wr = results[w];
+        if (wr.prom < 0.0f) continue;
+        const int r0 = origins[w].first;
+        const int c0 = origins[w].second;
+        for (int i = 0; i < W; ++i)
+            for (int j = 0; j < W; ++j)
+            {
+                const std::size_t idx =
+                    static_cast<std::size_t>(r0 + i) * ncols + (c0 + j);
+                if (!fvalid(idx)) continue;
+                if (wr.prom > best_prom[idx])
+                {
+                    best_prom[idx] = wr.prom;
+                    sp_data[idx]   = wr.spacing;
+                    or_data[idx]   = wr.orient;
+                    out_mask[idx]  = std::uint8_t{1};
+                }
+            }
+    }
+
+    // Strength raster: nodata where no window covered the pixel.
+    std::vector<float> st_data(npix, nd);
+    for (std::size_t idx = 0; idx < npix; ++idx)
+        if (out_mask[idx]) st_data[idx] = best_prom[idx];
+
+    directional_periodicity_result out;
+    out.strength = lsdtt_raster_cpu(std::move(st_data),
+        std::vector<std::uint8_t>(out_mask), meta);
+    out.spacing_metres = lsdtt_raster_cpu(std::move(sp_data),
+        std::vector<std::uint8_t>(out_mask), meta);
+    out.orientation_deg = lsdtt_raster_cpu(std::move(or_data),
+        std::move(out_mask), meta);
+    return out;
 }
 
 

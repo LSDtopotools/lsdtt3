@@ -528,4 +528,219 @@ road_flow_result find_road_flow_discrimination(
     const road_flow_request& request
 );
 
+
+// =============================================================================
+// Road extractor — composes the linear-feature primitives into a road mask
+// =============================================================================
+//
+// Pipeline (each stage is a reusable primitive from lsdtt_raster_linear_features
+// or lsdtt_raster_binary_mask):
+//
+//   response
+//     -> trim_valid_border                 (drop boundary artefacts)
+//     -> coherence_enhancing_diffusion      (bridge/denoise along orientation)
+//     -> compute_structure_tensor_coherence (line evidence + orientation)
+//     -> coherence-gated response
+//     -> oriented_nms_hysteresis            (1-px linked centrelines)
+//     -> optional valley-curvature veto     (drop the in-valley channel)
+//     -> filter_binary_components_by_size   (drop short speckle fragments)
+//     = road_mask
+//
+// The response is whatever per-pixel raster makes roads bright — typically the
+// flow-path divergence from find_road_flow_discrimination. The optional
+// valley-curvature raster (e.g. road_flow_result::regional_valley_curvature)
+// removes the false channel that runs along a valley axis where the flanking
+// hillslopes converge.
+// -----------------------------------------------------------------------------
+struct road_extract_request
+{
+    // Border trim (0 = skip).
+    int    trim_border_pixels = 15;
+
+    // Coherence-enhancing diffusion (ced_iterations = 0 to skip).
+    int    ced_iterations             = 8;
+    double ced_time_step              = 0.15;
+    double ced_derivative_radius_metres  = 1.0;
+    double ced_integration_radius_metres = 3.0;
+    double ced_contrast               = 0.2;
+
+    // Structure tensor (for the ridge orientation and the coherence gate).
+    double coherence_derivative_radius_metres  = 1.0;
+    double coherence_integration_radius_metres = 3.0;
+    double min_coherence              = 0.5;   // gate: zero response below this
+
+    // Oriented NMS + hysteresis (thresholds in response units).
+    double ridge_high_threshold       = 40.0;
+    double ridge_low_threshold        = 20.0;
+
+    // Valley-curvature veto (only used when a curvature raster is supplied).
+    // Drop centreline pixels where the regional curvature >= this (concave-up
+    // valley zone). Sign convention follows the supplied raster.
+    double valley_curvature_veto_threshold = 0.0;
+
+    // Final cleanup: remove connected components shorter than this many pixels.
+    int    min_component_pixels       = 30;
+
+    // --- Spacing classifier (road vs regularly-spaced track) ---
+    // When enabled, each retained component is labelled road (1) or track (2)
+    // by how much of it lies in a regularly-spaced field (high periodicity
+    // strength), using detect_directional_periodicity on the response.
+    bool   classify_spacing           = false;
+    int    spacing_window_pixels      = 96;
+    int    spacing_step_pixels        = 48;
+    double spacing_min_metres         = 4.0;
+    double spacing_max_metres         = 20.0;
+    double spacing_min_valid_fraction = 0.6;
+    double track_min_strength         = 6.0;   // periodicity strength = "in a regular field"
+    double track_min_fraction         = 0.5;   // fraction of a component that must be periodic
+    // Labelling mode:
+    //   false (default) — per component: a whole component is road or track by
+    //                     the track_min_fraction vote. Consistent per feature,
+    //                     but diluted where road and track components connect.
+    //   true            — per pixel: each mask pixel is track where its local
+    //                     periodicity strength >= track_min_strength, else road.
+    //                     No dilution; track_min_fraction is ignored.
+    bool   classify_per_pixel         = false;
+
+    int    n_threads                  = 0;
+};
+
+struct road_extract_result
+{
+    lsdtt_raster_cpu diffused;       // coherence-enhanced response
+    lsdtt_raster_cpu coherence;      // structure-tensor coherence
+    lsdtt_raster_cpu ridge_thinned;  // NMS-thinned response (pre-hysteresis link)
+    lsdtt_raster_cpu ridge_mask;     // hysteresis-linked centrelines (pre-cleanup)
+    lsdtt_raster_cpu road_mask;      // final: veto + component-size cleaned
+
+    // Populated only when request.classify_spacing is true:
+    lsdtt_raster_cpu spacing_strength; // periodicity strength of the response
+    lsdtt_raster_cpu classified;       // 0 background, 1 road, 2 regular track
+};
+
+// -----------------------------------------------------------------------------
+// extract_roads
+//
+// Composes the road-extraction pipeline above. `valley_curvature` may be null
+// to skip the valley veto. Throws std::runtime_error on invalid metadata or a
+// dimension mismatch between response and valley_curvature.
+// -----------------------------------------------------------------------------
+road_extract_result extract_roads(
+    const lsdtt_raster_cpu&      response,
+    const lsdtt_raster_cpu*      valley_curvature,
+    const road_extract_request&  request
+);
+
+
+// =============================================================================
+// Smoothness road extractor — roads are smooth ribbons on a rough hillslope
+// =============================================================================
+//
+// Engineered roads/tracks are graded smooth surfaces; the surrounding hillslope
+// carries fine roughness ("speckle"). So the discriminating signal is LOCAL
+// ROUGHNESS, not any derivative of elevation. This extractor takes the DEM
+// directly:
+//
+//   DEM
+//     -> moving_window_local_relief          (roughness = local elevation range)
+//     -> smoothness = 1 / (1 + roughness/h)  (roads -> ~1, rough -> ~0)
+//     -> trim_valid_border                    (drop boundary artefacts)
+//     -> grayscale_path_opening               (keep smooth ribbons of length L)
+//     -> threshold                            (binary smooth-ribbon mask)
+//     -> component size + elongation filter   (keep long thin roads, drop blobs)
+//     = road_mask
+//
+// This is deliberately simpler than extract_roads: the smoothness signal is
+// clean enough that the diffusion / structure-tensor / NMS stages used to fight
+// the noisy divergence are unnecessary.
+// -----------------------------------------------------------------------------
+struct road_smoothness_request
+{
+    double roughness_radius_metres   = 1.5;  // local-relief window radius
+    double roughness_half_saturation = 0.1;  // smoothness = 1/(1 + rough/this)
+    int    trim_border_pixels        = 10;   // 0 = skip
+    int    path_min_length_pixels    = 40;
+    int    path_quantization_levels  = 256;
+    double smoothness_threshold      = 0.5;  // on the path-opened smoothness
+    int    min_component_pixels      = 40;
+    double min_major_axis_pixels     = 0.0;  // 0 = skip major-axis test
+    double min_elongation            = 1.0;  // 1 = skip elongation test (>=1)
+    int    n_threads                 = 0;
+};
+
+struct road_smoothness_result
+{
+    lsdtt_raster_cpu roughness;     // local elevation range
+    lsdtt_raster_cpu smoothness;    // 1/(1+roughness/h), roads high
+    lsdtt_raster_cpu path_opened;   // smoothness after path opening
+    lsdtt_raster_cpu road_mask;     // final binary road mask
+};
+
+// -----------------------------------------------------------------------------
+// extract_roads_smooth
+//
+// See road_smoothness_request. Throws std::runtime_error on invalid metadata
+// and std::invalid_argument on out-of-range parameters.
+// -----------------------------------------------------------------------------
+road_smoothness_result extract_roads_smooth(
+    const lsdtt_raster_cpu&        dem,
+    const road_smoothness_request& request
+);
+
+
+// =============================================================================
+// Thin-line extractor — separate linear features from blobs and speckle
+// =============================================================================
+//
+// Takes any response raster (e.g. the inflated flow-path divergence), thresholds
+// it, and keeps only the THIN, LONG, ELONGATED parts — removing both speckle and
+// compact/blobby regions of any size:
+//
+//   response >= threshold                 -> binary
+//     -> binary_directional_closing        (bridge small gaps along lines)
+//     -> binary path opening (length L)    (KEY: keep pixels on a long thin path;
+//                                           removes speckle and any blob lacking a
+//                                           length-L path; handles curves)
+//     -> optional disk-opening top-hat     (remove residual WIDE features)
+//     -> component size + elongation filter (drop short / compact residue)
+//     = thin-line mask
+//
+// The path opening (step 3) is the key "thin/curvilinear vs blob/speckle"
+// discriminator and is robust to curvature (unlike whole-component elongation,
+// which fails on bent roads). Set path_length_pixels near the shortest road you
+// want to keep. The disk top-hat is offered as an extra blob remover but note it
+// converts solid blobs into thin boundary rings, so prefer the path opening +
+// elongation filter for blob rejection.
+// -----------------------------------------------------------------------------
+struct thin_lines_request
+{
+    double threshold                       = 20.0; // binarize response >= this
+    int    directional_closing_length_pixels = 0;  // 0 = skip gap bridging
+    int    directional_closing_n_angles    = 18;
+    int    path_length_pixels              = 40;   // binary path opening; 0 = skip
+    double blob_removal_radius_metres      = 0.0;  // disk top-hat; 0 = skip
+    int    min_component_pixels            = 40;
+    double min_major_axis_pixels           = 0.0;  // 0 = skip
+    double min_elongation                  = 1.0;  // 1 = skip (>=1)
+    int    trim_border_pixels              = 0;    // trim final mask; 0 = skip
+    int    n_threads                       = 0;
+};
+
+struct thin_lines_result
+{
+    lsdtt_raster_cpu binary;     // thresholded input (after optional closing)
+    lsdtt_raster_cpu blob_free;  // after path opening (+ optional disk top-hat)
+    lsdtt_raster_cpu mask;       // final thin-line mask
+};
+
+// -----------------------------------------------------------------------------
+// extract_thin_lines
+//
+// See thin_lines_request. Throws std::runtime_error on invalid metadata.
+// -----------------------------------------------------------------------------
+thin_lines_result extract_thin_lines(
+    const lsdtt_raster_cpu&    response,
+    const thin_lines_request&  request
+);
+
 } // namespace lsdtt
