@@ -112,9 +112,9 @@ static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
     bool enable_s, float amp_s_frac, int waves_s, float phase_s,
     float baselevel_elev)
 {
-    if (amp_n_frac < 0.0f || amp_n_frac >= 0.5f || amp_s_frac < 0.0f || amp_s_frac >= 0.5f)
+    if (amp_n_frac < 0.0f || amp_n_frac > 0.25f || amp_s_frac < 0.0f || amp_s_frac > 0.25f)
     {
-        throw std::runtime_error("sinuous amplitude fractions must be in [0, 0.5)");
+        throw std::runtime_error("sinuous amplitude fractions must be in [0, 0.25]");
     }
 
     const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
@@ -372,7 +372,8 @@ int main(int argc, char* argv[])
 
     float_default_map["sinuous_n_amplitude_fraction"] = 0.25f;
     help_map["sinuous_n_amplitude_fraction"] = {"float","0.25",
-        "Amplitude of the North sinuous boundary as a fraction of total N-S domain length.", ""};
+        "Amplitude of the North sinuous boundary as a fraction of total N-S domain length.", 
+        "This can max be 0.25, as it create waves that span half the N-S domain."};
 
     int_default_map["sinuous_n_n_waves"] = 1;
     help_map["sinuous_n_n_waves"] = {"int","1",
@@ -388,7 +389,8 @@ int main(int argc, char* argv[])
 
     float_default_map["sinuous_s_amplitude_fraction"] = 0.25f;
     help_map["sinuous_s_amplitude_fraction"] = {"float","0.25",
-        "Amplitude of the South sinuous boundary as a fraction of total N-S domain length.", ""};
+        "Amplitude of the South sinuous boundary as a fraction of total N-S domain length.",
+        "This can max be 0.25, as it create waves that span half the N-S domain."};
 
     int_default_map["sinuous_s_n_waves"] = 1;
     help_map["sinuous_s_n_waves"] = {"int","1",
