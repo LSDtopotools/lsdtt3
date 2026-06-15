@@ -772,19 +772,6 @@ int main(int argc, char* argv[])
         "both: run both methods and map outputs from each. "
         "Outputs are prefixed _wavelet_* or _direct_*."};
 
-    // --- Ridgeline power spectra ---
-    bool_default_map["write_ridgeline_power_spectra_csv"] = false;
-    help_map["write_ridgeline_power_spectra_csv"] = {"bool","false",
-    "Write the 1D power spectrum of polyfit metrics along ridgelines to CSV.",
-    "Requires FFTW. Generates a long-format CSV containing the decomposed wavelengths and power to help identify characteristic dominant wavelengths visually."};
-
-    // --- Ridgeline autocorrelation ---
-    bool_default_map["write_ridgeline_autocorrelation_csv"] = false;
-    help_map["write_ridgeline_autocorrelation_csv"] = {"bool","false",
-    "Calculates the characteristic spacing (dominant wavelength) of polyfit metrics along each ridgeline using 1D autocorrelation.",
-    "Generates a summary CSV. Highly useful for identifying characteristic saddle-spacing."};
-
-
 
     // =========================================================================
     // Core Setup & Validations
@@ -1618,18 +1605,20 @@ int main(int argc, char* argv[])
                     }
                 }
 
+
+                for (const auto& metric : requested_polyfit_metrics) {
+                    if (!metric_result.has(metric)) continue;
+                    std::string out_path = pp.make_output_path(polyfit_metric_suffix(metric, method));
+                    std::cout << "  Writing: " << out_path << "\n";
+                    loader.write_full(metric_result.at(metric).get_data(), metric_result.at(metric).get_meta(), out_path, lsdtt::raster_output_format::cog);
+                }
+
+
                 if (!all_ridgelines.empty())
                 {
                     std::cout << "  Mapping polyfit metrics onto ridgelines (" << method << ")...\n";
                     std::map<std::string, std::vector<std::vector<std::string>>> extended_csv_map;
                     
-                    // Map to hold spectra outputs
-                    std::map<std::string, std::vector<std::vector<std::string>>> spectra_csv_map;
-                    bool fftw_warning_printed = false;
-
-                    // Map to hold autocorelation
-                    std::map<std::string, std::vector<std::vector<std::string>>> spacing_csv_map;
-
 
                     for (const auto& rec : all_ridgelines)
                     {
@@ -1660,121 +1649,12 @@ int main(int argc, char* argv[])
                             extended_csv_map[rec.file_prefix].end(), base_rows.begin(), base_rows.end()
                         );
 
-                        // --- NEW SPECTRA EXTRACTION ---
-                        if (bf["write_ridgeline_power_spectra_csv"]) 
-                        {
-                            double dx = dem.get_meta().cell_size;
-                            
-                            for (std::size_t m_idx = 0; m_idx < requested_polyfit_metrics.size(); ++m_idx) 
-                            {
-                                bool has_nan = false;
-                                std::vector<double> y_dbl(sampled_metrics[m_idx].size());
-                                
-                                for (std::size_t i = 0; i < sampled_metrics[m_idx].size(); ++i) {
-                                    if (std::isnan(sampled_metrics[m_idx][i])) { 
-                                        has_nan = true; 
-                                        break;
-                                    }
-                                    y_dbl[i] = static_cast<double>(sampled_metrics[m_idx][i]);
-                                }
-
-                                // Only process traces that are fully valid
-                                if (!has_nan) {
-                                    try {
-                                        auto spectrum = lsdtt::compute_power_spectrum(y_dbl, dx);
-                                        for (const auto& bin : spectrum) {
-                                            std::vector<std::string> row;
-                                            row.push_back(id_str);
-                                            row.push_back(rec.feature_type);
-                                            row.push_back(active_metric_names[m_idx]);
-                                            row.push_back(std::to_string(bin.index));
-                                            
-                                            std::ostringstream oss;
-                                            oss << std::fixed << std::setprecision(9);
-                                            oss << bin.frequency; row.push_back(oss.str()); oss.str("");
-                                            oss << bin.wavelength; row.push_back(oss.str()); oss.str("");
-                                            oss << bin.power; row.push_back(oss.str());
-                                            
-                                            spectra_csv_map[rec.file_prefix].push_back(std::move(row));
-                                        }
-                                    } catch (const std::exception& e) {
-                                        if (!fftw_warning_printed) {
-                                            std::cerr << "  Warning: Power spectrum failed (skipping remaining): " << e.what() << "\n";
-                                            fftw_warning_printed = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // --- END NEW SPECTRA EXTRACTION ---
-
-
-                        // --- NEW AUTOCORRELATION EXTRACTION ---
-                        if (bf["write_ridgeline_autocorrelation_csv"]) 
-                        {
-                            double dx = dem.get_meta().cell_size;
-                            
-                            for (std::size_t m_idx = 0; m_idx < requested_polyfit_metrics.size(); ++m_idx) 
-                            {
-                                bool has_nan = false;
-                                std::vector<double> y_dbl(sampled_metrics[m_idx].size());
-                                
-                                for (std::size_t i = 0; i < sampled_metrics[m_idx].size(); ++i) {
-                                    if (std::isnan(sampled_metrics[m_idx][i])) { 
-                                        has_nan = true; 
-                                        break;
-                                    }
-                                    y_dbl[i] = static_cast<double>(sampled_metrics[m_idx][i]);
-                                }
-
-                                if (!has_nan) {
-                                    double spacing = lsdtt::compute_characteristic_spacing(y_dbl, dx);
-                                    
-                                    std::vector<std::string> row;
-                                    row.push_back(id_str);
-                                    row.push_back(rec.feature_type);
-                                    row.push_back(active_metric_names[m_idx]);
-                                    
-                                    std::ostringstream oss;
-                                    oss << std::fixed << std::setprecision(2) << spacing;
-                                    row.push_back(oss.str());
-                                    
-                                    spacing_csv_map[rec.file_prefix].push_back(std::move(row));
-                                }
-                            }
-                        }
-                        // --- END NEW AUTOCORRELATION EXTRACTION ---
-
                     }
 
                     lsdtt::lsdtt_data_loader csv_loader;
                     for (const auto& [pf, rows] : extended_csv_map) {
                         std::string out_path = pp.make_output_path("_" + method + pf + "_with_polyfit", ".csv");
                         csv_loader.write_csv(out_path, extended_headers, rows);
-                    }
-
-                    // --- NEW WRITE LOGIC FOR SPECTRA ---
-                    if (bf["write_ridgeline_power_spectra_csv"] && !spectra_csv_map.empty()) {
-                        std::vector<std::string> spec_headers = {
-                            headers_are_dual ? "ridgeline_number" : "basin_junction_number",
-                            "ridgeline_type", "polyfit_metric", "bin_index", "frequency_1_over_m", "wavelength_m", "power"
-                        };
-                        for (const auto& [pf, rows] : spectra_csv_map) {
-                            std::string out_path = pp.make_output_path("_" + method + pf + "_power_spectra", ".csv");
-                            csv_loader.write_csv(out_path, spec_headers, rows);
-                        }
-                    }
-
-                    // --- NEW WRITE LOGIC FOR SPACING ---
-                    if (bf["write_ridgeline_autocorrelation_csv"] && !spacing_csv_map.empty()) {
-                        std::vector<std::string> spec_headers = {
-                            headers_are_dual ? "ridgeline_number" : "basin_junction_number",
-                            "ridgeline_type", "polyfit_metric", "characteristic_spacing_m"
-                        };
-                        for (const auto& [pf, rows] : spacing_csv_map) {
-                            std::string out_path = pp.make_output_path("_" + method + pf + "_characteristic_spacing", ".csv");
-                            csv_loader.write_csv(out_path, spec_headers, rows);
-                        }
                     }
 
                 } else {
