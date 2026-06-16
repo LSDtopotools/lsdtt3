@@ -661,6 +661,10 @@ int main(int argc, char* argv[])
     opts.uplift_rate                     = ff["uplift_rate"];
     opts.enable_d8_fluvial_erosion       = bf["enable_d8_fluvial_erosion"];
     opts.enable_dinf_fluvial_erosion     = bf["enable_dinf_fluvial_erosion"];
+    // Safeguard: If D-inf was explicitly requested, turn off D8
+    if (opts.enable_dinf_fluvial_erosion) {
+        opts.enable_d8_fluvial_erosion = false;
+    }
     opts.enable_hillslope_transport      = bf["enable_hillslope_transport"];
     opts.enable_uplift                   = bf["enable_uplift"];
     opts.boundary_conditions             = sf["boundary_conditions"];
