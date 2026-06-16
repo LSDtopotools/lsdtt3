@@ -407,6 +407,73 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
     
     std::vector<float> A(max_dim), B(max_dim), C_arr(max_dim), D(max_dim);
     std::vector<float> c_prime(max_dim), d_prime(max_dim), x_res(max_dim);
+    std::vector<float> y_arr(max_dim), q_arr(max_dim);
+
+    // Standard Thomas Algorithm for standard O(N) tridiagonal matrices
+    auto solve_thomas = [&](int N, const float* a, const float* b, const float* c, const float* d, float* x, float* cp, float* dp) {
+        cp[0] = c[0] / b[0];
+        dp[0] = d[0] / b[0];
+        for (int i = 1; i < N; ++i) {
+            float m = 1.0f / (b[i] - a[i] * cp[i-1]);
+            cp[i] = c[i] * m;
+            dp[i] = (d[i] - a[i] * dp[i-1]) * m;
+        }
+        x[N - 1] = dp[N - 1];
+        for (int i = N - 2; i >= 0; --i) {
+            x[i] = dp[i] - cp[i] * x[i + 1];
+        }
+    };
+
+    // Sherman-Morrison adaptation of Thomas algorithm for Cyclic Tridiagonal (Periodic) systems
+    auto solve_cyclic_thomas = [&](int N, const float* a, const float* b, const float* c, const float* d, float* x, 
+                                   float* cp, float* dp, float* y, float* q) {
+        if (N <= 2) { solve_thomas(N, a, b, c, d, x, cp, dp); return; }
+        
+        float alpha = c[N-1];
+        float beta  = a[0];
+        float gamma = -b[0]; 
+        if (std::abs(gamma) < 1e-12f) gamma = 1.0f; // Robust fallback against masked breaks
+        
+        float b0_mod = b[0] - gamma;
+        float bn_mod = b[N-1] - alpha * beta / gamma;
+        
+        // Tridiagonal solve T*y = d
+        cp[0] = c[0] / b0_mod;
+        dp[0] = d[0] / b0_mod;
+        for (int i = 1; i < N - 1; ++i) {
+            float m = 1.0f / (b[i] - a[i] * cp[i-1]);
+            cp[i] = c[i] * m;
+            dp[i] = (d[i] - a[i] * dp[i-1]) * m;
+        }
+        {
+            int i = N - 1;
+            float m = 1.0f / (bn_mod - a[i] * cp[i-1]);
+            dp[i] = (d[i] - a[i] * dp[i-1]) * m;
+        }
+        y[N-1] = dp[N-1];
+        for (int i = N - 2; i >= 0; --i) y[i] = dp[i] - cp[i] * y[i+1];
+        
+        // Tridiagonal solve T*q = u
+        dp[0] = gamma / b0_mod;
+        for (int i = 1; i < N - 1; ++i) {
+            float m = 1.0f / (b[i] - a[i] * cp[i-1]);
+            dp[i] = (0.0f - a[i] * dp[i-1]) * m; 
+        }
+        {
+            int i = N - 1;
+            float m = 1.0f / (bn_mod - a[i] * cp[i-1]);
+            dp[i] = (alpha - a[i] * dp[i-1]) * m;
+        }
+        q[N-1] = dp[N-1];
+        for (int i = N - 2; i >= 0; --i) q[i] = dp[i] - cp[i] * q[i+1];
+        
+        // Reconstruct the unrolled ring using Sherman-Morrison logic
+        float v_dot_y = y[0] + (beta / gamma) * y[N-1];
+        float v_dot_q = q[0] + (beta / gamma) * q[N-1];
+        float factor = v_dot_y / (1.0f + v_dot_q);
+        
+        for (int i = 0; i < N; ++i) x[i] = y[i] - factor * q[i];
+    };
 
     // -----------------------------------------------------------------
     // Sweep 1: Implicit X-direction, Explicit Y-direction
@@ -425,15 +492,10 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
                 float gN = base_gamma, gS = base_gamma;
                 float gE = base_gamma, gW = base_gamma;
 
-                // Reduce flux to zero at open boundaries and mask borders
                 if (!per_n && !is_valid(r - 1, c)) gN = 0.0f;
                 if (!per_s && !is_valid(r + 1, c)) gS = 0.0f;
                 if (!per_e && !is_valid(r, c + 1)) gE = 0.0f;
                 if (!per_w && !is_valid(r, c - 1)) gW = 0.0f;
-
-                // For periodic bounds, push wrapped element to explicit terms to keep tridiagonal matrix intact
-                if (per_w && c == 0) gW = 0.0f;
-                if (per_e && c == ncols - 1) gE = 0.0f;
 
                 A[c] = -gW;
                 C_arr[c] = -gE;
@@ -444,31 +506,13 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
                 float zS = nbr_z(r, c, +1, 0, z_old);
                 
                 D[c] = zC + gN * (zN - zC) + gS * (zS - zC);
-                
-                // Explictly inject wrap connections
-                if (per_w && c == 0) D[c] += base_gamma * (nbr_z(r, c, 0, -1, z_old) - zC);
-                if (per_e && c == ncols - 1) D[c] += base_gamma * (nbr_z(r, c, 0, +1, z_old) - zC);
             }
         }
 
-        // Thomas Algorithm (TDMA)
-        c_prime[0] = C_arr[0] / B[0];
-        d_prime[0] = D[0] / B[0];
-        for (int i = 1; i < ncols; ++i)
-        {
-            float m = 1.0f / (B[i] - A[i] * c_prime[i-1]);
-            c_prime[i] = C_arr[i] * m;
-            d_prime[i] = (D[i] - A[i] * d_prime[i-1]) * m;
-        }
-        x_res[ncols - 1] = d_prime[ncols - 1];
-        for (int i = ncols - 2; i >= 0; --i)
-        {
-            x_res[i] = d_prime[i] - c_prime[i] * x_res[i + 1];
-        }
+        if (per_w) solve_cyclic_thomas(ncols, A.data(), B.data(), C_arr.data(), D.data(), x_res.data(), c_prime.data(), d_prime.data(), y_arr.data(), q_arr.data());
+        else solve_thomas(ncols, A.data(), B.data(), C_arr.data(), D.data(), x_res.data(), c_prime.data(), d_prime.data());
 
-        for (int c = 0; c < ncols; ++c) {
-            z_half[static_cast<std::size_t>(r * ncols + c)] = x_res[c];
-        }
+        for (int c = 0; c < ncols; ++c) z_half[static_cast<std::size_t>(r * ncols + c)] = x_res[c];
     }
 
     // -----------------------------------------------------------------
@@ -494,10 +538,6 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
                 if (!per_e && !is_valid(r, c + 1)) gE = 0.0f;
                 if (!per_w && !is_valid(r, c - 1)) gW = 0.0f;
 
-                // For periodic bounds, push wrapped element to explicit terms
-                if (per_n && r == 0) gN = 0.0f;
-                if (per_s && r == nrows - 1) gS = 0.0f;
-
                 A[r] = -gN;
                 C_arr[r] = -gS;
                 B[r] = 1.0f + gN + gS;
@@ -507,31 +547,13 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
                 float zW = nbr_z(r, c, 0, -1, z_half);
                 
                 D[r] = zC + gE * (zE - zC) + gW * (zW - zC);
-
-                // Explictly inject wrap connections
-                if (per_n && r == 0) D[r] += base_gamma * (nbr_z(r, c, -1, 0, z_half) - zC);
-                if (per_s && r == nrows - 1) D[r] += base_gamma * (nbr_z(r, c, +1, 0, z_half) - zC);
             }
         }
 
-        // Thomas Algorithm (TDMA)
-        c_prime[0] = C_arr[0] / B[0];
-        d_prime[0] = D[0] / B[0];
-        for (int i = 1; i < nrows; ++i)
-        {
-            float m = 1.0f / (B[i] - A[i] * c_prime[i-1]);
-            c_prime[i] = C_arr[i] * m;
-            d_prime[i] = (D[i] - A[i] * d_prime[i-1]) * m;
-        }
-        x_res[nrows - 1] = d_prime[nrows - 1];
-        for (int i = nrows - 2; i >= 0; --i)
-        {
-            x_res[i] = d_prime[i] - c_prime[i] * x_res[i + 1];
-        }
+        if (per_n) solve_cyclic_thomas(nrows, A.data(), B.data(), C_arr.data(), D.data(), x_res.data(), c_prime.data(), d_prime.data(), y_arr.data(), q_arr.data());
+        else solve_thomas(nrows, A.data(), B.data(), C_arr.data(), D.data(), x_res.data(), c_prime.data(), d_prime.data());
 
-        for (int r = 0; r < nrows; ++r) {
-            z_new[static_cast<std::size_t>(r * ncols + c)] = x_res[r];
-        }
+        for (int r = 0; r < nrows; ++r) z_new[static_cast<std::size_t>(r * ncols + c)] = x_res[r];
     }
 
     return lsdtt_raster_cpu(
@@ -540,6 +562,7 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
         meta
     );
 }
+
 
 
 } // namespace lsdtt

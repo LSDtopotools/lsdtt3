@@ -68,8 +68,39 @@ void lsdtt_ridgeline_cpu::compute_positions_and_distances_()
     distances_.push_back(0.0);
     for (std::size_t i = 1; i < positions_.size(); ++i)
     {
-        const double dx = positions_[i].x - positions_[i - 1].x;
-        const double dy = positions_[i].y - positions_[i - 1].y;
+        double dx = positions_[i].x - positions_[i - 1].x;
+        double dy = positions_[i].y - positions_[i - 1].y;
+
+        // Correct coordinate jumps when crossing periodic boundaries
+        int d_row = nodes_[i].row - nodes_[i - 1].row;
+        int d_col = nodes_[i].col - nodes_[i - 1].col;
+
+        bool wrapped = false;
+        int unwrapped_row = nodes_[i].row;
+        int unwrapped_col = nodes_[i].col;
+
+        if (divide_grid_meta_.n_rows > 0 && std::abs(d_row) > divide_grid_meta_.n_rows / 2)
+        {
+            int true_d_row = (d_row > 0) ? d_row - divide_grid_meta_.n_rows : d_row + divide_grid_meta_.n_rows;
+            unwrapped_row = nodes_[i - 1].row + true_d_row;
+            wrapped = true;
+        }
+
+        if (divide_grid_meta_.n_cols > 0 && std::abs(d_col) > divide_grid_meta_.n_cols / 2)
+        {
+            int true_d_col = (d_col > 0) ? d_col - divide_grid_meta_.n_cols : d_col + divide_grid_meta_.n_cols;
+            unwrapped_col = nodes_[i - 1].col + true_d_col;
+            wrapped = true;
+        }
+
+        // If a boundary was crossed, compute dx/dy using the locally un-wrapped coordinates
+        if (wrapped)
+        {
+            lsdtt_xy unwrapped_pos = cell_center_from_row_col(divide_grid_meta_, unwrapped_row, unwrapped_col);
+            dx = unwrapped_pos.x - positions_[i - 1].x;
+            dy = unwrapped_pos.y - positions_[i - 1].y;
+        }
+
         distances_.push_back(distances_.back() + std::sqrt(dx * dx + dy * dy));
     }
 }
