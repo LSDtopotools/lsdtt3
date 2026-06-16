@@ -1205,8 +1205,23 @@ std::vector<lsdtt_ridgeline_cpu> lsdtt_basin_outline_cpu::split_outline_into_rid
   double total_perimeter = 0.0;
   std::vector<double> dists(outline_divide_rc_.size(), 0.0);
   for (std::size_t i = 1; i < outline_divide_rc_.size(); ++i) {
+    int d_row = outline_divide_rc_[i].row - outline_divide_rc_[i-1].row;
+    int d_col = outline_divide_rc_[i].col - outline_divide_rc_[i-1].col;
+    
+    int unwrapped_row = outline_divide_rc_[i].row;
+    int unwrapped_col = outline_divide_rc_[i].col;
+
+    // Detect and unwrap coordinate seam jumps
+    if (divide_grid_meta_.n_rows > 0 && std::abs(d_row) > divide_grid_meta_.n_rows / 2) {
+        unwrapped_row = outline_divide_rc_[i-1].row + ((d_row > 0) ? d_row - divide_grid_meta_.n_rows : d_row + divide_grid_meta_.n_rows);
+    }
+    if (divide_grid_meta_.n_cols > 0 && std::abs(d_col) > divide_grid_meta_.n_cols / 2) {
+        unwrapped_col = outline_divide_rc_[i-1].col + ((d_col > 0) ? d_col - divide_grid_meta_.n_cols : d_col + divide_grid_meta_.n_cols);
+    }
+
     lsdtt_xy p1 = cell_center_from_row_col(divide_grid_meta_, outline_divide_rc_[i-1].row, outline_divide_rc_[i-1].col);
-    lsdtt_xy p2 = cell_center_from_row_col(divide_grid_meta_, outline_divide_rc_[i].row, outline_divide_rc_[i].col);
+    lsdtt_xy p2 = cell_center_from_row_col(divide_grid_meta_, unwrapped_row, unwrapped_col);
+    
     double dx = p2.x - p1.x;
     double dy = p2.y - p1.y;
     total_perimeter += std::sqrt(dx*dx + dy*dy);
