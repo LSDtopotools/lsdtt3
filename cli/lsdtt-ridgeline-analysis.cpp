@@ -261,6 +261,95 @@ static std::string polyfit_metric_suffix(
     throw std::runtime_error("No output suffix defined for requested polyfit metric.");
 }
 
+// =============================================================================
+// Helper: Wraps a periodic DEM with a 1-px pad so 3x3 windows hit the borders
+// =============================================================================
+static lsdtt::poly_fit_coeffs run_raw_dem_3x3_polyfit_with_bcs(
+    const lsdtt::lsdtt_raster_cpu& dem,
+    const std::string&             bcs,
+    int                            n_threads)
+{
+    bool p_ns = (bcs.size() >= 4 && std::tolower(static_cast<unsigned char>(bcs[0])) == 'p' && 
+                                    std::tolower(static_cast<unsigned char>(bcs[2])) == 'p');
+    bool p_ew = (bcs.size() >= 4 && std::tolower(static_cast<unsigned char>(bcs[1])) == 'p' && 
+                                    std::tolower(static_cast<unsigned char>(bcs[3])) == 'p');
+
+    // If there is no periodicity, a straight execution is fine
+    if (!p_ns && !p_ew) {
+        return lsdtt::direct_polyfit(dem, dem.get_meta().cell_size, n_threads);
+    }
+
+    const auto& meta = dem.get_meta();
+    int nrows = meta.n_rows;
+    int ncols = meta.n_cols;
+    int p_rows = nrows + 2; // Pad top and bottom
+    int p_cols = ncols + 2; // Pad left and right
+
+    std::vector<float>   p_data(p_rows * p_cols, static_cast<float>(meta.no_data_value));
+    std::vector<uint8_t> p_mask(p_rows * p_cols, 0);
+
+    const auto& orig_data = dem.get_data();
+    const auto& orig_mask = dem.get_mask();
+
+    auto wrap = [](int idx, int max_val, bool is_p) {
+        if (is_p) return (idx % max_val + max_val) % max_val;
+        return (idx >= 0 && idx < max_val) ? idx : -1;
+    };
+
+    // Pad the DEM taking boundary conditions into account
+    for (int r = -1; r <= nrows; ++r) {
+        for (int c = -1; c <= ncols; ++c) {
+            int wr = wrap(r, nrows, p_ns);
+            int wc = wrap(c, ncols, p_ew);
+
+            if (wr != -1 && wc != -1) {
+                std::size_t orig_idx = wr * ncols + wc;
+                std::size_t p_idx    = (r + 1) * p_cols + (c + 1);
+                p_data[p_idx] = orig_data[orig_idx];
+                p_mask[p_idx] = orig_mask[orig_idx];
+            }
+        }
+    }
+
+    lsdtt::lsdtt_raster_meta p_meta = meta;
+    p_meta.n_rows = p_rows;
+    p_meta.n_cols = p_cols;
+    lsdtt::lsdtt_raster_cpu padded_dem(std::move(p_data), std::move(p_mask), p_meta);
+
+    // Evaluate direct_polyfit strictly clamped to cell_size on the padded geometry
+    auto p_fit = lsdtt::direct_polyfit(padded_dem, meta.cell_size, n_threads);
+
+    // Cropping lambda
+    auto crop_raster = [&](const lsdtt::lsdtt_raster_cpu& p_rast) {
+        std::vector<float>   c_data(nrows * ncols, static_cast<float>(meta.no_data_value));
+        std::vector<uint8_t> c_mask(nrows * ncols, 0);
+        const auto& pd = p_rast.get_data();
+        const auto& pm = p_rast.get_mask();
+
+        for (int r = 0; r < nrows; ++r) {
+            for (int c = 0; c < ncols; ++c) {
+                std::size_t p_idx = (r + 1) * p_cols + (c + 1);
+                std::size_t c_idx = r * ncols + c;
+                c_data[c_idx] = pd[p_idx];
+                c_mask[c_idx] = pm[p_idx];
+            }
+        }
+        return lsdtt::lsdtt_raster_cpu(std::move(c_data), std::move(c_mask), meta);
+    };
+
+    // Strip the padding away to return the arrays exact original resolution
+    lsdtt::poly_fit_coeffs final_fit;
+    final_fit.a = crop_raster(p_fit.a);
+    final_fit.b = crop_raster(p_fit.b);
+    final_fit.c = crop_raster(p_fit.c);
+    final_fit.d = crop_raster(p_fit.d);
+    final_fit.e = crop_raster(p_fit.e);
+    final_fit.f = crop_raster(p_fit.f);
+
+    return final_fit;
+}
+
+
 // -----------------------------------------------------------------------------
 // print_banner
 // -----------------------------------------------------------------------------
@@ -771,6 +860,15 @@ int main(int argc, char* argv[])
         "direct: separable rolling-moment O(n) fit (no FFTW needed). "
         "both: run both methods and map outputs from each. "
         "Outputs are prefixed _wavelet_* or _direct_*."};
+
+    bool_default_map["calculate_polyfit_metrics_directly_on_dem"] = false;
+    help_map["calculate_polyfit_metrics_directly_on_dem"] = {"bool","false",
+        "If true, skips the large-scale polynomial surface fit and calculates "
+        "polyfit metrics directly on the raw DEM.",
+        "Internally forces a 3x3 direct Evans (1980) quadratic fit, "
+        "overriding polyfit_method and polyfit_lambda_metres. "
+        "Also supports periodic boundaries."};
+
 
 
     // =========================================================================
@@ -1528,13 +1626,26 @@ int main(int argc, char* argv[])
         std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda_metres"] << " m\n";
         std::cout << "Method: " << sf["polyfit_method"] << "\n";
 
-        const std::string polyfit_method = sf["polyfit_method"];
         std::vector<std::string> methods_to_run;
-        if (polyfit_method == "wavelet" || polyfit_method == "both") methods_to_run.push_back("wavelet");
-        if (polyfit_method == "direct" || polyfit_method == "both")  methods_to_run.push_back("direct");
 
-        if (methods_to_run.empty()) {
-            std::cerr << "Warning: unknown polyfit_method '" << polyfit_method << "'. expected wavelet, direct, or both. Skipping.\n";
+        if (bf["calculate_polyfit_metrics_directly_on_dem"])
+        {
+            std::cout << "Switch calculate_polyfit_metrics_directly_on_dem is true.\n";
+            std::cout << "Calculating metrics directly on the DEM using a local 3x3 moving window.\n";
+            methods_to_run.push_back("raw_dem_3x3");
+        }
+        else
+        {
+            std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda_metres"] << " m\n";
+            std::cout << "Method: " << sf["polyfit_method"] << "\n";
+            
+            const std::string polyfit_method = sf["polyfit_method"];
+            if (polyfit_method == "wavelet" || polyfit_method == "both") methods_to_run.push_back("wavelet");
+            if (polyfit_method == "direct" || polyfit_method == "both")  methods_to_run.push_back("direct");
+
+            if (methods_to_run.empty()) {
+                std::cerr << "Warning: unknown polyfit_method '" << polyfit_method << "'. expected wavelet, direct, or both. Skipping.\n";
+            }
         }
 
         // Setup base extended headers
@@ -1557,16 +1668,24 @@ int main(int argc, char* argv[])
         for (const std::string& method : methods_to_run)
         {
             std::cout << "  Running " << method << " polyfit..." << std::flush;
-            
+
             lsdtt::poly_fit_coeffs fitted;
             try {
-                if (method == "wavelet") fitted = lsdtt::wavelet_quadratic_fit(dem, ff["polyfit_lambda_metres"], ifs["n_threads"]);
-                else                     fitted = lsdtt::direct_polyfit(dem, ff["polyfit_lambda_metres"], ifs["n_threads"]);
+                if (method == "raw_dem_3x3") {
+                    fitted = run_raw_dem_3x3_polyfit_with_bcs(dem, sf["boundary_conditions"], ifs["n_threads"]);
+                } else if (method == "wavelet") {
+                    fitted = lsdtt::wavelet_quadratic_fit(dem, ff["polyfit_lambda_metres"], ifs["n_threads"]);
+                } else {
+                    fitted = lsdtt::direct_polyfit(dem, ff["polyfit_lambda_metres"], ifs["n_threads"]);
+                }
                 std::cout << " done\n";
             } catch (const std::exception& e) {
-                std::cerr << "\nWarning: " << method << " polynomial fit failed: " << e.what() << "\n";
+                std::cerr << "\n  Failed: " << e.what() << "\n";
                 continue;
             }
+
+            // Write coefficient rasters if requested
+
 
             // Write coefficient rasters if requested
             if (bf["write_polyfit_rasters"])
