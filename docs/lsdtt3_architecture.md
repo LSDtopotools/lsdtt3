@@ -35,6 +35,7 @@ lsdtt3/
 │   ├── lsdtt-feature-finder.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-hydraulic-routing.cpp
+│   ├── lsdtt-lem.cpp
 │   ├── lsdtt-mountain-front.cpp
 │   ├── lsdtt-basin-stats.cpp
 │   ├── lsdtt-stream-burning.cpp
@@ -111,6 +112,11 @@ lsdtt3/
 │   │   ├── lsdtt_swath_cpu.hpp/.cpp                          — swath profile extraction
 │   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp                 — mountain front identification from DEM
 │   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
+│   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
+│   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
+│   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state
+│   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp           — transient hillslope transport (cidre, roering, linear, adi)
+│   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp        — steady-state hillslope solver (SOR + pseudo-transient Cidre)
 │   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp               — Verlet cloth drape: upper envelope surface and incision depth
 │   │   ├── lsdtt_flat_surface_finder.hpp/.cpp                — flat surface identification (MADk2, residual IQR, NVD)
 │   │   ├── lsdtt_flat_surface_plane_analysis.hpp/.cpp        — plane analysis on detected flat surfaces
@@ -210,6 +216,11 @@ the utility-layer numerical functions.
 - `lsdtt_proximity_cpu.cpp`
 - `lsdtt_swath_cpu.cpp`
 - `lsdtt_streamlines_cpu.cpp`
+- `lsdtt_lem_cpu.cpp`
+- `lsdtt_stream_power_cpu.cpp`
+- `lsdtt_steady_state_cpu.cpp`
+- `lsdtt_hillslope_transport_cpu.cpp`
+- `lsdtt_hillslope_steady_state_cpu.cpp`
 - `lsdtt_flowgraph_cpu.cpp`
 - `lsdtt_raster_vectorise_cpu.cpp`
 - `lsdtt_raster_mosaic_cpu.cpp`
@@ -552,6 +563,21 @@ Current CLI programs are:
   Graph-based hydraulic routing on a fixed D-inf or MFD flow graph. Constructs
   `lsdtt_hydraulic_graph_cpu`, runs N timesteps, and writes water-depth,
   water-surface, and flux rasters (Gailleton et al. 2024).
+
+- **`lsdtt-lem.cpp`**  
+  Simple landscape evolution model (evolved from MuddPILE / DONKmodel). Builds a
+  synthetic initial surface (flat / white-noise / red-noise / diamond-square) or
+  loads a DEM, then runs one of two paths:
+  - **Time-stepping LEM** — loops `run_lem_step`: implicit stream-power fluvial
+    incision (D8 or D-inf), optional hillslope transport (cidre / roering / linear /
+    adi), and uniform uplift, writing per-step elevation stats and optional
+    intermediate rasters.
+  - **Analytical steady state** (`run_steady_state: true`) — chi-based fluvial snap
+    (optionally iterated over `steady_state_n_cycles` to let divides migrate), then
+    optional hillslope steady-state solve (SOR linear/roering or pseudo-transient
+    Cidre) with channels as Dirichlet BCs. Exits after writing.
+  Supports sinuous domain masking, N-S parabola conditioning, breaching, and a
+  `png` output format with worldfile/PAM sidecars. See the LEM stack section below.
 
 - **`lsdtt-channel-network-analysis.cpp`**  
   Builds a channel/junction network and runs one or more network analyses:
@@ -1131,6 +1157,7 @@ interior_nodata_is_outlet = true
 require_acyclic_graph     = true
 build_topological_order   = true
 build_s_vector            = true
+allow_pits_as_outlets     = false    # true = treat transient pits as outlets (used by the LEM)
 n_threads                 = 0
 ```
 Boundary codes: `o`=open, `n`=no-flux, `p`=periodic (symmetric pairs),
@@ -2051,6 +2078,144 @@ struct lsdtt_cloth_drape_result {
 **References:**
 - Zhang W. et al. (2016) Remote Sensing 8(6):501. DOI: 10.3390/rs8060501
 - Carretier S. & Valenti C. — EnvelopSurface.bash (IRD/GET, France)
+
+---
+
+## Landscape evolution model (LEM) stack
+
+The LEM is a layered set of CPU engines driven by the `lsdtt-lem` CLI. The CLI
+owns surface generation, conditioning, I/O, and the run loop; each physical
+process lives in its own free-function module so the same engines can be reused
+outside the LEM (e.g. the steady-state solvers are useful standalone).
+
+```
+cli/lsdtt-lem.cpp
+   │  builds/loads DEM, conditions it, owns the time loop or steady-state branch
+   ▼
+lsdtt_lem_cpu            run_lem_step(): one timestep = fluvial → hillslope → uplift → restore boundaries
+   ├── lsdtt_stream_power_cpu        implicit stream-power incision (transient)
+   ├── lsdtt_hillslope_transport_cpu transient hillslope transport
+   └── (uplift + boundary restore handled inline in lsdtt_lem_cpu)
+
+cli/lsdtt-lem.cpp  (run_steady_state branch)
+   ├── lsdtt_steady_state_cpu            analytical chi-based fluvial steady state
+   └── lsdtt_hillslope_steady_state_cpu  hillslope steady state on top of the fluvial result
+```
+
+All five engines are CPU free functions in `namespace lsdtt`, take a
+`const lsdtt_raster_cpu&`, and return a new `lsdtt_raster_cpu` (input never
+modified). They build their own flow object internally (D8 `lsdtt_flowinfo` or
+D-inf `lsdtt_flowgraph_cpu`) from the elevation passed in.
+
+### lsdtt_lem_cpu (orchestrator)
+
+File: `src/cpu/lsdtt_lem_cpu.hpp/.cpp`
+
+`run_lem_step(dem, opts, boundary_flats)` → `std::pair<lsdtt_raster_cpu, lsdtt_lem_step_stats>`.
+
+Per-step sequence:
+1. **Fluvial** — D8 (`compute_d8_stream_power_incision`) or D-inf
+   (`compute_dinf_stream_power_incision`); D-inf takes priority and the CLI forces
+   D8 off if D-inf is requested.
+2. **Hillslope** (optional) — `adi` runs without a flow graph; `linear` / `roering`
+   build a D-inf graph only for channel identification then apply an explicit FD
+   stencil; `cidre` uses the D-inf topological forward sweep.
+3. **Uplift** (optional) — uniform `uplift_rate * timestep` added to valid pixels.
+4. **Statistics** — computed full-domain *before* boundary restoration.
+5. **Boundary restore** — pixels in `boundary_flats` are reset to their pre-step
+   elevation (fixed-elevation baselevels).
+
+`lsdtt_lem_options` carries all per-step knobs (fluvial K/m/n, threshold area,
+hillslope model + diffusivity + Sc, uplift rate, process switches, boundary
+conditions). `lsdtt_lem_step_stats` reports `delta_max_elevation`,
+`delta_mean_elevation`, `max_local_elevation_change`, `mean_erosion_rate`,
+`max_erosion_rate`.
+
+The fluvial flow object is built with `allow_pits_as_outlets = true` because the
+transient LEM surface may contain pits that must not stall routing.
+
+### lsdtt_stream_power_cpu (transient incision)
+
+File: `src/cpu/lsdtt_stream_power_cpu.hpp/.cpp`
+
+Implicit stream-power incision, `U = K·A^m·S^n` (Braun & Willett 2013 generalised
+to D-inf per Anand et al. 2020). Both functions sweep the topological order in
+**reverse** (outlets first) so a receiver elevation is already updated when its
+donor is solved.
+
+- `compute_d8_stream_power_incision(dem, flowinfo, K, m, n, dt, threshold_area, divide_area_by_dx, slope_clamp)`
+  — single-receiver D8; serial reverse-topological sweep.
+- `compute_dinf_stream_power_incision(..., flowgraph, ..., n_threads)`
+  — D-inf with up to two receivers; level-parallel (`build_reverse_levels`) sweep,
+  OMP within each level.
+
+`n = 1` uses the closed-form implicit update; `n ≠ 1` uses Newton-Raphson with an
+overexcavation clamp to `receiver_elevation + slope_clamp·dx_eff`. Diagonal
+directions use `dx_eff = dx·√2`.
+
+### lsdtt_steady_state_cpu (analytical fluvial steady state)
+
+File: `src/cpu/lsdtt_steady_state_cpu.hpp/.cpp`
+
+Chi-based analytical solution of `U = K·A^m·S^n` (Mudd et al. 2014). `z[i] =
+baselevel + f·chi[i]`, where chi is integrated up-network and is independent of
+`f` (so it is computed once from geometry).
+
+- `compute_d8_fluvial_steady_state(flowinfo, opts)` — reverse topological sweep.
+- `compute_dinf_fluvial_steady_state(flowgraph, opts)` — level-parallel sweep;
+  two-receiver chi uses `chi[i] = chi[e1] + dx·√(A^(-2m/n) − dchi²)` with a
+  cardinal-only fallback when the discriminant is negative.
+
+`lsdtt_fluvial_steady_state_options` has two modes: **K-mode** (user supplies K,
+`f = (U/K)^(1/n)`) and **relief-mode** (user supplies `target_relief`, K is
+back-calculated so `f·MaxChi = target_relief`). Result reports `K_used`,
+`max_unit_height` (= MaxChi), and `computed_relief`. The CLI can iterate this over
+`steady_state_n_cycles`, pit-filling between cycles, so divides migrate one pixel
+per cycle and the single-pass elevation breaks across divides are smoothed.
+
+### lsdtt_hillslope_transport_cpu (transient hillslope)
+
+File: `src/cpu/lsdtt_hillslope_transport_cpu.hpp/.cpp`
+
+Three transient hillslope laws, selected by `hillslope_transport_model`:
+
+- `compute_cidre_hillslope_transport(dem, flowgraph, kappa, dt, nonlinear, Sc, threshold_area, divide_area_by_dx, deposit_on_hillslope_baselevels, n_threads)`
+  — Carretier et al. (2016) finite-volume forward topological sweep over the D-inf
+  graph; flux accumulated via atomic adds. Nonlinear branch uses
+  `L = 1/(1−S²/Sc²)` and switches to slope-restoration when `S ≥ Sc`
+  (unconditionally stable near Sc).
+- `compute_roering_hillslope_transport(dem, is_channel, kappa, dt_total, nonlinear, Sc, n_threads)`
+  — explicit FD of `D·∇·[∇z/(1−(|∇z|/Sc)²)]` on the 4-connected grid; conservative
+  divergence form; auto-subcycles to satisfy the CFL bound `dt ≤ h²/(4·D·α_max)`.
+  `nonlinear == false` reduces to the linear Laplacian.
+- `compute_adi_hillslope_transport(dem, kappa, dt, boundary_conditions)`
+  — Crank-Nicolson linear diffusion via uncoupled ADI (Thomas algorithm) sweeps;
+  no flow graph required.
+
+Channel pixels (drainage area ≥ `incision_threshold_area`) act as hillslope sinks
+/ Dirichlet nodes; the caller builds the `is_channel` mask for the FD laws.
+
+### lsdtt_hillslope_steady_state_cpu (steady-state hillslope)
+
+File: `src/cpu/lsdtt_hillslope_steady_state_cpu.hpp/.cpp`
+
+Solves the hillslope steady state on top of a fluvial result, with channel pixels
+fixed as Dirichlet boundaries. Two interchangeable solvers (same signature):
+
+- `compute_hillslope_steady_state(dem, is_channel, opts)` — Red-Black SOR solving
+  `D·∇²z = −U` (linear) or the Roering nonlinear law with Picard-lagged
+  coefficients. Auto-tuned ω (capped 1.95); O(N) convergence.
+- `compute_cidre_hillslope_steady_state(dem, is_channel, opts)` — pseudo-transient
+  Cidre iterated to a fixed point, rebuilding the D-inf graph each iteration
+  (Picard update of routing). At steady state the nonlinear Cidre and Roering
+  solvers produce the same field (Carretier et al. 2016, §3.3).
+
+`lsdtt_hillslope_steady_state_options`: `D`, `U`, `Sc`, `nonlinear`,
+`boundary_conditions`, `tolerance`, `max_iterations`, `sor_omega` (0 = auto),
+`n_threads`. Result reports `n_iterations`, `final_residual` (max|Δz|), and
+`converged`. In the CLI the solver is chosen by `hillslope_ss_model`
+(`linear`/`roering` → SOR, `cidre` → pseudo-transient); for `cidre` the nonlinear
+flag comes from `enable_nonlinear_hillslopes`.
 
 ---
 

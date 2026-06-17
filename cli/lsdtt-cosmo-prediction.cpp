@@ -38,6 +38,7 @@
 // -----------------------------------------------------------------------------
 
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -50,9 +51,12 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
+#include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
+#include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -266,6 +270,33 @@ int main(int argc, char* argv[])
     help_map["boundary_conditions"] = {"string","oooo",
         "D8 flow routing boundary conditions (N,E,S,W): o=open, b=forced outlet.",""};
 
+    // --- Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool) ---
+    string_default_map["sample_points_filename"] = "NULL";
+    help_map["sample_points_filename"] = {"string","NULL",
+        "CSV of latitude,longitude points at which to sample the accumulated CRN raster.",
+        "When set (not NULL), each point is snapped to the channel network and the "
+        "accumulated (basin-averaged) concentration at the snapped node is written to "
+        "<write_fname>_sampled_crn_conc.csv with columns latitude, longitude, <nuclide>_CONC "
+        "(plus snapped_contributing_pixels, and sample_name if present). The CSV can be read "
+        "directly by lsdtt-cosmo-tool (points_filename) to invert back to an erosion rate -- "
+        "a forward/inverse round-trip check against the imposed effective_erosion_rate. "
+        "Requires calculate_accumulated_crn_concentration: true."};
+
+    string_default_map["sample_column_name"] = "sample_name";
+    help_map["sample_column_name"] = {"string","sample_name",
+        "Optional sample identifier column copied through from the points CSV.",
+        "If absent from the points CSV, the column is omitted from the output."};
+
+    int_default_map["threshold_contributing_pixels"] = 1000;
+    help_map["threshold_contributing_pixels"] = {"int","1000",
+        "Minimum contributing pixels for a node to count as a channel when snapping sample points.",
+        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set."};
+
+    int_default_map["snap_search_radius_pixels"] = 8;
+    help_map["snap_search_radius_pixels"] = {"int","8",
+        "Maximum search radius (pixels) when snapping sample points to the channel network.",
+        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set."};
+
     // --- Output write toggles ---
     bool_default_map["write_crn_concentration_raster"] = true;
     help_map["write_crn_concentration_raster"] = {"bool","true",
@@ -288,9 +319,10 @@ int main(int argc, char* argv[])
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
-    auto bf = pp.get_bool_parameters();
-    auto ff = pp.get_float_parameters();
-    auto sf = pp.get_string_parameters();
+    auto bf  = pp.get_bool_parameters();
+    auto ff  = pp.get_float_parameters();
+    auto ifs = pp.get_int_parameters();
+    auto sf  = pp.get_string_parameters();
 
     const std::string nuclide     = sf["nuclide"];
     const std::string muon_scheme = sf["muon_scheme"];
@@ -305,6 +337,7 @@ int main(int argc, char* argv[])
     const bool do_ss_conc   = bf["calculate_crn_concentration_raster"];
     const bool do_step_conc = bf["calculate_step_change_crn_concentration_raster"];
     const bool do_accum     = bf["calculate_accumulated_crn_concentration"];
+    const bool do_sample    = (sf["sample_points_filename"] != "NULL");
 
     if (!do_ss_conc && !do_step_conc && !do_accum)
     {
@@ -313,6 +346,14 @@ int main(int argc, char* argv[])
                   << "  calculate_step_change_crn_concentration_raster: true\n"
                   << "  calculate_accumulated_crn_concentration: true\n";
         return 0;
+    }
+
+    if (do_sample && !do_accum)
+    {
+        std::cout << "Warning: sample_points_filename is set but "
+                     "calculate_accumulated_crn_concentration is false.\n"
+                     "Point sampling needs the accumulated (basin-averaged) raster "
+                     "and will be skipped.\n";
     }
 
     // -------------------------------------------------------------------------
@@ -499,7 +540,7 @@ int main(int argc, char* argv[])
         lsdtt::lsdtt_flowinfo_options flow_opts;
         flow_opts.boundary_conditions   = sf["boundary_conditions"];
         flow_opts.build_topological_order = true;
-        flow_opts.build_s_vector          = false;
+        flow_opts.build_s_vector          = do_sample;  // snapping requires the s_vector
 
         std::unique_ptr<lsdtt::lsdtt_flow_base> flow_ptr =
             lsdtt::make_flow_base(dem_for_flow.get_data_array(),
@@ -519,6 +560,155 @@ int main(int argc, char* argv[])
             const std::string out_path = write_base + "_" + nuclide + "_crn_acc.tif";
             std::cout << "Writing accumulated concentration raster: " << out_path << "\n";
             loader.write_full(acc_raster.get_data(), acc_raster.get_meta(), out_path, out_fmt);
+        }
+
+        // -----------------------------------------------------------------
+        // Bridge to lsdtt-cosmo-tool: sample the accumulated (basin-averaged)
+        // concentration at lat/lon points and write a CSV that lsdtt-cosmo-tool
+        // can read directly (columns: latitude, longitude, <nuclide>_CONC).
+        // Snapping mirrors lsdtt-cosmo-tool so both tools resolve the same node.
+        // -----------------------------------------------------------------
+        if (do_sample)
+        {
+            const std::string points_path =
+                pp.add_read_path_if_needed(sf["sample_points_filename"]);
+            std::cout << "\nSampling accumulated concentration at points: "
+                      << points_path << "\n";
+
+            std::vector<lsdtt::lsdtt_input_point> pts;
+            try
+            {
+                pts = lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
+                    points_path, acc_raster.get_meta());
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Error reading sample points: " << e.what() << "\n";
+                return 1;
+            }
+
+            // Optional sample-name passthrough, keyed by 1-based input order
+            // (lsdtt_input_point::point_id). Failure to parse simply omits names.
+            const std::string sample_col = sf["sample_column_name"];
+            std::map<int, std::string> sample_names;
+            {
+                std::ifstream name_csv(points_path);
+                if (name_csv.is_open())
+                {
+                    std::string line;
+                    std::getline(name_csv, line);  // header
+                    int name_idx = -1, idx = 0;
+                    std::istringstream hss(line);
+                    std::string tok;
+                    while (std::getline(hss, tok, ','))
+                    {
+                        tok.erase(0, tok.find_first_not_of(" \t\r\n"));
+                        tok.erase(tok.find_last_not_of(" \t\r\n") + 1);
+                        if (tok == sample_col) name_idx = idx;
+                        ++idx;
+                    }
+                    int row_id = 1;
+                    while (name_idx >= 0 && std::getline(name_csv, line))
+                    {
+                        std::istringstream dss(line);
+                        std::string cell;
+                        int c = 0;
+                        while (std::getline(dss, cell, ','))
+                        {
+                            if (c == name_idx)
+                            {
+                                cell.erase(0, cell.find_first_not_of(" \t\r\n"));
+                                cell.erase(cell.find_last_not_of(" \t\r\n") + 1);
+                                sample_names[row_id] = cell;
+                                break;
+                            }
+                            ++c;
+                        }
+                        ++row_id;
+                    }
+                }
+            }
+            const bool has_names = !sample_names.empty();
+
+            lsdtt::lsdtt_square_snap_options snap_opts;
+            snap_opts.contributing_pixels_threshold =
+                static_cast<std::uint64_t>(ifs["threshold_contributing_pixels"]);
+            snap_opts.max_search_radius_pixels = ifs["snap_search_radius_pixels"];
+            snap_opts.min_search_radius_pixels = 1;
+
+            const std::string conc_col = nuclide + "_CONC";
+            const auto& acc_data = acc_raster.get_data_array();
+            const auto& acc_mask = acc_raster.get_mask_array();
+
+            std::vector<std::string> headers;
+            if (has_names) headers.push_back("sample_name");
+            headers.push_back("latitude");
+            headers.push_back("longitude");
+            headers.push_back(conc_col);
+            headers.push_back("snapped_contributing_pixels");
+
+            std::vector<std::vector<std::string>> out_rows;
+            int n_ok = 0, n_skip = 0;
+
+            for (const auto& pt : pts)
+            {
+                if (pt.status != lsdtt::lsdtt_point_input_status::success)
+                {
+                    std::cerr << "  Point " << pt.point_id
+                              << " is outside the raster extent -- skipping.\n";
+                    ++n_skip;
+                    continue;
+                }
+
+                const lsdtt::lsdtt_snap_result snapped =
+                    lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
+                        flow, pt.row, pt.col, snap_opts);
+
+                if (snapped.status != lsdtt::lsdtt_snap_status::success)
+                {
+                    std::cerr << "  Point " << pt.point_id
+                              << " could not be snapped to a channel with >= "
+                              << ifs["threshold_contributing_pixels"]
+                              << " contributing pixels -- skipping.\n";
+                    ++n_skip;
+                    continue;
+                }
+
+                const int srow = snapped.snapped_row;
+                const int scol = snapped.snapped_col;
+                if (!acc_mask(srow, scol))
+                {
+                    std::cerr << "  Point " << pt.point_id
+                              << " snapped to a nodata accumulated cell -- skipping.\n";
+                    ++n_skip;
+                    continue;
+                }
+
+                const double conc = static_cast<double>(acc_data(srow, scol));
+                const lsdtt::lsdtt_lonlat ll =
+                    lsdtt::cell_center_to_lonlat(acc_raster.get_meta(), srow, scol);
+
+                std::vector<std::string> row;
+                if (has_names)
+                {
+                    auto it = sample_names.find(pt.point_id);
+                    row.push_back(it != sample_names.end() ? it->second : "");
+                }
+                row.push_back(std::to_string(ll.latitude));
+                row.push_back(std::to_string(ll.longitude));
+                row.push_back(std::to_string(conc));
+                row.push_back(std::to_string(snapped.snapped_contributing_pixels));
+                out_rows.push_back(std::move(row));
+                ++n_ok;
+            }
+
+            const std::string csv_path = write_base + "_sampled_crn_conc.csv";
+            loader.write_csv(csv_path, headers, out_rows);
+            std::cout << "  Sampled " << n_ok << " point(s) (" << n_skip
+                      << " skipped) -> " << csv_path << "\n"
+                      << "  Concentration column: " << conc_col
+                      << " -- ingest with lsdtt-cosmo-tool (points_filename="
+                      << csv_path << ", nuclide=" << nuclide << ").\n";
         }
     }
 
