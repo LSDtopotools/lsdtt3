@@ -1176,7 +1176,7 @@ std::string lsdtt_data_loader::get_vector_layer_crs_wkt(
         }
     }
 
-    OGRSpatialReference* srs = layer->GetSpatialRef();
+    const OGRSpatialReference* srs = layer->GetSpatialRef();
     if (!srs)
     {
         return "";
@@ -1663,7 +1663,7 @@ void lsdtt_data_loader::clip_vector_to_raster_bbox(
         double filter_maxx = raster_meta.x_max();
         double filter_maxy = raster_meta.y_max();
 
-        OGRSpatialReference* layer_srs = src_layer->GetSpatialRef();
+        const OGRSpatialReference* layer_srs = src_layer->GetSpatialRef();
         if (layer_srs && !raster_meta.crs_wkt.empty())
         {
             OGRSpatialReference raster_srs;

@@ -448,13 +448,14 @@ std::vector<raw_polyline> load_clipped_stream_polylines(
 
         std::unique_ptr<OGRCoordinateTransformation, oct_closer> tx;
 
-        OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+        const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
         if (layer_srs && raster_srs_ptr && !layer_srs->IsSame(raster_srs_ptr))
         {
-            layer_srs->SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            OGRSpatialReference layer_srs_copy(*layer_srs);
+            layer_srs_copy.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
 
             tx.reset(
-                OGRCreateCoordinateTransformation(layer_srs, raster_srs_ptr)
+                OGRCreateCoordinateTransformation(&layer_srs_copy, raster_srs_ptr)
             );
 
             if (!tx)

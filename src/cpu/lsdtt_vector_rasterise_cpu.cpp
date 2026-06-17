@@ -310,7 +310,7 @@ lsdtt_raster_cpu build_output(
 // differ. Returns nullptr when no transform is needed.
 // Throws on failure to create the transform.
 ct_ptr make_ct_if_needed(
-    OGRSpatialReference* layer_srs,
+    const OGRSpatialReference* layer_srs,
     const std::string&   raster_wkt)
 {
     if (!layer_srs || raster_wkt.empty()) return nullptr;
@@ -354,7 +354,7 @@ void set_spatial_filter_from_raster_bbox(
     double maxx = meta.x_max();
     double maxy = meta.y_max();
 
-    OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
     if (layer_srs && !meta.crs_wkt.empty())
     {
         OGRSpatialReference raster_srs;

@@ -241,7 +241,7 @@ oct_ptr make_epsg4326_to_raster_transform(
 }
 
 oct_ptr make_layer_to_raster_transform(
-    OGRSpatialReference*       layer_srs,
+    const OGRSpatialReference* layer_srs,
     const lsdtt_raster_meta&   raster_meta)
 {
     if (layer_srs == nullptr)
@@ -660,7 +660,7 @@ load_vector_point_layer_in_raster_crs(
 
     const std::string resolved_layer_name = layer->GetName();
 
-    OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
     const oct_ptr transform =
         make_layer_to_raster_transform(layer_srs, raster_meta);
 
@@ -800,7 +800,7 @@ load_drainage_injection_points(
         );
     }
 
-    OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
     const oct_ptr transform =
         make_layer_to_raster_transform(layer_srs, raster_meta);
 
