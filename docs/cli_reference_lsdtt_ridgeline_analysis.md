@@ -170,6 +170,8 @@ write_fname: indian_creek
 # Default mode: split every basin outline into two ridgelines
 ridgeline_analysis_mode: basin_outline_ridgelines
 select_all_basins: true
+filter_incomplete_basins:true
+filter_nested_basins:true
 
 # Channel network density
 source_pixels_threshold: 1000
