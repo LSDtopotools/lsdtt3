@@ -421,6 +421,16 @@ int main(int argc, char* argv[])
         "and inversion. Very short channels cannot be segmented meaningfully and "
         "can destabilise fitting. Set to 0 or 1 to keep all basins."};
 
+    int_default_map["n_largest_basins"] = 5;
+    help_map["n_largest_basins"] = {"int","5",
+        "Keep only the N largest complete basins for all chi outputs.",
+        "After the minimum_channel_pixels filter, incomplete basins (upslope "
+        "area touches the DEM edge / nodata) are dropped and only the N largest "
+        "remaining complete basins, ranked by total basin pixels (drainage area), "
+        "are analysed. This applies consistently to data maps, fitting, disorder, "
+        "and inversion so basin keys stay stable. Set to 0 to keep all complete "
+        "basins (no size cap)."};
+
     // --- Chi extraction / fitting ---
     bool_default_map["fit_chi_networks"] = false;
     help_map["fit_chi_networks"] = {"bool","false",
@@ -566,6 +576,10 @@ int main(int argc, char* argv[])
     const std::size_t minimum_channel_pixels =
         ifs["minimum_channel_pixels"] > 0
             ? static_cast<std::size_t>(ifs["minimum_channel_pixels"])
+            : std::size_t{0};
+    const std::size_t n_largest_basins =
+        ifs["n_largest_basins"] > 0
+            ? static_cast<std::size_t>(ifs["n_largest_basins"])
             : std::size_t{0};
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
@@ -764,6 +778,17 @@ int main(int argc, char* argv[])
                       << chi_dm.basins.size() << " basin(s) remain.\n";
         }
 
+        if (n_largest_basins > 0)
+        {
+            const std::size_t n_removed =
+                lsdtt::keep_n_largest_complete_chi_basins(
+                    chi_dm, *flow, n_largest_basins);
+            std::cout << "  Kept the " << chi_dm.basins.size()
+                      << " largest complete basin(s) (n_largest_basins="
+                      << n_largest_basins << "); dropped " << n_removed
+                      << " incomplete/smaller basin(s).\n";
+        }
+
         std::cout.flush();
 
         if (chi_dm.basins.empty())
@@ -828,6 +853,15 @@ int main(int argc, char* argv[])
                           << " basin(s) remain.\n";
             }
 
+            if (n_largest_basins > 0)
+            {
+                lsdtt::keep_n_largest_complete_chi_basins(
+                    chi_networks, *flow, n_largest_basins);
+                std::cout << "  Kept the " << chi_networks.basins.size()
+                          << " largest complete basin(s) (n_largest_basins="
+                          << n_largest_basins << ").\n";
+            }
+
             inversion_networks.reserve(chi_networks.basins.size());
             for (const auto& basin : chi_networks.basins)
                 inversion_networks.push_back(
@@ -877,6 +911,15 @@ int main(int argc, char* argv[])
                     std::cout << "  Rejected " << n_removed
                               << " basin(s) with fewer than "
                               << minimum_channel_pixels << " channel pixels.\n";
+                }
+
+                if (n_largest_basins > 0)
+                {
+                    lsdtt::keep_n_largest_complete_chi_basins(
+                        chi_networks, *flow, n_largest_basins);
+                    std::cout << "  Kept the " << chi_networks.basins.size()
+                              << " largest complete basin(s) (n_largest_basins="
+                              << n_largest_basins << ").\n";
                 }
 
                 std::cout << "  Chi networks extracted: "
