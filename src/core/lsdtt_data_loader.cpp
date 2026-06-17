@@ -1701,7 +1701,7 @@ void lsdtt_data_loader::clip_vector_to_raster_bbox(
 
         // Create output layer matching source schema and CRS
         OGRLayer* dst_layer = raw_dst->CreateLayer(
-            src_layer->GetName(), layer_srs, src_layer->GetGeomType(), nullptr
+            src_layer->GetName(), const_cast<OGRSpatialReference*>(layer_srs), src_layer->GetGeomType(), nullptr
         );
         if (!dst_layer)
             throw std::runtime_error(
