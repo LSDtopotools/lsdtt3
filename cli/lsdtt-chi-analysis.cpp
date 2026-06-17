@@ -148,14 +148,57 @@ static std::vector<std::int64_t> resolve_outlet_flats(
     const std::string& snapping_method,
     int snap_threshold_pixels,
     int min_search_radius_pixels,
-    int max_search_radius_pixels)
+    int max_search_radius_pixels,
+    int source_pixels_threshold,
+    int n_pixels_move_outlet_upstream)
 {
     if (outlet_file == "NULL" || outlet_file.empty())
     {
-        const std::int64_t flat = lsdtt::get_largest_basin_outlet_flat(flow);
-        std::cout << "No outlet file supplied; using largest basin outlet flat: "
-                  << flat << "\n";
-        return {flat};
+        std::vector<std::int64_t> all_outlets =
+            lsdtt::get_all_basin_outlet_flats(flow, source_pixels_threshold);
+        std::cout << "No outlet file supplied; seeding chi extraction from all "
+                  << all_outlets.size() << " basin outlet(s) above the source "
+                     "threshold.\n";
+        if (all_outlets.empty())
+            throw std::runtime_error(
+                "No basin outlets found in the flow object.");
+
+        // Interior (non-edge) outlets drain to nodata (e.g. an island coast);
+        // lift them off the nodata fringe by walking up the main stem. Re-check
+        // the source threshold afterwards and de-duplicate convergent outlets.
+        std::vector<std::int64_t> resolved;
+        resolved.reserve(all_outlets.size());
+        int n_moved = 0;
+        for (const std::int64_t o : all_outlets)
+        {
+            std::int64_t outlet = o;
+            if (n_pixels_move_outlet_upstream > 0 &&
+                !lsdtt::is_flat_on_dem_edge(flow, o))
+            {
+                outlet = lsdtt::move_outlet_upstream(
+                    flow, o, n_pixels_move_outlet_upstream);
+                if (outlet != o)
+                    ++n_moved;
+            }
+            if (flow.s_vector_size_unchecked(outlet) <
+                static_cast<std::uint64_t>(source_pixels_threshold))
+                continue;  // dropped below threshold after the move
+            resolved.push_back(outlet);
+        }
+
+        std::sort(resolved.begin(), resolved.end());
+        resolved.erase(std::unique(resolved.begin(), resolved.end()),
+                       resolved.end());
+
+        std::cout << "  Moved " << n_moved << " interior outlet(s) "
+                  << n_pixels_move_outlet_upstream << " pixel(s) upstream; "
+                  << resolved.size() << " unique outlet(s) remain. The largest "
+                     "complete basins are selected via n_largest_basins.\n";
+        if (resolved.empty())
+            throw std::runtime_error(
+                "No basin outlets remain after the upstream move / threshold "
+                "filter.");
+        return resolved;
     }
 
     const std::string outlet_file_path = pp.add_read_path_if_needed(outlet_file);
@@ -420,6 +463,15 @@ int main(int argc, char* argv[])
         "network nodes (channel pixels) is discarded before fitting, disorder, "
         "and inversion. Very short channels cannot be segmented meaningfully and "
         "can destabilise fitting. Set to 0 or 1 to keep all basins."};
+
+    int_default_map["n_pixels_move_outlet_upstream"] = 10;
+    help_map["n_pixels_move_outlet_upstream"] = {"int","10",
+        "Move interior (non-edge) auto-detected outlets this many pixels upstream.",
+        "When no basin_outlet_file is supplied, outlets are auto-detected. An "
+        "outlet not on the DEM bounding-box edge drains to interior nodata (e.g. "
+        "an island coast where the sea is masked); it is walked this many pixels "
+        "up the main stem so the resulting basin clears the coastal nodata fringe "
+        "and can pass the completeness test. Set to 0 to disable."};
 
     int_default_map["n_largest_basins"] = 5;
     help_map["n_largest_basins"] = {"int","5",
@@ -716,7 +768,9 @@ int main(int argc, char* argv[])
             snapping_method,
             ifs["basin_outlet_contributing_pixels_threshold"],
             ifs["basin_outlet_min_search_radius_pixels"],
-            ifs["basin_outlet_max_search_radius_pixels"]
+            ifs["basin_outlet_max_search_radius_pixels"],
+            ifs["source_pixels_threshold"],
+            ifs["n_pixels_move_outlet_upstream"]
         );
     }
     catch (const std::exception& e)

@@ -74,6 +74,94 @@ std::int64_t get_largest_basin_outlet_flat(const lsdtt_flow_base& flow)
     return best_flat;
 }
 
+std::vector<std::int64_t> get_all_basin_outlet_flats(
+    const lsdtt_flow_base& flow,
+    std::int64_t           min_upslope_pixels)
+{
+    std::vector<std::int64_t> outlets;
+
+    for (int row = 0; row < flow.n_rows(); ++row)
+    {
+        for (int col = 0; col < flow.n_cols(); ++col)
+        {
+            if (!flow.is_valid_cell(row, col))
+                continue;
+
+            const std::int64_t flat = flow.flat_index_unchecked(row, col);
+            if (flow.receiver_of_unchecked(flat) != k_outlet_receiver)
+                continue;
+
+            const std::int64_t n_up =
+                static_cast<std::int64_t>(flow.s_vector_size_unchecked(flat));
+            if (n_up < min_upslope_pixels)
+                continue;
+
+            outlets.push_back(flat);
+        }
+    }
+
+    return outlets;
+}
+
+bool is_flat_on_dem_edge(const lsdtt_flow_base& flow, std::int64_t flat)
+{
+    const int row = flow.row_from_flat_unchecked(flat);
+    const int col = flow.col_from_flat_unchecked(flat);
+    return row == 0 || col == 0 ||
+           row == flow.n_rows() - 1 || col == flow.n_cols() - 1;
+}
+
+std::int64_t move_outlet_upstream(
+    const lsdtt_flow_base& flow,
+    std::int64_t           outlet_flat,
+    int                    n_pixels)
+{
+    std::int64_t current = outlet_flat;
+
+    for (int step = 0; step < n_pixels; ++step)
+    {
+        const int row = flow.row_from_flat_unchecked(current);
+        const int col = flow.col_from_flat_unchecked(current);
+
+        // Pick the donor (neighbour flowing into current) with the largest
+        // upslope pixel count — i.e. continue up the main stem.
+        std::int64_t  best_donor = k_nodata_receiver;
+        std::uint64_t best_size  = 0;
+
+        for (int dr = -1; dr <= 1; ++dr)
+        {
+            for (int dc = -1; dc <= 1; ++dc)
+            {
+                if (dr == 0 && dc == 0)
+                    continue;
+
+                const int nr = row + dr;
+                const int nc = col + dc;
+                if (!flow.is_valid_cell(nr, nc))
+                    continue;
+
+                const std::int64_t nflat = flow.flat_index_unchecked(nr, nc);
+                if (flow.receiver_of_unchecked(nflat) != current)
+                    continue;
+
+                const std::uint64_t up = flow.s_vector_size_unchecked(nflat);
+                if (up > best_size)
+                {
+                    best_size  = up;
+                    best_donor = nflat;
+                }
+            }
+        }
+
+        if (best_donor == k_nodata_receiver)
+            break;  // reached a channel source
+
+        current = best_donor;
+    }
+
+    return current;
+}
+
 std::unique_ptr<lsdtt_flow_base> make_flow_base(
     const lsdtt_array2d_f&        dem,
     const lsdtt_array2d_u8&       mask,
