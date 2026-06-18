@@ -444,5 +444,56 @@ void write_junction_angle_bearing_vectors(
 );
 
 
+// =============================================================================
+// Basin centre-of-mass bearing
+//
+// For a basin draining to a given outlet pixel, the centre of mass is the
+// planimetric centroid of every upslope pixel. The centre-of-mass bearing is the
+// geographic bearing (degrees from North, clockwise, in [0,360)) from the outlet
+// to that centroid, a measure of the dominant direction in which the basin's
+// area lies relative to its outlet.
+// =============================================================================
+
+// Bearing in degrees from North (clockwise) from (ox,oy) to (cx,cy) in a
+// projected CRS (x = easting, y = northing). Returns NaN for a zero-length
+// vector.
+double bearing_from_north_degrees(double ox, double oy, double cx, double cy);
+
+struct lsdtt_junction_com_bearing
+{
+    std::int32_t junction_id   = -1;
+    std::int32_t order         = -1;   // Strahler order of the junction
+
+    // Basin outlet = the pixel just before the downstream junction (or the
+    // base-level pixel for the outlet junction).
+    double       outlet_x      = std::numeric_limits<double>::quiet_NaN();
+    double       outlet_y      = std::numeric_limits<double>::quiet_NaN();
+    double       com_x         = std::numeric_limits<double>::quiet_NaN();
+    double       com_y         = std::numeric_limits<double>::quiet_NaN();
+    double       bearing_deg   = std::numeric_limits<double>::quiet_NaN();
+    double       distance_m    = std::numeric_limits<double>::quiet_NaN();
+    std::int64_t n_pixels      = 0;
+};
+
+// -----------------------------------------------------------------------------
+// calculate_junction_com_bearings
+//
+// For every junction, defines the basin by the pixel just before the next
+// downstream junction (the base-level pixel for the outlet junction), then
+// computes the basin centre of mass and the outlet -> centre-of-mass bearing.
+// Centroids are obtained from a single O(N) upslope accumulation of the cell
+// coordinates, so the whole network is processed efficiently.
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_junction_com_bearing> calculate_junction_com_bearings(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& network
+);
+
+// Per-junction CSV (junction_id, order, outlet/com coordinates, bearing, ...).
+void write_junction_com_bearings(
+    const std::vector<lsdtt_junction_com_bearing>& records,
+    const std::string&                             out_path
+);
+
 
 } // namespace lsdtt

@@ -1,6 +1,6 @@
 # CLI reference: lsdtt-channel-network-analysis
 
-Builds a D8 channel and junction network from a DEM and then runs one or more channel-network analyses: channel-link bearing, junction-angle geometry, and Strahler/Tokunaga ordering.
+Builds a D8 channel and junction network from a DEM and then runs one or more channel-network analyses: channel-link bearing, junction-angle geometry, Strahler/Tokunaga ordering, and junction drainage-area ratios.
 
 At least one output must be requested or the CLI exits with an error.
 
@@ -34,9 +34,9 @@ key: value
 | 5 | Junction selection for bearing / angle analyses |
 | 6 | Channel-link bearing analysis |
 | 7 | Junction-angle analysis |
-| 8 | Strahler / Tokunaga ordering and output |
+| 8 | Junction drainage-area ratios, then Strahler / Tokunaga ordering and output |
 
-Steps 6 and 7 operate on the **selected junction subset** (see junction selection below). Step 8 (Strahler / Tokunaga) always operates on the **full extracted network**.
+Steps 6 and 7 operate on the **selected junction subset** (see junction selection below). Step 8 (junction area ratios, Strahler / Tokunaga) always operates on the **full extracted network**.
 
 ---
 
@@ -49,7 +49,7 @@ Steps 6 and 7 operate on the **selected junction subset** (see junction selectio
 | `write_path` | string | same as `read_path` | Directory for output files. |
 | `write_fname` | string | same as `read_fname` | Output filename stem. |
 
-There is no `write_output_format` for this CLI — all outputs are vector files.
+There is no `write_output_format` for this CLI — vector and tabular outputs each have their own format parameter.
 
 ---
 
@@ -141,9 +141,41 @@ One record is written per valid two-donor junction. Attributes include: junction
 
 ---
 
-## Step 8: Strahler / Tokunaga analysis
+## Step 8a: Junction drainage-area ratios
 
-These analyses operate on the **full extracted network**, not the outlet-selected subset.
+A **continuous, high-sample-count complement to order-binned Tokunaga analysis**. At every interior confluence two (or more) channels merge; the program records the ratio `r = A_trib / A_main` of the two largest incoming drainage areas (in (0, 1]) at *every* junction — far more samples than the few well-populated Strahler-order bins. The distribution of `r` encodes the network's area-accumulation self-similarity. This analysis uses the full extracted network.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_junction_area_ratio_data` | bool | `false` | Write per-junction drainage-area ratios. Output: `<write_fname>_junction_area_ratios.csv`. |
+| `write_junction_area_ratio_summary` | bool | `false` | Write the distribution summary (mean/median `r`, tail exponent `lambda`, Horton `R_A`, model-dependent `c_equivalent`) with branch-bootstrap confidence intervals. **Also** writes the area-decade collapse table. Outputs: `<write_fname>_junction_area_ratio_summary.csv` and `<write_fname>_junction_area_ratio_decades.csv`. |
+| `junction_area_ratio_bootstrap` | int | `1000` | Number of branch-bootstrap replicates for the area-ratio confidence intervals. Resampling is over non-mainstem tributary branches (the main stem is always retained), the correct unit of independence for nested junctions. `0` disables bootstrapping (CI columns left as nan). Used only when `write_junction_area_ratio_summary` is true. |
+| `junction_area_ratio_seed` | int | `1` | RNG seed for the area-ratio branch bootstrap. Fix for reproducible confidence intervals. |
+
+### Metric definitions
+
+- **`r = A_trib / A_main`** — ratio of the smaller to the larger merging tributary drainage area at a confluence, in (0, 1]. Areas are D8 contributing-pixel counts.
+- **`lambda` tail exponent** — `x = −ln(r)` is exponentially distributed when `r` has a power-law tail. `lambda_all` is fitted over all junctions; `lambda_tail` over the small-`r` tail (`x` above its median).
+- **`R_A`** — Horton area ratio from a per-order regression of mean downstream area.
+- **`c_equivalent`** — a **model-dependent** Tokunaga-equivalent `c ≈ R_A^lambda`; an estimate only, not a substitute for the order-binned Tokunaga `(a, c)`.
+- **Branch bootstrap** — junctions are nested and autocorrelated, so the unit of independence is a tributary branch. The main stem is retained, non-mainstem branches are resampled, yielding honest confidence intervals.
+- **Area-decade collapse** — summary statistics restricted to confluences whose downstream area falls in each log10 area decade. If the network is self-similar these rows collapse (similar `median_ratio` / `lambda_tail`); this is the self-similarity diagnostic.
+
+**Caveats.** This measures area accumulation, **not** side-branching topology, so it does not uniquely recover Tokunaga `(a, c)`. It is sensitive to the channel-extraction threshold (which truncates the small-`r` tail) and to the drainage-area definition (here D8 contributing pixels).
+
+### Output files
+
+| File | Contents | Columns |
+|---|---|---|
+| `<write_fname>_junction_area_ratios.csv` | One row per interior confluence | `junction_id`, `x`, `y`, `area_main_cells`, `area_trib_cells`, `ratio`, `area_down_cells`, `order_main`, `order_trib`, `order_receiver`, `n_tributaries`, `branch_id` |
+| `<write_fname>_junction_area_ratio_summary.csv` | Single-row distribution summary with branch-bootstrap CIs | `n_junctions`, `mean_ratio`, `median_ratio`, `lambda_all`, `lambda_tail`, `r_a`, `c_equivalent`, `n_bootstrap`, `n_branches`, `median_ratio_ci_low`, `median_ratio_ci_high`, `lambda_tail_ci_low`, `lambda_tail_ci_high`, `r_a_ci_low`, `r_a_ci_high`, `c_equivalent_ci_low`, `c_equivalent_ci_high` |
+| `<write_fname>_junction_area_ratio_decades.csv` | Area-decade collapse table (one row per populated log10 area decade) | `area_low_cells`, `area_high_cells`, `n`, `median_ratio`, `lambda_tail` |
+
+---
+
+## Step 8b: Strahler / Tokunaga analysis
+
+These analyses operate on the **full extracted network**, not the outlet-selected subset. A *Strahler channel* is a maximal downstream chain of compact links of the same Strahler order. For a Strahler channel of order `i` flowing into a receiving channel of order `j`, the **Tokunaga offset** is `k = j − i`.
 
 ### Strahler channels
 
@@ -159,7 +191,30 @@ These analyses operate on the **full extracted network**, not the outlet-selecte
 | `write_tokunaga_channels` | bool | `false` | `<write_fname>_tokunaga_channels.<ext>` — same geometry as Strahler channels with additional Tokunaga attributes: donor order, receiver order, Tokunaga offset. |
 | `tokunaga_channels_output_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb`, `gpkg`, or `csv`. |
 | `write_tokunaga_channel_data` | bool | `false` | `<write_fname>_tokunaga_channel_data.csv` — table-only export of Tokunaga channel attributes with no geometry. |
-| `write_tokunaga_summary_data` | bool | `false` | `<write_fname>_tokunaga_summary.csv` — Tokunaga pair counts, offset statistics, and self-similarity fit summary for the full network. |
+| `write_tokunaga_summary_data` | bool | `false` | Tokunaga pair counts, offset statistics, and self-similarity fits (see below). |
+
+### Tokunaga self-similarity fits
+
+The classical Tokunaga law models the mean count of side-tributary channels per offset:
+
+```
+T_k = a · c^(k − 1)
+```
+
+so that `a` is the count of channels one order lower joining a channel (offset `k = 1`) and `c` is the geometric ratio by which side-branching abundance grows per additional offset. When `write_tokunaga_summary_data` is true the CLI writes three tables (using the prefix `<write_fname>_tokunaga_summary`):
+
+| File | Contents | Columns |
+|---|---|---|
+| `<write_fname>_tokunaga_summary_pair_counts.csv` | Counts of observed order pairs | `donor_order`, `receiver_order`, `offset`, `count` |
+| `<write_fname>_tokunaga_summary_offset_stats.csv` | Counts / mean `T_k` grouped by offset `k` | `offset`, `count`, `mean_t` |
+| `<write_fname>_tokunaga_summary_fit.csv` | Fitted Tokunaga-law parameters, **two rows** | `method`, `valid`, `a`, `c`, `intercept`, `exponent`, `r_squared`, `n_offsets_used`, `rmse_log_space` |
+
+The `_fit.csv` table now contains **two fits**, distinguished by the `method` column:
+
+- **`ols`** — the original ordinary log-linear least squares: regress `log(T_k)` against `(k − 1)`. The slope is `log(c)` and the intercept is `log(a)`. Every offset bin is weighted equally in log space.
+- **`poisson`** — a count-weighted Poisson GLM fit (log link, solved by iteratively reweighted least squares). Each offset `k` contributes its observed mean `T_k` with a prior weight equal to its pair count.
+
+**Why count-weighting matters.** `T_k` is a count rate, and high-offset bins are sparsely populated (few channel pairs separated by several Strahler orders). In ordinary log-linear least squares these noisy, low-count high offsets carry the same weight as the well-populated low offsets and can dominate the fitted slope `c`. The Poisson GLM weights each offset by its count, so it is the statistically appropriate model and gives a more stable `(a, c)` for networks where the high-offset tail is thin. Both rows expose the same `(a, c)` interpretation; compare them to judge how sensitive the fit is to the sparse tail. (`rmse_log_space` is reported on the `ols` row only; it is nan for `poisson`.)
 
 ---
 
@@ -216,5 +271,21 @@ source_pixels_threshold:  500
 write_strahler_channels:        true
 strahler_channels_output_format: flatgeobuf
 write_tokunaga_channels:         true
-write_tokunaga_summary_data:     true
+write_tokunaga_summary_data:     true     # writes the ols + poisson _fit.csv
+```
+
+## Example parameter file: junction drainage-area ratios
+
+```
+read_path:  /data/dems/
+read_fname: my_dem
+write_fname: my_dem_areas
+
+raster_is_filled:         false
+source_pixels_threshold:  500
+
+write_junction_area_ratio_data:    true
+write_junction_area_ratio_summary: true   # also writes the decades collapse table
+junction_area_ratio_bootstrap:     1000
+junction_area_ratio_seed:          1
 ```

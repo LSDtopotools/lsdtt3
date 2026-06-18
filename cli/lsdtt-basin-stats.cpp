@@ -57,6 +57,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -77,6 +78,7 @@
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
 #include "../src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.hpp"
+#include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_polygon_geometry.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
@@ -116,6 +118,10 @@ struct basin_stats_record
     double centroid_y         = 0.0;
     double centroid_latitude  = 0.0;
     double centroid_longitude = 0.0;
+
+    // Outlet -> centre-of-mass bearing (degrees from North, clockwise) + distance
+    double com_bearing_deg    = std::numeric_limits<double>::quiet_NaN();
+    double com_distance_m     = std::numeric_limits<double>::quiet_NaN();
 
     // Slope (gradient magnitude) percentiles
     double slope_25th = 0.0;
@@ -241,7 +247,8 @@ static void write_basin_stats_csv(
     const std::string& csv_path,
     const std::vector<basin_stats_record>& rows,
     bool has_channel_stats,
-    bool has_shape_metrics)
+    bool has_shape_metrics,
+    bool has_com_bearing)
 {
     std::ofstream out(csv_path);
     if (!out)
@@ -268,7 +275,14 @@ static void write_basin_stats_csv(
         << ",centroid_x"
         << ",centroid_y"
         << ",centroid_latitude"
-        << ",centroid_longitude"
+        << ",centroid_longitude";
+
+    if (has_com_bearing)
+    {
+        out << ",com_bearing_deg" << ",com_distance_m";
+    }
+
+    out
         << ",elevation_min"
         << ",elevation_max"
         << ",elevation_range"
@@ -329,8 +343,15 @@ static void write_basin_stats_csv(
             << row.centroid_x << ","
             << row.centroid_y << ","
             << row.centroid_latitude << ","
-            << row.centroid_longitude << ","
-            << row.stats.min << ","
+            << row.centroid_longitude;
+
+        if (has_com_bearing)
+        {
+            out << "," << row.com_bearing_deg << "," << row.com_distance_m;
+        }
+
+        out
+            << "," << row.stats.min << ","
             << row.stats.max << ","
             << row.stats.range << ","
             << row.stats.mean << ","
@@ -525,8 +546,24 @@ int main(int argc, char* argv[])
         "Opt-in. Builds a channel network (using threshold_contributing_pixels) "
         "if one is not already built, then writes the ratio r = A_trib/A_main at "
         "every interior confluence plus a distribution summary. Outputs: "
-        "<write_fname>_junction_area_ratios.csv and "
-        "<write_fname>_junction_area_ratio_summary.csv."};
+        "<write_fname>_junction_area_ratios.csv, "
+        "<write_fname>_junction_area_ratio_summary.csv (with branch-bootstrap "
+        "confidence intervals), and a _junction_area_ratio_decades.csv collapse "
+        "table."};
+
+    int_default_map["junction_area_ratio_bootstrap"] = 1000;
+    help_map["junction_area_ratio_bootstrap"] = {"int","1000",
+        "Branch-bootstrap replicates for junction area-ratio confidence intervals.",
+        "Resampling is over non-mainstem tributary branches. 0 disables it."};
+
+    bool_default_map["calculate_centre_of_mass_bearing"] = false;
+    help_map["calculate_centre_of_mass_bearing"] = {"bool","false",
+        "Compute the bearing from each basin outlet to its centre of mass.",
+        "Opt-in. The basin centre of mass is the planimetric centroid of all "
+        "upslope pixels (already reported as centroid_x/centroid_y). This adds "
+        "com_bearing_deg (geographic bearing from North, clockwise, outlet -> "
+        "centre of mass) and com_distance_m columns. The outlet is the user-"
+        "supplied (optionally snapped) outlet pixel; the channel is not followed."};
 
     // --- Basin shape metrics ---
     bool_default_map["calculate_shape_metrics"] = false;
@@ -879,6 +916,7 @@ int main(int argc, char* argv[])
     // Optional channel network for stream-order statistics
     // -------------------------------------------------------------------------
     const bool do_shape_metrics = bf["calculate_shape_metrics"];
+    const bool do_com_bearing   = bf["calculate_centre_of_mass_bearing"];
 
     std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
     const bool do_channel_stats         = bf["calculate_channel_stats"];
@@ -940,7 +978,10 @@ int main(int argc, char* argv[])
         try
         {
             const lsdtt::lsdtt_junction_area_ratio_result jar =
-                lsdtt::compute_junction_area_ratios(*flow, *channel_network);
+                lsdtt::compute_junction_area_ratios(
+                    *flow, *channel_network,
+                    static_cast<std::int32_t>(ifs["junction_area_ratio_bootstrap"]),
+                    1u);
 
             std::cout << "Confluence junctions: " << jar.n_junctions
                       << "  median ratio: " << jar.median_ratio
@@ -955,6 +996,11 @@ int main(int argc, char* argv[])
                 pp.make_output_path("_junction_area_ratio_summary.csv");
             std::cout << "Writing: " << f_sum << "\n";
             lsdtt::write_junction_area_ratio_summary(jar, f_sum);
+
+            const std::string f_dec =
+                pp.make_output_path("_junction_area_ratio_decades.csv");
+            std::cout << "Writing: " << f_dec << "\n";
+            lsdtt::write_junction_area_ratio_decades(jar, f_dec);
         }
         catch (const std::exception& e)
         {
@@ -1523,6 +1569,12 @@ int main(int argc, char* argv[])
             row_out.centroid_y         = cy;
             row_out.centroid_latitude  = cent_lat;
             row_out.centroid_longitude = cent_lon;
+            if (do_com_bearing)
+            {
+                row_out.com_bearing_deg =
+                    lsdtt::bearing_from_north_degrees(xy.x, xy.y, cx, cy);
+                row_out.com_distance_m = std::hypot(cx - xy.x, cy - xy.y);
+            }
             row_out.stats              = elev_stats;
             row_out.slope_25th         = s25;
             row_out.slope_50th         = s50;
@@ -1592,7 +1644,7 @@ int main(int argc, char* argv[])
         const std::string csv_out = pp.make_output_path( "_basin_stats.csv");
         std::cout << "\nWriting basin statistics CSV: " << csv_out << "\n";
         write_basin_stats_csv(csv_out, basin_rows, has_channel_network,
-                              do_shape_metrics);
+                              do_shape_metrics, do_com_bearing);
     }
     catch (const std::exception& e)
     {

@@ -319,9 +319,32 @@ int main(int argc, char* argv[])
     help_map["write_junction_area_ratio_summary"] = {"bool","false",
         "Write a junction area-ratio distribution summary to CSV.",
         "Mean/median r, the exponential tail rate lambda of x=-ln(r), a Horton "
-        "area ratio R_A, and a model-dependent Tokunaga-equivalent c=R_A^lambda. "
-        "Output: <write_fname>_junction_area_ratio_summary.csv. See the caveats "
-        "in lsdtt_strahler_tokunaga_analysis_cpu.hpp."};
+        "area ratio R_A, and a model-dependent Tokunaga-equivalent c=R_A^lambda, "
+        "with branch-bootstrap confidence intervals. Also writes an area-decade "
+        "collapse table (<write_fname>_junction_area_ratio_decades.csv). Output: "
+        "<write_fname>_junction_area_ratio_summary.csv."};
+
+    int_default_map["junction_area_ratio_bootstrap"] = 1000;
+    help_map["junction_area_ratio_bootstrap"] = {"int","1000",
+        "Number of branch-bootstrap replicates for area-ratio confidence intervals.",
+        "Resampling is over non-mainstem tributary branches (the main stem is "
+        "always retained), the correct unit of independence for nested junctions. "
+        "0 disables bootstrapping (CI columns left as nan)."};
+
+    int_default_map["junction_area_ratio_seed"] = 1;
+    help_map["junction_area_ratio_seed"] = {"int","1",
+        "RNG seed for the area-ratio branch bootstrap.",
+        "Fix for reproducible confidence intervals."};
+
+    // --- Junction centre-of-mass bearing ---
+    bool_default_map["write_junction_centre_of_mass_bearings"] = false;
+    help_map["write_junction_centre_of_mass_bearings"] = {"bool","false",
+        "Write the basin centre-of-mass bearing for every junction.",
+        "For each junction the basin is defined by the pixel just before the next "
+        "downstream junction (base level for the outlet junction); this writes the "
+        "geographic bearing (degrees from North, clockwise) from that outlet to "
+        "the basin centre of mass, plus the outlet and centre-of-mass coordinates "
+        "and the basin pixel count. Output: <write_fname>_junction_com_bearings.csv."};
 
 
 
@@ -369,6 +392,7 @@ int main(int argc, char* argv[])
     const bool do_tokunaga_summary   = bf["write_tokunaga_summary_data"];
     const bool do_jar_data           = bf["write_junction_area_ratio_data"];
     const bool do_jar_summary        = bf["write_junction_area_ratio_summary"];
+    const bool do_com_bearings       = bf["write_junction_centre_of_mass_bearings"];
     const bool do_link_bearing_vectors = bf["write_channel_link_bearing_vectors"];
     const bool do_junction_angle_bearing_vectors = bf["write_junction_angle_bearing_vectors"];
 
@@ -383,7 +407,8 @@ int main(int argc, char* argv[])
         do_tokunaga_table                 ||
         do_tokunaga_summary               ||
         do_jar_data                       ||
-        do_jar_summary;
+        do_jar_summary                    ||
+        do_com_bearings;
 
 
     if (!do_any_output)
@@ -1199,8 +1224,14 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Junction area-ratio analysis ---\n";
         try
         {
+            const std::int32_t n_boot = do_jar_summary
+                ? static_cast<std::int32_t>(ifs["junction_area_ratio_bootstrap"])
+                : 0;
+
             const lsdtt::lsdtt_junction_area_ratio_result jar =
-                lsdtt::compute_junction_area_ratios(*flow, *channel_network);
+                lsdtt::compute_junction_area_ratios(
+                    *flow, *channel_network, n_boot,
+                    static_cast<std::uint64_t>(ifs["junction_area_ratio_seed"]));
 
             std::cout << "Confluence junctions        : "
                       << jar.n_junctions << "\n";
@@ -1222,11 +1253,42 @@ int main(int argc, char* argv[])
                     pp.make_output_path( "_junction_area_ratio_summary", ".csv");
                 std::cout << "Writing: " << f << "\n";
                 lsdtt::write_junction_area_ratio_summary(jar, f);
+
+                const std::string fd =
+                    pp.make_output_path( "_junction_area_ratio_decades", ".csv");
+                std::cout << "Writing: " << fd << "\n";
+                lsdtt::write_junction_area_ratio_decades(jar, fd);
             }
         }
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: junction area-ratio analysis failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Junction basin centre-of-mass bearings
+    // -------------------------------------------------------------------------
+    if (do_com_bearings)
+    {
+        std::cout << "\n--- Junction centre-of-mass bearings ---\n";
+        try
+        {
+            const std::vector<lsdtt::lsdtt_junction_com_bearing> com =
+                lsdtt::calculate_junction_com_bearings(*flow, *channel_network);
+
+            std::cout << "Junctions analysed          : " << com.size() << "\n";
+
+            const std::string f =
+                pp.make_output_path( "_junction_com_bearings", ".csv");
+            std::cout << "Writing: " << f << "\n";
+            lsdtt::write_junction_com_bearings(com, f);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: junction centre-of-mass bearing analysis failed: "
                       << e.what() << "\n";
             return 1;
         }

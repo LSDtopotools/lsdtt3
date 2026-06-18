@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -575,6 +576,72 @@ lsdtt_tokunaga_fit fit_tokunaga_law(
 }
 
 // -----------------------------------------------------------------------------
+// fit_tokunaga_law_poisson
+//
+// Count-weighted Poisson GLM (log link) for T_k = a*c^(k-1), solved by IRLS.
+// Linear predictor eta_k = b0 + b1*(k-1); mu_k = exp(eta_k); each offset is
+// weighted by its pair count so sparse high offsets do not dominate the slope.
+// -----------------------------------------------------------------------------
+lsdtt_tokunaga_fit fit_tokunaga_law_poisson(
+    const std::vector<lsdtt_tokunaga_offset_stat>& offset_stats
+)
+{
+    lsdtt_tokunaga_fit result;
+
+    std::vector<double> xk;  // (k-1)
+    std::vector<double> yk;  // observed T_k
+    std::vector<double> wk;  // prior weight = pair count
+    for (const auto& stat : offset_stats)
+    {
+        if (stat.offset < 1)                                    continue;
+        if (!std::isfinite(stat.mean_t) || stat.mean_t <= 0.0)  continue;
+        if (stat.count <= 0)                                    continue;
+        xk.push_back(static_cast<double>(stat.offset - 1));
+        yk.push_back(stat.mean_t);
+        wk.push_back(static_cast<double>(stat.count));
+    }
+    if (xk.size() < 2) return result;
+
+    // initialise from the log-linear OLS slope/intercept
+    double b0 = std::log(yk[0] > 0.0 ? yk[0] : 1.0);
+    double b1 = 0.0;
+
+    for (int iter = 0; iter < 50; ++iter)
+    {
+        // weighted normal equations for z = eta + (y-mu)/mu, weight W = w*mu
+        double Sw = 0.0, Swx = 0.0, Swxx = 0.0, Swz = 0.0, Swxz = 0.0;
+        for (std::size_t i = 0; i < xk.size(); ++i)
+        {
+            const double eta = b0 + b1 * xk[i];
+            const double mu  = std::exp(eta);
+            if (!(mu > 0.0) || !std::isfinite(mu)) return result;
+            const double z = eta + (yk[i] - mu) / mu;
+            const double W = wk[i] * mu;
+            Sw   += W;
+            Swx  += W * xk[i];
+            Swxx += W * xk[i] * xk[i];
+            Swz  += W * z;
+            Swxz += W * xk[i] * z;
+        }
+        const double det = Sw * Swxx - Swx * Swx;
+        if (std::abs(det) < 1e-300) return result;
+        const double nb0 = (Swxx * Swz - Swx * Swxz) / det;
+        const double nb1 = (Sw * Swxz - Swx * Swz) / det;
+        const double d = std::abs(nb0 - b0) + std::abs(nb1 - b1);
+        b0 = nb0; b1 = nb1;
+        if (d < 1e-10) break;
+    }
+
+    result.valid         = true;
+    result.intercept     = b0;
+    result.exponent      = b1;
+    result.a             = std::exp(b0);
+    result.c             = std::exp(b1);
+    result.n_offsets_used = xk.size();
+    return result;
+}
+
+// -----------------------------------------------------------------------------
 // analyse_tokunaga_self_similarity
 // -----------------------------------------------------------------------------
 lsdtt_tokunaga_self_similarity_test analyse_tokunaga_self_similarity(
@@ -591,6 +658,9 @@ lsdtt_tokunaga_self_similarity_test analyse_tokunaga_self_similarity(
 
     result.fit =
         fit_tokunaga_law(result.offset_stats);
+
+    result.fit_poisson =
+        fit_tokunaga_law_poisson(result.offset_stats);
 
     if (!result.fit.valid)
     {
@@ -986,6 +1056,7 @@ void write_tokunaga_summary_data(
 
         std::vector<std::string> headers =
         {
+            "method",
             "valid",
             "a",
             "c",
@@ -997,16 +1068,30 @@ void write_tokunaga_summary_data(
         };
 
         std::vector<std::vector<std::string>> rows =
-        {{
-            tokunaga_result.fit.valid ? "1" : "0",
-            precise_string(tokunaga_result.fit.a),
-            precise_string(tokunaga_result.fit.c),
-            precise_string(tokunaga_result.fit.intercept),
-            precise_string(tokunaga_result.fit.exponent),
-            precise_string(tokunaga_result.fit.r_squared),
-            std::to_string(tokunaga_result.fit.n_offsets_used),
-            precise_string(tokunaga_result.rmse_log_space)
-        }};
+        {
+            {
+                "ols",
+                tokunaga_result.fit.valid ? "1" : "0",
+                precise_string(tokunaga_result.fit.a),
+                precise_string(tokunaga_result.fit.c),
+                precise_string(tokunaga_result.fit.intercept),
+                precise_string(tokunaga_result.fit.exponent),
+                precise_string(tokunaga_result.fit.r_squared),
+                std::to_string(tokunaga_result.fit.n_offsets_used),
+                precise_string(tokunaga_result.rmse_log_space)
+            },
+            {
+                "poisson",
+                tokunaga_result.fit_poisson.valid ? "1" : "0",
+                precise_string(tokunaga_result.fit_poisson.a),
+                precise_string(tokunaga_result.fit_poisson.c),
+                precise_string(tokunaga_result.fit_poisson.intercept),
+                precise_string(tokunaga_result.fit_poisson.exponent),
+                precise_string(tokunaga_result.fit_poisson.r_squared),
+                std::to_string(tokunaga_result.fit_poisson.n_offsets_used),
+                precise_string(std::numeric_limits<double>::quiet_NaN())
+            }
+        };
 
         loader.write_csv(fit_path, headers, rows);
     }
@@ -1212,12 +1297,110 @@ void write_tokunaga_channels(
 
 
 
+// -----------------------------------------------------------------------------
+// area_ratio_summary_of_subset
+//
+// Computes the area-ratio summary scalars (median r, lambda over all x and the
+// small-r tail, Horton R_A, and c_equivalent) from the subset of records given
+// by idx. Shared by the point estimate, the bootstrap replicates, and the
+// per-decade rows.
+// -----------------------------------------------------------------------------
+static lsdtt_area_ratio_summary area_ratio_summary_of_subset(
+    const std::vector<lsdtt_junction_area_ratio>& recs,
+    const std::vector<std::size_t>&               idx)
+{
+    lsdtt_area_ratio_summary s;
+
+    std::vector<double> ratios;
+    std::vector<double> xs;
+    ratios.reserve(idx.size());
+    xs.reserve(idx.size());
+    for (const std::size_t i : idx)
+    {
+        const double r = recs[i].ratio;
+        if (std::isfinite(r) && r > 0.0)
+        {
+            ratios.push_back(r);
+            xs.push_back(-std::log(r));
+        }
+    }
+    if (ratios.size() < 2) return s;
+
+    std::vector<double> sorted_r = ratios;
+    std::sort(sorted_r.begin(), sorted_r.end());
+    s.median_ratio = sorted_r[sorted_r.size() / 2];
+
+    double sx = 0.0;
+    for (double v : xs) sx += v;
+    const double mean_x = sx / static_cast<double>(xs.size());
+    if (mean_x > 0.0) s.lambda_all = 1.0 / mean_x;
+
+    std::vector<double> sorted_x = xs;
+    std::sort(sorted_x.begin(), sorted_x.end());
+    const double u = sorted_x[sorted_x.size() / 2];
+    double st = 0.0;
+    std::size_t nt = 0;
+    for (double v : xs) { if (v >= u) { st += v - u; ++nt; } }
+    if (nt > 0 && st > 0.0) s.lambda_tail = static_cast<double>(nt) / st;
+
+    std::map<int, std::pair<double, long long>> per_order;
+    for (const std::size_t i : idx)
+    {
+        const auto& r = recs[i];
+        if (r.order_receiver >= 1 && r.area_down_cells > 0.0)
+        {
+            auto& p = per_order[r.order_receiver];
+            p.first  += r.area_down_cells;
+            p.second += 1;
+        }
+    }
+    if (per_order.size() >= 2)
+    {
+        double n = 0.0, sxo = 0.0, syo = 0.0, sxy = 0.0, sxx = 0.0;
+        for (const auto& kv : per_order)
+        {
+            const double mean_area =
+                kv.second.first / static_cast<double>(kv.second.second);
+            if (mean_area <= 0.0) continue;
+            const double o = static_cast<double>(kv.first);
+            const double y = std::log(mean_area);
+            n += 1.0; sxo += o; syo += y; sxy += o * y; sxx += o * o;
+        }
+        const double denom = n * sxx - sxo * sxo;
+        if (n >= 2.0 && std::abs(denom) > 1e-12)
+        {
+            s.r_a = std::exp((n * sxy - sxo * syo) / denom);
+            if (std::isfinite(s.lambda_tail) && s.r_a > 0.0)
+                s.c_equivalent = std::pow(s.r_a, s.lambda_tail);
+        }
+    }
+
+    return s;
+}
+
+// percentile (0..100) of a copy-sorted vector of finite values
+static double finite_percentile(std::vector<double> v, double p)
+{
+    v.erase(std::remove_if(v.begin(), v.end(),
+            [](double x){ return !std::isfinite(x); }), v.end());
+    if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
+    std::sort(v.begin(), v.end());
+    const double rank = (p / 100.0) * static_cast<double>(v.size() - 1);
+    const std::size_t lo = static_cast<std::size_t>(std::floor(rank));
+    const std::size_t hi = static_cast<std::size_t>(std::ceil(rank));
+    if (lo == hi) return v[lo];
+    const double w = rank - static_cast<double>(lo);
+    return v[lo] * (1.0 - w) + v[hi] * w;
+}
+
 // =============================================================================
 // compute_junction_area_ratios
 // =============================================================================
 lsdtt_junction_area_ratio_result compute_junction_area_ratios(
     const lsdtt_flow_base&             flow,
-    const lsdtt_junction_network_base& network
+    const lsdtt_junction_network_base& network,
+    std::int32_t                       n_bootstrap,
+    std::uint64_t                      random_seed
 )
 {
     lsdtt_junction_area_ratio_result out;
@@ -1372,6 +1555,140 @@ lsdtt_junction_area_ratio_result compute_junction_area_ratios(
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Branch assignment: mark the main stem(s), then label each confluence by
+    // the non-mainstem tributary subtree it belongs to (for branch-bootstrap).
+    // -------------------------------------------------------------------------
+    const std::int32_t n_junc_total = network.n_junctions();
+    std::vector<char> is_mainstem(static_cast<std::size_t>(n_junc_total), 0);
+
+    auto junction_area = [&](std::int32_t jj) -> double
+    {
+        const std::int64_t f = network.flat_of_junction(jj);
+        const int rr = flow.row_from_flat_unchecked(f);
+        const int cc = flow.col_from_flat_unchecked(f);
+        const std::size_t i = static_cast<std::size_t>(rr) * n_cols + cc;
+        return (i < A.size()) ? static_cast<double>(A[i]) : 0.0;
+    };
+
+    const std::int32_t n_out = network.n_outlet_junctions();
+    for (std::int32_t oi = 0; oi < n_out; ++oi)
+    {
+        std::int32_t j = network.outlet_junction(oi);
+        while (j >= 0)
+        {
+            is_mainstem[static_cast<std::size_t>(j)] = 1;
+            const lsdtt_junction_index_slice donors = network.donor_junctions(j);
+            std::int32_t best = -1;
+            double best_area = -1.0;
+            for (const std::int32_t* it = donors.begin(); it != donors.end(); ++it)
+            {
+                const double a = junction_area(*it);
+                if (a > best_area) { best_area = a; best = *it; }
+            }
+            j = best;
+        }
+    }
+
+    auto branch_root = [&](std::int32_t j) -> std::int32_t
+    {
+        if (j < 0 || is_mainstem[static_cast<std::size_t>(j)]) return -1;
+        std::int32_t cur = j;
+        while (true)
+        {
+            const std::int32_t r = network.receiver_of_junction(cur);
+            if (r < 0 || is_mainstem[static_cast<std::size_t>(r)]) break;
+            cur = r;
+        }
+        return cur;
+    };
+
+    for (auto& rec : out.junctions)
+        rec.branch_id = branch_root(rec.junction_id);
+
+    // -------------------------------------------------------------------------
+    // Branch-bootstrap confidence intervals (main stem always retained)
+    // -------------------------------------------------------------------------
+    if (n_bootstrap > 0 && out.junctions.size() >= 4)
+    {
+        std::map<std::int32_t, std::vector<std::size_t>> by_branch;
+        std::vector<std::size_t> mainstem_idx;
+        for (std::size_t i = 0; i < out.junctions.size(); ++i)
+        {
+            const std::int32_t b = out.junctions[i].branch_id;
+            if (b < 0) mainstem_idx.push_back(i);
+            else       by_branch[b].push_back(i);
+        }
+
+        std::vector<std::int32_t> branch_ids;
+        branch_ids.reserve(by_branch.size());
+        for (const auto& kv : by_branch) branch_ids.push_back(kv.first);
+        out.n_branches = static_cast<std::int32_t>(branch_ids.size());
+
+        if (!branch_ids.empty())
+        {
+            std::mt19937_64 rng(random_seed);
+            std::uniform_int_distribution<std::size_t> pick(0, branch_ids.size() - 1);
+
+            std::vector<double> bs_median, bs_lambda, bs_ra, bs_c;
+            bs_median.reserve(static_cast<std::size_t>(n_bootstrap));
+            bs_lambda.reserve(static_cast<std::size_t>(n_bootstrap));
+            bs_ra.reserve(static_cast<std::size_t>(n_bootstrap));
+            bs_c.reserve(static_cast<std::size_t>(n_bootstrap));
+
+            for (std::int32_t rep = 0; rep < n_bootstrap; ++rep)
+            {
+                std::vector<std::size_t> idx = mainstem_idx;
+                for (std::size_t b = 0; b < branch_ids.size(); ++b)
+                {
+                    const std::vector<std::size_t>& v = by_branch[branch_ids[pick(rng)]];
+                    idx.insert(idx.end(), v.begin(), v.end());
+                }
+                const lsdtt_area_ratio_summary s =
+                    area_ratio_summary_of_subset(out.junctions, idx);
+                bs_median.push_back(s.median_ratio);
+                bs_lambda.push_back(s.lambda_tail);
+                bs_ra.push_back(s.r_a);
+                bs_c.push_back(s.c_equivalent);
+            }
+
+            out.n_bootstrap = n_bootstrap;
+            out.median_ratio_ci_low  = finite_percentile(bs_median, 2.5);
+            out.median_ratio_ci_high = finite_percentile(bs_median, 97.5);
+            out.lambda_tail_ci_low   = finite_percentile(bs_lambda, 2.5);
+            out.lambda_tail_ci_high  = finite_percentile(bs_lambda, 97.5);
+            out.r_a_ci_low           = finite_percentile(bs_ra, 2.5);
+            out.r_a_ci_high          = finite_percentile(bs_ra, 97.5);
+            out.c_equivalent_ci_low  = finite_percentile(bs_c, 2.5);
+            out.c_equivalent_ci_high = finite_percentile(bs_c, 97.5);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Area-decade collapse: summary stats per log10 decade of downstream area.
+    // -------------------------------------------------------------------------
+    {
+        std::map<int, std::vector<std::size_t>> by_decade;
+        for (std::size_t i = 0; i < out.junctions.size(); ++i)
+        {
+            const double a = out.junctions[i].area_down_cells;
+            if (a > 0.0)
+                by_decade[static_cast<int>(std::floor(std::log10(a)))].push_back(i);
+        }
+        for (const auto& kv : by_decade)
+        {
+            const lsdtt_area_ratio_summary s =
+                area_ratio_summary_of_subset(out.junctions, kv.second);
+            lsdtt_area_ratio_decade d;
+            d.area_low     = std::pow(10.0, static_cast<double>(kv.first));
+            d.area_high    = std::pow(10.0, static_cast<double>(kv.first + 1));
+            d.n            = kv.second.size();
+            d.median_ratio = s.median_ratio;
+            d.lambda_tail  = s.lambda_tail;
+            out.decades.push_back(d);
+        }
+    }
+
     return out;
 }
 
@@ -1387,7 +1704,8 @@ void write_junction_area_ratio_data(
     {
         "junction_id", "x", "y",
         "area_main_cells", "area_trib_cells", "ratio", "area_down_cells",
-        "order_main", "order_trib", "order_receiver", "n_tributaries"
+        "order_main", "order_trib", "order_receiver", "n_tributaries",
+        "branch_id"
     };
 
     std::vector<std::vector<std::string>> rows;
@@ -1405,7 +1723,8 @@ void write_junction_area_ratio_data(
             std::to_string(r.order_main),
             std::to_string(r.order_trib),
             std::to_string(r.order_receiver),
-            std::to_string(r.n_tributaries)
+            std::to_string(r.n_tributaries),
+            std::to_string(r.branch_id)
         });
     }
 
@@ -1423,7 +1742,12 @@ void write_junction_area_ratio_summary(
     std::vector<std::string> headers =
     {
         "n_junctions", "mean_ratio", "median_ratio",
-        "lambda_all", "lambda_tail", "r_a", "c_equivalent"
+        "lambda_all", "lambda_tail", "r_a", "c_equivalent",
+        "n_bootstrap", "n_branches",
+        "median_ratio_ci_low", "median_ratio_ci_high",
+        "lambda_tail_ci_low", "lambda_tail_ci_high",
+        "r_a_ci_low", "r_a_ci_high",
+        "c_equivalent_ci_low", "c_equivalent_ci_high"
     };
 
     std::vector<std::vector<std::string>> rows =
@@ -1434,8 +1758,47 @@ void write_junction_area_ratio_summary(
         precise_string(result.lambda_all),
         precise_string(result.lambda_tail),
         precise_string(result.r_a),
-        precise_string(result.c_equivalent)
+        precise_string(result.c_equivalent),
+        std::to_string(result.n_bootstrap),
+        std::to_string(result.n_branches),
+        precise_string(result.median_ratio_ci_low),
+        precise_string(result.median_ratio_ci_high),
+        precise_string(result.lambda_tail_ci_low),
+        precise_string(result.lambda_tail_ci_high),
+        precise_string(result.r_a_ci_low),
+        precise_string(result.r_a_ci_high),
+        precise_string(result.c_equivalent_ci_low),
+        precise_string(result.c_equivalent_ci_high)
     }};
+
+    loader.write_csv(out_path, headers, rows);
+}
+
+// -----------------------------------------------------------------------------
+void write_junction_area_ratio_decades(
+    const lsdtt_junction_area_ratio_result& result,
+    const std::string&                      out_path
+)
+{
+    lsdtt_data_loader loader;
+
+    std::vector<std::string> headers =
+    {
+        "area_low_cells", "area_high_cells", "n", "median_ratio", "lambda_tail"
+    };
+
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(result.decades.size());
+    for (const auto& d : result.decades)
+    {
+        rows.push_back({
+            precise_string(d.area_low),
+            precise_string(d.area_high),
+            std::to_string(d.n),
+            precise_string(d.median_ratio),
+            precise_string(d.lambda_tail)
+        });
+    }
 
     loader.write_csv(out_path, headers, rows);
 }

@@ -137,6 +137,80 @@ struct lsdtt_raster_meta
     // lsdtt3 analyses operate on projected data in metres.
     // -------------------------------------------------------------------------
 
+    // Sets crs_wkt and epsg_code from an EPSG code (e.g. 32601 for UTM zone 1
+    // North on WGS84). Used to give synthetically generated rasters a sensible
+    // default projected CRS. Throws std::runtime_error if the EPSG code cannot
+    // be resolved. Requires OGR — include <ogr_spatialref.h> before using.
+    void set_crs_from_epsg(int epsg)
+    {
+        OGRSpatialReference srs;
+        if (srs.importFromEPSG(epsg) != OGRERR_NONE)
+        {
+            throw std::runtime_error(
+                std::string("lsdtt_raster_meta::set_crs_from_epsg: failed to "
+                            "import EPSG:") + std::to_string(epsg));
+        }
+        char* wkt_raw = nullptr;
+        if (srs.exportToWkt(&wkt_raw) != OGRERR_NONE || !wkt_raw)
+        {
+            CPLFree(wkt_raw);
+            throw std::runtime_error(
+                "lsdtt_raster_meta::set_crs_from_epsg: failed to export WKT");
+        }
+        crs_wkt   = wkt_raw;
+        epsg_code = epsg;
+        CPLFree(wkt_raw);
+    }
+
+    // Gives a synthetically generated raster (no input DEM) a sensible default
+    // georeference: the grid is centred on Teanu Island, Solomon Islands
+    // (11.633 S, 166.967 E) — the real-world location to which Zwift's fictional
+    // "Watopia" is geocoded for Strava. This sits comfortably inside UTM zone
+    // 58S (EPSG:32758), well away from the antimeridian and the poles, so
+    // generated DEMs carry realistic projected coordinates and round-trip
+    // cleanly to and from lat/lon. n_rows, n_cols and cell_size must already be
+    // set. Requires OGR. Falls back to no CRS if the transform fails.
+    void set_default_synthetic_georeference()
+    {
+        constexpr double watopia_lon = 166.967;  // Teanu Island
+        constexpr double watopia_lat = -11.633;
+        constexpr int    epsg        = 32758;    // WGS 84 / UTM zone 58S
+
+        try
+        {
+            set_crs_from_epsg(epsg);
+        }
+        catch (const std::exception&)
+        {
+            crs_wkt = "";
+            return;
+        }
+
+        OGRSpatialReference wgs84;
+        OGRSpatialReference utm;
+        if (wgs84.importFromEPSG(4326) != OGRERR_NONE ||
+            utm.importFromEPSG(epsg)   != OGRERR_NONE)
+        {
+            return;
+        }
+        wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        utm.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+        OGRCoordinateTransformation* ct =
+            OGRCreateCoordinateTransformation(&wgs84, &utm);
+        if (!ct) return;
+
+        double e = watopia_lon;
+        double n = watopia_lat;
+        const bool ok = ct->Transform(1, &e, &n) != 0;
+        OGRCoordinateTransformation::DestroyCT(ct);
+        if (!ok) return;
+
+        // Centre the grid on the anchor point.
+        x_min = e - 0.5 * static_cast<double>(n_cols) * cell_size;
+        y_min = n - 0.5 * static_cast<double>(n_rows) * cell_size;
+    }
+
     // Returns true if the CRS is geographic (latitude/longitude).
     // Returns false if projected or if no CRS is defined.
     // Requires OGR — include <ogr_spatialref.h> before using.

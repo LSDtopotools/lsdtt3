@@ -489,7 +489,14 @@ Requires: `<cmath>`, `<stdexcept>`, `<string>`, `<gdal.h>`, `<ogr_spatialref.h>`
 Key fields: `n_rows`, `n_cols`, `x_min`, `y_min`, `cell_size`, `no_data_value`,
 `crs_wkt`, `epsg_code`, `data_type`.
 
-**CRS validation methods:**
+**CRS / georeferencing methods:**
+- `set_crs_from_epsg(epsg)` — sets `crs_wkt` + `epsg_code` from an EPSG code (via OGR)
+- `set_default_synthetic_georeference()` — gives a generated raster (no input DEM)
+  a sensible default: the grid is centred on Teanu Island, Solomon Islands
+  (11.633°S, 166.967°E — the real-world location of Zwift's "Watopia"), in UTM
+  zone 58S (EPSG:32758), away from the antimeridian and poles so coordinates
+  round-trip cleanly to/from lat/lon. Used by the synthetic-surface generators,
+  `lsdtt_synthetic_network_cpu`, and `lsdtt-lem` when no CRS is supplied.
 - `is_geographic()` — true if lat/lon CRS
 - `linear_unit_name()` — returns e.g. "metre", "foot"
 - `is_in_metres()` — true if linear unit is metres (within 1e-6)
@@ -519,9 +526,10 @@ Current CLI programs are:
   minimise `E = Σ Aᵢ^gamma` (Metropolis acceptance `exp(-ΔE/T)`; the cooling
   schedule sweeps from random/Shreve-like at high T to strongly aggregated as
   T→0). Engine: `lsdtt_synthetic_network_cpu`. Elevations are derived after the
-  network by upstream slope-area integration. Outputs a synthetic DEM, the OCN
-  drainage-area raster, and a summary CSV that includes the **D8 round-trip
-  fidelity** (fraction of interior pixels whose D8 receiver equals the OCN
+  network by upstream slope-area integration. Generated DEMs carry the default
+  synthetic georeference (see below: centred on "Watopia"/Teanu Island, UTM zone
+  58S). Outputs a synthetic DEM, the OCN drainage-area raster, and a summary CSV
+  that includes the **D8 round-trip fidelity** (fraction of interior pixels whose D8 receiver equals the OCN
   receiver — ~1 for relaxed low-T networks, lower for random high-T networks, an
   inherent OCN self-consistency property). Design: `docs/synthetic_networks_plan.md`.
 
@@ -555,6 +563,10 @@ Current CLI programs are:
   percentiles, centroid lat/lon, drainage area, nodata-edge flag, and channel length by
   Strahler stream order (orders 1–6). Basins touching nodata or the raster edge are
   optionally rejected (reject_nodata_edge_basins, default true).
+  Optional toggles (each independent): `calculate_junction_area_ratios`
+  (network-wide junction area-ratio CSVs) and `calculate_centre_of_mass_bearing`
+  (adds com_bearing_deg / com_distance_m — bearing from the user outlet to the
+  basin centre of mass; the outlet is used directly, the channel is not followed).
   Optionally (independent toggle `calculate_shape_metrics`, like `calculate_channel_stats`)
   computes per-basin planform shape metrics from the traced outline polygon
   (`compute_basin_shape` in `lsdtt_polygon_geometry.hpp`): elongation ratio, form factor,
@@ -609,10 +621,14 @@ Current CLI programs are:
   Builds a channel/junction network and runs one or more network analyses:
   channel-link bearing fitting (orthogonal regression), junction-angle calculation
   (donor opening angle, donor–receiver angles, bending angle),
-  Strahler/Tokunaga self-similarity analysis, and per-junction drainage-area
-  ratios (`write_junction_area_ratio_data` / `_summary` — a continuous,
-  high-sample-count complement to order-binned Tokunaga). Writes CSV, GeoPackage,
-  or FlatGeobuf.
+  Strahler/Tokunaga self-similarity analysis (with a count-weighted Poisson GLM
+  fit alongside the OLS fit), per-junction drainage-area ratios
+  (`write_junction_area_ratio_data` / `_summary` — a continuous, high-sample-count
+  complement to order-binned Tokunaga, with branch-bootstrap CIs and an
+  area-decade collapse table), and per-junction basin centre-of-mass bearings
+  (`write_junction_centre_of_mass_bearings` — for each junction the basin is the
+  upslope area of the pixel just before the next downstream junction; outputs the
+  outlet→centre-of-mass bearing). Writes CSV, GeoPackage, or FlatGeobuf.
 
 - **`lsdtt-chi-analysis.cpp`** *(requires Eigen3)*  
   End-to-end chi workflow: chi extraction on threshold-defined channel networks,
