@@ -466,4 +466,50 @@ inline double d8_step_length(
     const lsdtt_flow_base& flow
 );
 
+// -----------------------------------------------------------------------------
+// get_all_basin_outlet_flats
+//
+// Scans all cells in the flow object and returns the flat indices of every
+// basin outlet (a valid cell whose receiver is k_outlet_receiver) whose upslope
+// pixel count is at least min_upslope_pixels. Used to seed chi extraction from
+// every basin large enough to qualify, so the largest complete basins can be
+// selected downstream. Pass min_upslope_pixels = source_pixels_threshold so
+// only outlets that meet the channel-head threshold are returned. Returns an
+// empty vector if no qualifying outlet is found.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<std::int64_t> get_all_basin_outlet_flats(
+    const lsdtt_flow_base& flow,
+    std::int64_t           min_upslope_pixels = 0
+);
+
+// -----------------------------------------------------------------------------
+// is_flat_on_dem_edge
+//
+// Returns true if the cell lies on the DEM's bounding-box border (first/last
+// row or column). An outlet on the edge drains off the clipped DEM; an outlet
+// that is NOT on the edge must drain to interior nodata (e.g. an island coast,
+// where the sea has been masked).
+// -----------------------------------------------------------------------------
+[[nodiscard]] bool is_flat_on_dem_edge(
+    const lsdtt_flow_base& flow,
+    std::int64_t           flat
+);
+
+// -----------------------------------------------------------------------------
+// move_outlet_upstream
+//
+// Walks up the main stem from outlet_flat by up to n_pixels steps, choosing at
+// each step the donor (a neighbour that flows directly into the current cell)
+// with the largest upslope pixel count. Stops early at a channel source. Used
+// to lift an interior (coastal) outlet off the nodata fringe so the resulting
+// basin no longer touches nodata and passes the completeness test. Returns the
+// flat index of the relocated outlet (== outlet_flat if n_pixels <= 0 or no
+// donor is found).
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::int64_t move_outlet_upstream(
+    const lsdtt_flow_base& flow,
+    std::int64_t           outlet_flat,
+    int                    n_pixels
+);
+
 } // namespace lsdtt

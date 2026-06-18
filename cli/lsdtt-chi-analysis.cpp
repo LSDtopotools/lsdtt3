@@ -148,14 +148,57 @@ static std::vector<std::int64_t> resolve_outlet_flats(
     const std::string& snapping_method,
     int snap_threshold_pixels,
     int min_search_radius_pixels,
-    int max_search_radius_pixels)
+    int max_search_radius_pixels,
+    int source_pixels_threshold,
+    int n_pixels_move_outlet_upstream)
 {
     if (outlet_file == "NULL" || outlet_file.empty())
     {
-        const std::int64_t flat = lsdtt::get_largest_basin_outlet_flat(flow);
-        std::cout << "No outlet file supplied; using largest basin outlet flat: "
-                  << flat << "\n";
-        return {flat};
+        std::vector<std::int64_t> all_outlets =
+            lsdtt::get_all_basin_outlet_flats(flow, source_pixels_threshold);
+        std::cout << "No outlet file supplied; seeding chi extraction from all "
+                  << all_outlets.size() << " basin outlet(s) above the source "
+                     "threshold.\n";
+        if (all_outlets.empty())
+            throw std::runtime_error(
+                "No basin outlets found in the flow object.");
+
+        // Interior (non-edge) outlets drain to nodata (e.g. an island coast);
+        // lift them off the nodata fringe by walking up the main stem. Re-check
+        // the source threshold afterwards and de-duplicate convergent outlets.
+        std::vector<std::int64_t> resolved;
+        resolved.reserve(all_outlets.size());
+        int n_moved = 0;
+        for (const std::int64_t o : all_outlets)
+        {
+            std::int64_t outlet = o;
+            if (n_pixels_move_outlet_upstream > 0 &&
+                !lsdtt::is_flat_on_dem_edge(flow, o))
+            {
+                outlet = lsdtt::move_outlet_upstream(
+                    flow, o, n_pixels_move_outlet_upstream);
+                if (outlet != o)
+                    ++n_moved;
+            }
+            if (flow.s_vector_size_unchecked(outlet) <
+                static_cast<std::uint64_t>(source_pixels_threshold))
+                continue;  // dropped below threshold after the move
+            resolved.push_back(outlet);
+        }
+
+        std::sort(resolved.begin(), resolved.end());
+        resolved.erase(std::unique(resolved.begin(), resolved.end()),
+                       resolved.end());
+
+        std::cout << "  Moved " << n_moved << " interior outlet(s) "
+                  << n_pixels_move_outlet_upstream << " pixel(s) upstream; "
+                  << resolved.size() << " unique outlet(s) remain. The largest "
+                     "complete basins are selected via n_largest_basins.\n";
+        if (resolved.empty())
+            throw std::runtime_error(
+                "No basin outlets remain after the upstream move / threshold "
+                "filter.");
+        return resolved;
     }
 
     const std::string outlet_file_path = pp.add_read_path_if_needed(outlet_file);
@@ -421,6 +464,25 @@ int main(int argc, char* argv[])
         "and inversion. Very short channels cannot be segmented meaningfully and "
         "can destabilise fitting. Set to 0 or 1 to keep all basins."};
 
+    int_default_map["n_pixels_move_outlet_upstream"] = 10;
+    help_map["n_pixels_move_outlet_upstream"] = {"int","10",
+        "Move interior (non-edge) auto-detected outlets this many pixels upstream.",
+        "When no basin_outlet_file is supplied, outlets are auto-detected. An "
+        "outlet not on the DEM bounding-box edge drains to interior nodata (e.g. "
+        "an island coast where the sea is masked); it is walked this many pixels "
+        "up the main stem so the resulting basin clears the coastal nodata fringe "
+        "and can pass the completeness test. Set to 0 to disable."};
+
+    int_default_map["n_largest_basins"] = 5;
+    help_map["n_largest_basins"] = {"int","5",
+        "Keep only the N largest complete basins for all chi outputs.",
+        "After the minimum_channel_pixels filter, incomplete basins (upslope "
+        "area touches the DEM edge / nodata) are dropped and only the N largest "
+        "remaining complete basins, ranked by total basin pixels (drainage area), "
+        "are analysed. This applies consistently to data maps, fitting, disorder, "
+        "and inversion so basin keys stay stable. Set to 0 to keep all complete "
+        "basins (no size cap)."};
+
     // --- Chi extraction / fitting ---
     bool_default_map["fit_chi_networks"] = false;
     help_map["fit_chi_networks"] = {"bool","false",
@@ -567,6 +629,10 @@ int main(int argc, char* argv[])
         ifs["minimum_channel_pixels"] > 0
             ? static_cast<std::size_t>(ifs["minimum_channel_pixels"])
             : std::size_t{0};
+    const std::size_t n_largest_basins =
+        ifs["n_largest_basins"] > 0
+            ? static_cast<std::size_t>(ifs["n_largest_basins"])
+            : std::size_t{0};
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
     const lsdtt::vector_output_format chi_dm_lines_fmt =
@@ -702,7 +768,9 @@ int main(int argc, char* argv[])
             snapping_method,
             ifs["basin_outlet_contributing_pixels_threshold"],
             ifs["basin_outlet_min_search_radius_pixels"],
-            ifs["basin_outlet_max_search_radius_pixels"]
+            ifs["basin_outlet_max_search_radius_pixels"],
+            ifs["source_pixels_threshold"],
+            ifs["n_pixels_move_outlet_upstream"]
         );
     }
     catch (const std::exception& e)
@@ -762,6 +830,17 @@ int main(int argc, char* argv[])
             std::cout << "  Rejected " << n_removed << " basin(s) with fewer than "
                       << minimum_channel_pixels << " channel pixels; "
                       << chi_dm.basins.size() << " basin(s) remain.\n";
+        }
+
+        if (n_largest_basins > 0)
+        {
+            const std::size_t n_removed =
+                lsdtt::keep_n_largest_complete_chi_basins(
+                    chi_dm, *flow, n_largest_basins);
+            std::cout << "  Kept the " << chi_dm.basins.size()
+                      << " largest complete basin(s) (n_largest_basins="
+                      << n_largest_basins << "); dropped " << n_removed
+                      << " incomplete/smaller basin(s).\n";
         }
 
         std::cout.flush();
@@ -828,6 +907,15 @@ int main(int argc, char* argv[])
                           << " basin(s) remain.\n";
             }
 
+            if (n_largest_basins > 0)
+            {
+                lsdtt::keep_n_largest_complete_chi_basins(
+                    chi_networks, *flow, n_largest_basins);
+                std::cout << "  Kept the " << chi_networks.basins.size()
+                          << " largest complete basin(s) (n_largest_basins="
+                          << n_largest_basins << ").\n";
+            }
+
             inversion_networks.reserve(chi_networks.basins.size());
             for (const auto& basin : chi_networks.basins)
                 inversion_networks.push_back(
@@ -877,6 +965,15 @@ int main(int argc, char* argv[])
                     std::cout << "  Rejected " << n_removed
                               << " basin(s) with fewer than "
                               << minimum_channel_pixels << " channel pixels.\n";
+                }
+
+                if (n_largest_basins > 0)
+                {
+                    lsdtt::keep_n_largest_complete_chi_basins(
+                        chi_networks, *flow, n_largest_basins);
+                    std::cout << "  Kept the " << chi_networks.basins.size()
+                              << " largest complete basin(s) (n_largest_basins="
+                              << n_largest_basins << ").\n";
                 }
 
                 std::cout << "  Chi networks extracted: "

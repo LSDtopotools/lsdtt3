@@ -74,7 +74,10 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_basin_cpu.hpp"
+#include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/utils/lsdtt_polygon_geometry.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
@@ -126,6 +129,19 @@ struct basin_stats_record
     // Channel length (m) by Strahler stream order (keys 1–6)
     // -1.0 indicates channel stats were not calculated
     std::map<int, double> channel_length_by_order;
+
+    // Basin planform shape metrics (see docs/basin_shape_metrics.tex)
+    // basin_length_m is L_b under the chosen basin_length_definition.
+    bool   shape_valid           = false;
+    double basin_length_m        = 0.0;
+    double elongation_ratio      = 0.0;
+    double form_factor           = 0.0;
+    double circularity_ratio     = 0.0;
+    double gravelius_compactness = 0.0;
+    double solidity              = 0.0;
+    double eccentricity          = 0.0;
+    double orientation_deg       = 0.0;
+    double hypsometric_integral  = 0.0;
 };
 
 
@@ -223,7 +239,8 @@ static std::string join_boundary_conditions(
 static void write_basin_stats_csv(
     const std::string& csv_path,
     const std::vector<basin_stats_record>& rows,
-    bool has_channel_stats)
+    bool has_channel_stats,
+    bool has_shape_metrics)
 {
     std::ofstream out(csv_path);
     if (!out)
@@ -267,6 +284,20 @@ static void write_basin_stats_csv(
         << ",flow_distance_25th"
         << ",flow_distance_50th"
         << ",flow_distance_75th";
+
+    if (has_shape_metrics)
+    {
+        out
+            << ",basin_length_m"
+            << ",elongation_ratio"
+            << ",form_factor"
+            << ",circularity_ratio"
+            << ",gravelius_compactness"
+            << ",solidity"
+            << ",eccentricity"
+            << ",orientation_deg"
+            << ",hypsometric_integral";
+    }
 
     if (has_channel_stats)
     {
@@ -314,6 +345,20 @@ static void write_basin_stats_csv(
             << row.flow_distance_25th << ","
             << row.flow_distance_50th << ","
             << row.flow_distance_75th;
+
+        if (has_shape_metrics)
+        {
+            out
+                << "," << row.basin_length_m
+                << "," << row.elongation_ratio
+                << "," << row.form_factor
+                << "," << row.circularity_ratio
+                << "," << row.gravelius_compactness
+                << "," << row.solidity
+                << "," << row.eccentricity
+                << "," << row.orientation_deg
+                << "," << row.hypsometric_integral;
+        }
 
         if (has_channel_stats)
         {
@@ -473,6 +518,38 @@ int main(int argc, char* argv[])
         "Minimum number of contributing pixels to define a channel source.",
         "Used when calculate_channel_stats is true. Larger values give a sparser network."};
 
+    // --- Basin shape metrics ---
+    bool_default_map["calculate_shape_metrics"] = false;
+    help_map["calculate_shape_metrics"] = {"bool","false",
+        "Trace each basin outline polygon and compute planform shape metrics.",
+        "Opt-in; off by default so the original curated hydromorphic stat set is "
+        "reproduced unless explicitly requested. When true, adds "
+        "basin_length_m, elongation_ratio, form_factor, circularity_ratio, "
+        "gravelius_compactness, solidity, eccentricity, orientation_deg, and "
+        "hypsometric_integral columns to the output CSV. When false, the outline "
+        "is not traced and those columns are omitted, reproducing the original "
+        "basin-stats output. See docs/basin_shape_metrics.tex."};
+
+    string_default_map["basin_length_definition"] = "flow_path";
+    help_map["basin_length_definition"] = {"string","flow_path",
+        "Definition of basin length L_b used in elongation ratio and form factor.",
+        "flow_path: the longest flow-path distance from the outlet (hydrologic "
+        "basin length; the default and the usual geomorphic convention). "
+        "geometric: the maximum Feret diameter of the basin outline polygon "
+        "(longest straight-line caliper). The two are not interchangeable and "
+        "Re, Rf both scale with L_b. See docs/basin_shape_metrics.tex."};
+
+    float_default_map["shape_perimeter_simplify_cells"] = 1.0f;
+    help_map["shape_perimeter_simplify_cells"] = {"float","1.0",
+        "Douglas-Peucker simplification tolerance for the perimeter, in cells.",
+        "The basin outline is traced on the pixel-corner grid and is staircased, "
+        "which inflates the perimeter and biases circularity_ratio and "
+        "gravelius_compactness (the coastline paradox). The perimeter for those "
+        "two metrics is measured on a ring simplified with tolerance "
+        "(this value * cell_size) in metres. Set to 0 to disable simplification "
+        "and use the raw staircased perimeter. Area-based metrics (elongation, "
+        "form factor, solidity) are unaffected."};
+
     // --- Basin distribution output ---
     bool_default_map["write_basin_pdf_cdf_csv"] = false;
     help_map["write_basin_pdf_cdf_csv"] = {"bool","false",
@@ -547,6 +624,17 @@ int main(int argc, char* argv[])
     {
         std::cerr << "FATAL: threshold_contributing_pixels must be > 0 "
                   << "when calculate_channel_stats is true.\n";
+        return 1;
+    }
+
+    const std::string basin_length_definition =
+        to_lower_copy(sf["basin_length_definition"]);
+
+    if (basin_length_definition != "flow_path" &&
+        basin_length_definition != "geometric")
+    {
+        std::cerr << "FATAL: basin_length_definition must be one of: "
+                  << "flow_path, geometric.\n";
         return 1;
     }
 
@@ -780,6 +868,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Optional channel network for stream-order statistics
     // -------------------------------------------------------------------------
+    const bool do_shape_metrics = bf["calculate_shape_metrics"];
+
     std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
     const bool do_channel_stats = bf["calculate_channel_stats"];
 
@@ -1301,6 +1391,70 @@ int main(int argc, char* argv[])
             }
 
             // ------------------------------------------------------------------
+            // Basin planform shape metrics
+            //
+            // Trace the basin outline polygon, convert the pixel-corner divide
+            // ring to projected coordinates, and derive shape metrics.
+            // See docs/basin_shape_metrics.tex for derivations and references.
+            // ------------------------------------------------------------------
+            lsdtt::lsdtt_basin_shape shape;
+            bool shape_ok = false;
+            if (do_shape_metrics)
+            try
+            {
+                lsdtt::lsdtt_basin_cpu basin(flat, *flow);
+                lsdtt::lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
+
+                const std::vector<lsdtt::lsdtt_pixel_rc>& div_rc =
+                    outline.outline_divide_rc();
+                const lsdtt::lsdtt_raster_meta& dgm = outline.divide_grid_meta();
+
+                std::vector<lsdtt::lsdtt_xy> ring;
+                ring.reserve(div_rc.size());
+                for (const auto& rc : div_rc)
+                {
+                    ring.push_back(
+                        lsdtt::cell_center_from_row_col(dgm, rc.row, rc.col));
+                }
+
+                if (ring.size() >= 3)
+                {
+                    double basin_len = 0.0;
+                    if (basin_length_definition == "geometric")
+                    {
+                        const std::vector<lsdtt::lsdtt_xy> hull =
+                            lsdtt::convex_hull(ring);
+                        basin_len = lsdtt::feret_diameters(hull).d_max;
+                    }
+                    else  // flow_path
+                    {
+                        for (const float f : fdist_values)
+                        {
+                            basin_len = std::max(basin_len,
+                                                 static_cast<double>(f));
+                        }
+                    }
+
+                    const double simp_tol =
+                        ff["shape_perimeter_simplify_cells"] * cell_size;
+
+                    shape = lsdtt::compute_basin_shape(
+                        ring,
+                        basin_len,
+                        elev_stats.min,
+                        elev_stats.mean,
+                        elev_stats.max,
+                        simp_tol);
+                    shape_ok = true;
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "  Warning: basin shape metrics failed for outlet "
+                          << outlet.point_id << ": " << e.what() << "\n";
+            }
+
+            // ------------------------------------------------------------------
             // Assemble record
             // ------------------------------------------------------------------
             basin_stats_record row_out;
@@ -1329,6 +1483,17 @@ int main(int argc, char* argv[])
             row_out.flow_distance_50th = fd50;
             row_out.flow_distance_75th = fd75;
 
+            row_out.shape_valid           = shape_ok;
+            row_out.basin_length_m        = shape.basin_length;
+            row_out.elongation_ratio      = shape.elongation_ratio;
+            row_out.form_factor           = shape.form_factor;
+            row_out.circularity_ratio     = shape.circularity_ratio;
+            row_out.gravelius_compactness = shape.gravelius_compactness;
+            row_out.solidity              = shape.solidity;
+            row_out.eccentricity          = shape.eccentricity;
+            row_out.orientation_deg       = shape.orientation_deg;
+            row_out.hypsometric_integral  = shape.hypsometric_integral;
+
             if (has_channel_network)
             {
                 row_out.channel_length_by_order = chan_len;
@@ -1344,6 +1509,13 @@ int main(int argc, char* argv[])
             std::cout << "  Relief        : " << elev_stats.range << " m\n";
             std::cout << "  Slope 50th    : " << s50 << " m/m\n";
             std::cout << "  FlowDist 50th : " << fd50 << " m\n";
+            if (shape_ok)
+            {
+                std::cout << "  Elongation Re : " << shape.elongation_ratio
+                          << "  (L_b=" << shape.basin_length << " m)\n";
+                std::cout << "  Circularity Rc: " << shape.circularity_ratio
+                          << "  Solidity: " << shape.solidity << "\n";
+            }
             if (has_channel_network)
             {
                 std::cout << "  Channel len O1: " << chan_len[1] << " m\n";
@@ -1371,7 +1543,8 @@ int main(int argc, char* argv[])
     {
         const std::string csv_out = pp.make_output_path( "_basin_stats.csv");
         std::cout << "\nWriting basin statistics CSV: " << csv_out << "\n";
-        write_basin_stats_csv(csv_out, basin_rows, has_channel_network);
+        write_basin_stats_csv(csv_out, basin_rows, has_channel_network,
+                              do_shape_metrics);
     }
     catch (const std::exception& e)
     {

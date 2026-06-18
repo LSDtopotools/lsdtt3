@@ -28,6 +28,8 @@
 
 #include "lsdtt_chi_extraction_cpu.hpp"
 
+#include "lsdtt_basin_cpu.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -1536,6 +1538,80 @@ std::size_t reject_chi_basins_with_few_channel_pixels(
         ),
         chi.basins.end()
     );
+
+    return n_before - chi.basins.size();
+}
+
+// =============================================================================
+// keep_n_largest_complete_chi_basins
+// =============================================================================
+std::size_t keep_n_largest_complete_chi_basins(
+    lsdtt_chi_collection_result& chi,
+    const lsdtt_flow_base&       flow,
+    std::size_t                  n_largest
+)
+{
+    if (n_largest == 0)
+    {
+        return 0;  // 0 == keep all complete basins (no size cap).
+    }
+
+    const std::size_t n_before = chi.basins.size();
+
+    // Rank complete basins by total basin pixels (drainage area proxy).
+    struct ranked_basin
+    {
+        std::size_t  original_index;
+        std::int32_t n_basin_pixels;
+    };
+
+    std::vector<ranked_basin> complete;
+    complete.reserve(chi.basins.size());
+
+    for (std::size_t bi = 0; bi < chi.basins.size(); ++bi)
+    {
+        const lsdtt_chi_basin_result& basin = chi.basins[bi];
+        if (basin.flats.empty())
+        {
+            continue;
+        }
+
+        lsdtt_basin_cpu basin_obj(basin.outlet_flat, flow);
+        if (!basin_obj.check_basin_completeness())
+        {
+            continue;
+        }
+
+        complete.push_back({bi, basin_obj.get_number_of_basin_pixels()});
+    }
+
+    // Largest first.
+    std::sort(complete.begin(), complete.end(),
+        [](const ranked_basin& a, const ranked_basin& b)
+        {
+            return a.n_basin_pixels > b.n_basin_pixels;
+        });
+
+    if (complete.size() > n_largest)
+    {
+        complete.resize(n_largest);
+    }
+
+    // Restore original ordering so basin_key / basin_index stay stable.
+    std::sort(complete.begin(), complete.end(),
+        [](const ranked_basin& a, const ranked_basin& b)
+        {
+            return a.original_index < b.original_index;
+        });
+
+    std::vector<lsdtt_chi_basin_result> kept;
+    kept.reserve(complete.size());
+    for (const ranked_basin& r : complete)
+    {
+        kept.push_back(std::move(chi.basins[r.original_index]));
+    }
+
+    chi.basins = std::move(kept);
 
     return n_before - chi.basins.size();
 }
