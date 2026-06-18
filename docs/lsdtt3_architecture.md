@@ -134,7 +134,8 @@ lsdtt3/
 │   │   ├── lsdtt_crn_column.hpp/.cpp                         — 1-D transient CRN column simulation
 │   │   ├── lsdtt_crn_particle.hpp                            — header-only: SS and transient nuclide concentration particle
 │   │   ├── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
-│   └── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (tunable Tokunaga exponents)
+│   ├── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (masks + multi-outlet; tunable Tokunaga exponents)
+│   └── lsdtt_synthetic_domain_cpu.hpp/.cpp               — island domain masks (EFD, red-noise, polygon import) for the OCN generator
 │   └── utils/
 │       ├── lsdtt_array2d.hpp                — header-only 2D array
 │       ├── lsdtt_raster_geometry.hpp        — header-only raster geometry helpers
@@ -201,6 +202,7 @@ the utility-layer numerical functions.
 - `lsdtt_raster_spectral_cpu.cpp`
 - `lsdtt_raster_synthetic_surfaces_cpu.cpp`
 - `lsdtt_synthetic_network_cpu.cpp`
+- `lsdtt_synthetic_domain_cpu.cpp`
 - `lsdtt_raster_feature_finder_cpu.cpp`
 - `lsdtt_flowinfo_cpu.cpp`
 - `lsdtt_flow_base.cpp`
@@ -526,10 +528,18 @@ Current CLI programs are:
   minimise `E = Σ Aᵢ^gamma` (Metropolis acceptance `exp(-ΔE/T)`; the cooling
   schedule sweeps from random/Shreve-like at high T to strongly aggregated as
   T→0). Engine: `lsdtt_synthetic_network_cpu`. Elevations are derived after the
-  network by upstream slope-area integration. Generated DEMs carry the default
-  synthetic georeference (see below: centred on "Watopia"/Teanu Island, UTM zone
-  58S). Outputs a synthetic DEM, the OCN drainage-area raster, and a summary CSV
-  that includes the **D8 round-trip fidelity** (fraction of interior pixels whose D8 receiver equals the OCN
+  network by upstream slope-area integration. The domain can be the full
+  rectangle or an **irregular island** (`domain_type` = efd_island /
+  noise_island / polygon): EFD = Elliptical Fourier random coastline,
+  noise_island = thresholded radial red-noise, polygon = a user vector
+  (`polygon_sizing` = scaled to the grid, or true_area = grid derived from the
+  polygon's real extent + cell_size, preserving area and the polygon's CRS)
+  (`lsdtt_synthetic_domain_cpu`). Outlets follow `outlet_mode`
+  (`auto` → islands drain to their whole coastline (all_coast), the rectangle to
+  a single outlet). Generated DEMs carry the default synthetic georeference (see
+  below: centred on "Watopia"/Teanu Island, UTM zone 58S), with sea pixels as
+  nodata. Outputs a synthetic DEM, the OCN drainage-area raster, and a summary
+  CSV that includes the **D8 round-trip fidelity** (fraction of interior pixels whose D8 receiver equals the OCN
   receiver — ~1 for relaxed low-T networks, lower for random high-T networks, an
   inherent OCN self-consistency property). Design: `docs/synthetic_networks_plan.md`.
 

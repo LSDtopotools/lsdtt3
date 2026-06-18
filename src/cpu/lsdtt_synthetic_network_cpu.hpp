@@ -46,11 +46,31 @@
 
 namespace lsdtt {
 
+// Where drainage leaves the domain.
+//   single_south : one outlet (rectangle: south-edge centre; island: southmost
+//                  land pixel) — the whole domain drains through one network.
+//   all_coast    : every coastal land pixel (land touching sea or the grid edge)
+//                  is a base level — an island draining to its whole coastline.
+enum class ocn_outlet_mode { single_south, all_coast };
+
 struct lsdtt_ocn_options
 {
     int       n_rows    = 128;
     int       n_cols    = 128;
     double    cell_size = 1.0;
+
+    // Optional land/sea mask (row-major, size n_rows*n_cols, 1 = land). Empty
+    // means the full rectangle is land. Pixels outside the mask are excluded
+    // from the network and written as nodata.
+    std::vector<std::uint8_t> domain_mask;
+    ocn_outlet_mode           outlet_mode = ocn_outlet_mode::single_south;
+
+    // Optional georeference override. When use_supplied_meta is true the output
+    // rasters use supplied_meta verbatim (its n_rows/n_cols/cell_size must match
+    // n_rows/n_cols/cell_size above) instead of the default Watopia anchor —
+    // used by true-area polygon import to preserve the polygon's real extent/CRS.
+    bool              use_supplied_meta = false;
+    lsdtt_raster_meta supplied_meta;
 
     double    gamma     = 0.5;     // energy exponent (OCNet expEnergy)
 
@@ -99,16 +119,23 @@ public:
     [[nodiscard]] int n_rows() const noexcept { return nrows_; }
     [[nodiscard]] int n_cols() const noexcept { return ncols_; }
     [[nodiscard]] std::int64_t outlet_flat() const noexcept { return outlet_; }
+    [[nodiscard]] bool is_outlet(std::int64_t f) const noexcept
+    { return f >= 0 && f < n_ && is_outlet_[static_cast<std::size_t>(f)] != 0; }
+    [[nodiscard]] bool is_land(std::int64_t f) const noexcept
+    { return f >= 0 && f < n_ && land_[static_cast<std::size_t>(f)] != 0; }
 
 private:
     lsdtt_ocn_options opts_;
     int          nrows_ = 0;
     int          ncols_ = 0;
     std::int64_t n_     = 0;
-    std::int64_t outlet_ = 0;
+    std::int64_t outlet_ = 0;        // a representative outlet (outlets_[0])
 
-    std::vector<std::int64_t> receiver_;  // receiver flat index (outlet -> itself)
-    std::vector<double>       area_;      // accumulated area in cells (>= 1)
+    std::vector<std::uint8_t> land_;      // 1 = land (in domain)
+    std::vector<char>         is_outlet_; // 1 = base-level outlet
+    std::vector<std::int64_t> outlets_;   // all outlet flats
+    std::vector<std::int64_t> receiver_;  // receiver flat index (outlet -> itself; sea -> -1)
+    std::vector<double>       area_;      // accumulated area in cells (>= 1 on land)
     std::vector<std::int64_t> topo_order_;// upstream-first topological order
 
     double energy_  = 0.0;
@@ -123,8 +150,9 @@ private:
     std::vector<std::int64_t>  gainers_;
 
     lsdtt_raster_meta build_meta_() const;
-    void   init_comb_tree_();
-    void   recompute_all_areas_();   // also fills topo_order_
+    void   setup_domain_and_outlets_();   // fills land_, is_outlet_, outlets_
+    void   init_forest_();                // multi-source BFS spanning forest
+    void   recompute_all_areas_();        // also fills topo_order_
     double total_energy_() const;
     double receiver_length_(std::int64_t node) const;
 

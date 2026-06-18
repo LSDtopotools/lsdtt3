@@ -34,6 +34,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
@@ -42,6 +43,7 @@
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_synthetic_network_cpu.hpp"
+#include "../src/cpu/lsdtt_synthetic_domain_cpu.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -109,8 +111,58 @@ int main(int argc, char* argv[])
     int_default_map["outlet_col"] = -1;
     help_map["outlet_col"] = {"int","-1",
         "Column of the single outlet on the south (bottom) edge.",
-        "-1 places the outlet at the centre column. The outlet is always on the "
-        "bottom row in this version."};
+        "-1 places the outlet at the centre column. Only used for outlet_mode "
+        "single."};
+
+    // --- Domain (rectangle vs irregular island) ---
+    string_default_map["domain_type"] = "rectangle";
+    help_map["domain_type"] = {"string","rectangle",
+        "Shape of the domain the network is grown on.",
+        "rectangle: the full n_rows x n_cols grid. efd_island: a smooth random "
+        "island from an Elliptical Fourier descriptor. noise_island: a "
+        "radially-tapered red-noise island (fractal coast). polygon: a user "
+        "polygon vector scaled to the grid (set polygon_file)."};
+
+    string_default_map["outlet_mode"] = "auto";
+    help_map["outlet_mode"] = {"string","auto",
+        "Where drainage leaves the domain.",
+        "auto: islands use all_coast, the rectangle uses single. single: one "
+        "outlet (whole domain drains through one network; most sensitive to "
+        "boundary shape). all_coast: every coastal land pixel is a base level "
+        "(an island draining to its whole coastline)."};
+
+    float_default_map["island_fill_fraction"] = 0.7f;
+    help_map["island_fill_fraction"] = {"float","0.7",
+        "Approximate fraction of the grid occupied by land (island generators).",
+        "Span (efd) or area fraction (noise) of the island within the grid."};
+
+    int_default_map["efd_n_harmonics"] = 6;
+    help_map["efd_n_harmonics"] = {"int","6",
+        "Number of Elliptical Fourier harmonics for efd_island.",
+        "1 = ellipse; more harmonics add lobes and bays. Try 4-12."};
+
+    float_default_map["efd_roughness"] = 1.5f;
+    help_map["efd_roughness"] = {"float","1.5",
+        "Harmonic amplitude decay exponent for efd_island.",
+        "Higher = smoother coast (high harmonics suppressed); lower = rougher."};
+
+    int_default_map["noise_blur_passes"] = 6;
+    help_map["noise_blur_passes"] = {"int","6",
+        "Smoothing passes for the noise_island coastline.",
+        "More passes = smoother, simpler coastline; fewer = rougher/fractal."};
+
+    string_default_map["polygon_file"] = "NULL";
+    help_map["polygon_file"] = {"string","NULL",
+        "Vector polygon file defining the domain (domain_type = polygon).",
+        "The first polygon's exterior ring is used as the island coastline."};
+
+    string_default_map["polygon_sizing"] = "scaled";
+    help_map["polygon_sizing"] = {"string","scaled",
+        "How an imported polygon is fitted to a grid.",
+        "scaled: scale the polygon to fill the n_rows x n_cols grid (shape "
+        "preserved, size set by the grid). true_area: derive the grid from the "
+        "polygon's real extent and cell_size, preserving real area and the "
+        "polygon's CRS (n_rows/n_cols are computed, not taken from parameters)."};
 
     // --- Energy / branching ---
     float_default_map["energy_exponent_gamma"] = 0.5f;
@@ -223,6 +275,122 @@ int main(int argc, char* argv[])
     opts.seed       = static_cast<std::uint64_t>(ifs["random_seed"]);
     opts.outlet_col = ifs["outlet_col"];
 
+    // -------------------------------------------------------------------------
+    // Build the domain mask (rectangle / island / imported polygon)
+    // -------------------------------------------------------------------------
+    const std::string domain_type = sf["domain_type"];
+    const std::uint64_t dseed = static_cast<std::uint64_t>(ifs["random_seed"]);
+    std::vector<std::uint8_t> mask;   // empty => full rectangle
+
+    try
+    {
+        if (domain_type == "efd_island")
+        {
+            mask = lsdtt::make_efd_island_mask(
+                opts.n_rows, opts.n_cols, ifs["efd_n_harmonics"],
+                ff["efd_roughness"], ff["island_fill_fraction"], dseed);
+        }
+        else if (domain_type == "noise_island")
+        {
+            mask = lsdtt::make_noise_island_mask(
+                opts.n_rows, opts.n_cols, ifs["noise_blur_passes"],
+                ff["island_fill_fraction"], dseed);
+        }
+        else if (domain_type == "polygon")
+        {
+            if (sf["polygon_file"] == "NULL" || sf["polygon_file"].empty())
+            {
+                std::cerr << "FATAL: domain_type=polygon requires polygon_file.\n";
+                return 1;
+            }
+            const std::string ppath =
+                pp.add_read_path_if_needed(sf["polygon_file"]);
+            lsdtt::lsdtt_data_loader vloader;
+            vloader.open_vector(ppath);
+            const std::vector<std::string> names = vloader.get_layer_names();
+            if (names.empty())
+                throw std::runtime_error("polygon file has no layers");
+            const lsdtt::lsdtt_vector_layer layer =
+                vloader.read_vector_layer(names[0]);
+
+            std::vector<lsdtt::lsdtt_xy> ring;
+            for (const auto& rec : layer.records)
+            {
+                if (std::holds_alternative<lsdtt::lsdtt_polygon_geom>(rec.geometry))
+                {
+                    ring = std::get<lsdtt::lsdtt_polygon_geom>(rec.geometry).exterior;
+                    if (ring.size() >= 3) break;
+                }
+            }
+            if (ring.size() < 3)
+                throw std::runtime_error("no usable polygon ring in file");
+
+            if (sf["polygon_sizing"] == "true_area")
+            {
+                const lsdtt::lsdtt_polygon_true_area ta =
+                    lsdtt::rasterise_polygon_true_area(ring, opts.cell_size);
+                if (ta.n_rows < 2 || ta.n_cols < 2)
+                    throw std::runtime_error(
+                        "polygon true_area grid is too small; reduce cell_size");
+
+                // the polygon defines the grid and georeference
+                opts.n_rows = ta.n_rows;
+                opts.n_cols = ta.n_cols;
+                mask = ta.mask;
+
+                lsdtt::lsdtt_raster_meta pmeta;
+                pmeta.n_rows        = ta.n_rows;
+                pmeta.n_cols        = ta.n_cols;
+                pmeta.cell_size     = ta.cell_size;
+                pmeta.x_min         = ta.x_min;
+                pmeta.y_min         = ta.y_min;
+                pmeta.no_data_value = -9999.0;
+                pmeta.data_type     = GDT_Float32;
+                pmeta.crs_wkt       = vloader.get_vector_layer_crs_wkt(names[0]);
+                opts.use_supplied_meta = true;
+                opts.supplied_meta     = pmeta;
+
+                std::cout << "Polygon true-area grid: " << ta.n_rows << " x "
+                          << ta.n_cols << " @ " << ta.cell_size << " m\n";
+            }
+            else
+            {
+                mask = lsdtt::rasterise_polygon_scaled(
+                    ring, opts.n_rows, opts.n_cols);
+            }
+        }
+        else if (domain_type != "rectangle")
+        {
+            std::cerr << "Warning: unknown domain_type '" << domain_type
+                      << "' — using rectangle.\n";
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: domain construction failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    // Outlet mode: auto => islands all_coast, rectangle single.
+    const bool is_island = !mask.empty();
+    const std::string omode = sf["outlet_mode"];
+    if (omode == "all_coast")
+        opts.outlet_mode = lsdtt::ocn_outlet_mode::all_coast;
+    else if (omode == "single")
+        opts.outlet_mode = lsdtt::ocn_outlet_mode::single_south;
+    else  // auto
+        opts.outlet_mode = is_island ? lsdtt::ocn_outlet_mode::all_coast
+                                     : lsdtt::ocn_outlet_mode::single_south;
+
+    if (is_island)
+    {
+        std::size_t n_land = 0;
+        for (std::uint8_t v : mask) if (v) ++n_land;
+        std::cout << "Domain: " << domain_type << " — " << n_land
+                  << " land pixels of " << mask.size() << "\n";
+    }
+    opts.domain_mask = std::move(mask);
+
     std::cout << "Generating OCN on a " << opts.n_rows << " x " << opts.n_cols
               << " lattice (gamma = " << opts.gamma << ")...\n";
 
@@ -290,8 +458,9 @@ int main(int argc, char* argv[])
                 {
                     const std::int64_t f =
                         static_cast<std::int64_t>(r) * nc + c;
-                    if (f == engine->outlet_flat()) continue;
-                    if (!flow->is_valid_cell(f))    continue;
+                    if (!engine->is_land(f))     continue;
+                    if (engine->is_outlet(f))    continue;
+                    if (!flow->is_valid_cell(f)) continue;
 
                     ++interior;
                     if (flow->receiver_of(f) == ocn_recv[static_cast<std::size_t>(f)])

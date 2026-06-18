@@ -20,6 +20,73 @@ namespace lsdtt
 {
 
 // -----------------------------------------------------------------------------
+// compute_fluvial_steady_state_on_tree  (shared backend-agnostic core)
+// -----------------------------------------------------------------------------
+lsdtt_fluvial_steady_state_field compute_fluvial_steady_state_on_tree(
+    const std::vector<std::int64_t>&          receiver,
+    const std::vector<double>&                drainage_area,
+    const std::vector<float>&                 dx_eff,
+    const std::vector<std::uint8_t>&          valid,
+    const std::vector<std::int64_t>&          topo_upstream_first,
+    double                                    cell_size,
+    double                                    no_data_value,
+    const lsdtt_fluvial_steady_state_options& opts)
+{
+    const std::size_t n  = receiver.size();
+    const float       dx = static_cast<float>(cell_size);
+
+    // Step 1: chi by reverse sweep (outlets first). Outlets (recv == self) and
+    // invalid cells keep chi = 0.
+    std::vector<float> chi(n, 0.0f);
+    for (auto it = topo_upstream_first.rbegin();
+         it != topo_upstream_first.rend(); ++it)
+    {
+        const std::int64_t flat = *it;
+        const std::size_t  s    = static_cast<std::size_t>(flat);
+        if (!valid[s]) continue;
+        const std::int64_t recv = receiver[s];
+        if (recv == flat || recv < 0) continue;
+
+        double A = drainage_area[s];
+        if (opts.divide_area_by_dx) A /= static_cast<double>(dx);
+        if (A <= 0.0) A = static_cast<double>(dx) * dx;
+
+        chi[s] = chi[static_cast<std::size_t>(recv)]
+               + dx_eff[s] * std::pow(static_cast<float>(A), -opts.m / opts.n);
+    }
+
+    // Step 2: MaxChi.
+    float MaxChi = 0.0f;
+    for (std::size_t s = 0; s < n; ++s)
+        if (valid[s]) MaxChi = std::max(MaxChi, chi[s]);
+    if (MaxChi <= 0.0f) MaxChi = 1.0f;
+
+    // Step 3: f = (U/K)^(1/n) and K_used.
+    float K_used, f;
+    if (opts.relief_mode)
+    {
+        K_used = opts.U * std::pow(MaxChi / opts.target_relief, opts.n);
+        f      = opts.target_relief / MaxChi;
+    }
+    else
+    {
+        K_used = opts.K;
+        f      = std::pow(opts.U / opts.K, 1.0f / opts.n);
+    }
+
+    // Step 4: z = baselevel + f*chi.
+    lsdtt_fluvial_steady_state_field out;
+    out.elevation.assign(n, static_cast<float>(no_data_value));
+    for (std::size_t s = 0; s < n; ++s)
+        if (valid[s]) out.elevation[s] = opts.baselevel_elevation + f * chi[s];
+
+    out.K_used          = K_used;
+    out.max_unit_height = MaxChi;
+    out.computed_relief = f * MaxChi;
+    return out;
+}
+
+// -----------------------------------------------------------------------------
 // compute_d8_fluvial_steady_state
 // -----------------------------------------------------------------------------
 lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(

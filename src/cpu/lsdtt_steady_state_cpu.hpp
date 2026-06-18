@@ -119,4 +119,44 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
     const lsdtt_fluvial_steady_state_options& opts = {}
 );
 
+// -----------------------------------------------------------------------------
+// compute_fluvial_steady_state_on_tree
+//
+// Backend-agnostic core of the chi-based fluvial steady state. Operates directly
+// on a single-receiver tree given as flat arrays, so any producer of such a tree
+// (the D8 flow router, or the synthetic OCN generator) gets *identical* steady
+// elevations for the same graph and parameters. compute_d8_fluvial_steady_state
+// delegates to this; the OCN generator calls it directly.
+//
+//   chi[outlet] = 0;  chi[i] = chi[receiver(i)] + dx_eff[i] * A^(-m/n)
+//   z[i]        = baselevel + f * chi[i],  f = (U/K)^(1/n) or relief/MaxChi
+//
+// receiver[i]      : receiver flat index; an outlet maps to itself (recv == i)
+// drainage_area[i] : drainage area in map-area units (e.g. m^2); /dx applied if
+//                    opts.divide_area_by_dx
+// dx_eff[i]        : flow-path length from i to its receiver (cell_size or
+//                    cell_size*sqrt2); supplied by the caller so each backend
+//                    keeps its own diagonal/periodic convention
+// valid[i]         : 1 if cell i is part of the domain
+// topo_upstream_first : a topological order with headwaters first and outlets
+//                    last (swept in reverse so receivers are visited first)
+// -----------------------------------------------------------------------------
+struct lsdtt_fluvial_steady_state_field
+{
+    std::vector<float> elevation;        // baselevel + f*chi (no_data where !valid)
+    float K_used          = 0.0f;
+    float max_unit_height = 0.0f;        // MaxChi (chi with f = 1)
+    float computed_relief = 0.0f;        // f * MaxChi
+};
+
+lsdtt_fluvial_steady_state_field compute_fluvial_steady_state_on_tree(
+    const std::vector<std::int64_t>&          receiver,
+    const std::vector<double>&                drainage_area,
+    const std::vector<float>&                 dx_eff,
+    const std::vector<std::uint8_t>&          valid,
+    const std::vector<std::int64_t>&          topo_upstream_first,
+    double                                    cell_size,
+    double                                    no_data_value,
+    const lsdtt_fluvial_steady_state_options& opts);
+
 } // namespace lsdtt
