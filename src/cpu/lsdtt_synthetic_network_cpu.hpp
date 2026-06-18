@@ -85,9 +85,18 @@ struct lsdtt_ocn_options
     double    initial_temperature = 0.0;
     double    temperature_scale   = 1.0;
 
-    // Landscape (elevation) synthesis.
-    double    slope0  = 1.0;
-    double    z_min   = 0.0;
+    // Landscape (elevation) synthesis — chi-based fluvial steady state, identical
+    // to lsdtt-lem's steady-state solver (compute_fluvial_steady_state_on_tree):
+    //   chi[i] = chi[receiver] + dx_eff * A^(-m/n);  z = baselevel + f*chi.
+    // OCN elevations use FLUVIAL relief only (no hillslope), so the OCN and a LEM
+    // steady state on the same graph and parameters produce the same surface.
+    float     m_exponent          = 0.45f;   // drainage-area exponent m
+    float     n_exponent          = 1.0f;    // slope exponent n
+    bool      relief_mode         = true;    // true: set total relief; false: K-mode
+    float     target_relief       = 1000.0f; // relief-mode target (m)
+    float     uplift_rate         = 1e-4f;   // U (m/yr)
+    float     erodibility         = 1e-3f;   // K (K-mode)
+    float     baselevel_elevation = 0.0f;    // elevation of the outlet(s)
 
     std::uint64_t seed = 1;
 

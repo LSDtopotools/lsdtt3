@@ -99,103 +99,37 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
     const std::int64_t       n_cells = static_cast<std::int64_t>(meta.n_rows)
                                        * meta.n_cols;
 
-    std::vector<double> area_d = flow.accumulate();
-
-    // -------------------------------------------------------------------------
-    // Step 1: compute chi for each valid cell.
-    //   chi[outlet] = 0  (initialised to zero; outlet cells use continue)
-    //   chi[cell]   = chi[receiver] + dx_eff * A^(-m/n)
-    // Outlets in the topological order use continue so chi stays 0.
-    // -------------------------------------------------------------------------
-    std::vector<float> chi(static_cast<std::size_t>(n_cells), 0.0f);
-
-    const auto& topo = flow.topological_order();
-
-    // Reverse sweep: topo[N-1] = outlet (processed first), topo[0] = headwater
-    for (std::int64_t ti = static_cast<std::int64_t>(topo.size()) - 1;
-         ti >= 0; --ti)
-    {
-        const std::int64_t flat = topo[static_cast<std::size_t>(ti)];
-
-        if (flow.is_outlet_unchecked(flat) || !flow.is_valid_cell(flat))
-            continue;
-
-        double A = area_d[static_cast<std::size_t>(flat)];
-        if (opts.divide_area_by_dx)
-            A /= static_cast<double>(dx);
-        if (A <= 0.0)
-            A = static_cast<double>(dx) * dx;
-
-        const std::int64_t recv = flow.receiver_of_unchecked(flat);
-        const std::uint8_t dir  = flow.receiver_dir_of_unchecked(flat);
-        const float dx_eff = (dir & 1u) ? dx_diag : dx;
-
-        chi[static_cast<std::size_t>(flat)] =
-            chi[static_cast<std::size_t>(recv)]
-            + dx_eff * std::pow(static_cast<float>(A), -opts.m / opts.n);
-    }
-
-    // -------------------------------------------------------------------------
-    // Step 2: find MaxChi (= max chi over valid cells).
-    // -------------------------------------------------------------------------
-    float MaxChi = 0.0f;
+    // Build the single-receiver tree arrays from the D8 flow object and delegate
+    // to the shared core, so the OCN generator gets identical steady elevations.
+    std::vector<std::int64_t> receiver(static_cast<std::size_t>(n_cells));
+    std::vector<float>        dx_eff(static_cast<std::size_t>(n_cells), dx);
+    std::vector<std::uint8_t> valid(static_cast<std::size_t>(n_cells), 0);
     for (std::int64_t flat = 0; flat < n_cells; ++flat)
     {
-        if (flow.is_valid_cell(flat))
-            MaxChi = std::max(MaxChi, chi[static_cast<std::size_t>(flat)]);
-    }
-    if (MaxChi <= 0.0f) MaxChi = 1.0f;   // degenerate guard
-
-    // -------------------------------------------------------------------------
-    // Step 3: determine f = (U/K)^(1/n) and K_used.
-    //   Relief-mode: K is back-calculated so that f * MaxChi = target_relief.
-    //   K-mode:      f is set from the supplied K directly.
-    // -------------------------------------------------------------------------
-    float K_used;
-    float f;
-    if (opts.relief_mode)
-    {
-        K_used = opts.U * std::pow(MaxChi / opts.target_relief, opts.n);
-        f      = opts.target_relief / MaxChi;   // == (U/K_used)^(1/n)
-    }
-    else
-    {
-        K_used = opts.K;
-        f      = std::pow(opts.U / opts.K, 1.0f / opts.n);
+        const std::size_t s = static_cast<std::size_t>(flat);
+        if (!flow.is_valid_cell(flat)) { receiver[s] = flat; continue; }
+        valid[s] = 1;
+        if (flow.is_outlet_unchecked(flat)) { receiver[s] = flat; continue; }
+        receiver[s] = flow.receiver_of_unchecked(flat);
+        dx_eff[s]   = (flow.receiver_dir_of_unchecked(flat) & 1u) ? dx_diag : dx;
     }
 
-    // -------------------------------------------------------------------------
-    // Step 4: assign elevations.
-    //   z[i] = baselevel + f * chi[i]  for all valid cells (outlets have chi=0)
-    //   nodata cells keep meta.no_data_value (write_full does not consult mask)
-    // -------------------------------------------------------------------------
-    std::vector<float> z(static_cast<std::size_t>(n_cells),
-                         static_cast<float>(meta.no_data_value));
+    const std::vector<double>        area_d = flow.accumulate();
+    const std::vector<std::int64_t>& topo   = flow.topological_order();
 
-    for (std::int64_t flat = 0; flat < n_cells; ++flat)
-    {
-        if (flow.is_valid_cell(flat))
-            z[static_cast<std::size_t>(flat)] =
-                opts.baselevel_elevation
-                + f * chi[static_cast<std::size_t>(flat)];
-    }
+    const lsdtt_fluvial_steady_state_field field =
+        compute_fluvial_steady_state_on_tree(
+            receiver, area_d, dx_eff, valid, topo,
+            meta.cell_size, meta.no_data_value, opts);
 
-    const float computed_relief = f * MaxChi;
-    const float max_unit_height = MaxChi;   // chi with f = 1
-
-    // Build mask
-    std::vector<uint8_t> mask(static_cast<std::size_t>(n_cells), 0);
-    for (std::int64_t flat = 0; flat < n_cells; ++flat)
-    {
-        if (flow.is_valid_cell(flat))
-            mask[static_cast<std::size_t>(flat)] = 1;
-    }
+    std::vector<float>   z    = field.elevation;
+    std::vector<uint8_t> mask = valid;
 
     lsdtt_fluvial_steady_state_result result;
-    result.elevation      = lsdtt_raster_cpu(std::move(z), std::move(mask), meta);
-    result.K_used         = K_used;
-    result.max_unit_height = max_unit_height;
-    result.computed_relief = computed_relief;
+    result.elevation       = lsdtt_raster_cpu(std::move(z), std::move(mask), meta);
+    result.K_used          = field.K_used;
+    result.max_unit_height = field.max_unit_height;
+    result.computed_relief = field.computed_relief;
     return result;
 }
 
