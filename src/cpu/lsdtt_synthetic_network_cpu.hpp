@@ -21,11 +21,14 @@
 // so the cooling schedule (temperature) sweeps the network from random /
 // Shreve-like (high T, Tokunaga c ~ 2) to strongly aggregated (T -> 0).
 //
-// Elevations are derived AFTER the network is fixed by upstream integration of a
-// slope-area law (landscape_OCN analogue): S_i = slope0 * (A_i/A_total)^(gamma-1)
-// and Z_i = Z_receiver(i) + S_i * length_i.
+// Elevations are derived AFTER the network is fixed by the chi-based fluvial
+// steady state, via the SAME shared core (compute_fluvial_steady_state_on_tree)
+// that lsdtt-lem's steady-state solver uses: chi[i] = chi[receiver] + dx_eff *
+// A^(-m/n) and Z_i = baselevel + f*chi_i. Relief is controlled exactly as in the
+// LEM (K-mode or relief-mode). Fluvial relief only — so an OCN and a LEM steady
+// state on the same graph and parameters produce the same surface.
 //
-// IMPORTANT round-trip caveat: the slope-area DEM reproduces the OCN graph under
+// IMPORTANT round-trip caveat: the chi DEM reproduces the OCN graph under
 // independent D8 routing only for fully-relaxed (low-T) networks, where the OCN
 // local-minimum condition makes each node's receiver its steepest-descent
 // neighbour. High-T / sub-optimal networks are NOT self-consistent and D8 will

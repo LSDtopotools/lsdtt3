@@ -114,7 +114,7 @@ lsdtt3/
 │   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
 │   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
-│   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state
+│   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp           — transient hillslope transport (cidre, roering, linear, adi)
 │   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp        — steady-state hillslope solver (SOR + pseudo-transient Cidre)
 │   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp               — Verlet cloth drape: upper envelope surface and incision depth
@@ -527,8 +527,13 @@ Current CLI programs are:
   statistics (tunable Tokunaga exponents) via simulated-annealing edge flips that
   minimise `E = Σ Aᵢ^gamma` (Metropolis acceptance `exp(-ΔE/T)`; the cooling
   schedule sweeps from random/Shreve-like at high T to strongly aggregated as
-  T→0). Engine: `lsdtt_synthetic_network_cpu`. Elevations are derived after the
-  network by upstream slope-area integration. The domain can be the full
+  T→0). Engine: `lsdtt_synthetic_network_cpu`. Elevations use the **chi-based
+  fluvial steady state** via the *same* shared core
+  (`compute_fluvial_steady_state_on_tree`) as lsdtt-lem's steady-state solver, so
+  an OCN and a LEM steady state on the same graph give the same surface; relief
+  is controlled exactly as in the LEM (`steady_state_mode` K/relief,
+  `target_relief`, `uplift_rate`, `erodibility`, `m_exponent`, `n_exponent`,
+  `baselevel_elevation`); fluvial relief only. The domain can be the full
   rectangle or an **irregular island** (`domain_type` = efd_island /
   noise_island / polygon): EFD = Elliptical Fourier random coastline,
   noise_island = thresholded radial red-noise, polygon = a user vector
@@ -588,6 +593,10 @@ Current CLI programs are:
   Theory and references: `docs/basin_shape_metrics.tex`.
   Also has an independent `calculate_junction_area_ratios` switch that writes the
   per-junction drainage-area ratio table + distribution summary (see below).
+  `write_basin_polygons` writes one basin-outline polygon per basin to a vector
+  layer (`basin_polygon_format` flatgeobuf/gpkg) with the per-basin hydromorphic,
+  shape, and centre-of-mass metrics attached as typed attributes — i.e. the basin
+  metrics joined to their basin polygons.
 
 - **`lsdtt-feature-finder.cpp`**  
   Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope morphology).

@@ -15,6 +15,8 @@
 #include <queue>
 #include <stdexcept>
 
+#include "lsdtt_steady_state_cpu.hpp"
+
 namespace lsdtt {
 
 // D8 neighbour offsets (row, col)
@@ -415,37 +417,52 @@ lsdtt_raster_result lsdtt_synthetic_network_cpu::get_drainage_area_cells_raster(
 }
 
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Elevation: chi-based fluvial steady state on the OCN tree, computed by the
+// SAME shared core that lsdtt-lem's steady-state solver uses, so an OCN and a
+// LEM steady state on the same graph and parameters give the same surface.
+// Drainage area is converted to map area (cells * cell_size^2) to match the D8
+// flow router's accumulate() convention. Fluvial relief only (no hillslope).
+// -----------------------------------------------------------------------------
 lsdtt_raster_result lsdtt_synthetic_network_cpu::get_elevation_raster() const
 {
-    const double g    = opts_.gamma;
-    const double invN = 1.0 / static_cast<double>(n_);
     const lsdtt_raster_meta meta = build_meta_();
+    const double cs  = opts_.cell_size;
+    const double cs2 = cs * cs;
 
-    std::vector<float> z(static_cast<std::size_t>(n_),
-                         static_cast<float>(meta.no_data_value));
-
-    for (auto it = topo_order_.rbegin(); it != topo_order_.rend(); ++it)
+    std::vector<double>       area_m2(static_cast<std::size_t>(n_), 0.0);
+    std::vector<float>        dx_eff(static_cast<std::size_t>(n_),
+                                     static_cast<float>(cs));
+    std::vector<std::uint8_t> valid(static_cast<std::size_t>(n_), 0);
+    for (std::int64_t f = 0; f < n_; ++f)
     {
-        const std::int64_t node = *it;
-        if (is_outlet_[static_cast<std::size_t>(node)])
-        {
-            z[static_cast<std::size_t>(node)] = static_cast<float>(opts_.z_min);
-            continue;
-        }
-        const double slope = opts_.slope0 *
-            std::pow(area_[static_cast<std::size_t>(node)] * invN, g - 1.0);
-        const double dz = slope * receiver_length_(node);
-        z[static_cast<std::size_t>(node)] =
-            z[static_cast<std::size_t>(receiver_[static_cast<std::size_t>(node)])]
-            + static_cast<float>(dz);
+        const std::size_t s = static_cast<std::size_t>(f);
+        if (!land_[s]) continue;
+        valid[s]   = 1;
+        area_m2[s] = area_[s] * cs2;
+        if (receiver_[s] >= 0 && receiver_[s] != f)
+            dx_eff[s] = static_cast<float>(receiver_length_(f));
     }
+
+    lsdtt_fluvial_steady_state_options sopts;
+    sopts.m                   = opts_.m_exponent;
+    sopts.n                   = opts_.n_exponent;
+    sopts.U                   = opts_.uplift_rate;
+    sopts.K                   = opts_.erodibility;
+    sopts.relief_mode         = opts_.relief_mode;
+    sopts.target_relief       = opts_.target_relief;
+    sopts.baselevel_elevation = opts_.baselevel_elevation;
+    sopts.divide_area_by_dx   = true;
+
+    const lsdtt_fluvial_steady_state_field field =
+        compute_fluvial_steady_state_on_tree(
+            receiver_, area_m2, dx_eff, valid, topo_order_,
+            cs, meta.no_data_value, sopts);
 
     lsdtt_raster_result out;
     out.meta = meta;
-    out.data = std::move(z);
-    out.mask.assign(static_cast<std::size_t>(n_), 0);
-    for (std::int64_t f = 0; f < n_; ++f)
-        if (land_[static_cast<std::size_t>(f)]) out.mask[static_cast<std::size_t>(f)] = 1;
+    out.data = field.elevation;
+    out.mask = std::move(valid);
     return out;
 }
 

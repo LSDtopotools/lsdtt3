@@ -203,16 +203,43 @@ int main(int argc, char* argv[])
         "Continuous knob for sweeping Tokunaga statistics: raise toward random "
         "(c~2), lower toward 0 for the optimised low-T limit (greedy at 0)."};
 
-    // --- Landscape synthesis ---
-    float_default_map["slope0"] = 1.0f;
-    help_map["slope0"] = {"float","1.0",
-        "Slope scale for the slope-area elevation law S = slope0*(A/N)^(gamma-1).",
-        "Controls overall relief of the synthetic DEM."};
+    // --- Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem) ---
+    string_default_map["steady_state_mode"] = "relief";
+    help_map["steady_state_mode"] = {"string","relief",
+        "How the fluvial relief of the synthetic DEM is set.",
+        "relief: total relief is set to target_relief (K is back-calculated). "
+        "K: erodibility is given directly and relief follows from uplift_rate/"
+        "erodibility. Identical to lsdtt-lem's steady-state solver."};
 
-    float_default_map["z_min"] = 0.0f;
-    help_map["z_min"] = {"float","0.0",
-        "Elevation assigned to the outlet (base level).",
-        "All elevations are integrated upstream from this value."};
+    float_default_map["target_relief"] = 1000.0f;
+    help_map["target_relief"] = {"float","1000",
+        "Target fluvial relief max(z)-baselevel in metres (relief mode).",
+        "Used when steady_state_mode = relief."};
+
+    float_default_map["uplift_rate"] = 1e-4f;
+    help_map["uplift_rate"] = {"float","1e-4",
+        "Uplift rate U (m/yr) for the steady-state stream-power solution.",
+        "U = K*A^m*S^n. In relief mode only the resulting steepness matters."};
+
+    float_default_map["erodibility"] = 1e-3f;
+    help_map["erodibility"] = {"float","1e-3",
+        "Erodibility K (K mode only).",
+        "Used when steady_state_mode = K; ignored in relief mode."};
+
+    float_default_map["m_exponent"] = 0.45f;
+    help_map["m_exponent"] = {"float","0.45",
+        "Drainage-area exponent m in the stream-power / chi law.",
+        "Concavity is m/n. Set the same m and n as the LEM run you compare to."};
+
+    float_default_map["n_exponent"] = 1.0f;
+    help_map["n_exponent"] = {"float","1.0",
+        "Slope exponent n in the stream-power / chi law.",
+        "Concavity is m/n."};
+
+    float_default_map["baselevel_elevation"] = 0.0f;
+    help_map["baselevel_elevation"] = {"float","0.0",
+        "Elevation assigned to the outlet(s) (base level).",
+        "Chi is integrated upstream from this elevation. Fluvial relief only."};
 
     int_default_map["random_seed"] = 1;
     help_map["random_seed"] = {"int","1",
@@ -270,8 +297,13 @@ int main(int argc, char* argv[])
     opts.initial_no_cooling_fraction = ff["initial_no_cooling_fraction"];
     opts.initial_temperature         = ff["initial_temperature"];
     opts.temperature_scale           = ff["temperature_scale"];
-    opts.slope0     = ff["slope0"];
-    opts.z_min      = ff["z_min"];
+    opts.relief_mode         = (sf["steady_state_mode"] != "K");
+    opts.target_relief       = ff["target_relief"];
+    opts.uplift_rate         = ff["uplift_rate"];
+    opts.erodibility         = ff["erodibility"];
+    opts.m_exponent          = ff["m_exponent"];
+    opts.n_exponent          = ff["n_exponent"];
+    opts.baselevel_elevation = ff["baselevel_elevation"];
     opts.seed       = static_cast<std::uint64_t>(ifs["random_seed"]);
     opts.outlet_col = ifs["outlet_col"];
 

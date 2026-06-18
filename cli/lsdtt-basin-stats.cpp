@@ -63,6 +63,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 
@@ -396,6 +397,146 @@ static void write_basin_stats_csv(
     }
 }
 
+// -----------------------------------------------------------------------------
+// write_basin_polygons
+//
+// Writes one basin-outline polygon per basin to a vector layer (FlatGeobuf /
+// GeoPackage), with the per-basin hydromorphic and (optionally) shape and
+// centre-of-mass metrics attached as typed attributes — i.e. the basin metrics
+// joined to their associated basin polygons.
+// -----------------------------------------------------------------------------
+static void write_basin_polygons(
+    const std::string&                      out_path,
+    const std::vector<basin_stats_record>&  rows,
+    const lsdtt::lsdtt_flow_base&           flow,
+    const lsdtt::lsdtt_raster_meta&         meta,
+    lsdtt::vector_output_format             fmt,
+    bool                                    has_channel_stats,
+    bool                                    has_shape_metrics,
+    bool                                    has_com_bearing,
+    bool                                    spatial_index)
+{
+    using FT = lsdtt::lsdtt_vector_field_type;
+
+    lsdtt::lsdtt_vector_schema sch;
+    auto add = [&](const std::string& name, FT t)
+    {
+        sch.field_names.push_back(name);
+        sch.field_types.push_back(t);
+    };
+
+    add("basin_id", FT::int64_type);
+    add("gauge_id", FT::string_type);
+    add("gauge_name", FT::string_type);
+    add("latitude", FT::double_type);
+    add("longitude", FT::double_type);
+    add("drainage_area_km2", FT::double_type);
+    add("n_pixels", FT::int64_type);
+    add("nodata_on_edge", FT::int64_type);
+    add("centroid_latitude", FT::double_type);
+    add("centroid_longitude", FT::double_type);
+    add("elevation_min", FT::double_type);
+    add("elevation_max", FT::double_type);
+    add("elevation_mean", FT::double_type);
+    add("elevation_range", FT::double_type);
+    add("slope_50th", FT::double_type);
+    add("flow_distance_50th", FT::double_type);
+    if (has_com_bearing)
+    {
+        add("com_bearing_deg", FT::double_type);
+        add("com_distance_m", FT::double_type);
+    }
+    if (has_shape_metrics)
+    {
+        add("basin_length_m", FT::double_type);
+        add("elongation_ratio", FT::double_type);
+        add("form_factor", FT::double_type);
+        add("circularity_ratio", FT::double_type);
+        add("gravelius_compactness", FT::double_type);
+        add("solidity", FT::double_type);
+        add("eccentricity", FT::double_type);
+        add("orientation_deg", FT::double_type);
+        add("hypsometric_integral", FT::double_type);
+    }
+    if (has_channel_stats)
+    {
+        for (int o = 1; o <= 6; ++o)
+            add("channel_length_O" + std::to_string(o), FT::double_type);
+    }
+
+    lsdtt::lsdtt_data_loader pw;
+    pw.begin_vector_write(out_path, "basin_polygons", sch,
+                          meta.crs_wkt, fmt, spatial_index);
+
+    for (const auto& row : rows)
+    {
+        try
+        {
+            lsdtt::lsdtt_basin_cpu basin(row.outlet_flat, flow);
+            lsdtt::lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
+            const lsdtt::lsdtt_vector_record rec =
+                outline.get_outline_as_polygon_record(row.basin_id);
+
+            if (std::holds_alternative<std::monostate>(rec.geometry)) continue;
+            const auto& poly = std::get<lsdtt::lsdtt_polygon_geom>(rec.geometry);
+            if (poly.exterior.size() < 4) continue;
+
+            std::vector<lsdtt::lsdtt_vector_field_value> v;
+            v.emplace_back(static_cast<std::int64_t>(row.basin_id));
+            v.emplace_back(row.gauge_id);
+            v.emplace_back(row.gauge_name);
+            v.emplace_back(row.latitude);
+            v.emplace_back(row.longitude);
+            v.emplace_back(row.drainage_area_km2);
+            v.emplace_back(static_cast<std::int64_t>(row.n_pixels));
+            v.emplace_back(static_cast<std::int64_t>(row.nodata_on_edge ? 1 : 0));
+            v.emplace_back(row.centroid_latitude);
+            v.emplace_back(row.centroid_longitude);
+            v.emplace_back(row.stats.min);
+            v.emplace_back(row.stats.max);
+            v.emplace_back(row.stats.mean);
+            v.emplace_back(row.stats.range);
+            v.emplace_back(row.slope_50th);
+            v.emplace_back(row.flow_distance_50th);
+            if (has_com_bearing)
+            {
+                v.emplace_back(row.com_bearing_deg);
+                v.emplace_back(row.com_distance_m);
+            }
+            if (has_shape_metrics)
+            {
+                v.emplace_back(row.basin_length_m);
+                v.emplace_back(row.elongation_ratio);
+                v.emplace_back(row.form_factor);
+                v.emplace_back(row.circularity_ratio);
+                v.emplace_back(row.gravelius_compactness);
+                v.emplace_back(row.solidity);
+                v.emplace_back(row.eccentricity);
+                v.emplace_back(row.orientation_deg);
+                v.emplace_back(row.hypsometric_integral);
+            }
+            if (has_channel_stats)
+            {
+                for (int o = 1; o <= 6; ++o)
+                {
+                    auto it = row.channel_length_by_order.find(o);
+                    v.emplace_back(it != row.channel_length_by_order.end()
+                                       ? it->second : 0.0);
+                }
+            }
+
+            pw.write_polygon(poly.exterior, v);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: basin polygon for basin_id=" << row.basin_id
+                      << " failed: " << e.what() << "\n";
+        }
+    }
+
+    pw.finish_vector_write();
+}
+
 // =============================================================================
 // main
 // =============================================================================
@@ -555,6 +696,19 @@ int main(int argc, char* argv[])
     help_map["junction_area_ratio_bootstrap"] = {"int","1000",
         "Branch-bootstrap replicates for junction area-ratio confidence intervals.",
         "Resampling is over non-mainstem tributary branches. 0 disables it."};
+
+    bool_default_map["write_basin_polygons"] = false;
+    help_map["write_basin_polygons"] = {"bool","false",
+        "Write basin outline polygons with the per-basin metrics as attributes.",
+        "Attaches the hydromorphic stats (and shape metrics / centre-of-mass "
+        "bearing when those are enabled) to each basin's outline polygon as a "
+        "vector layer. Output: <write_fname>_basin_polygons.<ext>. "
+        "Format set by basin_polygon_format."};
+
+    string_default_map["basin_polygon_format"] = "flatgeobuf";
+    help_map["basin_polygon_format"] = {"string","flatgeobuf",
+        "Vector format for the basin-polygon output.",
+        "flatgeobuf (default) or gpkg."};
 
     bool_default_map["calculate_centre_of_mass_bearing"] = false;
     help_map["calculate_centre_of_mass_bearing"] = {"bool","false",
@@ -1651,6 +1805,30 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: failed to write basin statistics CSV: "
                   << e.what() << "\n";
         return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Optional basin-polygon vector output (metrics attached to basin polygons)
+    // -------------------------------------------------------------------------
+    if (bf["write_basin_polygons"])
+    {
+        try
+        {
+            const lsdtt::vector_output_format poly_fmt =
+                lsdtt::resolve_vector_output_format(sf["basin_polygon_format"]);
+            const std::string ext = lsdtt::output_extension(poly_fmt);
+            const std::string poly_out =
+                pp.make_output_path("_basin_polygons" + ext);
+            std::cout << "Writing basin polygons: " << poly_out << "\n";
+            write_basin_polygons(poly_out, basin_rows, *flow, meta, poly_fmt,
+                                 has_channel_network, do_shape_metrics,
+                                 do_com_bearing, true);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: failed to write basin polygons: "
+                      << e.what() << "\n";
+        }
     }
 
     // -------------------------------------------------------------------------
