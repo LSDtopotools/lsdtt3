@@ -421,4 +421,87 @@ void write_tokunaga_channels(
 );
 
 
+// =============================================================================
+// Junction drainage-area ratios
+//
+// A continuous, high-sample-count complement to order-binned Tokunaga analysis.
+// At every interior confluence two (or more) channels merge; the ratio of the
+// two largest incoming drainage areas r = A_trib / A_main in (0,1] is recorded
+// at EVERY junction, giving far more samples than the few well-populated
+// Strahler-order bins. The distribution of r encodes the network's
+// area-accumulation self-similarity.
+//
+// CAVEATS (see docs/synthetic_networks_plan.md and the project notes):
+//   - This measures area accumulation, NOT side-branching topology; it does not
+//     uniquely recover Tokunaga (a,c). The c_equivalent below is a
+//     model-dependent estimate (c ~= R_A^lambda), not a substitute for (a,c).
+//   - Junctions are nested and hence autocorrelated; the naive summary here does
+//     not branch-bootstrap, so the spread is informative but the CIs are not.
+//   - Sensitive to the channel-extraction threshold (truncates the small-r tail)
+//     and to the drainage-area definition (here: D8 contributing pixels).
+// =============================================================================
+
+// One record per interior confluence junction.
+struct lsdtt_junction_area_ratio
+{
+    std::int32_t junction_id     = -1;
+    double       x               = std::numeric_limits<double>::quiet_NaN();
+    double       y               = std::numeric_limits<double>::quiet_NaN();
+    double       area_main_cells = 0.0;  // A_main (larger tributary), pixels
+    double       area_trib_cells = 0.0;  // A_trib (smaller tributary), pixels
+    double       ratio           = std::numeric_limits<double>::quiet_NaN(); // A_trib/A_main
+    double       area_down_cells = 0.0;  // contributing pixels at the confluence
+    std::int32_t order_main      = -1;   // Strahler order of larger tributary
+    std::int32_t order_trib      = -1;   // Strahler order of smaller tributary
+    std::int32_t order_receiver  = -1;   // Strahler order of the confluence
+    std::int32_t n_tributaries   = 0;    // number of channel tributaries merging
+};
+
+struct lsdtt_junction_area_ratio_result
+{
+    std::vector<lsdtt_junction_area_ratio> junctions;
+
+    std::size_t n_junctions   = 0;
+    double mean_ratio         = std::numeric_limits<double>::quiet_NaN();
+    double median_ratio       = std::numeric_limits<double>::quiet_NaN();
+
+    // Exponential rate of x = -ln(r): lambda_all over all junctions, lambda_tail
+    // over the small-r tail (x above its median). A power-law tail in r is an
+    // exponential tail in x.
+    double lambda_all         = std::numeric_limits<double>::quiet_NaN();
+    double lambda_tail        = std::numeric_limits<double>::quiet_NaN();
+
+    // Horton area ratio R_A from a per-order regression of mean downstream area,
+    // and the model-dependent Tokunaga-equivalent c = R_A^lambda_tail.
+    double r_a                = std::numeric_limits<double>::quiet_NaN();
+    double c_equivalent       = std::numeric_limits<double>::quiet_NaN();
+};
+
+// -----------------------------------------------------------------------------
+// compute_junction_area_ratios
+//
+// Enumerates interior confluence junctions of the network. For each, the merging
+// tributaries are the D8 channel-donors of the confluence node; their D8
+// contributing-pixel counts give A_main / A_trib and r. Orders come from the
+// junction governing each donor cell. Returns per-junction records plus summary
+// statistics. Requires a junction network with Strahler orders.
+// -----------------------------------------------------------------------------
+lsdtt_junction_area_ratio_result compute_junction_area_ratios(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& network
+);
+
+// Per-junction CSV (one row per confluence).
+void write_junction_area_ratio_data(
+    const lsdtt_junction_area_ratio_result& result,
+    const std::string&                      out_path
+);
+
+// Single-row summary CSV (distribution statistics + tail exponents).
+void write_junction_area_ratio_summary(
+    const lsdtt_junction_area_ratio_result& result,
+    const std::string&                      out_path
+);
+
+
 } // namespace lsdtt

@@ -127,13 +127,14 @@ lsdtt3/
 │   │   ├── lsdtt_chi_data_maps_cpu.hpp/.cpp                  — chi data-map output (per-node points, basin outlines, polylines)
 │   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
 │   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
-│   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity
+│   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity, junction area-ratio distribution
 │   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
 │   │   ├── lsdtt_cosmo_raster_cpu.hpp/.cpp                   — raster CRN: production, SS/step-change concentration, flow accumulation
 │   │   ├── lsdtt_crn_parameters.hpp/.cpp                     — Stone 2000 scaling, muon schemes, ERA40/palaeomagnetic correction
 │   │   ├── lsdtt_crn_column.hpp/.cpp                         — 1-D transient CRN column simulation
 │   │   ├── lsdtt_crn_particle.hpp                            — header-only: SS and transient nuclide concentration particle
-│   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
+│   │   ├── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
+│   └── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (tunable Tokunaga exponents)
 │   └── utils/
 │       ├── lsdtt_array2d.hpp                — header-only 2D array
 │       ├── lsdtt_raster_geometry.hpp        — header-only raster geometry helpers
@@ -199,6 +200,7 @@ the utility-layer numerical functions.
 - `lsdtt_raster_nodata_filling_cpu.cpp`
 - `lsdtt_raster_spectral_cpu.cpp`
 - `lsdtt_raster_synthetic_surfaces_cpu.cpp`
+- `lsdtt_synthetic_network_cpu.cpp`
 - `lsdtt_raster_feature_finder_cpu.cpp`
 - `lsdtt_flowinfo_cpu.cpp`
 - `lsdtt_flow_base.cpp`
@@ -511,6 +513,18 @@ Current CLI programs are:
 - **`lsdtt-raster-synthetic-tests.cpp`**  
   Synthetic raster generation and testing utilities.
 
+- **`lsdtt-synthetic-networks.cpp`**  
+  Generates synthetic Optimal Channel Networks (OCNs) with tunable branching
+  statistics (tunable Tokunaga exponents) via simulated-annealing edge flips that
+  minimise `E = Σ Aᵢ^gamma` (Metropolis acceptance `exp(-ΔE/T)`; the cooling
+  schedule sweeps from random/Shreve-like at high T to strongly aggregated as
+  T→0). Engine: `lsdtt_synthetic_network_cpu`. Elevations are derived after the
+  network by upstream slope-area integration. Outputs a synthetic DEM, the OCN
+  drainage-area raster, and a summary CSV that includes the **D8 round-trip
+  fidelity** (fraction of interior pixels whose D8 receiver equals the OCN
+  receiver — ~1 for relaxed low-T networks, lower for random high-T networks, an
+  inherent OCN self-consistency property). Design: `docs/synthetic_networks_plan.md`.
+
 - **`lsdtt-surface-metrics.cpp`**  
   Surface-analysis workflow that does not require flow routing: hillshade,
   polynomial surface fit, Otsu segmentation, Hough line extraction. Also writes
@@ -550,6 +564,8 @@ Current CLI programs are:
   circularity/Gravelius is measured on a Douglas–Peucker-simplified ring
   (`shape_perimeter_simplify_cells`) to mitigate the staircased divide-grid boundary.
   Theory and references: `docs/basin_shape_metrics.tex`.
+  Also has an independent `calculate_junction_area_ratios` switch that writes the
+  per-junction drainage-area ratio table + distribution summary (see below).
 
 - **`lsdtt-feature-finder.cpp`**  
   Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope morphology).
@@ -592,8 +608,11 @@ Current CLI programs are:
 - **`lsdtt-channel-network-analysis.cpp`**  
   Builds a channel/junction network and runs one or more network analyses:
   channel-link bearing fitting (orthogonal regression), junction-angle calculation
-  (donor opening angle, donor–receiver angles, bending angle), and
-  Strahler/Tokunaga self-similarity analysis. Writes CSV, GeoPackage, or FlatGeobuf.
+  (donor opening angle, donor–receiver angles, bending angle),
+  Strahler/Tokunaga self-similarity analysis, and per-junction drainage-area
+  ratios (`write_junction_area_ratio_data` / `_summary` — a continuous,
+  high-sample-count complement to order-binned Tokunaga). Writes CSV, GeoPackage,
+  or FlatGeobuf.
 
 - **`lsdtt-chi-analysis.cpp`** *(requires Eigen3)*  
   End-to-end chi workflow: chi extraction on threshold-defined channel networks,

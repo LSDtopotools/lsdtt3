@@ -306,6 +306,23 @@ int main(int argc, char* argv[])
         "Write Tokunaga pair counts, offset statistics, and fit summary to CSV.",
         "This is a summary-of-network export, not a geometry export."};
 
+    // --- Junction area-ratio outputs (complement to Tokunaga) ---
+    bool_default_map["write_junction_area_ratio_data"] = false;
+    help_map["write_junction_area_ratio_data"] = {"bool","false",
+        "Write per-junction drainage-area ratios to CSV.",
+        "One row per interior confluence: the ratio r = A_trib/A_main of the two "
+        "merging tributary drainage areas, plus their Strahler orders. A "
+        "continuous, high-sample-count complement to order-binned Tokunaga "
+        "analysis. Output: <write_fname>_junction_area_ratios.csv."};
+
+    bool_default_map["write_junction_area_ratio_summary"] = false;
+    help_map["write_junction_area_ratio_summary"] = {"bool","false",
+        "Write a junction area-ratio distribution summary to CSV.",
+        "Mean/median r, the exponential tail rate lambda of x=-ln(r), a Horton "
+        "area ratio R_A, and a model-dependent Tokunaga-equivalent c=R_A^lambda. "
+        "Output: <write_fname>_junction_area_ratio_summary.csv. See the caveats "
+        "in lsdtt_strahler_tokunaga_analysis_cpu.hpp."};
+
 
 
     // -------------------------------------------------------------------------
@@ -350,6 +367,8 @@ int main(int argc, char* argv[])
     const bool do_tokunaga_channels  = bf["write_tokunaga_channels"];
     const bool do_tokunaga_table     = bf["write_tokunaga_channel_data"];
     const bool do_tokunaga_summary   = bf["write_tokunaga_summary_data"];
+    const bool do_jar_data           = bf["write_junction_area_ratio_data"];
+    const bool do_jar_summary        = bf["write_junction_area_ratio_summary"];
     const bool do_link_bearing_vectors = bf["write_channel_link_bearing_vectors"];
     const bool do_junction_angle_bearing_vectors = bf["write_junction_angle_bearing_vectors"];
 
@@ -362,7 +381,9 @@ int main(int argc, char* argv[])
         do_strahler_channels              ||
         do_tokunaga_channels              ||
         do_tokunaga_table                 ||
-        do_tokunaga_summary;
+        do_tokunaga_summary               ||
+        do_jar_data                       ||
+        do_jar_summary;
 
 
     if (!do_any_output)
@@ -1170,6 +1191,47 @@ int main(int argc, char* argv[])
     // The current Strahler / Tokunaga builder operates on the full extracted
     // network, not on the outlet-selected analysis_junction subset.
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Junction drainage-area ratios (complement to Tokunaga)
+    // -------------------------------------------------------------------------
+    if (do_jar_data || do_jar_summary)
+    {
+        std::cout << "\n--- Junction area-ratio analysis ---\n";
+        try
+        {
+            const lsdtt::lsdtt_junction_area_ratio_result jar =
+                lsdtt::compute_junction_area_ratios(*flow, *channel_network);
+
+            std::cout << "Confluence junctions        : "
+                      << jar.n_junctions << "\n";
+            std::cout << "Median area ratio           : "
+                      << jar.median_ratio << "\n";
+            std::cout << "Tail exponent lambda        : "
+                      << jar.lambda_tail << "\n";
+
+            if (do_jar_data)
+            {
+                const std::string f =
+                    pp.make_output_path( "_junction_area_ratios", ".csv");
+                std::cout << "Writing: " << f << "\n";
+                lsdtt::write_junction_area_ratio_data(jar, f);
+            }
+            if (do_jar_summary)
+            {
+                const std::string f =
+                    pp.make_output_path( "_junction_area_ratio_summary", ".csv");
+                std::cout << "Writing: " << f << "\n";
+                lsdtt::write_junction_area_ratio_summary(jar, f);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: junction area-ratio analysis failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
     const bool need_strahler_tokunaga =
         do_strahler_channels ||
         do_tokunaga_channels ||

@@ -76,6 +76,7 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
+#include "../src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_polygon_geometry.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
@@ -518,6 +519,15 @@ int main(int argc, char* argv[])
         "Minimum number of contributing pixels to define a channel source.",
         "Used when calculate_channel_stats is true. Larger values give a sparser network."};
 
+    bool_default_map["calculate_junction_area_ratios"] = false;
+    help_map["calculate_junction_area_ratios"] = {"bool","false",
+        "Compute per-junction drainage-area ratios (complement to Tokunaga).",
+        "Opt-in. Builds a channel network (using threshold_contributing_pixels) "
+        "if one is not already built, then writes the ratio r = A_trib/A_main at "
+        "every interior confluence plus a distribution summary. Outputs: "
+        "<write_fname>_junction_area_ratios.csv and "
+        "<write_fname>_junction_area_ratio_summary.csv."};
+
     // --- Basin shape metrics ---
     bool_default_map["calculate_shape_metrics"] = false;
     help_map["calculate_shape_metrics"] = {"bool","false",
@@ -871,9 +881,10 @@ int main(int argc, char* argv[])
     const bool do_shape_metrics = bf["calculate_shape_metrics"];
 
     std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
-    const bool do_channel_stats = bf["calculate_channel_stats"];
+    const bool do_channel_stats         = bf["calculate_channel_stats"];
+    const bool do_junction_area_ratios  = bf["calculate_junction_area_ratios"];
 
-    if (do_channel_stats)
+    if (do_channel_stats || do_junction_area_ratios)
     {
         std::cout << "\n--- Building channel network "
                   << "(threshold = " << ifs["threshold_contributing_pixels"]
@@ -919,6 +930,43 @@ int main(int argc, char* argv[])
     }
 
     const bool has_channel_network = (channel_network != nullptr);
+
+    // -------------------------------------------------------------------------
+    // Junction drainage-area ratios (network-wide; complement to Tokunaga)
+    // -------------------------------------------------------------------------
+    if (do_junction_area_ratios && has_channel_network)
+    {
+        std::cout << "\n--- Junction area-ratio analysis ---\n";
+        try
+        {
+            const lsdtt::lsdtt_junction_area_ratio_result jar =
+                lsdtt::compute_junction_area_ratios(*flow, *channel_network);
+
+            std::cout << "Confluence junctions: " << jar.n_junctions
+                      << "  median ratio: " << jar.median_ratio
+                      << "  lambda_tail: " << jar.lambda_tail << "\n";
+
+            const std::string f_data =
+                pp.make_output_path("_junction_area_ratios.csv");
+            std::cout << "Writing: " << f_data << "\n";
+            lsdtt::write_junction_area_ratio_data(jar, f_data);
+
+            const std::string f_sum =
+                pp.make_output_path("_junction_area_ratio_summary.csv");
+            std::cout << "Writing: " << f_sum << "\n";
+            lsdtt::write_junction_area_ratio_summary(jar, f_sum);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: junction area-ratio analysis failed: "
+                      << e.what() << "\n";
+        }
+    }
+    else if (do_junction_area_ratios && !has_channel_network)
+    {
+        std::cerr << "Warning: calculate_junction_area_ratios requested but no "
+                     "channel network was built; skipping.\n";
+    }
 
     // -------------------------------------------------------------------------
     // Read basin outlet CSV
