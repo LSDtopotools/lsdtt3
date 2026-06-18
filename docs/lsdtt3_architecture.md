@@ -137,7 +137,8 @@ lsdtt3/
 │   └── utils/
 │       ├── lsdtt_array2d.hpp                — header-only 2D array
 │       ├── lsdtt_raster_geometry.hpp        — header-only raster geometry helpers
-│       ├── lsdtt_linear_algebra.hpp         — header-only: sym3x3 eigenvalues, 3×3 inversion, 2D geometry helpers
+│       ├── lsdtt_polygon_geometry.hpp       — header-only: polygon area/perimeter/moments, convex hull, min-area rect, Feret, basin shape metrics
+│       ├── lsdtt_linear_algebra.hpp         — header-only: sym3x3/sym2x2 eigenvalues, 3×3 inversion, 2D geometry helpers
 │       ├── lsdtt_thread_utils.hpp           — header-only: resolve_thread_count() (OpenMP / hardware fallback)
 │       ├── lsdtt_binary_array2d_tracing.hpp/.cpp — binary array tracing utilities
 │       ├── lsdtt_distributions.hpp/.cpp     — parametric distribution fitting: normal, exponential, Weibull, Pareto (MLE + KS)
@@ -540,6 +541,15 @@ Current CLI programs are:
   percentiles, centroid lat/lon, drainage area, nodata-edge flag, and channel length by
   Strahler stream order (orders 1–6). Basins touching nodata or the raster edge are
   optionally rejected (reject_nodata_edge_basins, default true).
+  Optionally (independent toggle `calculate_shape_metrics`, like `calculate_channel_stats`)
+  computes per-basin planform shape metrics from the traced outline polygon
+  (`compute_basin_shape` in `lsdtt_polygon_geometry.hpp`): elongation ratio, form factor,
+  circularity ratio, Gravelius compactness, solidity, moment eccentricity, orientation, and
+  hypsometric integral. Basin length L_b is selected by `basin_length_definition`
+  (`flow_path` default, or `geometric` = max Feret diameter); the perimeter for
+  circularity/Gravelius is measured on a Douglas–Peucker-simplified ring
+  (`shape_perimeter_simplify_cells`) to mitigate the staircased divide-grid boundary.
+  Theory and references: `docs/basin_shape_metrics.tex`.
 
 - **`lsdtt-feature-finder.cpp`**  
   Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope morphology).
@@ -2008,9 +2018,17 @@ Does NOT perform DEM feature scoring, polygon conversion, or skeleton analysis �
 
 **`lsdtt_linear_algebra.hpp`** — header-only lightweight linear algebra (no GDAL, no lsdtt3 headers):
 - `sym3x3_eigenvalues(M)` — analytical Cardano eigenvalues of a real symmetric 3×3 matrix
+- `sym2x2_eigen(a, b, c)` — eigenvalues + major-axis orientation of a symmetric 2×2 matrix (inertia-tensor / shape-orientation analysis)
 - `invert3x3(M)` — Gauss–Jordan inversion
 - `angle_between_vectors_degrees(a, b)`
 - `point_to_segment_distance(p, a, b)`
+
+**`lsdtt_polygon_geometry.hpp`** — header-only planar polygon geometry on rings of `lsdtt_xy` (depends only on `lsdtt_types.hpp` + `lsdtt_linear_algebra.hpp`):
+- `polygon_signed_area` / `polygon_area`, `polygon_perimeter`, `polygon_centroid`
+- `polygon_central_moments` — Green's-theorem mu20/mu11/mu02 (feeds `sym2x2_eigen`)
+- `simplify_douglas_peucker` — strips the pixel-staircase before perimeter-based metrics
+- `convex_hull` (Andrew monotone chain), `min_area_bounding_rect` (rotating calipers), `feret_diameters`, `equivalent_circle_diameter` (Heywood)
+- `compute_basin_shape(...)` → `lsdtt_basin_shape` — headline drainage-basin shape indices (elongation, form factor, circularity, Gravelius compactness, solidity, moment eccentricity/orientation, hypsometric integral). Theory + references: `docs/basin_shape_metrics.tex`.
 
 **`lsdtt_thread_utils.hpp`** — header-only: `resolve_thread_count(n_threads)` returns `n_threads` if > 0, otherwise the OpenMP or hardware maximum.
 

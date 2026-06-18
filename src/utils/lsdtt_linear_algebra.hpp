@@ -14,6 +14,7 @@
 //
 // Current contents:
 //   - sym3x3_eigenvalues              analytical eigenvalues of a real symmetric 3×3 matrix
+//   - sym2x2_eigen                    eigenvalues + major-axis orientation of a symmetric 2×2 matrix
 //   - invert3x3                       Gauss-Jordan inversion of a general 3×3 matrix
 //   - angle_between_vectors_degrees   angle between two 2D vectors, in degrees
 //   - point_to_segment_distance       point-to-segment distance in 2D
@@ -105,6 +106,48 @@ inline std::array<double, 3> sym3x3_eigenvalues(
     const double ev1 = 3.0 * q - ev0 - ev2;                   // middle
 
     return { ev0, ev1, ev2 };
+}
+
+
+// -----------------------------------------------------------------------------
+// sym2x2_eigen
+//
+// Eigenvalues and major-axis orientation of a real symmetric 2×2 matrix
+//
+//   | a  b |
+//   | b  c |
+//
+// Returns the eigenvalues in descending order (lambda1 ≥ lambda2) together with
+// the orientation theta_rad of the eigenvector belonging to lambda1 (the
+// major axis), measured anticlockwise from the +x axis in radians, in the
+// range (-π/2, π/2].
+//
+// Closed form:
+//   lambda_{1,2} = (a+c)/2 ± 0.5·sqrt((a-c)² + 4b²)
+//   theta        = 0.5·atan2(2b, a-c)
+//
+// Intended use: principal-axis analysis of the second-moment (inertia) tensor
+// of a polygon, giving moment-based eccentricity and shape orientation
+// (see lsdtt_polygon_geometry.hpp). The atan2 form handles the b ≈ 0 case
+// (already axis-aligned) without special casing.
+// -----------------------------------------------------------------------------
+struct lsdtt_sym2x2_eigen
+{
+    double lambda1;    // larger eigenvalue
+    double lambda2;    // smaller eigenvalue
+    double theta_rad;  // orientation of the lambda1 eigenvector, radians
+};
+
+inline lsdtt_sym2x2_eigen sym2x2_eigen(double a, double b, double c)
+{
+    const double half_trace = 0.5 * (a + c);
+    const double disc       = std::sqrt(0.25 * (a - c) * (a - c) + b * b);
+
+    lsdtt_sym2x2_eigen out;
+    out.lambda1   = half_trace + disc;
+    out.lambda2   = half_trace - disc;
+    out.theta_rad = 0.5 * std::atan2(2.0 * b, a - c);
+    return out;
 }
 
 
