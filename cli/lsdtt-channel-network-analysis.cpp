@@ -347,6 +347,21 @@ int main(int argc, char* argv[])
         "and the basin pixel count. Output: <write_fname>_junction_com_bearings.csv."};
 
 
+    // --- Complete-basin filtering ---
+    bool_default_map["only_complete_basins"] = true;
+    help_map["only_complete_basins"] = {"bool","true",
+        "Restrict junction/bearing/angle analyses to complete basins.",
+        "A basin is complete if no pixel in its upslope area is influenced by "
+        "nodata or the DEM edge. Incomplete (edge-truncated) basins are dropped "
+        "before computing channel-link bearings, junction angles, and "
+        "centre-of-mass bearings. Needed for stream-order-based statistics."};
+
+    int_default_map["minimum_basin_pixels"] = 0;
+    help_map["minimum_basin_pixels"] = {"int","0",
+        "Drop junctions whose upslope basin has fewer than this many pixels.",
+        "0 disables the size filter. Applied alongside only_complete_basins."};
+
+
 
     // -------------------------------------------------------------------------
     // Parse
@@ -395,6 +410,11 @@ int main(int argc, char* argv[])
     const bool do_com_bearings       = bf["write_junction_centre_of_mass_bearings"];
     const bool do_link_bearing_vectors = bf["write_channel_link_bearing_vectors"];
     const bool do_junction_angle_bearing_vectors = bf["write_junction_angle_bearing_vectors"];
+
+    const bool only_complete_basins = bf["only_complete_basins"];
+    const std::size_t minimum_basin_pixels =
+        ifs["minimum_basin_pixels"] > 0
+        ? static_cast<std::size_t>(ifs["minimum_basin_pixels"]) : 0;
 
 
     const bool do_any_output =
@@ -762,6 +782,33 @@ int main(int argc, char* argv[])
     std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
     std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
 
+    // Predicate: keep a junction iff its upslope basin is "complete" (no pixel
+    // influenced by nodata / the DEM edge) and meets the minimum-pixel size.
+    // Used to drop edge-truncated basins from the stream-order-based analyses.
+    auto junction_basin_kept = [&](std::int32_t junction) -> bool
+    {
+        const std::int64_t outlet =
+            channel_network->basin_outlet_flat_of_junction(junction);
+        const auto slice = flow->upslope_nodes(outlet);
+        if (minimum_basin_pixels > 0 &&
+            static_cast<std::size_t>(slice.end() - slice.begin())
+                < minimum_basin_pixels)
+        {
+            return false;
+        }
+        if (only_complete_basins)
+        {
+            for (const std::int64_t* it = slice.begin(); it != slice.end(); ++it)
+            {
+                if (flow->is_influenced_by_invalid(*it))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
     // -------------------------------------------------------------------------
     // Step 5 — Select junctions for bearing / angle analyses
     // -------------------------------------------------------------------------
@@ -1023,6 +1070,20 @@ int main(int argc, char* argv[])
 
         sort_unique(analysis_junctions);
 
+        if (only_complete_basins || minimum_basin_pixels > 0)
+        {
+            const std::size_t before = analysis_junctions.size();
+            analysis_junctions.erase(
+                std::remove_if(
+                    analysis_junctions.begin(),
+                    analysis_junctions.end(),
+                    [&](std::int32_t j) { return !junction_basin_kept(j); }),
+                analysis_junctions.end());
+            std::cout << "Complete-basin filter: kept "
+                      << analysis_junctions.size() << " of " << before
+                      << " junctions.\n";
+        }
+
         if (analysis_junctions.empty())
         {
             std::cerr << "FATAL: analysis junction selection produced no junctions.\n";
@@ -1276,8 +1337,20 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Junction centre-of-mass bearings ---\n";
         try
         {
-            const std::vector<lsdtt::lsdtt_junction_com_bearing> com =
+            std::vector<lsdtt::lsdtt_junction_com_bearing> com =
                 lsdtt::calculate_junction_com_bearings(*flow, *channel_network);
+
+            if (only_complete_basins || minimum_basin_pixels > 0)
+            {
+                const std::size_t before = com.size();
+                com.erase(
+                    std::remove_if(com.begin(), com.end(),
+                        [&](const lsdtt::lsdtt_junction_com_bearing& r)
+                        { return !junction_basin_kept(r.junction_id); }),
+                    com.end());
+                std::cout << "Complete-basin filter: kept " << com.size()
+                          << " of " << before << " junctions.\n";
+            }
 
             std::cout << "Junctions analysed          : " << com.size() << "\n";
 
