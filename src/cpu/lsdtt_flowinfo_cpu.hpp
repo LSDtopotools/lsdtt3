@@ -484,6 +484,8 @@ public:
     [[nodiscard]] std::vector<std::int64_t>
     get_sources_index_threshold(int threshold) const;
 
+
+
     // -------------------------------------------------------------------------
     // Flow-routing raster outputs
     // -------------------------------------------------------------------------
@@ -700,6 +702,17 @@ private:
     std::vector<std::int64_t>          s_vector_;
     lsdtt_array2d<std::int64_t>        s_vector_start_;
     lsdtt_array2d<std::uint64_t>  s_vector_size_;
-};
+}; // End of flowinfo class
+
+// -------------------------------------------------------------------------
+// Topology
+// -------------------------------------------------------------------------
+// Calculates the topological flow distance down to a common topological 
+// junction between two pixels, and back up. Returns NaN if they don't converge.
+[[nodiscard]] float calculate_flow_topological_distance(
+    std::int64_t flat1, 
+    std::int64_t flat2, 
+    const lsdtt_flow_base& flow
+);
 
 } // namespace lsdtt

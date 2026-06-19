@@ -184,6 +184,13 @@ public:
         const lsdtt_coordinate_transform&            transform
     ) const;
 
+    [[nodiscard]] std::vector<std::vector<std::string>> get_flow_topological_distance_csv_rows(
+        const std::string&     id_string,
+        const std::string&     ridgeline_type,
+        const lsdtt_flow_base& flow
+    ) const;
+
+
 
 private:
     void compute_positions_and_distances_();

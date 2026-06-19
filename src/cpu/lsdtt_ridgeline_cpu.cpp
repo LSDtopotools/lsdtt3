@@ -35,6 +35,38 @@ std::string format_float(double value)
     oss << std::fixed << std::setprecision(9) << value;
     return oss.str();
 }
+
+
+struct EdgePixels {
+    int left_r, left_c;
+    int right_r, right_c;
+    bool valid;
+};
+
+// Gets the row/col DEM pixels strictly to the Left and Right of an oriented 4-connected divide grid step
+EdgePixels get_edge_pixels(const lsdtt_pixel_rc& p1, const lsdtt_pixel_rc& p2) {
+    EdgePixels ep;
+    ep.valid = true;
+    int dr = p2.row - p1.row;
+    int dc = p2.col - p1.col;
+
+    if (dr == 0 && dc == 1) { // East
+        ep.left_r = p1.row - 1; ep.left_c = p1.col;
+        ep.right_r = p1.row;    ep.right_c = p1.col;
+    } else if (dr == 0 && dc == -1) { // West
+        ep.left_r = p1.row;     ep.left_c = p1.col - 1;
+        ep.right_r = p1.row - 1; ep.right_c = p1.col - 1;
+    } else if (dr == 1 && dc == 0) { // South
+        ep.left_r = p1.row;     ep.left_c = p1.col;
+        ep.right_r = p1.row;    ep.right_c = p1.col - 1;
+    } else if (dr == -1 && dc == 0) { // North
+        ep.left_r = p1.row - 1; ep.left_c = p1.col - 1;
+        ep.right_r = p1.row - 1; ep.right_c = p1.col;
+    } else {
+        ep.valid = false; // Not a strict 4-connected step
+    }
+    return ep;
+}
 }
 
 // =============================================================================
@@ -733,6 +765,58 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_extrema_csv_rows(
 
     return rows;
 }
+
+std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_flow_topological_distance_csv_rows(
+    const std::string&     id_string,
+    const std::string&     ridgeline_type,
+    const lsdtt_flow_base& flow
+) const
+{
+    std::vector<std::vector<std::string>> rows;
+    if (nodes_.size() < 3) return rows; 
+
+    rows.reserve(nodes_.size() - 2);
+
+    for (std::size_t i = 1; i < nodes_.size() - 1; ++i) {
+        // Incoming edge: nodes_[i-1] -> nodes_[i]
+        EdgePixels in_edge = get_edge_pixels(nodes_[i-1], nodes_[i]);
+        // Outgoing edge: nodes_[i] -> nodes_[i+1]
+        EdgePixels out_edge = get_edge_pixels(nodes_[i], nodes_[i+1]);
+
+        float left_dist = std::numeric_limits<float>::quiet_NaN();
+        float right_dist = std::numeric_limits<float>::quiet_NaN();
+
+        if (in_edge.valid && out_edge.valid) {
+            std::int64_t left_in_flat = flow.in_bounds(in_edge.left_r, in_edge.left_c) ? 
+                flow.flat_index_unchecked(in_edge.left_r, in_edge.left_c) : -1;
+            std::int64_t left_out_flat = flow.in_bounds(out_edge.left_r, out_edge.left_c) ? 
+                flow.flat_index_unchecked(out_edge.left_r, out_edge.left_c) : -1;
+
+            std::int64_t right_in_flat = flow.in_bounds(in_edge.right_r, in_edge.right_c) ? 
+                flow.flat_index_unchecked(in_edge.right_r, in_edge.right_c) : -1;
+            std::int64_t right_out_flat = flow.in_bounds(out_edge.right_r, out_edge.right_c) ? 
+                flow.flat_index_unchecked(out_edge.right_r, out_edge.right_c) : -1;
+
+            if (left_in_flat >= 0 && left_out_flat >= 0) {
+                left_dist = calculate_flow_topological_distance(left_in_flat, left_out_flat, flow);
+            }
+            if (right_in_flat >= 0 && right_out_flat >= 0) {
+                right_dist = calculate_flow_topological_distance(right_in_flat, right_out_flat, flow);
+            }
+        }
+
+        // Only store internal nodes (start and end have no fully formed edges on one side)
+        rows.push_back({
+            id_string,
+            ridgeline_type,
+            format_float(distances_[i]),
+            format_float(left_dist),
+            format_float(right_dist)
+        });
+    }
+    return rows;
+}
+
 
 
 } // namespace lsdtt

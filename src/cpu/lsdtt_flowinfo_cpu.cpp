@@ -24,6 +24,8 @@
 #include <utility>
 #include <iostream>
 #include <vector>
+#include <unordered_map>
+
 
 
 #ifdef _OPENMP
@@ -1591,6 +1593,7 @@ lsdtt_flowinfo::get_sources_index_threshold(int threshold) const
 }
 
 
+
 // =============================================================================
 // Flow-routing raster outputs
 // =============================================================================
@@ -2755,7 +2758,78 @@ void lsdtt_flowinfo::write_flow_lines(
         }
     }
     loader.finish_vector_write();
+} // End of flowinfo class
+
+
+// =============================================================================
+// Topology
+// =============================================================================
+float calculate_flow_topological_distance(
+    std::int64_t flat1,
+    std::int64_t flat2,
+    const lsdtt_flow_base& flow)
+{
+    float nan_f = std::numeric_limits<float>::quiet_NaN();
+    if (!flow.is_valid_cell(flat1) || !flow.is_valid_cell(flat2)) return nan_f;
+    if (flat1 == flat2) return 0.0f; // Incoming and outgoing edges share the exact same pixel
+
+    double dx = flow.cell_size();
+    double dxy = dx * 1.4142135623730950488; // sqrt(2)
+
+    // Trace path down from flat1 to outlet and record distances
+    std::unordered_map<std::int64_t, double> path1;
+    std::int64_t current = flat1;
+    double dist = 0.0;
+    path1[current] = dist;
+
+    while (!flow.is_outlet_unchecked(current)) 
+    {
+        std::uint8_t dir = flow.receiver_dir_of_unchecked(current);
+        if (dir == lsdtt::k_no_direction) break;
+
+        double step = (dir % 2 == 0) ? dx : dxy;
+        std::int64_t next_cell = flow.receiver_of_unchecked(current);
+
+        // Prevent infinite looping on bad topography cycles
+        if (path1.find(next_cell) != path1.end()) break; 
+
+        dist += step;
+        current = next_cell;
+        path1[current] = dist;
+    }
+
+    // Now trace down from flat2 and look for intersection with path1
+    current = flat2;
+    dist = 0.0;
+    if (path1.find(current) != path1.end()) {
+        return static_cast<float>(dist + path1[current]);
+    }
+
+    std::unordered_map<std::int64_t, double> path2;
+    path2[current] = dist;
+
+    while (!flow.is_outlet_unchecked(current)) 
+    {
+        std::uint8_t dir = flow.receiver_dir_of_unchecked(current);
+        if (dir == lsdtt::k_no_direction) break;
+
+        double step = (dir % 2 == 0) ? dx : dxy;
+        std::int64_t next_cell = flow.receiver_of_unchecked(current);
+
+        if (path2.find(next_cell) != path2.end()) break;
+
+        dist += step;
+        current = next_cell;
+        path2[current] = dist;
+
+        if (path1.find(current) != path1.end()) {
+            return static_cast<float>(dist + path1[current]);
+        }
+    }
+
+    return nan_f; // Diverging paths or hit nodata edges
 }
+
 
 
 
