@@ -185,10 +185,13 @@ public:
     ) const;
 
     [[nodiscard]] std::vector<std::vector<std::string>> get_flow_topological_distance_csv_rows(
-        const std::string&     id_string,
-        const std::string&     ridgeline_type,
-        const lsdtt_flow_base& flow
+        const std::string&                id_string,
+        const std::string&                ridgeline_type,
+        const lsdtt_flow_base&            flow,
+        const lsdtt_raster_cpu&           dem,
+        const lsdtt_coordinate_transform& transform
     ) const;
+
 
 
 

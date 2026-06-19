@@ -2764,14 +2764,14 @@ void lsdtt_flowinfo::write_flow_lines(
 // =============================================================================
 // Topology
 // =============================================================================
-float calculate_flow_topological_distance(
+lsdtt_flow_topology_metrics calculate_flow_topological_distance(
     std::int64_t flat1,
     std::int64_t flat2,
     const lsdtt_flow_base& flow)
 {
-    float nan_f = std::numeric_limits<float>::quiet_NaN();
-    if (!flow.is_valid_cell(flat1) || !flow.is_valid_cell(flat2)) return nan_f;
-    if (flat1 == flat2) return 0.0f; // Incoming and outgoing edges share the exact same pixel
+    lsdtt_flow_topology_metrics failed = {-9999.0f, -1};
+    if (!flow.is_valid_cell(flat1) || !flow.is_valid_cell(flat2)) return failed;
+    if (flat1 == flat2) return {0.0f, flat1}; // Incoming and outgoing edges share the exact same pixel
 
     double dx = flow.cell_size();
     double dxy = dx * 1.4142135623730950488; // sqrt(2)
@@ -2802,7 +2802,7 @@ float calculate_flow_topological_distance(
     current = flat2;
     dist = 0.0;
     if (path1.find(current) != path1.end()) {
-        return static_cast<float>(dist + path1[current]);
+        return {static_cast<float>(dist + path1[current]), current};
     }
 
     std::unordered_map<std::int64_t, double> path2;
@@ -2823,11 +2823,11 @@ float calculate_flow_topological_distance(
         path2[current] = dist;
 
         if (path1.find(current) != path1.end()) {
-            return static_cast<float>(dist + path1[current]);
+            return {static_cast<float>(dist + path1[current]), current};
         }
     }
 
-    return nan_f; // Diverging paths or hit nodata edges
+    return failed; // Diverging paths or hit nodata edges
 }
 
 

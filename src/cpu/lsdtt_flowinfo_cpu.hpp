@@ -707,12 +707,18 @@ private:
 // -------------------------------------------------------------------------
 // Topology
 // -------------------------------------------------------------------------
+struct lsdtt_flow_topology_metrics {
+    float distance;
+    std::int64_t junction_flat;
+};
+
 // Calculates the topological flow distance down to a common topological 
-// junction between two pixels, and back up. Returns NaN if they don't converge.
-[[nodiscard]] float calculate_flow_topological_distance(
+// junction between two pixels, and back up. Returns {-9999.0f, -1} if they don't converge.
+[[nodiscard]] lsdtt_flow_topology_metrics calculate_flow_topological_distance(
     std::int64_t flat1, 
     std::int64_t flat2, 
     const lsdtt_flow_base& flow
 );
+
 
 } // namespace lsdtt

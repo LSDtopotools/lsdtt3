@@ -1556,12 +1556,18 @@ int main(int argc, char* argv[])
         };
 
         const std::vector<std::string> flow_dist_headers_single = {
-            "basin_junction_number", "ridgeline_type", "distance", 
-            "left_flow_topological_distance", "right_flow_topological_distance"
+            "basin_junction_number", "ridgeline_type", "latitude", "longitude", 
+            "distance", "elevation",
+            "left_flow_topological_distance", "right_flow_topological_distance",
+            "left_junction_elevation", "right_junction_elevation",
+            "left_junction_elevation_difference", "right_junction_elevation_difference"
         };
         const std::vector<std::string> flow_dist_headers_dual = {
-            "ridgeline_number", "ridgeline_type", "distance", 
-            "left_flow_topological_distance", "right_flow_topological_distance"
+            "ridgeline_number", "ridgeline_type", "latitude", "longitude", 
+            "distance", "elevation",
+            "left_flow_topological_distance", "right_flow_topological_distance",
+            "left_junction_elevation", "right_junction_elevation",
+            "left_junction_elevation_difference", "right_junction_elevation_difference"
         };
 
 
@@ -1617,7 +1623,7 @@ int main(int argc, char* argv[])
             }
 
             if (bf["print_ridgeline_flow_topological_distance"]) {
-                auto fd_rows = rl.get_flow_topological_distance_csv_rows(id_str, rec.feature_type, *flow);
+                auto fd_rows = rl.get_flow_topological_distance_csv_rows(id_str, rec.feature_type, *flow, dem, transform);
                 flow_dist_map[rec.file_prefix].insert(
                     flow_dist_map[rec.file_prefix].end(), fd_rows.begin(), fd_rows.end()
                 );
