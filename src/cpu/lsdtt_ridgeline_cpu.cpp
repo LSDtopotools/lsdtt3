@@ -35,6 +35,38 @@ std::string format_float(double value)
     oss << std::fixed << std::setprecision(9) << value;
     return oss.str();
 }
+
+
+struct EdgePixels {
+    int left_r, left_c;
+    int right_r, right_c;
+    bool valid;
+};
+
+// Gets the row/col DEM pixels strictly to the Left and Right of an oriented 4-connected divide grid step
+EdgePixels get_edge_pixels(const lsdtt_pixel_rc& p1, const lsdtt_pixel_rc& p2) {
+    EdgePixels ep;
+    ep.valid = true;
+    int dr = p2.row - p1.row;
+    int dc = p2.col - p1.col;
+
+    if (dr == 0 && dc == 1) { // East
+        ep.left_r = p1.row - 1; ep.left_c = p1.col;
+        ep.right_r = p1.row;    ep.right_c = p1.col;
+    } else if (dr == 0 && dc == -1) { // West
+        ep.left_r = p1.row;     ep.left_c = p1.col - 1;
+        ep.right_r = p1.row - 1; ep.right_c = p1.col - 1;
+    } else if (dr == 1 && dc == 0) { // South
+        ep.left_r = p1.row;     ep.left_c = p1.col;
+        ep.right_r = p1.row;    ep.right_c = p1.col - 1;
+    } else if (dr == -1 && dc == 0) { // North
+        ep.left_r = p1.row - 1; ep.left_c = p1.col - 1;
+        ep.right_r = p1.row - 1; ep.right_c = p1.col;
+    } else {
+        ep.valid = false; // Not a strict 4-connected step
+    }
+    return ep;
+}
 }
 
 // =============================================================================
@@ -733,6 +765,102 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_extrema_csv_rows(
 
     return rows;
 }
+
+std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_flow_topological_distance_csv_rows(
+    const std::string&                id_string,
+    const std::string&                ridgeline_type,
+    const lsdtt_flow_base&            flow,
+    const lsdtt_raster_cpu&           dem,
+    const lsdtt_coordinate_transform& transform
+) const
+{
+    std::vector<std::vector<std::string>> rows;
+    if (nodes_.empty()) return rows; 
+
+    rows.reserve(nodes_.size());
+
+    const auto& data = dem.get_data_array();
+    const auto& mask = dem.get_mask_array();
+    const float ndv  = dem.get_meta().no_data_value;
+
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+        
+        lsdtt_flow_topology_metrics left_met  = {-9999.0f, -1};
+        lsdtt_flow_topology_metrics right_met = {-9999.0f, -1};
+        
+        // Exclude start and end node from getting distances (no fully formed incoming/outgoing edge limits)
+        if (i > 0 && i < nodes_.size() - 1) {
+            EdgePixels in_edge = get_edge_pixels(nodes_[i-1], nodes_[i]);
+            EdgePixels out_edge = get_edge_pixels(nodes_[i], nodes_[i+1]);
+
+            if (in_edge.valid && out_edge.valid) {
+                std::int64_t left_in_flat = flow.in_bounds(in_edge.left_r, in_edge.left_c) ? 
+                    flow.flat_index_unchecked(in_edge.left_r, in_edge.left_c) : -1;
+                std::int64_t left_out_flat = flow.in_bounds(out_edge.left_r, out_edge.left_c) ? 
+                    flow.flat_index_unchecked(out_edge.left_r, out_edge.left_c) : -1;
+
+                std::int64_t right_in_flat = flow.in_bounds(in_edge.right_r, in_edge.right_c) ? 
+                    flow.flat_index_unchecked(in_edge.right_r, in_edge.right_c) : -1;
+                std::int64_t right_out_flat = flow.in_bounds(out_edge.right_r, out_edge.right_c) ? 
+                    flow.flat_index_unchecked(out_edge.right_r, out_edge.right_c) : -1;
+
+                if (left_in_flat >= 0 && left_out_flat >= 0) {
+                    left_met = calculate_flow_topological_distance(left_in_flat, left_out_flat, flow);
+                }
+                if (right_in_flat >= 0 && right_out_flat >= 0) {
+                    right_met = calculate_flow_topological_distance(right_in_flat, right_out_flat, flow);
+                }
+            }
+        }
+
+        // Establish the main node metrics
+        lsdtt_lonlat ll = xy_to_lonlat(positions_[i].x, positions_[i].y, transform);
+        float ridge_z = (i < elevations_.size() && elevations_[i] != ndv) ? elevations_[i] : -9999.0f;
+
+        // Perform the elevation lookups and differences
+        float left_junc_z = -9999.0f;
+        float right_junc_z = -9999.0f;
+        float left_diff_z = -9999.0f;
+        float right_diff_z = -9999.0f;
+
+        if (left_met.junction_flat >= 0) {
+            int r = flow.row_from_flat_unchecked(left_met.junction_flat);
+            int c = flow.col_from_flat_unchecked(left_met.junction_flat);
+            if (mask(r,c) != 0 && data(r,c) != ndv) {
+                left_junc_z = data(r,c);
+                if (ridge_z != -9999.0f) left_diff_z = ridge_z - left_junc_z;
+            }
+        }
+        
+        if (right_met.junction_flat >= 0) {
+            int r = flow.row_from_flat_unchecked(right_met.junction_flat);
+            int c = flow.col_from_flat_unchecked(right_met.junction_flat);
+            if (mask(r,c) != 0 && data(r,c) != ndv) {
+                right_junc_z = data(r,c);
+                if (ridge_z != -9999.0f) right_diff_z = ridge_z - right_junc_z;
+            }
+        }
+
+        rows.push_back({
+            id_string,
+            ridgeline_type,
+            format_float(ll.latitude),
+            format_float(ll.longitude),
+            format_float(distances_[i]),
+            format_float(ridge_z),
+            format_float(left_met.distance),
+            format_float(right_met.distance),
+            format_float(left_junc_z),
+            format_float(right_junc_z),
+            format_float(left_diff_z),
+            format_float(right_diff_z)
+        });
+    }
+
+    return rows;
+}
+
+
 
 
 } // namespace lsdtt

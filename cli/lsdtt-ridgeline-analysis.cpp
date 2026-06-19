@@ -541,9 +541,10 @@ static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
 
         if (boundary_id != -1) {
             if (start_idx <= end_idx) {
+                // +1 to make the end_idx (the corner) inclusive on this boundary
                 boundary_segments[boundary_id].assign(
                     boundary_flats.begin() + start_idx, 
-                    boundary_flats.begin() + end_idx
+                    boundary_flats.begin() + end_idx + 1
                 );
             } else {
                 // Segment wraps perfectly around the end of the trace array
@@ -551,17 +552,18 @@ static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
                     boundary_flats.begin() + start_idx, 
                     boundary_flats.end()
                 );
+                // +1 to make the end_idx (the corner) inclusive on this boundary
                 boundary_segments[boundary_id].insert(
                     boundary_segments[boundary_id].end(), 
                     boundary_flats.begin(), 
-                    boundary_flats.begin() + end_idx
+                    boundary_flats.begin() + end_idx + 1
                 );
             }
         }
     }
     return boundary_segments;
-
 }
+
 
 // =============================================================================
 // main
@@ -812,6 +814,12 @@ int main(int argc, char* argv[])
     help_map["print_ridgeline_extrema"] = {"bool", "false", 
         "This triggers printing of ridgeline extrema to csv.", 
         "Includes distance to next extremum, relief, and distance to TDJ."};
+
+    bool_default_map["print_ridgeline_flow_topological_distance"] = false;
+    help_map["print_ridgeline_flow_topological_distance"] = {"bool", "false", 
+        "Write the left and right flow topological distances for internal ridgeline nodes.", 
+        "Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node."};
+
 
     // --- Polynomial surface fit ---
     bool_default_map["write_polyfit_rasters"] = false;
@@ -1509,19 +1517,21 @@ int main(int argc, char* argv[])
 
     if (all_ridgelines.empty() && 
        (bf["print_ridgelines"] || bf["print_ridgeline_stats"] || 
-        bf["print_ridgeline_extrema"]))
+        bf["print_ridgeline_extrema"] || bf["print_ridgeline_flow_topological_distance"]))
     {
         std::cout << "\nNote: No extracted ridgelines exist right now, "
                   << "skipping CSV prints.\n";
     }
     else if (bf["print_ridgelines"] || bf["print_ridgeline_stats"] || 
-             bf["print_ridgeline_extrema"])
+             bf["print_ridgeline_extrema"] || bf["print_ridgeline_flow_topological_distance"])
     {
+
         std::cout << "\n--- Writing CSV Outputs ---\n";
         
         std::map<std::string, std::vector<std::vector<std::string>>> pt_map;
         std::map<std::string, std::vector<std::vector<std::string>>> stats_map;
         std::map<std::string, std::vector<std::vector<std::string>>> ext_map;
+        std::map<std::string, std::vector<std::vector<std::string>>> flow_dist_map;
 
         const std::vector<std::string> stats_headers_single = {
             "basin_junction_number", "ridgeline_type", "basin_drainage_area", 
@@ -1545,6 +1555,22 @@ int main(int argc, char* argv[])
             "extremum_type", "distance_to_next_extremum", "relief_to_next_extremum", "distance_to_triple_divide"
         };
 
+        const std::vector<std::string> flow_dist_headers_single = {
+            "basin_junction_number", "ridgeline_type", "latitude", "longitude", 
+            "distance", "elevation",
+            "left_flow_topological_distance", "right_flow_topological_distance",
+            "left_junction_elevation", "right_junction_elevation",
+            "left_junction_elevation_difference", "right_junction_elevation_difference"
+        };
+        const std::vector<std::string> flow_dist_headers_dual = {
+            "ridgeline_number", "ridgeline_type", "latitude", "longitude", 
+            "distance", "elevation",
+            "left_flow_topological_distance", "right_flow_topological_distance",
+            "left_junction_elevation", "right_junction_elevation",
+            "left_junction_elevation_difference", "right_junction_elevation_difference"
+        };
+
+
         if (bf["print_ridgelines"]) {
             std::cout << "\nPrinting " << analysis_mode << " ridgelines to file: \n";
         }
@@ -1555,6 +1581,10 @@ int main(int argc, char* argv[])
         if (bf["print_ridgeline_extrema"]) {
             std::cout << "\nPrinting " << analysis_mode << " ridgeline extrema to file:\n";
         }
+        if (bf["print_ridgeline_flow_topological_distance"]) {
+            std::cout << "\nPrinting " << analysis_mode << " ridgeline flow topological distances to file:\n";
+        }
+
 
         for (const auto& rec : all_ridgelines)
         {
@@ -1591,6 +1621,14 @@ int main(int argc, char* argv[])
                     ext_map[rec.file_prefix].end(), rows.begin(), rows.end()
                 );
             }
+
+            if (bf["print_ridgeline_flow_topological_distance"]) {
+                auto fd_rows = rl.get_flow_topological_distance_csv_rows(id_str, rec.feature_type, *flow, dem, transform);
+                flow_dist_map[rec.file_prefix].insert(
+                    flow_dist_map[rec.file_prefix].end(), fd_rows.begin(), fd_rows.end()
+                );
+            }
+
         }
 
         try 
@@ -1609,6 +1647,12 @@ int main(int argc, char* argv[])
                 const auto& hdrs = headers_are_dual ? extrema_headers_dual : extrema_headers_single;
                 csv_loader.write_csv(pp.make_output_path(pf + "_extrema", ".csv"), hdrs, rows);
             }
+            for (const auto& [pf, rows] : flow_dist_map) {
+                if (rows.empty()) continue;
+                const auto& hdrs = headers_are_dual ? flow_dist_headers_dual : flow_dist_headers_single;
+                csv_loader.write_csv(pp.make_output_path(pf + "_flow_topology", ".csv"), hdrs, rows);
+            }
+
         }
         catch (const std::exception& e) 
         {
