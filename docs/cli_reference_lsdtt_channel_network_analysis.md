@@ -101,6 +101,23 @@ Exactly one selection mode must be active. If none is specified, `analyse_all_ju
 
 ---
 
+## Complete-basin filtering
+
+Restricts the junction-based analyses to *complete* basins — basins whose entire
+upslope area touches no nodata or DEM edge. Because the bearing, junction-angle,
+and centre-of-mass analyses are stream-order based, edge-truncated basins (whose
+true upstream network is clipped by the DEM boundary) would bias the statistics,
+so they are dropped before analysis. The filter is applied after junction
+selection and affects the `_channel_link_bearings`, `_junction_angles`, and
+`_junction_com_bearings` outputs.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `only_complete_basins` | bool | `true` | Keep only junctions whose upslope basin is complete (no upslope pixel is influenced by nodata or the DEM edge). **Note:** the default is `true`, so output now excludes edge-truncated basins (a change from older versions). Set `false` to analyse every selected junction regardless of completeness. |
+| `minimum_basin_pixels` | int | `0` | Drop junctions whose upslope basin has fewer than this many pixels. `0` (default) disables the size filter. Applied alongside `only_complete_basins`. |
+
+---
+
 ## Link sampling (Steps 6 and 7)
 
 Controls how channel link geometry is sampled when fitting a bearing direction.
