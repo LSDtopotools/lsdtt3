@@ -541,9 +541,10 @@ static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
 
         if (boundary_id != -1) {
             if (start_idx <= end_idx) {
+                // +1 to make the end_idx (the corner) inclusive on this boundary
                 boundary_segments[boundary_id].assign(
                     boundary_flats.begin() + start_idx, 
-                    boundary_flats.begin() + end_idx
+                    boundary_flats.begin() + end_idx + 1
                 );
             } else {
                 // Segment wraps perfectly around the end of the trace array
@@ -551,17 +552,18 @@ static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
                     boundary_flats.begin() + start_idx, 
                     boundary_flats.end()
                 );
+                // +1 to make the end_idx (the corner) inclusive on this boundary
                 boundary_segments[boundary_id].insert(
                     boundary_segments[boundary_id].end(), 
                     boundary_flats.begin(), 
-                    boundary_flats.begin() + end_idx
+                    boundary_flats.begin() + end_idx + 1
                 );
             }
         }
     }
     return boundary_segments;
-
 }
+
 
 // =============================================================================
 // main
