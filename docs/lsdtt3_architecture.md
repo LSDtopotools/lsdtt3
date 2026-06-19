@@ -114,7 +114,7 @@ lsdtt3/
 │   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
 │   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
-│   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state
+│   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp           — transient hillslope transport (cidre, roering, linear, adi)
 │   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp        — steady-state hillslope solver (SOR + pseudo-transient Cidre)
 │   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp               — Verlet cloth drape: upper envelope surface and incision depth
@@ -127,13 +127,15 @@ lsdtt3/
 │   │   ├── lsdtt_chi_data_maps_cpu.hpp/.cpp                  — chi data-map output (per-node points, basin outlines, polylines)
 │   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
 │   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
-│   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity
+│   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity, junction area-ratio distribution
 │   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
 │   │   ├── lsdtt_cosmo_raster_cpu.hpp/.cpp                   — raster CRN: production, SS/step-change concentration, flow accumulation
 │   │   ├── lsdtt_crn_parameters.hpp/.cpp                     — Stone 2000 scaling, muon schemes, ERA40/palaeomagnetic correction
 │   │   ├── lsdtt_crn_column.hpp/.cpp                         — 1-D transient CRN column simulation
 │   │   ├── lsdtt_crn_particle.hpp                            — header-only: SS and transient nuclide concentration particle
-│   │   └── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
+│   │   ├── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
+│   ├── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (masks + multi-outlet; tunable Tokunaga exponents)
+│   └── lsdtt_synthetic_domain_cpu.hpp/.cpp               — island domain masks (EFD, red-noise, polygon import) for the OCN generator
 │   └── utils/
 │       ├── lsdtt_array2d.hpp                — header-only 2D array
 │       ├── lsdtt_raster_geometry.hpp        — header-only raster geometry helpers
@@ -199,6 +201,8 @@ the utility-layer numerical functions.
 - `lsdtt_raster_nodata_filling_cpu.cpp`
 - `lsdtt_raster_spectral_cpu.cpp`
 - `lsdtt_raster_synthetic_surfaces_cpu.cpp`
+- `lsdtt_synthetic_network_cpu.cpp`
+- `lsdtt_synthetic_domain_cpu.cpp`
 - `lsdtt_raster_feature_finder_cpu.cpp`
 - `lsdtt_flowinfo_cpu.cpp`
 - `lsdtt_flow_base.cpp`
@@ -487,7 +491,14 @@ Requires: `<cmath>`, `<stdexcept>`, `<string>`, `<gdal.h>`, `<ogr_spatialref.h>`
 Key fields: `n_rows`, `n_cols`, `x_min`, `y_min`, `cell_size`, `no_data_value`,
 `crs_wkt`, `epsg_code`, `data_type`.
 
-**CRS validation methods:**
+**CRS / georeferencing methods:**
+- `set_crs_from_epsg(epsg)` — sets `crs_wkt` + `epsg_code` from an EPSG code (via OGR)
+- `set_default_synthetic_georeference()` — gives a generated raster (no input DEM)
+  a sensible default: the grid is centred on Teanu Island, Solomon Islands
+  (11.633°S, 166.967°E — the real-world location of Zwift's "Watopia"), in UTM
+  zone 58S (EPSG:32758), away from the antimeridian and poles so coordinates
+  round-trip cleanly to/from lat/lon. Used by the synthetic-surface generators,
+  `lsdtt_synthetic_network_cpu`, and `lsdtt-lem` when no CRS is supplied.
 - `is_geographic()` — true if lat/lon CRS
 - `linear_unit_name()` — returns e.g. "metre", "foot"
 - `is_in_metres()` — true if linear unit is metres (within 1e-6)
@@ -510,6 +521,32 @@ Current CLI programs are:
 
 - **`lsdtt-raster-synthetic-tests.cpp`**  
   Synthetic raster generation and testing utilities.
+
+- **`lsdtt-synthetic-networks.cpp`**  
+  Generates synthetic Optimal Channel Networks (OCNs) with tunable branching
+  statistics (tunable Tokunaga exponents) via simulated-annealing edge flips that
+  minimise `E = Σ Aᵢ^gamma` (Metropolis acceptance `exp(-ΔE/T)`; the cooling
+  schedule sweeps from random/Shreve-like at high T to strongly aggregated as
+  T→0). Engine: `lsdtt_synthetic_network_cpu`. Elevations use the **chi-based
+  fluvial steady state** via the *same* shared core
+  (`compute_fluvial_steady_state_on_tree`) as lsdtt-lem's steady-state solver, so
+  an OCN and a LEM steady state on the same graph give the same surface; relief
+  is controlled exactly as in the LEM (`steady_state_mode` K/relief,
+  `target_relief`, `uplift_rate`, `erodibility`, `m_exponent`, `n_exponent`,
+  `baselevel_elevation`); fluvial relief only. The domain can be the full
+  rectangle or an **irregular island** (`domain_type` = efd_island /
+  noise_island / polygon): EFD = Elliptical Fourier random coastline,
+  noise_island = thresholded radial red-noise, polygon = a user vector
+  (`polygon_sizing` = scaled to the grid, or true_area = grid derived from the
+  polygon's real extent + cell_size, preserving area and the polygon's CRS)
+  (`lsdtt_synthetic_domain_cpu`). Outlets follow `outlet_mode`
+  (`auto` → islands drain to their whole coastline (all_coast), the rectangle to
+  a single outlet). Generated DEMs carry the default synthetic georeference (see
+  below: centred on "Watopia"/Teanu Island, UTM zone 58S), with sea pixels as
+  nodata. Outputs a synthetic DEM, the OCN drainage-area raster, and a summary
+  CSV that includes the **D8 round-trip fidelity** (fraction of interior pixels whose D8 receiver equals the OCN
+  receiver — ~1 for relaxed low-T networks, lower for random high-T networks, an
+  inherent OCN self-consistency property). Design: `docs/synthetic_networks_plan.md`.
 
 - **`lsdtt-surface-metrics.cpp`**  
   Surface-analysis workflow that does not require flow routing: hillshade,
@@ -541,6 +578,10 @@ Current CLI programs are:
   percentiles, centroid lat/lon, drainage area, nodata-edge flag, and channel length by
   Strahler stream order (orders 1–6). Basins touching nodata or the raster edge are
   optionally rejected (reject_nodata_edge_basins, default true).
+  Optional toggles (each independent): `calculate_junction_area_ratios`
+  (network-wide junction area-ratio CSVs) and `calculate_centre_of_mass_bearing`
+  (adds com_bearing_deg / com_distance_m — bearing from the user outlet to the
+  basin centre of mass; the outlet is used directly, the channel is not followed).
   Optionally (independent toggle `calculate_shape_metrics`, like `calculate_channel_stats`)
   computes per-basin planform shape metrics from the traced outline polygon
   (`compute_basin_shape` in `lsdtt_polygon_geometry.hpp`): elongation ratio, form factor,
@@ -550,6 +591,12 @@ Current CLI programs are:
   circularity/Gravelius is measured on a Douglas–Peucker-simplified ring
   (`shape_perimeter_simplify_cells`) to mitigate the staircased divide-grid boundary.
   Theory and references: `docs/basin_shape_metrics.tex`.
+  Also has an independent `calculate_junction_area_ratios` switch that writes the
+  per-junction drainage-area ratio table + distribution summary (see below).
+  `write_basin_polygons` writes one basin-outline polygon per basin to a vector
+  layer (`basin_polygon_format` flatgeobuf/gpkg) with the per-basin hydromorphic,
+  shape, and centre-of-mass metrics attached as typed attributes — i.e. the basin
+  metrics joined to their basin polygons.
 
 - **`lsdtt-feature-finder.cpp`**  
   Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope morphology).
@@ -592,8 +639,15 @@ Current CLI programs are:
 - **`lsdtt-channel-network-analysis.cpp`**  
   Builds a channel/junction network and runs one or more network analyses:
   channel-link bearing fitting (orthogonal regression), junction-angle calculation
-  (donor opening angle, donor–receiver angles, bending angle), and
-  Strahler/Tokunaga self-similarity analysis. Writes CSV, GeoPackage, or FlatGeobuf.
+  (donor opening angle, donor–receiver angles, bending angle),
+  Strahler/Tokunaga self-similarity analysis (with a count-weighted Poisson GLM
+  fit alongside the OLS fit), per-junction drainage-area ratios
+  (`write_junction_area_ratio_data` / `_summary` — a continuous, high-sample-count
+  complement to order-binned Tokunaga, with branch-bootstrap CIs and an
+  area-decade collapse table), and per-junction basin centre-of-mass bearings
+  (`write_junction_centre_of_mass_bearings` — for each junction the basin is the
+  upslope area of the pixel just before the next downstream junction; outputs the
+  outlet→centre-of-mass bearing). Writes CSV, GeoPackage, or FlatGeobuf.
 
 - **`lsdtt-chi-analysis.cpp`** *(requires Eigen3)*  
   End-to-end chi workflow: chi extraction on threshold-defined channel networks,

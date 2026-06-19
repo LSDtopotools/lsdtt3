@@ -212,6 +212,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_nodata_filling_cpu.cpp
     src/cpu/lsdtt_raster_spectral_cpu.cpp
     src/cpu/lsdtt_raster_synthetic_surfaces_cpu.cpp
+    src/cpu/lsdtt_synthetic_network_cpu.cpp
+    src/cpu/lsdtt_synthetic_domain_cpu.cpp
     src/cpu/lsdtt_flowinfo_cpu.cpp
     src/cpu/lsdtt_flow_base.cpp
     src/cpu/lsdtt_junction_network_cpu.cpp
@@ -398,6 +400,7 @@ endmacro()
 # =============================================================================
 lsdtt_cli(lsdtt-raster-preprocessing   cli/lsdtt-raster-preprocessing.cpp)
 lsdtt_cli(lsdtt-raster-synthetic-tests cli/lsdtt-raster-synthetic-tests.cpp)
+lsdtt_cli(lsdtt-synthetic-networks     cli/lsdtt-synthetic-networks.cpp)
 lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-drainage-analysis      cli/lsdtt-drainage-analysis.cpp)

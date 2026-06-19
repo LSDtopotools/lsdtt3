@@ -88,12 +88,13 @@ static lsdtt_raster_meta build_meta(
     lsdtt_raster_meta meta;
     meta.n_rows        = n_rows;
     meta.n_cols        = n_cols;
-    meta.x_min         = 0.0;
-    meta.y_min         = 0.0;
     meta.cell_size     = cell_size;
     meta.no_data_value = -9999.0;
     meta.data_type     = GDT_Float32;
-    meta.crs_wkt       = "";
+
+    // Synthetic surfaces have no input raster, so default to a sensible
+    // projected georeference centred on "Watopia" (Teanu Island, UTM zone 58S).
+    meta.set_default_synthetic_georeference();
 
     return meta;
 }

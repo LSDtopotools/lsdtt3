@@ -774,12 +774,22 @@ int main(int argc, char* argv[])
         syn_meta.no_data_value = -9999.0;
         syn_meta.crs_wkt       = crs_wkt;
 
+        // No CRS supplied for a generated DEM: default to a sensible projected
+        // georeference centred on "Watopia" (Teanu Island, UTM zone 58S). This
+        // also overrides the grid origin to centre it on that anchor.
+        if (crs_wkt.empty())
+        {
+            syn_meta.set_default_synthetic_georeference();
+        }
+
         const std::string surf_type = sf["initial_surface_type"];
         std::cout << "\nBuilding synthetic " << surf_type << " surface: "
                   << nr << " x " << nc << " @ " << dx << " m\n";
-        
-        if (!crs_wkt.empty()) {
-            std::cout << "Assigned projection to synthetic raster.\n";
+
+        if (!syn_meta.crs_wkt.empty()) {
+            std::cout << "Assigned projection to synthetic raster"
+                      << (crs_wkt.empty() ? " (default: Watopia, UTM zone 58S).\n"
+                                          : ".\n");
         }
 
         if (surf_type == "white_noise")

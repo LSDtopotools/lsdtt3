@@ -2279,4 +2279,144 @@ void write_junction_angle_bearing_vectors(
 }
 
 
+// =============================================================================
+// bearing_from_north_degrees
+// =============================================================================
+double bearing_from_north_degrees(double ox, double oy, double cx, double cy)
+{
+    const double de = cx - ox;   // easting difference
+    const double dn = cy - oy;   // northing difference
+    if (de == 0.0 && dn == 0.0)
+        return std::numeric_limits<double>::quiet_NaN();
+    double b = std::atan2(de, dn) * (180.0 / M_PI);
+    if (b < 0.0) b += 360.0;
+    return b;
+}
+
+// =============================================================================
+// calculate_junction_com_bearings
+// =============================================================================
+std::vector<lsdtt_junction_com_bearing> calculate_junction_com_bearings(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& network)
+{
+    std::vector<lsdtt_junction_com_bearing> out;
+
+    const lsdtt_raster_meta& meta = flow.meta();
+    const int n_rows = meta.n_rows;
+    const int n_cols = meta.n_cols;
+    const std::size_t n =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    // Origin-relative cell-centre coordinates as accumulation inputs (kept small
+    // to preserve float precision through the O(N) upslope sum).
+    std::vector<float>   vx(n, 0.0f);
+    std::vector<float>   vy(n, 0.0f);
+    std::vector<uint8_t> mask(n, 0);
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t f = static_cast<std::size_t>(r) * n_cols + c;
+            if (!flow.is_valid_cell(static_cast<std::int64_t>(f))) continue;
+            mask[f] = 1;
+            vx[f] = static_cast<float>(cell_centre_x(meta, c) - meta.x_min);
+            vy[f] = static_cast<float>(cell_centre_y(meta, r) - meta.y_min);
+        }
+    }
+
+    const lsdtt_raster_result sx = flow.get_upslope_sum_raster(vx, mask, true);
+    const lsdtt_raster_result sy = flow.get_upslope_sum_raster(vy, mask, true);
+    const lsdtt_raster_result nc = flow.get_n_contributing_pixels_raster();
+    const std::vector<float>& AX = sx.data;
+    const std::vector<float>& AY = sy.data;
+    const std::vector<float>& NP = nc.data;
+
+    const std::int32_t n_junc = network.n_junctions();
+    out.reserve(static_cast<std::size_t>(n_junc));
+
+    for (std::int32_t j = 0; j < n_junc; ++j)
+    {
+        if (!network.is_valid_junction(j)) continue;
+
+        const std::int64_t node = network.flat_of_junction(j);
+        const std::int32_t recv_j = network.receiver_of_junction(j);
+        const std::int64_t recv_node =
+            (recv_j >= 0) ? network.flat_of_junction(recv_j) : -1;
+
+        // Walk downstream to the pixel just before the downstream junction
+        // (or to base level for the outlet junction).
+        std::int64_t outlet = node;
+        while (true)
+        {
+            const std::int64_t nxt = flow.receiver_of(outlet);
+            if (nxt < 0) break;                              // base level
+            if (recv_node >= 0 && nxt == recv_node) break;   // just before downstream junction
+            outlet = nxt;
+        }
+
+        const std::size_t oi = static_cast<std::size_t>(outlet);
+        if (oi >= NP.size() || NP[oi] <= 0.0f) continue;
+
+        const double area  = static_cast<double>(NP[oi]);
+        const double com_x = meta.x_min + static_cast<double>(AX[oi]) / area;
+        const double com_y = meta.y_min + static_cast<double>(AY[oi]) / area;
+
+        const int orow = flow.row_from_flat_unchecked(outlet);
+        const int ocol = flow.col_from_flat_unchecked(outlet);
+        const lsdtt_xy oxy = cell_center_from_row_col(meta, orow, ocol);
+
+        lsdtt_junction_com_bearing rec;
+        rec.junction_id = j;
+        rec.order       = network.stream_order_of_junction(j);
+        rec.outlet_x    = oxy.x;
+        rec.outlet_y    = oxy.y;
+        rec.com_x       = com_x;
+        rec.com_y       = com_y;
+        rec.bearing_deg = bearing_from_north_degrees(oxy.x, oxy.y, com_x, com_y);
+        rec.distance_m  = std::hypot(com_x - oxy.x, com_y - oxy.y);
+        rec.n_pixels    = static_cast<std::int64_t>(area);
+        out.push_back(rec);
+    }
+
+    return out;
+}
+
+// =============================================================================
+// write_junction_com_bearings
+// =============================================================================
+void write_junction_com_bearings(
+    const std::vector<lsdtt_junction_com_bearing>& records,
+    const std::string&                             out_path)
+{
+    lsdtt_data_loader loader;
+
+    std::vector<std::string> headers =
+    {
+        "junction_id", "order",
+        "outlet_x", "outlet_y", "com_x", "com_y",
+        "bearing_deg", "distance_m", "n_pixels"
+    };
+
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(records.size());
+    for (const auto& r : records)
+    {
+        rows.push_back({
+            std::to_string(r.junction_id),
+            std::to_string(r.order),
+            precise_string(r.outlet_x),
+            precise_string(r.outlet_y),
+            precise_string(r.com_x),
+            precise_string(r.com_y),
+            precise_string(r.bearing_deg),
+            precise_string(r.distance_m),
+            std::to_string(r.n_pixels)
+        });
+    }
+
+    loader.write_csv(out_path, headers, rows);
+}
+
+
 } // namespace lsdtt

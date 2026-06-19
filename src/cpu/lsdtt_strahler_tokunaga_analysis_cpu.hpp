@@ -241,7 +241,8 @@ struct lsdtt_tokunaga_self_similarity_test
     std::vector<lsdtt_tokunaga_pair_count>  pair_counts;
     std::vector<lsdtt_tokunaga_offset_stat> offset_stats;
 
-    lsdtt_tokunaga_fit fit;
+    lsdtt_tokunaga_fit fit;          // ordinary log-linear least squares
+    lsdtt_tokunaga_fit fit_poisson;  // count-weighted Poisson GLM (IRLS)
 
     double rmse_log_space = std::numeric_limits<double>::quiet_NaN();
 };
@@ -310,6 +311,19 @@ std::vector<lsdtt_tokunaga_offset_stat> calculate_tokunaga_offset_statistics(
 // using the available offset statistics.
 // -----------------------------------------------------------------------------
 lsdtt_tokunaga_fit fit_tokunaga_law(
+    const std::vector<lsdtt_tokunaga_offset_stat>& offset_stats
+);
+
+// -----------------------------------------------------------------------------
+// fit_tokunaga_law_poisson
+//
+// Count-weighted Poisson GLM fit of T_k = a*c^(k-1) by iteratively reweighted
+// least squares (log link). Each offset k contributes its observed mean T_k with
+// a prior weight equal to its pair count, so sparsely-populated high offsets no
+// longer dominate the slope as they do in ordinary log-linear least squares.
+// This is the statistically appropriate model for T_k as a count rate.
+// -----------------------------------------------------------------------------
+lsdtt_tokunaga_fit fit_tokunaga_law_poisson(
     const std::vector<lsdtt_tokunaga_offset_stat>& offset_stats
 );
 
@@ -418,6 +432,145 @@ void write_tokunaga_channels(
     point_output_format                   format,
     const std::string&                    layer_name = "tokunaga_channels",
     bool                                  spatial_index = true
+);
+
+
+// =============================================================================
+// Junction drainage-area ratios
+//
+// A continuous, high-sample-count complement to order-binned Tokunaga analysis.
+// At every interior confluence two (or more) channels merge; the ratio of the
+// two largest incoming drainage areas r = A_trib / A_main in (0,1] is recorded
+// at EVERY junction, giving far more samples than the few well-populated
+// Strahler-order bins. The distribution of r encodes the network's
+// area-accumulation self-similarity.
+//
+// CAVEATS (see docs/synthetic_networks_plan.md and the project notes):
+//   - This measures area accumulation, NOT side-branching topology; it does not
+//     uniquely recover Tokunaga (a,c). The c_equivalent below is a
+//     model-dependent estimate (c ~= R_A^lambda), not a substitute for (a,c).
+//   - Junctions are nested and hence autocorrelated; the naive summary here does
+//     not branch-bootstrap, so the spread is informative but the CIs are not.
+//   - Sensitive to the channel-extraction threshold (truncates the small-r tail)
+//     and to the drainage-area definition (here: D8 contributing pixels).
+// =============================================================================
+
+// One record per interior confluence junction.
+struct lsdtt_junction_area_ratio
+{
+    std::int32_t junction_id     = -1;
+    double       x               = std::numeric_limits<double>::quiet_NaN();
+    double       y               = std::numeric_limits<double>::quiet_NaN();
+    double       area_main_cells = 0.0;  // A_main (larger tributary), pixels
+    double       area_trib_cells = 0.0;  // A_trib (smaller tributary), pixels
+    double       ratio           = std::numeric_limits<double>::quiet_NaN(); // A_trib/A_main
+    double       area_down_cells = 0.0;  // contributing pixels at the confluence
+    std::int32_t order_main      = -1;   // Strahler order of larger tributary
+    std::int32_t order_trib      = -1;   // Strahler order of smaller tributary
+    std::int32_t order_receiver  = -1;   // Strahler order of the confluence
+    std::int32_t n_tributaries   = 0;    // number of channel tributaries merging
+
+    // Branch label for branch-bootstrap resampling: the non-mainstem tributary
+    // subtree this confluence belongs to. -1 means the sample is on the main
+    // stem (always retained during resampling).
+    std::int32_t branch_id       = -1;
+};
+
+// One row of the summary scalars; reused for the point estimate and for each
+// bootstrap replicate.
+struct lsdtt_area_ratio_summary
+{
+    double median_ratio = std::numeric_limits<double>::quiet_NaN();
+    double lambda_all   = std::numeric_limits<double>::quiet_NaN();
+    double lambda_tail  = std::numeric_limits<double>::quiet_NaN();
+    double r_a          = std::numeric_limits<double>::quiet_NaN();
+    double c_equivalent = std::numeric_limits<double>::quiet_NaN();
+};
+
+// One row of the area-decade collapse table: summary statistics restricted to
+// confluences whose downstream area falls in [area_low, area_high). If the
+// network is self-similar these rows collapse (similar median_ratio / lambda).
+struct lsdtt_area_ratio_decade
+{
+    double       area_low     = std::numeric_limits<double>::quiet_NaN();
+    double       area_high    = std::numeric_limits<double>::quiet_NaN();
+    std::size_t  n            = 0;
+    double       median_ratio = std::numeric_limits<double>::quiet_NaN();
+    double       lambda_tail  = std::numeric_limits<double>::quiet_NaN();
+};
+
+struct lsdtt_junction_area_ratio_result
+{
+    std::vector<lsdtt_junction_area_ratio> junctions;
+
+    std::size_t n_junctions   = 0;
+    double mean_ratio         = std::numeric_limits<double>::quiet_NaN();
+    double median_ratio       = std::numeric_limits<double>::quiet_NaN();
+
+    // Exponential rate of x = -ln(r): lambda_all over all junctions, lambda_tail
+    // over the small-r tail (x above its median). A power-law tail in r is an
+    // exponential tail in x.
+    double lambda_all         = std::numeric_limits<double>::quiet_NaN();
+    double lambda_tail        = std::numeric_limits<double>::quiet_NaN();
+
+    // Horton area ratio R_A from a per-order regression of mean downstream area,
+    // and the model-dependent Tokunaga-equivalent c = R_A^lambda_tail.
+    double r_a                = std::numeric_limits<double>::quiet_NaN();
+    double c_equivalent       = std::numeric_limits<double>::quiet_NaN();
+
+    // Branch-bootstrap 95% confidence intervals (2.5 / 97.5 percentiles). NaN if
+    // bootstrapping was not requested. The main stem is always retained and
+    // resampling is over non-mainstem tributary branches, the correct unit of
+    // independence for nested (autocorrelated) junctions.
+    std::int32_t n_bootstrap        = 0;
+    std::int32_t n_branches         = 0;
+    double median_ratio_ci_low  = std::numeric_limits<double>::quiet_NaN();
+    double median_ratio_ci_high = std::numeric_limits<double>::quiet_NaN();
+    double lambda_tail_ci_low   = std::numeric_limits<double>::quiet_NaN();
+    double lambda_tail_ci_high  = std::numeric_limits<double>::quiet_NaN();
+    double r_a_ci_low           = std::numeric_limits<double>::quiet_NaN();
+    double r_a_ci_high          = std::numeric_limits<double>::quiet_NaN();
+    double c_equivalent_ci_low  = std::numeric_limits<double>::quiet_NaN();
+    double c_equivalent_ci_high = std::numeric_limits<double>::quiet_NaN();
+
+    // Area-decade collapse table (one row per populated log10 area decade).
+    std::vector<lsdtt_area_ratio_decade> decades;
+};
+
+// -----------------------------------------------------------------------------
+// compute_junction_area_ratios
+//
+// Enumerates interior confluence junctions of the network. For each, the merging
+// tributaries are the D8 channel-donors of the confluence node; their D8
+// contributing-pixel counts give A_main / A_trib and r. Orders come from the
+// junction governing each donor cell. Returns per-junction records plus summary
+// statistics, the area-decade collapse table, and (if n_bootstrap > 0)
+// branch-bootstrap confidence intervals. Requires a junction network with
+// Strahler orders.
+// -----------------------------------------------------------------------------
+lsdtt_junction_area_ratio_result compute_junction_area_ratios(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& network,
+    std::int32_t                       n_bootstrap = 0,
+    std::uint64_t                      random_seed = 5489u
+);
+
+// Per-junction CSV (one row per confluence; includes branch_id).
+void write_junction_area_ratio_data(
+    const lsdtt_junction_area_ratio_result& result,
+    const std::string&                      out_path
+);
+
+// Single-row summary CSV (distribution statistics, tail exponents, and CIs).
+void write_junction_area_ratio_summary(
+    const lsdtt_junction_area_ratio_result& result,
+    const std::string&                      out_path
+);
+
+// Area-decade collapse CSV (one row per log10 area decade).
+void write_junction_area_ratio_decades(
+    const lsdtt_junction_area_ratio_result& result,
+    const std::string&                      out_path
 );
 
 
