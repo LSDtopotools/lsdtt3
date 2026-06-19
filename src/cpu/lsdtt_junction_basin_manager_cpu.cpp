@@ -655,13 +655,15 @@ lsdtt_junction_basin_manager_cpu::filter_range_spanning(
     };
 
     // 1. Build lookup for checking where baselevels end up
-    std::unordered_map<std::int64_t, int> flat_to_boundary;
+    // A flat index (like a corner) can belong to up to 2 boundaries.
+    std::unordered_map<std::int64_t, std::vector<int>> flat_to_boundary;
     for (int b = 0; b < 4; ++b) 
     {
         for (const std::int64_t flat : boundary_segments[b]) {
-            flat_to_boundary[flat] = b;
+            flat_to_boundary[flat].push_back(b);
         }
     }
+
 
     auto get_baselevel = [&](std::int64_t flat) -> std::int64_t {
         std::int64_t curr = flat;
@@ -744,12 +746,17 @@ lsdtt_junction_basin_manager_cpu::filter_range_spanning(
                 std::int64_t bln_index = get_baselevel(node);
                 
                 auto bl_it = flat_to_boundary.find(bln_index);
-                if (bl_it != flat_to_boundary.end() && bl_it->second == opp_b_idx) {
-                    // Yes! This node that is outside along the basin outline flows
-                    // to the opposite boundary!
-                    n_flow_to_opposite_side++;
+                if (bl_it != flat_to_boundary.end()) {
+                    // Check if the baselevel exists on the opposing boundary
+                    const auto& boundaries = bl_it->second;
+                    if (std::find(boundaries.begin(), boundaries.end(), opp_b_idx) != boundaries.end()) {
+                        // Yes! This node that is outside along the basin outline flows
+                        // to the opposite boundary!
+                        n_flow_to_opposite_side++;
+                    }
                 }
             }
+
 
             // If there are two or more nodes flowing to the opposite side, we have a range 
             // spanning basin!
