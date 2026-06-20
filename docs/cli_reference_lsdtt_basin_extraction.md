@@ -180,3 +180,65 @@ basins_max_area_pixels: 22222
 
 write_basin_outlines_as_polygon: true
 ```
+
+## Basins draining into a single channel
+
+`extract_basins_from_single_channel` builds **one main channel** from a supplied
+upstream point and extracts the side-tributary basins draining into it. It is the
+single-trunk counterpart of `extract_side_tributary_basins_from_points`, but
+identifies the channel endpoints explicitly (no reliance on input feature order)
+and snaps the downstream limit onto the traced flow path.
+
+The points file holds one or two points (any OGR format; reprojected to the DEM
+CRS on read):
+
+- **one point** — trace D8 from it to the DEM edge; that path is the single
+  channel.
+- **two points** — the **upstream** point is identified by D8 reachability: both
+  points' D8 paths are traced and the upstream point is the one whose reach to
+  the *common-downstream point* (where the two flows merge) is longer. The single
+  channel runs from the upstream point to that confluence (so a downstream point
+  that sits on a hillslope is snapped to where its flow joins the channel). If the
+  two points are in different sub-basins (their flows never meet), a
+  `downstream point not found` warning is printed and the longer of the two D8
+  paths is used.
+
+Side basins are then found exactly as for `extract_side_tributary_basins_from_points`
+— a side outlet is the pixel just before a tributary joins the channel, kept if
+its basin is complete (`reject_incomplete_side_tributary_basins`) and at least
+`side_tributary_minimum_contributing_pixels` in size.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `extract_basins_from_single_channel` | bool | `false` | Enable the mode. |
+| `single_channel_points_fname` | string | `NULL` | Point vector with 1 or 2 points (upstream, optional downstream). Required. |
+| `side_tributary_minimum_contributing_pixels` | int | `1000` | Minimum side-basin size (pixels). |
+| `reject_incomplete_side_tributary_basins` | bool | `true` | Drop basins touching nodata / the DEM edge. |
+
+Outputs (shared with the side-tributary writers, selected by the
+`write_side_tributary_*` flags and `side_tributary_vector_output_format`):
+`<write_fname>_side_tributary_main_channel`, `..._side_tributary_outlets`,
+`..._side_tributary_basin_outlines`.
+
+The `lsdviztools3` `single_channel_basins.py` example drives this mode and plots
+the single channel with the basins draining into it.
+
+Example parameter file:
+
+```
+read_path:   /data/nujang/
+write_path:  /data/nujang/
+read_fname:  nujang_COP30_fill.tif
+write_fname: nujang_sc
+raster_is_filled: true
+
+extract_basins_from_single_channel: true
+single_channel_points_fname: nujang_mainstem_points.gpkg
+side_tributary_minimum_contributing_pixels: 2000
+reject_incomplete_side_tributary_basins: true
+
+write_side_tributary_main_channel: true
+write_side_tributary_outlets: true
+write_side_tributary_basin_outlines: true
+side_tributary_vector_output_format: gpkg
+```

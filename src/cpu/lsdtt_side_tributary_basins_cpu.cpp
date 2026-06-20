@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iostream>
 #include <cstdint>
 #include <limits>
 #include <sstream>
@@ -409,6 +410,86 @@ std::vector<lsdtt_vector_field_value> side_basin_field_values(
     };
 }
 
+// Given a populated traced_channel_mask, find side-tributary outlets
+// (non-channel cells whose D8 receiver is on the channel), filter by minimum
+// size, reject basins that touch the channel or are incomplete, and append the
+// accepted basin records. Shared by extract_side_tributary_basins and
+// extract_single_channel_side_basins.
+void extract_side_basins_from_traced_mask(
+    const lsdtt_flow_base& flow,
+    const lsdtt_side_tributary_basin_options& opts,
+    lsdtt_side_tributary_basin_result& result)
+{
+    const std::size_t n = flow.full_grid_size();
+
+    std::vector<std::int64_t> candidate_outlets;
+    candidate_outlets.reserve(1024);
+
+    for (std::int64_t flat = 0; flat < static_cast<std::int64_t>(n); ++flat)
+    {
+        if (!flow.is_valid_cell(flat)) continue;
+        if (result.traced_channel_mask[static_cast<std::size_t>(flat)] != 0) continue;
+        const std::int64_t receiver = flow.receiver_of_unchecked(flat);
+        if (receiver < 0) continue;
+        if (result.traced_channel_mask[static_cast<std::size_t>(receiver)] == 0) continue;
+        if (flow.s_vector_size(flat) <
+            static_cast<std::uint64_t>(opts.minimum_contributing_pixels)) continue;
+        candidate_outlets.push_back(flat);
+    }
+
+    std::sort(candidate_outlets.begin(), candidate_outlets.end());
+    candidate_outlets.erase(
+        std::unique(candidate_outlets.begin(), candidate_outlets.end()),
+        candidate_outlets.end());
+
+    result.accepted_basins.reserve(
+        result.accepted_basins.size() + candidate_outlets.size());
+
+    for (const std::int64_t outlet : candidate_outlets)
+    {
+        const lsdtt_flat_index_slice basin_slice = flow.upslope_nodes(outlet);
+        if (basin_intersects_traced_channel(basin_slice, result.traced_channel_mask))
+            continue;
+        const bool complete = basin_is_complete(flow, basin_slice);
+        if (opts.reject_incomplete_basins && !complete) continue;
+        const std::int64_t receiver = flow.receiver_of_unchecked(outlet);
+        if (receiver < 0) continue;
+
+        lsdtt_side_tributary_basin_record record;
+        record.outlet_flat = outlet;
+        record.outlet_row  = flow.row_from_flat_unchecked(outlet);
+        record.outlet_col  = flow.col_from_flat_unchecked(outlet);
+        record.receiver_channel_flat = receiver;
+        record.receiver_channel_row  = flow.row_from_flat_unchecked(receiver);
+        record.receiver_channel_col  = flow.col_from_flat_unchecked(receiver);
+        record.n_pixels = flow.s_vector_size(outlet);
+        record.drainage_area =
+            static_cast<double>(record.n_pixels) * flow.cell_size() * flow.cell_size();
+        record.complete = complete;
+        result.accepted_basins.push_back(record);
+    }
+}
+
+// Trace the D8 flow path from `seed` to the outlet/edge; return ordered flats.
+std::vector<std::int64_t> trace_d8_path_to_outlet(
+    const lsdtt_flow_base& flow, std::int64_t seed)
+{
+    std::vector<std::int64_t> path;
+    if (!flow.is_valid_cell(seed)) return path;
+    const std::int64_t max_steps = static_cast<std::int64_t>(flow.full_grid_size());
+    std::int64_t current = seed;
+    while (flow.is_valid_cell(current))
+    {
+        path.push_back(current);
+        if (flow.is_outlet_unchecked(current)) break;
+        const std::int64_t receiver = flow.receiver_of_unchecked(current);
+        if (receiver < 0 || receiver == current) break;
+        current = receiver;
+        if (static_cast<std::int64_t>(path.size()) > max_steps) break;
+    }
+    return path;
+}
+
 } // unnamed namespace
 
 // =============================================================================
@@ -561,108 +642,96 @@ lsdtt_side_tributary_basin_result extract_side_tributary_basins(
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Find side tributary outlet pixels:
-    // non-channel valid cells whose D8 receiver lies on the traced channel.
-    // -------------------------------------------------------------------------
-    std::vector<std::int64_t> candidate_outlets;
-    candidate_outlets.reserve(1024);
+    extract_side_basins_from_traced_mask(flow, opts, result);
 
-    for (std::int64_t flat = 0;
-         flat < static_cast<std::int64_t>(n);
-         ++flat)
+    return result;
+}
+
+// =============================================================================
+// extract_single_channel_side_basins
+// =============================================================================
+lsdtt_side_tributary_basin_result extract_single_channel_side_basins(
+    const lsdtt_flow_base& flow,
+    const lsdtt_side_tributary_basin_options& opts)
+{
+    const std::size_t n = flow.full_grid_size();
+    lsdtt_side_tributary_basin_result result;
+    result.traced_channel_mask.assign(n, std::uint8_t{0});
+
+    const std::vector<std::int64_t> ordered =
+        load_point_vector_as_ordered_flats(
+            flow, opts.input_points_path, opts.input_points_layer);
+
+    std::vector<std::int64_t> pts;
+    for (const std::int64_t f : ordered)
+        if (flow.is_valid_cell(f)) pts.push_back(f);
+    result.n_seed_points = pts.size();
+    if (pts.empty()) return result;
+
+    std::vector<std::int64_t> single_channel;
+
+    if (pts.size() == 1)
     {
-        if (!flow.is_valid_cell(flat))
+        // Single point: trace to the DEM edge (no warning).
+        single_channel = trace_d8_path_to_outlet(flow, pts[0]);
+    }
+    else
+    {
+        const std::int64_t a = pts[0];
+        const std::int64_t b = pts[1];
+        const std::vector<std::int64_t> path_a = trace_d8_path_to_outlet(flow, a);
+        const std::vector<std::int64_t> path_b = trace_d8_path_to_outlet(flow, b);
+        const std::unordered_set<std::int64_t> set_b(path_b.begin(), path_b.end());
+
+        // Common downstream point = first pixel of A's path that lies on B's path
+        // (where the two flows merge). D8 reachability identifies the upstream
+        // point as the one with the longer reach to that confluence.
+        std::int64_t conf_idx_a = -1;
+        for (std::size_t i = 0; i < path_a.size(); ++i)
         {
-            continue;
+            if (set_b.count(path_a[i]) != 0)
+            {
+                conf_idx_a = static_cast<std::int64_t>(i);
+                break;
+            }
         }
 
-        if (result.traced_channel_mask[static_cast<std::size_t>(flat)] != 0)
+        if (conf_idx_a < 0)
         {
-            continue;
+            std::cerr << "Warning: downstream point not found on the upstream flow "
+                         "path (the two points are in different sub-basins); using "
+                         "the longer of the two D8 paths as the single channel.\n";
+            single_channel = (path_a.size() >= path_b.size()) ? path_a : path_b;
+            result.stopping_point_applied = false;
         }
-
-        const std::int64_t receiver = flow.receiver_of_unchecked(flat);
-
-        if (receiver < 0)
+        else
         {
-            continue;
-        }
+            const std::int64_t confluence =
+                path_a[static_cast<std::size_t>(conf_idx_a)];
+            std::int64_t conf_idx_b = 0;
+            for (std::size_t i = 0; i < path_b.size(); ++i)
+                if (path_b[i] == confluence)
+                {
+                    conf_idx_b = static_cast<std::int64_t>(i);
+                    break;
+                }
 
-        if (result.traced_channel_mask[static_cast<std::size_t>(receiver)] == 0)
-        {
-            continue;
+            // Seed = the point with the longer reach to the confluence (the main
+            // stem); the other is the downstream point, snapped to the confluence.
+            const std::vector<std::int64_t>& seed_path =
+                (conf_idx_a >= conf_idx_b) ? path_a : path_b;
+            const std::int64_t cut =
+                (conf_idx_a >= conf_idx_b) ? conf_idx_a : conf_idx_b;
+            single_channel.assign(seed_path.begin(),
+                                  seed_path.begin() + cut + 1);
+            result.stopping_point_applied = true;
         }
-
-        if (flow.s_vector_size(flat) <
-            static_cast<std::uint64_t>(opts.minimum_contributing_pixels))
-        {
-            continue;
-        }
-
-        candidate_outlets.push_back(flat);
     }
 
-    std::sort(candidate_outlets.begin(), candidate_outlets.end());
-    candidate_outlets.erase(
-        std::unique(candidate_outlets.begin(), candidate_outlets.end()),
-        candidate_outlets.end()
-    );
+    for (const std::int64_t f : single_channel)
+        result.traced_channel_mask[static_cast<std::size_t>(f)] = std::uint8_t{1};
 
-    // -------------------------------------------------------------------------
-    // Completion test and final record construction.
-    // -------------------------------------------------------------------------
-    result.accepted_basins.reserve(candidate_outlets.size());
-
-    for (const std::int64_t outlet : candidate_outlets)
-    {
-        const lsdtt_flat_index_slice basin_slice =
-            flow.upslope_nodes(outlet);
-
-        if (basin_intersects_traced_channel(
-                basin_slice,
-                result.traced_channel_mask))
-        {
-            continue;
-        }
-
-        const bool complete = basin_is_complete(flow, basin_slice);
-
-        if (opts.reject_incomplete_basins && !complete)
-        {
-            continue;
-        }
-
-        const std::int64_t receiver =
-            flow.receiver_of_unchecked(outlet);
-
-        if (receiver < 0)
-        {
-            continue;
-        }
-
-        lsdtt_side_tributary_basin_record record;
-
-        record.outlet_flat = outlet;
-        record.outlet_row  = flow.row_from_flat_unchecked(outlet);
-        record.outlet_col  = flow.col_from_flat_unchecked(outlet);
-
-        record.receiver_channel_flat = receiver;
-        record.receiver_channel_row  = flow.row_from_flat_unchecked(receiver);
-        record.receiver_channel_col  = flow.col_from_flat_unchecked(receiver);
-
-        record.n_pixels = flow.s_vector_size(outlet);
-
-        record.drainage_area =
-            static_cast<double>(record.n_pixels) *
-            flow.cell_size() *
-            flow.cell_size();
-
-        record.complete = complete;
-
-        result.accepted_basins.push_back(record);
-    }
-
+    extract_side_basins_from_traced_mask(flow, opts, result);
     return result;
 }
 

@@ -92,6 +92,21 @@ struct lsdtt_side_tributary_basin_options
     const lsdtt_side_tributary_basin_options& opts
 );
 
+// Build a SINGLE main channel from an upstream point and extract the side
+// tributary basins draining into it. The input file holds one or two points:
+//   - one point  : trace D8 from it to the DEM edge (the single channel).
+//   - two points : identify the upstream point by D8 reachability (the point
+//     whose flow path the other joins), trace from it, and truncate at the
+//     "common downstream point" where the other point's flow meets the channel.
+//     If neither point's flow reaches the other (different sub-basins), a
+//     warning is emitted and the longer of the two D8 paths is used.
+// Side basins are then found exactly as in extract_side_tributary_basins
+// (outlet = pixel just before joining; complete + minimum-size filtered).
+[[nodiscard]] lsdtt_side_tributary_basin_result extract_single_channel_side_basins(
+    const lsdtt_flow_base& flow,
+    const lsdtt_side_tributary_basin_options& opts
+);
+
 void write_side_tributary_outlets(
     const lsdtt_flow_base& flow,
     const std::vector<lsdtt_side_tributary_basin_record>& basins,

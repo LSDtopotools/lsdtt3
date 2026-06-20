@@ -269,6 +269,26 @@ int main(int argc, char* argv[])
         "gpkg: writes a GeoPackage in the raster CRS. "
         "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
 
+    // --- Single-channel side-basin extraction ---
+    bool_default_map["extract_basins_from_single_channel"] = false;
+    help_map["extract_basins_from_single_channel"] = {"bool","false",
+        "Build one main channel from an upstream point and extract the side "
+        "basins draining into it.",
+        "Reads single_channel_points_fname (one or two points; any CRS). With one "
+        "point the D8 path is traced to the DEM edge; with two, the upstream point "
+        "is identified by D8 reachability and the channel is truncated at the "
+        "common-downstream point where the other point's flow joins it. Side "
+        "basins are then filtered by side_tributary_minimum_contributing_pixels "
+        "and reject_incomplete_side_tributary_basins, and written with the "
+        "side-tributary writers (main channel, outlets, basin outlines)."};
+
+    string_default_map["single_channel_points_fname"] = "NULL";
+    help_map["single_channel_points_fname"] = {"string","NULL",
+        "Point vector file (1 or 2 points) for extract_basins_from_single_channel.",
+        "First/only point is the upstream seed; an optional second point is the "
+        "downstream limit (identified and snapped automatically). Any OGR format; "
+        "reprojected to the DEM CRS on read."};
+
     // --- Side-tributary basin extraction from seed points ---
     bool_default_map["extract_side_tributary_basins_from_points"] = false;
     help_map["extract_side_tributary_basins_from_points"] = {"bool","false",
@@ -865,13 +885,20 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 2b — Optional side-tributary basin extraction from supplied points
     // -------------------------------------------------------------------------
-    if (bf["extract_side_tributary_basins_from_points"])
+    if (bf["extract_side_tributary_basins_from_points"] ||
+        bf["extract_basins_from_single_channel"])
     {
-        std::cout << "\n--- Side-tributary basin extraction ---\n";
+        const bool single_channel_mode =
+            bf["extract_basins_from_single_channel"];
+        std::cout << (single_channel_mode
+                      ? "\n--- Single-channel side-basin extraction ---\n"
+                      : "\n--- Side-tributary basin extraction ---\n");
 
         lsdtt::lsdtt_side_tributary_basin_options side_opts;
         side_opts.input_points_path =
-            pp.add_read_path_if_needed(sf["side_tributary_points_fname"]);
+            pp.add_read_path_if_needed(
+                single_channel_mode ? sf["single_channel_points_fname"]
+                                    : sf["side_tributary_points_fname"]);
         side_opts.input_points_layer =
             sf["side_tributary_points_layer"];
         side_opts.minimum_contributing_pixels =
@@ -909,11 +936,9 @@ int main(int argc, char* argv[])
 
         try
         {
-            side_result =
-                lsdtt::extract_side_tributary_basins(
-                    *flow,
-                    side_opts
-                );
+            side_result = single_channel_mode
+                ? lsdtt::extract_single_channel_side_basins(*flow, side_opts)
+                : lsdtt::extract_side_tributary_basins(*flow, side_opts);
         }
         catch (const std::exception& e)
         {
