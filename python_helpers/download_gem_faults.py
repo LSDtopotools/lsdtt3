@@ -48,7 +48,7 @@ DEFAULT_BRANCH = "master"
 
 # Known repo-relative paths for the harmonized global dataset, keyed by format.
 DATASET_PATHS = {
-    "gpkg":    "gpkg/gem_active_faults_harmonized.gpkg",
+    "gpkg":    "geopackage/gem_active_faults_harmonized.gpkg",
     "geojson": "geojson/gem_active_faults_harmonized.geojson",
 }
 

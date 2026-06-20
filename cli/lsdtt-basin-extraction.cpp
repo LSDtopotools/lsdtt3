@@ -27,9 +27,14 @@
 //   lsdtt-basin-extraction -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <sstream>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -49,6 +54,71 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_side_tributary_basins_cpu.hpp"
+#include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/utils/lsdtt_raster_geometry.hpp"
+
+// ---------------------------------------------------------------------------
+// Small geometry helpers for the line-crossing basin analysis.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Geographic bearing of (ox,oy)->(cx,cy): degrees from North, clockwise [0,360).
+double bearing_north(double ox, double oy, double cx, double cy)
+{
+    const double de = cx - ox, dn = cy - oy;
+    if (de == 0.0 && dn == 0.0)
+        return std::numeric_limits<double>::quiet_NaN();
+    double b = std::atan2(de, dn) * 180.0 / M_PI;
+    if (b < 0.0) b += 360.0;
+    return b;
+}
+
+// Wrap an angle to (-180, 180].
+double wrap180(double a)
+{
+    double r = std::fmod(a + 180.0, 360.0);
+    if (r < 0.0) r += 360.0;
+    return r - 180.0;
+}
+
+std::string precise_string(double v)
+{
+    std::ostringstream ss;
+    ss.precision(10);
+    ss << v;
+    return ss.str();
+}
+
+struct lsdtt_seg_hit { double tan_az; double nx; double ny; };
+
+// Nearest fault segment to (px,py): closest point + that segment's azimuth.
+lsdtt_seg_hit nearest_fault_segment(
+    double px, double py,
+    const std::vector<std::array<double, 4>>& segs)
+{
+    double best = std::numeric_limits<double>::infinity();
+    lsdtt_seg_hit hit{0.0, px, py};
+    for (const auto& s : segs)
+    {
+        const double x0 = s[0], y0 = s[1], x1 = s[2], y1 = s[3];
+        const double dx = x1 - x0, dy = y1 - y0;
+        const double len2 = dx * dx + dy * dy;
+        double t = (len2 > 0.0) ? ((px - x0) * dx + (py - y0) * dy) / len2 : 0.0;
+        t = std::clamp(t, 0.0, 1.0);
+        const double cx = x0 + t * dx, cy = y0 + t * dy;
+        const double d2 = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+        if (d2 < best)
+        {
+            best = d2;
+            hit.nx = cx;
+            hit.ny = cy;
+            hit.tan_az = bearing_north(x0, y0, x1, y1);
+        }
+    }
+    return hit;
+}
+
+}  // namespace
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -337,6 +407,27 @@ int main(int argc, char* argv[])
         "selection to include all upstream nested basins from the junction-network "
         "s_vector."};
 
+    bool_default_map["select_basins_from_line_crossings"] = false;
+    help_map["select_basins_from_line_crossings"] = {"bool","false",
+        "Select basins whose channels cross a supplied line (e.g. a fault).",
+        "Reads crossing_line_fname (a polyline vector that MUST be in the same "
+        "CRS as the DEM). Channel pixels lying on the line whose contributing "
+        "pixel count is at least crossing_minimum_contributing_pixels become "
+        "basin outlets. Incomplete and nested basins are removed automatically, "
+        "leaving the largest complete basin for each independent crossing. "
+        "Outputs basin outlines and outlet points."};
+
+    string_default_map["crossing_line_fname"] = "NULL";
+    help_map["crossing_line_fname"] = {"string","NULL",
+        "Polyline vector file the channels must cross (same CRS as the DEM).",
+        "Required when select_basins_from_line_crossings is true. Any "
+        "OGR-readable polyline layer (gpkg, fgb, shp, geojson)."};
+
+    int_default_map["crossing_minimum_contributing_pixels"] = 500;
+    help_map["crossing_minimum_contributing_pixels"] = {"int","500",
+        "Minimum contributing pixels at a line crossing to seed a basin outlet.",
+        "Channel-line crossings with fewer upslope pixels are ignored."};
+
     bool_default_map["select_all_basins"] = false;
     help_map["select_all_basins"] = {"bool","false",
         "Select one basin for every junction in the junction network.",
@@ -541,20 +632,38 @@ int main(int argc, char* argv[])
         bf["select_basins_from_outlets_nested"];
     const bool select_all_basins =
         bf["select_all_basins"];
+    const bool select_basins_from_line_crossings =
+        bf["select_basins_from_line_crossings"];
 
     const int n_selection_modes =
         static_cast<int>(select_basins_from_outlets) +
         static_cast<int>(select_basins_from_outlets_nested) +
-        static_cast<int>(select_all_basins);
+        static_cast<int>(select_all_basins) +
+        static_cast<int>(select_basins_from_line_crossings);
 
     if (n_selection_modes > 1)
     {
         std::cerr << "FATAL: choose only one of: select_basins_from_outlets, "
-                  << "select_basins_from_outlets_nested, select_all_basins.\n";
+                  << "select_basins_from_outlets_nested, select_all_basins, "
+                  << "select_basins_from_line_crossings.\n";
         return 1;
     }
 
     const bool do_basin_selection = (n_selection_modes == 1);
+
+    // Line-crossing basins are, by definition, the largest complete basin per
+    // independent crossing: force the incomplete/nested filters on.
+    if (select_basins_from_line_crossings)
+    {
+        bf["filter_incomplete_basins"] = true;
+        bf["filter_nested_basins"] = true;
+        if (sf["crossing_line_fname"] == "NULL" || sf["crossing_line_fname"].empty())
+        {
+            std::cerr << "FATAL: crossing_line_fname is required when "
+                      << "select_basins_from_line_crossings is true.\n";
+            return 1;
+        }
+    }
 
     const std::string basin_outlet_snapping_method =
         to_lower_copy(sf["basin_outlet_snapping_method"]);
@@ -1088,9 +1197,145 @@ int main(int argc, char* argv[])
             *channel_network
         );
 
+        // Fault/line segments in the raster CRS — populated by the line-crossing
+        // mode and reused for the per-basin fault-relative analysis below.
+        std::vector<std::array<double, 4>> fault_segments;
+
         if (select_all_basins)
         {
             basin_manager.select_all_junction_basins();
+        }
+        else if (select_basins_from_line_crossings)
+        {
+            // Outlets = channel pixels lying on the supplied line whose
+            // contributing-pixel count meets the threshold. The line is
+            // reprojected into the DEM CRS internally.
+            const std::string line_path =
+                pp.add_read_path_if_needed(sf["crossing_line_fname"]);
+            std::cout << "Reading crossing line: " << line_path << "\n";
+
+            const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+            const lsdtt::lsdtt_raster_result cp =
+                flow->get_n_contributing_pixels_raster();
+            const std::int64_t crossing_min =
+                ifs["crossing_minimum_contributing_pixels"];
+
+            std::vector<std::int64_t> crossing_flats;
+            try
+            {
+                lsdtt::lsdtt_data_loader line_loader;
+                line_loader.open_vector(line_path);
+                const std::vector<std::string> names =
+                    line_loader.get_layer_names();
+                if (names.empty())
+                {
+                    std::cerr << "FATAL: crossing line file has no layers.\n";
+                    return 1;
+                }
+                const lsdtt::lsdtt_vector_layer layer =
+                    line_loader.read_vector_layer(names[0]);
+                std::string src_wkt;
+                try { src_wkt = line_loader.get_vector_layer_crs_wkt(names[0]); }
+                catch (const std::exception&) {}
+                line_loader.close_vector();
+
+                // Reproject the line into the DEM CRS if its CRS differs.
+                std::unique_ptr<lsdtt::lsdtt_coordinate_transform> xform;
+                if (!src_wkt.empty() && !m.crs_wkt.empty() && src_wkt != m.crs_wkt)
+                {
+                    try
+                    {
+                        xform =
+                            std::make_unique<lsdtt::lsdtt_coordinate_transform>(
+                                src_wkt, m.crs_wkt);
+                        std::cout << "Reprojecting crossing line into the DEM CRS.\n";
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: could not build a CRS transform "
+                                  << "for the crossing line (" << e.what()
+                                  << "); assuming it is already in the DEM CRS.\n";
+                    }
+                }
+
+                const double step = 0.5 * m.cell_size;  // along-segment sampling
+                std::vector<char> seen(
+                    static_cast<std::size_t>(m.n_rows) * m.n_cols, 0);
+
+                for (const auto& rec : layer.records)
+                {
+                    std::vector<lsdtt::lsdtt_xy> pts;
+                    try
+                    {
+                        pts = lsdtt::lsdtt_vector_layer::as_line(rec).points;
+                    }
+                    catch (const std::exception&)
+                    {
+                        continue;  // skip non-polyline geometries
+                    }
+
+                    if (xform)
+                        for (auto& p : pts)
+                            xform->transform_in_place(p.x, p.y);
+
+                    for (std::size_t i = 1; i < pts.size(); ++i)
+                        fault_segments.push_back(
+                            {pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y});
+
+                    for (std::size_t i = 1; i < pts.size(); ++i)
+                    {
+                        const double x0 = pts[i - 1].x, y0 = pts[i - 1].y;
+                        const double x1 = pts[i].x,     y1 = pts[i].y;
+                        const double seg = std::hypot(x1 - x0, y1 - y0);
+                        const int nstep = std::max(1, static_cast<int>(seg / step));
+                        for (int s = 0; s <= nstep; ++s)
+                        {
+                            const double t = static_cast<double>(s) / nstep;
+                            const double x = x0 + t * (x1 - x0);
+                            const double y = y0 + t * (y1 - y0);
+                            const int col =
+                                static_cast<int>((x - m.x_min) / m.cell_size);
+                            const int row =
+                                static_cast<int>((m.y_max() - y) / m.cell_size);
+                            if (row < 0 || row >= m.n_rows ||
+                                col < 0 || col >= m.n_cols)
+                                continue;
+                            const std::int64_t flat = flow->flat_index(row, col);
+                            if (flat < 0 ||
+                                flat >= static_cast<std::int64_t>(seen.size()))
+                                continue;
+                            if (seen[static_cast<std::size_t>(flat)])
+                                continue;
+                            seen[static_cast<std::size_t>(flat)] = 1;
+                            if (!flow->is_valid_cell(flat))
+                                continue;
+                            if (static_cast<std::int64_t>(
+                                    cp.data[static_cast<std::size_t>(flat)])
+                                >= crossing_min)
+                                crossing_flats.push_back(flat);
+                        }
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: failed to read crossing line: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            std::cout << "Channel crossings of the line (>= " << crossing_min
+                      << " contributing pixels): " << crossing_flats.size()
+                      << "\n";
+            if (crossing_flats.empty())
+            {
+                std::cerr << "FATAL: no channel crossings met the "
+                          << "contributing-pixel threshold.\n";
+                return 1;
+            }
+
+            basin_manager.select_junction_basins_from_basin_outlets(
+                crossing_flats);
         }
         else
         {
@@ -1564,6 +1809,90 @@ int main(int argc, char* argv[])
             basin_manager.filter_nested_by_stream_order();
             std::cout << "There are now " << basin_manager.size()
                       << " basins left.\n";
+        }
+
+        // ---------------------------------------------------------------------
+        // Line-crossing basin analysis: per-basin outlet, centre of mass, area,
+        // outlet->COM bearing, and the bearing relative to the local fault
+        // orientation (split-ready by side of the line). Written to CSV.
+        // ---------------------------------------------------------------------
+        if (select_basins_from_line_crossings && !basin_manager.empty()
+            && !fault_segments.empty())
+        {
+            std::cout << "\n--- Line-crossing basin analysis ---\n";
+            const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+            const int nr = m.n_rows, nc = m.n_cols;
+            const std::size_t n = static_cast<std::size_t>(nr) * nc;
+
+            // Per-pixel origin-relative coordinates for an upslope-sum COM.
+            std::vector<float> vx(n, 0.0f), vy(n, 0.0f);
+            std::vector<std::uint8_t> mask(n, 0);
+            for (int r = 0; r < nr; ++r)
+                for (int c = 0; c < nc; ++c)
+                {
+                    const std::size_t f = static_cast<std::size_t>(r) * nc + c;
+                    if (!flow->is_valid_cell(static_cast<std::int64_t>(f)))
+                        continue;
+                    mask[f] = 1;
+                    vx[f] = static_cast<float>(lsdtt::cell_centre_x(m, c) - m.x_min);
+                    vy[f] = static_cast<float>(lsdtt::cell_centre_y(m, r) - m.y_min);
+                }
+            const lsdtt::lsdtt_raster_result sx =
+                flow->get_upslope_sum_raster(vx, mask, true);
+            const lsdtt::lsdtt_raster_result sy =
+                flow->get_upslope_sum_raster(vy, mask, true);
+            const lsdtt::lsdtt_raster_result npix =
+                flow->get_n_contributing_pixels_raster();
+            const double cell_area = m.cell_size * m.cell_size;
+
+            std::vector<std::string> headers = {
+                "basin_id", "area_m2", "outlet_x", "outlet_y", "com_x", "com_y",
+                "outlet_to_com_bearing_deg", "local_fault_azimuth_deg", "side",
+                "deflection_from_fault_orthogonal_deg"};
+            std::vector<std::vector<std::string>> rows;
+            rows.reserve(basin_manager.size());
+
+            for (std::size_t i = 0; i < basin_manager.size(); ++i)
+            {
+                const auto& basin = basin_manager.basin_at(i);
+                const std::int64_t outlet = basin.get_basin_outlet_flat_index();
+                const std::size_t oi = static_cast<std::size_t>(outlet);
+                if (oi >= npix.data.size() || npix.data[oi] <= 0.0f)
+                    continue;
+
+                const int orow = flow->row_from_flat_unchecked(outlet);
+                const int ocol = flow->col_from_flat_unchecked(outlet);
+                const double ox = lsdtt::cell_centre_x(m, ocol);
+                const double oy = lsdtt::cell_centre_y(m, orow);
+                const double area_px = static_cast<double>(npix.data[oi]);
+                const double com_x = m.x_min + static_cast<double>(sx.data[oi]) / area_px;
+                const double com_y = m.y_min + static_cast<double>(sy.data[oi]) / area_px;
+                const double bearing = bearing_north(ox, oy, com_x, com_y);
+
+                const lsdtt_seg_hit hit =
+                    nearest_fault_segment(com_x, com_y, fault_segments);
+                const std::string side = (com_x >= hit.nx) ? "east" : "west";
+                const double n1 = std::fmod(hit.tan_az + 90.0, 360.0);
+                const double n2 = std::fmod(hit.tan_az - 90.0 + 360.0, 360.0);
+                const double to_com = bearing_north(hit.nx, hit.ny, com_x, com_y);
+                const double normal =
+                    (std::fabs(wrap180(n1 - to_com))
+                     <= std::fabs(wrap180(n2 - to_com))) ? n1 : n2;
+                const double defl = wrap180(bearing - normal);
+
+                rows.push_back({
+                    std::to_string(i), precise_string(area_px * cell_area),
+                    precise_string(ox), precise_string(oy),
+                    precise_string(com_x), precise_string(com_y),
+                    precise_string(bearing), precise_string(hit.tan_az),
+                    side, precise_string(defl)});
+            }
+
+            const std::string out =
+                pp.make_output_path("_line_crossing_basins", ".csv");
+            lsdtt::lsdtt_data_loader csv_writer;
+            csv_writer.write_csv(out, headers, rows);
+            std::cout << "Writing: " << out << " (" << rows.size() << " basins)\n";
         }
 
         // ---------------------------------------------------------------------
