@@ -80,6 +80,14 @@ struct lsdtt_vector_to_junction_network_options
 
     // Small elevation tolerance when comparing junction elevations.
     double receiver_min_drop_metres = 1.0e-6;
+
+    // Cycle handling. When false (default) a loop-closing compact edge (one not
+    // used as a receiver edge by either endpoint) is a fatal error. When true,
+    // such an edge is instead LABELLED (is_loop_edge) and excluded from the
+    // receiver / donor / topological graph, so the network builds despite loops;
+    // its endpoints are marked is_on_loop. The geometry is retained for a
+    // downstream D8-based loop resolver.
+    bool break_cycles = false;
 };
 
 struct lsdtt_vector_network_junction
@@ -92,6 +100,7 @@ struct lsdtt_vector_network_junction
 
     bool is_dem_edge_junction = false;
     bool is_outlet = false;
+    bool is_on_loop = false;    // incident to a labelled loop-closing edge
 
     std::int32_t receiver_junction = k_outlet_junction;
     std::int32_t outlet_junction   = k_nodata_junction;
@@ -127,6 +136,7 @@ struct lsdtt_vector_network_edge
 
     std::int32_t strahler_order = 0;
 
+    bool is_loop_edge = false;   // loop-closing edge; excluded from the DAG
 
     double length_metres = 0.0;
 
@@ -264,6 +274,7 @@ private:
     void require_built() const;
     void require_valid_junction(std::int32_t junction) const;
 
+    void break_receiver_cycles();
     void build_outlet_keys();
     void build_topological_order();
     void build_strahler_order();

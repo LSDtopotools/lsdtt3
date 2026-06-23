@@ -3767,6 +3767,24 @@ repair_candidate_junctions(
             continue;
         }
 
+        // Gap too large to be a physical obstruction: the DEM flow is correct
+        // and the vector network is a coarse local representation. Report and
+        // skip rather than carve a long, spurious channel.
+        if (params.max_repair_gap_m > 0.0 &&
+            c.match_distance_m > params.max_repair_gap_m)
+        {
+            std::cout << "  skipping candidate vector_jid=" << c.vector_junction_id
+                      << " basin=" << c.basin_outlet_junction
+                      << " gap=" << c.match_distance_m
+                      << " m > max_repair_gap_m=" << params.max_repair_gap_m
+                      << " m (topology mismatch, not an obstruction; reason="
+                      << c.mismatch_reason << ")\n";
+            rec.fix_type = GapFixType::unresolved;
+            rec.success  = false;
+            records.push_back(rec);
+            continue;
+        }
+
         std::cout << "  repairing candidate vector_jid=" << c.vector_junction_id
                   << " basin=" << c.basin_outlet_junction
                   << " gap=" << c.match_distance_m
@@ -3835,6 +3853,16 @@ repair_candidate_junctions(
         if (attempt.fix_type != GapFixType::unresolved &&
             attempt.fix_type != GapFixType::ok)
         {
+            // A carve can leave a residual pit/flat. make_flow_base is OpenMP
+            // and TERMINATES the process on an unresolved sink (uncatchable),
+            // so FILL any residual depression the burn left BEFORE reflowing —
+            // a capturing burn that daylights is unchanged by the fill; one
+            // that accidentally pitted is resolved instead of crashing.
+            const float fill_slope = (params.repair_min_slope > 0.0)
+                ? static_cast<float>(params.repair_min_slope) : 1.0e-4f;
+            lsdtt_raster_cpu filled = fill_pits(dem, fill_slope, fi_opts.n_threads);
+            dem.get_data_array() = filled.get_data_array();
+
             flow = make_flow_base(
                 dem.get_data_array(), dem.get_mask_array(), meta, fi_opts);
             dem_network = make_junction_network_base(*flow, source_flats, jn_opts);

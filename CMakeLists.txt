@@ -259,6 +259,10 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_crn_column.cpp
     src/cpu/lsdtt_cosmo_raster_cpu.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
+    src/cpu/lsdtt_vector_ops_cpu.cpp
+    src/cpu/lsdtt_vector_line_repair_cpu.cpp
+    src/cpu/lsdtt_vector_network_d8_clean_cpu.cpp
+    src/cpu/lsdtt_water_area_centreline_cpu.cpp
     src/cpu/lsdtt_marsh_platform_cpu.cpp
     src/cpu/lsdtt_tidal_channel_cpu.cpp
     src/cpu/lsdtt_tidal_skeleton_metrics_cpu.cpp
@@ -413,6 +417,8 @@ lsdtt_cli(lsdtt-hydraulic-routing      cli/lsdtt-hydraulic-routing.cpp)
 lsdtt_cli(lsdtt-channel-network-analysis cli/lsdtt-channel-network-analysis.cpp)
 lsdtt_cli(lsdtt-cross-sections         cli/lsdtt-cross-sections.cpp)
 lsdtt_cli(lsdtt-stream-burning         cli/lsdtt-stream-burning.cpp)
+lsdtt_cli(lsdtt-water-line-repair      cli/lsdtt-water-line-repair.cpp)
+lsdtt_cli(lsdtt-water-centreline       cli/lsdtt-water-centreline.cpp)
 lsdtt_cli(lsdtt-cosmo-tool             cli/lsdtt-cosmo-tool.cpp)
 lsdtt_cli(lsdtt-cosmo-prediction       cli/lsdtt-cosmo-prediction.cpp)
 lsdtt_cli(lsdtt-crn-column-tool        cli/lsdtt-crn-column-tool.cpp)

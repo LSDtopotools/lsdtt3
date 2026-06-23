@@ -103,6 +103,143 @@ inline double polygon_perimeter(const std::vector<lsdtt_xy>& ring)
 }
 
 // -----------------------------------------------------------------------------
+// polyline_length
+//
+// Arc length of an OPEN polyline (no implied closing edge — unlike
+// polygon_perimeter). O(n). Returns 0 for fewer than 2 vertices.
+// -----------------------------------------------------------------------------
+inline double polyline_length(const std::vector<lsdtt_xy>& points)
+{
+    const std::size_t n = points.size();
+    if (n < 2) return 0.0;
+
+    double len = 0.0;
+    for (std::size_t i = 1; i < n; ++i)
+    {
+        const double dx = points[i].x - points[i - 1].x;
+        const double dy = points[i].y - points[i - 1].y;
+        len += std::sqrt(dx * dx + dy * dy);
+    }
+    return len;
+}
+
+// -----------------------------------------------------------------------------
+// nearest_point_on_polyline
+//
+// Closest point on an OPEN polyline to a query point. Returns the projected
+// point, the index of the segment it lies on (segment i spans points[i] ->
+// points[i+1]), the segment parameter t in [0,1], and the Euclidean distance.
+// For a single-vertex polyline the lone vertex is returned; for an empty
+// polyline distance is +infinity and segment_index is npos.
+//
+// Used both to snap a tributary endpoint onto an extracted centreline and, by
+// looping over a polygon ring's edges, as a point-near-boundary test (no
+// point-in-polygon needed).
+// -----------------------------------------------------------------------------
+struct lsdtt_nearest_polyline_point
+{
+    lsdtt_xy    point        = lsdtt_xy{0.0, 0.0};
+    std::size_t segment_index = static_cast<std::size_t>(-1);
+    double      t            = 0.0;
+    double      distance     = std::numeric_limits<double>::infinity();
+};
+
+inline lsdtt_nearest_polyline_point nearest_point_on_polyline(
+    const lsdtt_xy&              query,
+    const std::vector<lsdtt_xy>& polyline)
+{
+    lsdtt_nearest_polyline_point out;
+
+    const std::size_t n = polyline.size();
+    if (n == 0) return out;
+    if (n == 1)
+    {
+        const double dx = query.x - polyline[0].x;
+        const double dy = query.y - polyline[0].y;
+        out.point         = polyline[0];
+        out.segment_index = 0;
+        out.t             = 0.0;
+        out.distance      = std::sqrt(dx * dx + dy * dy);
+        return out;
+    }
+
+    for (std::size_t i = 0; i + 1 < n; ++i)
+    {
+        const lsdtt_xy& a = polyline[i];
+        const lsdtt_xy& b = polyline[i + 1];
+        const double vx = b.x - a.x;
+        const double vy = b.y - a.y;
+        const double vv = vx * vx + vy * vy;
+
+        double t = 0.0;
+        if (vv > 0.0)
+        {
+            t = ((query.x - a.x) * vx + (query.y - a.y) * vy) / vv;
+            if (t < 0.0) t = 0.0;
+            if (t > 1.0) t = 1.0;
+        }
+
+        const double qx = a.x + t * vx;
+        const double qy = a.y + t * vy;
+        const double dx = query.x - qx;
+        const double dy = query.y - qy;
+        const double d  = std::sqrt(dx * dx + dy * dy);
+
+        if (d < out.distance)
+        {
+            out.distance      = d;
+            out.point         = lsdtt_xy{qx, qy};
+            out.segment_index = i;
+            out.t             = t;
+        }
+    }
+
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// point_in_ring
+//
+// Even-odd (ray-casting) point-in-polygon test for a single ring. Tolerates
+// open or explicitly-closed rings. Behaviour exactly on an edge is not defined
+// (use a separate boundary-distance test for on-edge cases). O(n).
+// -----------------------------------------------------------------------------
+inline bool point_in_ring(const lsdtt_xy& p, const std::vector<lsdtt_xy>& ring)
+{
+    const std::size_t n = ring.size();
+    if (n < 3) return false;
+
+    bool inside = false;
+    for (std::size_t i = 0, j = n - 1; i < n; j = i++)
+    {
+        const lsdtt_xy& a = ring[i];
+        const lsdtt_xy& b = ring[j];
+        if (((a.y > p.y) != (b.y > p.y)) &&
+            (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x))
+        {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+// -----------------------------------------------------------------------------
+// point_in_polygon
+//
+// True when p is inside the exterior ring and not inside any hole ring. O(n).
+// -----------------------------------------------------------------------------
+inline bool point_in_polygon(
+    const lsdtt_xy&                            p,
+    const std::vector<lsdtt_xy>&               exterior,
+    const std::vector<std::vector<lsdtt_xy>>&  holes)
+{
+    if (!point_in_ring(p, exterior)) return false;
+    for (const std::vector<lsdtt_xy>& h : holes)
+        if (point_in_ring(p, h)) return false;
+    return true;
+}
+
+// -----------------------------------------------------------------------------
 // polygon_centroid
 //
 // Area centroid via the Green's-theorem closed form. Falls back to the vertex

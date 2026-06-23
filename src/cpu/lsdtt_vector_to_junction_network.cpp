@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -1140,6 +1141,15 @@ void lsdtt_vector_to_junction_network::create(
 
             if (!a_to_b && !b_to_a)
             {
+                if (options.break_cycles)
+                {
+                    // Loop-closing edge: label it and exclude it from the
+                    // directed graph so the network builds despite the cycle.
+                    e.is_loop_edge = true;
+                    ja.is_on_loop  = true;
+                    jb.is_on_loop  = true;
+                    continue;
+                }
                 std::ostringstream ss;
                 ss.precision(17);
                 ss << "lsdtt_vector_to_junction_network: compact edge is not used as a "
@@ -1172,6 +1182,39 @@ void lsdtt_vector_to_junction_network::create(
 
 
     // -------------------------------------------------------------------------
+    // Label redundant parallel edges as loop edges. Each junction drains through
+    // exactly one edge (its downstream_edge_id); any other edge oriented OUT of
+    // that junction (e.g. a second, parallel compact edge to the same receiver,
+    // a bigon) is redundant and would otherwise inflate the receiver's donor
+    // count above its receiver in-degree, stalling the topological sort.
+    // -------------------------------------------------------------------------
+    if (options.break_cycles)
+    {
+        for (auto& e : edges_)
+        {
+            if (e.is_loop_edge) continue;
+            const std::int32_t up = e.upstream_junction;
+            if (up < 0) continue;
+            if (junctions_[static_cast<std::size_t>(up)].downstream_edge_id
+                    != e.edge_id)
+            {
+                e.is_loop_edge = true;
+                junctions_[static_cast<std::size_t>(e.junction_a)].is_on_loop = true;
+                junctions_[static_cast<std::size_t>(e.junction_b)].is_on_loop = true;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Break any remaining directed receiver cycles (where every edge is claimed
+    // by an endpoint, so the orientation pass above could not detect them).
+    // -------------------------------------------------------------------------
+    if (options.break_cycles)
+    {
+        break_receiver_cycles();
+    }
+
+    // -------------------------------------------------------------------------
     // Donor lists
     // -------------------------------------------------------------------------
     for (auto& j : junctions_)
@@ -1181,6 +1224,7 @@ void lsdtt_vector_to_junction_network::create(
 
     for (const auto& e : edges_)
     {
+        if (e.is_loop_edge) continue;   // loop edges are not in the DAG
         junctions_[static_cast<std::size_t>(e.receiver_junction)]
             .donor_junctions.push_back(e.upstream_junction);
     }
@@ -1391,6 +1435,7 @@ void lsdtt_vector_to_junction_network::build_outlet_keys()
 
     for (auto& e : edges_)
     {
+        if (e.is_loop_edge) { e.outlet_junction = k_nodata_junction; continue; }
         const std::int32_t up = e.upstream_junction;
         if (up < 0)
         {
@@ -1404,6 +1449,84 @@ void lsdtt_vector_to_junction_network::build_outlet_keys()
     }
 }
 
+
+// -----------------------------------------------------------------------------
+// break_receiver_cycles
+//
+// The receiver graph is a functional graph (each junction has one receiver, or
+// is an outlet). A directed cycle a->b->...->a cannot be ordered. We detect any
+// such cycle by walking receivers, and break it by demoting the highest-
+// elevation junction in the cycle to an outlet: its downstream edge is labelled
+// as a loop edge (so it is excluded from the DAG and flagged for the downstream
+// D8 loop resolver) and its endpoints are marked is_on_loop. Repeats until no
+// cycle remains. Only invoked when options.break_cycles is set.
+// -----------------------------------------------------------------------------
+void lsdtt_vector_to_junction_network::break_receiver_cycles()
+{
+    const std::size_t n = junctions_.size();
+
+    // Iteratively: run Kahn on the receiver functional graph; the junctions that
+    // never reach in-degree 0 are exactly those trapped in directed cycles.
+    // Demote the highest-elevation trapped junction to an outlet (labelling its
+    // downstream edge as a loop edge) and repeat until the graph is acyclic.
+    for (std::size_t guard = 0; guard <= n; ++guard)
+    {
+        // In-degree from current receiver pointers.
+        std::vector<std::int32_t> indeg(n, 0);
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            const std::int32_t rec =
+                junctions_[j].receiver_junction;
+            if (rec >= 0) ++indeg[static_cast<std::size_t>(rec)];
+        }
+
+        std::vector<std::int32_t> ready;
+        for (std::size_t j = 0; j < n; ++j)
+            if (indeg[j] == 0) ready.push_back(static_cast<std::int32_t>(j));
+
+        std::vector<char> processed(n, 0);
+        std::size_t head = 0;
+        while (head < ready.size())
+        {
+            const std::int32_t j = ready[head++];
+            processed[static_cast<std::size_t>(j)] = 1;
+            const std::int32_t rec =
+                junctions_[static_cast<std::size_t>(j)].receiver_junction;
+            if (rec >= 0 && --indeg[static_cast<std::size_t>(rec)] == 0)
+                ready.push_back(rec);
+        }
+
+        // Find the highest-elevation junction still trapped in a cycle.
+        int    hi  = -1;
+        double hiz = -std::numeric_limits<double>::infinity();
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            if (processed[j]) continue;
+            if (junctions_[j].elevation > hiz)
+            { hiz = junctions_[j].elevation; hi = static_cast<int>(j); }
+        }
+        if (hi < 0) return;   // acyclic: done
+
+        auto& jh = junctions_[static_cast<std::size_t>(hi)];
+        const std::int32_t de = jh.downstream_edge_id;
+        if (de >= 0)
+        {
+            edges_[static_cast<std::size_t>(de)].is_loop_edge = true;
+            jh.is_on_loop = true;
+            const std::int32_t orec = jh.receiver_junction;
+            if (orec >= 0)
+                junctions_[static_cast<std::size_t>(orec)].is_on_loop = true;
+        }
+        jh.is_outlet          = true;
+        jh.receiver_junction  = k_outlet_junction;
+        jh.downstream_edge_id = -1;
+        if (std::find(outlets_.begin(), outlets_.end(),
+                      jh.junction_id) == outlets_.end())
+        {
+            outlets_.push_back(jh.junction_id);
+        }
+    }
+}
 
 // -----------------------------------------------------------------------------
 // build_topological_order
@@ -1527,6 +1650,7 @@ void lsdtt_vector_to_junction_network::build_strahler_order()
     // The downstream edge leaving a junction gets that junction's Strahler order.
     for (auto& e : edges_)
     {
+        if (e.is_loop_edge) { e.strahler_order = 0; continue; }
         e.strahler_order =
             junctions_[static_cast<std::size_t>(e.upstream_junction)]
                 .junction_strahler_order;
@@ -1658,7 +1782,8 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
         "n_incident_edges",
         "incident_edges",
         "s_vector_start",
-        "s_vector_size"
+        "s_vector_size",
+        "is_on_loop"
     };
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
@@ -1674,6 +1799,7 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
         lsdtt_vector_field_type::string_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::string_type,
+        lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type
     };
@@ -1707,7 +1833,8 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
                 static_cast<std::int64_t>(j.incident_edges.size()),
                 join_ids_csv(j.incident_edges),
                 static_cast<std::int64_t>(j.s_vector_start),
-                static_cast<std::int64_t>(j.s_vector_size)
+                static_cast<std::int64_t>(j.s_vector_size),
+                static_cast<std::int64_t>(j.is_on_loop ? 1 : 0)
             }
         );
     }
@@ -1736,7 +1863,8 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         "outlet_junction",
         "junction_a",
         "junction_b",
-        "length_m"
+        "length_m",
+        "is_loop_edge"
     };
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
@@ -1746,7 +1874,8 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
-        lsdtt_vector_field_type::double_type
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type
     };
 
 
@@ -1764,12 +1893,15 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         loader.write_line(
             e.xy,
             {
+                static_cast<std::int64_t>(e.edge_id),
+                static_cast<std::int64_t>(e.strahler_order),
                 static_cast<std::int64_t>(e.upstream_junction),
                 static_cast<std::int64_t>(e.receiver_junction),
                 static_cast<std::int64_t>(e.outlet_junction),
                 static_cast<std::int64_t>(e.junction_a),
                 static_cast<std::int64_t>(e.junction_b),
-                e.length_metres
+                e.length_metres,
+                static_cast<std::int64_t>(e.is_loop_edge ? 1 : 0)
             }
         );
     }

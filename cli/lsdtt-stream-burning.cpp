@@ -69,6 +69,7 @@
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_vector_to_junction_network.hpp"
+#include "../src/cpu/lsdtt_vector_network_d8_clean_cpu.hpp"
 
 
 static const std::string k_version  = "0.1.0";
@@ -282,6 +283,16 @@ int main(int argc, char* argv[])
         "Minimum junction-pair distance (m) to trigger gap repair.",
         "Pairs closer than this are considered correctly matched and skipped."};
 
+    float_default_map["max_repair_gap_m"] = 100.0f;
+    help_map["max_repair_gap_m"] = {"float","100",
+        "Maximum gap (m) the repair will attempt to carve.",
+        "A real road/embankment/culvert gap in a LiDAR DEM spans tens of metres. "
+        "A much larger vector-to-DEM junction gap means the DEM flow is already "
+        "correct and the vector network is a coarse local representation (e.g. a "
+        "confluence whose branches genuinely reunite far downstream). Candidates "
+        "beyond this are reported as topology mismatches and left unrepaired "
+        "rather than carving a long spurious channel. Set 0 to disable the cap."};
+
     int_default_map["max_gap_search_px"] = 60;
     help_map["max_gap_search_px"] = {"int","60",
         "Search-window half-width in pixels for gap repair.",
@@ -304,6 +315,15 @@ int main(int argc, char* argv[])
     help_map["write_repaired_dem"] = {"bool","false",
         "Write the modified (gap-repaired) DEM as a raster.",
         "Only used when repair_junction_gaps is true."};
+
+    bool_default_map["write_burned_outputs"] = true;
+    help_map["write_burned_outputs"] = {"bool","true",
+        "Write the final burned DEM and the stream network extracted from it.",
+        "In snap_to_network mode, after all conditioning and gap repair, writes "
+        "<write_fname>_burned.tif (the carved elevation surface) and "
+        "<write_fname>_burned_network_lines.fgb plus _burned_network_junctions.fgb "
+        "(the D8 stream network extracted from the burned DEM, for checking that "
+        "flow paths route correctly under roads and other obstructions)."};
 
     bool_default_map["write_channel_score_raster"] = false;
     help_map["write_channel_score_raster"] = {"bool","false",
@@ -447,6 +467,29 @@ int main(int argc, char* argv[])
         "Compute a spatial index when writing vector outputs.",
         "Improves GIS spatial query speed at the cost of buffering the "
         "entire layer in memory before writing."};
+
+    // --- D8 cleaning of the clipped vector network (loops + dead ends) ---
+    bool_default_map["clean_vector_network_d8"] = true;
+    help_map["clean_vector_network_d8"] = {"bool","true",
+        "Run D8-guided cleaning of the clipped vector network before "
+        "junction finding.",
+        "Resolves loops (removes the arm farthest from a D8 channel) and "
+        "dead-ending segments (links the downstream tip to the next segment "
+        "along the D8 flow path). Writes a cleaned-network line layer."};
+
+    int_default_map["d8_channel_threshold_pixels"] = 1000;
+    help_map["d8_channel_threshold_pixels"] = {"int","1000",
+        "Contributing-pixel threshold defining a D8 channel.",
+        "A DEM cell belongs to the D8 channel mask when its number of "
+        "contributing pixels (include-self) is at least this value. Used to "
+        "score loop arms. Only used when clean_vector_network_d8 is true."};
+
+    float_default_map["d8_dead_end_search_max_metres"] = 750.0f;
+    help_map["d8_dead_end_search_max_metres"] = {"float","750.0",
+        "Maximum D8 walk distance (m) when reconnecting a dead-ending tip.",
+        "If the flow path does not reach another vector segment within this "
+        "distance the dead end is left unresolved. Only used when "
+        "clean_vector_network_d8 is true."};
 
     // -------------------------------------------------------------------------
     // Parse
@@ -625,6 +668,7 @@ int main(int argc, char* argv[])
     std::cout << "Vector file: " << stream_vector_path << "\n";
 
     lsdtt::lsdtt_vector_to_junction_network_options vjn_opts;
+    vjn_opts.break_cycles = true;   // label loops instead of throwing; resolved by D8 below
     lsdtt::lsdtt_vector_to_junction_network vector_network;
 
     try
@@ -699,6 +743,61 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Step 4b — D8-guided cleaning of the clipped vector network
+    //
+    // The repaired OS VectorMap network contains loops (water polygons that
+    // split and rejoin) and dead-ending interior tips that break junction
+    // finding. Loops were labelled (is_loop_edge) by the loop-tolerant builder.
+    // Here we score loop arms against a D8 channel (contributing-pixel
+    // threshold) and drop the arm farthest from the channel, and we walk D8
+    // downhill from each dead-ending tip to link it to the next vector segment.
+    // The result is a cleaned line layer for inspection / downstream use.
+    // -------------------------------------------------------------------------
+    if (bf["clean_vector_network_d8"])
+    {
+        std::cout << "\n--- Cleaning vector network with D8 guidance ---\n";
+
+        lsdtt::vector_network_d8_clean_options clean_opts;
+        clean_opts.channel_threshold_pixels =
+            static_cast<std::int64_t>(ifs["d8_channel_threshold_pixels"]);
+        clean_opts.dead_end_search_max_metres =
+            static_cast<double>(ff["d8_dead_end_search_max_metres"]);
+
+        try
+        {
+            lsdtt::vector_network_d8_clean_result clean =
+                lsdtt::clean_vector_network_with_d8(
+                    vector_network, *flow, clean_opts);
+
+            std::cout << "D8 channel cells (>= "
+                      << clean_opts.channel_threshold_pixels << " px): "
+                      << clean.channel_mask_cells << "\n";
+            std::cout << "Loops detected / resolved : "
+                      << clean.n_loops_detected << " / "
+                      << clean.n_loops_resolved
+                      << "  (loop arm edges removed: "
+                      << clean.n_loop_edges_removed << ")\n";
+            std::cout << "Dead ends detected / resolved / unresolved : "
+                      << clean.n_dead_ends_detected << " / "
+                      << clean.n_dead_ends_resolved << " / "
+                      << clean.n_dead_ends_unresolved << "\n";
+
+            const std::string clean_file =
+                pp.make_output_path("_cleaned_network", ".fgb");
+            std::cout << "Writing cleaned network: " << clean_file << "\n";
+            lsdtt::write_cleaned_network(
+                clean, flow->meta(), clean_file,
+                lsdtt::vector_output_format::flatgeobuf,
+                bf["calculate_spatial_index"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: D8 vector-network cleaning failed: "
+                      << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Step 5 — Extract source junctions from the clipped vector network
     //
     // Sources are junctions with no donor junctions and which are not outlets.
@@ -738,7 +837,8 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (!junction.is_outlet && junction.donor_junctions.empty())
+        if (!junction.is_outlet && junction.donor_junctions.empty()
+            && !junction.is_on_loop)
         {
             vector_source_points.push_back(xy);
             vector_source_junction_ids.push_back(junction.junction_id);
@@ -1164,6 +1264,27 @@ int main(int argc, char* argv[])
 
         if (n_carved > 0)
         {
+            // Carving lowers a descending channel into the filled DEM. Although
+            // burn_capturing_path daylights at each terminus, a carve that hits
+            // the pixel cap or floors an interior cell can leave a residual
+            // single-cell pit or flat that D8 cannot route across. Re-resolve
+            // depressions on the carved DEM before rebuilding flow; fill only
+            // raises closed depressions to their spill point, so the carved
+            // channels (which daylight onward) are preserved.
+            std::cout << "Re-filling depressions introduced by carving "
+                      << "(min slope = " << ff["fill_min_slope"] << ").\n";
+            try
+            {
+                routed_dem = lsdtt::fill_pits(routed_dem, ff["fill_min_slope"],
+                                              ifs["n_threads"]);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: re-fill after edge-source carving failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
             std::cout << "Rebuilding D8 flow routing after edge-source carving.\n";
             try
             {
@@ -1667,6 +1788,7 @@ int main(int argc, char* argv[])
 
             lsdtt::junction_repair_params repair_params;
             repair_params.min_gap_m           = static_cast<double>(ff["junction_tolerance_m"]);
+            repair_params.max_repair_gap_m    = static_cast<double>(ff["max_repair_gap_m"]);
             repair_params.max_search_px       = ifs["max_gap_search_px"];
             repair_params.uphill_mult         = static_cast<double>(ff["gap_uphill_penalty"]);
             repair_params.max_climb_m         = static_cast<double>(ff["max_gap_climb_m"]);
@@ -2135,6 +2257,89 @@ int main(int argc, char* argv[])
         else if (bf["repair_junction_gaps"] && phase_result.incomplete_basins.empty())
         {
             std::cout << "All basins complete — no repair needed.\n";
+        }
+
+        // ---------------------------------------------------------------------
+        // Final deliverables — the burned DEM and the stream network it routes.
+        //
+        // After conditioning and gap repair, routed_dem is the carved elevation
+        // surface (roads and obstructions cut so D8 routes through them) and
+        // `flow` reflects it. We write that DEM and re-extract the seeded D8
+        // channel network from it so the routed flow paths can be checked.
+        // ---------------------------------------------------------------------
+        if (bf["write_burned_outputs"])
+        {
+            std::cout << "\n--- Writing burned DEM and stream network ---\n";
+
+            const std::string burned_dem_file =
+                pp.make_output_path("_burned", ".tif");
+            std::cout << "Writing burned DEM: " << burned_dem_file << "\n";
+            try
+            {
+                lsdtt::lsdtt_data_loader writer;
+                writer.write_full(routed_dem.get_data(),
+                                  routed_dem.get_meta(), burned_dem_file);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: could not write burned DEM: "
+                          << e.what() << "\n";
+            }
+
+            // Re-extract the network from the final (carved) DEM so the output
+            // network is guaranteed consistent with the burned surface.
+            std::unique_ptr<lsdtt::lsdtt_junction_network_base> burned_network;
+            try
+            {
+                burned_network = lsdtt::make_junction_network_base(
+                    *flow, source_flats, jn_opts);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: could not extract burned stream network: "
+                          << e.what() << "\n";
+            }
+
+            if (burned_network)
+            {
+                std::cout << "Burned network channel cells : "
+                          << burned_network->n_channel_cells() << "\n";
+                std::cout << "Burned network junctions     : "
+                          << burned_network->n_junctions() << "\n";
+                std::cout << "Burned network outlet nodes  : "
+                          << burned_network->n_outlet_junctions() << "\n";
+
+                const std::string lines_file =
+                    pp.make_output_path("_burned_network_lines", ".fgb");
+                std::cout << "Writing burned network lines: " << lines_file << "\n";
+                try
+                {
+                    burned_network->write_channel_network_lines(
+                        lines_file, lsdtt::vector_output_format::flatgeobuf,
+                        "burned_network_lines", bf["calculate_spatial_index"]);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write burned network lines: "
+                              << e.what() << "\n";
+                }
+
+                const std::string junc_file =
+                    pp.make_output_path("_burned_network_junctions", ".fgb");
+                std::cout << "Writing burned network junctions: "
+                          << junc_file << "\n";
+                try
+                {
+                    burned_network->write_junction_network_points(
+                        junc_file, lsdtt::point_output_format::flatgeobuf,
+                        "burned_network_junctions", bf["calculate_spatial_index"]);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write burned network "
+                                 "junctions: " << e.what() << "\n";
+                }
+            }
         }
     }
 

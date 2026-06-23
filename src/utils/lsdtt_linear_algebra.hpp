@@ -18,6 +18,7 @@
 //   - invert3x3                       Gauss-Jordan inversion of a general 3×3 matrix
 //   - angle_between_vectors_degrees   angle between two 2D vectors, in degrees
 //   - point_to_segment_distance       point-to-segment distance in 2D
+//   - segment_segment_intersection    proper 2D segment-segment crossing test
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -263,6 +264,49 @@ inline double point_to_segment_distance(
     const double dc = pc - qc;
 
     return std::sqrt(dr * dr + dc * dc);
+}
+
+
+// -----------------------------------------------------------------------------
+// segment_segment_intersection
+//
+// Proper 2D segment-segment intersection test for segment p1->p2 against
+// segment p3->p4. Returns true when the two open/closed segments cross at a
+// single point that lies within BOTH segments; on success the crossing point is
+// written to (ix, iy).
+//
+// Method: solve p1 + t*(p2-p1) == p3 + u*(p4-p3) for t,u via the 2D cross
+// product. Parallel and collinear cases (|denominator| <= eps) return false:
+// for the bridge-crosses-road use case a near-collinear bridge is degenerate
+// and is better handled by the caller with a point-to-segment tolerance test.
+// Endpoint-touching counts as an intersection (t,u in the closed [0,1]).
+// -----------------------------------------------------------------------------
+inline bool segment_segment_intersection(
+    double p1x, double p1y, double p2x, double p2y,
+    double p3x, double p3y, double p4x, double p4y,
+    double& ix, double& iy)
+{
+    const double d1x = p2x - p1x;
+    const double d1y = p2y - p1y;
+    const double d2x = p4x - p3x;
+    const double d2y = p4y - p3y;
+
+    const double denom = d1x * d2y - d1y * d2x;
+    if (std::abs(denom) <= 1e-30)
+        return false;   // parallel or collinear
+
+    const double rx = p3x - p1x;
+    const double ry = p3y - p1y;
+
+    const double t = (rx * d2y - ry * d2x) / denom;
+    const double u = (rx * d1y - ry * d1x) / denom;
+
+    if (t < 0.0 || t > 1.0 || u < 0.0 || u > 1.0)
+        return false;
+
+    ix = p1x + t * d1x;
+    iy = p1y + t * d1y;
+    return true;
 }
 
 } // namespace lsdtt

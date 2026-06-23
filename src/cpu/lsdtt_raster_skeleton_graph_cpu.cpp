@@ -3889,5 +3889,21 @@ route_skeleton_endpoint_bridges_least_cost(
 }
 
 
+// -----------------------------------------------------------------------------
+// skeleton_segment_to_polyline
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_xy> skeleton_segment_to_polyline(
+    const skeleton_segment&  segment,
+    const lsdtt_raster_meta& meta)
+{
+    std::vector<lsdtt_xy> out;
+    out.reserve(segment.pixels.size());
+    for (const skeleton_pixel& px : segment.pixels)
+    {
+        out.push_back(cell_center_from_row_col(meta, px.row, px.col));
+    }
+    return out;
+}
+
 
 } // end namespace lsdtt

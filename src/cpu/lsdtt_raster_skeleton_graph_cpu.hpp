@@ -42,6 +42,7 @@
 #pragma once
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../core/lsdtt_types.hpp"
 
 #include <cstddef>
 #include <limits>
@@ -297,6 +298,23 @@ struct skeleton_segment_strength
 [[nodiscard]] std::vector<skeleton_segment>
 extract_skeleton_segments(
     const lsdtt_raster_cpu& skeleton
+);
+
+// -----------------------------------------------------------------------------
+// skeleton_segment_to_polyline
+//
+// Converts an ordered skeleton segment's pixel chain to a world-coordinate
+// polyline by mapping each pixel (row, col) to its cell centre under `meta`.
+// The output follows the segment's pixel order. Returns an empty vector for an
+// empty segment.
+//
+// This is the bridge from the raster skeleton suite back into vector space (the
+// same pixel -> lsdtt_xy mapping used internally by the tidal skeleton module),
+// used by the water-area centreline extractor.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_xy> skeleton_segment_to_polyline(
+    const skeleton_segment&  segment,
+    const lsdtt_raster_meta& meta
 );
 
 // -----------------------------------------------------------------------------

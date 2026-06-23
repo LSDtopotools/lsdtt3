@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -1774,6 +1775,47 @@ int lsdtt_data_loader::count_features_in_first_layer(
     }
 
     return static_cast<int>(layer->GetFeatureCount(/*bForce=*/TRUE));
+}
+
+// =============================================================================
+// resolve_writable_path
+// =============================================================================
+std::string lsdtt_data_loader::resolve_writable_path(
+    const std::string& base,
+    const std::string& ext,
+    bool*              was_renamed)
+{
+    if (was_renamed) *was_renamed = false;
+
+    auto exists = [](const std::string& p) -> bool
+    {
+        std::ifstream f(p);
+        return f.good();
+    };
+
+    const std::string path = base + ext;
+    if (!exists(path))
+    {
+        return path;   // nothing there: free to create
+    }
+
+    if (std::remove(path.c_str()) == 0)
+    {
+        return path;   // removed (not locked): caller will recreate in place
+    }
+
+    // Could not remove — treat as locked; find the next free fallback name.
+    for (int n = 2; n < 1000; ++n)
+    {
+        const std::string cand = base + "_" + std::to_string(n) + ext;
+        if (!exists(cand))
+        {
+            if (was_renamed) *was_renamed = true;
+            return cand;
+        }
+    }
+    // Exhausted fallbacks: return the original (write will likely fail loudly).
+    return path;
 }
 
 } // namespace lsdtt

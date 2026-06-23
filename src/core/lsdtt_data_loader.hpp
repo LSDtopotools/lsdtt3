@@ -584,6 +584,23 @@ public:
     // Throws std::runtime_error if the file cannot be opened.
     static int count_features_in_first_layer(const std::string& vector_path);
 
+    // Resolve a writable output path that will not be silently clobbered by a
+    // locked file. If "base + ext" does not exist, it is returned. If it exists
+    // and can be removed, it is removed (so the caller's create() makes a fresh
+    // file) and "base + ext" is returned. If it exists but CANNOT be removed
+    // (e.g. locked open in QGIS on a Windows/WSL mount), the next free
+    // "base_N + ext" (N = 2, 3, ...) is returned instead, so a rerun never
+    // fails to overwrite. If `was_renamed` is non-null it is set to true when a
+    // fallback name had to be used.
+    //
+    // Note: on POSIX a file open by another process can normally still be
+    // removed (no mandatory lock), so this overwrites in place there; the
+    // fallback path is for Windows/WSL-mounted filesystems.
+    static std::string resolve_writable_path(
+        const std::string& base,
+        const std::string& ext,
+        bool*              was_renamed = nullptr);
+
     // Write a table to a CSV file. The first row is a header.
     //
     //   out_path   — output .csv file path

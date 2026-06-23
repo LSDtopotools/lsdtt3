@@ -402,6 +402,15 @@ struct junction_repair_params
     double uphill_mult   = 20.0;
     double max_climb_m   = 10.0;
 
+    // Maximum gap (vector junction to its matched DEM junction, metres) that a
+    // repair will attempt to carve. A real road / embankment / culvert gap in a
+    // LiDAR DEM spans tens of metres; a much larger "gap" means the DEM flow is
+    // correct and the vector network is a coarse local representation (e.g. a
+    // confluence whose branches genuinely reunite far downstream), not an
+    // obstruction. Candidates beyond this are reported as topology mismatches
+    // and left unrepaired instead of carving a long, spurious channel.
+    double max_repair_gap_m = 100.0;
+
     // Enforce a strictly downhill repair burn (m/m).
     // Set 0 for the original non-increasing running-minimum behaviour.
     double repair_min_slope = 0.0001;
