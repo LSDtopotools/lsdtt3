@@ -47,6 +47,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -70,6 +71,7 @@
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_vector_to_junction_network.hpp"
 #include "../src/cpu/lsdtt_vector_network_d8_clean_cpu.hpp"
+#include "../src/cpu/lsdtt_burn_vectormap_cpu.hpp"
 
 
 static const std::string k_version  = "0.1.0";
@@ -152,7 +154,40 @@ int main(int argc, char* argv[])
     string_default_map["breach_algorithm_choice"] = "lindsay2016";
     help_map["breach_algorithm_choice"] = {"string","lindsay2016",
         "Breaching algorithm used when carve_before_fill is true.",
-        "Allowed values: lindsay2016, least_cost."};
+        "Allowed values: lindsay2016 (unbounded), least_cost (supports bounded "
+        "breaching via breach_max_cost / breach_max_dist_px)."};
+
+    // --- Bounded least-cost breaching (breach_algorithm_choice = least_cost) ---
+    float_default_map["breach_max_cost"] = 0.0f;
+    help_map["breach_max_cost"] = {"float","0",
+        "Cap on the total elevation (m, distance-weighted) carved along one "
+        "least-cost breach path. 0 = unbounded.",
+        "Discriminates obstruction type by carve depth: shallow carves (lake "
+        "spillways, small pits) stay below the cap and breach; deep carves "
+        "through road/rail embankments exceed it and are left filled, so those "
+        "crossings remain as gaps for snap_to_accumulation to burn under the "
+        "vector line. Start ~2-5 (m). Only used when breach_algorithm_choice is "
+        "least_cost."};
+
+    int_default_map["breach_max_dist_px"] = 1000;
+    help_map["breach_max_dist_px"] = {"int","1000",
+        "Maximum breach-path length in pixels for least-cost breaching.",
+        "Must be large enough to span the widest water body you want breached. "
+        "Only used when breach_algorithm_choice is least_cost."};
+
+    float_default_map["breach_flat_increment"] = 0.0f;
+    help_map["breach_flat_increment"] = {"float","0",
+        "Per-step elevation drop (m) imposed along a breach channel.",
+        "0 = auto (derived from the DEM). Only used when breach_algorithm_choice "
+        "is least_cost."};
+
+    bool_default_map["breach_fill_remainder"] = true;
+    help_map["breach_fill_remainder"] = {"bool","true",
+        "Fill any depression that could not be breached within the cost/distance "
+        "bounds (so flow still routes off it).",
+        "Keep true for bounded breaching: road-dammed depressions that exceed "
+        "breach_max_cost are filled (then routed by fill_min_slope) rather than "
+        "carved. Only used when breach_algorithm_choice is least_cost."};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -177,7 +212,48 @@ int main(int argc, char* argv[])
         "snap_to_network: compare the supplied vector junctions against "
         "junctions extracted from the DEM flow network and produce a "
         "diagnostic point file showing where the two networks agree or diverge "
-        "(first step toward guided carving)."};
+        "(first step toward guided carving). Best for less accurate vector "
+        "layers (e.g. OS Rivers). "
+        "snap_to_accumulation: for ACCURATE vector layers (e.g. OS VectorMap "
+        "Local). Snap the vector lines to the LiDAR D8 channel (cells above an "
+        "accumulation threshold) and burn ONLY the obstruction gaps (roads), "
+        "where accumulation drops to ~0, directly under the vector line. "
+        "Preserves the LiDAR thalweg and writes the burned DEM plus the network "
+        "extracted from it."};
+
+    // --- snap_to_accumulation (accurate vector layers, e.g. VectorMap Local) ---
+    int_default_map["accumulation_threshold_pixels"] = 1000;
+    help_map["accumulation_threshold_pixels"] = {"int","1000",
+        "Contributing-pixel threshold defining a D8 channel.",
+        "Used by stream_burn_mode=snap_to_accumulation: cells with at least this "
+        "many contributing pixels form the channel the vector lines snap to, and "
+        "the same threshold extracts the verification network from the burned "
+        "DEM."};
+
+    int_default_map["network_threshold_pixels"] = 5000;
+    help_map["network_threshold_pixels"] = {"int","5000",
+        "Contributing-pixel threshold for the OUTPUT network extracted from the "
+        "burned DEM.",
+        "Separate from accumulation_threshold_pixels (which is kept low so the "
+        "vector lines snap onto channels for gap detection). Raise this for a "
+        "cleaner verification network: on the strathduie tile the VML channels "
+        "are ~95% covered at 5000 and ~90% at 10000, versus a hairball at 1000. "
+        "Only used when stream_burn_mode=snap_to_accumulation."};
+
+    float_default_map["snap_radius_m"] = 30.0f;
+    help_map["snap_radius_m"] = {"float","30",
+        "Lateral search radius (m) for snapping a vector line to a D8 channel.",
+        "Used by stream_burn_mode=snap_to_accumulation. A vector sample with no "
+        "above-threshold channel within this radius is treated as an obstruction "
+        "(road) gap to be burned. Keep small for accurate layers like VectorMap "
+        "Local."};
+
+    float_default_map["max_burn_gap_m"] = 250.0f;
+    help_map["max_burn_gap_m"] = {"float","250",
+        "Maximum length (m) of an obstruction gap that will be burned.",
+        "Used by stream_burn_mode=snap_to_accumulation. A span longer than this "
+        "with no nearby channel is unlikely to be a single obstruction; it is "
+        "reported but not burned. Set 0 to disable the cap."};
 
     // --- burn_in_place outputs ---
     bool_default_map["write_burned_profiles_csv"] = true;
@@ -579,7 +655,23 @@ int main(int argc, char* argv[])
             {
                 if (sf["breach_algorithm_choice"] == "least_cost")
                 {
-                    routed_dem = lsdtt::breach_depressions_least_cost(dem);
+                    // Bounded least-cost breaching. max_cost caps the total
+                    // elevation carved along a breach path: shallow carves
+                    // (lake spillways, small pits) pass, but deep carves through
+                    // road embankments exceed the cap and are left filled — so
+                    // roads stay as gaps for snap_to_accumulation to burn under
+                    // the vector line. <= 0 means unbounded cost (carve through
+                    // everything, the classic behaviour).
+                    const float bmc = ff["breach_max_cost"];
+                    routed_dem = lsdtt::breach_depressions_least_cost(
+                        dem,
+                        ifs["breach_max_dist_px"],
+                        bmc > 0.0f ? bmc
+                                   : std::numeric_limits<float>::max(),
+                        /*min_dist=*/true,
+                        /*flat_increment=*/ff["breach_flat_increment"],
+                        /*fill_remainder=*/bf["breach_fill_remainder"],
+                        ifs["n_threads"]);
                 }
                 else
                 {
@@ -1341,7 +1433,8 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing DEM network (points) ---\n";
 
         const std::string ext    = lsdtt::output_extension(dem_net_point_fmt);
-        const std::string output = pp.make_output_path( "_dem_network_points", ext);
+        const std::string output = lsdtt::lsdtt_data_loader::resolve_writable_path(
+            pp.get_full_write_path() + "_dem_network_points", ext);
         std::cout << "Writing: " << output << "\n";
 
         try
@@ -1366,7 +1459,8 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing DEM network (lines) ---\n";
 
         const std::string ext    = lsdtt::output_extension(dem_net_line_fmt);
-        const std::string output = pp.make_output_path( "_dem_network_lines", ext);
+        const std::string output = lsdtt::lsdtt_data_loader::resolve_writable_path(
+            pp.get_full_write_path() + "_dem_network_lines", ext);
         std::cout << "Writing: " << output << "\n";
 
         try
@@ -1391,7 +1485,8 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing DEM network junctions ---\n";
 
         const std::string ext    = lsdtt::output_extension(dem_net_point_fmt);
-        const std::string output = pp.make_output_path( "_dem_network_junctions", ext);
+        const std::string output = lsdtt::lsdtt_data_loader::resolve_writable_path(
+            pp.get_full_write_path() + "_dem_network_junctions", ext);
         std::cout << "Writing: " << output << "\n";
 
         try
@@ -2338,6 +2433,189 @@ int main(int argc, char* argv[])
                 {
                     std::cerr << "Warning: could not write burned network "
                                  "junctions: " << e.what() << "\n";
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // snap_to_accumulation — accurate vector layer (e.g. OS VectorMap Local)
+    //
+    // Snap the vector lines to the LiDAR D8 channel (cells above an
+    // accumulation threshold) and burn ONLY obstruction gaps (roads), where the
+    // accumulation drops to ~0 just downstream of the blockage, directly under
+    // the vector line. The LiDAR thalweg is preserved everywhere else. Then
+    // extract the verification network from the burned DEM by the same
+    // accumulation threshold.
+    // -------------------------------------------------------------------------
+    else if (burn_mode == lsdtt::stream_burn_mode::snap_to_accumulation)
+    {
+        std::cout << "\n--- Snap-to-accumulation burn (accurate vector layer) ---\n";
+
+        // Diagnostic: write the pre-burn flow-accumulation raster so the
+        // channel threshold can be tuned against the vector network offline.
+        if (bf["write_burned_outputs"])
+        {
+            const std::string acc_path =
+                lsdtt::lsdtt_data_loader::resolve_writable_path(
+                    pp.get_full_write_path() + "_accumulation", ".tif");
+            std::cout << "Writing flow-accumulation raster: " << acc_path << "\n";
+            try
+            {
+                lsdtt::lsdtt_raster_result ncp =
+                    flow->get_n_contributing_pixels_raster();
+                lsdtt::lsdtt_data_loader accw;
+                accw.write_full(ncp.data, ncp.meta, acc_path);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: could not write accumulation raster: "
+                          << e.what() << "\n";
+            }
+        }
+
+        lsdtt::vectormap_burn_options vb_opts;
+        vb_opts.accumulation_threshold_pixels =
+            static_cast<std::int64_t>(ifs["accumulation_threshold_pixels"]);
+        vb_opts.snap_radius_m    = static_cast<double>(ff["snap_radius_m"]);
+        vb_opts.max_gap_length_m = static_cast<double>(ff["max_burn_gap_m"]);
+        vb_opts.burn_min_slope   =
+            (ff["repair_min_slope"] > 0.0f)
+                ? static_cast<double>(ff["repair_min_slope"])
+                : static_cast<double>(ff["fill_min_slope"]);
+        vb_opts.n_threads        = ifs["n_threads"];
+
+        lsdtt::vectormap_burn_result vb;
+        try
+        {
+            vb = lsdtt::burn_vectormap_road_gaps(
+                routed_dem, *flow, stream_vector_path, vb_opts);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: snap-to-accumulation burn failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "Vector lines           : " << vb.n_lines << "\n";
+        std::cout << "D8 channel cells (>= "
+                  << vb_opts.accumulation_threshold_pixels << " px): "
+                  << vb.channel_mask_cells << "\n";
+        std::cout << "Obstruction gaps detected/burned/skipped : "
+                  << vb.n_gaps_detected << " / " << vb.n_gaps_burned
+                  << " / " << vb.n_gaps_skipped << "\n";
+        std::cout << "Total burned gap length: " << vb.total_burn_length_m
+                  << " m\n";
+
+        std::cout << "\nRe-filling and rebuilding flow after gap burning.\n";
+        try
+        {
+            routed_dem = lsdtt::fill_pits(routed_dem, ff["fill_min_slope"],
+                                          ifs["n_threads"]);
+            flow = lsdtt::make_flow_base(
+                routed_dem.get_data_array(), routed_dem.get_mask_array(),
+                routed_dem.get_meta(), fi_opts);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: reflow after gap burning failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        if (bf["write_burned_outputs"])
+        {
+            const std::string dem_path =
+                lsdtt::lsdtt_data_loader::resolve_writable_path(
+                    pp.get_full_write_path() + "_burned", ".tif");
+            std::cout << "Writing burned DEM: " << dem_path << "\n";
+            try
+            {
+                lsdtt::lsdtt_data_loader writer;
+                writer.write_full(routed_dem.get_data(),
+                                  routed_dem.get_meta(), dem_path);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: could not write burned DEM: "
+                          << e.what() << "\n";
+            }
+
+            const std::int64_t net_threshold =
+                static_cast<std::int64_t>(ifs["network_threshold_pixels"]);
+            const std::vector<std::int64_t> heads =
+                lsdtt::channel_heads_from_accumulation(*flow, net_threshold);
+            std::cout << "Output network threshold: " << net_threshold
+                      << " px; channel heads: " << heads.size() << "\n";
+
+            std::unique_ptr<lsdtt::lsdtt_junction_network_base> burned_net;
+            try
+            {
+                burned_net = lsdtt::make_junction_network_base(
+                    *flow, heads, jn_opts);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: could not extract burned network: "
+                          << e.what() << "\n";
+            }
+            if (burned_net)
+            {
+                std::cout << "Burned network channel cells : "
+                          << burned_net->n_channel_cells() << "\n";
+                std::cout << "Burned network junctions     : "
+                          << burned_net->n_junctions() << "\n";
+                const std::string lines_path =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_burned_network_lines", ".fgb");
+                std::cout << "Writing burned network lines: " << lines_path << "\n";
+                try
+                {
+                    burned_net->write_channel_network_lines(
+                        lines_path, lsdtt::vector_output_format::flatgeobuf,
+                        "burned_network_lines", bf["calculate_spatial_index"]);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write burned network lines: "
+                              << e.what() << "\n";
+                }
+            }
+
+            // Diagnostic: the burned obstruction-gap trenches.
+            if (!vb.gaps.empty())
+            {
+                const std::string gap_path =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_burned_gaps", ".fgb");
+                std::cout << "Writing burned gap segments: " << gap_path << "\n";
+                try
+                {
+                    lsdtt::lsdtt_vector_schema schema;
+                    schema.field_names = {"length_m", "burned", "skip_reason"};
+                    schema.field_types = {
+                        lsdtt::lsdtt_vector_field_type::double_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::string_type};
+                    lsdtt::lsdtt_data_loader gw;
+                    gw.begin_vector_write(gap_path, "burned_gaps", schema,
+                        routed_dem.get_meta().crs_wkt,
+                        lsdtt::vector_output_format::flatgeobuf, false);
+                    for (const auto& g : vb.gaps)
+                    {
+                        if (g.path_xy.size() < 2) continue;
+                        gw.write_line(g.path_xy, {
+                            g.length_m,
+                            static_cast<std::int64_t>(g.burned ? 1 : 0),
+                            g.skip_reason});
+                    }
+                    gw.finish_vector_write();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write burned gaps: "
+                              << e.what() << "\n";
                 }
             }
         }

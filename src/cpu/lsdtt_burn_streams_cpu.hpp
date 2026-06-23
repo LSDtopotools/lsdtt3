@@ -120,10 +120,12 @@ struct vector_network_endpoints
 enum class stream_burn_mode
 {
     burn_in_place,
-    snap_to_network
+    snap_to_network,
+    snap_to_accumulation
 };
 
-// Resolve from string ("burn_in_place" / "snap_to_network").
+// Resolve from string ("burn_in_place" / "snap_to_network" /
+// "snap_to_accumulation").
 stream_burn_mode resolve_stream_burn_mode(const std::string& s);
 
 // ---------------------------------------------------------------------------

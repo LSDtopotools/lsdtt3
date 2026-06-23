@@ -262,6 +262,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_vector_ops_cpu.cpp
     src/cpu/lsdtt_vector_line_repair_cpu.cpp
     src/cpu/lsdtt_vector_network_d8_clean_cpu.cpp
+    src/cpu/lsdtt_burn_vectormap_cpu.cpp
     src/cpu/lsdtt_water_area_centreline_cpu.cpp
     src/cpu/lsdtt_marsh_platform_cpu.cpp
     src/cpu/lsdtt_tidal_channel_cpu.cpp
