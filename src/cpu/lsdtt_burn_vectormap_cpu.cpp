@@ -614,6 +614,63 @@ vectormap_source_burn_result burn_vectormap_source_paths(
         return true;
     };
 
+    const double seg_len = std::max(cs, options.segment_length_m);
+
+    // Trace the D8 path from arc-length s_top and report how far along the path
+    // it follows (within tol). On divergence, `escape_z` is set to the elevation
+    // of the cell the flow strayed TO (lower than the path, the competing route)
+    // — the carve must reach a path pixel below this to actually capture the
+    // flow, not merely below the divergence point. `diverged` distinguishes a
+    // genuine stray from reaching the path end / a base-level outlet.
+    auto trace_reach_s = [&](const std::vector<lsdtt_xy>& path,
+                             const std::vector<double>& cum, double total,
+                             double s_top, double& escape_z, bool& diverged)
+        -> double
+    {
+        escape_z = std::numeric_limits<double>::max();
+        diverged = false;
+        int row, col;
+        const lsdtt_xy ptop = point_at_arclength(path, cum, s_top);
+        if (!xy_to_rc(meta, ptop.x, ptop.y, row, col)) return total; // off-DEM: clear
+        std::int64_t cur = flow.flat_index_unchecked(row, col);
+        double max_s = s_top;
+        for (int s = 0; s < max_steps; ++s)
+        {
+            const int rr = flow.row_from_flat_unchecked(cur);
+            const int cc = flow.col_from_flat_unchecked(cur);
+            const lsdtt_nearest_polyline_point np =
+                nearest_point_on_polyline(rc_to_centre(meta, rr, cc), path);
+            if (np.distance > tol)
+            {
+                escape_z = static_cast<double>(zdata(rr, cc));
+                diverged = true;
+                break;
+            }
+            const double s_here = cum[np.segment_index] +
+                np.t * (cum[np.segment_index + 1] - cum[np.segment_index]);
+            if (s_here > max_s) max_s = s_here;
+            if (max_s >= total - 0.5 * cs) break;
+            if (flow.is_outlet_unchecked(cur)) break;
+            const std::int64_t nxt = flow.receiver_of_unchecked(cur);
+            if (nxt == cur || nxt < 0) break;
+            cur = nxt;
+        }
+        return max_s;
+    };
+
+    // Lowest-cell elevation along the path at arc-length s (sampled cell).
+    auto path_elev = [&](const std::vector<lsdtt_xy>& path,
+                         const std::vector<double>& cum, double s,
+                         double& z) -> bool
+    {
+        int r, c;
+        const lsdtt_xy p = point_at_arclength(path, cum, s);
+        if (!xy_to_rc(meta, p.x, p.y, r, c)) return false;
+        if (mdata(r, c) == 0) return false;
+        z = static_cast<double>(zdata(r, c));
+        return true;
+    };
+
     for (const std::vector<lsdtt_xy>& path : source_paths)
     {
         if (path.size() < 2) continue;
@@ -623,60 +680,73 @@ vectormap_source_burn_result burn_vectormap_source_paths(
         const double total = cum.back();
         if (total < cs) continue;
 
-        int sr, sc;
-        if (!xy_to_rc(meta, path.front().x, path.front().y, sr, sc)) continue;
-
-        // Trace D8 from the source; advance s_dep/z_dep along the path while the
-        // flow stays within tol of it; stop at the first stray (the divergence).
-        std::int64_t cur = flow.flat_index_unchecked(sr, sc);
-        double s_dep = 0.0;
-        double z_dep = static_cast<double>(zdata(sr, sc));
-        bool   diverged = false;
-        for (int s = 0; s < max_steps; ++s)
+        // Fallback: force the WHOLE path into the DEM (last resort for sources no
+        // sequence of reach-burns can resolve), but only if it actually diverges.
+        if (options.force_full_path)
         {
-            const int rr = flow.row_from_flat_unchecked(cur);
-            const int cc = flow.col_from_flat_unchecked(cur);
-            const lsdtt_nearest_polyline_point np =
-                nearest_point_on_polyline(rc_to_centre(meta, rr, cc), path);
-            if (np.distance > tol) { diverged = true; break; }
-            s_dep = cum[np.segment_index] +
-                    np.t * (cum[np.segment_index + 1] - cum[np.segment_index]);
-            z_dep = static_cast<double>(zdata(rr, cc));
-            if (s_dep >= total - 0.5 * cs) break;          // followed to path end
-            if (flow.is_outlet_unchecked(cur)) break;       // reached base level
-            const std::int64_t nxt = flow.receiver_of_unchecked(cur);
-            if (nxt == cur || nxt < 0) break;
-            cur = nxt;
+            double esc; bool dv;
+            if (trace_reach_s(path, cum, total, 0.0, esc, dv) >= total - 0.5 * cs)
+                continue;                                   // already follows
+            const std::vector<lsdtt_xy> sub = subline(path, cum, 0.0, total);
+            if (burn_subpath(sub))
+            {
+                ++result.n_burned;
+                result.total_burn_length_m += total;
+                vectormap_burn_gap g;
+                g.path_xy = sub; g.length_m = total; g.burned = true;
+                result.burned.push_back(std::move(g));
+            }
+            continue;
         }
-        if (!diverged) continue;   // this source already follows its vector path
 
-        // Keep following the vector path downstream from the divergence until a
-        // pixel genuinely LOWER than the divergence point (enough head-room for a
-        // draining grade); burn a descending channel between them.
-        double s_low = -1.0;
-        for (double s = s_dep + step; s <= total; s += step)
+        // Walk the whole path in segments and burn EVERY divergent crossing, not
+        // just the first one — so a stuck crossing upstream does not prevent the
+        // (often easier) crossings downstream from being burned in the same pass.
+        const int m = std::max(1, static_cast<int>(std::ceil(total / seg_len)));
+        int i = 0;
+        while (i < m)
         {
-            int r, c;
-            if (!xy_to_rc(meta, point_at_arclength(path, cum, s).x,
-                                point_at_arclength(path, cum, s).y, r, c))
+            const double s_top = i * seg_len;
+            double escape_z = 0.0; bool diverged = false;
+            const double reach =
+                trace_reach_s(path, cum, total, s_top, escape_z, diverged);
+            const int reach_i = static_cast<int>(reach / seg_len + 1e-6);
+            if (reach_i > i) { i = reach_i; continue; }     // follows here: skip
+            if (!diverged) { ++i; continue; }               // ended/outlet, not a stray
+
+            // Divergent at segment i: search downstream along the path for the
+            // first pixel LOWER THAN THE ESCAPE the flow took (not merely lower
+            // than the divergence point) — only then can the carve cut below the
+            // competing route and actually capture. Burn from s_top to there.
+            double s_low = -1.0;
+            for (double s = s_top + step; s <= total; s += step)
+            {
+                double z;
+                if (!path_elev(path, cum, s, z)) continue;
+                if (z < escape_z - std::max(0.1, options.burn_min_slope * (s - s_top)))
+                { s_low = s; break; }
+            }
+            if (s_low < 0.0)
+            {
+                // The path never drops below the escape: this is a genuine
+                // vector-vs-terrain conflict (the real valley is lower than the
+                // vector). Leave it rather than gouge an against-grade channel.
+                ++i;
                 continue;
-            if (mdata(r, c) == 0) continue;
-            const double z = static_cast<double>(zdata(r, c));
-            if (z < z_dep - std::max(0.1, options.burn_min_slope * (s - s_dep)))
-            { s_low = s; break; }
-        }
-        if (s_low < 0.0) s_low = total;   // none lower: burn to the path's end
+            }
 
-        const std::vector<lsdtt_xy> sub = subline(path, cum, s_dep, s_low);
-        if (burn_subpath(sub))
-        {
-            ++result.n_burned;
-            result.total_burn_length_m += (s_low - s_dep);
-            vectormap_burn_gap g;
-            g.path_xy = sub;
-            g.length_m = s_low - s_dep;
-            g.burned = true;
-            result.burned.push_back(std::move(g));
+            const std::vector<lsdtt_xy> sub = subline(path, cum, s_top, s_low);
+            if (burn_subpath(sub))
+            {
+                ++result.n_burned;
+                result.total_burn_length_m += (s_low - s_top);
+                vectormap_burn_gap g;
+                g.path_xy = sub; g.length_m = s_low - s_top; g.burned = true;
+                result.burned.push_back(std::move(g));
+            }
+            // Continue downstream past the burned span.
+            const int next_i = static_cast<int>(s_low / seg_len + 1e-6);
+            i = (next_i > i) ? next_i : i + 1;
         }
     }
 

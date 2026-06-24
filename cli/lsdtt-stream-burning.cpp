@@ -275,6 +275,17 @@ int main(int argc, char* argv[])
         "when the burned-segment count stops decreasing (the remaining segments "
         "are re-burning without resolving)."};
 
+    bool_default_map["force_full_path_burn"] = false;
+    help_map["force_full_path_burn"] = {"bool","false",
+        "Last-resort source-path burn: force the WHOLE downstream vector path of "
+        "any source whose D8 still diverges after the per-reach burns.",
+        "OFF by default: it carves the channel onto the vector even where a real "
+        "thalweg sits just beside the line, producing parallel-but-offset burns. "
+        "The per-reach source-path burn (burn each diverging crossing down to the "
+        "next lower vector pixel, then re-trace) is the intended behaviour; only "
+        "enable this brute-force fallback deliberately. "
+        "stream_burn_mode=snap_to_accumulation."};
+
     bool_default_map["write_burn_diagnostics"] = false;
     help_map["write_burn_diagnostics"] = {"bool","false",
         "Write per-segment burn diagnostics for QC of the trace-divergence burn.",
@@ -2740,6 +2751,39 @@ int main(int argc, char* argv[])
                 } catch (const std::exception& e) {
                     std::cerr << "FATAL: reflow failed: " << e.what() << "\n";
                     return 1;
+                }
+            }
+
+            // Last resort: any source whose D8 still diverges after the reach
+            // burns gets its WHOLE downstream vector path burned into the DEM, so
+            // the channel is forced onto the vector even where no reach-burn could
+            // capture it (deep against-grade conflicts).
+            if (bf["force_full_path_burn"])
+            {
+                lsdtt::vectormap_trace_burn_options ff_opts = tb_opts;
+                ff_opts.force_full_path = true;
+                try
+                {
+                    lsdtt::vectormap_source_burn_result fb =
+                        lsdtt::burn_vectormap_source_paths(
+                            routed_dem, *flow, source_paths, ff_opts);
+                    std::cout << "  full-path fallback: forced "
+                              << fb.n_burned << " whole source path(s) ("
+                              << fb.total_burn_length_m << " m)\n";
+                    for (auto& g : fb.burned) all_burned.push_back(std::move(g));
+                    if (fb.n_burned > 0)
+                    {
+                        routed_dem = lsdtt::fill_pits(routed_dem,
+                            ff["fill_min_slope"], ifs["n_threads"]);
+                        flow = lsdtt::make_flow_base(routed_dem.get_data_array(),
+                            routed_dem.get_mask_array(), routed_dem.get_meta(),
+                            fi_opts);
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: full-path fallback failed: "
+                              << e.what() << "\n";
                 }
             }
         }

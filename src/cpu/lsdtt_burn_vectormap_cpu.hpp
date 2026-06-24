@@ -149,6 +149,12 @@ struct vectormap_trace_burn_options
     bool   collect_traces      = false; // populate result.traces (sampled D8 paths)
     bool   dry_run             = false; // classify only; do NOT modify the DEM
     double trace_sample_spacing_m = 200.0; // emit a trace ~every this along a line
+
+    // Source-path burn fallback: when true, burn the ENTIRE downstream vector
+    // path of any source whose D8 still diverges (force the whole channel into
+    // the DEM along the vector). When false (default), burn only the individual
+    // divergent reaches (each crossing, down to the next lower pixel).
+    bool   force_full_path     = false;
 };
 
 // Per-segment classification of one fixed-length vector segment.
