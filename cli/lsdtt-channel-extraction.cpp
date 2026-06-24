@@ -26,6 +26,7 @@
 // -----------------------------------------------------------------------------
 
 #include <cstdlib>
+#include <cctype>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -37,9 +38,11 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
+#include "../src/cpu/lsdtt_channel_sources_wiener_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -62,6 +65,27 @@ static void print_banner()
         << "|| Version : " << k_version  << "\n"
         << "|| Citation: " << k_citation << "\n"
         << "=========================================================\n\n";
+}
+
+static std::string to_lower_copy(std::string s)
+{
+    for (char& c : s)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return s;
+}
+
+static std::string raster_ext(lsdtt::raster_output_format fmt)
+{
+    return (fmt == lsdtt::raster_output_format::png) ? ".png" : ".tif";
+}
+
+static bool mentions_missing_fftw(const std::string& msg)
+{
+    const std::string lower = to_lower_copy(msg);
+    return lower.find("without fftw") != std::string::npos ||
+           lower.find("fftw") != std::string::npos;
 }
 
 // =============================================================================
@@ -133,6 +157,59 @@ int main(int argc, char* argv[])
         "Contributing-pixel threshold used to define source channel heads.",
         "Channel heads are extracted from the flow-routing object using a "
         "contributing-pixel threshold. Reduce this value to extract denser networks."};
+
+    string_default_map["source_extraction_algorithm_choice"] = "threshold";
+    help_map["source_extraction_algorithm_choice"] = {"string","threshold",
+        "Source extraction algorithm.",
+        "Allowed values: threshold, wiener. Threshold uses source_pixels_threshold. "
+        "Wiener uses filtered-DEM curvature, QQ thresholding, and area pruning."};
+
+    float_default_map["wiener_pruning_drainage_area_m2"] = 1000.0f;
+    help_map["wiener_pruning_drainage_area_m2"] = {"float","1000.0",
+        "Minimum drainage area for Wiener channel pixels (m^2).",
+        "Wiener-only parameter. Channel pixels with drainage area below this "
+        "physical-area threshold are removed before skeleton endpoint extraction."};
+
+    float_default_map["wiener_surface_fitting_radius_m"] = 6.0f;
+    help_map["wiener_surface_fitting_radius_m"] = {"float","6.0",
+        "Surface-fitting radius for Wiener tangential curvature (m).",
+        "Wiener-only parameter. Passed to local polynomial fitting used for "
+        "tangential curvature computation."};
+
+    int_default_map["wiener_connected_components_threshold_pixels"] = 100;
+    help_map["wiener_connected_components_threshold_pixels"] = {"int","100",
+        "Minimum connected-component size in Wiener channel mask (pixels).",
+        "Wiener-only parameter. Components smaller than this are removed before "
+        "skeletonisation."};
+
+    bool_default_map["wiener_write_filtered_dem"] = false;
+    help_map["wiener_write_filtered_dem"] = {"bool","false",
+        "Write Wiener-filtered DEM diagnostic raster.",
+        "If true, writes <write_fname>_wiener_filtered_dem with the format set by "
+        "wiener_diagnostics_raster_format."};
+
+    bool_default_map["wiener_write_tangential_curvature"] = false;
+    help_map["wiener_write_tangential_curvature"] = {"bool","false",
+        "Write Wiener tangential-curvature diagnostic raster.",
+        "If true, writes <write_fname>_wiener_tangential_curvature with the format "
+        "set by wiener_diagnostics_raster_format."};
+
+    bool_default_map["wiener_write_qq_table"] = false;
+    help_map["wiener_write_qq_table"] = {"bool","false",
+        "Write Wiener QQ diagnostic table as CSV.",
+        "If true, writes QQ data to wiener_qq_output_csv, or to "
+        "<write_fname>_wiener_qq.csv when that parameter is empty."};
+
+    string_default_map["wiener_diagnostics_raster_format"] = "same_as_input";
+    help_map["wiener_diagnostics_raster_format"] = {"string","same_as_input",
+        "Raster format for Wiener diagnostic rasters.",
+        "Allowed values: cog, gtiff, same_as_input, png."};
+
+    string_default_map["wiener_qq_output_csv"] = "";
+    help_map["wiener_qq_output_csv"] = {"string","",
+        "Output CSV path for Wiener QQ diagnostics.",
+        "Wiener-only parameter. If empty and wiener_write_qq_table is true, "
+        "the CLI writes <write_fname>_wiener_qq.csv."};
 
     // --- Output --- general
     bool_default_map["calculate_spatial_index"] = true;
@@ -276,10 +353,42 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Cross-parameter logic
     // -------------------------------------------------------------------------
-    if (ifs["source_pixels_threshold"] <= 0)
+    const std::string source_algorithm_choice =
+        to_lower_copy(sf["source_extraction_algorithm_choice"]);
+
+    if (source_algorithm_choice != "threshold" &&
+        source_algorithm_choice != "wiener")
+    {
+        std::cerr << "FATAL: source_extraction_algorithm_choice must be one of: "
+                  << "threshold, wiener.\n";
+        return 1;
+    }
+
+    if (source_algorithm_choice == "threshold" &&
+        ifs["source_pixels_threshold"] <= 0)
     {
         std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
         return 1;
+    }
+
+    if (source_algorithm_choice == "wiener")
+    {
+        if (ff["wiener_pruning_drainage_area_m2"] <= 0.0f)
+        {
+            std::cerr << "FATAL: wiener_pruning_drainage_area_m2 must be > 0.\n";
+            return 1;
+        }
+        if (ff["wiener_surface_fitting_radius_m"] <= 0.0f)
+        {
+            std::cerr << "FATAL: wiener_surface_fitting_radius_m must be > 0.\n";
+            return 1;
+        }
+        if (ifs["wiener_connected_components_threshold_pixels"] < 1)
+        {
+            std::cerr << "FATAL: wiener_connected_components_threshold_pixels "
+                      << "must be >= 1.\n";
+            return 1;
+        }
     }
 
     lsdtt::point_output_format cn_points_output_format =
@@ -293,6 +402,14 @@ int main(int argc, char* argv[])
 
     lsdtt::raster_output_format flow_direction_output_format =
         lsdtt::resolve_raster_output_format(sf["flow_direction_output_format"]);
+
+    lsdtt::raster_output_format wiener_diagnostics_output_format =
+        lsdtt::raster_output_format::same_as_input;
+    if (source_algorithm_choice == "wiener")
+    {
+        wiener_diagnostics_output_format =
+            lsdtt::resolve_raster_output_format(sf["wiener_diagnostics_raster_format"]);
+    }
 
     lsdtt::point_output_format cn_junctions_output_format =
         lsdtt::resolve_point_output_format(
@@ -483,43 +600,154 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Step 3 — Extract source pixels
-    //
-    // At present the threshold source-extraction helper is on the CPU flow
-    // object. This dynamic_cast can be removed later if the functionality moves
-    // onto the abstract base or a shared helper.
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source extraction ---\n";
-    std::cout << "Contributing-pixel threshold: "
-              << ifs["source_pixels_threshold"] << "\n";
-
-    const lsdtt::lsdtt_flowinfo* flow_cpu =
-        dynamic_cast<const lsdtt::lsdtt_flowinfo*>(flow.get());
-
-    if (flow_cpu == nullptr)
-    {
-        std::cerr << "FATAL: source extraction by threshold currently "
-                  << "requires lsdtt_flowinfo.\n";
-        return 1;
-    }
+    std::cout << "Method: " << source_algorithm_choice << "\n";
 
     std::vector<std::int64_t> source_flats;
-    try
+
+    if (source_algorithm_choice == "threshold")
     {
-        source_flats =
-            flow_cpu->get_sources_index_threshold(
-                ifs["source_pixels_threshold"]
-            );
+        std::cout << "Contributing-pixel threshold: "
+                  << ifs["source_pixels_threshold"] << "\n";
+
+        const lsdtt::lsdtt_flowinfo* flow_cpu =
+            dynamic_cast<const lsdtt::lsdtt_flowinfo*>(flow.get());
+
+        if (flow_cpu == nullptr)
+        {
+            std::cerr << "FATAL: source extraction by threshold currently "
+                      << "requires lsdtt_flowinfo.\n";
+            return 1;
+        }
+
+        try
+        {
+            source_flats =
+                flow_cpu->get_sources_index_threshold(
+                    ifs["source_pixels_threshold"]
+                );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: source extraction failed: " << e.what() << "\n";
+            return 1;
+        }
     }
-    catch (const std::exception& e)
+    else
     {
-        std::cerr << "FATAL: source extraction failed: " << e.what() << "\n";
-        return 1;
+        std::cout << "Wiener pruning drainage area (m^2): "
+                  << ff["wiener_pruning_drainage_area_m2"] << "\n";
+        std::cout << "Wiener surface fitting radius (m): "
+                  << ff["wiener_surface_fitting_radius_m"] << "\n";
+        std::cout << "Wiener component size threshold   : "
+                  << ifs["wiener_connected_components_threshold_pixels"] << "\n";
+
+        lsdtt::wiener_source_extraction_params wparams;
+        wparams.pruning_drainage_area_m2 = ff["wiener_pruning_drainage_area_m2"];
+        wparams.surface_fitting_radius_m = ff["wiener_surface_fitting_radius_m"];
+        wparams.connected_components_threshold_pixels =
+            ifs["wiener_connected_components_threshold_pixels"];
+        wparams.write_filtered_dem         = bf["wiener_write_filtered_dem"];
+        wparams.write_tangential_curvature = bf["wiener_write_tangential_curvature"];
+        wparams.write_qq_table             = bf["wiener_write_qq_table"];
+
+        lsdtt::wiener_source_extraction_result wresult;
+        try
+        {
+            wresult = lsdtt::extract_channel_sources_wiener(
+                routed_dem,
+                *flow,
+                wparams
+            );
+            source_flats = std::move(wresult.source_flats);
+        }
+        catch (const std::exception& e)
+        {
+            if (mentions_missing_fftw(e.what()))
+            {
+                std::cerr
+                    << "FATAL: Wiener channel extraction requires FFTW, "
+                    << "but this build was compiled without FFTW. "
+                    << "Rebuild with FFTW support or use "
+                    << "source_extraction_algorithm_choice: threshold.\n";
+                return 1;
+            }
+
+            std::cerr << "FATAL: Wiener source extraction failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_data_loader diagnostics_loader;
+
+        if (bf["wiener_write_filtered_dem"] &&
+            wresult.diagnostics.filtered_dem.has_value())
+        {
+            const std::string out_file =
+                pp.make_output_path(
+                    "_wiener_filtered_dem",
+                    raster_ext(wiener_diagnostics_output_format)
+                );
+            diagnostics_loader.write_full(
+                wresult.diagnostics.filtered_dem->get_data(),
+                wresult.diagnostics.filtered_dem->get_meta(),
+                out_file,
+                wiener_diagnostics_output_format
+            );
+            std::cout << "Wrote Wiener filtered DEM diagnostic: "
+                      << out_file << "\n";
+        }
+
+        if (bf["wiener_write_tangential_curvature"] &&
+            wresult.diagnostics.tangential_curvature.has_value())
+        {
+            const std::string out_file =
+                pp.make_output_path(
+                    "_wiener_tangential_curvature",
+                    raster_ext(wiener_diagnostics_output_format)
+                );
+            diagnostics_loader.write_full(
+                wresult.diagnostics.tangential_curvature->get_data(),
+                wresult.diagnostics.tangential_curvature->get_meta(),
+                out_file,
+                wiener_diagnostics_output_format
+            );
+            std::cout << "Wrote Wiener tangential curvature diagnostic: "
+                      << out_file << "\n";
+        }
+
+        if (bf["wiener_write_qq_table"] &&
+            !wresult.diagnostics.qq_data.standard_normal_variate.empty())
+        {
+            const std::string out_csv = sf["wiener_qq_output_csv"].empty()
+                ? pp.make_output_path("_wiener_qq", ".csv")
+                : sf["wiener_qq_output_csv"];
+
+            lsdtt::write_qq_csv(
+                diagnostics_loader,
+                out_csv,
+                wresult.diagnostics.qq_data
+            );
+
+            std::cout << "Wrote Wiener QQ diagnostic table: "
+                      << out_csv << "\n";
+        }
     }
 
     if (source_flats.empty())
     {
-        std::cerr << "FATAL: source extraction returned no source pixels. "
-                  << "Try lowering source_pixels_threshold.\n";
+        if (source_algorithm_choice == "threshold")
+        {
+            std::cerr << "FATAL: source extraction returned no source pixels. "
+                      << "Try lowering source_pixels_threshold.\n";
+        }
+        else
+        {
+            std::cerr << "FATAL: Wiener source extraction returned no source pixels. "
+                      << "Try lowering wiener_pruning_drainage_area_m2 or "
+                      << "wiener_connected_components_threshold_pixels.\n";
+        }
         return 1;
     }
 

@@ -1,6 +1,6 @@
 # CLI reference: lsdtt-channel-extraction
 
-Extracts a channel network from a DEM using D8 flow routing and a contributing-pixel threshold. Outputs the network as points, polylines, junctions, or a flow-direction raster. Optionally burns a user-supplied vector channel network into the DEM and writes elevation profiles.
+Extracts a channel network from a DEM using D8 flow routing and either threshold-based or Wiener-based source extraction. Outputs the network as points, polylines, junctions, or a flow-direction raster. Optionally burns a user-supplied vector channel network into the DEM and writes elevation profiles.
 
 ## Usage
 
@@ -31,7 +31,7 @@ Steps run in this order:
 |---|---|
 | 1. Pit filling | Optional; always recommended unless DEM is pre-filled |
 | 2. D8 flow routing | Build the D8 flow-info object |
-| 3. Source extraction | Find channel heads from `source_pixels_threshold` |
+| 3. Source extraction | Find channel heads using `source_extraction_algorithm_choice` (`threshold` or `wiener`) |
 | 4. Junction network | Build compact channel link and junction objects |
 | 5. Outputs | Write selected outputs |
 
@@ -70,7 +70,30 @@ Steps run in this order:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `source_extraction_algorithm_choice` | string | `threshold` | Source extraction method. Allowed values: `threshold`, `wiener`. |
 | `source_pixels_threshold` | int | `1000` | Contributing-pixel count required to define a channel head. Reduce to extract a denser network. |
+
+### Wiener parameters
+
+Used only when `source_extraction_algorithm_choice: wiener`.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `wiener_pruning_drainage_area_m2` | float | `1000.0` | Minimum drainage area for Wiener channel-mask pruning, in physical square metres (m^2). |
+| `wiener_surface_fitting_radius_m` | float | `6.0` | Radius (metres) used when fitting surfaces for tangential-curvature estimation. |
+| `wiener_connected_components_threshold_pixels` | int | `100` | Minimum connected-component size (pixels) retained in the Wiener channel mask before skeletonisation. |
+
+### Wiener diagnostics (optional)
+
+All diagnostics are opt-in and do not alter source extraction output.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `wiener_write_filtered_dem` | bool | `false` | Write Wiener-filtered DEM raster as `<write_fname>_wiener_filtered_dem.*`. |
+| `wiener_write_tangential_curvature` | bool | `false` | Write tangential-curvature raster as `<write_fname>_wiener_tangential_curvature.*`. |
+| `wiener_write_qq_table` | bool | `false` | Write QQ diagnostics table CSV. |
+| `wiener_diagnostics_raster_format` | string | `same_as_input` | Raster format for Wiener diagnostics (`cog`, `gtiff`, `same_as_input`, `png`). |
+| `wiener_qq_output_csv` | string | _(empty)_ | Explicit QQ CSV path. If empty and `wiener_write_qq_table` is true, output defaults to `<write_fname>_wiener_qq.csv`. |
 
 ---
 
@@ -168,4 +191,35 @@ read_fname: my_dem.tif
 source_pixels_threshold:          500
 write_channel_network_lines:      true
 write_channel_network_junctions:  true
+```
+
+## Example: threshold source extraction
+
+```
+read_path: /data/dems/
+read_fname: my_dem.tif
+
+source_extraction_algorithm_choice: threshold
+source_pixels_threshold: 750
+
+write_channel_network_lines: true
+```
+
+## Example: Wiener source extraction with diagnostics
+
+```
+read_path: /data/dems/
+read_fname: my_dem.tif
+
+source_extraction_algorithm_choice: wiener
+wiener_pruning_drainage_area_m2: 2500.0
+wiener_surface_fitting_radius_m: 8.0
+wiener_connected_components_threshold_pixels: 80
+
+wiener_write_filtered_dem: true
+wiener_write_tangential_curvature: true
+wiener_write_qq_table: true
+wiener_diagnostics_raster_format: gtiff
+
+write_channel_network_points: true
 ```
