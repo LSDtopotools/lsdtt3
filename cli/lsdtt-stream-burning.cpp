@@ -848,8 +848,11 @@ int main(int argc, char* argv[])
     // Step 4 — Write the clipped vector junction network
     // -------------------------------------------------------------------------
     {
+        // Lock-tolerant: this QC layer is deterministic and often left open in a
+        // GIS, so a write lock must not abort the run. Fall back to a _N name.
         const std::string junction_file =
-            pp.make_output_path( "_vector_junctions", ".fgb");
+            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                pp.get_full_write_path() + "_vector_junctions", ".fgb");
 
         std::cout << "Writing vector junctions: " << junction_file << "\n";
 
@@ -862,15 +865,15 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "FATAL: writing vector junction network junctions failed: "
+            std::cerr << "Warning: writing vector junctions failed (continuing): "
                       << e.what() << "\n";
-            return 1;
         }
     }
 
     {
         const std::string edge_file =
-            pp.make_output_path( "_vector_edges", ".fgb");
+            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                pp.get_full_write_path() + "_vector_edges", ".fgb");
 
         std::cout << "Writing vector edges    : " << edge_file << "\n";
 
@@ -883,9 +886,8 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "FATAL: writing vector junction network edges failed: "
+            std::cerr << "Warning: writing vector edges failed (continuing): "
                       << e.what() << "\n";
-            return 1;
         }
     }
 
@@ -2649,6 +2651,100 @@ int main(int argc, char* argv[])
         std::cout << "Total segments burned: " << all_burned.size() << "\n";
 
         // ---------------------------------------------------------------------
+        // Source-path divergence burn
+        //
+        // Per-segment burning checks each VML line locally; it misses a SOURCE
+        // whose flow leaves its own downstream vector path (and so produces no
+        // channel, or a wide divergence). Here we build each vector source's
+        // downstream path (following the receiver chain) and, where the D8 flow
+        // strays from it, follow the path to a lower pixel and burn between —
+        // re-flowing between passes — so every source is pulled onto its vector.
+        // ---------------------------------------------------------------------
+        {
+            const auto& vjns = vector_network.junctions();
+            const auto& veds = vector_network.edges();
+            std::vector<std::vector<lsdtt::lsdtt_xy>> source_paths;
+            for (std::size_t si = 0; si < valid_source_junction_ids.size(); ++si)
+            {
+                std::int32_t cur = valid_source_junction_ids[si];
+                std::vector<lsdtt::lsdtt_xy> pathxy;
+                std::unordered_set<std::int32_t> seen;
+                while (cur >= 0 && cur < vector_network.n_junctions() &&
+                       seen.insert(cur).second)
+                {
+                    const auto& J = vjns[static_cast<std::size_t>(cur)];
+                    if (J.downstream_edge_id < 0) break;
+                    const auto& E =
+                        veds[static_cast<std::size_t>(J.downstream_edge_id)];
+                    if (E.xy.size() >= 2)
+                    {
+                        const bool fwd = (E.upstream_junction == cur);
+                        const std::size_t n = E.xy.size();
+                        for (std::size_t q = 0; q < n; ++q)
+                        {
+                            const lsdtt::lsdtt_xy& p = fwd ? E.xy[q] : E.xy[n-1-q];
+                            if (pathxy.empty() ||
+                                pathxy.back().x != p.x || pathxy.back().y != p.y)
+                                pathxy.push_back(p);
+                        }
+                    }
+                    cur = J.receiver_junction;
+                }
+                if (pathxy.size() >= 2) source_paths.push_back(std::move(pathxy));
+            }
+            std::cout << "Source-path burn: " << source_paths.size()
+                      << " source paths\n";
+
+            int sp_prev = -1;
+            for (int pass = 0; pass < max_passes; ++pass)
+            {
+                lsdtt::vectormap_source_burn_result sb;
+                try
+                {
+                    sb = lsdtt::burn_vectormap_source_paths(
+                        routed_dem, *flow, source_paths, tb_opts);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: source-path burn failed: "
+                              << e.what() << "\n";
+                    break;
+                }
+                std::cout << "  pass " << pass << ": sources " << sb.n_sources
+                          << ", burned " << sb.n_burned
+                          << " (" << sb.total_burn_length_m << " m)\n";
+                for (auto& g : sb.burned) all_burned.push_back(std::move(g));
+                if (sb.n_burned == 0) break;
+                if (sp_prev >= 0 && sb.n_burned >= sp_prev)
+                {
+                    std::cout << "  source-path burn stalled; stopping.\n";
+                    try {
+                        routed_dem = lsdtt::fill_pits(routed_dem,
+                            ff["fill_min_slope"], ifs["n_threads"]);
+                        flow = lsdtt::make_flow_base(routed_dem.get_data_array(),
+                            routed_dem.get_mask_array(), routed_dem.get_meta(),
+                            fi_opts);
+                    } catch (const std::exception& e) {
+                        std::cerr << "FATAL: reflow failed: " << e.what() << "\n";
+                        return 1;
+                    }
+                    break;
+                }
+                sp_prev = sb.n_burned;
+                try {
+                    routed_dem = lsdtt::fill_pits(routed_dem,
+                        ff["fill_min_slope"], ifs["n_threads"]);
+                    flow = lsdtt::make_flow_base(routed_dem.get_data_array(),
+                        routed_dem.get_mask_array(), routed_dem.get_meta(),
+                        fi_opts);
+                } catch (const std::exception& e) {
+                    std::cerr << "FATAL: reflow failed: " << e.what() << "\n";
+                    return 1;
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
         // Per-segment burn diagnostics
         //
         // A final no-modify (dry-run) trace pass over the converged DEM
@@ -2794,30 +2890,34 @@ int main(int argc, char* argv[])
                           << e.what() << "\n";
             }
 
-            // Seed the verification network from the TIPS of the vector network,
-            // D8-traced down the burned DEM — the network that shows whether the
-            // sourced channels make it through the road crossings (an accumulation
-            // threshold would light up every hillslope channel and hide the
-            // diversions of the real channels). VectorMap Local is fragmented
-            // (many disconnected line pieces), so the junction-network sources
-            // miss whole branches; seed from the upstream end of EVERY vector
-            // fragment instead, which covers all channels and reseeds each
-            // fragment from its own top so an upstream divergence does not orphan
-            // the channels below it.
-            std::vector<std::int64_t> net_heads;
+            // Seed the verification network from the vector network SOURCES,
+            // D8-traced down the burned DEM. Two complementary sets, unioned so
+            // every genuine source produces a flow path:
+            //   * source_flats — the vector junction-network sources (stable
+            //     junction_id). Every one of these must yield a path (the user
+            //     inspects these directly).
+            //   * vectormap_line_source_cells — the upstream tip of each VML
+            //     fragment (with the below-road spurious-seed filter). VectorMap
+            //     Local is fragmented, so its unjoined "repair" branches have no
+            //     junction-network source; these tips cover them.
+            std::vector<std::int64_t> net_heads = source_flats;
+            std::unordered_set<std::int64_t> head_set(
+                source_flats.begin(), source_flats.end());
             try
             {
-                net_heads = lsdtt::vectormap_line_source_cells(
-                    routed_dem, stream_vector_path);
+                for (std::int64_t h :
+                     lsdtt::vectormap_line_source_cells(routed_dem,
+                                                        stream_vector_path))
+                    if (head_set.insert(h).second) net_heads.push_back(h);
             }
             catch (const std::exception& e)
             {
                 std::cerr << "Warning: could not read vector fragment tips: "
-                          << e.what() << "; falling back to junction sources.\n";
-                net_heads = source_flats;
+                          << e.what() << "; using junction sources only.\n";
             }
             std::cout << "Seeding burned network from " << net_heads.size()
-                      << " vector fragment tips.\n";
+                      << " sources (" << source_flats.size()
+                      << " junction sources + fragment tips).\n";
 
             std::unique_ptr<lsdtt::lsdtt_junction_network_base> burned_net;
             try

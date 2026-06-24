@@ -201,6 +201,38 @@ struct vectormap_trace_burn_result
     const vectormap_trace_burn_options& options = vectormap_trace_burn_options{}
 );
 
+// ---------------------------------------------------------------------------
+// Source-path divergence burning
+//
+// Implements: trace D8 from a source; where the flow strays from the source's
+// OWN downstream vector path by more than max_divergence_m, keep following that
+// vector path downstream until a pixel LOWER than the divergence point, burn a
+// descending channel between them (forcing flow back onto the vector), then
+// (caller re-fills + re-flows and) traces again. Each `source_paths` entry is one
+// source's downstream vector polyline (source -> outlet), oriented downstream.
+//
+// Divergence is measured against the source's OWN path (not the whole VML), so a
+// flow that wanders onto a hillslope is rejected even where some other VML line
+// happens to be nearby.
+// ---------------------------------------------------------------------------
+struct vectormap_source_burn_result
+{
+    int    n_sources           = 0;
+    int    n_burned            = 0;   // sources that needed a burn this pass
+    double total_burn_length_m = 0.0;
+    std::vector<vectormap_burn_gap> burned;
+};
+
+// One pass. Returns counts; if n_burned > 0 the caller should re-fill + re-flow
+// and call again.
+[[nodiscard]] vectormap_source_burn_result burn_vectormap_source_paths(
+    lsdtt_raster_cpu&                            dem,
+    const lsdtt_flow_base&                       flow,
+    const std::vector<std::vector<lsdtt_xy>>&    source_paths,
+    const vectormap_trace_burn_options&          options =
+        vectormap_trace_burn_options{}
+);
+
 // Channel-head seeds for network extraction by accumulation threshold: cells
 // whose contributing-pixel count is >= threshold and which have no upstream
 // donor cell that also meets the threshold.

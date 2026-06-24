@@ -574,6 +574,116 @@ vectormap_trace_burn_result burn_vectormap_trace_divergence(
 }
 
 // ---------------------------------------------------------------------------
+// burn_vectormap_source_paths
+// ---------------------------------------------------------------------------
+vectormap_source_burn_result burn_vectormap_source_paths(
+    lsdtt_raster_cpu&                         dem,
+    const lsdtt_flow_base&                    flow,
+    const std::vector<std::vector<lsdtt_xy>>& source_paths,
+    const vectormap_trace_burn_options&       options)
+{
+    vectormap_source_burn_result result;
+
+    const lsdtt_raster_meta& meta   = dem.get_meta();
+    const int    n_rows = meta.n_rows;
+    const int    n_cols = meta.n_cols;
+    const double cs     = meta.cell_size;
+    const double tol    = options.max_divergence_m;
+    const double step   = (options.sample_step_m > 0.0)
+                              ? options.sample_step_m : 0.5 * cs;
+    const int max_steps = options.max_trace_steps > 0
+                              ? options.max_trace_steps
+                              : 10 * std::max(n_rows, n_cols);
+
+    const lsdtt_array2d_f&  zdata = dem.get_data_array();
+    const lsdtt_array2d_u8& mdata = dem.get_mask_array();
+
+    auto burn_subpath = [&](const std::vector<lsdtt_xy>& sub) -> bool
+    {
+        std::vector<std::int64_t> path;
+        for (const lsdtt_xy& p : sample_polyline(sub, step))
+        {
+            int r, c;
+            if (!xy_to_rc(meta, p.x, p.y, r, c)) continue;
+            const std::int64_t f = static_cast<std::int64_t>(r) * n_cols + c;
+            if (path.empty() || path.back() != f) path.push_back(f);
+        }
+        if (path.size() < 2) return false;
+        burn_capturing_path(dem, path, options.burn_min_slope,
+                            /*capture_margin=*/1.0e-3, options.max_burn_depth_m);
+        return true;
+    };
+
+    for (const std::vector<lsdtt_xy>& path : source_paths)
+    {
+        if (path.size() < 2) continue;
+        ++result.n_sources;
+
+        const std::vector<double> cum = cumulative_lengths(path);
+        const double total = cum.back();
+        if (total < cs) continue;
+
+        int sr, sc;
+        if (!xy_to_rc(meta, path.front().x, path.front().y, sr, sc)) continue;
+
+        // Trace D8 from the source; advance s_dep/z_dep along the path while the
+        // flow stays within tol of it; stop at the first stray (the divergence).
+        std::int64_t cur = flow.flat_index_unchecked(sr, sc);
+        double s_dep = 0.0;
+        double z_dep = static_cast<double>(zdata(sr, sc));
+        bool   diverged = false;
+        for (int s = 0; s < max_steps; ++s)
+        {
+            const int rr = flow.row_from_flat_unchecked(cur);
+            const int cc = flow.col_from_flat_unchecked(cur);
+            const lsdtt_nearest_polyline_point np =
+                nearest_point_on_polyline(rc_to_centre(meta, rr, cc), path);
+            if (np.distance > tol) { diverged = true; break; }
+            s_dep = cum[np.segment_index] +
+                    np.t * (cum[np.segment_index + 1] - cum[np.segment_index]);
+            z_dep = static_cast<double>(zdata(rr, cc));
+            if (s_dep >= total - 0.5 * cs) break;          // followed to path end
+            if (flow.is_outlet_unchecked(cur)) break;       // reached base level
+            const std::int64_t nxt = flow.receiver_of_unchecked(cur);
+            if (nxt == cur || nxt < 0) break;
+            cur = nxt;
+        }
+        if (!diverged) continue;   // this source already follows its vector path
+
+        // Keep following the vector path downstream from the divergence until a
+        // pixel genuinely LOWER than the divergence point (enough head-room for a
+        // draining grade); burn a descending channel between them.
+        double s_low = -1.0;
+        for (double s = s_dep + step; s <= total; s += step)
+        {
+            int r, c;
+            if (!xy_to_rc(meta, point_at_arclength(path, cum, s).x,
+                                point_at_arclength(path, cum, s).y, r, c))
+                continue;
+            if (mdata(r, c) == 0) continue;
+            const double z = static_cast<double>(zdata(r, c));
+            if (z < z_dep - std::max(0.1, options.burn_min_slope * (s - s_dep)))
+            { s_low = s; break; }
+        }
+        if (s_low < 0.0) s_low = total;   // none lower: burn to the path's end
+
+        const std::vector<lsdtt_xy> sub = subline(path, cum, s_dep, s_low);
+        if (burn_subpath(sub))
+        {
+            ++result.n_burned;
+            result.total_burn_length_m += (s_low - s_dep);
+            vectormap_burn_gap g;
+            g.path_xy = sub;
+            g.length_m = s_low - s_dep;
+            g.burned = true;
+            result.burned.push_back(std::move(g));
+        }
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // channel_heads_from_accumulation
 // ---------------------------------------------------------------------------
 std::vector<std::int64_t> channel_heads_from_accumulation(
