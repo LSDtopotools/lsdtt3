@@ -176,11 +176,17 @@ void burn_monotonic_path(
 // capture_margin (m): extra slope*length head-room added on top of the best
 //   competing slope so the choice survives floating-point ties.
 // ---------------------------------------------------------------------------
+// max_depth (m): if > 0, no path cell is carved more than this far below its
+//   own natural elevation. Caps runaway canyons when capturing along a long
+//   path that crosses flat or rising ground (capture may fail where the cap
+//   binds, which is the intended trade — better than a deep artificial gash).
+//   <= 0 means unlimited (the original behaviour).
 void burn_capturing_path(
     lsdtt_raster_cpu&                   dem,
     const std::vector<std::int64_t>&    path,
     double                              min_slope      = 1.0e-4,
-    double                              capture_margin = 1.0e-3
+    double                              capture_margin = 1.0e-3,
+    double                              max_depth      = 0.0
 );
 
 } // namespace lsdtt

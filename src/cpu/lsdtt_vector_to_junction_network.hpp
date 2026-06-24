@@ -295,4 +295,16 @@ private:
     std::vector<std::int32_t> s_vector_;
 };
 
+// Clip a vector line file to the DEM extent, returning the in-DEM linework using
+// the same boundary handling as the junction-network builder: an inset-bbox OGR
+// intersection (which splits a boundary meander into separate in-DEM pieces),
+// then removal of short edge stubs and pass-in/pass-out meanders (both endpoints
+// on the edge with shallow interior penetration). Reused by the VML stream burn
+// so it operates only on genuine in-DEM channels.
+[[nodiscard]] std::vector<std::vector<lsdtt_xy>> clip_vector_lines_to_dem(
+    const std::string&                              vector_path,
+    const lsdtt_raster_cpu&                         dem,
+    const lsdtt_vector_to_junction_network_options& options =
+        lsdtt_vector_to_junction_network_options{});
+
 } // namespace lsdtt

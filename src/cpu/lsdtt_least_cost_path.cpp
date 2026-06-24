@@ -279,7 +279,8 @@ void burn_capturing_path(
     lsdtt_raster_cpu&                   dem,
     const std::vector<std::int64_t>&    path,
     double                              min_slope,
-    double                              capture_margin)
+    double                              capture_margin,
+    double                              max_depth)
 {
     if (path.size() < 2) return;
 
@@ -379,6 +380,11 @@ void burn_capturing_path(
         // the previous cell (would break the descent).
         if (new_z > cur_nat)               new_z = cur_nat;
         if (new_z >= prev_z)               new_z = prev_z - slope_floor * L_path;
+
+        // Optional depth cap: don't gash more than max_depth below the cell's
+        // own natural elevation, even if that means failing to capture here.
+        if (max_depth > 0.0 && new_z < cur_nat - max_depth)
+            new_z = cur_nat - max_depth;
 
         elev[static_cast<std::size_t>(cur)] = static_cast<float>(new_z);
         prev_z = new_z;

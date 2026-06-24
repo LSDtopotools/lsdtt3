@@ -511,6 +511,53 @@ std::vector<raw_polyline> load_clipped_stream_polylines(
     return polylines;
 }
 
+// Drop clipped fragments that are artefacts of the DEM boundary:
+//   * short stubs that touch the edge and carry only a tiny in-DEM length;
+//   * "pass-in/pass-out" meanders whose BOTH endpoints sit on the edge and whose
+//     interior penetration is below threshold (a channel hugging the boundary,
+//     dipping in and out, vs a genuine through/diagonal channel that penetrates
+//     deep). Penetration discriminates these where path length cannot.
+std::vector<raw_polyline> filter_boundary_polylines(
+    std::vector<raw_polyline>  polylines,
+    const lsdtt_raster_meta&   meta,
+    double                     edge_tol,
+    double                     min_clipped_edge_length,
+    double                     both_edge_min_penetration)
+{
+    std::vector<raw_polyline> filtered;
+    filtered.reserve(polylines.size());
+
+    for (auto& poly : polylines)
+    {
+        const double len = polyline_length(poly.xy);
+
+        const bool start_on_edge = point_is_on_dem_edge(
+            meta, poly.xy.front().x, poly.xy.front().y, edge_tol);
+        const bool end_on_edge = point_is_on_dem_edge(
+            meta, poly.xy.back().x, poly.xy.back().y, edge_tol);
+
+        const bool touches_dem_edge = start_on_edge || end_on_edge;
+
+        if (touches_dem_edge && len < min_clipped_edge_length)
+        {
+            continue;
+        }
+
+        const bool both_on_edge = start_on_edge && end_on_edge;
+
+        if (both_on_edge &&
+            polyline_interior_penetration(poly.xy, meta) <
+                both_edge_min_penetration)
+        {
+            continue;
+        }
+
+        filtered.push_back(std::move(poly));
+    }
+
+    return filtered;
+}
+
 std::string join_ids_csv(const std::vector<std::int32_t>& ids)
 {
     std::ostringstream ss;
@@ -546,6 +593,43 @@ std::vector<lsdtt_xy> oriented_geometry(
 }
 
 } // unnamed namespace
+
+
+// -----------------------------------------------------------------------------
+// clip_vector_lines_to_dem
+//
+// Public helper: clip a vector line file to the DEM extent and return the in-DEM
+// linework, reusing the exact same logic the junction-network builder uses
+// (inset-bbox OGR intersection + boundary-stub and pass-in/pass-out meander
+// removal). Lines that meander in and out of the raster along the boundary are
+// split by the clip into separate in-DEM pieces and the shallow boundary
+// meanders are dropped, so callers (e.g. the VML stream burn) operate only on
+// genuine in-DEM channels.
+// -----------------------------------------------------------------------------
+std::vector<std::vector<lsdtt_xy>> clip_vector_lines_to_dem(
+    const std::string&                              vector_path,
+    const lsdtt_raster_cpu&                         dem,
+    const lsdtt_vector_to_junction_network_options& options)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+
+    const double vertex_tol = resolved_vertex_tolerance(options, meta);
+    const double edge_tol   = resolved_edge_tolerance(options, meta);
+    const double min_clipped_edge_length =
+        resolved_minimum_clipped_edge_length(options, meta);
+    const double both_edge_min_penetration =
+        resolved_both_edge_min_penetration(options, meta);
+    const double clip_inset = resolved_clip_inset_distance(meta);
+
+    std::vector<raw_polyline> polylines = filter_boundary_polylines(
+        load_clipped_stream_polylines(vector_path, dem, vertex_tol, clip_inset),
+        meta, edge_tol, min_clipped_edge_length, both_edge_min_penetration);
+
+    std::vector<std::vector<lsdtt_xy>> out;
+    out.reserve(polylines.size());
+    for (auto& p : polylines) out.push_back(std::move(p.xy));
+    return out;
+}
 
 
 // -----------------------------------------------------------------------------
@@ -618,67 +702,12 @@ void lsdtt_vector_to_junction_network::create(
     }
 
     // -------------------------------------------------------------------------
-    // Remove very short boundary stubs.
-    //
-    // These are clipped line fragments that touch the DEM edge but contain only
-    // a tiny in-DEM length. They are useful diagnostics, but they are often too
-    // short to support robust receiver inference and can destabilise the
-    // compact-graph build.
+    // Remove boundary stubs and pass-in/pass-out meanders (see
+    // filter_boundary_polylines).
     // -------------------------------------------------------------------------
-    {
-        std::vector<raw_polyline> filtered;
-        filtered.reserve(polylines.size());
-
-        for (auto& poly : polylines)
-        {
-            const double len = polyline_length(poly.xy);
-
-            const bool start_on_edge =
-                point_is_on_dem_edge(
-                    meta,
-                    poly.xy.front().x,
-                    poly.xy.front().y,
-                    edge_tol
-                );
-
-            const bool end_on_edge =
-                point_is_on_dem_edge(
-                    meta,
-                    poly.xy.back().x,
-                    poly.xy.back().y,
-                    edge_tol
-                );
-
-            const bool touches_dem_edge = start_on_edge || end_on_edge;
-
-            if (touches_dem_edge && len < min_clipped_edge_length)
-            {
-                continue;
-            }
-
-            // Drop pass-in/pass-out fragments: both endpoints sit on the DEM
-            // edge. A channel that merely meanders along the boundary, dipping
-            // in and out, has both endpoints on the edge and seeds a spurious
-            // edge source (plus its paired outlet). These are discriminated
-            // from genuine through-/diagonal channels by interior penetration,
-            // NOT by path length: a boundary meander can have a long path but a
-            // shallow penetration, whereas a genuine crossing penetrates deep.
-            // When penetration is below threshold the whole segment is dropped,
-            // removing BOTH its junctions.
-            const bool both_on_edge = start_on_edge && end_on_edge;
-
-            if (both_on_edge &&
-                polyline_interior_penetration(poly.xy, meta) <
-                    both_edge_min_penetration)
-            {
-                continue;
-            }
-
-            filtered.push_back(std::move(poly));
-        }
-
-        polylines = std::move(filtered);
-    }
+    polylines = filter_boundary_polylines(
+        std::move(polylines), meta, edge_tol,
+        min_clipped_edge_length, both_edge_min_penetration);
 
     if (polylines.empty())
     {

@@ -240,6 +240,58 @@ int main(int argc, char* argv[])
         "are ~95% covered at 5000 and ~90% at 10000, versus a hairball at 1000. "
         "Only used when stream_burn_mode=snap_to_accumulation."};
 
+    float_default_map["trace_segment_length_m"] = 20.0f;
+    help_map["trace_segment_length_m"] = {"float","20",
+        "Length (m) of the fixed segments each vector line is split into.",
+        "snap_to_accumulation traces D8 flow from each segment top; a segment is "
+        "burned only where the trace leaves the vector. Smaller = finer control, "
+        "more segments."};
+
+    float_default_map["trace_max_divergence_m"] = 10.0f;
+    help_map["trace_max_divergence_m"] = {"float","10",
+        "Max distance (m) the D8 flow trace may stray from the vector before the "
+        "segment is burned.",
+        "Set above the typical offset between the vector lines and the LiDAR "
+        "valley bottom, so a channel that merely sits beside the thalweg is not "
+        "burned; only genuine divergences (roads, captures) are."};
+
+    float_default_map["trace_max_burn_depth_m"] = 0.0f;
+    help_map["trace_max_burn_depth_m"] = {"float","0",
+        "Cap (m) on how far below its natural elevation a cell may be carved when "
+        "burning a divergent run. 0 = unbounded.",
+        "Used by stream_burn_mode=snap_to_accumulation. A divergent reach is often "
+        "blocked by an embankment/road taller than a few metres; capping the carve "
+        "leaves the obstruction's crest above the surrounding terrain so flow is "
+        "not captured into the trench and the reach stays unresolved. Because only "
+        "genuinely divergent segments are burned (followed reaches are left alone), "
+        "unbounded carving rarely gouges deep canyons, so 0 is the default. Set a "
+        "positive value only if you see over-deep gashes on long divergent runs."};
+
+    int_default_map["max_burn_passes"] = 6;
+    help_map["max_burn_passes"] = {"int","6",
+        "Maximum trace/burn passes (re-fill + re-flow between passes).",
+        "Burning a segment changes downstream routing, so the burn is repeated "
+        "until no segment diverges or this cap is hit. The loop also stops early "
+        "when the burned-segment count stops decreasing (the remaining segments "
+        "are re-burning without resolving)."};
+
+    bool_default_map["write_burn_diagnostics"] = false;
+    help_map["write_burn_diagnostics"] = {"bool","false",
+        "Write per-segment burn diagnostics for QC of the trace-divergence burn.",
+        "Used by stream_burn_mode=snap_to_accumulation. After the burn converges, "
+        "a final no-modify (dry-run) trace pass classifies every fixed-length "
+        "vector segment as followed (D8 already carries it) or unresolved (still "
+        "diverging after all passes), written to <write_fname>_segments.fgb with "
+        "a 'status' field (0 followed, 1 unresolved) and 'divergence_m'. Sampled "
+        "D8 flow traces are written to <write_fname>_flow_traces.fgb. These feed "
+        "the segment-classification and flow-trace QC plots."};
+
+    float_default_map["trace_sample_spacing_m"] = 200.0f;
+    help_map["trace_sample_spacing_m"] = {"float","200",
+        "Spacing (m) between sampled D8 flow traces in the burn diagnostics.",
+        "Used when write_burn_diagnostics is true: one trace is emitted from a "
+        "segment top roughly every this many metres along each vector line."};
+
     float_default_map["snap_radius_m"] = 30.0f;
     help_map["snap_radius_m"] = {"float","30",
         "Lateral search radius (m) for snapping a vector line to a D8 channel.",
@@ -439,8 +491,11 @@ int main(int argc, char* argv[])
         "that pixel drains back off the raster, the DEM channel cannot be seeded "
         "inward. If the vector network confirms the source drains inward (its "
         "downstream junction is lower), the DEM is carved a few pixels along the "
-        "vector path so D8 routes into the DEM. Only used when stream_burn_mode "
-        "is snap_to_network."};
+        "vector path so D8 routes into the DEM. Sources the vector confirms drain "
+        "OFF the edge (downstream junction off-raster or higher) are left alone. "
+        "Used by stream_burn_mode snap_to_network and snap_to_accumulation; for "
+        "snap_to_accumulation it runs before the burn passes so the trace-burn "
+        "and the tip-seeded network build on the inward-routed DEM."};
 
     int_default_map["edge_source_carve_pixels"] = 3;
     help_map["edge_source_carve_pixels"] = {"int","3",
@@ -1220,7 +1275,8 @@ int main(int argc, char* argv[])
     // few pixels along the vector path so D8 routes into the DEM. The flow
     // object is rebuilt afterwards so the seeded network sees the carved DEM.
     // -------------------------------------------------------------------------
-    if (burn_mode == lsdtt::stream_burn_mode::snap_to_network &&
+    if ((burn_mode == lsdtt::stream_burn_mode::snap_to_network ||
+         burn_mode == lsdtt::stream_burn_mode::snap_to_accumulation) &&
         bf["carve_inward_edge_sources"])
     {
         const int    carve_px = std::max(1, ifs["edge_source_carve_pixels"]);
@@ -1286,55 +1342,77 @@ int main(int argc, char* argv[])
             if (!(recv_elev < J.elevation - 1.0e-6)) continue;
 
             // Build a contiguous carve path: the source pixel followed by
-            // distinct in-DEM cells sampled along the downstream vector edge
-            // (oriented source -> receiver). The carve extends inward until the
-            // terminus is at least interior_margin_m from the nearest DEM
-            // boundary, so the seeded channel reaches genuine interior terrain
-            // rather than hugging the edge; it never carves beyond carve_max_px
-            // cells and always carves at least carve_px cells. A distance test
-            // is used, not a D8-drains-off test, because near the boundary the
-            // DEM flow runs along the edge and may never reach an outlet within
-            // any reasonable hop budget.
-            const auto& E = veds[static_cast<std::size_t>(J.downstream_edge_id)];
-
+            // distinct in-DEM cells sampled along the downstream vector PATH —
+            // following the receiver chain across junctions, not just the single
+            // immediate downstream edge. A channel that hugs the boundary for one
+            // short edge before turning inland (or that runs along the edge to an
+            // outlet) needs several edges to escape the boundary; carving only the
+            // first edge leaves it stranded. The carve extends until the terminus
+            // is at least interior_margin_m from the nearest DEM boundary, or the
+            // downstream path ends (outlet), or carve_max_px is hit; it always
+            // carves at least carve_px cells. A distance test is used, not a
+            // D8-drains-off test, because near the boundary the DEM flow runs
+            // along the edge and may never reach an outlet within a hop budget.
             std::vector<std::int64_t> path;
             path.push_back(source_flats[i]);
 
             const double step = cmeta.cell_size * 0.5;
             bool reached_interior = false;
-            for (std::size_t k = 1;
-                 k < E.xy.size() &&
-                 !reached_interior &&
-                 static_cast<int>(path.size()) <= carve_max_px;
-                 ++k)
-            {
-                const auto& a = E.xy[k - 1];
-                const auto& b = E.xy[k];
-                const double seglen = std::hypot(b.x - a.x, b.y - a.y);
-                const int nsteps =
-                    std::max(1, static_cast<int>(seglen / step));
+            std::int32_t cur_j = jid;
+            std::unordered_set<std::int32_t> visited_j;
 
-                for (int s = 1;
-                     s <= nsteps &&
+            while (!reached_interior &&
+                   static_cast<int>(path.size()) <= carve_max_px)
+            {
+                if (cur_j < 0 || cur_j >= vector_network.n_junctions()) break;
+                if (!visited_j.insert(cur_j).second) break;     // cycle guard
+                const auto& CJ = vjns[static_cast<std::size_t>(cur_j)];
+                if (CJ.downstream_edge_id < 0) break;           // outlet / no path
+                const auto& E =
+                    veds[static_cast<std::size_t>(CJ.downstream_edge_id)];
+                if (E.xy.size() < 2) break;
+
+                // Orient the edge geometry so it runs from cur_j downstream.
+                const bool forward = (E.upstream_junction == cur_j);
+                auto vtx = [&](std::size_t k) -> const lsdtt::lsdtt_xy&
+                {
+                    return forward ? E.xy[k] : E.xy[E.xy.size() - 1 - k];
+                };
+
+                for (std::size_t k = 1;
+                     k < E.xy.size() &&
                      !reached_interior &&
                      static_cast<int>(path.size()) <= carve_max_px;
-                     ++s)
+                     ++k)
                 {
-                    const double t = static_cast<double>(s) / nsteps;
-                    const std::int64_t f = xy_to_flat(
-                        a.x + t * (b.x - a.x),
-                        a.y + t * (b.y - a.y));
-                    if (f < 0 || f == path.back()) continue;
-                    path.push_back(f);
+                    const auto& a = vtx(k - 1);
+                    const auto& b = vtx(k);
+                    const double seglen = std::hypot(b.x - a.x, b.y - a.y);
+                    const int nsteps =
+                        std::max(1, static_cast<int>(seglen / step));
 
-                    // Stop once we have carved at least the minimum and the
-                    // terminus has reached genuine interior terrain.
-                    if (static_cast<int>(path.size()) > carve_px &&
-                        dist_to_boundary_m(f) >= interior_margin_m)
+                    for (int s = 1;
+                         s <= nsteps &&
+                         !reached_interior &&
+                         static_cast<int>(path.size()) <= carve_max_px;
+                         ++s)
                     {
-                        reached_interior = true;
+                        const double t = static_cast<double>(s) / nsteps;
+                        const std::int64_t f = xy_to_flat(
+                            a.x + t * (b.x - a.x),
+                            a.y + t * (b.y - a.y));
+                        if (f < 0 || f == path.back()) continue;
+                        path.push_back(f);
+
+                        if (static_cast<int>(path.size()) > carve_px &&
+                            dist_to_boundary_m(f) >= interior_margin_m)
+                        {
+                            reached_interior = true;
+                        }
                     }
                 }
+
+                cur_j = CJ.receiver_junction;
             }
 
             if (path.size() < 2) continue;
@@ -1348,7 +1426,9 @@ int main(int argc, char* argv[])
                       << " m from edge"
                       << (reached_interior
                               ? " (reached interior margin)"
-                              : " (hit carve_max_pixels cap)")
+                              : (static_cast<int>(path.size()) > carve_max_px
+                                     ? " (hit carve_max_pixels cap)"
+                                     : " (followed channel to its downstream end)"))
                       << "\n";
         }
 
@@ -2474,54 +2554,226 @@ int main(int argc, char* argv[])
             }
         }
 
-        lsdtt::vectormap_burn_options vb_opts;
-        vb_opts.accumulation_threshold_pixels =
-            static_cast<std::int64_t>(ifs["accumulation_threshold_pixels"]);
-        vb_opts.snap_radius_m    = static_cast<double>(ff["snap_radius_m"]);
-        vb_opts.max_gap_length_m = static_cast<double>(ff["max_burn_gap_m"]);
-        vb_opts.burn_min_slope   =
+        lsdtt::vectormap_trace_burn_options tb_opts;
+        tb_opts.segment_length_m = static_cast<double>(ff["trace_segment_length_m"]);
+        tb_opts.max_divergence_m = static_cast<double>(ff["trace_max_divergence_m"]);
+        tb_opts.burn_min_slope   =
             (ff["repair_min_slope"] > 0.0f)
                 ? static_cast<double>(ff["repair_min_slope"])
                 : static_cast<double>(ff["fill_min_slope"]);
-        vb_opts.n_threads        = ifs["n_threads"];
+        tb_opts.max_burn_depth_m = static_cast<double>(ff["trace_max_burn_depth_m"]);
+        tb_opts.channel_threshold_pixels =
+            static_cast<std::int64_t>(ifs["accumulation_threshold_pixels"]);
+        tb_opts.channel_anchor_radius_m = static_cast<double>(ff["snap_radius_m"]);
 
-        lsdtt::vectormap_burn_result vb;
-        try
+        // Trace-divergence burn: where the D8 flow from a vector segment top
+        // leaves the vector by more than trace_max_divergence_m, burn that
+        // segment under the line. Burning changes downstream routing, so re-fill,
+        // re-flow, and pass again until nothing new burns.
+        std::vector<lsdtt::vectormap_burn_gap> all_burned;
+        const int max_passes = std::max(1, ifs["max_burn_passes"]);
+        int prev_burned = -1;
+        for (int pass = 0; pass < max_passes; ++pass)
         {
-            vb = lsdtt::burn_vectormap_road_gaps(
-                routed_dem, *flow, stream_vector_path, vb_opts);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: snap-to-accumulation burn failed: "
-                      << e.what() << "\n";
-            return 1;
-        }
+            lsdtt::vectormap_trace_burn_result tb;
+            try
+            {
+                tb = lsdtt::burn_vectormap_trace_divergence(
+                    routed_dem, *flow, stream_vector_path, tb_opts);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: trace-divergence burn failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
 
-        std::cout << "Vector lines           : " << vb.n_lines << "\n";
-        std::cout << "D8 channel cells (>= "
-                  << vb_opts.accumulation_threshold_pixels << " px): "
-                  << vb.channel_mask_cells << "\n";
-        std::cout << "Obstruction gaps detected/burned/skipped : "
-                  << vb.n_gaps_detected << " / " << vb.n_gaps_burned
-                  << " / " << vb.n_gaps_skipped << "\n";
-        std::cout << "Total burned gap length: " << vb.total_burn_length_m
-                  << " m\n";
+            std::cout << "Pass " << pass << ": lines " << tb.n_lines
+                      << ", segments " << tb.n_segments
+                      << ", burned " << tb.n_segments_burned
+                      << " (" << tb.total_burn_length_m << " m), "
+                      << tb.n_runs_anchored << " run(s) anchored to channel\n";
+            for (auto& g : tb.burned) all_burned.push_back(std::move(g));
 
-        std::cout << "\nRe-filling and rebuilding flow after gap burning.\n";
-        try
-        {
-            routed_dem = lsdtt::fill_pits(routed_dem, ff["fill_min_slope"],
-                                          ifs["n_threads"]);
-            flow = lsdtt::make_flow_base(
-                routed_dem.get_data_array(), routed_dem.get_mask_array(),
-                routed_dem.get_meta(), fi_opts);
+            if (tb.n_segments_burned == 0)
+            {
+                std::cout << "Converged: D8 follows the vector within tolerance.\n";
+                break;
+            }
+
+            // Early stop: once the burned-segment count stops decreasing, the
+            // remaining segments are re-burning each pass without resolving
+            // (vector far from a deep thalweg, or a vector error). Burning them
+            // again wastes passes, so stop and report them as unresolved.
+            if (prev_burned >= 0 && tb.n_segments_burned >= prev_burned)
+            {
+                std::cout << "Early stop: burned count no longer decreasing ("
+                          << prev_burned << " -> " << tb.n_segments_burned
+                          << "); " << tb.n_segments_burned
+                          << " segment(s) unresolved.\n";
+                // Re-fill + re-flow once more so the DEM/flow reflect this pass's
+                // burns before output and diagnostics.
+                try
+                {
+                    routed_dem = lsdtt::fill_pits(routed_dem, ff["fill_min_slope"],
+                                                  ifs["n_threads"]);
+                    flow = lsdtt::make_flow_base(
+                        routed_dem.get_data_array(), routed_dem.get_mask_array(),
+                        routed_dem.get_meta(), fi_opts);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: reflow after trace burn failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+                break;
+            }
+            prev_burned = tb.n_segments_burned;
+
+            try
+            {
+                routed_dem = lsdtt::fill_pits(routed_dem, ff["fill_min_slope"],
+                                              ifs["n_threads"]);
+                flow = lsdtt::make_flow_base(
+                    routed_dem.get_data_array(), routed_dem.get_mask_array(),
+                    routed_dem.get_meta(), fi_opts);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: reflow after trace burn failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
         }
-        catch (const std::exception& e)
+        std::cout << "Total segments burned: " << all_burned.size() << "\n";
+
+        // ---------------------------------------------------------------------
+        // Per-segment burn diagnostics
+        //
+        // A final no-modify (dry-run) trace pass over the converged DEM
+        // classifies every fixed-length vector segment: followed (the D8 trace
+        // stays within tolerance) or unresolved (still diverging after all
+        // passes). Written with the sampled D8 traces so the algorithm's
+        // behaviour can be mapped segment by segment.
+        // ---------------------------------------------------------------------
+        if (bf["write_burn_diagnostics"])
         {
-            std::cerr << "FATAL: reflow after gap burning failed: "
-                      << e.what() << "\n";
-            return 1;
+            std::cout << "\n--- Burn diagnostics (dry-run classification) ---\n";
+
+            lsdtt::vectormap_trace_burn_options diag_opts = tb_opts;
+            diag_opts.dry_run             = true;
+            diag_opts.collect_diagnostics = true;
+            diag_opts.collect_traces      = true;
+            diag_opts.trace_sample_spacing_m =
+                static_cast<double>(ff["trace_sample_spacing_m"]);
+
+            lsdtt::vectormap_trace_burn_result diag;
+            try
+            {
+                diag = lsdtt::burn_vectormap_trace_divergence(
+                    routed_dem, *flow, stream_vector_path, diag_opts);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: burn diagnostics pass failed: "
+                          << e.what() << "\n";
+            }
+
+            int n_followed = 0, n_unresolved = 0;
+            int reason_count[7] = {0,0,0,0,0,0,0};
+            for (const auto& s : diag.segments)
+            {
+                (s.status == 0 ? n_followed : n_unresolved)++;
+                if (s.status != 0 && s.stop_reason >= 0 && s.stop_reason < 7)
+                    reason_count[s.stop_reason]++;
+            }
+            std::cout << "Segments: " << diag.segments.size()
+                      << " (followed " << n_followed
+                      << ", unresolved " << n_unresolved << ")\n";
+            static const char* reason_name[7] = {
+                "advanced", "diverged(>tol)", "reached line end",
+                "DEM outlet", "no receiver", "max steps", "off-DEM top"};
+            std::cout << "Unresolved stop reasons:\n";
+            for (int r = 0; r < 7; ++r)
+                if (reason_count[r] > 0)
+                    std::cout << "  " << reason_name[r] << ": "
+                              << reason_count[r] << "\n";
+
+            if (!diag.segments.empty())
+            {
+                const std::string seg_path =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_segments", ".fgb");
+                std::cout << "Writing segment classification: " << seg_path << "\n";
+                try
+                {
+                    lsdtt::lsdtt_vector_schema schema;
+                    schema.field_names = {"line_id", "seg_id", "status",
+                                          "divergence_m", "stop_reason"};
+                    schema.field_types = {
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::double_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type};
+                    lsdtt::lsdtt_data_loader sw;
+                    sw.begin_vector_write(seg_path, "segments", schema,
+                        routed_dem.get_meta().crs_wkt,
+                        lsdtt::vector_output_format::flatgeobuf, false);
+                    for (const auto& s : diag.segments)
+                    {
+                        if (s.xy.size() < 2) continue;
+                        sw.write_line(s.xy, {
+                            static_cast<std::int64_t>(s.line_index),
+                            static_cast<std::int64_t>(s.segment_index),
+                            static_cast<std::int64_t>(s.status),
+                            s.divergence_m,
+                            static_cast<std::int64_t>(s.stop_reason)});
+                    }
+                    sw.finish_vector_write();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write segments: "
+                              << e.what() << "\n";
+                }
+            }
+
+            if (!diag.traces.empty())
+            {
+                const std::string tr_path =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_flow_traces", ".fgb");
+                std::cout << "Writing flow traces: " << tr_path << "\n";
+                try
+                {
+                    lsdtt::lsdtt_vector_schema schema;
+                    schema.field_names = {"line_id", "seg_id", "max_divergence_m"};
+                    schema.field_types = {
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::double_type};
+                    lsdtt::lsdtt_data_loader tw;
+                    tw.begin_vector_write(tr_path, "flow_traces", schema,
+                        routed_dem.get_meta().crs_wkt,
+                        lsdtt::vector_output_format::flatgeobuf, false);
+                    for (const auto& t : diag.traces)
+                    {
+                        if (t.xy.size() < 2) continue;
+                        tw.write_line(t.xy, {
+                            static_cast<std::int64_t>(t.line_index),
+                            static_cast<std::int64_t>(t.segment_index),
+                            t.max_divergence_m});
+                    }
+                    tw.finish_vector_write();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: could not write flow traces: "
+                              << e.what() << "\n";
+                }
+            }
         }
 
         if (bf["write_burned_outputs"])
@@ -2542,18 +2794,36 @@ int main(int argc, char* argv[])
                           << e.what() << "\n";
             }
 
-            const std::int64_t net_threshold =
-                static_cast<std::int64_t>(ifs["network_threshold_pixels"]);
-            const std::vector<std::int64_t> heads =
-                lsdtt::channel_heads_from_accumulation(*flow, net_threshold);
-            std::cout << "Output network threshold: " << net_threshold
-                      << " px; channel heads: " << heads.size() << "\n";
+            // Seed the verification network from the TIPS of the vector network,
+            // D8-traced down the burned DEM — the network that shows whether the
+            // sourced channels make it through the road crossings (an accumulation
+            // threshold would light up every hillslope channel and hide the
+            // diversions of the real channels). VectorMap Local is fragmented
+            // (many disconnected line pieces), so the junction-network sources
+            // miss whole branches; seed from the upstream end of EVERY vector
+            // fragment instead, which covers all channels and reseeds each
+            // fragment from its own top so an upstream divergence does not orphan
+            // the channels below it.
+            std::vector<std::int64_t> net_heads;
+            try
+            {
+                net_heads = lsdtt::vectormap_line_source_cells(
+                    routed_dem, stream_vector_path);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: could not read vector fragment tips: "
+                          << e.what() << "; falling back to junction sources.\n";
+                net_heads = source_flats;
+            }
+            std::cout << "Seeding burned network from " << net_heads.size()
+                      << " vector fragment tips.\n";
 
             std::unique_ptr<lsdtt::lsdtt_junction_network_base> burned_net;
             try
             {
                 burned_net = lsdtt::make_junction_network_base(
-                    *flow, heads, jn_opts);
+                    *flow, net_heads, jn_opts);
             }
             catch (const std::exception& e)
             {
@@ -2583,32 +2853,30 @@ int main(int argc, char* argv[])
                 }
             }
 
-            // Diagnostic: the burned obstruction-gap trenches.
-            if (!vb.gaps.empty())
+            // Diagnostic: the burned segment trenches.
+            if (!all_burned.empty())
             {
                 const std::string gap_path =
                     lsdtt::lsdtt_data_loader::resolve_writable_path(
                         pp.get_full_write_path() + "_burned_gaps", ".fgb");
-                std::cout << "Writing burned gap segments: " << gap_path << "\n";
+                std::cout << "Writing burned segments: " << gap_path << "\n";
                 try
                 {
                     lsdtt::lsdtt_vector_schema schema;
-                    schema.field_names = {"length_m", "burned", "skip_reason"};
+                    schema.field_names = {"length_m", "burned"};
                     schema.field_types = {
                         lsdtt::lsdtt_vector_field_type::double_type,
-                        lsdtt::lsdtt_vector_field_type::int64_type,
-                        lsdtt::lsdtt_vector_field_type::string_type};
+                        lsdtt::lsdtt_vector_field_type::int64_type};
                     lsdtt::lsdtt_data_loader gw;
-                    gw.begin_vector_write(gap_path, "burned_gaps", schema,
+                    gw.begin_vector_write(gap_path, "burned_segments", schema,
                         routed_dem.get_meta().crs_wkt,
                         lsdtt::vector_output_format::flatgeobuf, false);
-                    for (const auto& g : vb.gaps)
+                    for (const auto& g : all_burned)
                     {
                         if (g.path_xy.size() < 2) continue;
                         gw.write_line(g.path_xy, {
                             g.length_m,
-                            static_cast<std::int64_t>(g.burned ? 1 : 0),
-                            g.skip_reason});
+                            static_cast<std::int64_t>(g.burned ? 1 : 0)});
                     }
                     gw.finish_vector_write();
                 }
