@@ -29,6 +29,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -47,6 +48,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_sti_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
 
@@ -177,6 +179,51 @@ int main(int argc, char* argv[])
         "Passed to direct_polyfit(). Larger values smooth out local "
         "roughness; smaller values capture fine-scale slope variation."};
 
+    // --- Soil Topographic Index (STI) ---
+    bool_default_map["write_sti_raster"] = false;
+    help_map["write_sti_raster"] = {"bool","false",
+        "Write STI raster using the ln(Ks*D) denominator term.",
+        "Output file: <write_fname>_sti.tif. Requires clipped soil and land-use "
+        "vector overlays and the SSKIB Ksat horizon CSV."};
+
+    bool_default_map["write_sti_proxy_raster"] = false;
+    help_map["write_sti_proxy_raster"] = {"bool","false",
+        "Write STI proxy raster using a runoff-based SPR denominator term.",
+        "Output file: <write_fname>_sti_proxy.tif. Uses SERIES_SPR.csv "
+        "joined by normalised series code."};
+
+    bool_default_map["write_sti_intermediate_rasters"] = false;
+    help_map["write_sti_intermediate_rasters"] = {"bool","false",
+        "Write STI debugging rasters (coded series, coded land use, term, valid mask).",
+        "Useful for checking joins and nodata coverage."};
+
+    bool_default_map["write_sti_lookup_csv"] = false;
+    help_map["write_sti_lookup_csv"] = {"bool","false",
+        "Write per-series/land-use lookup diagnostics CSV.",
+        "CSV fields: series_code, land_use, n_profiles, ln_kd_median, "
+        "spr_prc, spr_term, source."};
+
+    string_default_map["sti_soil_vector_path"] =
+        "data/scotland_soils/hutton_series_code_min.fgb";
+    string_default_map["sti_soil_layer_name"] = "hutton_series_code_min";
+    string_default_map["sti_landuse_vector_path"] =
+        "data/scotland_soils/sg_land_use_min.fgb";
+    string_default_map["sti_landuse_layer_name"] = "sg_land_use_min";
+    string_default_map["sti_ksat_csv_path"] =
+        "data/scotland_soils/SSKIB_C_MED_KSAT.csv";
+    string_default_map["sti_spr_csv_path"] =
+        "data/scotland_soils/SERIES_SPR.csv";
+    string_default_map["sti_xlsx_path"] =
+        "data/scotland_soils/SSKIB_OCT18_V1.2.xlsx";
+    string_default_map["sti_drainage_area_method"] = "Dinf";
+    string_default_map["sti_term_mode"] = "ksd";
+    string_default_map["sti_spr_transform"] = "ln_1_minus_spr";
+
+    float_default_map["sti_window_radius"] = 100.0f;
+    float_default_map["sti_depth_cap_cm"] = 100.0f;
+    float_default_map["sti_min_valid_depth_cm"] = 30.0f;
+    float_default_map["sti_ks_unit_scale_to_m_per_day"] = 1.0f;
+
     // --- Connectivity index (Cavalli et al. 2013) ---
     bool_default_map["write_connectivity_raster"] = false;
     help_map["write_connectivity_raster"] = {"bool","false",
@@ -276,6 +323,24 @@ int main(int argc, char* argv[])
                    conn_roughness_method.begin(),
                    [](unsigned char c){ return std::tolower(c); });
 
+    std::string sti_method = sf["sti_drainage_area_method"];
+    std::transform(sti_method.begin(), sti_method.end(), sti_method.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    std::string sti_term_mode_str = sf["sti_term_mode"];
+    std::transform(sti_term_mode_str.begin(), sti_term_mode_str.end(),
+                   sti_term_mode_str.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    std::string sti_spr_transform_str = sf["sti_spr_transform"];
+    std::transform(sti_spr_transform_str.begin(), sti_spr_transform_str.end(),
+                   sti_spr_transform_str.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    const bool write_sti = bf["write_sti_raster"];
+    const bool write_sti_proxy = bf["write_sti_proxy_raster"];
+    const bool need_sti = write_sti || write_sti_proxy;
+
     if (bf["write_twi_raster"] && twi_method != "dinf" && twi_method != "mfd")
     {
         std::cerr << "FATAL: twi_drainage_area_method must be 'Dinf' or 'MFD'. "
@@ -309,6 +374,110 @@ int main(int argc, char* argv[])
         }
     }
 
+    if (need_sti)
+    {
+        if (sti_method != "dinf" && sti_method != "mfd")
+        {
+            std::cerr << "FATAL: sti_drainage_area_method must be 'Dinf' or 'MFD'. "
+                      << "Got: " << sf["sti_drainage_area_method"] << "\n";
+            return 1;
+        }
+
+        if (sti_term_mode_str != "ksd" && sti_term_mode_str != "spr")
+        {
+            std::cerr << "FATAL: sti_term_mode must be 'ksd' or 'spr'. "
+                      << "Got: " << sf["sti_term_mode"] << "\n";
+            return 1;
+        }
+
+        if (sti_spr_transform_str != "ln_1_minus_spr" &&
+            sti_spr_transform_str != "ln_spr")
+        {
+            std::cerr << "FATAL: sti_spr_transform must be 'ln_1_minus_spr' "
+                      << "or 'ln_spr'. Got: " << sf["sti_spr_transform"] << "\n";
+            return 1;
+        }
+
+        if (ff["sti_depth_cap_cm"] <= 0.0f)
+        {
+            std::cerr << "FATAL: sti_depth_cap_cm must be > 0. "
+                      << "Got: " << ff["sti_depth_cap_cm"] << "\n";
+            return 1;
+        }
+
+        if (ff["sti_min_valid_depth_cm"] <= 0.0f)
+        {
+            std::cerr << "FATAL: sti_min_valid_depth_cm must be > 0. "
+                      << "Got: " << ff["sti_min_valid_depth_cm"] << "\n";
+            return 1;
+        }
+
+        if (ff["sti_min_valid_depth_cm"] > ff["sti_depth_cap_cm"])
+        {
+            std::cerr << "FATAL: sti_min_valid_depth_cm cannot exceed "
+                      << "sti_depth_cap_cm. Got min_valid_depth_cm="
+                      << ff["sti_min_valid_depth_cm"] << ", depth_cap_cm="
+                      << ff["sti_depth_cap_cm"] << "\n";
+            return 1;
+        }
+
+        if (ff["sti_window_radius"] <= 0.0f)
+        {
+            std::cerr << "FATAL: sti_window_radius must be > 0. "
+                      << "Got: " << ff["sti_window_radius"] << "\n";
+            return 1;
+        }
+
+        if (ff["sti_ks_unit_scale_to_m_per_day"] <= 0.0f)
+        {
+            std::cerr << "FATAL: sti_ks_unit_scale_to_m_per_day must be > 0. "
+                      << "Got: " << ff["sti_ks_unit_scale_to_m_per_day"] << "\n";
+            return 1;
+        }
+
+        if (write_sti)
+        {
+            if (sf["sti_soil_vector_path"].empty() || sf["sti_soil_layer_name"].empty())
+            {
+                std::cerr << "FATAL: STI requires non-empty sti_soil_vector_path "
+                          << "and sti_soil_layer_name when write_sti_raster is true.\n";
+                return 1;
+            }
+            if (sf["sti_landuse_vector_path"].empty() || sf["sti_landuse_layer_name"].empty())
+            {
+                std::cerr << "FATAL: STI requires non-empty sti_landuse_vector_path "
+                          << "and sti_landuse_layer_name when write_sti_raster is true.\n";
+                return 1;
+            }
+            if (sf["sti_ksat_csv_path"].empty())
+            {
+                std::cerr << "FATAL: STI ksd mode requires sti_ksat_csv_path.\n";
+                return 1;
+            }
+        }
+
+        if (write_sti_proxy)
+        {
+            if (sf["sti_soil_vector_path"].empty() || sf["sti_soil_layer_name"].empty())
+            {
+                std::cerr << "FATAL: STI proxy requires non-empty sti_soil_vector_path "
+                          << "and sti_soil_layer_name when write_sti_proxy_raster is true.\n";
+                return 1;
+            }
+            if (sf["sti_landuse_vector_path"].empty() || sf["sti_landuse_layer_name"].empty())
+            {
+                std::cerr << "FATAL: STI proxy requires non-empty sti_landuse_vector_path "
+                          << "and sti_landuse_layer_name when write_sti_proxy_raster is true.\n";
+                return 1;
+            }
+            if (sf["sti_spr_csv_path"].empty())
+            {
+                std::cerr << "FATAL: STI proxy mode requires sti_spr_csv_path.\n";
+                return 1;
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Warn about unimplemented placeholders
     // -------------------------------------------------------------------------
@@ -321,11 +490,13 @@ int main(int argc, char* argv[])
                            bf["write_connectivity_raster"]      ||   // D8 always needed for IC routing
                            bf["write_height_above_channel_raster"];
     const bool need_dinf = bf["write_dinf_drainage_area_raster"] ||
-                           (bf["write_twi_raster"] && twi_method == "dinf") ||
-                           (bf["write_connectivity_raster"] && conn_area_method == "dinf");
+                            (bf["write_twi_raster"] && twi_method == "dinf") ||
+                            (need_sti && sti_method == "dinf") ||
+                            (bf["write_connectivity_raster"] && conn_area_method == "dinf");
     const bool need_mfd  = bf["write_mfd_drainage_area_raster"] ||
-                           (bf["write_twi_raster"] && twi_method == "mfd") ||
-                           (bf["write_connectivity_raster"] && conn_area_method == "mfd");
+                            (bf["write_twi_raster"] && twi_method == "mfd") ||
+                            (need_sti && sti_method == "mfd") ||
+                            (bf["write_connectivity_raster"] && conn_area_method == "mfd");
     const bool need_flow = need_d8 || need_dinf || need_mfd;
 
     if (!need_flow)
@@ -505,6 +676,113 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Shared helper for TWI/STI paths
+    // -------------------------------------------------------------------------
+    auto compute_twi_raster =
+        [&](const std::string& area_method,
+            float              window_radius,
+            const std::string& context_label) -> lsdtt::lsdtt_raster_cpu
+    {
+        std::cout << "\n--- " << context_label << " TWI computation ---\n";
+        std::cout << "Drainage area method : " << area_method << "\n";
+        std::cout << "Slope window radius  : " << window_radius << " m\n";
+
+        lsdtt::poly_fit_coeffs coeffs;
+        try
+        {
+            std::cout << "Computing slope via direct polyfit...\n";
+            coeffs = lsdtt::direct_polyfit(
+                routed_dem,
+                window_radius,
+                ifs["n_threads"]
+            );
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error(
+                context_label + " polyfit for slope failed: " + std::string(e.what()));
+        }
+
+        lsdtt::polyfit_metric_request slope_req;
+        slope_req.metrics   = { lsdtt::polyfit_metric::slope };
+        slope_req.n_threads = ifs["n_threads"];
+
+        lsdtt::polyfit_metric_result slope_res;
+        try
+        {
+            slope_res = lsdtt::compute_polyfit_metrics(coeffs, slope_req);
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error(
+                context_label + " slope metric computation failed: " + std::string(e.what()));
+        }
+
+        const lsdtt::lsdtt_raster_cpu& slope_raster =
+            slope_res.at(lsdtt::polyfit_metric::slope);
+
+        std::string method_lc = area_method;
+        std::transform(method_lc.begin(), method_lc.end(), method_lc.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+
+        lsdtt::lsdtt_raster_result area_result;
+        try
+        {
+            if (method_lc == "dinf")
+            {
+                area_result = dinf_graph->accumulate_raster();
+            }
+            else
+            {
+                area_result = mfd_graph->accumulate_raster();
+            }
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error(
+                context_label + " drainage area accumulation failed: " +
+                std::string(e.what()));
+        }
+
+        lsdtt::lsdtt_raster_cpu area_raster(std::move(area_result));
+
+        const int    n_rows     = dem_meta.n_rows;
+        const int    n_cols     = dem_meta.n_cols;
+        const double pixel_area = dem_meta.cell_size * dem_meta.cell_size;
+        const float  nodata_val = static_cast<float>(dem_meta.no_data_value);
+
+        lsdtt::lsdtt_array2d_f  twi_data(n_rows, n_cols, nodata_val);
+        lsdtt::lsdtt_array2d_u8 twi_mask(n_rows, n_cols, uint8_t(0));
+
+        const lsdtt::lsdtt_array2d_f&  area_arr  = area_raster.get_data_array();
+        const lsdtt::lsdtt_array2d_u8& area_msk  = area_raster.get_mask_array();
+        const lsdtt::lsdtt_array2d_f&  slope_arr = slope_raster.get_data_array();
+        const lsdtt::lsdtt_array2d_u8& slope_msk = slope_raster.get_mask_array();
+
+        for (int row = 0; row < n_rows; ++row)
+        {
+            for (int col = 0; col < n_cols; ++col)
+            {
+                if (area_msk(row, col) == 0) continue;
+                if (slope_msk(row, col) == 0) continue;
+
+                const float area_val  = area_arr(row, col);
+                const float slope_val = slope_arr(row, col);
+
+                if (area_val > 0.0f && slope_val > 0.0f)
+                {
+                    twi_data(row, col) = std::log(
+                        (area_val / static_cast<float>(pixel_area)) / slope_val
+                    );
+                    twi_mask(row, col) = uint8_t(1);
+                }
+            }
+        }
+
+        return lsdtt::lsdtt_raster_cpu(std::move(twi_data), std::move(twi_mask), dem_meta);
+    };
+
+    // -------------------------------------------------------------------------
     // Step 3a — Write D8 drainage area
     // -------------------------------------------------------------------------
     if (bf["write_d8_drainage_area_raster"])
@@ -585,108 +863,20 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     if (bf["write_twi_raster"])
     {
-        std::cout << "\n--- Topographic Wetness Index ---\n";
-        std::cout << "Drainage area method : " << sf["twi_drainage_area_method"] << "\n";
-        std::cout << "Slope window radius  : " << ff["twi_window_radius"] << " m\n";
-
-        // -- Slope from direct polyfit --
-        lsdtt::poly_fit_coeffs coeffs;
+        lsdtt::lsdtt_raster_cpu twi_raster;
         try
         {
-            std::cout << "Computing slope via direct polyfit...\n";
-            coeffs = lsdtt::direct_polyfit(
-                routed_dem,
+            twi_raster = compute_twi_raster(
+                sf["twi_drainage_area_method"],
                 ff["twi_window_radius"],
-                ifs["n_threads"]
+                "TWI"
             );
         }
         catch (const std::exception& e)
         {
-            std::cerr << "FATAL: polyfit for TWI slope failed: "
-                      << e.what() << "\n";
+            std::cerr << "FATAL: " << e.what() << "\n";
             return 1;
         }
-
-        lsdtt::polyfit_metric_request slope_req;
-        slope_req.metrics   = { lsdtt::polyfit_metric::slope };
-        slope_req.n_threads = ifs["n_threads"];
-
-        lsdtt::polyfit_metric_result slope_res;
-        try
-        {
-            slope_res = lsdtt::compute_polyfit_metrics(coeffs, slope_req);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: slope metric computation failed: "
-                      << e.what() << "\n";
-            return 1;
-        }
-
-        const lsdtt::lsdtt_raster_cpu& slope_raster =
-            slope_res.at(lsdtt::polyfit_metric::slope);
-
-        // -- Drainage area for TWI --
-        lsdtt::lsdtt_raster_result area_result;
-        try
-        {
-            if (twi_method == "dinf")
-            {
-                area_result = dinf_graph->accumulate_raster();
-            }
-            else  // mfd
-            {
-                area_result = mfd_graph->accumulate_raster();
-            }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: drainage area accumulation for TWI failed: "
-                      << e.what() << "\n";
-            return 1;
-        }
-
-        lsdtt::lsdtt_raster_cpu area_raster(std::move(area_result));
-
-        // -- Compute TWI pixel by pixel --
-        const int    n_rows     = dem_meta.n_rows;
-        const int    n_cols     = dem_meta.n_cols;
-        const double pixel_area = dem_meta.cell_size * dem_meta.cell_size;
-        const float  nodata_val = static_cast<float>(dem_meta.no_data_value);
-
-        lsdtt::lsdtt_array2d_f  twi_data(n_rows, n_cols, nodata_val);
-        lsdtt::lsdtt_array2d_u8 twi_mask(n_rows, n_cols, uint8_t(0));
-
-        const lsdtt::lsdtt_array2d_f&  area_arr  = area_raster.get_data_array();
-        const lsdtt::lsdtt_array2d_u8& area_msk  = area_raster.get_mask_array();
-        const lsdtt::lsdtt_array2d_f&  slope_arr = slope_raster.get_data_array();
-        const lsdtt::lsdtt_array2d_u8& slope_msk = slope_raster.get_mask_array();
-
-        for (int row = 0; row < n_rows; ++row)
-        {
-            for (int col = 0; col < n_cols; ++col)
-            {
-                if (area_msk(row, col) == 0) continue;
-                if (slope_msk(row, col) == 0) continue;
-
-                const float area_val  = area_arr(row, col);
-                const float slope_val = slope_arr(row, col);
-
-                if (area_val > 0.0f && slope_val > 0.0f)
-                {
-                    twi_data(row, col) = std::log(
-                        (area_val / static_cast<float>(pixel_area)) / slope_val
-                    );
-                    twi_mask(row, col) = uint8_t(1);
-                }
-            }
-        }
-
-        lsdtt::lsdtt_raster_cpu twi_raster(
-            std::move(twi_data),
-            std::move(twi_mask),
-            dem_meta
-        );
 
         const std::string twi_file = pp.make_output_path( "_twi", ".tif");
         std::cout << "Writing: " << twi_file << "\n";
@@ -705,6 +895,415 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: writing TWI raster failed: "
                       << e.what() << "\n";
             return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Soil Topographic Index (STI)
+    // -------------------------------------------------------------------------
+    if (need_sti)
+    {
+        std::cout << "\n--- Soil Topographic Index (STI) ---\n";
+        std::cout << "Requested outputs       : "
+                  << (write_sti ? "_sti.tif " : "")
+                  << (write_sti_proxy ? "_sti_proxy.tif" : "") << "\n";
+        std::cout << "STI drainage method     : " << sf["sti_drainage_area_method"] << "\n";
+        std::cout << "STI slope window radius : " << ff["sti_window_radius"] << " m\n";
+        std::cout << "STI term mode           : " << sf["sti_term_mode"] << "\n";
+        std::cout << "STI SPR transform       : " << sf["sti_spr_transform"] << "\n";
+        std::cout << "\nWARNING: STI unit assumptions are not yet validated automatically.\n";
+        std::cout << "WARNING: assuming HORZ_TOP/HORZ_BOTTOM are in cm and using "
+                  << "sti_depth_cap_cm=" << ff["sti_depth_cap_cm"] << ".\n";
+        std::cout << "WARNING: assuming COND_0_HYPRES is compatible with Ks proxy use.\n";
+        std::cout << "WARNING: STI magnitudes should be treated as relative/proxy until units are verified.\n";
+        std::cout << "WARNING: applying sti_ks_unit_scale_to_m_per_day="
+                  << ff["sti_ks_unit_scale_to_m_per_day"] << " to COND_0_HYPRES before ln(Ks*D).\n";
+
+        const std::string soil_clip_path = pp.make_output_path("_sti_soil_clip", ".fgb");
+        const std::string land_clip_path = pp.make_output_path("_sti_landuse_clip", ".fgb");
+
+        try
+        {
+            std::cout << "Clipping soil vector to DEM extent...\n";
+            lsdtt::lsdtt_data_loader::clip_vector_to_raster_bbox(
+                sf["sti_soil_vector_path"],
+                soil_clip_path,
+                dem_meta,
+                lsdtt::vector_output_format::flatgeobuf
+            );
+
+            std::cout << "Clipping land-use vector to DEM extent...\n";
+            lsdtt::lsdtt_data_loader::clip_vector_to_raster_bbox(
+                sf["sti_landuse_vector_path"],
+                land_clip_path,
+                dem_meta,
+                lsdtt::vector_output_format::flatgeobuf
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: STI vector clipping failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        int soil_clip_count = -1;
+        int land_clip_count = -1;
+        try
+        {
+            soil_clip_count = lsdtt::lsdtt_data_loader::count_features_in_first_layer(soil_clip_path);
+            land_clip_count = lsdtt::lsdtt_data_loader::count_features_in_first_layer(land_clip_path);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: STI clipped feature counting failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        if (soil_clip_count <= 0)
+        {
+            std::cerr << "FATAL: clipped STI soil vector has zero features over DEM extent.\n"
+                      << "Check sti_soil_vector_path/layer and DEM overlap.\n";
+            return 1;
+        }
+        if (land_clip_count <= 0)
+        {
+            std::cerr << "FATAL: clipped STI land-use vector has zero features over DEM extent.\n"
+                      << "Check sti_landuse_vector_path/layer and DEM overlap.\n";
+            return 1;
+        }
+
+        std::cout << "Clipped soil features    : " << soil_clip_count << "\n";
+        std::cout << "Clipped land-use features: " << land_clip_count << "\n";
+
+        lsdtt::sti_polygon_string_rasterise_result series_codes;
+        lsdtt::sti_polygon_string_rasterise_result land_use_codes;
+        try
+        {
+            series_codes = lsdtt::rasterise_polygon_string_field(
+                routed_dem,
+                soil_clip_path,
+                sf["sti_soil_layer_name"],
+                "SERIES_CODE",
+                8
+            );
+        }
+        catch (const std::exception&)
+        {
+            try
+            {
+                series_codes = lsdtt::rasterise_polygon_string_field(
+                    routed_dem,
+                    soil_clip_path,
+                    sf["sti_soil_layer_name"],
+                    "SERCDE1",
+                    8
+                );
+                std::cout << "STI note: soil field 'SERIES_CODE' not found; used fallback field 'SERCDE1'.\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: STI soil rasterization failed for fields SERIES_CODE and SERCDE1: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        try
+        {
+            land_use_codes = lsdtt::rasterise_polygon_string_field(
+                routed_dem,
+                land_clip_path,
+                sf["sti_landuse_layer_name"],
+                "LAND_USE",
+                8
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: STI land-use rasterization failed for field LAND_USE: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "STI soil categories rasterized   : " << series_codes.lookup.size() << "\n";
+        std::cout << "STI land-use categories rasterized: " << land_use_codes.lookup.size() << "\n";
+
+        const bool xlsx_ok = lsdtt::sti_check_xlsx_available(sf["sti_xlsx_path"]);
+        if (!xlsx_ok)
+        {
+            std::cout << "WARNING: sti_xlsx_path not found/readable: " << sf["sti_xlsx_path"]
+                      << " (continuing; xlsx consistency checks are lightweight in this first pass).\n";
+        }
+        else
+        {
+            std::cout << "STI xlsx consistency source found: " << sf["sti_xlsx_path"] << "\n";
+        }
+
+        lsdtt::sti_lnkd_table lnkd_table;
+        lsdtt::sti_spr_table spr_table;
+
+        if (write_sti || bf["write_sti_lookup_csv"])
+        {
+            try
+            {
+                lsdtt::sti_lnkd_options lnkd_opts;
+                lnkd_opts.depth_cap_cm = ff["sti_depth_cap_cm"];
+                lnkd_opts.min_valid_depth_cm = ff["sti_min_valid_depth_cm"];
+                lnkd_opts.ks_unit_scale_to_m_per_day = ff["sti_ks_unit_scale_to_m_per_day"];
+
+                const lsdtt::sti_lnkd_build_result lnkd =
+                    lsdtt::build_sti_lnkd_table_from_csv(sf["sti_ksat_csv_path"], lnkd_opts);
+                lnkd_table = lnkd.table;
+
+                std::cout << "STI ksat rows read/used        : " << lnkd.rows_read
+                          << " / " << lnkd.rows_used << "\n";
+                std::cout << "STI profiles total/valid       : " << lnkd.profiles_total
+                          << " / " << lnkd.profiles_valid << "\n";
+                std::cout << "STI series-landuse pairs built : " << lnkd.pairs_built << "\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: STI ln(Ks*D) table build failed: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        if (write_sti_proxy || bf["write_sti_lookup_csv"])
+        {
+            try
+            {
+                const lsdtt::sti_spr_parse_result spr =
+                    lsdtt::load_sti_spr_table_from_csv(sf["sti_spr_csv_path"]);
+                spr_table = spr.table;
+                std::cout << "STI SPR rows read/used         : " << spr.rows_read
+                          << " / " << spr.rows_used << "\n";
+                std::cout << "STI SPR clamped rows           : " << spr.clamped_rows << "\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: STI SPR table load failed: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        lsdtt::lsdtt_raster_cpu sti_twi;
+        try
+        {
+            sti_twi = compute_twi_raster(
+                sf["sti_drainage_area_method"],
+                ff["sti_window_radius"],
+                "STI"
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+
+        lsdtt::sti_spr_transform spr_transform = lsdtt::sti_spr_transform::ln_1_minus_spr;
+        if (sti_spr_transform_str == "ln_spr")
+        {
+            spr_transform = lsdtt::sti_spr_transform::ln_spr;
+        }
+
+        std::unordered_map<std::string, std::string> lookup_sources;
+
+        if (write_sti)
+        {
+            lsdtt::sti_compute_options compute_opts;
+            compute_opts.mode = lsdtt::sti_term_mode::ksd;
+            compute_opts.spr_transform = spr_transform;
+
+            lsdtt::sti_compute_result ksd_result;
+            try
+            {
+                ksd_result = lsdtt::compute_sti_from_rasters(
+                    sti_twi,
+                    series_codes,
+                    land_use_codes,
+                    lnkd_table,
+                    spr_table,
+                    compute_opts
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: STI ksd assembly failed: " << e.what() << "\n";
+                return 1;
+            }
+
+            const std::string sti_file = pp.make_output_path("_sti", ".tif");
+            std::cout << "Writing: " << sti_file << "\n";
+            try
+            {
+                loader.write_full(
+                    ksd_result.sti_raster.get_data(),
+                    ksd_result.sti_raster.get_meta(),
+                    sti_file,
+                    out_fmt
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing STI raster failed: " << e.what() << "\n";
+                return 1;
+            }
+
+            std::cout << "STI ksd valid output pixels     : " << ksd_result.stats.valid_output_pixels
+                      << " / " << ksd_result.stats.valid_twi_pixels << "\n";
+            std::cout << "STI ksd missing lookup pixels   : " << ksd_result.stats.missing_lookup_pixels << "\n";
+            std::cout << "STI ksd fallback pixels         : " << ksd_result.stats.fallback_pixels << "\n";
+
+            lookup_sources.insert(ksd_result.source_by_series_landuse.begin(),
+                                  ksd_result.source_by_series_landuse.end());
+
+            if (bf["write_sti_intermediate_rasters"])
+            {
+                try
+                {
+                    loader.write_full(
+                        series_codes.raster_codes.get_data(),
+                        series_codes.raster_codes.get_meta(),
+                        pp.make_output_path("_sti_series_codes", ".tif"),
+                        out_fmt
+                    );
+                    loader.write_full(
+                        land_use_codes.raster_codes.get_data(),
+                        land_use_codes.raster_codes.get_meta(),
+                        pp.make_output_path("_sti_landuse_codes", ".tif"),
+                        out_fmt
+                    );
+                    loader.write_full(
+                        ksd_result.term_raster.get_data(),
+                        ksd_result.term_raster.get_meta(),
+                        pp.make_output_path("_sti_term_ksd", ".tif"),
+                        out_fmt
+                    );
+                    loader.write_full(
+                        ksd_result.valid_mask_raster.get_data(),
+                        ksd_result.valid_mask_raster.get_meta(),
+                        pp.make_output_path("_sti_valid_mask_ksd", ".tif"),
+                        out_fmt
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing STI intermediate rasters failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+            }
+        }
+
+        if (write_sti_proxy)
+        {
+            lsdtt::sti_compute_options compute_opts;
+            compute_opts.mode = lsdtt::sti_term_mode::spr;
+            compute_opts.spr_transform = spr_transform;
+
+            lsdtt::sti_compute_result spr_result;
+            try
+            {
+                spr_result = lsdtt::compute_sti_from_rasters(
+                    sti_twi,
+                    series_codes,
+                    land_use_codes,
+                    lnkd_table,
+                    spr_table,
+                    compute_opts
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: STI proxy assembly failed: " << e.what() << "\n";
+                return 1;
+            }
+
+            const std::string sti_proxy_file = pp.make_output_path("_sti_proxy", ".tif");
+            std::cout << "Writing: " << sti_proxy_file << "\n";
+            try
+            {
+                loader.write_full(
+                    spr_result.sti_raster.get_data(),
+                    spr_result.sti_raster.get_meta(),
+                    sti_proxy_file,
+                    out_fmt
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing STI proxy raster failed: " << e.what() << "\n";
+                return 1;
+            }
+
+            std::cout << "STI proxy valid output pixels   : " << spr_result.stats.valid_output_pixels
+                      << " / " << spr_result.stats.valid_twi_pixels << "\n";
+            std::cout << "STI proxy missing lookup pixels : " << spr_result.stats.missing_lookup_pixels << "\n";
+            std::cout << "STI proxy clamped pixels        : " << spr_result.stats.clamped_pixels << "\n";
+
+            lookup_sources.insert(spr_result.source_by_series_landuse.begin(),
+                                  spr_result.source_by_series_landuse.end());
+
+            if (bf["write_sti_intermediate_rasters"])
+            {
+                try
+                {
+                    loader.write_full(
+                        series_codes.raster_codes.get_data(),
+                        series_codes.raster_codes.get_meta(),
+                        pp.make_output_path("_sti_series_codes", ".tif"),
+                        out_fmt
+                    );
+                    loader.write_full(
+                        land_use_codes.raster_codes.get_data(),
+                        land_use_codes.raster_codes.get_meta(),
+                        pp.make_output_path("_sti_landuse_codes", ".tif"),
+                        out_fmt
+                    );
+                    loader.write_full(
+                        spr_result.term_raster.get_data(),
+                        spr_result.term_raster.get_meta(),
+                        pp.make_output_path("_sti_term_spr", ".tif"),
+                        out_fmt
+                    );
+                    loader.write_full(
+                        spr_result.valid_mask_raster.get_data(),
+                        spr_result.valid_mask_raster.get_meta(),
+                        pp.make_output_path("_sti_valid_mask_spr", ".tif"),
+                        out_fmt
+                    );
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing STI intermediate rasters failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+            }
+        }
+
+        if (bf["write_sti_lookup_csv"])
+        {
+            try
+            {
+                const std::vector<lsdtt::sti_lookup_row> rows =
+                    lsdtt::build_sti_lookup_rows(
+                        lookup_sources,
+                        lnkd_table,
+                        spr_table,
+                        spr_transform
+                    );
+                const std::string lookup_csv = pp.make_output_path("_sti_lookup", ".csv");
+                std::cout << "Writing: " << lookup_csv << "\n";
+                lsdtt::write_sti_lookup_csv(rows, lookup_csv);
+                std::cout << "STI lookup rows written         : " << rows.size() << "\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing STI lookup CSV failed: " << e.what() << "\n";
+                return 1;
+            }
         }
     }
 

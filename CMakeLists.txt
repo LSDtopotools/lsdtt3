@@ -231,6 +231,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_slope_break_finder_cpu.cpp
     src/cpu/lsdtt_flat_surface_plane_analysis.cpp
     src/cpu/lsdtt_vector_rasterise_cpu.cpp
+    src/cpu/lsdtt_sti_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp
     src/cpu/lsdtt_swath_cpu.cpp
     src/cpu/lsdtt_streamlines_cpu.cpp
