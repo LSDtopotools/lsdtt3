@@ -366,7 +366,7 @@ int main(int argc, char* argv[])
         auto& req = requested_metric_strings;
         if (std::find(req.begin(), req.end(), "slope") == req.end()) {
             std::cout << "Injecting 'slope' into polyfit metrics to "
-                      << "support shape-area analysis.\n";
+                      << "support slope-area analysis.\n";
             req.push_back("slope");
         }
     }

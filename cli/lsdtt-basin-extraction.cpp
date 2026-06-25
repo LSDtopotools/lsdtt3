@@ -411,6 +411,14 @@ int main(int argc, char* argv[])
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "The search stops at the first radius containing one or more qualifying pixels."};
+    
+    bool_default_map["write_basin_outlet_points"] = false;
+    help_map["write_basin_outlet_points"] = {"bool","false",
+        "Write requested basin outlet points to FlatGeobuf in the raster CRS.",
+        "Useful for debugging outlet locations after latitude/longitude input has "
+        "been transformed into the DEM local/projected coordinate system. "
+        "Points that fail coordinate transformation are omitted because they do "
+        "not have valid raster-CRS coordinates."};
 
     // --- Basin selection ---
     bool_default_map["select_basins_from_outlets"] = false;
@@ -545,14 +553,15 @@ int main(int argc, char* argv[])
         "Outputs a _basin_outlines.csv file containing points for all basins."
     };
 
-
-    bool_default_map["write_basin_outlet_points"] = false;
-    help_map["write_basin_outlet_points"] = {"bool","false",
-        "Write requested basin outlet points to FlatGeobuf in the raster CRS.",
-        "Useful for debugging outlet locations after latitude/longitude input has "
-        "been transformed into the DEM local/projected coordinate system. "
-        "Points that fail coordinate transformation are omitted because they do "
-        "not have valid raster-CRS coordinates."};
+    // --- Basin outlet writing ---
+    bool_default_map["write_selected_basin_outlets_csv"] = false;
+    help_map["write_selected_basin_outlets_csv"] = {"bool", "false",
+        "Write the outlets of the final selected basins to a CSV file.",
+        "Outputs a _selected_basin_outlets.csv file with longitude, latitude, "
+        "basin_junction_number, and basin_outlet_flat_index. "
+        "This file can be directly read back into lsdtt as a basin_outlet_file."
+        "Note: write_basin_outlet_points writes the requested outlets, but "
+        "this option writes the outlets of the selected basins."};
 
     // --- Basin printing to raster ---
     bool_default_map["write_basins_raster"] = false;
@@ -730,7 +739,8 @@ int main(int argc, char* argv[])
     if (!do_basin_selection &&
         (bf["write_basin_outlines"] ||
          bf["write_basins_raster"] ||
-         bf["write_basins_datamap"]))
+         bf["write_basins_datamap"] ||
+         bf["write_selected_basin_outlets_csv"]))
     {
         std::cerr << "FATAL: basin output switches require a basin selection "
                   << "mode to be enabled.\n";
@@ -2109,6 +2119,78 @@ int main(int argc, char* argv[])
             catch (const std::exception& e)
             {
                 std::cerr << "FATAL: writing basin datamap failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        if (bf["write_selected_basin_outlets_csv"])
+        {
+            std::cout << "\n--- Selected Basin Outlets CSV output ---\n";
+
+            const std::string output_file =
+                pp.make_output_path("_selected_basin_outlets", ".csv");
+
+            std::cout << "Writing: " << output_file << "\n";
+
+            try
+            {
+                const std::vector<std::string> headers = {
+                    "longitude",
+                    "latitude",
+                    "basin_junction_number",
+                    "basin_outlet_flat_index"
+                };
+
+                std::vector<std::vector<std::string>> rows;
+                rows.reserve(basin_manager.size());
+
+                const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+
+                // Setup EPSG:4326 (Lat/Lon) coordinate transformation safely
+                lsdtt::lsdtt_coordinate_transform transformer;
+                if (!m.crs_wkt.empty())
+                {
+                    try {
+                        transformer.initialise_from_epsg(m.crs_wkt, 4326);
+                    } catch (const std::exception& e) {
+                        std::cerr << "Warning: Could not initialize coordinate transform to EPSG:4326 (" << e.what() << "). Coordinates will be printed in raster CRS.\n";
+                    }
+                }
+
+                for (std::size_t i = 0; i < basin_manager.size(); ++i)
+                {
+                    const auto& basin = basin_manager.basin_at(i);
+                    const std::int64_t flat = basin.get_basin_outlet_flat_index();
+                    const std::int32_t junc = basin.get_junction_number();
+
+                    const int row = flow->row_from_flat_unchecked(flat);
+                    const int col = flow->col_from_flat_unchecked(flat);
+
+                    double lon = lsdtt::cell_centre_x(m, col);
+                    double lat = lsdtt::cell_centre_y(m, row);
+
+                    // Transform to lat/lon if the transformer is ready
+                    if (transformer.is_initialised()) {
+                        try {
+                            transformer.transform_in_place(lon, lat);
+                        } catch (...) {}
+                    }
+
+                    rows.push_back({
+                        precise_string(lon),
+                        precise_string(lat),
+                        std::to_string(junc),
+                        std::to_string(flat)
+                    });
+                }
+
+                lsdtt::lsdtt_data_loader csv_writer;
+                csv_writer.write_csv(output_file, headers, rows);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing selected basin outlets failed: "
                           << e.what() << "\n";
                 return 1;
             }
