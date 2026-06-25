@@ -50,6 +50,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -317,6 +318,17 @@ int main(int argc, char* argv[])
         "Used by stream_burn_mode=snap_to_accumulation. A span longer than this "
         "with no nearby channel is unlikely to be a single obstruction; it is "
         "reported but not burned. Set 0 to disable the cap."};
+
+    string_default_map["algoviz_source_junctions"] = "";
+    help_map["algoviz_source_junctions"] = {"string","",
+        "Comma-separated vector junction_ids to trace for the _algoviz overlay.",
+        "Used by stream_burn_mode=snap_to_accumulation. For each listed source "
+        "junction (junction_id from <write_fname>_vector_junctions.fgb), the "
+        "source-path burn records every iteration of its per-segment walk: the D8 "
+        "flow trace used to test divergence and the burned segment (if any), across "
+        "all re-flow passes. Written to <write_fname>_algoviz_jXX_d8.fgb (traces), "
+        "_algoviz_jXX_burns.fgb (carved segments) and _algoviz_jXX_source.fgb (the "
+        "vector source path). Empty = off."};
 
     // --- burn_in_place outputs ---
     bool_default_map["write_burned_profiles_csv"] = true;
@@ -2675,9 +2687,11 @@ int main(int argc, char* argv[])
             const auto& vjns = vector_network.junctions();
             const auto& veds = vector_network.edges();
             std::vector<std::vector<lsdtt::lsdtt_xy>> source_paths;
+            std::vector<std::int32_t> source_path_jids;   // junction_id per path
             for (std::size_t si = 0; si < valid_source_junction_ids.size(); ++si)
             {
                 std::int32_t cur = valid_source_junction_ids[si];
+                const std::int32_t src_jid = cur;
                 std::vector<lsdtt::lsdtt_xy> pathxy;
                 std::unordered_set<std::int32_t> seen;
                 while (cur >= 0 && cur < vector_network.n_junctions() &&
@@ -2701,15 +2715,71 @@ int main(int argc, char* argv[])
                     }
                     cur = J.receiver_junction;
                 }
-                if (pathxy.size() >= 2) source_paths.push_back(std::move(pathxy));
+                if (pathxy.size() >= 2)
+                {
+                    source_paths.push_back(std::move(pathxy));
+                    source_path_jids.push_back(src_jid);
+                }
             }
             std::cout << "Source-path burn: " << source_paths.size()
                       << " source paths\n";
+
+            // _algoviz: resolve the requested junction_ids to source-path indices.
+            // A request may name a SOURCE junction or any junction downstream of
+            // one (e.g. the outlet of a channel): every source path whose receiver
+            // chain passes through the requested junction is selected, so naming a
+            // channel by its outlet visualises all the sources that feed it.
+            std::vector<int> algoviz_jids;
+            {
+                std::stringstream ss(sf["algoviz_source_junctions"]);
+                std::string tok;
+                while (std::getline(ss, tok, ','))
+                {
+                    try { int v = std::stoi(tok); algoviz_jids.push_back(v); }
+                    catch (...) {}
+                }
+            }
+            // (requested junction, source-path index) pairs, for output naming.
+            std::vector<std::pair<int,int>> algoviz_targets;
+            for (int want : algoviz_jids)
+            {
+                bool found = false;
+                for (std::size_t k = 0; k < source_path_jids.size(); ++k)
+                {
+                    // Walk the receiver chain from this source; does it reach want?
+                    std::int32_t cur = source_path_jids[k];
+                    std::unordered_set<std::int32_t> seen;
+                    bool hits = false;
+                    while (cur >= 0 && cur < vector_network.n_junctions() &&
+                           seen.insert(cur).second)
+                    {
+                        if (cur == want) { hits = true; break; }
+                        cur = vjns[static_cast<std::size_t>(cur)].receiver_junction;
+                    }
+                    if (!hits) continue;
+                    const int ki = static_cast<int>(k);
+                    if (std::find(tb_opts.algoviz_source_indices.begin(),
+                                  tb_opts.algoviz_source_indices.end(), ki) ==
+                        tb_opts.algoviz_source_indices.end())
+                        tb_opts.algoviz_source_indices.push_back(ki);
+                    algoviz_targets.emplace_back(want, ki);
+                    found = true;
+                }
+                if (!found)
+                    std::cerr << "Warning: algoviz junction " << want
+                              << " has no source path passing through it; skipping.\n";
+                else
+                    std::cout << "Algoviz junction " << want << ": "
+                              << "selected source path(s)\n";
+            }
+            // Accumulated across all passes for output.
+            std::vector<lsdtt::vectormap_algoviz_step> algoviz_all;
 
             int sp_prev = -1;
             for (int pass = 0; pass < max_passes; ++pass)
             {
                 lsdtt::vectormap_source_burn_result sb;
+                tb_opts.algoviz_pass = pass;
                 try
                 {
                     sb = lsdtt::burn_vectormap_source_paths(
@@ -2724,6 +2794,8 @@ int main(int argc, char* argv[])
                 std::cout << "  pass " << pass << ": sources " << sb.n_sources
                           << ", burned " << sb.n_burned
                           << " (" << sb.total_burn_length_m << " m)\n";
+                for (auto& s : sb.algoviz_steps)
+                    algoviz_all.push_back(std::move(s));
                 for (auto& g : sb.burned) all_burned.push_back(std::move(g));
                 if (sb.n_burned == 0) break;
                 if (sp_prev >= 0 && sb.n_burned >= sp_prev)
@@ -2784,6 +2856,142 @@ int main(int argc, char* argv[])
                 {
                     std::cerr << "Warning: full-path fallback failed: "
                               << e.what() << "\n";
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // _algoviz overlays: per-requested-junction D8 traces + burns,
+            // recorded across every pass, so the algorithm can be replayed.
+            // -----------------------------------------------------------------
+            if (!algoviz_targets.empty())
+            {
+                const std::string crs = routed_dem.get_meta().crs_wkt;
+                for (const auto& tgt : algoviz_targets)
+                {
+                    const int want = tgt.first;
+                    const int sidx = tgt.second;
+                    const std::int32_t jid =
+                        (sidx >= 0 && sidx < (int)source_path_jids.size())
+                            ? source_path_jids[sidx] : -1;
+                    // Name by the requested junction and the feeding source, so a
+                    // channel named by its outlet is unambiguous even with several
+                    // sources (e.g. _algoviz_j39_s41, _algoviz_j39_s44).
+                    const std::string tag = "_algoviz_j" + std::to_string(want)
+                                          + "_s" + std::to_string(jid);
+
+                    int n_d8 = 0, n_burn = 0;
+                    for (const auto& s : algoviz_all)
+                        if (s.source_index == sidx)
+                        {
+                            if (s.d8_trace.size() >= 2)        ++n_d8;
+                            if (s.burned_segment.size() >= 2)  ++n_burn;
+                        }
+                    std::cout << "Algoviz junction " << want << " via source "
+                              << jid << " (index " << sidx << "): "
+                              << n_d8 << " D8 traces, "
+                              << n_burn << " burned segments\n";
+
+                    // (1) the vector source path
+                    if (sidx >= 0 && sidx < (int)source_paths.size() &&
+                        source_paths[sidx].size() >= 2)
+                    {
+                        const std::string sp =
+                            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                                pp.get_full_write_path() + tag + "_source", ".fgb");
+                        try
+                        {
+                            lsdtt::lsdtt_vector_schema schema;
+                            schema.field_names = {"junction_id"};
+                            schema.field_types = {
+                                lsdtt::lsdtt_vector_field_type::int64_type};
+                            lsdtt::lsdtt_data_loader w;
+                            w.begin_vector_write(sp, "algoviz_source", schema, crs,
+                                lsdtt::vector_output_format::flatgeobuf, false);
+                            w.write_line(source_paths[sidx],
+                                {static_cast<std::int64_t>(jid)});
+                            w.finish_vector_write();
+                        }
+                        catch (const std::exception& e)
+                        { std::cerr << "Warning: algoviz source write: "
+                                    << e.what() << "\n"; }
+                    }
+
+                    // (2) the D8 traces used to test divergence
+                    {
+                        const std::string d8 =
+                            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                                pp.get_full_write_path() + tag + "_d8", ".fgb");
+                        try
+                        {
+                            lsdtt::lsdtt_vector_schema schema;
+                            schema.field_names = {"pass", "iteration", "s_top",
+                                "divergence_m", "diverged", "escape_z", "outcome"};
+                            schema.field_types = {
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::double_type,
+                                lsdtt::lsdtt_vector_field_type::double_type,
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::double_type,
+                                lsdtt::lsdtt_vector_field_type::int64_type};
+                            lsdtt::lsdtt_data_loader w;
+                            w.begin_vector_write(d8, "algoviz_d8", schema, crs,
+                                lsdtt::vector_output_format::flatgeobuf, false);
+                            for (const auto& s : algoviz_all)
+                            {
+                                if (s.source_index != sidx) continue;
+                                if (s.d8_trace.size() < 2) continue;
+                                w.write_line(s.d8_trace, {
+                                    static_cast<std::int64_t>(s.pass),
+                                    static_cast<std::int64_t>(s.iteration),
+                                    s.s_top, s.divergence_m,
+                                    static_cast<std::int64_t>(s.diverged ? 1 : 0),
+                                    s.escape_z,
+                                    static_cast<std::int64_t>(s.outcome)});
+                            }
+                            w.finish_vector_write();
+                            std::cout << "Wrote " << d8 << "\n";
+                        }
+                        catch (const std::exception& e)
+                        { std::cerr << "Warning: algoviz d8 write: "
+                                    << e.what() << "\n"; }
+                    }
+
+                    // (3) the incrementally burned segments
+                    {
+                        const std::string bn =
+                            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                                pp.get_full_write_path() + tag + "_burns", ".fgb");
+                        try
+                        {
+                            lsdtt::lsdtt_vector_schema schema;
+                            schema.field_names = {"pass", "iteration", "s_top",
+                                "s_low", "length_m"};
+                            schema.field_types = {
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::int64_type,
+                                lsdtt::lsdtt_vector_field_type::double_type,
+                                lsdtt::lsdtt_vector_field_type::double_type,
+                                lsdtt::lsdtt_vector_field_type::double_type};
+                            lsdtt::lsdtt_data_loader w;
+                            w.begin_vector_write(bn, "algoviz_burns", schema, crs,
+                                lsdtt::vector_output_format::flatgeobuf, false);
+                            for (const auto& s : algoviz_all)
+                            {
+                                if (s.source_index != sidx) continue;
+                                if (s.burned_segment.size() < 2) continue;
+                                w.write_line(s.burned_segment, {
+                                    static_cast<std::int64_t>(s.pass),
+                                    static_cast<std::int64_t>(s.iteration),
+                                    s.s_top, s.s_low, s.s_low - s.s_top});
+                            }
+                            w.finish_vector_write();
+                            std::cout << "Wrote " << bn << "\n";
+                        }
+                        catch (const std::exception& e)
+                        { std::cerr << "Warning: algoviz burns write: "
+                                    << e.what() << "\n"; }
+                    }
                 }
             }
         }

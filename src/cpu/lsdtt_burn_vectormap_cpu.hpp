@@ -155,6 +155,38 @@ struct vectormap_trace_burn_options
     // the DEM along the vector). When false (default), burn only the individual
     // divergent reaches (each crossing, down to the next lower pixel).
     bool   force_full_path     = false;
+
+    // _algoviz: when burn_vectormap_source_paths processes a source path whose
+    // index is in this list, it records every iteration of the per-segment walk
+    // (the D8 trace used to test divergence, and the burned segment, if any) into
+    // result.algoviz_steps. Empty = off (no overhead). `algoviz_pass` tags each
+    // recorded step with the caller's re-flow pass number so the progression can
+    // be replayed across passes.
+    std::vector<int> algoviz_source_indices;
+    int              algoviz_pass = 0;
+};
+
+// One recorded iteration of the source-path burn, for the _algoviz overlay.
+// Each step is one while-loop iteration of the per-segment walk down a source's
+// downstream vector path: a D8 flow trace is run from arc-length `s_top`, tested
+// for divergence from the path, and (if it strays) a segment is burned down to
+// the next pixel below the escape elevation.
+struct vectormap_algoviz_step
+{
+    int    source_index = -1;   // index into source_paths
+    int    pass         = 0;    // caller's re-flow pass (options.algoviz_pass)
+    int    iteration    = 0;    // iteration within this pass's walk for the source
+    double s_top        = 0.0;  // arc-length along the path where the D8 test began
+    std::vector<lsdtt_xy> d8_trace;       // D8 flow path from s_top (cell centres)
+    double divergence_m = 0.0;  // max trace-to-path separation observed on the trace
+    bool   diverged     = false;// true: strayed > tol; false: reached end / outlet
+    double escape_z     = 0.0;  // elevation the flow strayed TO (only if diverged)
+    std::vector<lsdtt_xy> burned_segment; // burn geometry this iteration (empty if none)
+    double s_low        = -1.0; // arc-length end of the burn / followed reach (-1 none)
+    // 0 = advanced (D8 follows the path here, nothing burned)
+    // 1 = burned (diverged; a lower pixel was found downstream and carved)
+    // 2 = skip-conflict (diverged but the path never drops below the escape; left)
+    int    outcome      = 0;
 };
 
 // Per-segment classification of one fixed-length vector segment.
@@ -227,6 +259,9 @@ struct vectormap_source_burn_result
     int    n_burned            = 0;   // sources that needed a burn this pass
     double total_burn_length_m = 0.0;
     std::vector<vectormap_burn_gap> burned;
+
+    // Populated only for source paths listed in options.algoviz_source_indices.
+    std::vector<vectormap_algoviz_step> algoviz_steps;
 };
 
 // One pass. Returns counts; if n_burned > 0 the caller should re-fill + re-flow

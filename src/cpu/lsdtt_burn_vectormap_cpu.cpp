@@ -622,13 +622,19 @@ vectormap_source_burn_result burn_vectormap_source_paths(
     // — the carve must reach a path pixel below this to actually capture the
     // flow, not merely below the divergence point. `diverged` distinguishes a
     // genuine stray from reaching the path end / a base-level outlet.
+    // `trace_out`/`maxdiv_out` (optional, for _algoviz): when non-null, record the
+    // D8 cell-centre path walked and the maximum trace-to-path separation seen.
     auto trace_reach_s = [&](const std::vector<lsdtt_xy>& path,
                              const std::vector<double>& cum, double total,
-                             double s_top, double& escape_z, bool& diverged)
+                             double s_top, double& escape_z, bool& diverged,
+                             std::vector<lsdtt_xy>* trace_out = nullptr,
+                             double* maxdiv_out = nullptr)
         -> double
     {
         escape_z = std::numeric_limits<double>::max();
         diverged = false;
+        if (maxdiv_out) *maxdiv_out = 0.0;
+        if (trace_out)  trace_out->clear();
         int row, col;
         const lsdtt_xy ptop = point_at_arclength(path, cum, s_top);
         if (!xy_to_rc(meta, ptop.x, ptop.y, row, col)) return total; // off-DEM: clear
@@ -638,8 +644,10 @@ vectormap_source_burn_result burn_vectormap_source_paths(
         {
             const int rr = flow.row_from_flat_unchecked(cur);
             const int cc = flow.col_from_flat_unchecked(cur);
+            if (trace_out) trace_out->push_back(rc_to_centre(meta, rr, cc));
             const lsdtt_nearest_polyline_point np =
                 nearest_point_on_polyline(rc_to_centre(meta, rr, cc), path);
+            if (maxdiv_out && np.distance > *maxdiv_out) *maxdiv_out = np.distance;
             if (np.distance > tol)
             {
                 escape_z = static_cast<double>(zdata(rr, cc));
@@ -671,8 +679,15 @@ vectormap_source_burn_result burn_vectormap_source_paths(
         return true;
     };
 
-    for (const std::vector<lsdtt_xy>& path : source_paths)
+    for (std::size_t spi = 0; spi < source_paths.size(); ++spi)
     {
+        const std::vector<lsdtt_xy>& path = source_paths[spi];
+        const bool viz =
+            std::find(options.algoviz_source_indices.begin(),
+                      options.algoviz_source_indices.end(),
+                      static_cast<int>(spi)) !=
+            options.algoviz_source_indices.end();
+
         if (path.size() < 2) continue;
         ++result.n_sources;
 
@@ -704,46 +719,86 @@ vectormap_source_burn_result burn_vectormap_source_paths(
         // (often easier) crossings downstream from being burned in the same pass.
         const int m = std::max(1, static_cast<int>(std::ceil(total / seg_len)));
         int i = 0;
+        int viz_iter = 0;
         while (i < m)
         {
             const double s_top = i * seg_len;
             double escape_z = 0.0; bool diverged = false;
+            std::vector<lsdtt_xy> viz_trace; double viz_maxdiv = 0.0;
             const double reach =
-                trace_reach_s(path, cum, total, s_top, escape_z, diverged);
+                trace_reach_s(path, cum, total, s_top, escape_z, diverged,
+                              viz ? &viz_trace : nullptr,
+                              viz ? &viz_maxdiv : nullptr);
             const int reach_i = static_cast<int>(reach / seg_len + 1e-6);
-            if (reach_i > i) { i = reach_i; continue; }     // follows here: skip
-            if (!diverged) { ++i; continue; }               // ended/outlet, not a stray
 
-            // Divergent at segment i: search downstream along the path for the
-            // first pixel LOWER THAN THE ESCAPE the flow took (not merely lower
-            // than the divergence point) — only then can the carve cut below the
-            // competing route and actually capture. Burn from s_top to there.
+            // Pre-build the algoviz step (geometry/divergence common to all
+            // outcomes); the outcome and burn geometry are filled in below.
+            vectormap_algoviz_step vstep;
+            if (viz)
+            {
+                vstep.source_index = static_cast<int>(spi);
+                vstep.pass         = options.algoviz_pass;
+                vstep.iteration    = viz_iter++;
+                vstep.s_top        = s_top;
+                vstep.d8_trace     = viz_trace;
+                vstep.divergence_m = viz_maxdiv;
+                vstep.diverged     = diverged;
+                vstep.escape_z     = escape_z;
+            }
+
+            if (!diverged)
+            {
+                // The trace stayed within tolerance to the end of its walk (line
+                // end / DEM outlet / base level): this span is already carried by
+                // the LiDAR. ONE good trace clears many segments, so skip ahead.
+                if (viz) { vstep.outcome = 0; vstep.s_low = reach;
+                           result.algoviz_steps.push_back(std::move(vstep)); }
+                i = (reach_i > i) ? reach_i : i + 1;
+                continue;
+            }
+
+            // Diverged: the flow followed the path to arc-length `reach` (within
+            // tolerance) and then left it for a LOWER competing cell (escape_z).
+            // Burn the path from the divergence location downstream to the first
+            // pixel below the escape, forcing flow back onto the vector.
+            //
+            // NOTE: we must act on the divergence even when the trace advanced
+            // past segment i before straying. Skipping ahead whenever reach_i > i
+            // (the previous behaviour) silently dropped every divergence that was
+            // not immediate — so a channel that followed its first segment or two
+            // and then got captured by a road downstream was never burned.
+            const double s_div = (reach > s_top) ? reach : s_top;
             double s_low = -1.0;
-            for (double s = s_top + step; s <= total; s += step)
+            for (double s = s_div + step; s <= total; s += step)
             {
                 double z;
                 if (!path_elev(path, cum, s, z)) continue;
-                if (z < escape_z - std::max(0.1, options.burn_min_slope * (s - s_top)))
+                if (z < escape_z - std::max(0.1, options.burn_min_slope * (s - s_div)))
                 { s_low = s; break; }
             }
             if (s_low < 0.0)
             {
-                // The path never drops below the escape: this is a genuine
-                // vector-vs-terrain conflict (the real valley is lower than the
-                // vector). Leave it rather than gouge an against-grade channel.
-                ++i;
+                // The path never drops below the escape: a genuine vector-vs-
+                // terrain conflict (the real valley is lower than the vector).
+                // Leave it rather than gouge an against-grade channel.
+                if (viz) { vstep.outcome = 2; vstep.s_low = s_div;
+                           result.algoviz_steps.push_back(std::move(vstep)); }
+                i = (reach_i > i) ? reach_i + 1 : i + 1;
                 continue;
             }
 
-            const std::vector<lsdtt_xy> sub = subline(path, cum, s_top, s_low);
+            const std::vector<lsdtt_xy> sub = subline(path, cum, s_div, s_low);
             if (burn_subpath(sub))
             {
                 ++result.n_burned;
-                result.total_burn_length_m += (s_low - s_top);
+                result.total_burn_length_m += (s_low - s_div);
                 vectormap_burn_gap g;
-                g.path_xy = sub; g.length_m = s_low - s_top; g.burned = true;
+                g.path_xy = sub; g.length_m = s_low - s_div; g.burned = true;
                 result.burned.push_back(std::move(g));
+                if (viz) { vstep.outcome = 1; vstep.s_low = s_low;
+                           vstep.burned_segment = sub; }
             }
+            if (viz) result.algoviz_steps.push_back(std::move(vstep));
             // Continue downstream past the burned span.
             const int next_i = static_cast<int>(s_low / seg_len + 1e-6);
             i = (next_i > i) ? next_i : i + 1;
