@@ -12,6 +12,8 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 #include <variant>
 
 #include "../core/lsdtt_data_loader.hpp"
@@ -597,7 +599,15 @@ vectormap_source_burn_result burn_vectormap_source_paths(
 
     const lsdtt_array2d_f&  zdata = dem.get_data_array();
     const lsdtt_array2d_u8& mdata = dem.get_mask_array();
+    std::vector<float>&     elevw = dem.get_data();
 
+    // Sloping-cut carve: lower every cell on `sub` to a SINGLE straight
+    // descending line from the first cell's elevation to the last cell's
+    // elevation. The caller chooses `sub` to span an obstruction (berm/road) from
+    // a point above it to where the channel resumes below it (the lower-convex-
+    // hull anchor), so by construction the natural surface lies above this line in
+    // between: the cut slices cleanly through the obstruction with a constant
+    // grade and daylights at both ends — no step, no flat. Cells are only lowered.
     auto burn_subpath = [&](const std::vector<lsdtt_xy>& sub) -> bool
     {
         std::vector<std::int64_t> path;
@@ -609,9 +619,86 @@ vectormap_source_burn_result burn_vectormap_source_paths(
             if (path.empty() || path.back() != f) path.push_back(f);
         }
         if (path.size() < 2) return false;
-        burn_capturing_path(dem, path, options.burn_min_slope,
-                            /*capture_margin=*/1.0e-3, options.max_burn_depth_m);
+
+        std::vector<double> d(path.size(), 0.0);
+        for (std::size_t k = 1; k < path.size(); ++k)
+        {
+            const int r0 = static_cast<int>(path[k-1] / n_cols);
+            const int c0 = static_cast<int>(path[k-1] % n_cols);
+            const int r1 = static_cast<int>(path[k]   / n_cols);
+            const int c1 = static_cast<int>(path[k]   % n_cols);
+            d[k] = d[k-1] + std::hypot((r1 - r0) * cs, (c1 - c0) * cs);
+        }
+        const double tot = d.back();
+        if (tot <= 0.0) return false;
+
+        const double zt = static_cast<double>(elevw[path.front()]);
+        const double zb = static_cast<double>(elevw[path.back()]);
+        if (zt <= zb) return false;   // not descending: nothing to dig
+
+        // Pure straight sloping cut: lower each cell to the line zt -> zb. The
+        // caller passes a path SNAPPED to the local thalweg and truncated at the
+        // lower-convex-hull outlet, so the natural surface lies above this line in
+        // between -- a clean constant-grade cut through the obstruction, daylighting
+        // at both ends, with no step and no flat. Cells are only lowered.
+        for (std::size_t k = 0; k < path.size(); ++k)
+        {
+            const double zl = zt - (zt - zb) * d[k] / tot;
+            if (static_cast<double>(elevw[path[k]]) > zl)
+                elevw[path[k]] = static_cast<float>(zl);
+        }
         return true;
+    };
+
+    // Deep forcing carve: lower the cells of `sub` to a strictly-descending
+    // trench `depth` m below the natural surface, daylighting at the (low) outlet.
+    // Used to FORCE flow onto the vector through a real obstruction (a road berm
+    // with a culvert) where the LiDAR's competing route is a drainage ditch that
+    // must be beaten. A FAR low outlet keeps the interior at natural-minus-depth
+    // (a clean slope parallel to the surface) rather than a flat. (See
+    // burn_relative_depth_path.)
+    auto burn_deep = [&](const std::vector<lsdtt_xy>& sub, double depth) -> bool
+    {
+        std::vector<std::int64_t> path;
+        for (const lsdtt_xy& p : sample_polyline(sub, step))
+        {
+            int r, c;
+            if (!xy_to_rc(meta, p.x, p.y, r, c)) continue;
+            const std::int64_t f = static_cast<std::int64_t>(r) * n_cols + c;
+            if (path.empty() || path.back() != f) path.push_back(f);
+        }
+        if (path.size() < 2) return false;
+        burn_relative_depth_path(dem, path, depth, options.burn_min_slope);
+        return true;
+    };
+
+    // Snap a point to the lowest valid DEM cell within `radius` m -- the local
+    // thalweg. So a vector drawn a few metres off the valley bottom is burned INTO
+    // the thalweg, while a point over an obstruction (no low cell nearby) barely
+    // moves, leaving the sloping cut to dig through it. Returns the cell centre and
+    // sets z_out to its elevation.
+    auto snap_to_thalweg = [&](const lsdtt_xy& p, double radius,
+                               double& z_out) -> lsdtt_xy
+    {
+        int r, c;
+        if (!xy_to_rc(meta, p.x, p.y, r, c))
+        { z_out = std::numeric_limits<double>::max(); return p; }
+        const int rad = std::max(0, static_cast<int>(std::ceil(radius / cs)));
+        const double r2 = radius * radius;
+        double best = std::numeric_limits<double>::max();
+        int br = r, bc = c;
+        for (int dr = -rad; dr <= rad; ++dr)
+            for (int dc = -rad; dc <= rad; ++dc)
+            {
+                const int rr = r + dr, cc = c + dc;
+                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) continue;
+                if (mdata(rr, cc) == 0) continue;
+                if (static_cast<double>(dr*dr + dc*dc) * cs * cs > r2) continue;
+                const double z = static_cast<double>(zdata(rr, cc));
+                if (z < best) { best = z; br = rr; bc = cc; }
+            }
+        z_out = best;
+        return rc_to_centre(meta, br, bc);
     };
 
     const double seg_len = std::max(cs, options.segment_length_m);
@@ -768,39 +855,70 @@ vectormap_source_burn_result burn_vectormap_source_paths(
             // not immediate — so a channel that followed its first segment or two
             // and then got captured by a road downstream was never burned.
             const double s_div = (reach > s_top) ? reach : s_top;
-            double s_low = -1.0;
-            for (double s = s_div + step; s <= total; s += step)
+
+            // Build the SNAPPED-THALWEG polyline downstream of the divergence: at
+            // each sample, snap the vector to the lowest cell within `snap_radius`
+            // (the local valley bottom). Where the vector is a few metres off the
+            // thalweg the snapped path sits IN the thalweg (so the final flow
+            // follows the real channel, not the drawn line); where the vector
+            // crosses an obstruction the snapped point stays high (no low nearby).
+            // FORCE the flow onto the vector (a culvert under a road berm; the
+            // LiDAR's competing route is a drainage ditch it must beat). Carve the
+            // RAW vector line (no thalweg snap -- the nearby low IS the ditch here),
+            // deep enough to sit below the ditch, down to the local channel just
+            // below the obstruction.
+            const double force_window = 400.0;  // obstruction crossings are local
+            const double s_far = std::min(total, s_div + force_window);
+            double z_top;
+            if (!path_elev(path, cum, s_div, z_top)) { ++i; continue; }
+
+            // Outlet: the first point the vector drops below the escape (the ditch),
+            // then extended downstream to the local minimum (the channel bottom)
+            // so the deep trench daylights descending, not into a flat.
+            double s_out = -1.0, z_prev = z_top;
+            bool below = false;
+            for (double s = s_div + step; s <= s_far; s += step)
             {
                 double z;
                 if (!path_elev(path, cum, s, z)) continue;
-                if (z < escape_z - std::max(0.1, options.burn_min_slope * (s - s_div)))
-                { s_low = s; break; }
+                if (!below && z < escape_z) below = true;
+                if (below)
+                {
+                    if (z <= z_prev) { s_out = s; z_prev = z; }
+                    else break;          // started rising: local min reached
+                }
             }
-            if (s_low < 0.0)
+            if (s_out < 0.0)
             {
-                // The path never drops below the escape: a genuine vector-vs-
-                // terrain conflict (the real valley is lower than the vector).
-                // Leave it rather than gouge an against-grade channel.
+                // Vector never drops below the ditch within the window -> leave it.
                 if (viz) { vstep.outcome = 2; vstep.s_low = s_div;
                            result.algoviz_steps.push_back(std::move(vstep)); }
                 i = (reach_i > i) ? reach_i + 1 : i + 1;
                 continue;
             }
 
-            const std::vector<lsdtt_xy> sub = subline(path, cum, s_div, s_low);
-            if (burn_subpath(sub))
+            // Depth: enough to beat the ditch (escape) plus head-room, at least the
+            // configured force depth.
+            const double cfg_depth =
+                (options.relative_burn_depth_m > 0.0)
+                    ? options.relative_burn_depth_m : 4.0;
+            const double force_depth =
+                std::min(10.0, std::max(cfg_depth, (z_top - escape_z) + 2.0));
+            std::vector<lsdtt_xy> sub = subline(path, cum, s_div, s_out);
+            const double s_anchor = s_out;
+            if (burn_deep(sub, force_depth))
             {
                 ++result.n_burned;
-                result.total_burn_length_m += (s_low - s_div);
+                result.total_burn_length_m += (s_anchor - s_div);
                 vectormap_burn_gap g;
-                g.path_xy = sub; g.length_m = s_low - s_div; g.burned = true;
+                g.path_xy = sub; g.length_m = s_anchor - s_div; g.burned = true;
                 result.burned.push_back(std::move(g));
-                if (viz) { vstep.outcome = 1; vstep.s_low = s_low;
+                if (viz) { vstep.outcome = 1; vstep.s_low = s_anchor;
                            vstep.burned_segment = sub; }
             }
             if (viz) result.algoviz_steps.push_back(std::move(vstep));
-            // Continue downstream past the burned span.
-            const int next_i = static_cast<int>(s_low / seg_len + 1e-6);
+            // Continue downstream past the carved span.
+            const int next_i = static_cast<int>(s_anchor / seg_len + 1e-6);
             i = (next_i > i) ? next_i : i + 1;
         }
     }
@@ -1139,6 +1257,196 @@ vectormap_burn_result burn_vectormap_road_gaps(
     }
 
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// segmented_trace_test
+// ---------------------------------------------------------------------------
+std::vector<vectormap_segmented_trace> segmented_trace_test(
+    const lsdtt_raster_cpu&                   dem,
+    const lsdtt_flow_base&                    flow,
+    const std::vector<std::vector<lsdtt_xy>>& lines,
+    double                                    spacing_m,
+    double                                    max_divergence_m,
+    int                                       min_near_pixels,
+    double                                    endpoint_tol_m,
+    int                                       spur_min_pixels,
+    std::vector<std::vector<lsdtt_xy>>*       accepted_segments,
+    std::vector<std::vector<lsdtt_xy>>*       accepted_clean,
+    int                                       max_trace_steps)
+{
+    std::vector<vectormap_segmented_trace> out;
+
+    const lsdtt_raster_meta& meta   = dem.get_meta();
+    const int    n_rows = meta.n_rows;
+    const int    n_cols = meta.n_cols;
+    const double cs     = meta.cell_size;
+    const double tol    = max_divergence_m;
+    const double endpoint_tol =
+        (endpoint_tol_m > 0.0) ? endpoint_tol_m : 0.5 * tol;
+    const double spacing = std::max(cs, spacing_m);
+    const int max_steps = max_trace_steps > 0
+                              ? max_trace_steps
+                              : 10 * std::max(n_rows, n_cols);
+
+    const lsdtt_array2d_f&  zdata = dem.get_data_array();
+    const lsdtt_array2d_u8& mdata = dem.get_mask_array();
+
+    // Elevation of the nearest valid cell to a vertex (for downhill orientation).
+    auto vertex_z = [&](const lsdtt_xy& p, double& z) -> bool
+    {
+        int r, c;
+        if (!xy_to_rc(meta, p.x, p.y, r, c)) return false;
+        if (mdata(r, c) == 0) return false;
+        z = static_cast<double>(zdata(r, c));
+        return true;
+    };
+
+    const bool want_accept = (accepted_segments != nullptr) ||
+                             (accepted_clean    != nullptr);
+    // Each accepted (and trimmed) trace: its cell flats and its cell-centre xy.
+    std::vector<std::vector<std::int64_t>> acc_flats;
+    std::vector<std::vector<lsdtt_xy>>     acc_xy;
+
+    for (std::size_t li = 0; li < lines.size(); ++li)
+    {
+        std::vector<lsdtt_xy> pts = lines[li];
+        if (pts.size() < 2) continue;
+
+        // Orient downhill: first valid vertex should be higher than the last.
+        double z_first = 0.0, z_last = 0.0;
+        bool have_f = false, have_l = false;
+        for (std::size_t k = 0; k < pts.size() && !have_f; ++k)
+            have_f = vertex_z(pts[k], z_first);
+        for (std::size_t k = pts.size(); k-- > 0 && !have_l; )
+            have_l = vertex_z(pts[k], z_last);
+        if (have_f && have_l && z_last > z_first)
+            std::reverse(pts.begin(), pts.end());
+
+        const std::vector<double> cum = cumulative_lengths(pts);
+        const double total = cum.back();
+        if (total < cs) continue;
+
+        int seg = 0;
+        for (double s0 = 0.0; s0 <= total + 1e-6; s0 += spacing, ++seg)
+        {
+            vectormap_segmented_trace tr;
+            tr.line_index = static_cast<int>(li);
+            tr.seg_index  = seg;
+            tr.start_s_m  = s0;
+            tr.reach_s_m  = s0;
+
+            const lsdtt_xy ptop = point_at_arclength(pts, cum, s0);
+            int row, col;
+            if (!xy_to_rc(meta, ptop.x, ptop.y, row, col))
+            { tr.stop_reason = 5; out.push_back(std::move(tr)); continue; }
+
+            std::vector<std::int64_t> flats;   // trace cells, parallel to tr.xy
+            std::vector<double>       dists;    // each cell's distance to the line
+
+            std::int64_t cur = flow.flat_index_unchecked(row, col);
+            tr.stop_reason = 4;   // default: max steps
+            for (int step = 0; step < max_steps; ++step)
+            {
+                const int rr = flow.row_from_flat_unchecked(cur);
+                const int cc = flow.col_from_flat_unchecked(cur);
+                const lsdtt_xy here = rc_to_centre(meta, rr, cc);
+                tr.xy.push_back(here);
+                flats.push_back(cur);
+
+                const lsdtt_nearest_polyline_point np =
+                    nearest_point_on_polyline(here, pts);
+                dists.push_back(np.distance);
+                if (np.distance > tr.max_divergence_m)
+                    tr.max_divergence_m = np.distance;
+                if (np.distance > tol) { tr.stop_reason = 0; break; }  // strayed
+
+                ++tr.near_count;                            // this cell is near
+                const double s_here = cum[np.segment_index] +
+                    np.t * (cum[np.segment_index + 1] - cum[np.segment_index]);
+                if (s_here > tr.reach_s_m) tr.reach_s_m = s_here;
+
+                // Reached (near) the downstream end of the line, still on it.
+                if (s_here >= total - 0.5 * cs) { tr.stop_reason = 1; break; }
+
+                if (flow.is_outlet_unchecked(cur)) { tr.stop_reason = 2; break; }
+                const std::int64_t nxt = flow.receiver_of_unchecked(cur);
+                if (nxt == cur || nxt < 0)         { tr.stop_reason = 3; break; }
+                cur = nxt;
+            }
+
+            // Accept traces that reach the line end or stay near it > N cells.
+            if (want_accept &&
+                (tr.stop_reason == 1 || tr.near_count > min_near_pixels))
+            {
+                // Trim back from the downstream end until the last kept cell is
+                // within endpoint_tol of the line (so the endpoint sits close to
+                // the channel even though the trace may wander mid-way).
+                int e = static_cast<int>(flats.size()) - 1;
+                while (e >= 0 && dists[e] > endpoint_tol) --e;
+                if (e >= 1)
+                {
+                    acc_flats.emplace_back(flats.begin(), flats.begin() + e + 1);
+                    acc_xy.emplace_back(tr.xy.begin(), tr.xy.begin() + e + 1);
+                }
+            }
+
+            if (tr.xy.size() >= 2) out.push_back(std::move(tr));
+        }
+    }
+
+    // Initial accepted segments: every accepted, trimmed trace (these overlap).
+    if (accepted_segments)
+        for (auto& x : acc_xy)
+            if (x.size() >= 2) accepted_segments->push_back(x);
+
+    // Cleaned accepted segments: drop contained traces, then spurs.
+    if (accepted_clean && !acc_flats.empty())
+    {
+        const std::size_t n = acc_flats.size();
+        std::vector<std::unordered_set<std::int64_t>> sets(n);
+        for (std::size_t i = 0; i < n; ++i)
+            sets[i].insert(acc_flats[i].begin(), acc_flats[i].end());
+
+        // Longest first.
+        std::vector<std::size_t> order(n);
+        for (std::size_t i = 0; i < n; ++i) order[i] = i;
+        std::sort(order.begin(), order.end(),
+            [&](std::size_t a, std::size_t b)
+            { return acc_flats[a].size() > acc_flats[b].size(); });
+
+        // (1) CONTAINMENT: keep a trace only if its cells are NOT a subset of an
+        // already-kept (longer) trace.
+        std::vector<std::size_t> kept;
+        for (std::size_t idx : order)
+        {
+            bool contained = false;
+            for (std::size_t k : kept)
+            {
+                if (acc_flats[k].size() < acc_flats[idx].size()) continue;
+                bool subset = true;
+                for (std::int64_t c : acc_flats[idx])
+                    if (!sets[k].count(c)) { subset = false; break; }
+                if (subset) { contained = true; break; }
+            }
+            if (!contained) kept.push_back(idx);
+        }
+
+        // (2) SPUR removal: a kept trace is a spur if the cells unique to it (not
+        // in any other kept trace) number < spur_min_pixels.
+        std::unordered_map<std::int64_t, int> mult;
+        for (std::size_t k : kept)
+            for (std::int64_t c : acc_flats[k]) ++mult[c];
+        for (std::size_t k : kept)
+        {
+            int uniq = 0;
+            for (std::int64_t c : acc_flats[k]) if (mult[c] == 1) ++uniq;
+            if (uniq >= spur_min_pixels && acc_xy[k].size() >= 2)
+                accepted_clean->push_back(acc_xy[k]);
+        }
+    }
+
+    return out;
 }
 
 } // namespace lsdtt

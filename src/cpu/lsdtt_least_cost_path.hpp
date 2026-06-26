@@ -51,6 +51,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -181,12 +182,48 @@ void burn_monotonic_path(
 //   path that crosses flat or rising ground (capture may fail where the cap
 //   binds, which is the intended trade — better than a deep artificial gash).
 //   <= 0 means unlimited (the original behaviour).
+// capture_ceiling (m): when finite, every interior path cell is additionally
+//   lowered to sit at least capture_margin BELOW this elevation (then kept
+//   strictly descending to the terminus). This is the "deep capture" needed
+//   when the flow escapes to a competing route that is NOT an immediate
+//   neighbour (e.g. a gentler road grade tens of metres away): the per-cell
+//   neighbour test cannot see that competitor, so pass the escaped-to elevation
+//   here to force the whole divergent reach below it. Default +inf = disabled.
 void burn_capturing_path(
     lsdtt_raster_cpu&                   dem,
     const std::vector<std::int64_t>&    path,
-    double                              min_slope      = 1.0e-4,
-    double                              capture_margin = 1.0e-3,
-    double                              max_depth      = 0.0
+    double                              min_slope       = 1.0e-4,
+    double                              capture_margin  = 1.0e-3,
+    double                              max_depth       = 0.0,
+    double                              capture_ceiling =
+        std::numeric_limits<double>::infinity()
+);
+
+// ---------------------------------------------------------------------------
+// burn_relative_depth_path
+//
+// Carves a continuous trench `depth` metres BELOW the natural surface along the
+// path, descending monotonically and daylighting at the terminus's natural
+// elevation. Unlike burn_capturing_path (which only beats a path cell's
+// immediate neighbours, so it cannot win against a competing valley tens of
+// metres away), this makes the path a true local minimum: adjacent hillslope
+// cells drain INTO the trench and cannot drift sideways toward a parallel route
+// (e.g. a road). Use it on genuinely-divergent reaches to force flow onto the
+// vector where a parallel competing valley exists.
+//
+// The carve is computed upstream from the terminus (a reverse running descent):
+//   terminus  : kept at natural (daylights into the downstream network)
+//   cell k    : min(natural_k - depth, ...) but at least min_slope above the
+//               next cell downstream, and never raised above natural.
+// This automatically TAPERS the trench back to the surface over the last stretch
+// before the terminus (where natural is within `depth` of the outlet), so the
+// reach ramps out cleanly at the rejoin point instead of leaving a step/pit.
+// dem is modified in place; cells are only ever lowered. depth <= 0 is a no-op.
+void burn_relative_depth_path(
+    lsdtt_raster_cpu&                   dem,
+    const std::vector<std::int64_t>&    path,
+    double                              depth,
+    double                              min_slope = 1.0e-4
 );
 
 } // namespace lsdtt

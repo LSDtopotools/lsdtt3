@@ -307,4 +307,17 @@ private:
     const lsdtt_vector_to_junction_network_options& options =
         lsdtt_vector_to_junction_network_options{});
 
+// Merge fragmented polylines into continuous lines by contracting degree-2
+// junctions. Endpoints within `snap_tol` metres are treated as the same node (so
+// a small gap left by the vector "repair" -- e.g. across a road -- is bridged).
+// A node touched by exactly two fragment-ends is interior to one watercourse and
+// the two fragments are merged across it; a node of degree 1 (a free end) or
+// degree >= 3 (a real tributary confluence) is a break. Merging is transitive:
+// a chain A-B-C where B shares a degree-2 node with A on one end and with C on
+// the other becomes a single line A+B+C. Returns the set of maximal merged lines,
+// each oriented consistently along the chain.
+[[nodiscard]] std::vector<std::vector<lsdtt_xy>> merge_degree2_polylines(
+    const std::vector<std::vector<lsdtt_xy>>& polylines,
+    double                                    snap_tol);
+
 } // namespace lsdtt

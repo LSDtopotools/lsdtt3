@@ -280,9 +280,16 @@ void burn_capturing_path(
     const std::vector<std::int64_t>&    path,
     double                              min_slope,
     double                              capture_margin,
-    double                              max_depth)
+    double                              max_depth,
+    double                              capture_ceiling)
 {
     if (path.size() < 2) return;
+
+    // Deep-capture ceiling: when finite, no interior cell may sit above this
+    // (less capture_margin). Forces the whole reach below a competing route that
+    // is not an immediate neighbour (the per-cell test below cannot see it).
+    const bool   use_ceiling = std::isfinite(capture_ceiling);
+    const double ceil_z      = capture_ceiling - capture_margin;
 
     const lsdtt_raster_meta&     meta = dem.get_meta();
     std::vector<float>&          elev = dem.get_data();
@@ -369,6 +376,12 @@ void burn_capturing_path(
             slope_floor * L_path);
         double new_z = std::min(cur_nat, prev_z - drop);
 
+        // Deep capture: force this cell below the competing escape route even
+        // when that route is not a neighbour (best_comp_slope cannot see it).
+        // The descent re-check below keeps the capped run strictly descending
+        // (no flats), and the terminus still daylights at its natural elevation.
+        if (use_ceiling && new_z > ceil_z) new_z = ceil_z;
+
         // Floor: keep enough head-room above the terminus elevation that the
         // remaining steps can still descend to it without flats or undercut.
         const std::size_t steps_left = path.size() - 1 - k;
@@ -388,6 +401,57 @@ void burn_capturing_path(
 
         elev[static_cast<std::size_t>(cur)] = static_cast<float>(new_z);
         prev_z = new_z;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// burn_relative_depth_path
+// ---------------------------------------------------------------------------
+void burn_relative_depth_path(
+    lsdtt_raster_cpu&                   dem,
+    const std::vector<std::int64_t>&    path,
+    double                              depth,
+    double                              min_slope)
+{
+    if (path.size() < 2 || depth <= 0.0) return;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    std::vector<float>&      elev = dem.get_data();
+
+    const int    n_cols  = meta.n_cols;
+    const double cs       = meta.cell_size;
+    const double cs_diag  = cs * 1.4142135623730950488;
+    const double slope_floor = std::max(0.0, min_slope);
+
+    auto step_length = [&](std::int64_t a, std::int64_t b) -> double
+    {
+        const int dr = std::abs(static_cast<int>(a / n_cols) -
+                                static_cast<int>(b / n_cols));
+        const int dc = std::abs(static_cast<int>(a % n_cols) -
+                                static_cast<int>(b % n_cols));
+        return (dr == 1 && dc == 1) ? cs_diag : cs;
+    };
+
+    const int n = static_cast<int>(path.size());
+
+    // Terminus keeps its natural elevation so the trench daylights downstream.
+    double z_next = static_cast<double>(elev[static_cast<std::size_t>(path[n - 1])]);
+
+    // Reverse running descent from the terminus toward the source.
+    for (int k = n - 2; k >= 0; --k)
+    {
+        const double nat = static_cast<double>(
+            elev[static_cast<std::size_t>(path[k])]);
+        const double L = step_length(path[k], path[k + 1]);
+
+        // Want `depth` below natural, but stay at least min_slope above the next
+        // cell downstream (keeps the profile descending and tapers near the
+        // outlet); never raise a cell above its natural elevation.
+        double z = std::max(nat - depth, z_next + slope_floor * L);
+        if (z > nat) z = nat;
+
+        elev[static_cast<std::size_t>(path[k])] = static_cast<float>(z);
+        z_next = z;
     }
 }
 

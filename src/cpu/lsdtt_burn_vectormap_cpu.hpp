@@ -164,6 +164,14 @@ struct vectormap_trace_burn_options
     // be replayed across passes.
     std::vector<int> algoviz_source_indices;
     int              algoviz_pass = 0;
+
+    // Deep capture for genuinely-divergent reaches: when > 0, a reach where the
+    // D8 escapes the vector (and a competing parallel valley exists) is carved
+    // this many metres BELOW the natural surface (a continuous descending trench
+    // that daylights at the rejoin outlet), so adjacent cells drain into the
+    // vector instead of drifting to the competitor. 0 = the old escape-relative
+    // capture (which cannot beat a non-neighbour competing valley).
+    double relative_burn_depth_m = 0.0;
 };
 
 // One recorded iteration of the source-path burn, for the _algoviz overlay.
@@ -300,6 +308,57 @@ struct vectormap_source_burn_result
     const lsdtt_raster_cpu& dem,
     const std::string&      vector_path,
     double                  source_exclusion_radius_m = 75.0
+);
+
+// ---------------------------------------------------------------------------
+// segmented_trace_test
+//
+// Diagnostic (no burning): for each input line (merged + repaired VML), oriented
+// downhill, drop a start point every `spacing_m` from the upstream end and trace
+// the D8 flow path from it until the flow strays more than `max_divergence_m`
+// from THAT line (or reaches the line end / a base-level outlet / a sink). Each
+// trace is the sequence of D8 cell centres. Lets you see, segment by segment,
+// where the LiDAR flow follows the vector and where it peels off -- before any
+// conditioning.
+// ---------------------------------------------------------------------------
+struct vectormap_segmented_trace
+{
+    int    line_index   = 0;
+    int    seg_index    = 0;       // which start point along the line (0 = source)
+    double start_s_m    = 0.0;     // arc-length of the start point along the line
+    std::vector<lsdtt_xy> xy;      // D8 trace, start -> where it stopped
+    double max_divergence_m = 0.0; // furthest the trace got from the line
+    double reach_s_m    = 0.0;     // furthest arc-length along the line it reached
+    int    near_count   = 0;       // trace cells that stayed within tol of the line
+    // 0 diverged(>tol), 1 reached line end, 2 DEM outlet, 3 no receiver,
+    // 4 max steps, 5 start off-DEM.
+    int    stop_reason  = 0;
+};
+
+// Trace D8 every `spacing_m` along each line (see struct above). A trace is
+// ACCEPTED if it reached the line end (stop_reason 1) or stayed near the line for
+// more than `min_near_pixels` cells; each accepted trace is then TRIMMED back from
+// its downstream end until its last cell is within `endpoint_tol_m` of the line
+// (so it may wander up to max_divergence_m mid-way but its endpoint sits close to
+// the channel). Outputs (each as a list of D8-trace polylines, made of the actual
+// traces -- not the vector segments):
+//   accepted_segments : every accepted, trimmed trace (these overlap).
+//   accepted_clean    : after cleaning -- (1) CONTAINMENT: drop any trace whose
+//     cells are a subset of a longer trace's (one that starts upstream AND ends
+//     downstream of it); (2) SPUR removal: drop any remaining trace whose cells
+//     unique to it (not shared with another kept trace) number < spur_min_pixels.
+[[nodiscard]] std::vector<vectormap_segmented_trace> segmented_trace_test(
+    const lsdtt_raster_cpu&                   dem,
+    const lsdtt_flow_base&                    flow,
+    const std::vector<std::vector<lsdtt_xy>>& lines,
+    double                                    spacing_m,
+    double                                    max_divergence_m,
+    int                                       min_near_pixels   = 20,
+    double                                    endpoint_tol_m    = -1.0,
+    int                                       spur_min_pixels   = 20,
+    std::vector<std::vector<lsdtt_xy>>*       accepted_segments = nullptr,
+    std::vector<std::vector<lsdtt_xy>>*       accepted_clean    = nullptr,
+    int                                       max_trace_steps   = 0
 );
 
 } // namespace lsdtt

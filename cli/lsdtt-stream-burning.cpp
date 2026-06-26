@@ -304,6 +304,83 @@ int main(int argc, char* argv[])
         "Used when write_burn_diagnostics is true: one trace is emitted from a "
         "segment top roughly every this many metres along each vector line."};
 
+    bool_default_map["do_stream_burn"] = true;
+    help_map["do_stream_burn"] = {"bool","true",
+        "Run the stream-burning stage. Set false to stop after the INITIAL stage: "
+        "fill/flow, the clipped+repaired vector network, the merged vector lines "
+        "(<write_fname>_merged_lines.fgb) and the source-seeded D8 network "
+        "(<write_fname>_dem_network_lines.fgb) are written, but no burning is done. "
+        "Useful for inspecting the starting point before any burn."};
+
+    bool_default_map["segmented_trace_test"] = false;
+    help_map["segmented_trace_test"] = {"bool","false",
+        "Diagnostic (no burning): trace D8 from points every "
+        "segmented_trace_spacing_m along each merged+repaired vector line, stopping "
+        "each trace where the flow strays > trace_max_divergence_m from the line "
+        "(or reaches the line end / outlet / sink). Writes "
+        "<write_fname>_segmented_traces.fgb (fields line_id, seg_id, start_s_m, "
+        "max_divergence_m, stop_reason). Runs in the initial stage; pair with "
+        "do_stream_burn=false to stop after it."};
+
+    float_default_map["segmented_trace_spacing_m"] = 20.0f;
+    help_map["segmented_trace_spacing_m"] = {"float","20",
+        "Spacing (m) of trace start points along each line for "
+        "segmented_trace_test."};
+
+    int_default_map["segmented_trace_min_pixels"] = 20;
+    help_map["segmented_trace_min_pixels"] = {"int","20",
+        "For segmented_trace_test: a trace is ACCEPTED if it reaches the line end "
+        "OR stays within trace_max_divergence_m of the line for more than this many "
+        "cells. The accepted D8 traces (overlaps merged) are written to "
+        "<write_fname>_accepted_segments.fgb."};
+
+    int_default_map["segmented_trace_spur_pixels"] = 20;
+    help_map["segmented_trace_spur_pixels"] = {"int","20",
+        "For segmented_trace_test cleaning: after dropping contained traces, a "
+        "remaining trace is removed as a SPUR if the cells unique to it (not shared "
+        "with another kept trace) number fewer than this. The cleaned linework is "
+        "written to <write_fname>_accepted_clean.fgb."};
+
+    float_default_map["segmented_trace_endpoint_fraction"] = 0.5f;
+    help_map["segmented_trace_endpoint_fraction"] = {"float","0.5",
+        "For segmented_trace_test: an accepted trace is trimmed back from its "
+        "downstream end until its last cell is within this FRACTION of "
+        "trace_max_divergence_m of the line. So a trace may wander up to the full "
+        "divergence tolerance mid-way, but its endpoint sits close to the channel "
+        "(default 0.5 = half the stop threshold)."};
+
+    bool_default_map["write_merged_lines"] = true;
+    help_map["write_merged_lines"] = {"bool","true",
+        "Write <write_fname>_merged_lines.fgb: the repaired vector fragments merged "
+        "across degree-2 junctions into continuous lines (see merge_snap_tol_m). "
+        "Written in the initial stage, independent of the burn."};
+
+    float_default_map["merge_snap_tol_m"] = 2.0f;
+    help_map["merge_snap_tol_m"] = {"float","2",
+        "Endpoint snap tolerance (m) for merging degree-2 vector fragments.",
+        "Used by stream_burn_mode=snap_to_accumulation to write "
+        "<write_fname>_merged_lines.fgb: fragmented vector lines whose endpoints "
+        "fall within this distance and form a degree-2 junction (shared by exactly "
+        "two fragments) are merged into one continuous line. The repaired vector "
+        "layer fills road gaps with short bridge fragments, so endpoints are nearly "
+        "coincident -- keep this SMALL (< the shortest bridge fragment); too large "
+        "collapses a short bridge and its two neighbours into one node (degree >=3) "
+        "and blocks the merge. Confluences (degree >=3) and free ends (degree 1) "
+        "remain breaks."};
+
+    float_default_map["relative_burn_depth_m"] = 4.0f;
+    help_map["relative_burn_depth_m"] = {"float","4",
+        "Deep-capture depth (m) for genuinely-divergent reaches.",
+        "Used by stream_burn_mode=snap_to_accumulation. Where the D8 flow escapes "
+        "the vector to a competing parallel valley (e.g. a road), the divergent "
+        "reach is carved this far BELOW the natural surface as a continuous "
+        "descending trench that daylights at the rejoin outlet, so adjacent cells "
+        "drain into the vector instead of drifting to the competitor. Only "
+        "divergent reaches (D8 strays > trace_max_divergence_m) are carved, so "
+        "vectors that already sit a few metres off the thalweg are left untouched. "
+        "Set 0 for the old escape-relative capture (cannot beat a non-neighbour "
+        "competing valley)."};
+
     float_default_map["snap_radius_m"] = 30.0f;
     help_map["snap_radius_m"] = {"float","30",
         "Lateral search radius (m) for snapping a vector line to a D8 channel.",
@@ -1611,14 +1688,181 @@ int main(int argc, char* argv[])
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Merged vector lines (initial stage, independent of burning): contract
+    // degree-2 junctions so fragmented input (OS VectorMap Local broken across
+    // roads) becomes continuous watercourses, written for inspection.
+    // -------------------------------------------------------------------------
+    if ((bf["write_merged_lines"] || bf["segmented_trace_test"]) &&
+        !stream_vector_path.empty())
+    {
+        try
+        {
+            std::vector<std::vector<lsdtt::lsdtt_xy>> frags =
+                lsdtt::clip_vector_lines_to_dem(stream_vector_path,
+                                                routed_dem, vjn_opts);
+            std::vector<std::vector<lsdtt::lsdtt_xy>> merged =
+                lsdtt::merge_degree2_polylines(
+                    frags, static_cast<double>(ff["merge_snap_tol_m"]));
+            std::cout << "Merged " << frags.size() << " fragments -> "
+                      << merged.size() << " lines\n";
+
+            if (bf["write_merged_lines"])
+            {
+                const std::string mpath =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_merged_lines", ".fgb");
+                std::cout << "Writing merged lines: " << mpath << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"line_id", "length_m"};
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type};
+                lsdtt::lsdtt_data_loader mw;
+                mw.begin_vector_write(mpath, "merged_lines", schema,
+                    routed_dem.get_meta().crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, false);
+                for (std::size_t li = 0; li < merged.size(); ++li)
+                {
+                    if (merged[li].size() < 2) continue;
+                    double len = 0.0;
+                    for (std::size_t k = 1; k < merged[li].size(); ++k)
+                        len += std::hypot(merged[li][k].x - merged[li][k-1].x,
+                                          merged[li][k].y - merged[li][k-1].y);
+                    mw.write_line(merged[li],
+                                  {static_cast<std::int64_t>(li), len});
+                }
+                mw.finish_vector_write();
+            }
+
+            // Segmented-trace diagnostic: D8 traces every N m along each merged
+            // line, stopped where they stray from the line.
+            if (bf["segmented_trace_test"] && flow)
+            {
+                std::vector<std::vector<lsdtt::lsdtt_xy>> accepted;
+                std::vector<std::vector<lsdtt::lsdtt_xy>> accepted_clean;
+                const double seg_endpoint_tol =
+                    static_cast<double>(ff["segmented_trace_endpoint_fraction"]) *
+                    static_cast<double>(ff["trace_max_divergence_m"]);
+                std::vector<lsdtt::vectormap_segmented_trace> traces =
+                    lsdtt::segmented_trace_test(
+                        routed_dem, *flow, merged,
+                        static_cast<double>(ff["segmented_trace_spacing_m"]),
+                        static_cast<double>(ff["trace_max_divergence_m"]),
+                        ifs["segmented_trace_min_pixels"],
+                        seg_endpoint_tol,
+                        ifs["segmented_trace_spur_pixels"],
+                        &accepted, &accepted_clean);
+                const std::string tpath =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_segmented_traces", ".fgb");
+                std::cout << "Segmented traces: " << traces.size()
+                          << " D8 traces (every "
+                          << static_cast<double>(ff["segmented_trace_spacing_m"])
+                          << " m): " << tpath << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"line_id", "seg_id", "start_s_m",
+                                      "max_divergence_m", "stop_reason"};
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type};
+                lsdtt::lsdtt_data_loader tw;
+                tw.begin_vector_write(tpath, "segmented_traces", schema,
+                    routed_dem.get_meta().crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, false);
+                for (const auto& t : traces)
+                {
+                    if (t.xy.size() < 2) continue;
+                    tw.write_line(t.xy, {
+                        static_cast<std::int64_t>(t.line_index),
+                        static_cast<std::int64_t>(t.seg_index),
+                        t.start_s_m, t.max_divergence_m,
+                        static_cast<std::int64_t>(t.stop_reason)});
+                }
+                tw.finish_vector_write();
+
+                // Accepted reaches (traces that reach the end or stay near the
+                // line > min_pixels; overlaps merged).
+                const std::string apath =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_accepted_segments", ".fgb");
+                std::cout << "Accepted segments: " << accepted.size()
+                          << " merged reaches: " << apath << "\n";
+                lsdtt::lsdtt_vector_schema aschema;
+                aschema.field_names = {"seg_id", "length_m"};
+                aschema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type};
+                lsdtt::lsdtt_data_loader aw;
+                aw.begin_vector_write(apath, "accepted_segments", aschema,
+                    routed_dem.get_meta().crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, false);
+                for (std::size_t ai = 0; ai < accepted.size(); ++ai)
+                {
+                    if (accepted[ai].size() < 2) continue;
+                    double len = 0.0;
+                    for (std::size_t k = 1; k < accepted[ai].size(); ++k)
+                        len += std::hypot(
+                            accepted[ai][k].x - accepted[ai][k-1].x,
+                            accepted[ai][k].y - accepted[ai][k-1].y);
+                    aw.write_line(accepted[ai],
+                                  {static_cast<std::int64_t>(ai), len});
+                }
+                aw.finish_vector_write();
+
+                // Cleaned accepted segments (contained traces + spurs removed).
+                const std::string cpath =
+                    lsdtt::lsdtt_data_loader::resolve_writable_path(
+                        pp.get_full_write_path() + "_accepted_clean", ".fgb");
+                std::cout << "Cleaned accepted: " << accepted_clean.size()
+                          << " segments (was " << accepted.size()
+                          << "): " << cpath << "\n";
+                lsdtt::lsdtt_vector_schema cschema;
+                cschema.field_names = {"seg_id", "length_m"};
+                cschema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type};
+                lsdtt::lsdtt_data_loader cw;
+                cw.begin_vector_write(cpath, "accepted_clean", cschema,
+                    routed_dem.get_meta().crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, false);
+                for (std::size_t ci = 0; ci < accepted_clean.size(); ++ci)
+                {
+                    if (accepted_clean[ci].size() < 2) continue;
+                    double len = 0.0;
+                    for (std::size_t k = 1; k < accepted_clean[ci].size(); ++k)
+                        len += std::hypot(
+                            accepted_clean[ci][k].x - accepted_clean[ci][k-1].x,
+                            accepted_clean[ci][k].y - accepted_clean[ci][k-1].y);
+                    cw.write_line(accepted_clean[ci],
+                                  {static_cast<std::int64_t>(ci), len});
+                }
+                cw.finish_vector_write();
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: merged-lines / segmented-trace stage failed: "
+                      << e.what() << "\n";
+        }
+    }
+
     // =========================================================================
-    // Mode-specific processing
+    // Mode-specific processing (stream burning)
     // =========================================================================
+    if (!bf["do_stream_burn"])
+    {
+        std::cout << "\ndo_stream_burn=false: initial stage only, no burning.\n";
+    }
 
     // -------------------------------------------------------------------------
     // burn_in_place — lower DEM pixels directly under the vector polylines
     // -------------------------------------------------------------------------
-    if (burn_mode == lsdtt::stream_burn_mode::burn_in_place)
+    if (bf["do_stream_burn"] &&
+        burn_mode == lsdtt::stream_burn_mode::burn_in_place)
     {
         std::cout << "\n--- Burning streams in place ---\n";
         std::cout << "Vector file: " << stream_vector_path << "\n";
@@ -1709,7 +1953,8 @@ int main(int argc, char* argv[])
     // Gap repair (optional — repair_junction_gaps = true)
     //   See the detailed comment in the gap repair block below.
     // -------------------------------------------------------------------------
-    else if (burn_mode == lsdtt::stream_burn_mode::snap_to_network)
+    else if (bf["do_stream_burn"] &&
+             burn_mode == lsdtt::stream_burn_mode::snap_to_network)
     {
         // ---------------------------------------------------------------------
         // Per-reach divergence diagnostic (optional)
@@ -2553,7 +2798,8 @@ int main(int argc, char* argv[])
     // extract the verification network from the burned DEM by the same
     // accumulation threshold.
     // -------------------------------------------------------------------------
-    else if (burn_mode == lsdtt::stream_burn_mode::snap_to_accumulation)
+    else if (bf["do_stream_burn"] &&
+             burn_mode == lsdtt::stream_burn_mode::snap_to_accumulation)
     {
         std::cout << "\n--- Snap-to-accumulation burn (accurate vector layer) ---\n";
 
@@ -2590,6 +2836,8 @@ int main(int argc, char* argv[])
         tb_opts.channel_threshold_pixels =
             static_cast<std::int64_t>(ifs["accumulation_threshold_pixels"]);
         tb_opts.channel_anchor_radius_m = static_cast<double>(ff["snap_radius_m"]);
+        tb_opts.relative_burn_depth_m =
+            static_cast<double>(ff["relative_burn_depth_m"]);
 
         // Trace-divergence burn: where the D8 flow from a vector segment top
         // leaves the vector by more than trace_max_divergence_m, burn that
