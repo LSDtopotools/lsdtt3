@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
@@ -1029,8 +1030,11 @@ std::vector<std::int64_t> vectormap_line_source_cells(
     const std::vector<std::vector<lsdtt_xy>> clipped_lines =
         clip_vector_lines_to_dem(vector_path, dem);
 
-    // Candidate head = the upstream (higher) end of each fragment.
-    struct candidate { lsdtt_xy up; double z; };
+    // Candidate head = the upstream (higher) end of each fragment. `edge` flags a
+    // head that is a genuine inflow across the DEM boundary / NoData fringe (the
+    // chosen end's original vertex is off-DEM) — these bypass the higher_nearby
+    // exclusion below so "channels coming in from the edge" are always seeded.
+    struct candidate { lsdtt_xy up; double z; bool edge; };
     std::vector<candidate> cands;
     // All fragment vertices with a valid elevation, for the "is something higher
     // draining toward this head?" test below.
@@ -1038,29 +1042,26 @@ std::vector<std::int64_t> vectormap_line_source_cells(
     for (const std::vector<lsdtt_xy>& pts : clipped_lines)
     {
         if (pts.size() < 2) continue;
-        double z_first = 0.0, z_last = 0.0;
-        bool ok_first = false, ok_last = false;
-        for (std::size_t a = 0; a < pts.size() && !ok_first; ++a)
-            ok_first = valid_elev(pts[a], z_first);
-        for (std::size_t a = pts.size(); a-- > 0 && !ok_last; )
-            ok_last = valid_elev(pts[a], z_last);
-        if (!ok_first && !ok_last) continue;
-        lsdtt_xy up; double zu = 0.0;
-        if (ok_first && ok_last)
-        {
-            // both ends in-DEM: head is the higher end (unchanged behaviour)
-            up = (z_first >= z_last) ? pts.front() : pts.back();
-            if (!valid_elev(up, zu)) continue;
-        }
-        else
-        {
-            // one end off-DEM: the channel enters the DEM from that (source)
-            // side across the NoData fringe. Seed at the first valid cell when
-            // walking inward from the off-DEM end (the channel's DEM entry).
-            const bool source_is_front = !ok_first;
-            if (!first_valid_inward(pts, source_is_front, up, zu)) continue;
-        }
-        cands.push_back({up, zu});
+        // First in-DEM cell walking inward from each end. When an end is itself
+        // in-DEM this is just that endpoint; when an end is off-DEM (boundary /
+        // NoData fringe) this is the channel's DEM-entry cell.
+        lsdtt_xy pf, pb; double zf = 0.0, zb = 0.0;
+        const bool okf = first_valid_inward(pts, true,  pf, zf);
+        const bool okb = first_valid_inward(pts, false, pb, zb);
+        if (!okf && !okb) continue;
+        // Was each original end off-DEM? (governs the edge-inflow bypass)
+        double ztmp = 0.0;
+        const bool front_off = !valid_elev(pts.front(), ztmp);
+        const bool back_off  = !valid_elev(pts.back(),  ztmp);
+        // Head = the higher of the two inward entries (the upstream end).
+        lsdtt_xy up; double zu; bool from_front;
+        if (okf && okb)
+        { if (zf >= zb) { up = pf; zu = zf; from_front = true; }
+          else          { up = pb; zu = zb; from_front = false; } }
+        else if (okf)   { up = pf; zu = zf; from_front = true; }
+        else            { up = pb; zu = zb; from_front = false; }
+        const bool edge = from_front ? front_off : back_off;
+        cands.push_back({up, zu, edge});
         for (const lsdtt_xy& p : pts)
         {
             double zp = 0.0;
@@ -1086,6 +1087,7 @@ std::vector<std::int64_t> vectormap_line_source_cells(
     for (const candidate& cand : cands)
     {
         bool higher_nearby = false;
+        if (!cand.edge)   // edge inflows are always genuine sources
         for (const auto& v : verts)
         {
             if (v.second <= cand.z + higher_margin) continue;
