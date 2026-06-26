@@ -46,6 +46,8 @@
 namespace lsdtt
 {
 
+class lsdtt_vector_to_junction_network;   // fwd decl (defined in its own header)
+
 struct vectormap_burn_options
 {
     // A DEM cell belongs to the D8 channel mask when its number of contributing
@@ -335,30 +337,112 @@ struct vectormap_segmented_trace
     int    stop_reason  = 0;
 };
 
-// Trace D8 every `spacing_m` along each line (see struct above). A trace is
-// ACCEPTED if it reached the line end (stop_reason 1) or stayed near the line for
-// more than `min_near_pixels` cells; each accepted trace is then TRIMMED back from
-// its downstream end until its last cell is within `endpoint_tol_m` of the line
-// (so it may wander up to max_divergence_m mid-way but its endpoint sits close to
-// the channel). Outputs (each as a list of D8-trace polylines, made of the actual
-// traces -- not the vector segments):
-//   accepted_segments : every accepted, trimmed trace (these overlap).
-//   accepted_clean    : after cleaning -- (1) CONTAINMENT: drop any trace whose
-//     cells are a subset of a longer trace's (one that starts upstream AND ends
-//     downstream of it); (2) SPUR removal: drop any remaining trace whose cells
-//     unique to it (not shared with another kept trace) number < spur_min_pixels.
+// Trace D8 every `spacing_m` along each line (see struct above). Run this on the
+// junction-aware vector EDGES (each `lines[i]` = one edge/link), so an accepted
+// reach keys to the edge it follows and tributaries from different sources get
+// distinct ids. A trace is ACCEPTED if it reached the line end (stop_reason 1) or
+// stayed near the line for more than `min_near_pixels` cells; each accepted trace
+// is then TRIMMED back from its downstream end until its last cell is within
+// `endpoint_tol_m` of the line (so it may wander up to max_divergence_m mid-way
+// but its endpoint sits close to the channel). Accepted geometry is the D8 TRACES,
+// not the vector segments. Outputs (polyline + parallel source-line index):
+//   accepted_segments / accepted_seg_line : every accepted trimmed trace (overlap).
+//   accepted_clean / accepted_clean_line  : after cleaning -- CONTAINMENT (drop a
+//     trace whose cells are a subset of a longer trace) then SPUR removal (drop a
+//     kept trace whose line is a Strahler-1 leaf shorter than spur_min_pixels
+//     cells; trunks, Strahler>=2, are never removed). `line_strahler` supplies the
+//     per-line Strahler order; if null, no spur removal is done.
+// ---------------------------------------------------------------------------
+// burn_lcp_segment
+//
+// Burn a single connecting segment from start_cell to end_cell (both flat
+// indices), modifying `dem` in place. Implements, exactly:
+//   1. (caller guarantees z(start) > z(end).)
+//   2. least-cost path start->end weighted by length vs drainage area
+//      (`da_score`, normalised [0,1], 1 = strong channel), with a small uphill
+//      penalty to cross residual barriers at their lowest point.
+//   3. straight-line elevation profile by flow distance, z(start)->z(end);
+//      each path cell set to min(natural, line); then strict descent.
+//   4. per cell, make its D8 (distance-weighted steepest-descent) receiver the
+//      NEXT path cell by CONCAVE-DEEPENING the next cell below the cell's best
+//      competing OFF-PATH neighbour (never below the fixed target, cascading the
+//      deepening downstream as needed); only where the target floor prevents
+//      deepening enough is the competing neighbour RAISED just above the next
+//      path cell.
+//   5. verify D8 from start reaches end along the path; `connected` reports it.
+// da_score must be flat-indexed to the dem grid (size n_rows*n_cols).
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// identify_burn_segments
+//
+// The C++ "stitch": from the cleaned accepted reaches (each keyed to a vector
+// edge id) and the junction-aware vector network, find the gaps that must be
+// burned to connect every channel, returning the start/end DEM cells per gap.
+//   - parallel-duplicate reaches are dropped first (one stays).
+//   - CASE 1 (source): a source edge whose coverage doesn't start at the VML
+//     source -> burn from the source to the first reach.
+//   - CASE 2 (gap): between the downstream end of one reach and the upstream
+//     start of the next reach along the flow path.
+//   - CASE 3 (outlet): a channel's last reach not reaching the next channel down
+//     (skipped where the receiver junction is a DEM-edge outlet).
+// Endpoint conditioning walks the accepted reaches so z(start) > z(end)+min_drop
+// (start moves up its reach, end moves down its reach).
+// ---------------------------------------------------------------------------
+struct burn_segment_def
+{
+    std::int64_t start_cell = -1;
+    std::int64_t end_cell   = -1;
+    int          burn_case  = 0;     // 1 source, 2 gap, 3 outlet
+    int          up_edge    = -1;
+    int          down_edge  = -1;
+};
+
+[[nodiscard]] std::vector<burn_segment_def> identify_burn_segments(
+    const lsdtt_raster_cpu&                          dem,
+    const lsdtt_vector_to_junction_network&          net,
+    const std::vector<std::vector<lsdtt_xy>>&        accepted,
+    const std::vector<int>&                          accepted_edge_id,
+    double                                           tol          = 0.0,
+    double                                           parallel_tol = 8.0,
+    double                                           min_drop     = 0.05
+);
+
+struct lcp_burn_result
+{
+    std::vector<std::int64_t> path;      // LCP cells, start -> end
+    std::vector<std::int64_t> raised;    // cells raised to block a diversion
+    bool                      connected = false;
+    int                       break_reason = 0;  // 0 ok,1 no descent,2 off-path,3 backward
+    int                       break_idx    = 0;  // path index where D8 verify left
+};
+
+[[nodiscard]] lcp_burn_result burn_lcp_segment(
+    lsdtt_raster_cpu&         dem,
+    const std::vector<float>& da_score,
+    std::int64_t             start_cell,
+    std::int64_t             end_cell,
+    double                   min_slope      = 1.0e-3,
+    double                   capture_margin = 1.0e-3,
+    double                   uphill_mult    = 20.0,
+    double                   channel_alpha  = 4.0,
+    int                      window_pad     = 50
+);
+
 [[nodiscard]] std::vector<vectormap_segmented_trace> segmented_trace_test(
     const lsdtt_raster_cpu&                   dem,
     const lsdtt_flow_base&                    flow,
     const std::vector<std::vector<lsdtt_xy>>& lines,
     double                                    spacing_m,
     double                                    max_divergence_m,
-    int                                       min_near_pixels   = 20,
-    double                                    endpoint_tol_m    = -1.0,
-    int                                       spur_min_pixels   = 20,
-    std::vector<std::vector<lsdtt_xy>>*       accepted_segments = nullptr,
-    std::vector<std::vector<lsdtt_xy>>*       accepted_clean    = nullptr,
-    int                                       max_trace_steps   = 0
+    int                                       min_near_pixels     = 20,
+    double                                    endpoint_tol_m      = -1.0,
+    int                                       spur_min_pixels     = 20,
+    const std::vector<int>*                   line_strahler       = nullptr,
+    std::vector<std::vector<lsdtt_xy>>*       accepted_segments   = nullptr,
+    std::vector<int>*                         accepted_seg_line   = nullptr,
+    std::vector<std::vector<lsdtt_xy>>*       accepted_clean      = nullptr,
+    std::vector<int>*                         accepted_clean_line = nullptr,
+    int                                       max_trace_steps     = 0
 );
 
 } // namespace lsdtt

@@ -827,6 +827,115 @@ void lsdtt_vector_to_junction_network::create(
 
 
     // -------------------------------------------------------------------------
+    // Node the linework at T-junctions. The input (e.g. OS VectorMap Local) is
+    // typically NOT noded: a trunk is one long polyline that tributaries touch at
+    // an INTERIOR vertex, so without this the trunk is never split and the edges /
+    // Strahler order come out wrong (one link through many confluences). Here we
+    // split each polyline at any interior vertex that coincides (within
+    // vertex_tol) with another polyline's ENDPOINT, so every confluence becomes a
+    // shared endpoint. (True interior-interior crossings with no shared vertex are
+    // not handled; rivers confluence rather than cross.)
+    // -------------------------------------------------------------------------
+    {
+        // Distinct endpoints of all polylines.
+        std::vector<lsdtt_xy> endpoints;
+        {
+            std::set<quantised_key> seen;
+            for (const auto& p : polylines)
+            {
+                if (p.xy.size() < 2) continue;
+                for (const lsdtt_xy& e : {p.xy.front(), p.xy.back()})
+                    if (seen.insert(make_key(e.x, e.y, vertex_tol)).second)
+                        endpoints.push_back(e);
+            }
+        }
+
+        // Closest point on segment a-b to q; returns distance, sets t and proj.
+        auto project = [](const lsdtt_xy& a, const lsdtt_xy& b,
+                          const lsdtt_xy& q, double& t, lsdtt_xy& proj) -> double
+        {
+            const double dx = b.x - a.x, dy = b.y - a.y;
+            const double l2 = dx * dx + dy * dy;
+            t = (l2 > 0.0) ? ((q.x - a.x) * dx + (q.y - a.y) * dy) / l2 : 0.0;
+            if (t < 0.0) t = 0.0; else if (t > 1.0) t = 1.0;
+            proj.x = a.x + t * dx; proj.y = a.y + t * dy;
+            return std::hypot(q.x - proj.x, q.y - proj.y);
+        };
+
+        std::vector<raw_polyline> noded;
+        noded.reserve(polylines.size());
+        std::size_t n_split = 0;
+
+        for (auto& p : polylines)
+        {
+            const std::vector<lsdtt_xy>& xy = p.xy;
+            if (xy.size() < 2) { noded.push_back(std::move(p)); continue; }
+
+            // Where an endpoint touches p's INTERIOR: record (segment, t, point).
+            struct split_pt { std::size_t seg; double t; lsdtt_xy pt; };
+            std::vector<split_pt> splits;
+            const std::size_t nseg = xy.size() - 1;
+            for (const lsdtt_xy& q : endpoints)
+            {
+                double best_d = std::numeric_limits<double>::max();
+                std::size_t best_seg = 0; double best_t = 0.0; lsdtt_xy best_pt{};
+                for (std::size_t s = 0; s < nseg; ++s)
+                {
+                    double t; lsdtt_xy pr;
+                    const double d = project(xy[s], xy[s + 1], q, t, pr);
+                    if (d < best_d) { best_d = d; best_seg = s; best_t = t; best_pt = pr; }
+                }
+                if (best_d > vertex_tol) continue;            // not on this line
+                // Ignore touches at p's own ends (handled by endpoint noding).
+                if (best_seg == 0 && best_t < 1e-6) continue;
+                if (best_seg == nseg - 1 && best_t > 1.0 - 1e-6) continue;
+                splits.push_back({best_seg, best_t, best_pt});
+            }
+
+            if (splits.empty()) { noded.push_back(std::move(p)); continue; }
+
+            std::sort(splits.begin(), splits.end(),
+                [](const split_pt& a, const split_pt& b)
+                { return a.seg != b.seg ? a.seg < b.seg : a.t < b.t; });
+
+            // Walk segments, inserting split points and cutting arcs.
+            std::vector<lsdtt_xy> cur; cur.push_back(xy[0]);
+            std::size_t si = 0;
+            auto close_arc = [&](const lsdtt_xy& at)
+            {
+                if (cur.size() >= 2) { raw_polyline a; a.xy = cur;
+                                       noded.push_back(std::move(a)); }
+                cur.clear(); cur.push_back(at);
+            };
+            for (std::size_t s = 0; s < nseg; ++s)
+            {
+                while (si < splits.size() && splits[si].seg == s)
+                {
+                    const lsdtt_xy& pt = splits[si].pt;
+                    if (std::hypot(pt.x - cur.back().x,
+                                   pt.y - cur.back().y) > 1e-6)
+                        cur.push_back(pt);
+                    close_arc(pt);
+                    ++si;
+                }
+                if (std::hypot(xy[s + 1].x - cur.back().x,
+                               xy[s + 1].y - cur.back().y) > 1e-6)
+                    cur.push_back(xy[s + 1]);
+            }
+            if (cur.size() >= 2) { raw_polyline a; a.xy = cur;
+                                   noded.push_back(std::move(a)); }
+            ++n_split;
+        }
+
+        if (n_split > 0)
+            std::cout << "Noded vector linework: split " << n_split
+                      << " polyline(s) at interior junctions ("
+                      << polylines.size() << " -> " << noded.size()
+                      << " arcs)\n";
+        polylines = std::move(noded);
+    }
+
+    // -------------------------------------------------------------------------
     // Build raw endpoint graph from clipped linework.
     // -------------------------------------------------------------------------
     std::map<quantised_key, std::int32_t> vertex_lookup;

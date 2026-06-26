@@ -312,6 +312,27 @@ int main(int argc, char* argv[])
         "(<write_fname>_dem_network_lines.fgb) are written, but no burning is done. "
         "Useful for inspecting the starting point before any burn."};
 
+    bool_default_map["do_lcp_burn"] = false;
+    help_map["do_lcp_burn"] = {"bool","false",
+        "After segmented_trace_test, connect the cleaned accepted reaches into a "
+        "continuous network by least-cost-path burning the gaps (source / "
+        "intermediate / outlet). Requires segmented_trace_test=true. Writes "
+        "<write_fname>_burn_segments.fgb (start->end per gap), _lcp_burn_paths.fgb "
+        "(the carved paths), _lcp_burn_raised.fgb (cells raised to block "
+        "diversions), the burned DEM, and re-extracts the connected network."};
+
+    float_default_map["connect_tol_m"] = 0.0f;
+    help_map["connect_tol_m"] = {"float","0",
+        "Gap tolerance (m) for do_lcp_burn: reaches whose ends are farther apart "
+        "than this get a burn segment. Default 0 = EVERY gap between consecutive "
+        "accepted reaches is burned (no short gap is ever dropped)."};
+
+    float_default_map["lcp_channel_alpha"] = 4.0f;
+    help_map["lcp_channel_alpha"] = {"float","4",
+        "Drainage-area weighting for the do_lcp_burn least-cost path: higher = the "
+        "path prefers existing channels (high drainage area) more strongly over a "
+        "shorter straight route."};
+
     bool_default_map["segmented_trace_test"] = false;
     help_map["segmented_trace_test"] = {"bool","false",
         "Diagnostic (no burning): trace D8 from points every "
@@ -1735,24 +1756,38 @@ int main(int argc, char* argv[])
                 mw.finish_vector_write();
             }
 
-            // Segmented-trace diagnostic: D8 traces every N m along each merged
-            // line, stopped where they stray from the line.
+            // Segmented-trace diagnostic: D8 traces every N m along each
+            // junction-aware vector EDGE, stopped where they stray from it. Each
+            // accepted reach keys to its edge (tributaries from different sources
+            // get distinct ids); spur removal uses the edge Strahler order.
             if (bf["segmented_trace_test"] && flow)
             {
-                std::vector<std::vector<lsdtt::lsdtt_xy>> accepted;
-                std::vector<std::vector<lsdtt::lsdtt_xy>> accepted_clean;
+                std::vector<std::vector<lsdtt::lsdtt_xy>> edge_lines;
+                std::vector<int> edge_strahler, edge_ids;
+                for (const auto& e : vector_network.edges())
+                {
+                    if (e.xy.size() < 2) continue;
+                    edge_lines.push_back(e.xy);
+                    edge_strahler.push_back(static_cast<int>(e.strahler_order));
+                    edge_ids.push_back(static_cast<int>(e.edge_id));
+                }
+
+                std::vector<std::vector<lsdtt::lsdtt_xy>> accepted, accepted_clean;
+                std::vector<int> accepted_seg_line, accepted_clean_line;
                 const double seg_endpoint_tol =
                     static_cast<double>(ff["segmented_trace_endpoint_fraction"]) *
                     static_cast<double>(ff["trace_max_divergence_m"]);
                 std::vector<lsdtt::vectormap_segmented_trace> traces =
                     lsdtt::segmented_trace_test(
-                        routed_dem, *flow, merged,
+                        routed_dem, *flow, edge_lines,
                         static_cast<double>(ff["segmented_trace_spacing_m"]),
                         static_cast<double>(ff["trace_max_divergence_m"]),
                         ifs["segmented_trace_min_pixels"],
                         seg_endpoint_tol,
                         ifs["segmented_trace_spur_pixels"],
-                        &accepted, &accepted_clean);
+                        &edge_strahler,
+                        &accepted, &accepted_seg_line,
+                        &accepted_clean, &accepted_clean_line);
                 const std::string tpath =
                     lsdtt::lsdtt_data_loader::resolve_writable_path(
                         pp.get_full_write_path() + "_segmented_traces", ".fgb");
@@ -1790,10 +1825,18 @@ int main(int argc, char* argv[])
                     lsdtt::lsdtt_data_loader::resolve_writable_path(
                         pp.get_full_write_path() + "_accepted_segments", ".fgb");
                 std::cout << "Accepted segments: " << accepted.size()
-                          << " merged reaches: " << apath << "\n";
+                          << " reaches: " << apath << "\n";
+                // edge_id / strahler of an accepted segment via its source line.
+                auto edge_of = [&](int li) -> std::int64_t
+                { return (li >= 0 && li < (int)edge_ids.size())
+                             ? edge_ids[li] : -1; };
+                auto strah_of = [&](int li) -> std::int64_t
+                { return (li >= 0 && li < (int)edge_strahler.size())
+                             ? edge_strahler[li] : 0; };
                 lsdtt::lsdtt_vector_schema aschema;
-                aschema.field_names = {"seg_id", "length_m"};
+                aschema.field_names = {"edge_id", "strahler", "length_m"};
                 aschema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
                     lsdtt::lsdtt_vector_field_type::int64_type,
                     lsdtt::lsdtt_vector_field_type::double_type};
                 lsdtt::lsdtt_data_loader aw;
@@ -1803,13 +1846,15 @@ int main(int argc, char* argv[])
                 for (std::size_t ai = 0; ai < accepted.size(); ++ai)
                 {
                     if (accepted[ai].size() < 2) continue;
+                    const int li = ai < accepted_seg_line.size()
+                                       ? accepted_seg_line[ai] : -1;
                     double len = 0.0;
                     for (std::size_t k = 1; k < accepted[ai].size(); ++k)
                         len += std::hypot(
                             accepted[ai][k].x - accepted[ai][k-1].x,
                             accepted[ai][k].y - accepted[ai][k-1].y);
                     aw.write_line(accepted[ai],
-                                  {static_cast<std::int64_t>(ai), len});
+                                  {edge_of(li), strah_of(li), len});
                 }
                 aw.finish_vector_write();
 
@@ -1821,8 +1866,9 @@ int main(int argc, char* argv[])
                           << " segments (was " << accepted.size()
                           << "): " << cpath << "\n";
                 lsdtt::lsdtt_vector_schema cschema;
-                cschema.field_names = {"seg_id", "length_m"};
+                cschema.field_names = {"edge_id", "strahler", "length_m"};
                 cschema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
                     lsdtt::lsdtt_vector_field_type::int64_type,
                     lsdtt::lsdtt_vector_field_type::double_type};
                 lsdtt::lsdtt_data_loader cw;
@@ -1832,15 +1878,179 @@ int main(int argc, char* argv[])
                 for (std::size_t ci = 0; ci < accepted_clean.size(); ++ci)
                 {
                     if (accepted_clean[ci].size() < 2) continue;
+                    const int li = ci < accepted_clean_line.size()
+                                       ? accepted_clean_line[ci] : -1;
                     double len = 0.0;
                     for (std::size_t k = 1; k < accepted_clean[ci].size(); ++k)
                         len += std::hypot(
                             accepted_clean[ci][k].x - accepted_clean[ci][k-1].x,
                             accepted_clean[ci][k].y - accepted_clean[ci][k-1].y);
                     cw.write_line(accepted_clean[ci],
-                                  {static_cast<std::int64_t>(ci), len});
+                                  {edge_of(li), strah_of(li), len});
                 }
                 cw.finish_vector_write();
+
+                // ---- do_lcp_burn: connect the cleaned reaches by LCP burning ----
+                if (bf["do_lcp_burn"])
+                {
+                    const auto& bmeta = routed_dem.get_meta();
+                    const int bnc = bmeta.n_cols;
+                    auto cell_xy = [&](std::int64_t f) -> lsdtt::lsdtt_xy
+                    { int r=static_cast<int>(f/bnc), c=static_cast<int>(f%bnc);
+                      return lsdtt::lsdtt_xy{ bmeta.x_min + (c+0.5)*bmeta.cell_size,
+                                              bmeta.y_max() - (r+0.5)*bmeta.cell_size }; };
+
+                    std::vector<int> accepted_edge_id;
+                    for (int li : accepted_clean_line)
+                        accepted_edge_id.push_back(
+                            (li>=0 && li<(int)edge_ids.size()) ? edge_ids[li] : -1);
+
+                    std::vector<lsdtt::burn_segment_def> burns =
+                        lsdtt::identify_burn_segments(
+                            routed_dem, vector_network, accepted_clean,
+                            accepted_edge_id,
+                            static_cast<double>(ff["connect_tol_m"]), 8.0, 0.05);
+
+                    // log-normalised drainage area as the LCP channel score
+                    lsdtt::lsdtt_raster_result ncp =
+                        flow->get_n_contributing_pixels_raster();
+                    std::vector<float> da_score(ncp.data.size(), 0.0f);
+                    float maxda = 1.0f;
+                    for (float v : ncp.data) if (v > maxda) maxda = v;
+                    const float lden = std::log1p(maxda);
+                    for (std::size_t i=0;i<ncp.data.size();++i)
+                        da_score[i] = std::log1p(std::max(0.0f,ncp.data[i]))/lden;
+
+                    const double bslope =
+                        (ff["repair_min_slope"]>0.0f)?static_cast<double>(ff["repair_min_slope"])
+                                                     :static_cast<double>(ff["fill_min_slope"]);
+                    std::vector<lsdtt::lcp_burn_result> bres;
+                    std::vector<double> bzs, bze;     // pre-burn start/end elevation
+                    int n_conn=0, n_bail=0;
+                    for (const auto& b : burns)
+                    {
+                        const auto& zv = routed_dem.get_data();
+                        const double zs=(b.start_cell>=0&&b.start_cell<(std::int64_t)zv.size())
+                                        ?(double)zv[b.start_cell]:std::nan("");
+                        const double ze=(b.end_cell>=0&&b.end_cell<(std::int64_t)zv.size())
+                                        ?(double)zv[b.end_cell]:std::nan("");
+                        bzs.push_back(zs); bze.push_back(ze);
+                        lsdtt::lcp_burn_result r = lsdtt::burn_lcp_segment(
+                            routed_dem, da_score, b.start_cell, b.end_cell,
+                            bslope, 1.0e-3, 20.0,
+                            static_cast<double>(ff["lcp_channel_alpha"]), 60);
+                        if (r.connected) ++n_conn;
+                        if (r.path.size()<2) ++n_bail;
+                        bres.push_back(std::move(r));
+                    }
+                    std::cout << "LCP burn detail: " << n_bail
+                              << " bailed (z_start<=z_end), "
+                              << (burns.size()-n_bail-n_conn)
+                              << " carved-not-connected\n";
+                    std::cout << "LCP burn: " << burns.size()
+                              << " gaps (case1/2/3), " << n_conn
+                              << " D8-connected on carve\n";
+
+                    // re-fill + re-flow so the burns take effect
+                    try {
+                        routed_dem = lsdtt::fill_pits(routed_dem,
+                            ff["fill_min_slope"], ifs["n_threads"]);
+                        flow = lsdtt::make_flow_base(routed_dem.get_data_array(),
+                            routed_dem.get_mask_array(), routed_dem.get_meta(), fi_opts);
+                    } catch (const std::exception& e) {
+                        std::cerr << "Warning: reflow after LCP burn failed: "
+                                  << e.what() << "\n";
+                    }
+
+                    // write the gap definitions (start->end straight reference)
+                    {
+                        const std::string bp =
+                            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                                pp.get_full_write_path() + "_burn_segments", ".fgb");
+                        lsdtt::lsdtt_vector_schema s;
+                        s.field_names={"case","up_edge","down_edge",
+                                       "z_start","z_end","carved","connected"};
+                        s.field_types={lsdtt::lsdtt_vector_field_type::int64_type,
+                                       lsdtt::lsdtt_vector_field_type::int64_type,
+                                       lsdtt::lsdtt_vector_field_type::int64_type,
+                                       lsdtt::lsdtt_vector_field_type::double_type,
+                                       lsdtt::lsdtt_vector_field_type::double_type,
+                                       lsdtt::lsdtt_vector_field_type::int64_type,
+                                       lsdtt::lsdtt_vector_field_type::int64_type};
+                        lsdtt::lsdtt_data_loader w;
+                        w.begin_vector_write(bp,"burn_segments",s,bmeta.crs_wkt,
+                            lsdtt::vector_output_format::flatgeobuf,false);
+                        for (std::size_t i=0;i<burns.size();++i){
+                            const auto& b=burns[i];
+                            w.write_line({cell_xy(b.start_cell),cell_xy(b.end_cell)},
+                                {(std::int64_t)b.burn_case,(std::int64_t)b.up_edge,
+                                 (std::int64_t)b.down_edge, bzs[i], bze[i],
+                                 (std::int64_t)(bres[i].path.size()>=2?1:0),
+                                 (std::int64_t)(bres[i].connected?1:0)});
+                        }
+                        w.finish_vector_write();
+                        std::cout << "Wrote " << bp << "\n";
+                    }
+                    // write the carved LCP paths + raised cells
+                    {
+                        const std::string pp2 =
+                            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                                pp.get_full_write_path() + "_lcp_burn_paths", ".fgb");
+                        lsdtt::lsdtt_vector_schema s;
+                        s.field_names={"case","connected"};
+                        s.field_types={lsdtt::lsdtt_vector_field_type::int64_type,
+                                       lsdtt::lsdtt_vector_field_type::int64_type};
+                        lsdtt::lsdtt_data_loader w;
+                        w.begin_vector_write(pp2,"lcp_burn_paths",s,bmeta.crs_wkt,
+                            lsdtt::vector_output_format::flatgeobuf,false);
+                        for (std::size_t i=0;i<bres.size();++i){
+                            if(bres[i].path.size()<2) continue;
+                            std::vector<lsdtt::lsdtt_xy> xy;
+                            for(std::int64_t f:bres[i].path) xy.push_back(cell_xy(f));
+                            w.write_line(xy,{(std::int64_t)burns[i].burn_case,
+                                             (std::int64_t)(bres[i].connected?1:0)});
+                        }
+                        w.finish_vector_write();
+                        std::cout << "Wrote " << pp2 << "\n";
+                    }
+
+                    if (bf["write_burned_outputs"]) {
+                        const std::string dp =
+                            lsdtt::lsdtt_data_loader::resolve_writable_path(
+                                pp.get_full_write_path() + "_lcp_burned", ".tif");
+                        lsdtt::lsdtt_data_loader wr;
+                        wr.write_full(routed_dem.get_data(), routed_dem.get_meta(), dp);
+                        std::cout << "Wrote " << dp << "\n";
+                    }
+
+                    // re-extract the connected network, seeded from VML tips
+                    try {
+                        std::vector<std::int64_t> heads = source_flats;
+                        std::unordered_set<std::int64_t> hs(source_flats.begin(),
+                                                            source_flats.end());
+                        const std::size_t n_sf = heads.size();
+                        for (std::int64_t h : lsdtt::vectormap_line_source_cells(
+                                 routed_dem, stream_vector_path))
+                            if (hs.insert(h).second) heads.push_back(h);
+                        std::cout << "Connected-network seeds: " << heads.size()
+                                  << " (" << n_sf << " source_flats + "
+                                  << (heads.size()-n_sf) << " line-source cells)\n";
+                        std::unique_ptr<lsdtt::lsdtt_junction_network_base> cn =
+                            lsdtt::make_junction_network_base(*flow, heads, jn_opts);
+                        if (cn) {
+                            const std::string np =
+                                lsdtt::lsdtt_data_loader::resolve_writable_path(
+                                    pp.get_full_write_path()+"_connected_network_lines",".fgb");
+                            cn->write_channel_network_lines(np,
+                                lsdtt::vector_output_format::flatgeobuf,
+                                "connected_network_lines", bf["calculate_spatial_index"]);
+                            std::cout << "Wrote " << np << "\n";
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "Warning: connected-network extract failed: "
+                                  << e.what() << "\n";
+                    }
+                }
             }
         }
         catch (const std::exception& e)
