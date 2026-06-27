@@ -638,4 +638,138 @@ lsdtt_mountain_range_surface generate_arc_range_surface(
     int    n_threads                        = 0
 );
 
+// -----------------------------------------------------------------------------
+// Hillslope-strip test-domain generator
+//
+// Produces the 1-D hillslope-strip domains used to validate the transient
+// Roering hillslope solver (docs/roering_implicit_transient_plan.md §9, tests
+// 1-3 and 5).  The strip varies along a single cross-axis; the orthogonal axis
+// is uniform, so every row (or column) is an identical 1-D hillslope profile.
+//
+// Channels are geometry-defined Dirichlet sinks held at baselevel_elevation
+// (§3): either at both cross-axis ends with the divide at the centre (the
+// symmetric test-1 parabola case) or at a single end with a no-flux divide at
+// the opposite end.  The returned channel_mask is 1 on channel cells and 0
+// elsewhere, exactly the is_channel convention the solver consumes.
+// -----------------------------------------------------------------------------
+
+// Where the Dirichlet channels sit along the cross-axis.
+//   both_ends       — channels at both ends, no-flux divide at the centre (x=0).
+//   single_end_low  — channel at the low-index end, no-flux divide at the high end.
+//   single_end_high — channel at the high-index end, no-flux divide at the low end.
+enum class lsdtt_strip_channel_config
+{
+    both_ends,
+    single_end_low,
+    single_end_high
+};
+
+// Initial (non-channel) elevation profile.
+//   flat              — every hillslope cell at baselevel_elevation.
+//   analytic_parabola — the steady-state profile (linear parabola, or the
+//                       nonlinear Roering 2007 profile when nonlinear_profile
+//                       is true); a discrete fixed point of the steady solver
+//                       when half_width is auto-derived (half_width <= 0).
+//   raised_plateau    — hillslope cells at baselevel_elevation + init_amplitude
+//                       (a raised block to relax: test-2 transient relaxation).
+//   perturbed         — flat baselevel plus seeded uniform noise of amplitude
+//                       init_amplitude (a noisy start: test-2 transient).
+//   linear_ramp       — a triangular ridge linear from a crest of init_amplitude
+//                       above baselevel at the divide down to baselevel at the
+//                       channel(s).
+enum class lsdtt_strip_init_profile
+{
+    flat,
+    analytic_parabola,
+    raised_plateau,
+    perturbed,
+    linear_ramp
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_hillslope_strip_surface
+//
+// dem          — synthetic elevation raster (the hillslope strip)
+// channel_mask — 1.0 on geometry-defined channel cells, 0.0 elsewhere
+//
+// Analogous to lsdtt_mountain_range_surface{dem, front_mask}.
+// -----------------------------------------------------------------------------
+struct lsdtt_hillslope_strip_surface
+{
+    lsdtt_raster_cpu dem;
+    lsdtt_raster_cpu channel_mask;
+};
+
+// -----------------------------------------------------------------------------
+// generate_hillslope_strip_surface
+//
+// cross_axis_is_x
+//   true  — elevation varies along columns (E-W cross-axis x); channels are
+//           full N-S lines at the E/W end column(s).
+//   false — elevation varies along rows (N-S cross-axis); channels are full
+//           E-W lines at the N/S end row(s).
+//
+// baselevel_elevation
+//   Elevation of the channel cells (the Dirichlet value, m).
+//
+// half_width
+//   The hillslope half-width L (m), i.e. the divide-to-channel distance used by
+//   the analytic profiles.  If <= 0 it is auto-derived from the grid geometry so
+//   the analytic profile is a discrete fixed point (recommended).  If > 0 it
+//   overrides the L used in the profile formulas while channels remain at the
+//   extreme cross-axis cells; a value that does not match the grid extent will
+//   make analytic_parabola only approximately a fixed point.
+//
+// uplift_U, diffusivity_D, critical_slope_Sc
+//   Physical scalars used only to build the analytic init profile
+//   (analytic_parabola).  Sc is used only when nonlinear_profile is true.
+//
+// nonlinear_profile
+//   false — analytic_parabola uses the linear steady parabola
+//           z(x) = z_ch + (U/2D)(L^2 - x^2).
+//   true  — analytic_parabola uses the nonlinear Roering (2007) steady profile
+//           obtained by integrating D*S/(1-(S/Sc)^2) = U*x.
+//
+// init_amplitude
+//   Height scale for raised_plateau (plateau height above baselevel), perturbed
+//   (noise amplitude), and linear_ramp (crest height above baselevel).
+//
+// perturb_seed
+//   Seed for the perturbed init profile (deterministic).
+// -----------------------------------------------------------------------------
+lsdtt_hillslope_strip_surface generate_hillslope_strip_surface(
+    const lsdtt_raster_meta&   meta,
+    lsdtt_strip_channel_config channel_config      = lsdtt_strip_channel_config::both_ends,
+    lsdtt_strip_init_profile   init_profile        = lsdtt_strip_init_profile::flat,
+    bool                       cross_axis_is_x     = true,
+    double                     baselevel_elevation = 0.0,
+    double                     half_width          = 0.0,
+    double                     uplift_U            = 1e-3,
+    double                     diffusivity_D       = 1e-2,
+    double                     critical_slope_Sc   = 0.8,
+    bool                       nonlinear_profile   = false,
+    double                     init_amplitude      = 50.0,
+    int                        perturb_seed        = 1,
+    int                        n_threads           = 0
+);
+
+// Convenience overload
+lsdtt_hillslope_strip_surface generate_hillslope_strip_surface(
+    int                        n_rows,
+    int                        n_cols,
+    double                     cell_size,
+    lsdtt_strip_channel_config channel_config      = lsdtt_strip_channel_config::both_ends,
+    lsdtt_strip_init_profile   init_profile        = lsdtt_strip_init_profile::flat,
+    bool                       cross_axis_is_x     = true,
+    double                     baselevel_elevation = 0.0,
+    double                     half_width          = 0.0,
+    double                     uplift_U            = 1e-3,
+    double                     diffusivity_D       = 1e-2,
+    double                     critical_slope_Sc   = 0.8,
+    bool                       nonlinear_profile   = false,
+    double                     init_amplitude      = 50.0,
+    int                        perturb_seed        = 1,
+    int                        n_threads           = 0
+);
+
 } // namespace lsdtt

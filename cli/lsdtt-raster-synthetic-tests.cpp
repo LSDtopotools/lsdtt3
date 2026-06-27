@@ -390,6 +390,12 @@ int main(int argc, char* argv[])
         {"write_global_quadratic_surface",          false},
         {"quadratic_random_sign",                   true},
 
+        // Hillslope strip (transient-solver test domain)
+        {"write_hillslope_strip_surface",           false},
+        {"write_hillslope_strip_channel_mask",      true},
+        {"strip_cross_axis_is_x",                   true},
+        {"strip_nonlinear_profile",                 false},
+
         // Wavelet tests
         {"test_wavelet_on_periodic_wave",           false},
         {"test_wavelet_on_global_quadratic",        false},
@@ -433,6 +439,14 @@ int main(int argc, char* argv[])
 
         // Wavelet fit
         {"wavelet_lambda",            100.0f},
+
+        // Hillslope strip
+        {"strip_baselevel_elevation",   0.0f},
+        {"strip_half_width",            0.0f},   // <=0 = auto from geometry
+        {"strip_uplift",               1e-3f},
+        {"strip_diffusivity",          1e-2f},
+        {"strip_critical_slope",        0.8f},
+        {"strip_init_amplitude",       50.0f},
     };
 
     std::map<std::string, int> int_defaults =
@@ -455,6 +469,10 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string> string_defaults =
     {
         {"write_output_format", "cog"},
+
+        // Hillslope strip
+        {"strip_channel_config", "both_ends"},   // both_ends | single_end_low | single_end_high
+        {"strip_init_profile",   "flat"},        // flat | analytic_parabola | raised_plateau | perturbed | linear_ramp
     };
 
     // -------------------------------------------------------------------------
@@ -532,6 +550,51 @@ int main(int argc, char* argv[])
              "0.5 gives Brownian noise; lower = smoother; higher = rougher."}},
         {"diamond_square_initial_scale",
             {"float","1.0","Initial perturbation amplitude for diamond-square.",""}},
+
+        // Hillslope strip (transient Roering hillslope solver test domain)
+        {"write_hillslope_strip_surface",
+            {"bool","false",
+             "Write a 1-D hillslope-strip DEM (and channel mask) for the "
+             "transient hillslope solver validation tests.",""}},
+        {"write_hillslope_strip_channel_mask",
+            {"bool","true",
+             "Write the geometry-defined channel mask (1 = channel/Dirichlet "
+             "sink, 0 = hillslope) alongside the strip DEM.",""}},
+        {"strip_channel_config",
+            {"string","both_ends",
+             "Channel placement: both_ends (divide at centre), single_end_low, "
+             "or single_end_high (no-flux divide at the opposite end).",""}},
+        {"strip_init_profile",
+            {"string","flat",
+             "Initial profile: flat, analytic_parabola, raised_plateau, "
+             "perturbed, or linear_ramp.",
+             "analytic_parabola is the steady fixed point; raised_plateau / "
+             "perturbed seed transient-relaxation tests."}},
+        {"strip_cross_axis_is_x",
+            {"bool","true",
+             "true: elevation varies E-W (channels are N-S end columns); "
+             "false: varies N-S (channels are E-W end rows).",""}},
+        {"strip_nonlinear_profile",
+            {"bool","false",
+             "For analytic_parabola: true uses the nonlinear Roering (2007) "
+             "steady profile; false uses the linear parabola.",""}},
+        {"strip_baselevel_elevation",
+            {"float","0.0","Channel (Dirichlet) baselevel elevation in metres.",""}},
+        {"strip_half_width",
+            {"float","0.0",
+             "Hillslope half-width L (divide-to-channel distance, m) for the "
+             "analytic profile. <= 0 auto-derives L from the grid (recommended; "
+             "makes analytic_parabola a discrete fixed point).",""}},
+        {"strip_uplift",
+            {"float","1e-3","Uplift rate U (m/yr) used to build analytic_parabola.",""}},
+        {"strip_diffusivity",
+            {"float","1e-2","Diffusivity D (m^2/yr) used to build analytic_parabola.",""}},
+        {"strip_critical_slope",
+            {"float","0.8","Critical slope Sc (m/m); used only for the nonlinear profile.",""}},
+        {"strip_init_amplitude",
+            {"float","50.0",
+             "Height scale (m): plateau height (raised_plateau), noise amplitude "
+             "(perturbed), or crest height (linear_ramp).",""}},
     };
 
     pp.parse_all_parameters(float_defaults, int_defaults, bool_defaults, string_defaults);
@@ -762,6 +825,72 @@ int main(int argc, char* argv[])
                     out_fmt,
                     wavelet_summary_rows
                 );
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Hillslope strip (transient-solver test domain)
+        // ---------------------------------------------------------------------
+        if (bf["write_hillslope_strip_surface"])
+        {
+            std::cout << "\n--- Hillslope strip ---\n";
+
+            // Resolve channel placement
+            lsdtt::lsdtt_strip_channel_config cfg =
+                lsdtt::lsdtt_strip_channel_config::both_ends;
+            {
+                const std::string& s = sf["strip_channel_config"];
+                if (s == "single_end_low")
+                    cfg = lsdtt::lsdtt_strip_channel_config::single_end_low;
+                else if (s == "single_end_high")
+                    cfg = lsdtt::lsdtt_strip_channel_config::single_end_high;
+                else if (s != "both_ends")
+                    std::cerr << "Warning: unknown strip_channel_config '" << s
+                              << "' — defaulting to both_ends.\n";
+            }
+
+            // Resolve init profile
+            lsdtt::lsdtt_strip_init_profile prof =
+                lsdtt::lsdtt_strip_init_profile::flat;
+            {
+                const std::string& s = sf["strip_init_profile"];
+                if (s == "analytic_parabola")
+                    prof = lsdtt::lsdtt_strip_init_profile::analytic_parabola;
+                else if (s == "raised_plateau")
+                    prof = lsdtt::lsdtt_strip_init_profile::raised_plateau;
+                else if (s == "perturbed")
+                    prof = lsdtt::lsdtt_strip_init_profile::perturbed;
+                else if (s == "linear_ramp")
+                    prof = lsdtt::lsdtt_strip_init_profile::linear_ramp;
+                else if (s != "flat")
+                    std::cerr << "Warning: unknown strip_init_profile '" << s
+                              << "' — defaulting to flat.\n";
+            }
+
+            lsdtt::lsdtt_hillslope_strip_surface strip =
+                lsdtt::generate_hillslope_strip_surface(
+                    n_rows, n_cols, cell_size,
+                    cfg, prof,
+                    bf["strip_cross_axis_is_x"],
+                    ff["strip_baselevel_elevation"],
+                    ff["strip_half_width"],
+                    ff["strip_uplift"],
+                    ff["strip_diffusivity"],
+                    ff["strip_critical_slope"],
+                    bf["strip_nonlinear_profile"],
+                    ff["strip_init_amplitude"],
+                    seed,
+                    n_threads
+                );
+
+            loader.write_full(strip.dem.get_data(), strip.dem.get_meta(),
+                pp.make_output_path("_hillslope_strip.tif"), out_fmt);
+
+            if (bf["write_hillslope_strip_channel_mask"])
+            {
+                loader.write_full(
+                    strip.channel_mask.get_data(), strip.channel_mask.get_meta(),
+                    pp.make_output_path("_hillslope_strip_channel_mask.tif"), out_fmt);
             }
         }
 

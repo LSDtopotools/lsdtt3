@@ -271,6 +271,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_landscape_drape_cpu.cpp
     src/cpu/lsdtt_stream_power_cpu.cpp
     src/cpu/lsdtt_hillslope_transport_cpu.cpp
+    src/cpu/lsdtt_hillslope_implicit_cpu.cpp
     src/cpu/lsdtt_lem_cpu.cpp
     src/cpu/lsdtt_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
@@ -433,6 +434,7 @@ lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)
 lsdtt_cli(lsdtt-ridgeline-analysis     cli/lsdtt-ridgeline-analysis.cpp)
 lsdtt_cli(lsdtt-basin-surface-metrics  cli/lsdtt-basin-surface-metrics.cpp)
+lsdtt_cli(lsdtt-test-hillslope-implicit cli/lsdtt-test-hillslope-implicit.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
