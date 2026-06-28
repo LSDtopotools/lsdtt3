@@ -550,8 +550,14 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
             const bool semi = (max_face_ratio() < semi_implicit_ratio)
                               && (cur_omega >= omega - 1e-12);
             const int  iter_cap = semi ? 1 : picard_max_iter;
+            // A semi-implicit step is a single lagged-coefficient (IMEX) solve, not a
+            // fixed-point iteration, so it must be applied IN FULL (omega = 1).  Using
+            // the damped omega here would leave the field at only omega of the solve —
+            // an under-relaxed, under-diffused step (which biased coupled LEM steady
+            // states high).  Damping only makes sense across multiple Picard iterates.
+            const double step_omega = semi ? 1.0 : cur_omega;
             int iters = 0; double step_dz = 0.0;
-            const bool converged = attempt_step(dt, z_old, cur_omega, iters, step_dz,
+            const bool converged = attempt_step(dt, z_old, step_omega, iters, step_dz,
                                                 iter_cap, semi);
             const double mratio = max_face_ratio();
             const bool slope_ok = (mratio < reject_ratio);

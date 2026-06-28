@@ -14,8 +14,10 @@
 #include <vector>
 
 #include "lsdtt_flowgraph_cpu.hpp"
+#include "lsdtt_hillslope_implicit_cpu.hpp"
 #include "lsdtt_hillslope_transport_cpu.hpp"
 #include "lsdtt_stream_power_cpu.hpp"
+#include <iostream>
 
 namespace lsdtt
 {
@@ -141,16 +143,23 @@ run_lem_step(
                 fg_opts
             );
 
-            if (opts.hillslope_transport_model == "linear" ||
-                opts.hillslope_transport_model == "roering")
+            // Build the Dirichlet channel mask once for the channel-using explicit
+            // FD models: prefer an explicit channel mask when supplied (§8), else
+            // derive it from the drainage-area threshold.
+            const std::int64_t n_hs =
+                static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
+            auto build_is_channel = [&]() -> std::vector<uint8_t>
             {
-                // Explicit FD on the regular grid — flow graph used only for channel ID.
-                const std::int64_t n_hs =
-                    static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
                 const float dx = static_cast<float>(meta.cell_size);
                 std::vector<uint8_t> is_channel(static_cast<std::size_t>(n_hs), 0);
-
-                if (opts.incision_threshold_area > 0.0f)
+                if (opts.explicit_channel_mask.size()
+                        == static_cast<std::size_t>(n_hs))
+                {
+                    for (std::int64_t flat = 0; flat < n_hs; ++flat)
+                        is_channel[static_cast<std::size_t>(flat)] =
+                            opts.explicit_channel_mask[static_cast<std::size_t>(flat)] ? 1 : 0;
+                }
+                else if (opts.incision_threshold_area > 0.0f)
                 {
                     std::vector<double> area = flow_hillslope.accumulate();
                     for (std::int64_t flat = 0; flat < n_hs; ++flat)
@@ -162,6 +171,14 @@ run_lem_step(
                             is_channel[static_cast<std::size_t>(flat)] = 1;
                     }
                 }
+                return is_channel;
+            };
+
+            if (opts.hillslope_transport_model == "linear" ||
+                opts.hillslope_transport_model == "roering")
+            {
+                // Explicit FD on the regular grid — flow graph used only for channel ID.
+                std::vector<uint8_t> is_channel = build_is_channel();
 
                 const bool nl = (opts.hillslope_transport_model == "roering")
                                 && opts.enable_nonlinear_hillslopes;
@@ -175,6 +192,42 @@ run_lem_step(
                     opts.critical_hillslope_slope,
                     opts.n_threads
                 );
+            }
+            else if (opts.hillslope_transport_model == "roering_implicit")
+            {
+                // Unconditionally-stable backward-Euler Roering solver (§8).
+                std::vector<uint8_t> is_channel = build_is_channel();
+
+                // Transient-coupling rule 2 (§8): with no Dirichlet channel sinks the
+                // solve degenerates to sink-free diffusion toward the edges, which is
+                // meaningless — skip the hillslope step entirely.
+                const bool any_channel =
+                    std::any_of(is_channel.begin(), is_channel.end(),
+                                [](uint8_t v) { return v != 0; });
+                if (!any_channel)
+                {
+                    std::cout << "[lem] roering_implicit: no channel pixels "
+                                 "(empty is_channel) — skipping the hillslope step "
+                                 "(needs incision_threshold_area > 0 or a non-empty "
+                                 "channel_mask_fname).\n";
+                }
+                else
+                {
+                    lsdtt_roering_implicit_options ri = opts.roering_implicit_opts;
+                    ri.D  = opts.hillslope_diffusivity;
+                    ri.U  = 0.0f;                       // uplift applied in step 3
+                    ri.Sc = opts.critical_hillslope_slope;
+                    ri.nonlinear = opts.enable_nonlinear_hillslopes;
+                    ri.boundary_conditions = opts.boundary_conditions;
+                    ri.n_threads = opts.n_threads;
+
+                    // Transient-coupling rule 1 (§8): integrate exactly one LEM step
+                    // (dt_total = opts.timestep), so channels are re-incised each step.
+                    lsdtt_roering_implicit_result ri_res =
+                        compute_roering_hillslope_transport_implicit(
+                            current, is_channel, opts.timestep, ri);
+                    current = std::move(ri_res.elevation);
+                }
             }
             else  // "cidre"
             {

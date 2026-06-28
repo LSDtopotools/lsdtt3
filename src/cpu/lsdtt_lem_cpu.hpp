@@ -14,12 +14,13 @@
 //
 //   1. Build D-infinity flow graph from current DEM
 //   2. Fluvial incision (stream power, implicit solver)
-//   3. Hillslope transport (Cidre finite-volume)
+//   3. Hillslope transport (Cidre / linear / roering / roering_implicit / adi)
 //   4. Uniform uplift
 //   5. Restore boundary-pixel elevations to their pre-step values
 //
-// All algorithms are in lsdtt_stream_power_cpu and lsdtt_hillslope_transport_cpu.
-// This module only handles the step sequence and statistics.
+// All algorithms are in lsdtt_stream_power_cpu, lsdtt_hillslope_transport_cpu and
+// lsdtt_hillslope_implicit_cpu.  This module only handles the step sequence and
+// statistics.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -30,6 +31,7 @@
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_hillslope_implicit_cpu.hpp"
 
 namespace lsdtt
 {
@@ -54,7 +56,20 @@ struct lsdtt_lem_options
     bool  deposit_on_hillslope_baselevels = true;
     // "linear" = explicit FD D·∇²z,  "roering" = explicit FD Roering 1999,  "cidre" = Carretier 2016
     // "adi" = alternating directions implicit for linear hillslope diffusion only
+    // "roering_implicit" = unconditionally-stable backward-Euler Roering solver
     std::string hillslope_transport_model = "cidre";
+
+    // Knobs for the "roering_implicit" model (Picard / adaptive / linear-solver
+    // settings).  D, U (forced to 0 — uplift is applied separately below), Sc,
+    // nonlinear, boundary_conditions and n_threads are overridden from the LEM
+    // options at call time; the remaining fields are taken from here.
+    lsdtt_roering_implicit_options roering_implicit_opts;
+
+    // Optional explicit channel (Dirichlet) mask for the hillslope step: cell != 0
+    // marks a fixed-elevation channel pixel.  Empty (default) = derive is_channel
+    // from the drainage-area threshold.  Overrides the area-derived set for all
+    // hillslope models that use channels (roering, roering_implicit, cidre).
+    std::vector<std::uint8_t> explicit_channel_mask;
 
     // Uplift
     float uplift_rate                     = 1e-4f;
