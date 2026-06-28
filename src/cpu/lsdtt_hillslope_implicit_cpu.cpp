@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #include "lsdtt_hillslope_transport_cpu.hpp"
@@ -120,7 +121,9 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     // The system is SPD (symmetric face-centred D_eff) and solved with
     // Eigen::SimplicialLDLT.
     //
-    // TODO(Phase 3): adaptive sub-stepping + post-step projection / rejection.
+    // Phase 3 (done): adaptive iteration-count-based sub-stepping controller (§7)
+    // with post-step face-slope projection / step rejection (§5 layer 3) and
+    // omega auto-tuning on Picard divergence.
     // TODO(Phase 4): analyzePattern() reuse, OpenMP triplet assembly, CG backend.
     // TODO(Phase 6): optional Newton / TR-BDF2 cores.
     // -------------------------------------------------------------------------
@@ -232,11 +235,10 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         nr = rr; nc = cc; return true;
     };
 
-    bool limiter_fired = false;
-    // Face-centred effective diffusivity (§3); symmetric in the two adjacent cells.
-    auto face_Deff = [&](int r, int c, int nr, int nc, int dir) -> double
+    // Squared face slope ratio (|∇z|²/Sc², uncapped) using the face-centred
+    // cross-slope of Perron (2011) (§3); symmetric in the two adjacent cells.
+    auto face_ratio2 = [&](int r, int c, int nr, int nc, int dir) -> double
     {
-        if (!nonlinear) return D;
         const double Snorm = (z[static_cast<std::size_t>(idx(nr, nc))]
                             - z[static_cast<std::size_t>(idx(r, c))]) / h;
         double Scross;
@@ -252,26 +254,56 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
             const double gQ = (nbr_z(nr, nc, -1, 0) - nbr_z(nr, nc, 1, 0)) / (2.0 * h);
             Scross = 0.5 * (gP + gQ);
         }
-        double ratio2 = (Snorm * Snorm + Scross * Scross) / (Sc * Sc);
+        return (Snorm * Snorm + Scross * Scross) / (Sc * Sc);
+    };
+
+    // Face-centred effective diffusivity (§3) — the r_max cap (limiter layer 1)
+    // keeps D_eff finite.  The cap firing here is benign (§5/§9) so it does NOT
+    // set the result limiter_fired flag, which is reserved for the post-step
+    // projection (layer 3).
+    auto face_Deff = [&](int r, int c, int nr, int nc, int dir) -> double
+    {
+        if (!nonlinear) return D;
+        double ratio2 = face_ratio2(r, c, nr, nc, dir);
         const double cap = r_max * r_max;
-        if (ratio2 > cap) { ratio2 = cap; limiter_fired = true; }
+        if (ratio2 > cap) ratio2 = cap;
         return D / (1.0 - ratio2);
     };
 
-    // Fixed sub-stepping over dt_total (adaptive controller is Phase 3).
-    double dt_sub = (opts.dt_init > 0.0f) ? static_cast<double>(opts.dt_init)
-                                          : static_cast<double>(dt_total);
-    int n_sub = static_cast<int>(std::ceil(static_cast<double>(dt_total) / dt_sub));
-    if (n_sub < 1) n_sub = 1;
-    dt_sub = static_cast<double>(dt_total) / n_sub;
+    // Maximum (uncapped) face slope ratio max|∇z|/Sc over all faces of valid
+    // cells, in the face-centred convention used by the solver (§3).  This is the
+    // quantity the limiter and the result diagnostic are defined against — it
+    // differs from the per-cell centred-difference compute_max_slope_ratio helper.
+    auto max_face_ratio = [&]() -> double
+    {
+        double mx = 0.0;
+        for (int r = 0; r < n_rows; ++r)
+            for (int c = 0; c < n_cols; ++c)
+            {
+                if (!mask[static_cast<std::size_t>(idx(r, c))]) continue;
+                for (int dir = 0; dir < 4; ++dir)
+                {
+                    int nr = 0, nc = 0;
+                    if (!get_face(r, c, dir, nr, nc)) continue;
+                    mx = std::max(mx, std::sqrt(face_ratio2(r, c, nr, nc, dir)));
+                }
+            }
+        return mx;
+    };
 
     Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
-    std::vector<double> z_old(static_cast<std::size_t>(n_cells));
-    int total_picard = 0;
 
-    for (int sub = 0; sub < n_sub; ++sub)
+    // One backward-Euler sub-step over dt with a damped Picard iteration from the
+    // start-of-step field z_old (z is the iterate, advanced in place).  Returns
+    // whether Picard converged within picard_max_iter; reports the iteration count
+    // and the max |z − z_old| change accumulated over the step.
+    auto attempt_step = [&](double dt, const std::vector<double>& z_old,
+                            double cur_omega, int& iters_out,
+                            double& step_max_dz) -> bool
     {
-        z_old = z;                                  // start of step
+        iters_out   = 0;
+        step_max_dz = 0.0;
+        bool converged = false;
         for (int k = 0; k < picard_max_iter; ++k)
         {
             std::vector<Eigen::Triplet<double>> trips;
@@ -285,8 +317,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
                     const std::int64_t row = flat_to_dof[static_cast<std::size_t>(f)];
                     if (row < 0) continue;           // skip Dirichlet / masked
 
-                    double diag = 1.0 / dt_sub;
-                    double rhs  = z_old[static_cast<std::size_t>(f)] / dt_sub + U;
+                    double diag = 1.0 / dt;
+                    double rhs  = z_old[static_cast<std::size_t>(f)] / dt + U;
 
                     for (int dir = 0; dir < 4; ++dir)
                     {
@@ -310,21 +342,164 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
             A.setFromTriplets(trips.begin(), trips.end());
             solver.compute(A);
             const Eigen::VectorXd zstar = solver.solve(b);
-            ++total_picard;
+            ++iters_out;
 
-            // Damped update of the DOF cells; converge on max|Δz|.
+            // Damped update of the DOF cells; converge on max|Δz| between iterates.
             double max_dz = 0.0;
             for (std::int64_t f = 0; f < n_cells; ++f)
             {
                 const std::int64_t row = flat_to_dof[static_cast<std::size_t>(f)];
                 if (row < 0) continue;
                 const double znew = z[static_cast<std::size_t>(f)]
-                    + omega * (zstar(static_cast<int>(row)) - z[static_cast<std::size_t>(f)]);
+                    + cur_omega * (zstar(static_cast<int>(row)) - z[static_cast<std::size_t>(f)]);
                 max_dz = std::max(max_dz, std::abs(znew - z[static_cast<std::size_t>(f)]));
                 z[static_cast<std::size_t>(f)] = znew;
             }
-            if (!nonlinear || max_dz < picard_tol) break;   // linear: one solve is exact
+            if (!nonlinear) { converged = true; break; }   // linear: one solve is exact
+            if (max_dz < picard_tol) { converged = true; break; }
         }
+        for (std::int64_t f = 0; f < n_cells; ++f)
+        {
+            if (flat_to_dof[static_cast<std::size_t>(f)] < 0) continue;
+            step_max_dz = std::max(step_max_dz,
+                std::abs(z[static_cast<std::size_t>(f)] - z_old[static_cast<std::size_t>(f)]));
+        }
+        return converged;
+    };
+
+    // Last-resort slope-restoration projection (limiter layer 3, §5): clamp DOF
+    // cells by Gauss-Seidel sweeps so no cardinal face-normal slope exceeds
+    // r_max·Sc.  Only lowers cells (over-steepening from uplift makes ridge cells
+    // too high relative to downslope/channel neighbours).
+    auto apply_projection = [&]()
+    {
+        const double cap_slope = r_max * Sc;
+        for (int sweep = 0; sweep < 25; ++sweep)
+        {
+            double max_change = 0.0;
+            for (int r = 0; r < n_rows; ++r)
+                for (int c = 0; c < n_cols; ++c)
+                {
+                    const std::int64_t f = idx(r, c);
+                    if (flat_to_dof[static_cast<std::size_t>(f)] < 0) continue;
+                    double z_allowed = std::numeric_limits<double>::infinity();
+                    for (int dir = 0; dir < 4; ++dir)
+                    {
+                        int nr = 0, nc = 0;
+                        if (!get_face(r, c, dir, nr, nc)) continue;
+                        z_allowed = std::min(z_allowed,
+                            z[static_cast<std::size_t>(idx(nr, nc))] + cap_slope * h);
+                    }
+                    if (z[static_cast<std::size_t>(f)] > z_allowed)
+                    {
+                        max_change = std::max(max_change,
+                                              z[static_cast<std::size_t>(f)] - z_allowed);
+                        z[static_cast<std::size_t>(f)] = z_allowed;
+                    }
+                }
+            if (max_change < 1e-12) break;
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // Time integration over dt_total.
+    // -------------------------------------------------------------------------
+    std::vector<double> z_old(static_cast<std::size_t>(n_cells));
+    bool   limiter_fired = false;
+    int    n_sub         = 0;
+    int    n_rejected    = 0;
+    int    total_picard  = 0;
+    double final_dt      = 0.0;
+
+    if (!nonlinear)
+    {
+        // Linear backward-Euler: fixed sub-stepping (one exact solve per step), no
+        // limiter / rejection (no Sc constraint in the linear law).
+        double dt_lin = (opts.dt_init > 0.0f)
+                        ? std::min(static_cast<double>(opts.dt_init), static_cast<double>(dt_total))
+                        : static_cast<double>(dt_total);
+        int n_lin = static_cast<int>(std::ceil(static_cast<double>(dt_total) / dt_lin));
+        if (n_lin < 1) n_lin = 1;
+        dt_lin = static_cast<double>(dt_total) / n_lin;
+        for (int s = 0; s < n_lin; ++s)
+        {
+            z_old = z;
+            int iters = 0; double step_dz = 0.0;
+            attempt_step(dt_lin, z_old, 1.0, iters, step_dz);
+            total_picard += iters;
+            ++n_sub;
+        }
+        final_dt = dt_lin;
+    }
+    else
+    {
+        // Adaptive, iteration-count-based controller (§7) + post-step projection /
+        // rejection (§5 layer 3).
+        const double dt_max_eff = (opts.dt_max > 0.0f) ? static_cast<double>(opts.dt_max)
+                                                       : static_cast<double>(dt_total);
+        double dt_min_eff = (opts.dt_min > 0.0f) ? static_cast<double>(opts.dt_min)
+                                                 : static_cast<double>(dt_total) * 1e-4;
+        dt_min_eff = std::min(dt_min_eff, dt_max_eff);
+        const double grow   = (opts.grow_factor   > 1.0f) ? static_cast<double>(opts.grow_factor)   : 1.5;
+        const double shrink = (opts.shrink_factor > 0.0f && opts.shrink_factor < 1.0f)
+                              ? static_cast<double>(opts.shrink_factor) : 0.5;
+        const double dz_target = static_cast<double>(opts.dz_target);   // 0 disables
+        const double reject_ratio = r_max;          // accept needs max face ratio < r_max
+        const int    k_lo = 5;                       // "easy" Picard convergence
+        const double omega_floor = 0.1;
+
+        double cur_omega = omega;
+        double dt = (opts.dt_init > 0.0f) ? static_cast<double>(opts.dt_init)
+                                          : static_cast<double>(dt_total);
+        dt = std::min(dt, std::min(dt_max_eff, static_cast<double>(dt_total)));
+        double t_remaining = static_cast<double>(dt_total);
+        const double t_eps = static_cast<double>(dt_total) * 1e-12;
+        const int    max_attempts = 2000000;
+        int          attempts = 0;
+
+        while (t_remaining > t_eps && attempts < max_attempts)
+        {
+            ++attempts;
+            dt = std::min(dt, t_remaining);
+            dt = std::min(dt, dt_max_eff);
+            if (dt < dt_min_eff) dt = dt_min_eff;
+
+            z_old = z;
+            int iters = 0; double step_dz = 0.0;
+            const bool converged = attempt_step(dt, z_old, cur_omega, iters, step_dz);
+            const double mratio = max_face_ratio();
+            const bool slope_ok = (mratio < reject_ratio);
+            const bool dz_ok    = (dz_target <= 0.0) || (step_dz <= dz_target);
+            const bool accept   = converged && slope_ok && dz_ok;
+
+            if (accept)
+            {
+                t_remaining -= dt; ++n_sub; total_picard += iters; final_dt = dt;
+                const bool easy = (iters <= k_lo)
+                    && ((dz_target <= 0.0) || (step_dz <= 0.5 * dz_target));
+                if (easy) dt = std::min(dt * grow, dt_max_eff);
+                cur_omega = std::min(omega, cur_omega * 1.1);   // relax damping back
+            }
+            else if (dt <= dt_min_eff * (1.0 + 1e-9))
+            {
+                // At the floor and still failing: force progress.  Keep the
+                // attempt's field, shave any super-critical slopes (layer 3), and
+                // flag that the projection fired.
+                apply_projection();
+                limiter_fired = true;
+                t_remaining -= dt; ++n_sub; total_picard += iters; final_dt = dt;
+            }
+            else
+            {
+                // Reject: discard the attempt, shrink dt, retry.  Tighten damping
+                // when the failure was a Picard divergence.
+                z = z_old;
+                ++n_rejected;
+                dt = std::max(dt * shrink, dt_min_eff);
+                if (!converged) cur_omega = std::max(omega_floor, cur_omega * 0.7);
+            }
+        }
+        if (final_dt <= 0.0) final_dt = dt;
     }
 
     // Pack the result.
@@ -337,10 +512,10 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     }
     result.elevation           = lsdtt_raster_cpu(std::move(zf), std::move(mcopy), meta);
     result.n_substeps          = n_sub;
-    result.n_rejected_substeps = 0;     // Phase 3
+    result.n_rejected_substeps = n_rejected;
     result.total_picard_iters  = total_picard;
-    result.final_dt            = dt_sub;
-    result.max_slope_ratio     = compute_max_slope_ratio(result.elevation, is_channel, opts.Sc);
+    result.final_dt            = static_cast<float>(final_dt);
+    result.max_slope_ratio     = static_cast<float>(max_face_ratio());
     result.limiter_fired       = limiter_fired;
 
 #else

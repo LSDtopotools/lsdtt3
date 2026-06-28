@@ -37,6 +37,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -137,19 +138,21 @@ lsdtt::lsdtt_raster_cpu flat_strip(int n_rows, int n_cols, double cell_size)
         /*cross_axis_is_x=*/false, /*baselevel_elevation=*/0.0).dem;
 }
 
-// Integrate from flat (or a given field) to near steady state at uplift U.
-lsdtt::lsdtt_raster_cpu run_to_steady(const lsdtt::lsdtt_raster_cpu& dem,
-                                      double U, double D, double Sc,
-                                      const std::string& bc, double dt_total,
-                                      double dt_init)
+// Integrate from flat (or a given field) to near steady state at uplift U,
+// returning the FULL result struct (elevation + Phase-3 adaptive/limiter
+// diagnostics).
+lsdtt::lsdtt_roering_implicit_result run_to_steady_result(
+    const lsdtt::lsdtt_raster_cpu& dem,
+    double U, double D, double Sc,
+    const std::string& bc, double dt_total, double dt_init)
 {
     lsdtt::lsdtt_roering_implicit_options opts;
     opts.D = static_cast<float>(D);
     opts.U = static_cast<float>(U);
     opts.Sc = static_cast<float>(Sc);
     opts.nonlinear = true;                 // Roering
-    opts.dt_init = static_cast<float>(dt_init);  // fixed sub-stepping (adaptive is Phase 3)
-    opts.relaxation_omega = 0.7f;          // Picard damping for the strong nonlinearity
+    opts.dt_init = static_cast<float>(dt_init);  // initial guess; controller adapts (Phase 3)
+    opts.relaxation_omega = 0.7f;          // Picard damping (controller auto-tunes down)
     opts.picard_max_iter  = 200;
     opts.boundary_conditions = bc;
     // No is_channel sinks — the fixed ends come from the 'o' boundary code.
@@ -159,7 +162,65 @@ lsdtt::lsdtt_raster_cpu run_to_steady(const lsdtt::lsdtt_raster_cpu& dem,
     const std::vector<std::uint8_t> no_channels(
         static_cast<std::size_t>(m.n_rows) * m.n_cols, 0);
     return lsdtt::compute_roering_hillslope_transport_implicit(
-        dem, no_channels, static_cast<float>(dt_total), opts).elevation;
+        dem, no_channels, static_cast<float>(dt_total), opts);
+}
+
+// Convenience wrapper returning only the elevation field.
+lsdtt::lsdtt_raster_cpu run_to_steady(const lsdtt::lsdtt_raster_cpu& dem,
+                                      double U, double D, double Sc,
+                                      const std::string& bc, double dt_total,
+                                      double dt_init)
+{
+    return run_to_steady_result(dem, U, D, Sc, bc, dt_total, dt_init).elevation;
+}
+
+// Max |Linf| difference between two solver fields of equal shape.
+double field_linf_diff(const lsdtt::lsdtt_raster_cpu& a,
+                       const lsdtt::lsdtt_raster_cpu& b)
+{
+    const std::vector<float>& za = a.get_data();
+    const std::vector<float>& zb = b.get_data();
+    double mx = 0.0;
+    const std::size_t n = std::min(za.size(), zb.size());
+    for (std::size_t i = 0; i < n; ++i)
+        mx = std::max(mx, std::abs(static_cast<double>(za[i]) - static_cast<double>(zb[i])));
+    return mx;
+}
+
+// Output directory for plot CSVs consumed by lsdviztools.lsdtransientvalidation.
+// Relative to the run directory (../data/roering_transient_tests).
+const std::string plot_data_dir = "plot_data/";
+
+// Write a per-row profile: x (cell index), numeric mid-column z, analytic z.
+void write_profile_csv(const std::string& path,
+                       const lsdtt::lsdtt_raster_cpu& field,
+                       const std::vector<double>& ref)
+{
+    std::ofstream os(path);
+    if (!os) { std::cout << "  [warn] could not write " << path << "\n"; return; }
+    const std::vector<float>& z = field.get_data();
+    const int nr = field.get_meta().n_rows;
+    const int nc = field.get_meta().n_cols;
+    const int cmid = nc / 2;
+    os << "x,z_numeric,z_analytical\n";
+    os << std::setprecision(10);
+    for (int r = 0; r < nr; ++r)
+        os << r << "," << z[static_cast<std::size_t>(r) * nc + cmid] << ","
+           << ref[static_cast<std::size_t>(r)] << "\n";
+}
+
+// Write a grid-refinement table: grid spacing vs Linf / rms error.
+void write_refinement_csv(const std::string& path,
+                          const std::vector<double>& gs,
+                          const std::vector<double>& linf,
+                          const std::vector<double>& rms)
+{
+    std::ofstream os(path);
+    if (!os) { std::cout << "  [warn] could not write " << path << "\n"; return; }
+    os << "grid_spacing,linf_error,rms_error\n";
+    os << std::setprecision(10);
+    for (std::size_t i = 0; i < gs.size(); ++i)
+        os << gs[i] << "," << linf[i] << "," << rms[i] << "\n";
 }
 
 } // namespace
@@ -188,15 +249,17 @@ int main()
     std::cout << "Test 1 Full (Roering steady, BC opop) -- grid refinement:\n";
     std::cout << "  n_rows  cell_size      Linf       rms   Linf/peak  col_spread\n";
     double prev = 0.0;
+    std::vector<double> full_gs, full_linf, full_rms;
     for (int k = 0; k < 3; ++k)
     {
         const double cs = 2.0 / std::pow(2.0, k);                 // 2, 1, 0.5 m
         const int    nr = static_cast<int>(std::lround(domain_len / cs)) + 1;
         const double L  = 0.5 * (nr - 1) * cs;
         const double tau = L * L / D;
+        const std::vector<double> ref = roering_profile(nr, cs, U, D, Sc, true);
         lsdtt::lsdtt_raster_cpu f = run_to_steady(flat_strip(nr, n_cols, cs),
                                                   U, D, Sc, "opop", 8.0 * tau, tau / 40.0);
-        const case_result rr = compare(f, roering_profile(nr, cs, U, D, Sc, true));
+        const case_result rr = compare(f, ref);
         const double rel = (rr.peak > 0.0) ? rr.linf / rr.peak : rr.linf;
         std::cout << "  " << std::setw(6) << nr << "  " << std::setw(8) << cs
                   << "  " << std::setw(9) << rr.linf << "  " << std::setw(9) << rr.rms
@@ -207,8 +270,12 @@ int main()
                       << std::setprecision(2) << std::log2(prev / std::max(rr.linf, 1e-30))
                       << std::scientific << std::setprecision(3) << "\n";
         prev = rr.linf;
+        full_gs.push_back(cs); full_linf.push_back(rr.linf); full_rms.push_back(rr.rms);
+        if (cs == 1.0) write_profile_csv(plot_data_dir + "test1_full_profile.csv", f, ref);
         if (rel > rel_tol || rr.max_col_spread > col_tol) all_pass = false;
     }
+    write_refinement_csv(plot_data_dir + "test1_full_refinement.csv",
+                         full_gs, full_linf, full_rms);
 
     // --- Test 1, Half scenario: no-flux-end check.  H=20 so the single-sided
     // driving U*H/D = 1.25*Sc matches the Full case (sub-critical, convergent);
@@ -218,14 +285,16 @@ int main()
     {
         const double len = 20.0;
         double prevh = 0.0;
+        std::vector<double> half_gs, half_linf, half_rms;
         for (int k = 0; k < 3; ++k)
         {
             const double cs = 2.0 / std::pow(2.0, k);
             const int    nr = static_cast<int>(std::lround(len / cs)) + 1;
             const double H = (nr - 1) * cs; const double tau = H * H / D;
+            const std::vector<double> ref = roering_profile(nr, cs, U, D, Sc, false);
             lsdtt::lsdtt_raster_cpu f = run_to_steady(flat_strip(nr, n_cols, cs),
                                                       U, D, Sc, "opnp", 8.0 * tau, tau / 40.0);
-            const case_result rr = compare(f, roering_profile(nr, cs, U, D, Sc, false));
+            const case_result rr = compare(f, ref);
             const double rel = (rr.peak > 0.0) ? rr.linf / rr.peak : rr.linf;
             std::cout << "  " << std::setw(6) << nr << "  " << std::setw(8) << cs
                       << "  " << std::setw(9) << rr.linf << "  " << std::setw(9) << rr.rms
@@ -236,8 +305,12 @@ int main()
                           << std::setprecision(2) << std::log2(prevh / std::max(rr.linf, 1e-30))
                           << std::scientific << std::setprecision(3) << "\n";
             prevh = rr.linf;
+            half_gs.push_back(cs); half_linf.push_back(rr.linf); half_rms.push_back(rr.rms);
+            if (cs == 1.0) write_profile_csv(plot_data_dir + "test1_half_profile.csv", f, ref);
             if (rel > rel_tol || rr.max_col_spread > col_tol) all_pass = false;
         }
+        write_refinement_csv(plot_data_dir + "test1_half_refinement.csv",
+                             half_gs, half_linf, half_rms);
     }
 
     // --- Test 2: step-change uplift transient (U doubles at 200 kyr) ---
@@ -249,17 +322,95 @@ int main()
         const double cs = 1.0; const int nr = static_cast<int>(len / cs) + 1;
         const double U2 = 2.0 * U;
         const double L = 0.5 * (nr - 1) * cs; const double tau = L * L / D;
+        const std::vector<double> ref1 = roering_profile(nr, cs, U,  D, Sc, true);
+        const std::vector<double> ref2 = roering_profile(nr, cs, U2, D, Sc, true);
         lsdtt::lsdtt_raster_cpu s1 = run_to_steady(flat_strip(nr, n_cols, cs),
                                                    U, D, Sc, "opop", 2.0e5, tau / 40.0);  // to 200 kyr
         lsdtt::lsdtt_raster_cpu s2 = run_to_steady(s1, U2, D, Sc, "opop", 8.0 * tau, tau / 40.0);
-        const case_result e1 = compare(s1, roering_profile(nr, cs, U,  D, Sc, true));
-        const case_result e2 = compare(s2, roering_profile(nr, cs, U2, D, Sc, true));
+        const case_result e1 = compare(s1, ref1);
+        const case_result e2 = compare(s2, ref2);
+        write_profile_csv(plot_data_dir + "test2_prestep_profile.csv",  s1, ref1);
+        write_profile_csv(plot_data_dir + "test2_poststep_profile.csv", s2, ref2);
         const double r1 = (e1.peak > 0) ? e1.linf / e1.peak : e1.linf;
         const double r2 = (e2.peak > 0) ? e2.linf / e2.peak : e2.linf;
         std::cout << "\nTest 2 step-change uplift (5e-4 -> 1e-3 at 200 kyr):\n"
                   << "  pre-step  vs Roering(U1): Linf/peak=" << r1 << "\n"
                   << "  post-step vs Roering(U2): Linf/peak=" << r2 << "\n";
         if (r1 > rel_tol || r2 > rel_tol) all_pass = false;
+    }
+
+    // --- Test 2 strong: strongly supercritical step-change on the 40 m domain.
+    // U doubles 5e-4 -> 1e-3; with L=20, U2*L/D = 2.0 = 2.5*Sc.  Phase 2 (fixed
+    // sub-stepping) overshot Sc here (max_slope_ratio ~1.45); the Phase-3 adaptive
+    // controller + post-step rejection must now hold max_slope_ratio <= 1 with a
+    // bounded number of rejected sub-steps, and still land on Roering(U2). ---
+    {
+        const double cs = 1.0;
+        const int    nr = static_cast<int>(domain_len / cs) + 1;   // 40 m -> L=20
+        const double U2 = 2.0 * U;
+        const double L  = 0.5 * (nr - 1) * cs; const double tau = L * L / D;
+        lsdtt::lsdtt_roering_implicit_result s1 = run_to_steady_result(
+            flat_strip(nr, n_cols, cs), U, D, Sc, "opop", 2.0e5, tau / 40.0);
+        lsdtt::lsdtt_roering_implicit_result s2 = run_to_steady_result(
+            s1.elevation, U2, D, Sc, "opop", 8.0 * tau, tau / 40.0);
+        const case_result e2 = compare(s2.elevation, roering_profile(nr, cs, U2, D, Sc, true));
+        const double r2 = (e2.peak > 0) ? e2.linf / e2.peak : e2.linf;
+        std::cout << "\nTest 2 strong (U2*L/D = 2.5*Sc, 40 m domain):\n"
+                  << "  post-step vs Roering(U2): Linf/peak=" << r2 << "\n"
+                  << "  max_slope_ratio=" << s2.max_slope_ratio
+                  << "  n_substeps=" << s2.n_substeps
+                  << "  n_rejected=" << s2.n_rejected_substeps
+                  << "  limiter_fired=" << (s2.limiter_fired ? "yes" : "no") << "\n";
+        const bool ok = (r2 <= rel_tol)
+                     && (s2.max_slope_ratio <= 1.0f + 1e-4f)
+                     && (s2.n_rejected_substeps < s2.n_substeps + 50);
+        if (!ok) all_pass = false;
+    }
+
+    // --- Test 6: timestep independence.  Same steady end state (40 m, U2) across a
+    // range of dt_init / controller settings -> stability + no limiter bias. ---
+    {
+        const double cs = 1.0;
+        const int    nr = static_cast<int>(domain_len / cs) + 1;
+        const double U2 = 2.0 * U;
+        const double L  = 0.5 * (nr - 1) * cs; const double tau = L * L / D;
+        const double dts[3] = { tau / 10.0, tau / 40.0, tau / 160.0 };
+        lsdtt::lsdtt_raster_cpu ref;
+        double max_spread = 0.0; double peak = 0.0;
+        for (int i = 0; i < 3; ++i)
+        {
+            lsdtt::lsdtt_raster_cpu f = run_to_steady(
+                flat_strip(nr, n_cols, cs), U2, D, Sc, "opop", 8.0 * tau, dts[i]);
+            if (i == 0) { ref = f; const case_result rr =
+                compare(f, roering_profile(nr, cs, U2, D, Sc, true)); peak = rr.peak; }
+            else        max_spread = std::max(max_spread, field_linf_diff(f, ref));
+        }
+        const double rel_spread = (peak > 0.0) ? max_spread / peak : max_spread;
+        std::cout << "\nTest 6 timestep independence (40 m, U2; dt_init = tau/{10,40,160}):\n"
+                  << "  max end-state Linf spread vs dt=tau/10 = " << max_spread
+                  << "  (rel=" << rel_spread << ")\n";
+        if (rel_spread > rel_tol) all_pass = false;
+    }
+
+    // --- Test 9: Sc enforcement stress.  Very strong driving (U=2e-2 -> a~100,
+    // steady slope ratio ~Sc) forces slopes hard against Sc from a flat start, so
+    // the r_max cap fires every step and the post-step projection is exercised.
+    // Required: max_slope_ratio <= 1 and bounded rejections. ---
+    {
+        const double cs  = 1.0;
+        const int    nr  = static_cast<int>(20.0 / cs) + 1;     // L=10
+        const double Us  = 2.0e-2;                              // a = 2*Us*L/(D*Sc) ~ 100
+        const double L   = 0.5 * (nr - 1) * cs; const double tau = L * L / D;
+        lsdtt::lsdtt_roering_implicit_result s = run_to_steady_result(
+            flat_strip(nr, n_cols, cs), Us, D, Sc, "opop", 8.0 * tau, tau / 40.0);
+        std::cout << "\nTest 9 Sc stress (U=2e-2, slopes driven to Sc):\n"
+                  << "  max_slope_ratio=" << s.max_slope_ratio
+                  << "  n_substeps=" << s.n_substeps
+                  << "  n_rejected=" << s.n_rejected_substeps
+                  << "  limiter_fired=" << (s.limiter_fired ? "yes" : "no") << "\n";
+        const bool ok = (s.max_slope_ratio <= 1.0f + 1e-4f)
+                     && (s.n_rejected_substeps < s.n_substeps + 200);
+        if (!ok) all_pass = false;
     }
 
     std::cout << "\nRESULT: " << (all_pass ? "PASS" : "FAIL") << "\n";
