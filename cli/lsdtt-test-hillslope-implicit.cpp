@@ -35,6 +35,7 @@
 // is required for the nonlinearity — see run_to_steady.
 // -----------------------------------------------------------------------------
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -172,6 +173,32 @@ lsdtt::lsdtt_raster_cpu run_to_steady(const lsdtt::lsdtt_raster_cpu& dem,
                                       double dt_init)
 {
     return run_to_steady_result(dem, U, D, Sc, bc, dt_total, dt_init).elevation;
+}
+
+// Run to near steady state with an explicit backend / thread choice (Phase 4).
+// solver_choice: 0 = SimplicialLDLT, 1 = CG + IncompleteCholesky.
+lsdtt::lsdtt_roering_implicit_result run_to_steady_backend(
+    const lsdtt::lsdtt_raster_cpu& dem,
+    double U, double D, double Sc,
+    const std::string& bc, double dt_total, double dt_init,
+    int solver_choice, int n_threads)
+{
+    lsdtt::lsdtt_roering_implicit_options opts;
+    opts.D = static_cast<float>(D);
+    opts.U = static_cast<float>(U);
+    opts.Sc = static_cast<float>(Sc);
+    opts.nonlinear = true;
+    opts.dt_init = static_cast<float>(dt_init);
+    opts.relaxation_omega = 0.7f;
+    opts.picard_max_iter  = 200;
+    opts.boundary_conditions = bc;
+    opts.solver_choice = solver_choice;
+    opts.n_threads = n_threads;
+    const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+    const std::vector<std::uint8_t> no_channels(
+        static_cast<std::size_t>(m.n_rows) * m.n_cols, 0);
+    return lsdtt::compute_roering_hillslope_transport_implicit(
+        dem, no_channels, static_cast<float>(dt_total), opts);
 }
 
 // Max |Linf| difference between two solver fields of equal shape.
@@ -411,6 +438,71 @@ int main()
         const bool ok = (s.max_slope_ratio <= 1.0f + 1e-4f)
                      && (s.n_rejected_substeps < s.n_substeps + 200);
         if (!ok) all_pass = false;
+    }
+
+    // --- Phase 4 test: CG + IncompleteCholesky backend agrees with LDLT. ---
+    // Same Roering steady solve via both backends must land on the same field to
+    // solver tolerance (the matrix is identical; only the linear solver differs).
+    {
+        const double cs = 1.0;
+        const int    nr = static_cast<int>(domain_len / cs) + 1;   // 40 m
+        const double L  = 0.5 * (nr - 1) * cs; const double tau = L * L / D;
+        lsdtt::lsdtt_raster_cpu f_ldlt = run_to_steady_backend(
+            flat_strip(nr, n_cols, cs), U, D, Sc, "opop", 8.0 * tau, tau / 40.0, 0, 0).elevation;
+        lsdtt::lsdtt_raster_cpu f_cg = run_to_steady_backend(
+            flat_strip(nr, n_cols, cs), U, D, Sc, "opop", 8.0 * tau, tau / 40.0, 1, 0).elevation;
+        const case_result rp = compare(f_ldlt, roering_profile(nr, cs, U, D, Sc, true));
+        const double diff = field_linf_diff(f_ldlt, f_cg);
+        const double rel = (rp.peak > 0.0) ? diff / rp.peak : diff;
+        std::cout << "\nPhase 4 backend agreement (LDLT vs CG+IC, 40 m steady):\n"
+                  << "  Linf(LDLT - CG) = " << diff << "  (rel=" << rel << ")\n";
+        if (rel > rel_tol) all_pass = false;
+    }
+
+    // --- Phase 4 benchmark (test 8): per-step linear-algebra cost and grid scaling
+    // for each backend.  To isolate the solve cost (assembly + symbolic-reuse
+    // factorize + back-substitution) from the transient dynamics, this drives a
+    // FLAT field with U=0 over one fixed moderate sub-step: nothing moves, the
+    // semi-implicit path takes a single solve, the step is accepted immediately,
+    // and the wall-time is the cost of one implicit solve on a near-Poisson
+    // (large-dt-like) operator at that grid size.  Sizes are modest so the
+    // validation run stays quick; the design target is ~10^6 DOF. ---
+    {
+        std::cout << "\nPhase 4 benchmark (one implicit solve, flat U=0, square domains):\n"
+                  << "    side      DOF     backend     wall_ms\n";
+        const int sides[3] = { 128, 256, 512 };
+        const double cs = 1.0;
+        const double dt_bench = 1.0e4;   // yr; 1/dt << D/h^2 -> diffusion-dominated matrix
+        for (int si = 0; si < 3; ++si)
+        {
+            const int side = sides[si];
+            for (int sc_choice = 0; sc_choice < 2; ++sc_choice)
+            {
+                lsdtt::lsdtt_raster_cpu dem = flat_strip(side, side, cs);
+                lsdtt::lsdtt_roering_implicit_options opts;
+                opts.D = static_cast<float>(D); opts.U = 0.0f;
+                opts.Sc = static_cast<float>(Sc); opts.nonlinear = true;
+                opts.dt_init = static_cast<float>(dt_bench);
+                opts.dt_max  = static_cast<float>(dt_bench);
+                opts.relaxation_omega = 0.7f; opts.picard_max_iter = 50;
+                opts.boundary_conditions = "opop";
+                opts.solver_choice = sc_choice; opts.n_threads = 0;
+                const std::vector<std::uint8_t> nochan(
+                    static_cast<std::size_t>(side) * side, 0);
+                const auto t0 = std::chrono::steady_clock::now();
+                lsdtt::lsdtt_roering_implicit_result r =
+                    lsdtt::compute_roering_hillslope_transport_implicit(
+                        dem, nochan, static_cast<float>(dt_bench), opts);
+                const auto t1 = std::chrono::steady_clock::now();
+                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                (void)r;
+                const long dof = static_cast<long>(side - 2) * (side - 2);  // 'o' edges fixed
+                std::cout << "  " << std::setw(6) << side << "  " << std::setw(9) << dof
+                          << "  " << std::setw(10) << (sc_choice == 0 ? "LDLT" : "CG+IC")
+                          << "  " << std::fixed << std::setprecision(1) << std::setw(9) << ms
+                          << std::scientific << std::setprecision(3) << "\n";
+            }
+        }
     }
 
     std::cout << "\nRESULT: " << (all_pass ? "PASS" : "FAIL") << "\n";

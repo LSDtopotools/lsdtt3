@@ -29,8 +29,13 @@
 
 #include "lsdtt_hillslope_transport_cpu.hpp"
 
+#ifdef _OPENMP
+#  include <omp.h>
+#endif
+
 #ifdef LSDTT_HAS_EIGEN
 #  include <Eigen/Sparse>
+#  include <Eigen/IterativeLinearSolvers>
 #endif
 
 namespace lsdtt
@@ -124,9 +129,18 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     // Phase 3 (done): adaptive iteration-count-based sub-stepping controller (§7)
     // with post-step face-slope projection / step rejection (§5 layer 3) and
     // omega auto-tuning on Picard divergence.
-    // TODO(Phase 4): analyzePattern() reuse, OpenMP triplet assembly, CG backend.
+    // Phase 4 (done): the sparsity pattern is fixed for the whole call (it depends
+    // only on the mask / boundary codes / DOF map, not on z), so analyzePattern()
+    // is called once and only factorize() runs each Picard iteration; the triplet
+    // assembly is OpenMP-parallel (per-thread buffers, then concatenate); a
+    // CG + IncompleteCholesky backend (solver_choice == 1) with warm-start is
+    // available for large grids; and a semi-implicit fast path takes a single
+    // lagged-coefficient solve when the field is far below Sc.
     // TODO(Phase 6): optional Newton / TR-BDF2 cores.
     // -------------------------------------------------------------------------
+#ifdef _OPENMP
+    if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
+#endif
     const lsdtt_raster_meta&    meta    = dem.get_meta();
     const int                   n_rows  = meta.n_rows;
     const int                   n_cols  = meta.n_cols;
@@ -291,57 +305,117 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         return mx;
     };
 
-    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
+    // Linear algebra backends (§6).  The sparsity pattern is fixed for the whole
+    // call, so the direct solver's symbolic analysis is done once (analyzePattern)
+    // and reused; only factorize() runs per Picard iteration.  solver_choice == 1
+    // selects CG + IncompleteCholesky (warm-started) for large grids where direct
+    // factor fill-in is prohibitive.
+    const int solver_choice = opts.solver_choice;
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> ldlt;
+    Eigen::ConjugateGradient<Eigen::SparseMatrix<double>,
+                             Eigen::Lower | Eigen::Upper,
+                             Eigen::IncompleteCholesky<double>> cg;
+    bool pattern_analyzed = false;
+    Eigen::SparseMatrix<double> A(static_cast<int>(n_dof), static_cast<int>(n_dof));
+
+#ifdef _OPENMP
+    const int n_assembly_threads = std::max(1, omp_get_max_threads());
+#else
+    const int n_assembly_threads = 1;
+#endif
 
     // One backward-Euler sub-step over dt with a damped Picard iteration from the
     // start-of-step field z_old (z is the iterate, advanced in place).  Returns
-    // whether Picard converged within picard_max_iter; reports the iteration count
-    // and the max |z − z_old| change accumulated over the step.
+    // whether Picard converged within iter_cap; reports the iteration count and the
+    // max |z − z_old| change accumulated over the step.  When semi_implicit is set
+    // (gentle field, §6 fast path) a single lagged-coefficient solve is taken and
+    // treated as converged.
     auto attempt_step = [&](double dt, const std::vector<double>& z_old,
                             double cur_omega, int& iters_out,
-                            double& step_max_dz) -> bool
+                            double& step_max_dz, int iter_cap,
+                            bool semi_implicit) -> bool
     {
         iters_out   = 0;
         step_max_dz = 0.0;
         bool converged = false;
-        for (int k = 0; k < picard_max_iter; ++k)
+        for (int k = 0; k < iter_cap; ++k)
         {
-            std::vector<Eigen::Triplet<double>> trips;
-            trips.reserve(static_cast<std::size_t>(n_dof) * 5);
+            // Per-thread triplet buffers, concatenated after the parallel region
+            // (the matrix pattern is identical every iteration; b(row) writes are to
+            // unique rows so they need no synchronisation).
+            std::vector<std::vector<Eigen::Triplet<double>>> tl_trips(
+                static_cast<std::size_t>(n_assembly_threads));
             Eigen::VectorXd b(n_dof);
 
-            for (int r = 0; r < n_rows; ++r)
-                for (int c = 0; c < n_cols; ++c)
-                {
-                    const std::int64_t f = idx(r, c);
-                    const std::int64_t row = flat_to_dof[static_cast<std::size_t>(f)];
-                    if (row < 0) continue;           // skip Dirichlet / masked
-
-                    double diag = 1.0 / dt;
-                    double rhs  = z_old[static_cast<std::size_t>(f)] / dt + U;
-
-                    for (int dir = 0; dir < 4; ++dir)
+            #pragma omp parallel
+            {
+#ifdef _OPENMP
+                const int tid = omp_get_thread_num();
+#else
+                const int tid = 0;
+#endif
+                std::vector<Eigen::Triplet<double>>& trips =
+                    tl_trips[static_cast<std::size_t>(tid)];
+                trips.reserve(static_cast<std::size_t>(n_dof) * 5
+                              / static_cast<std::size_t>(n_assembly_threads) + 16);
+                #pragma omp for schedule(static)
+                for (int r = 0; r < n_rows; ++r)
+                    for (int c = 0; c < n_cols; ++c)
                     {
-                        int nr = 0, nc = 0;
-                        if (!get_face(r, c, dir, nr, nc)) continue;   // no-flux face
-                        const double Deff = face_Deff(r, c, nr, nc, dir);
-                        const double w    = Deff / h2;
-                        diag += w;
-                        const std::int64_t ncol =
-                            flat_to_dof[static_cast<std::size_t>(idx(nr, nc))];
-                        if (ncol >= 0)
-                            trips.emplace_back(static_cast<int>(row), static_cast<int>(ncol), -w);
-                        else                                           // Dirichlet neighbour
-                            rhs += w * z[static_cast<std::size_t>(idx(nr, nc))];
-                    }
-                    trips.emplace_back(static_cast<int>(row), static_cast<int>(row), diag);
-                    b(static_cast<int>(row)) = rhs;
-                }
+                        const std::int64_t f = idx(r, c);
+                        const std::int64_t row = flat_to_dof[static_cast<std::size_t>(f)];
+                        if (row < 0) continue;           // skip Dirichlet / masked
 
-            Eigen::SparseMatrix<double> A(static_cast<int>(n_dof), static_cast<int>(n_dof));
+                        double diag = 1.0 / dt;
+                        double rhs  = z_old[static_cast<std::size_t>(f)] / dt + U;
+
+                        for (int dir = 0; dir < 4; ++dir)
+                        {
+                            int nr = 0, nc = 0;
+                            if (!get_face(r, c, dir, nr, nc)) continue;   // no-flux face
+                            const double Deff = face_Deff(r, c, nr, nc, dir);
+                            const double w    = Deff / h2;
+                            diag += w;
+                            const std::int64_t ncol =
+                                flat_to_dof[static_cast<std::size_t>(idx(nr, nc))];
+                            if (ncol >= 0)
+                                trips.emplace_back(static_cast<int>(row), static_cast<int>(ncol), -w);
+                            else                                          // Dirichlet neighbour
+                                rhs += w * z[static_cast<std::size_t>(idx(nr, nc))];
+                        }
+                        trips.emplace_back(static_cast<int>(row), static_cast<int>(row), diag);
+                        b(static_cast<int>(row)) = rhs;
+                    }
+            }
+
+            std::size_t n_trips = 0;
+            for (const auto& v : tl_trips) n_trips += v.size();
+            std::vector<Eigen::Triplet<double>> trips;
+            trips.reserve(n_trips);
+            for (auto& v : tl_trips) trips.insert(trips.end(), v.begin(), v.end());
+
             A.setFromTriplets(trips.begin(), trips.end());
-            solver.compute(A);
-            const Eigen::VectorXd zstar = solver.solve(b);
+
+            Eigen::VectorXd zstar;
+            if (solver_choice == 1)
+            {
+                // CG + IncompleteCholesky, warm-started from the current iterate.
+                cg.compute(A);
+                Eigen::VectorXd guess(n_dof);
+                for (std::int64_t g = 0; g < n_cells; ++g)
+                {
+                    const std::int64_t row = flat_to_dof[static_cast<std::size_t>(g)];
+                    if (row >= 0) guess(static_cast<int>(row)) = z[static_cast<std::size_t>(g)];
+                }
+                zstar = cg.solveWithGuess(b, guess);
+            }
+            else
+            {
+                // Direct: reuse the symbolic factorisation; refactor numerically.
+                if (!pattern_analyzed) { ldlt.analyzePattern(A); pattern_analyzed = true; }
+                ldlt.factorize(A);
+                zstar = ldlt.solve(b);
+            }
             ++iters_out;
 
             // Damped update of the DOF cells; converge on max|Δz| between iterates.
@@ -355,7 +429,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
                 max_dz = std::max(max_dz, std::abs(znew - z[static_cast<std::size_t>(f)]));
                 z[static_cast<std::size_t>(f)] = znew;
             }
-            if (!nonlinear) { converged = true; break; }   // linear: one solve is exact
+            if (!nonlinear)    { converged = true; break; }  // linear: one solve is exact
+            if (semi_implicit) { converged = true; break; }  // gentle field fast path
             if (max_dz < picard_tol) { converged = true; break; }
         }
         for (std::int64_t f = 0; f < n_cells; ++f)
@@ -425,7 +500,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         {
             z_old = z;
             int iters = 0; double step_dz = 0.0;
-            attempt_step(dt_lin, z_old, 1.0, iters, step_dz);
+            attempt_step(dt_lin, z_old, 1.0, iters, step_dz, picard_max_iter, false);
             total_picard += iters;
             ++n_sub;
         }
@@ -447,6 +522,10 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         const double reject_ratio = r_max;          // accept needs max face ratio < r_max
         const int    k_lo = 5;                       // "easy" Picard convergence
         const double omega_floor = 0.1;
+        // Semi-implicit fast path (§6): when the field is well below Sc the
+        // coefficient lag is harmless, so a single lagged solve suffices.  As
+        // slopes steepen toward Sc the controller drops back to full Picard.
+        const double semi_implicit_ratio = 0.5;
 
         double cur_omega = omega;
         double dt = (opts.dt_init > 0.0f) ? static_cast<double>(opts.dt_init)
@@ -465,8 +544,15 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
             if (dt < dt_min_eff) dt = dt_min_eff;
 
             z_old = z;
+            // Use the semi-implicit single-solve path only when the field is gentle
+            // *and* damping is undisturbed (cur_omega == omega); a tightened omega
+            // signals a recent divergence, so fall back to full Picard.
+            const bool semi = (max_face_ratio() < semi_implicit_ratio)
+                              && (cur_omega >= omega - 1e-12);
+            const int  iter_cap = semi ? 1 : picard_max_iter;
             int iters = 0; double step_dz = 0.0;
-            const bool converged = attempt_step(dt, z_old, cur_omega, iters, step_dz);
+            const bool converged = attempt_step(dt, z_old, cur_omega, iters, step_dz,
+                                                iter_cap, semi);
             const double mratio = max_face_ratio();
             const bool slope_ok = (mratio < reject_ratio);
             const bool dz_ok    = (dz_target <= 0.0) || (step_dz <= dz_target);
