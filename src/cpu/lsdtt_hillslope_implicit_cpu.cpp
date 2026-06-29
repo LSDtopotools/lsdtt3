@@ -136,7 +136,12 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     // CG + IncompleteCholesky backend (solver_choice == 1) with warm-start is
     // available for large grids; and a semi-implicit fast path takes a single
     // lagged-coefficient solve when the field is far below Sc.
-    // TODO(Phase 6): optional Newton / TR-BDF2 cores.
+    // Phase 6 (done, TR-BDF2 only): time_integrator == 1 selects a 2nd-order,
+    // L-stable TR-BDF2 composite (trapezoidal stage over γ·dt + BDF2 stage over
+    // (1−γ)·dt, γ = 2−√2), reusing the SPD Picard stage solver, with an embedded
+    // local-error estimate driving a PI step-size controller for time-accuracy.
+    // The Newton core remains deferred (Picard converges in a few iterations, so
+    // its 9-point nonsymmetric Jacobian buys little over the TR-BDF2 accuracy path).
     // -------------------------------------------------------------------------
 #ifdef _OPENMP
     if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
@@ -442,6 +447,213 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         return converged;
     };
 
+    // -------------------------------------------------------------------------
+    // Phase 6: TR-BDF2 building blocks (used only when time_integrator == 1).
+    // -------------------------------------------------------------------------
+
+    // Generic implicit stage solver: solve the per-Picard-iterate linear system
+    //   [ I − beta·L(D_eff) ] y = g
+    // for the stage unknown y, with the nonlinear face diffusivity lagged at the
+    // current iterate (global z), damped by cur_omega.  g is a per-cell RHS field
+    // (used only at DOF rows); Dirichlet cells keep their fixed value and feed
+    // neighbours' RHS.  z is the iterate, warm-started by the caller and advanced in
+    // place.  Mirrors the backward-Euler assembly in attempt_step but in the
+    // [I − beta·L] stage form (beta = a·dt) instead of [I/dt − L]; shares the cached
+    // symbolic factorisation and the CG/LDLT backend selection.  Returns whether the
+    // Picard iteration converged.
+    auto solve_stage = [&](double beta, const std::vector<double>& g,
+                           double cur_omega, int iter_cap, int& iters_out) -> bool
+    {
+        iters_out = 0;
+        bool converged = false;
+        for (int k = 0; k < iter_cap; ++k)
+        {
+            std::vector<std::vector<Eigen::Triplet<double>>> tl_trips(
+                static_cast<std::size_t>(n_assembly_threads));
+            Eigen::VectorXd b(n_dof);
+
+            #pragma omp parallel
+            {
+#ifdef _OPENMP
+                const int tid = omp_get_thread_num();
+#else
+                const int tid = 0;
+#endif
+                std::vector<Eigen::Triplet<double>>& trips =
+                    tl_trips[static_cast<std::size_t>(tid)];
+                trips.reserve(static_cast<std::size_t>(n_dof) * 5
+                              / static_cast<std::size_t>(n_assembly_threads) + 16);
+                #pragma omp for schedule(static)
+                for (int r = 0; r < n_rows; ++r)
+                    for (int c = 0; c < n_cols; ++c)
+                    {
+                        const std::int64_t f = idx(r, c);
+                        const std::int64_t row = flat_to_dof[static_cast<std::size_t>(f)];
+                        if (row < 0) continue;           // skip Dirichlet / masked
+
+                        double diag = 1.0;
+                        double rhs  = g[static_cast<std::size_t>(f)];
+                        for (int dir = 0; dir < 4; ++dir)
+                        {
+                            int nr = 0, nc = 0;
+                            if (!get_face(r, c, dir, nr, nc)) continue;   // no-flux face
+                            const double w = beta * face_Deff(r, c, nr, nc, dir) / h2;
+                            diag += w;
+                            const std::int64_t ncol =
+                                flat_to_dof[static_cast<std::size_t>(idx(nr, nc))];
+                            if (ncol >= 0)
+                                trips.emplace_back(static_cast<int>(row), static_cast<int>(ncol), -w);
+                            else                                          // Dirichlet neighbour
+                                rhs += w * z[static_cast<std::size_t>(idx(nr, nc))];
+                        }
+                        trips.emplace_back(static_cast<int>(row), static_cast<int>(row), diag);
+                        b(static_cast<int>(row)) = rhs;
+                    }
+            }
+
+            std::size_t n_trips = 0;
+            for (const auto& v : tl_trips) n_trips += v.size();
+            std::vector<Eigen::Triplet<double>> trips;
+            trips.reserve(n_trips);
+            for (auto& v : tl_trips) trips.insert(trips.end(), v.begin(), v.end());
+            A.setFromTriplets(trips.begin(), trips.end());
+
+            Eigen::VectorXd ystar;
+            if (solver_choice == 1)
+            {
+                cg.compute(A);
+                Eigen::VectorXd guess(n_dof);
+                for (std::int64_t gg = 0; gg < n_cells; ++gg)
+                {
+                    const std::int64_t row = flat_to_dof[static_cast<std::size_t>(gg)];
+                    if (row >= 0) guess(static_cast<int>(row)) = z[static_cast<std::size_t>(gg)];
+                }
+                ystar = cg.solveWithGuess(b, guess);
+            }
+            else
+            {
+                if (!pattern_analyzed) { ldlt.analyzePattern(A); pattern_analyzed = true; }
+                ldlt.factorize(A);
+                ystar = ldlt.solve(b);
+            }
+            ++iters_out;
+
+            double max_dz = 0.0;
+            for (std::int64_t f = 0; f < n_cells; ++f)
+            {
+                const std::int64_t row = flat_to_dof[static_cast<std::size_t>(f)];
+                if (row < 0) continue;
+                const double znew = z[static_cast<std::size_t>(f)]
+                    + cur_omega * (ystar(static_cast<int>(row)) - z[static_cast<std::size_t>(f)]);
+                max_dz = std::max(max_dz, std::abs(znew - z[static_cast<std::size_t>(f)]));
+                z[static_cast<std::size_t>(f)] = znew;
+            }
+            if (!nonlinear)          { converged = true; break; }  // linear: one solve is exact
+            if (max_dz < picard_tol) { converged = true; break; }
+        }
+        return converged;
+    };
+
+    // Apply the spatial operator L(z)_P = (1/h²) Σ_f D_eff,f (z_nb − z_P) at the
+    // current field z, over DOF cells (Dirichlet / masked rows left 0).  Used to
+    // form the explicit f_n = U + L(z^n) term in the TR-BDF2 stages and error
+    // estimate; D_eff is evaluated at the field as it currently stands in z.
+    auto compute_L = [&](std::vector<double>& Lout)
+    {
+        Lout.assign(static_cast<std::size_t>(n_cells), 0.0);
+        for (int r = 0; r < n_rows; ++r)
+            for (int c = 0; c < n_cols; ++c)
+            {
+                const std::int64_t f = idx(r, c);
+                if (flat_to_dof[static_cast<std::size_t>(f)] < 0) continue;
+                const double zP = z[static_cast<std::size_t>(f)];
+                double acc = 0.0;
+                for (int dir = 0; dir < 4; ++dir)
+                {
+                    int nr = 0, nc = 0;
+                    if (!get_face(r, c, dir, nr, nc)) continue;
+                    const double w = face_Deff(r, c, nr, nc, dir) / h2;
+                    acc += w * (z[static_cast<std::size_t>(idx(nr, nc))] - zP);
+                }
+                Lout[static_cast<std::size_t>(f)] = acc;
+            }
+    };
+
+    // TR-BDF2 coefficients (γ = 2 − √2): a trapezoidal stage over γ·dt to z_γ, then
+    // a BDF2 stage over (1−γ)·dt to z^{n+1}.  Both stages are SPD [I − beta·L]
+    // solves dispatched through solve_stage.  err_c scales the embedded local-error
+    // estimate (Hosea & Shampine 1996, "Analysis and implementation of TR-BDF2").
+    const double tr_gamma = 2.0 - std::sqrt(2.0);
+    const double bdf_c1 = 1.0 / (tr_gamma * (2.0 - tr_gamma));
+    const double bdf_c2 = (1.0 - tr_gamma) * (1.0 - tr_gamma)
+                          / (tr_gamma * (2.0 - tr_gamma));
+    const double bdf_c3 = (1.0 - tr_gamma) / (2.0 - tr_gamma);
+    const double err_c  = (-3.0 * tr_gamma * tr_gamma + 4.0 * tr_gamma - 2.0)
+                          / (12.0 * (2.0 - tr_gamma));
+
+    // One TR-BDF2 step from z^n (which z must hold on entry; z holds z^{n+1} on
+    // return).  Produces a 2nd-order, L-stable update plus an embedded local-error
+    // estimate err_out (elevation units) from the three stage derivatives f_n, f_γ,
+    // f_{n+1}.  The combination a0·f_n + a1·f_γ + a2·f_{n+1} is a second divided
+    // difference of f (a0+a1+a2 = 0), so it vanishes for constant f and scales as
+    // O(dt²) → err = O(dt³), the correct order for a 2nd-order method.  f_γ and
+    // f_{n+1} are recovered from the converged stage relations, so the estimate
+    // costs no extra solves or operator applies beyond L(z^n).  Returns whether both
+    // stages' Picard iterations converged.
+    auto tr_bdf2_step = [&](double dt, const std::vector<double>& z_n,
+                            double cur_omega, int iter_cap,
+                            int& iters_out, double& err_out,
+                            double& step_max_dz) -> bool
+    {
+        std::vector<double> Lzn;            // L(z^n); z currently holds z^n
+        compute_L(Lzn);
+
+        // TR stage: [I − (γ·dt/2) L] z_γ = z^n + (γ·dt/2) L(z^n) + γ·dt·U
+        const double beta_tr = 0.5 * tr_gamma * dt;
+        std::vector<double> g(static_cast<std::size_t>(n_cells), 0.0);
+        for (std::int64_t f = 0; f < n_cells; ++f)
+        {
+            const std::size_t s = static_cast<std::size_t>(f);
+            if (flat_to_dof[s] < 0) continue;
+            g[s] = z_n[s] + beta_tr * Lzn[s] + tr_gamma * dt * U;
+        }
+        int it1 = 0;
+        const bool c_tr = solve_stage(beta_tr, g, cur_omega, iter_cap, it1);
+        std::vector<double> z_gamma = z;    // stage-1 solution
+
+        // BDF2 stage: [I − c3·dt·L] z^{n+1} = c1·z_γ − c2·z^n + c3·dt·U
+        const double beta_bdf = bdf_c3 * dt;
+        for (std::int64_t f = 0; f < n_cells; ++f)
+        {
+            const std::size_t s = static_cast<std::size_t>(f);
+            if (flat_to_dof[s] < 0) continue;
+            g[s] = bdf_c1 * z_gamma[s] - bdf_c2 * z_n[s] + bdf_c3 * dt * U;
+        }
+        int it2 = 0;
+        const bool c_bdf = solve_stage(beta_bdf, g, cur_omega, iter_cap, it2);
+        iters_out = it1 + it2;              // z now holds z^{n+1}
+
+        const double a0 =  1.0 / tr_gamma;
+        const double a1 = -1.0 / (tr_gamma * (1.0 - tr_gamma));
+        const double a2 =  1.0 / (1.0 - tr_gamma);
+        double err = 0.0, smdz = 0.0;
+        for (std::int64_t f = 0; f < n_cells; ++f)
+        {
+            const std::size_t s = static_cast<std::size_t>(f);
+            if (flat_to_dof[s] < 0) continue;
+            const double fn   = U + Lzn[s];
+            const double fg   = 2.0 * (z_gamma[s] - z_n[s]) / (tr_gamma * dt) - fn;
+            const double fnp1 = (z[s] - bdf_c1 * z_gamma[s] + bdf_c2 * z_n[s])
+                                / (bdf_c3 * dt);
+            const double e = err_c * dt * (a0 * fn + a1 * fg + a2 * fnp1);
+            err  = std::max(err, std::abs(e));
+            smdz = std::max(smdz, std::abs(z[s] - z_n[s]));
+        }
+        err_out     = err;
+        step_max_dz = smdz;
+        return c_tr && c_bdf;
+    };
+
     // Last-resort slope-restoration projection (limiter layer 3, §5): clamp DOF
     // cells by Gauss-Seidel sweeps so no cardinal face-normal slope exceeds
     // r_max·Sc.  Only lowers cells (over-steepening from uplift makes ridge cells
@@ -486,7 +698,113 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     int    total_picard  = 0;
     double final_dt      = 0.0;
 
-    if (!nonlinear)
+    if (opts.time_integrator == 1)
+    {
+        // ---------------------------------------------------------------------
+        // Phase 6: TR-BDF2 with embedded-error PI step control (§7).  Each step
+        // is a 2nd-order, L-stable composite solve; the embedded local-error
+        // estimate drives a PI controller for genuine time-accuracy.  The same
+        // slope-limiter accept/reject and floor projection as the backward-Euler
+        // adaptive path guard sub-criticality.  Handles linear and nonlinear
+        // (each stage solve simply converges in one Picard pass when linear).
+        // ---------------------------------------------------------------------
+        const double dt_max_eff = (opts.dt_max > 0.0f) ? static_cast<double>(opts.dt_max)
+                                                       : static_cast<double>(dt_total);
+        double dt_min_eff = (opts.dt_min > 0.0f) ? static_cast<double>(opts.dt_min)
+                                                 : static_cast<double>(dt_total) * 1e-6;
+        dt_min_eff = std::min(dt_min_eff, dt_max_eff);
+        const double grow   = (opts.grow_factor   > 1.0f) ? static_cast<double>(opts.grow_factor)   : 1.5;
+        const double shrink = (opts.shrink_factor > 0.0f && opts.shrink_factor < 1.0f)
+                              ? static_cast<double>(opts.shrink_factor) : 0.5;
+        const double reject_ratio = r_max;
+        const double omega_floor  = 0.1;
+
+        // Error tolerance (elevation units).  Auto: a small fraction of the
+        // current relief, floored, when the user leaves error_tol == 0.
+        double tol = static_cast<double>(opts.error_tol);
+        if (tol <= 0.0)
+        {
+            double zmin =  std::numeric_limits<double>::infinity();
+            double zmax = -std::numeric_limits<double>::infinity();
+            for (std::int64_t f = 0; f < n_cells; ++f)
+            {
+                if (flat_to_dof[static_cast<std::size_t>(f)] < 0) continue;
+                zmin = std::min(zmin, z[static_cast<std::size_t>(f)]);
+                zmax = std::max(zmax, z[static_cast<std::size_t>(f)]);
+            }
+            const double relief = (zmax > zmin) ? (zmax - zmin) : 1.0;
+            tol = std::max(1e-4 * relief, 1e-9);
+        }
+
+        const double exponent = 1.0 / 3.0;     // 1/(order+1); TR-BDF2 is 2nd order
+        const double safety   = 0.9;
+
+        double cur_omega = omega;
+        double dt = (opts.dt_init > 0.0f) ? static_cast<double>(opts.dt_init)
+                                          : static_cast<double>(dt_total);
+        dt = std::min(dt, std::min(dt_max_eff, static_cast<double>(dt_total)));
+        double t_remaining = static_cast<double>(dt_total);
+        const double t_eps = static_cast<double>(dt_total) * 1e-12;
+        double err_prev = -1.0;                 // <0 → no PI memory yet
+        const int max_attempts = 2000000;
+        int       attempts = 0;
+
+        while (t_remaining > t_eps && attempts < max_attempts)
+        {
+            ++attempts;
+            dt = std::min(dt, t_remaining);
+            dt = std::min(dt, dt_max_eff);
+            if (dt < dt_min_eff) dt = dt_min_eff;
+
+            z_old = z;                          // z^n
+            int iters = 0; double err = 0.0, step_dz = 0.0;
+            const bool converged = tr_bdf2_step(dt, z_old, cur_omega, picard_max_iter,
+                                                iters, err, step_dz);
+            const double mratio   = max_face_ratio();
+            const bool   slope_ok = (mratio < reject_ratio);
+            const bool   err_ok   = (err <= tol);
+            const bool   accept   = converged && slope_ok && err_ok;
+
+            // PI step-size factor (Gustafsson) from the embedded error estimate.
+            double fac;
+            if (err <= 0.0)
+                fac = grow;
+            else if (err_prev > 0.0)
+                fac = safety * std::pow(tol / err, 0.7 * exponent)
+                             * std::pow(err_prev / err, 0.4 * exponent);
+            else
+                fac = safety * std::pow(tol / err, exponent);
+            fac = std::max(shrink, std::min(grow, fac));
+
+            if (accept)
+            {
+                t_remaining -= dt; ++n_sub; total_picard += iters; final_dt = dt;
+                err_prev  = err;
+                cur_omega = std::min(omega, cur_omega * 1.1);
+                dt = std::min(dt * fac, dt_max_eff);
+            }
+            else if (dt <= dt_min_eff * (1.0 + 1e-9))
+            {
+                // At the floor and still failing: force progress, shave any
+                // super-critical slopes (layer 3), flag the projection.
+                apply_projection();
+                limiter_fired = true;
+                t_remaining -= dt; ++n_sub; total_picard += iters; final_dt = dt;
+                if (err > 0.0) err_prev = err;
+            }
+            else
+            {
+                // Reject: discard the attempt, shrink dt (always by at least
+                // `shrink`), retry; tighten damping after a Picard divergence.
+                z = z_old;
+                ++n_rejected;
+                dt = std::max(dt * std::min(fac, shrink), dt_min_eff);
+                if (!converged) cur_omega = std::max(omega_floor, cur_omega * 0.7);
+            }
+        }
+        if (final_dt <= 0.0) final_dt = dt;
+    }
+    else if (!nonlinear)
     {
         // Linear backward-Euler: fixed sub-stepping (one exact solve per step), no
         // limiter / rejection (no Sc constraint in the linear law).
