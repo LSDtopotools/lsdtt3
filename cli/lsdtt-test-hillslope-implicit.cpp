@@ -47,6 +47,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "lsdtt_hillslope_implicit_cpu.hpp"
+#include "lsdtt_hillslope_steady_state_cpu.hpp"
 
 namespace
 {
@@ -212,6 +213,39 @@ double field_linf_diff(const lsdtt::lsdtt_raster_cpu& a,
     for (std::size_t i = 0; i < n; ++i)
         mx = std::max(mx, std::abs(static_cast<double>(za[i]) - static_cast<double>(zb[i])));
     return mx;
+}
+
+// Convert a geometry channel-mask raster (1.0 on channels) to the uint8
+// is_channel vector both hillslope solvers consume as Dirichlet sinks.
+std::vector<std::uint8_t> mask_to_is_channel(const lsdtt::lsdtt_raster_cpu& cm)
+{
+    const std::vector<float>& d = cm.get_data();
+    std::vector<std::uint8_t> ch(d.size(), 0);
+    for (std::size_t i = 0; i < d.size(); ++i)
+        ch[i] = (d[i] > 0.5f) ? std::uint8_t{1} : std::uint8_t{0};
+    return ch;
+}
+
+// Max |z| over a field (its relief above the z_ch = 0 channels) — used as the
+// peak scale for relative-error reporting.
+double field_peak_abs(const lsdtt::lsdtt_raster_cpu& f)
+{
+    double mx = 0.0;
+    for (float v : f.get_data()) mx = std::max(mx, std::abs(static_cast<double>(v)));
+    return mx;
+}
+
+// Total volume of the field above a datum: sum( (z - datum) * cell_area ).
+// Units m^3.  Used by the conservation test (plan section 9 item 7).
+double total_volume_above(const lsdtt::lsdtt_raster_cpu& field, double datum)
+{
+    const std::vector<float>& z = field.get_data();
+    const lsdtt::lsdtt_raster_meta& m = field.get_meta();
+    const double cell_area = m.cell_size * m.cell_size;
+    double v = 0.0;
+    for (std::size_t i = 0; i < z.size(); ++i)
+        v += (static_cast<double>(z[i]) - datum) * cell_area;
+    return v;
 }
 
 // Output directory for plot CSVs consumed by lsdviztools.lsdtransientvalidation.
@@ -503,6 +537,348 @@ int main()
                           << std::scientific << std::setprecision(3) << "\n";
             }
         }
+    }
+
+    // --- Test 7: conservation (plan section 9 item 7). -----------------------
+    // With U = 0 and reflecting (no-flux 'nnnn') boundaries and NO channel sinks,
+    // the discrete conservative diffusion operator moves mass between cells but
+    // adds/removes none across the no-flux edges, so the total volume above the
+    // datum must be conserved to solver/round-off tolerance as the field relaxes.
+    // We start from a GENTLE linear-ramp ridge (max slope 0.4 = 0.5*Sc, well below
+    // Sc) so the r_max limiter NEVER fires -- the Carretier slope-restoration
+    // removal path (plan section 5) would break conservation if it did, so we stay
+    // in the limiter-off regime and assert limiter_fired == false.  Volume is
+    // tracked over the whole simulation by integrating in successive chunks.
+    {
+        const double cs  = 1.0;
+        const int    nr  = static_cast<int>(40.0 / cs) + 1;     // 41 rows, L = 20
+        const double amp = 8.0;                                 // crest height: max slope 8/20 = 0.4
+        const double L   = 0.5 * (nr - 1) * cs;
+        const double tau = L * L / D;
+        const double datum = 0.0;
+
+        // Gentle triangular ridge: flat IC would be trivially conserved, so use a
+        // non-trivial field that actually diffuses.  channel_mask is ignored (we
+        // pass an all-zero is_channel below); the ends come from 'nnnn' no-flux.
+        lsdtt::lsdtt_raster_cpu dem = lsdtt::generate_hillslope_strip_surface(
+            nr, n_cols, cs,
+            lsdtt::lsdtt_strip_channel_config::both_ends,
+            lsdtt::lsdtt_strip_init_profile::linear_ramp,
+            /*cross_axis_is_x=*/false, /*baselevel_elevation=*/0.0,
+            /*half_width=*/0.0, /*U=*/0.0, /*D=*/D, /*Sc=*/Sc,
+            /*nonlinear_profile=*/false, /*init_amplitude=*/amp).dem;
+
+        lsdtt::lsdtt_roering_implicit_options opts;
+        opts.D = static_cast<float>(D);
+        opts.U = 0.0f;                          // conservation requires no source
+        opts.Sc = static_cast<float>(Sc);
+        opts.nonlinear = true;
+        opts.relaxation_omega = 0.7f;
+        opts.picard_max_iter  = 200;
+        opts.boundary_conditions = "nnnn";      // all reflecting / no-flux
+        const std::vector<std::uint8_t> no_channels(
+            static_cast<std::size_t>(nr) * n_cols, 0);   // NO Dirichlet sinks
+
+        const double v0 = total_volume_above(dem, datum);
+        // Integrate in successive chunks, tracking volume the whole way.
+        const int    n_chunks   = 8;
+        const double chunk_dt   = tau;                   // total = 8*tau -> well relaxed
+        double max_rel_drift    = 0.0;
+        bool   any_limiter      = false;
+        float  final_ratio      = 0.0f;
+        lsdtt::lsdtt_raster_cpu field = dem;
+        for (int c = 0; c < n_chunks; ++c)
+        {
+            lsdtt::lsdtt_roering_implicit_result r =
+                lsdtt::compute_roering_hillslope_transport_implicit(
+                    field, no_channels, static_cast<float>(chunk_dt), opts);
+            field = r.elevation;
+            any_limiter = any_limiter || r.limiter_fired;
+            final_ratio = r.max_slope_ratio;
+            const double vc = total_volume_above(field, datum);
+            const double drift = (std::abs(v0) > 0.0) ? std::abs(vc - v0) / std::abs(v0)
+                                                      : std::abs(vc - v0);
+            max_rel_drift = std::max(max_rel_drift, drift);
+        }
+        const double v_end   = total_volume_above(field, datum);
+        const double rel_end = (std::abs(v0) > 0.0) ? std::abs(v_end - v0) / std::abs(v0)
+                                                    : std::abs(v_end - v0);
+
+        std::cout << "\nTest 7 conservation (U=0, no-flux 'nnnn', no sinks):\n"
+                  << "  V0=" << v0 << " m^3   V_end=" << v_end << " m^3\n"
+                  << "  max rel volume drift over run = " << max_rel_drift
+                  << "  (end rel drift = " << rel_end << ")\n"
+                  << "  max_slope_ratio=" << final_ratio
+                  << "  limiter_fired=" << (any_limiter ? "yes" : "no") << "\n";
+        // Closed budget: with no source and no-flux edges the only way volume can
+        // change is solver/round-off error.  Require tight conservation AND that
+        // the limiter never fired (the conservation-breaking removal path).
+        const double conserve_tol = 1.0e-6;
+        const bool ok = (max_rel_drift <= conserve_tol)
+                     && !any_limiter
+                     && (final_ratio <= 1.0f);
+        if (!ok) all_pass = false;
+    }
+
+    // --- Test 4: match the SOR steady state (plan section 9 item 4). ----------
+    // Run the transient implicit solver to convergence (and, in linear mode, with
+    // ONE huge backward-Euler step) and compare against compute_hillslope_steady_state
+    // on the SAME DEM + is_channel.  Both must agree to solver tolerance because they
+    // assemble the SAME shared discretization operator (plan section 3).
+    //
+    // OPTION (a) of the plan section 3 caveat is used: the comparison is restricted to
+    // 'n'/'p' edges with is_channel supplying the Dirichlet sinks, so NO change to the
+    // SOR solver is required.  The new 'o' = fixed-elevation BC of the implicit solver
+    // is deliberately NOT exercised here (the existing SOR/explicit solvers treat 'o'
+    // AND 'n' as Neumann, so an 'o' edge would make the two operators disagree).
+    //
+    // Domain: a hillslope strip (channels on the top/bottom rows via the geometry
+    // channel_mask, NOT the 'o' code), PERIODIC column edges ('p'), no-flux 'n' on the
+    // channel rows (the channels override them, so no Neumann face is ever assembled).
+    // The two solvers' nonlinear face diffusivities also coincide exactly on this
+    // 1D-varying strip: the cross-slope is uniform across each face, so the implicit
+    // face-centred D_eff equals the SOR per-cell D_eff (plan section 3).  Driving is
+    // kept sub-critical (U*L/D = 0.5 = 0.625*Sc) so neither solver's slope cap fires.
+    {
+        const double cs   = 1.0;
+        const int    nr   = 21;            // L = 10 m
+        const double L    = 0.5 * (nr - 1) * cs;
+        const double tau  = L * L / D;     // diffusive time scale
+        const std::string bc = "npnp";     // N/S no-flux (channels override), E/W periodic
+
+        const lsdtt::lsdtt_hillslope_strip_surface strip =
+            lsdtt::generate_hillslope_strip_surface(
+                nr, n_cols, cs,
+                lsdtt::lsdtt_strip_channel_config::both_ends,
+                lsdtt::lsdtt_strip_init_profile::flat,
+                /*cross_axis_is_x=*/false, /*baselevel_elevation=*/0.0);
+        const lsdtt::lsdtt_raster_cpu&  dem        = strip.dem;
+        const std::vector<std::uint8_t> is_channel = mask_to_is_channel(strip.channel_mask);
+
+        std::cout << "\nTest 4 match the SOR steady state (shared operator, BC "
+                  << bc << ", is_channel Dirichlet ends):\n";
+
+        // -- Linear mode: one huge dt is an exact backward-Euler steady solve. -----
+        // The implicit and SOR operators are the identical 5-point Laplacian here.
+        {
+            lsdtt::lsdtt_roering_implicit_options iopts;
+            iopts.D = static_cast<float>(D);  iopts.U = static_cast<float>(U);
+            iopts.Sc = static_cast<float>(Sc); iopts.nonlinear = false;
+            iopts.boundary_conditions = bc;
+            iopts.dt_init = 1.0e12f;          // one huge backward-Euler step
+            const lsdtt::lsdtt_raster_cpu fi =
+                lsdtt::compute_roering_hillslope_transport_implicit(
+                    dem, is_channel, 1.0e12f, iopts).elevation;
+
+            lsdtt::lsdtt_hillslope_steady_state_options sopts;
+            sopts.D = static_cast<float>(D);  sopts.U = static_cast<float>(U);
+            sopts.Sc = static_cast<float>(Sc); sopts.nonlinear = false;
+            sopts.boundary_conditions = bc;
+            sopts.tolerance = 1.0e-6f; sopts.max_iterations = 200000;
+            const lsdtt::lsdtt_hillslope_steady_state_result sr =
+                lsdtt::compute_hillslope_steady_state(dem, is_channel, sopts);
+
+            const double diff = field_linf_diff(fi, sr.elevation);
+            const double peak = field_peak_abs(sr.elevation);
+            const double rel  = (peak > 0.0) ? diff / peak : diff;
+            std::cout << "  linear   : Linf(implicit-SOR)=" << diff << "  peak=" << peak
+                      << "  rel=" << rel << "  (SOR iters=" << sr.n_iterations
+                      << ", res=" << sr.final_residual << ")\n";
+            if (rel > 1.0e-3) all_pass = false;
+        }
+
+        // -- Nonlinear (Roering) mode: integrate to steady state, compare to SOR. ---
+        {
+            lsdtt::lsdtt_roering_implicit_options iopts;
+            iopts.D = static_cast<float>(D);  iopts.U = static_cast<float>(U);
+            iopts.Sc = static_cast<float>(Sc); iopts.nonlinear = true;
+            iopts.boundary_conditions = bc;
+            iopts.relaxation_omega = 0.7f; iopts.picard_max_iter = 200;
+            iopts.picard_tol = 1.0e-7f;
+            iopts.dt_init = static_cast<float>(tau / 40.0);
+            const lsdtt::lsdtt_roering_implicit_result ir =
+                lsdtt::compute_roering_hillslope_transport_implicit(
+                    dem, is_channel, static_cast<float>(16.0 * tau), iopts);
+
+            lsdtt::lsdtt_hillslope_steady_state_options sopts;
+            sopts.D = static_cast<float>(D);  sopts.U = static_cast<float>(U);
+            sopts.Sc = static_cast<float>(Sc); sopts.nonlinear = true;
+            sopts.boundary_conditions = bc;
+            sopts.tolerance = 1.0e-6f; sopts.max_iterations = 200000;
+            const lsdtt::lsdtt_hillslope_steady_state_result sr =
+                lsdtt::compute_hillslope_steady_state(dem, is_channel, sopts);
+
+            const double diff = field_linf_diff(ir.elevation, sr.elevation);
+            const double peak = field_peak_abs(sr.elevation);
+            const double rel  = (peak > 0.0) ? diff / peak : diff;
+            std::cout << "  nonlinear: Linf(implicit-SOR)=" << diff << "  peak=" << peak
+                      << "  rel=" << rel << "  (SOR iters=" << sr.n_iterations
+                      << ", res=" << sr.final_residual
+                      << "; implicit substeps=" << ir.n_substeps
+                      << ", max_slope_ratio=" << ir.max_slope_ratio << ")\n";
+            // Diagnostic CSV: implicit mid-column profile vs the SOR mid-column.
+            std::vector<double> sor_midcol(static_cast<std::size_t>(nr), 0.0);
+            {
+                const std::vector<float>& zs = sr.elevation.get_data();
+                const int cmid = n_cols / 2;
+                for (int r = 0; r < nr; ++r)
+                    sor_midcol[static_cast<std::size_t>(r)] =
+                        zs[static_cast<std::size_t>(r) * n_cols + cmid];
+            }
+            write_profile_csv(plot_data_dir + "test4_sor_match_profile.csv",
+                              ir.elevation, sor_midcol);
+            if (rel > 5.0e-3) all_pass = false;
+        }
+    }
+
+    // --- Test 3: coupled lowering-channel dynamic equilibrium -- the BC hand-off
+    // check (plan section 9 item 3).  A both-ends hillslope strip whose CHANNEL
+    // cells (is_channel Dirichlet sinks, NOT 'o' edges) are lowered at a constant
+    // base-level-fall rate E:  z_ch(t) = z_ch0 - E*t.  At dynamic equilibrium every
+    // point lowers at the channel rate, so the relief relative to the channel is
+    // steady and given by the Roering profile driven by (U+E):
+    //   D*S/(1-(S/Sc)^2) = (U+E)*x      (linear limit ((U+E)/2D)(L^2 - x^2)).
+    // This is the DECISIVE test that the Dirichlet hand-off uses the NEW-time,
+    // post-incision channel elevation z_ch^{n+1} (plan section 3): with the correct
+    // new-time value the equilibrium relief matches the analytic profile to solver
+    // tolerance and is INDEPENDENT of dt; feeding the solver the OLD-time z_ch^n
+    // instead lags the hillslope by one step and biases the divide relief high by
+    // ~O(E*dt).  We run a dt-sweep and confirm the bias is ABSENT for the new-time
+    // hand-off and PRESENT (and ~E*dt) for the old-time one.
+    {
+        const double Uh  = 5.0e-4;     // hillslope uplift (m/yr)
+        const double E   = 5.0e-4;     // channel base-level-fall rate (m/yr)
+        const double cs  = 1.0;
+        const int    nr  = 21;         // both_ends -> L = 10 m; (U+E)*L/D = 1.25*Sc
+        const int    nc  = n_cols;
+        const double L   = 0.5 * (nr - 1) * cs;
+        const double tau = L * L / D;
+        const double total_time = 30.0 * tau;     // long enough to reach equilibrium
+        const int    divide_row = (nr - 1) / 2;
+        const int    cmid = nc / 2;
+
+        // Analytic equilibrium relief (channel at 0) driven by (U+E).
+        const std::vector<double> relief_ref =
+            roering_profile(nr, cs, Uh + E, D, Sc, true);
+        const double analytic_divide_relief =
+            relief_ref[static_cast<std::size_t>(divide_row)];
+
+        // One coupled lowering run at sub-step dt.  new_time selects the hand-off:
+        //   true  -> Dirichlet handed to the solver = z_ch^{n+1} (post-incision; correct)
+        //   false -> Dirichlet handed to the solver = z_ch^{n}   (pre-incision; the bug)
+        // In BOTH cases the channel cells are pinned to the true new-time elevation
+        // z_ch^{n+1} AFTER each step, so the recorded relief is measured against the
+        // actual continuously-lowering channel either way.
+        auto run_coupled = [&](double dt, bool new_time,
+                               lsdtt::lsdtt_raster_cpu& out_field, double& out_zch)
+        {
+            auto strip = lsdtt::generate_hillslope_strip_surface(
+                nr, nc, cs, lsdtt::lsdtt_strip_channel_config::both_ends,
+                lsdtt::lsdtt_strip_init_profile::flat,
+                /*cross_axis_is_x=*/false, /*baselevel_elevation=*/0.0);
+            lsdtt::lsdtt_raster_cpu field = strip.dem;
+            const std::vector<float>& cm = strip.channel_mask.get_data();
+            std::vector<std::uint8_t> is_channel(cm.size(), 0);
+            for (std::size_t i = 0; i < cm.size(); ++i)
+                is_channel[i] = (cm[i] > 0.5f) ? 1 : 0;
+
+            lsdtt::lsdtt_roering_implicit_options opts;
+            opts.D = static_cast<float>(D); opts.U = static_cast<float>(Uh);
+            opts.Sc = static_cast<float>(Sc); opts.nonlinear = true;
+            opts.dt_init = static_cast<float>(dt);
+            opts.dt_max  = static_cast<float>(dt);   // one coupling step per call (rule 1)
+            opts.relaxation_omega = 0.7f; opts.picard_max_iter = 200;
+            opts.boundary_conditions = "npnp";       // row ends are channels; cols periodic
+
+            const double z_ch0 = 0.0;
+            const int n_steps = static_cast<int>(std::llround(total_time / dt));
+            double t = 0.0, z_ch_new = z_ch0;
+            for (int s = 0; s < n_steps; ++s)
+            {
+                const double z_ch_old   = z_ch0 - E * t;
+                z_ch_new                = z_ch0 - E * (t + dt);
+                const double z_ch_solve = new_time ? z_ch_new : z_ch_old;
+                // Stamp the channel Dirichlet value handed to the solver.
+                std::vector<float>& zf = field.get_data();
+                for (std::size_t i = 0; i < is_channel.size(); ++i)
+                    if (is_channel[i]) zf[i] = static_cast<float>(z_ch_solve);
+                field = lsdtt::compute_roering_hillslope_transport_implicit(
+                    field, is_channel, static_cast<float>(dt), opts).elevation;
+                // Pin the channel cells to the true new-time elevation so the recorded
+                // relief is measured against the actual lowering channel (both hand-offs).
+                std::vector<float>& zf2 = field.get_data();
+                for (std::size_t i = 0; i < is_channel.size(); ++i)
+                    if (is_channel[i]) zf2[i] = static_cast<float>(z_ch_new);
+                t += dt;
+            }
+            out_field = field; out_zch = z_ch_new;
+        };
+
+        const double dts[3] = { tau / 5.0, tau / 10.0, tau / 20.0 };
+        std::cout << "\nTest 3 coupled lowering-channel hand-off (E=" << E
+                  << ", U=" << Uh << ", analytic divide relief="
+                  << analytic_divide_relief << "):\n"
+                  << "       dt   new:Linf/peak  new:divide  old:divide   old:bias"
+                     "      E*dt\n";
+
+        double new_relief_min = 1e300, new_relief_max = -1e300;
+        double new_linf_rel_max = 0.0;
+        double old_bias_large = 0.0, new_bias_large = 0.0;
+        lsdtt::lsdtt_raster_cpu f_new_plot; std::vector<double> ref_plot;
+        for (int i = 0; i < 3; ++i)
+        {
+            const double dt = dts[i];
+            lsdtt::lsdtt_raster_cpu f_new, f_old; double zch_new = 0.0, zch_old = 0.0;
+            run_coupled(dt, true,  f_new, zch_new);
+            run_coupled(dt, false, f_old, zch_old);
+
+            // Absolute analytic reference = channel elevation + relief profile.
+            std::vector<double> ref_new(static_cast<std::size_t>(nr));
+            for (int r = 0; r < nr; ++r)
+                ref_new[static_cast<std::size_t>(r)] =
+                    zch_new + relief_ref[static_cast<std::size_t>(r)];
+            const case_result rn = compare(f_new, ref_new);
+            const double new_linf_rel = (rn.peak > 0.0) ? rn.linf / rn.peak : rn.linf;
+
+            const double new_divide_relief =
+                f_new.get_data()[static_cast<std::size_t>(divide_row) * nc + cmid] - zch_new;
+            const double old_divide_relief =
+                f_old.get_data()[static_cast<std::size_t>(divide_row) * nc + cmid] - zch_old;
+            const double new_bias = new_divide_relief - analytic_divide_relief;
+            const double old_bias = old_divide_relief - analytic_divide_relief;
+
+            std::cout << "  " << std::setw(8) << dt
+                      << "   " << std::setw(11) << new_linf_rel
+                      << "  " << std::setw(9) << new_divide_relief
+                      << "  " << std::setw(9) << old_divide_relief
+                      << "  " << std::setw(9) << old_bias
+                      << "  " << std::setw(9) << (E * dt) << "\n";
+
+            new_relief_min   = std::min(new_relief_min, new_divide_relief);
+            new_relief_max   = std::max(new_relief_max, new_divide_relief);
+            new_linf_rel_max = std::max(new_linf_rel_max, new_linf_rel);
+            if (i == 0) { old_bias_large = old_bias; new_bias_large = std::abs(new_bias); }
+            if (i == 1) { f_new_plot = f_new; ref_plot = ref_new; }
+        }
+        // dt-independence of the new-time hand-off (relief spread small vs peak).
+        const double new_spread  = new_relief_max - new_relief_min;
+        const double rel_spread  = (analytic_divide_relief > 0.0)
+                                   ? new_spread / analytic_divide_relief : new_spread;
+        write_profile_csv(plot_data_dir + "test3_coupled_profile.csv", f_new_plot, ref_plot);
+
+        std::cout << "  new-time: max Linf/peak=" << new_linf_rel_max
+                  << "  divide-relief dt-spread=" << new_spread
+                  << " (rel=" << rel_spread << ")\n"
+                  << "  old-time: divide-relief bias at dt=tau/5 = " << old_bias_large
+                  << " (E*dt=" << (E * dts[0]) << ")\n";
+
+        // PASS: new-time hand-off matches the (U+E) Roering profile to tolerance and
+        // is dt-independent; the old-time hand-off shows the ~E*dt high bias that the
+        // new-time one removes (decisive proof the Dirichlet value is z_ch^{n+1}).
+        const bool new_ok     = (new_linf_rel_max <= rel_tol) && (rel_spread <= rel_tol);
+        const bool handoff_ok = (old_bias_large >= 0.5 * E * dts[0])    // bias real, ~E*dt
+                             && (new_bias_large <= 0.2 * E * dts[0]);   // new-time bias tiny
+        if (!(new_ok && handoff_ok)) all_pass = false;
     }
 
     std::cout << "\nRESULT: " << (all_pass ? "PASS" : "FAIL") << "\n";
