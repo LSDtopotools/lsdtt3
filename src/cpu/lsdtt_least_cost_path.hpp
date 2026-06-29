@@ -51,6 +51,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -181,12 +182,21 @@ void burn_monotonic_path(
 //   path that crosses flat or rising ground (capture may fail where the cap
 //   binds, which is the intended trade — better than a deep artificial gash).
 //   <= 0 means unlimited (the original behaviour).
+// capture_ceiling (m): when finite, every interior path cell is additionally
+//   lowered to sit at least capture_margin BELOW this elevation (then kept
+//   strictly descending to the terminus). This is the "deep capture" needed
+//   when the flow escapes to a competing route that is NOT an immediate
+//   neighbour (e.g. a gentler road grade tens of metres away): the per-cell
+//   neighbour test cannot see that competitor, so pass the escaped-to elevation
+//   here to force the whole divergent reach below it. Default +inf = disabled.
 void burn_capturing_path(
     lsdtt_raster_cpu&                   dem,
     const std::vector<std::int64_t>&    path,
-    double                              min_slope      = 1.0e-4,
-    double                              capture_margin = 1.0e-3,
-    double                              max_depth      = 0.0
+    double                              min_slope       = 1.0e-4,
+    double                              capture_margin  = 1.0e-3,
+    double                              max_depth       = 0.0,
+    double                              capture_ceiling =
+        std::numeric_limits<double>::infinity()
 );
 
 } // namespace lsdtt
