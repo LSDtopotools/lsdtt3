@@ -14,25 +14,46 @@
 //
 // Pipeline:
 //   1. Local relief threshold → raw relief mask
+//      Threshold is either relief_threshold_metres or, with
+//      adaptive_relief_threshold, chosen by CDF divergence and scaled by
+//      relief_threshold_multiplier.
 //   2. Optional morphological closing  (flat_closing_radius_metres; 0 = skip)
 //      Seals small holes and narrow gaps inside flat blobs.
 //   3. Optional morphological opening  (flat_opening_radius_metres; 0 = skip)
 //      Removes thin connections between blobs that should be separate.
 //      Order of steps 2 and 3 is controlled by open_then_close.
 //   4. Remove components < min_component_pixels → working flat mask
-//   5. Progressive Canny annealing for slope break detection (requires OpenCV)
-//        vertical_excess_curvature and profile_curvature at thresholds {50, 25, 15}
+//   5. Slope break detection (requires OpenCV): adaptive thresholding of
+//      vertical_excess_curvature → closing → Zhang-Suen skeleton → spur and
+//      terminal-loop pruning → optional elevation-based endpoint bridging.
+//   6. Optional channel breaks (break_flats_with_channels): D8 drainage-area
+//      threshold, with optional drainage-area injection.
+//   7. Combined labelling: flat mask minus slope-break and channel-break
+//      pixels → labelled flat mask.
+//   8. Optional plane analysis (run_plane_analysis): per-label plane fits with
+//      split/merge detection, then a residual-relief second pass that
+//      re-breaks, re-labels, and merges the flat surfaces.
+//   9. Optional channel network and flat-surface → channel connections
+//      (write_channel_network, connect_flat_surfaces_to_channels), seeded
+//      from user-supplied source points.
 //
 // Outputs (always written):
 //   <stem>_labelled_flat_mask.tif
 //   <stem>_relief_cdf.csv
 //   <stem>_relief_dist_fits.csv
 //   <stem>_flat_vertical_excess_curvature.tif
-//   <stem>_flat_profile_curvature.tif
-//   <stem>_slope_break_step<N>_canny_vert.tif
-//   <stem>_slope_break_step<N>_canny_prof.tif
-//   <stem>_slope_break_step<N>_break_mask_vert.tif
-//   <stem>_slope_break_step<N>_break_mask_prof.tif
+//   <stem>_slope_break_adaptive_binary.tif
+//
+// Frequently used optional outputs (see help for the full list):
+//   <stem>_combined_flat_mask.tif                (write_combined_flat_mask)
+//   <stem>_slope_break_centreline.tif            (write_slope_break_centreline)
+//   <stem>_slope_break_centreline_connected.tif  (write_slope_break_centreline_connected)
+//   <stem>_slope_break_bridge_mask.tif           (write_slope_break_bridge_mask)
+//   <stem>_plane_fits.csv, _plane_residual.tif, _residual_relief*.tif,
+//   <stem>_merged_residual_relief_labelled_flat_mask.tif  (run_plane_analysis)
+//   <stem>_flat_surface_polygons.fgb, _label_source_connections.csv
+//                                                (connect_flat_surfaces_to_channels)
+//   <stem>_channel_network_lines.fgb             (write_channel_network)
 //
 // Usage:
 //   lsdtt-flat-surface-finder <path> <parameter_file>
@@ -504,7 +525,7 @@ int main(int argc, char* argv[])
 
     std::cout << "Switches for analysis are:\n";
     std::cout << "  relief: always on\n";
-    std::cout << "  slope break finder (progressive Canny): always on\n";
+    std::cout << "  slope break finder (VEC adaptive skeleton): always on\n";
 
     // -------------------------------------------------------------------------
     // Load DEM
@@ -589,9 +610,8 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Post-process the relief flat mask:
-    //   1. optional morphological closing
-    //   2. optional morphological dilation
-    //   3. remove components below min_component_pixels
+    //   1. optional morphological closing / opening (order set by open_then_close)
+    //   2. remove components below min_component_pixels
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu flat_mask = result.relief_flat_mask;
 
@@ -772,7 +792,7 @@ int main(int argc, char* argv[])
     if (bf["write_combined_flat_mask"])
     {
         const std::string p = stem + "_combined_flat_mask.tif";
-        std::cout << "Writing flat mask (post closing/dilation/filtering): " << p << "\n";
+        std::cout << "Writing flat mask (post closing/opening/filtering): " << p << "\n";
         loader.write_full(flat_mask.get_data(), flat_mask.get_meta(), p, out_format);
     }
 
