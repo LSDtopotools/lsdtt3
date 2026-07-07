@@ -881,6 +881,113 @@ int main()
         if (!(new_ok && handoff_ok)) all_pass = false;
     }
 
+    // --- Test 12: TR-BDF2 integrator (Phase 6) -- 2nd-order time accuracy. -----
+    // The optional TR-BDF2 integrator (time_integrator == 1) is an L-stable,
+    // 2nd-order composite (trapezoidal stage over gamma*dt + BDF2 stage over
+    // (1-gamma)*dt, gamma = 2 - sqrt(2)) with an embedded local-error estimate
+    // driving a PI step controller.  Two checks:
+    //   (A) Correctness: run to steady state -> matches the Roering(U) Full profile
+    //       (the integrator converges to the same steady state as backward Euler).
+    //   (B) Temporal order: on a mid-transient (flat IC -> t = T, partway to steady)
+    //       with FIXED dt, the Linf error vs a fine reference drops at ~2nd order for
+    //       TR-BDF2 and ~1st order for backward Euler, and TR-BDF2 is markedly more
+    //       accurate at a coarse dt.
+    // Note: the auto error tolerance is relief-based, which is degenerate for a flat
+    // IC (relief 0), so the steady run below passes an explicit error_tol; the
+    // fixed-dt order study disables adaptivity (error_tol huge, dt_min=dt_max=dt).
+    {
+        const double cs  = 1.0;
+        const int    nr  = 21;                 // L = 10 m; U*L/D = 0.625*Sc (sub-critical)
+        const int    nc  = n_cols;
+        const double L   = 0.5 * (nr - 1) * cs;
+        const double tau = L * L / D;
+
+        // Shared TR-BDF2 / backward-Euler option builder for a fixed-dt run to time T.
+        auto run_fixed = [&](int integrator, double dt_fixed, double T)
+            -> lsdtt::lsdtt_raster_cpu
+        {
+            lsdtt::lsdtt_raster_cpu dem = flat_strip(nr, nc, cs);
+            lsdtt::lsdtt_roering_implicit_options opts;
+            opts.D = static_cast<float>(D); opts.U = static_cast<float>(U);
+            opts.Sc = static_cast<float>(Sc); opts.nonlinear = true;
+            opts.boundary_conditions = "opop";
+            opts.dt_init = static_cast<float>(dt_fixed);
+            opts.dt_min  = static_cast<float>(dt_fixed);   // pin dt (disable adaptivity)
+            opts.dt_max  = static_cast<float>(dt_fixed);
+            opts.relaxation_omega = 1.0f;
+            opts.picard_tol      = 1.0e-10f;               // iteration error << temporal error
+            opts.picard_max_iter = 300;
+            opts.time_integrator = integrator;
+            opts.error_tol = (integrator == 1) ? 1.0e30f : 0.0f;  // huge -> never reject
+            const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+            const std::vector<std::uint8_t> no_channels(
+                static_cast<std::size_t>(m.n_rows) * m.n_cols, 0);
+            return lsdtt::compute_roering_hillslope_transport_implicit(
+                dem, no_channels, static_cast<float>(T), opts).elevation;
+        };
+
+        // (A) TR-BDF2 to steady state (adaptive, explicit error_tol) vs Roering(U).
+        lsdtt::lsdtt_raster_cpu dem_s = flat_strip(nr, nc, cs);
+        lsdtt::lsdtt_roering_implicit_options sopts;
+        sopts.D = static_cast<float>(D); sopts.U = static_cast<float>(U);
+        sopts.Sc = static_cast<float>(Sc); sopts.nonlinear = true;
+        sopts.boundary_conditions = "opop";
+        sopts.dt_init = static_cast<float>(tau);
+        sopts.relaxation_omega = 0.7f; sopts.picard_max_iter = 200;
+        sopts.time_integrator = 1;
+        sopts.error_tol = 1.0e-3f;                         // elevation units (relief ~ 4 m)
+        const lsdtt::lsdtt_raster_meta& ms = dem_s.get_meta();
+        const std::vector<std::uint8_t> no_ch(
+            static_cast<std::size_t>(ms.n_rows) * ms.n_cols, 0);
+        const lsdtt::lsdtt_roering_implicit_result steady =
+            lsdtt::compute_roering_hillslope_transport_implicit(
+                dem_s, no_ch, static_cast<float>(60.0 * tau), sopts);
+        const case_result sc_cmp = compare(steady.elevation,
+                                           roering_profile(nr, cs, U, D, Sc, true));
+        const double steady_rel = (sc_cmp.peak > 0.0) ? sc_cmp.linf / sc_cmp.peak : sc_cmp.linf;
+        write_profile_csv(plot_data_dir + "test12_trbdf2_steady.csv",
+                          steady.elevation, roering_profile(nr, cs, U, D, Sc, true));
+
+        // (B) Fixed-dt temporal-order study at a mid-transient time T = 0.5*tau.
+        const double T       = 0.5 * tau;
+        const double dt_ref  = T / 512.0;
+        const double dts[3]  = { T / 4.0, T / 8.0, T / 16.0 };
+        const lsdtt::lsdtt_raster_cpu ref = run_fixed(1, dt_ref, T);  // fine TR-BDF2 reference
+
+        double err_be[3], err_tr[3];
+        for (int i = 0; i < 3; ++i)
+        {
+            err_be[i] = field_linf_diff(run_fixed(0, dts[i], T), ref);
+            err_tr[i] = field_linf_diff(run_fixed(1, dts[i], T), ref);
+        }
+        auto order = [](double e_coarse, double e_fine)
+        { return (e_fine > 0.0) ? std::log2(e_coarse / e_fine) : 0.0; };
+        const double be_order = order(err_be[1], err_be[2]);   // finest (asymptotic) pair
+        const double tr_order = order(err_tr[1], err_tr[2]);
+
+        std::cout << "\nTest 12 TR-BDF2 integrator (Phase 6):\n"
+                  << "  (A) steady vs Roering(U): Linf/peak=" << steady_rel
+                  << "  (n_substeps=" << steady.n_substeps
+                  << ", n_rejected=" << steady.n_rejected_substeps << ")\n"
+                  << "  (B) fixed-dt error vs fine reference (T=0.5*tau):\n"
+                  << "        dt     err(backward_euler)   err(tr_bdf2)\n";
+        for (int i = 0; i < 3; ++i)
+            std::cout << "  " << std::setw(8) << dts[i]
+                      << "   " << std::setw(18) << err_be[i]
+                      << "   " << std::setw(12) << err_tr[i] << "\n";
+        std::cout << "  observed order: backward_euler=" << be_order
+                  << "  tr_bdf2=" << tr_order << "\n";
+
+        // PASS: TR-BDF2 reaches the right steady state; it converges at ~2nd order
+        // (clearly super-linear) while backward Euler is ~1st order, and TR-BDF2 is
+        // more accurate than backward Euler at the finest fixed dt.
+        const bool steady_ok = (steady_rel <= rel_tol);
+        const bool order_ok  = (tr_order >= 1.7) && (be_order <= 1.4)
+                            && (tr_order - be_order >= 0.5)
+                            && (err_tr[2] < err_be[2]);
+        if (!(steady_ok && order_ok)) all_pass = false;
+    }
+
     std::cout << "\nRESULT: " << (all_pass ? "PASS" : "FAIL") << "\n";
     return all_pass ? 0 : 1;
 }

@@ -544,6 +544,11 @@ public:
         const std::vector<uint8_t>& elev_mask,
         int threshold_contributing_pixels) const override;
 
+    [[nodiscard]] lsdtt_raster_result get_height_above_channel_mask_raster(
+        const std::vector<float>&    elev,
+        const std::vector<uint8_t>&  elev_mask,
+        const std::vector<uint8_t>&  channel_mask) const override;
+
     [[nodiscard]] lsdtt_raster_result get_distance_to_channel_raster(
         int threshold_contributing_pixels) const override;
 

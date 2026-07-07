@@ -469,6 +469,18 @@ int main(int argc, char* argv[])
         "Linear solver for roering_implicit: 0 = SimplicialLDLT, 1 = CG+IncompleteCholesky.",
         "LDLT is robust for moderate grids; CG+IC scales better on very large grids."};
 
+    int_default_map["hillslope_implicit_time_integrator"] = 0;
+    help_map["hillslope_implicit_time_integrator"] = {"int","0",
+        "Time integrator for roering_implicit: 0 = backward Euler, 1 = TR-BDF2 (2nd order).",
+        "TR-BDF2 is L-stable and time-accurate with embedded PI error control; use it for "
+        "time-accurate transients rather than just the approach to steady state."};
+
+    float_default_map["hillslope_implicit_error_tol"] = 0.0f;
+    help_map["hillslope_implicit_error_tol"] = {"float","0",
+        "TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller "
+        "(0 = auto = a small fraction of the relief). Only used when time_integrator = 1.",
+        ""};
+
     float_default_map["hillslope_implicit_dt_init"] = 0.0f;
     help_map["hillslope_implicit_dt_init"] = {"float","0",
         "Initial adaptive sub-step for roering_implicit (0 = auto = the LEM timestep).",
@@ -731,6 +743,8 @@ int main(int argc, char* argv[])
     opts.roering_implicit_opts.picard_max_iter  = ifs["hillslope_implicit_picard_max_iter"];
     opts.roering_implicit_opts.slope_ratio_cap  = ff["hillslope_implicit_slope_ratio_cap"];
     opts.roering_implicit_opts.solver_choice    = ifs["hillslope_implicit_solver_choice"];
+    opts.roering_implicit_opts.time_integrator  = ifs["hillslope_implicit_time_integrator"];
+    opts.roering_implicit_opts.error_tol        = ff["hillslope_implicit_error_tol"];
     opts.roering_implicit_opts.dt_init          = ff["hillslope_implicit_dt_init"];
     opts.roering_implicit_opts.dt_min           = ff["hillslope_implicit_dt_min"];
     opts.roering_implicit_opts.dt_max           = ff["hillslope_implicit_dt_max"];

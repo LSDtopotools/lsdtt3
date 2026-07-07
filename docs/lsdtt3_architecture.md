@@ -116,6 +116,7 @@ lsdtt3/
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
 │   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp           — transient hillslope transport (cidre, roering, linear, adi)
+│   │   ├── lsdtt_hillslope_implicit_cpu.hpp/.cpp            — implicit transient Roering solver (Eigen; backward-Euler/TR-BDF2 + damped Picard, channels as Dirichlet sinks)
 │   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp        — steady-state hillslope solver (SOR + pseudo-transient Cidre)
 │   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp               — Verlet cloth drape: upper envelope surface and incision depth
 │   │   ├── lsdtt_flat_surface_finder.hpp/.cpp                — flat surface identification (MADk2, residual IQR, NVD)
@@ -627,8 +628,9 @@ Current CLI programs are:
   loads a DEM, then runs one of two paths:
   - **Time-stepping LEM** — loops `run_lem_step`: implicit stream-power fluvial
     incision (D8 or D-inf), optional hillslope transport (cidre / roering / linear /
-    adi), and uniform uplift, writing per-step elevation stats and optional
-    intermediate rasters.
+    adi / roering_implicit — the unconditionally-stable backward-Euler/TR-BDF2 solver,
+    with channels as Dirichlet sinks and an optional `channel_mask_fname`), and uniform
+    uplift, writing per-step elevation stats and optional intermediate rasters.
   - **Analytical steady state** (`run_steady_state: true`) — chi-based fluvial snap
     (optionally iterated over `steady_state_n_cycles` to let divides migrate), then
     optional hillslope steady-state solve (SOR linear/roering or pseudo-transient
