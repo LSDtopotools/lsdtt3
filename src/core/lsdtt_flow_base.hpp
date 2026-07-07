@@ -85,6 +85,19 @@ struct lsdtt_flowinfo_options
     bool        allow_pits_as_outlets     = false;
 };
 
+// -----------------------------------------------------------------------------
+// height_above_channel_donor_result
+//
+// Return type of get_height_above_channel_mask_donor_raster. donor_flat has
+// flat-index size n_rows * n_cols; donor_flat[i] is the flat index of the
+// channel pixel whose elevation defines pixel i's HANC (-1 where undefined).
+// -----------------------------------------------------------------------------
+struct height_above_channel_donor_result
+{
+    lsdtt_raster_result       height;
+    std::vector<std::int64_t> donor_flat;
+};
+
 class lsdtt_flow_base
 {
 public:
@@ -345,6 +358,20 @@ public:
     //   referenced to the trunk channel of interest rather than any nearby rill.
     //   channel_mask must have flat-index size == n_rows * n_cols.
     [[nodiscard]] virtual lsdtt_raster_result get_height_above_channel_mask_raster(
+        const std::vector<float>&    elev,
+        const std::vector<uint8_t>&  elev_mask,
+        const std::vector<uint8_t>&  channel_mask) const = 0;
+
+    // get_height_above_channel_mask_donor_raster:
+    //   As get_height_above_channel_mask_raster, but also records, per pixel,
+    //   the flat index of the nearest downstream channel pixel ("donor") whose
+    //   elevation defines that pixel's HANC (-1 where HANC is undefined;
+    //   channel pixels are their own donor). The donor links every off-channel
+    //   pixel to a specific channel node, so callers can attribute HANC values
+    //   to along-channel position (reach-relative statistics, HANC-vs-distance
+    //   profiles).
+    [[nodiscard]] virtual height_above_channel_donor_result
+    get_height_above_channel_mask_donor_raster(
         const std::vector<float>&    elev,
         const std::vector<uint8_t>&  elev_mask,
         const std::vector<uint8_t>&  channel_mask) const = 0;

@@ -2141,12 +2141,30 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_mask_raster(
     const std::vector<uint8_t>& elev_mask,
     const std::vector<uint8_t>& channel_mask) const
 {
+    return get_height_above_channel_mask_donor_raster(
+        elev, elev_mask, channel_mask).height;
+}
+
+// -----------------------------------------------------------------------------
+// get_height_above_channel_mask_donor_raster
+//
+// As get_height_above_channel_mask_raster, but the forward pass also carries
+// the flat index of the nearest downstream channel pixel, so every HANC value
+// can be attributed to a specific channel node (reach-relative statistics,
+// HANC-vs-distance profiles).
+// -----------------------------------------------------------------------------
+height_above_channel_donor_result
+lsdtt_flowinfo::get_height_above_channel_mask_donor_raster(
+    const std::vector<float>&   elev,
+    const std::vector<uint8_t>& elev_mask,
+    const std::vector<uint8_t>& channel_mask) const
+{
     require_built();
 
     if (!has_s_vector_)
     {
         throw std::runtime_error(
-            "lsdtt_flowinfo::get_height_above_channel_mask_raster(): "
+            "lsdtt_flowinfo::get_height_above_channel_mask_donor_raster(): "
             "s_vector not built"
         );
     }
@@ -2156,7 +2174,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_mask_raster(
     if (elev.size() != n || elev_mask.size() != n || channel_mask.size() != n)
     {
         throw std::invalid_argument(
-            "lsdtt_flowinfo::get_height_above_channel_mask_raster(): "
+            "lsdtt_flowinfo::get_height_above_channel_mask_donor_raster(): "
             "elev, elev_mask and channel_mask must have the same flat-index "
             "size as the DEM"
         );
@@ -2164,8 +2182,8 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_mask_raster(
 
     const float ndv = static_cast<float>(meta_.no_data_value);
 
-    std::vector<float>   nearest_ch_elev(n, 0.0f);
-    std::vector<uint8_t> ch_valid(n, 0u);
+    std::vector<float>        nearest_ch_elev(n, 0.0f);
+    std::vector<std::int64_t> donor(n, -1);
 
     for (std::size_t i = 0; i < s_vector_.size(); ++i)
     {
@@ -2175,32 +2193,33 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_mask_raster(
         if (channel_mask[static_cast<std::size_t>(flat)] != 0)
         {
             nearest_ch_elev[flat] = elev[flat];
-            ch_valid[flat]        = 1u;
+            donor[flat]           = flat;
         }
         else
         {
             const std::int64_t rec = receiver_.data()[flat];
-            if (rec != outlet_receiver && ch_valid[static_cast<std::size_t>(rec)])
+            if (rec != outlet_receiver && donor[static_cast<std::size_t>(rec)] >= 0)
             {
                 nearest_ch_elev[flat] = nearest_ch_elev[static_cast<std::size_t>(rec)];
-                ch_valid[flat]        = 1u;
+                donor[flat]           = donor[static_cast<std::size_t>(rec)];
             }
         }
     }
 
-    lsdtt_raster_result r;
-    r.meta = meta_;
-    r.data.assign(n, ndv);
-    r.mask.assign(n, 0u);
+    height_above_channel_donor_result out;
+    out.height.meta = meta_;
+    out.height.data.assign(n, ndv);
+    out.height.mask.assign(n, 0u);
 
     for (std::size_t i = 0; i < n; ++i)
     {
-        if (mask_.data()[i] == 0 || elev_mask[i] == 0 || ch_valid[i] == 0) continue;
-        r.data[i] = elev[i] - nearest_ch_elev[i];
-        r.mask[i] = 1u;
+        if (mask_.data()[i] == 0 || elev_mask[i] == 0 || donor[i] < 0) continue;
+        out.height.data[i] = elev[i] - nearest_ch_elev[i];
+        out.height.mask[i] = 1u;
     }
 
-    return r;
+    out.donor_flat = std::move(donor);
+    return out;
 }
 
 // -----------------------------------------------------------------------------

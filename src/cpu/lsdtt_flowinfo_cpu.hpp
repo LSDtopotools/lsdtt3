@@ -34,7 +34,7 @@
 // system and CLI layer — they are invisible to analysis code.
 //
 // The only other flow file you might encounter is lsdtt_flowgraph_cpu.hpp,
-// which handles D-infinity / MFD routing (fractional multi-receiver flow).
+// which hancles D-infinity / MFD routing (fractional multi-receiver flow).
 // Use that instead when you need distributed-flow analyses (TWI, sediment
 // flux). For everything channel-network related, use this file.
 //
@@ -545,6 +545,12 @@ public:
         int threshold_contributing_pixels) const override;
 
     [[nodiscard]] lsdtt_raster_result get_height_above_channel_mask_raster(
+        const std::vector<float>&    elev,
+        const std::vector<uint8_t>&  elev_mask,
+        const std::vector<uint8_t>&  channel_mask) const override;
+
+    [[nodiscard]] height_above_channel_donor_result
+    get_height_above_channel_mask_donor_raster(
         const std::vector<float>&    elev,
         const std::vector<uint8_t>&  elev_mask,
         const std::vector<uint8_t>&  channel_mask) const override;
