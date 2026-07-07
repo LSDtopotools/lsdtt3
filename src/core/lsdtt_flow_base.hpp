@@ -337,6 +337,18 @@ public:
         const std::vector<uint8_t>& elev_mask,
         int threshold_contributing_pixels) const = 0;
 
+    // get_height_above_channel_mask_raster:
+    //   As above, but the channel set is supplied explicitly as a full-grid mask
+    //   (channel_mask[flat] != 0 marks a channel pixel) rather than derived from
+    //   a contributing-pixel threshold. Use this to measure height above a
+    //   specific (e.g. in-scope) subset of the channel network, so surfaces are
+    //   referenced to the trunk channel of interest rather than any nearby rill.
+    //   channel_mask must have flat-index size == n_rows * n_cols.
+    [[nodiscard]] virtual lsdtt_raster_result get_height_above_channel_mask_raster(
+        const std::vector<float>&    elev,
+        const std::vector<uint8_t>&  elev_mask,
+        const std::vector<uint8_t>&  channel_mask) const = 0;
+
     [[nodiscard]] virtual lsdtt_raster_result get_distance_to_channel_raster(
         int threshold_contributing_pixels) const = 0;
 

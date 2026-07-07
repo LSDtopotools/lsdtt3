@@ -21,7 +21,10 @@
 // excluded.  Unlike the explicit forward-Euler subcycling solver
 // (compute_roering_hillslope_transport) the implicit scheme is unconditionally
 // stable, so the sub-step size is governed by accuracy and the nonlinearity
-// rather than a CFL bound.  The face-centred cross-slope diffusivity keeps the
+// rather than a CFL bound.  An optional TR-BDF2 integrator (time_integrator == 1)
+// upgrades the backward-Euler core to a 2nd-order, L-stable composite scheme with
+// an embedded local-error estimate driving a PI step-size controller, for
+// time-accurate transient trajectories (Phase 6).  The face-centred cross-slope diffusivity keeps the
 // assembled system symmetric positive-definite, allowing a sparse Cholesky
 // (Eigen SimplicialLDLT) solve.  A regularised slope-ratio cap (r_max) keeps
 // slopes strictly sub-critical (|∇z| < Sc).  The solver requires Eigen3; when
@@ -80,6 +83,14 @@ struct lsdtt_roering_implicit_options
     float relaxation_omega  = 1.0f;    // Picard damping (≤ 1)
     float slope_ratio_cap   = 0.99f;   // r_max
     int   solver_choice     = 0;       // 0 = SimplicialLDLT, 1 = CG+IncompleteCholesky
+
+    // time integrator (Phase 6).  backward_euler is the robust 1st-order default;
+    // tr_bdf2 is a 2nd-order, L-stable composite (trapezoidal + BDF2) with an
+    // embedded local-error estimate that drives a PI step-size controller for
+    // genuine time-accuracy (use it for time-accurate transient trajectories, e.g.
+    // base-level-fall response studies, not just the approach to steady state).
+    int   time_integrator   = 0;       // 0 = backward Euler, 1 = TR-BDF2
+    float error_tol         = 0.0f;    // TR-BDF2 PI controller tol (elevation units); 0 = auto
 
     int   n_threads         = 0;
 };
