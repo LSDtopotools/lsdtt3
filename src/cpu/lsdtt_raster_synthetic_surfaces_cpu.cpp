@@ -2176,4 +2176,282 @@ lsdtt_mountain_range_surface generate_arc_range_surface(
     );
 }
 
+// -----------------------------------------------------------------------------
+// strip_nonlinear_slope
+//
+// Roering (2007) steady-state slope magnitude S at distance x from the divide,
+// the positive root of  D*S/(1 - (S/Sc)^2) = U*x, i.e.
+//   (U*x/Sc^2) S^2 + D S - U*x = 0.
+// Reduces to S = U*x/D as x -> 0 (the linear limit) and approaches Sc from
+// below as x grows.
+// -----------------------------------------------------------------------------
+static double strip_nonlinear_slope(double x, double U, double D, double Sc)
+{
+    const double u = U * x;
+    if (u <= 0.0)
+    {
+        return 0.0;
+    }
+    const double a = u / (Sc * Sc);
+    // S = (-D + sqrt(D^2 + 4 a u)) / (2 a)
+    return (-D + std::sqrt(D * D + 4.0 * a * u)) / (2.0 * a);
+}
+
+// -----------------------------------------------------------------------------
+// generate_hillslope_strip_surface
+// -----------------------------------------------------------------------------
+lsdtt_hillslope_strip_surface generate_hillslope_strip_surface(
+    const lsdtt_raster_meta&   meta,
+    lsdtt_strip_channel_config channel_config,
+    lsdtt_strip_init_profile   init_profile,
+    bool                       cross_axis_is_x,
+    double                     baselevel_elevation,
+    double                     half_width,
+    double                     uplift_U,
+    double                     diffusivity_D,
+    double                     critical_slope_Sc,
+    bool                       nonlinear_profile,
+    double                     init_amplitude,
+    int                        perturb_seed,
+    int                        n_threads)
+{
+    static const char* fn = "lsdtt::generate_hillslope_strip_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (diffusivity_D <= 0.0)
+    {
+        throw std::runtime_error(std::string(fn) + ": diffusivity_D must be > 0");
+    }
+    if (critical_slope_Sc <= 0.0)
+    {
+        throw std::runtime_error(std::string(fn) + ": critical_slope_Sc must be > 0");
+    }
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+
+    // Number of cells along the cross-axis (the direction elevation varies in).
+    const int n_cross = cross_axis_is_x ? n_cols : n_rows;
+    if (n_cross < 3)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": cross-axis must span at least 3 cells");
+    }
+
+    // -------------------------------------------------------------------------
+    // Per cross-index: distance-from-divide xd, channel flag, and the
+    // auto-derived half-width L (divide-to-channel distance).
+    // -------------------------------------------------------------------------
+    std::vector<double>  xd(static_cast<std::size_t>(n_cross), 0.0);
+    std::vector<uint8_t> chan(static_cast<std::size_t>(n_cross), uint8_t{0});
+    double L_auto = 0.0;
+
+    switch (channel_config)
+    {
+        case lsdtt_strip_channel_config::both_ends:
+        {
+            // Divide at the centre; channels at both extreme cells.
+            const double centre = 0.5 * static_cast<double>(n_cross - 1);
+            L_auto = centre * cell_size;
+            for (int i = 0; i < n_cross; ++i)
+            {
+                xd[static_cast<std::size_t>(i)] =
+                    std::abs(static_cast<double>(i) - centre) * cell_size;
+            }
+            chan[0]                                          = uint8_t{1};
+            chan[static_cast<std::size_t>(n_cross - 1)]      = uint8_t{1};
+            break;
+        }
+        case lsdtt_strip_channel_config::single_end_low:
+        {
+            // Channel at index 0; divide (no-flux) at the high-index end.
+            L_auto = static_cast<double>(n_cross - 1) * cell_size;
+            for (int i = 0; i < n_cross; ++i)
+            {
+                xd[static_cast<std::size_t>(i)] =
+                    static_cast<double>((n_cross - 1) - i) * cell_size;
+            }
+            chan[0] = uint8_t{1};
+            break;
+        }
+        case lsdtt_strip_channel_config::single_end_high:
+        {
+            // Channel at the high-index end; divide (no-flux) at index 0.
+            L_auto = static_cast<double>(n_cross - 1) * cell_size;
+            for (int i = 0; i < n_cross; ++i)
+            {
+                xd[static_cast<std::size_t>(i)] =
+                    static_cast<double>(i) * cell_size;
+            }
+            chan[static_cast<std::size_t>(n_cross - 1)] = uint8_t{1};
+            break;
+        }
+    }
+
+    // Half-width used by the analytic profiles: auto-derived unless overridden.
+    const double L = (half_width > 0.0) ? half_width : L_auto;
+
+    // -------------------------------------------------------------------------
+    // Build the 1-D profile along the cross-axis (one value per cross-index).
+    // Channel cells are forced to baselevel below.
+    // -------------------------------------------------------------------------
+    std::vector<double> profile(static_cast<std::size_t>(n_cross), baselevel_elevation);
+
+    switch (init_profile)
+    {
+        case lsdtt_strip_init_profile::flat:
+        {
+            // already baselevel everywhere
+            break;
+        }
+        case lsdtt_strip_init_profile::analytic_parabola:
+        {
+            if (!nonlinear_profile)
+            {
+                // Linear steady parabola: z = z_ch + (U/2D)(L^2 - xd^2)
+                const double k = uplift_U / (2.0 * diffusivity_D);
+                for (int i = 0; i < n_cross; ++i)
+                {
+                    const double x = xd[static_cast<std::size_t>(i)];
+                    profile[static_cast<std::size_t>(i)] =
+                        baselevel_elevation + k * (L * L - x * x);
+                }
+            }
+            else
+            {
+                // Nonlinear Roering steady profile: integrate slope from the
+                // channel (xd = L) back to the divide (xd = 0).  Trapezoidal
+                // integration on a fine sub-grid keyed by distance-from-divide.
+                const int n_sub = 4096;
+                const double dx_sub = L / static_cast<double>(n_sub);
+                std::vector<double> z_of_s(static_cast<std::size_t>(n_sub + 1), 0.0);
+                // z at the channel (s = L) is baselevel; accumulate upslope.
+                z_of_s[static_cast<std::size_t>(n_sub)] = baselevel_elevation;
+                for (int s = n_sub - 1; s >= 0; --s)
+                {
+                    const double x_hi = static_cast<double>(s + 1) * dx_sub;
+                    const double x_lo = static_cast<double>(s)     * dx_sub;
+                    const double S_hi = strip_nonlinear_slope(
+                        x_hi, uplift_U, diffusivity_D, critical_slope_Sc);
+                    const double S_lo = strip_nonlinear_slope(
+                        x_lo, uplift_U, diffusivity_D, critical_slope_Sc);
+                    // dz = +S dx going upslope (decreasing x toward divide)
+                    z_of_s[static_cast<std::size_t>(s)] =
+                        z_of_s[static_cast<std::size_t>(s + 1)]
+                        + 0.5 * (S_hi + S_lo) * dx_sub;
+                }
+                for (int i = 0; i < n_cross; ++i)
+                {
+                    double x = xd[static_cast<std::size_t>(i)];
+                    if (x > L) x = L;
+                    const double f   = x / dx_sub;
+                    int    s0 = static_cast<int>(f);
+                    if (s0 < 0)      s0 = 0;
+                    if (s0 > n_sub)  s0 = n_sub;
+                    int s1 = (s0 < n_sub) ? s0 + 1 : n_sub;
+                    const double w = f - static_cast<double>(s0);
+                    profile[static_cast<std::size_t>(i)] =
+                        (1.0 - w) * z_of_s[static_cast<std::size_t>(s0)]
+                        +       w * z_of_s[static_cast<std::size_t>(s1)];
+                }
+            }
+            break;
+        }
+        case lsdtt_strip_init_profile::raised_plateau:
+        {
+            for (int i = 0; i < n_cross; ++i)
+            {
+                profile[static_cast<std::size_t>(i)] =
+                    baselevel_elevation + init_amplitude;
+            }
+            break;
+        }
+        case lsdtt_strip_init_profile::perturbed:
+        {
+            for (int i = 0; i < n_cross; ++i)
+            {
+                const std::uint64_t key = make_hash_key(
+                    perturb_seed, 0xB17, static_cast<std::uint64_t>(i));
+                profile[static_cast<std::size_t>(i)] =
+                    baselevel_elevation + init_amplitude * symmetric_uniform(key);
+            }
+            break;
+        }
+        case lsdtt_strip_init_profile::linear_ramp:
+        {
+            for (int i = 0; i < n_cross; ++i)
+            {
+                const double x = xd[static_cast<std::size_t>(i)];
+                const double frac = (L > 0.0) ? (1.0 - x / L) : 0.0;
+                profile[static_cast<std::size_t>(i)] =
+                    baselevel_elevation + init_amplitude * frac;
+            }
+            break;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Expand the 1-D profile across the uniform axis and stamp the channel mask.
+    // -------------------------------------------------------------------------
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    std::vector<float> dem_data(n_pixels, 0.0f);
+    std::vector<float> mask_data(n_pixels, 0.0f);
+
+    const int threads = resolve_thread_count(n_threads);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const int cross_i = cross_axis_is_x ? col : row;
+            const std::size_t sc = static_cast<std::size_t>(cross_i);
+            const std::size_t flat = flat_index(row, col, n_cols);
+
+            const bool is_chan = (chan[sc] != 0);
+            dem_data[flat] = static_cast<float>(
+                is_chan ? baselevel_elevation : profile[sc]);
+            mask_data[flat] = is_chan ? 1.0f : 0.0f;
+        }
+    }
+
+    lsdtt_hillslope_strip_surface out;
+    out.dem          = make_raster(std::move(dem_data),  meta);
+    out.channel_mask = make_raster(std::move(mask_data), meta);
+    return out;
+}
+
+lsdtt_hillslope_strip_surface generate_hillslope_strip_surface(
+    int                        n_rows,
+    int                        n_cols,
+    double                     cell_size,
+    lsdtt_strip_channel_config channel_config,
+    lsdtt_strip_init_profile   init_profile,
+    bool                       cross_axis_is_x,
+    double                     baselevel_elevation,
+    double                     half_width,
+    double                     uplift_U,
+    double                     diffusivity_D,
+    double                     critical_slope_Sc,
+    bool                       nonlinear_profile,
+    double                     init_amplitude,
+    int                        perturb_seed,
+    int                        n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_hillslope_strip_surface(
+        meta, channel_config, init_profile, cross_axis_is_x,
+        baselevel_elevation, half_width,
+        uplift_U, diffusivity_D, critical_slope_Sc,
+        nonlinear_profile, init_amplitude, perturb_seed, n_threads);
+}
+
 } // namespace lsdtt

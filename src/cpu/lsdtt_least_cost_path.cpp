@@ -280,9 +280,16 @@ void burn_capturing_path(
     const std::vector<std::int64_t>&    path,
     double                              min_slope,
     double                              capture_margin,
-    double                              max_depth)
+    double                              max_depth,
+    double                              capture_ceiling)
 {
     if (path.size() < 2) return;
+
+    // Deep-capture ceiling: when finite, no interior cell may sit above this
+    // (less capture_margin). Forces the whole reach below a competing route that
+    // is not an immediate neighbour (the per-cell test below cannot see it).
+    const bool   use_ceiling = std::isfinite(capture_ceiling);
+    const double ceil_z      = capture_ceiling - capture_margin;
 
     const lsdtt_raster_meta&     meta = dem.get_meta();
     std::vector<float>&          elev = dem.get_data();
@@ -368,6 +375,12 @@ void burn_capturing_path(
             best_comp_slope * L_path + capture_margin,
             slope_floor * L_path);
         double new_z = std::min(cur_nat, prev_z - drop);
+
+        // Deep capture: force this cell below the competing escape route even
+        // when that route is not a neighbour (best_comp_slope cannot see it).
+        // The descent re-check below keeps the capped run strictly descending
+        // (no flats), and the terminus still daylights at its natural elevation.
+        if (use_ceiling && new_z > ceil_z) new_z = ceil_z;
 
         // Floor: keep enough head-room above the terminus elevation that the
         // remaining steps can still descend to it without flats or undercut.

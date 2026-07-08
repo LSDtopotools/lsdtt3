@@ -426,16 +426,82 @@ int main(int argc, char* argv[])
 
     string_default_map["hillslope_model"] = "cidre";
     help_map["hillslope_model"] = {"string","cidre",
-        "Hillslope transport model: linear, roering, or cidre, or adi.",
+        "Hillslope transport model: linear, roering, roering_implicit, cidre, or adi.",
         "linear: explicit FD of D·∇²z on the regular 4-connected grid (stable at any "
         "typical LEM dt; no flow graph needed beyond channel ID). "
         "roering: explicit FD of the Roering (1999) nonlinear law D·∇·[∇z/(1-(|∇z|/Sc)²)]; "
         "auto-subcycles when near Sc (dt ≤ h²/(4·D·α_max)); enable_nonlinear_hillslopes "
         "must be true or it reduces to linear FD. "
+        "roering_implicit: unconditionally-stable backward-Euler solver for the same "
+        "Roering law (Eigen sparse Cholesky / CG; adaptive sub-stepping; sub-critical "
+        "limiter). Channels are Dirichlet sinks from the area threshold or "
+        "channel_mask_fname; needs a non-empty channel set or the step is skipped. "
+        "Set enable_nonlinear_hillslopes false for linear backward-Euler diffusion. "
         "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
         "unconditionally stable near Sc via slope-restoration. "
         "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps."
         "Requires enable_hillslope_transport."};
+
+    // --- roering_implicit solver knobs (used only when hillslope_model = roering_implicit) ---
+    float_default_map["hillslope_implicit_relaxation_omega"] = 0.7f;
+    help_map["hillslope_implicit_relaxation_omega"] = {"float","0.7",
+        "Damped-Picard relaxation factor omega (0<omega<=1) for roering_implicit.",
+        "Values below 1 stabilise the nonlinear iteration near Sc; the controller "
+        "auto-tunes it down further on divergence. Ignored by other hillslope models."};
+
+    float_default_map["hillslope_implicit_picard_tol"] = 1e-4f;
+    help_map["hillslope_implicit_picard_tol"] = {"float","1e-4",
+        "Convergence tolerance max|delta_z| for the Picard iteration (roering_implicit).",
+        ""};
+
+    int_default_map["hillslope_implicit_picard_max_iter"] = 50;
+    help_map["hillslope_implicit_picard_max_iter"] = {"int","50",
+        "Maximum Picard iterations per sub-step (roering_implicit).",
+        ""};
+
+    float_default_map["hillslope_implicit_slope_ratio_cap"] = 0.99f;
+    help_map["hillslope_implicit_slope_ratio_cap"] = {"float","0.99",
+        "Regularised slope-ratio cap r_max (<1) bounding D_eff near Sc (roering_implicit).",
+        ""};
+
+    int_default_map["hillslope_implicit_solver_choice"] = 0;
+    help_map["hillslope_implicit_solver_choice"] = {"int","0",
+        "Linear solver for roering_implicit: 0 = SimplicialLDLT, 1 = CG+IncompleteCholesky.",
+        "LDLT is robust for moderate grids; CG+IC scales better on very large grids."};
+
+    int_default_map["hillslope_implicit_time_integrator"] = 0;
+    help_map["hillslope_implicit_time_integrator"] = {"int","0",
+        "Time integrator for roering_implicit: 0 = backward Euler, 1 = TR-BDF2 (2nd order).",
+        "TR-BDF2 is L-stable and time-accurate with embedded PI error control; use it for "
+        "time-accurate transients rather than just the approach to steady state."};
+
+    float_default_map["hillslope_implicit_error_tol"] = 0.0f;
+    help_map["hillslope_implicit_error_tol"] = {"float","0",
+        "TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller "
+        "(0 = auto = a small fraction of the relief). Only used when time_integrator = 1.",
+        ""};
+
+    float_default_map["hillslope_implicit_dt_init"] = 0.0f;
+    help_map["hillslope_implicit_dt_init"] = {"float","0",
+        "Initial adaptive sub-step for roering_implicit (0 = auto = the LEM timestep).",
+        ""};
+
+    float_default_map["hillslope_implicit_dt_min"] = 0.0f;
+    help_map["hillslope_implicit_dt_min"] = {"float","0",
+        "Floor on the adaptive sub-step for roering_implicit (0 = auto).",
+        ""};
+
+    float_default_map["hillslope_implicit_dt_max"] = 0.0f;
+    help_map["hillslope_implicit_dt_max"] = {"float","0",
+        "Cap on the adaptive sub-step for roering_implicit (0 = the LEM timestep).",
+        ""};
+
+    string_default_map["channel_mask_fname"] = "";
+    help_map["channel_mask_fname"] = {"string","",
+        "Optional raster (in read_path) whose cells > 0.5 are fixed-elevation channel "
+        "pixels for the hillslope Dirichlet set, overriding the drainage-area threshold.",
+        "Must match the DEM grid. Empty (default) = derive channels from "
+        "incision_threshold_area. Useful for prescribed-channel / hillslope-strip runs."};
 
     bool_default_map["enable_uplift"] = true;
     help_map["enable_uplift"] = {"bool","true",
@@ -670,6 +736,19 @@ int main(int argc, char* argv[])
     opts.boundary_conditions             = sf["boundary_conditions"];
     opts.n_threads                       = ifs["n_threads"];
 
+    // roering_implicit solver knobs (D/U/Sc/nonlinear/BC/threads are set in the LEM
+    // step from the options above; these fill the rest of the implicit options).
+    opts.roering_implicit_opts.relaxation_omega = ff["hillslope_implicit_relaxation_omega"];
+    opts.roering_implicit_opts.picard_tol       = ff["hillslope_implicit_picard_tol"];
+    opts.roering_implicit_opts.picard_max_iter  = ifs["hillslope_implicit_picard_max_iter"];
+    opts.roering_implicit_opts.slope_ratio_cap  = ff["hillslope_implicit_slope_ratio_cap"];
+    opts.roering_implicit_opts.solver_choice    = ifs["hillslope_implicit_solver_choice"];
+    opts.roering_implicit_opts.time_integrator  = ifs["hillslope_implicit_time_integrator"];
+    opts.roering_implicit_opts.error_tol        = ff["hillslope_implicit_error_tol"];
+    opts.roering_implicit_opts.dt_init          = ff["hillslope_implicit_dt_init"];
+    opts.roering_implicit_opts.dt_min           = ff["hillslope_implicit_dt_min"];
+    opts.roering_implicit_opts.dt_max           = ff["hillslope_implicit_dt_max"];
+
     // -------------------------------------------------------------------------
     // Safe output writing wrappers allowing NoData export without breaking
     // the stable zero-baseline math needed by explicit PDE solvers
@@ -870,6 +949,43 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     std::vector<std::int64_t> boundary_flats = build_boundary_flats(dem, opts.boundary_conditions);
     std::cout << "Boundary pixels identified: " << boundary_flats.size() << "\n";
+
+    // -------------------------------------------------------------------------
+    // Optional explicit channel mask (overrides the drainage-area Dirichlet set
+    // for the hillslope step; §8).  Loaded from read_path + channel_mask_fname.
+    // -------------------------------------------------------------------------
+    if (!sf["channel_mask_fname"].empty())
+    {
+        const std::string mask_path = pp.get_read_path() + sf["channel_mask_fname"];
+        std::cout << "Loading channel mask: " << mask_path << "\n";
+        try
+        {
+            lsdtt::lsdtt_data_loader mask_loader;
+            mask_loader.open_raster(mask_path);
+            lsdtt::lsdtt_raster_cpu mask_raster(mask_loader);
+            const lsdtt::lsdtt_raster_meta& mm = mask_raster.get_meta();
+            const lsdtt::lsdtt_raster_meta& dm = dem.get_meta();
+            if (mm.n_rows != dm.n_rows || mm.n_cols != dm.n_cols)
+            {
+                std::cerr << "FATAL: channel mask grid (" << mm.n_rows << "x" << mm.n_cols
+                          << ") does not match the DEM (" << dm.n_rows << "x" << dm.n_cols
+                          << ").\n";
+                return 1;
+            }
+            const std::vector<float>&   md = mask_raster.get_data();
+            const std::vector<uint8_t>& mk = mask_raster.get_mask();
+            opts.explicit_channel_mask.assign(md.size(), 0);
+            std::size_t n_ch = 0;
+            for (std::size_t i = 0; i < md.size(); ++i)
+                if (mk[i] && md[i] > 0.5f) { opts.explicit_channel_mask[i] = 1; ++n_ch; }
+            std::cout << "  channel pixels in mask: " << n_ch << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: could not load channel mask: " << e.what() << "\n";
+            return 1;
+        }
+    }
 
     // Lambda to snap all structurally-sound boundary pixels to user-defined baselevel elevation
     auto enforce_baselevel = [&]() {

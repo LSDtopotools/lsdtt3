@@ -372,12 +372,25 @@ double sample_dem_elevation_nearest_valid(
                static_cast<std::size_t>(c);
     };
 
-    for (int radius = 0; radius <= 1; ++radius)
+    // Search outward for the nearest valid cell. A vertex can land on the DEM's
+    // NoData fringe (rounded clip edges); rather than abort the whole build, we
+    // snap to the nearest valid elevation within `max_radius` cells, and if none
+    // is found (the vertex is genuinely off the valid data) return NaN so the
+    // caller can drop that fragment.
+    const int max_radius = 100;
+    for (int radius = 0; radius <= max_radius; ++radius)
     {
         for (int rr = row - radius; rr <= row + radius; ++rr)
         {
             for (int cc = col - radius; cc <= col + radius; ++cc)
             {
+                // Only scan the new ring at this radius (cells on its border).
+                if (radius > 0 &&
+                    rr != row - radius && rr != row + radius &&
+                    cc != col - radius && cc != col + radius)
+                {
+                    continue;
+                }
                 if (rr < 0 || rr >= meta.n_rows || cc < 0 || cc >= meta.n_cols)
                 {
                     continue;
@@ -393,9 +406,7 @@ double sample_dem_elevation_nearest_valid(
         }
     }
 
-    throw std::runtime_error(
-        "lsdtt_vector_to_junction_network: no valid DEM elevation found beneath or adjacent to vector vertex"
-    );
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 std::vector<raw_polyline> load_clipped_stream_polylines(
@@ -631,6 +642,103 @@ std::vector<std::vector<lsdtt_xy>> clip_vector_lines_to_dem(
     return out;
 }
 
+// -----------------------------------------------------------------------------
+// merge_degree2_polylines
+// -----------------------------------------------------------------------------
+std::vector<std::vector<lsdtt_xy>> merge_degree2_polylines(
+    const std::vector<std::vector<lsdtt_xy>>& polylines, double snap_tol)
+{
+    const std::size_t n = polylines.size();
+    const double tol2 = snap_tol * snap_tol;
+
+    // Cluster endpoints into nodes (O(n^2); fragment counts are small).
+    std::vector<lsdtt_xy> node_pos;
+    auto find_node = [&](const lsdtt_xy& p) -> int
+    {
+        for (std::size_t i = 0; i < node_pos.size(); ++i)
+        {
+            const double dx = node_pos[i].x - p.x;
+            const double dy = node_pos[i].y - p.y;
+            if (dx * dx + dy * dy <= tol2) return static_cast<int>(i);
+        }
+        node_pos.push_back(p);
+        return static_cast<int>(node_pos.size()) - 1;
+    };
+
+    std::vector<int> sn(n, -1), en(n, -1);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (polylines[i].size() < 2) continue;
+        sn[i] = find_node(polylines[i].front());
+        en[i] = find_node(polylines[i].back());
+    }
+
+    std::vector<int> deg(node_pos.size(), 0);
+    std::vector<std::vector<int>> node_edges(node_pos.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (sn[i] < 0) continue;
+        deg[sn[i]]++; deg[en[i]]++;
+        node_edges[sn[i]].push_back(static_cast<int>(i));
+        node_edges[en[i]].push_back(static_cast<int>(i));
+    }
+
+    std::vector<char> used(n, 0);
+    std::vector<std::vector<lsdtt_xy>> out;
+
+    // Append polyline e to chain, oriented to start at `from_node`; return the
+    // node at its far end.
+    auto append_oriented = [&](std::vector<lsdtt_xy>& chain, int e, int from_node)
+        -> int
+    {
+        const auto& pl = polylines[e];
+        const bool fwd = (sn[e] == from_node);
+        auto push = [&](const lsdtt_xy& q)
+        {
+            if (chain.empty() || chain.back().x != q.x || chain.back().y != q.y)
+                chain.push_back(q);
+        };
+        if (fwd) for (std::size_t k = 0; k < pl.size(); ++k) push(pl[k]);
+        else     for (std::size_t k = pl.size(); k-- > 0; )   push(pl[k]);
+        return fwd ? en[e] : sn[e];
+    };
+
+    auto walk = [&](int first_edge, int start_node)
+    {
+        std::vector<lsdtt_xy> chain;
+        int cur = first_edge, from = start_node;
+        while (true)
+        {
+            used[cur] = 1;
+            const int next_node = append_oriented(chain, cur, from);
+            if (next_node < 0 || deg[next_node] != 2) break;  // chain end / confluence
+            int nxt = -1;
+            for (int e : node_edges[next_node]) if (!used[e]) { nxt = e; break; }
+            if (nxt < 0) break;
+            cur = nxt; from = next_node;
+        }
+        if (chain.size() >= 2) out.push_back(std::move(chain));
+    };
+
+    // Start each chain at a NON-degree-2 end (free end or confluence).
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (used[i] || sn[i] < 0) continue;
+        int start_node = -1;
+        if (deg[sn[i]] != 2)      start_node = sn[i];
+        else if (deg[en[i]] != 2) start_node = en[i];
+        if (start_node < 0) continue;           // interior of a chain: walked later
+        walk(static_cast<int>(i), start_node);
+    }
+    // Remaining edges belong to all-degree-2 chains/loops not started above.
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (used[i] || sn[i] < 0) continue;
+        walk(static_cast<int>(i), sn[i]);
+    }
+    return out;
+}
+
 
 // -----------------------------------------------------------------------------
 // construction
@@ -719,6 +827,115 @@ void lsdtt_vector_to_junction_network::create(
 
 
     // -------------------------------------------------------------------------
+    // Node the linework at T-junctions. The input (e.g. OS VectorMap Local) is
+    // typically NOT noded: a trunk is one long polyline that tributaries touch at
+    // an INTERIOR vertex, so without this the trunk is never split and the edges /
+    // Strahler order come out wrong (one link through many confluences). Here we
+    // split each polyline at any interior vertex that coincides (within
+    // vertex_tol) with another polyline's ENDPOINT, so every confluence becomes a
+    // shared endpoint. (True interior-interior crossings with no shared vertex are
+    // not handled; rivers confluence rather than cross.)
+    // -------------------------------------------------------------------------
+    {
+        // Distinct endpoints of all polylines.
+        std::vector<lsdtt_xy> endpoints;
+        {
+            std::set<quantised_key> seen;
+            for (const auto& p : polylines)
+            {
+                if (p.xy.size() < 2) continue;
+                for (const lsdtt_xy& e : {p.xy.front(), p.xy.back()})
+                    if (seen.insert(make_key(e.x, e.y, vertex_tol)).second)
+                        endpoints.push_back(e);
+            }
+        }
+
+        // Closest point on segment a-b to q; returns distance, sets t and proj.
+        auto project = [](const lsdtt_xy& a, const lsdtt_xy& b,
+                          const lsdtt_xy& q, double& t, lsdtt_xy& proj) -> double
+        {
+            const double dx = b.x - a.x, dy = b.y - a.y;
+            const double l2 = dx * dx + dy * dy;
+            t = (l2 > 0.0) ? ((q.x - a.x) * dx + (q.y - a.y) * dy) / l2 : 0.0;
+            if (t < 0.0) t = 0.0; else if (t > 1.0) t = 1.0;
+            proj.x = a.x + t * dx; proj.y = a.y + t * dy;
+            return std::hypot(q.x - proj.x, q.y - proj.y);
+        };
+
+        std::vector<raw_polyline> noded;
+        noded.reserve(polylines.size());
+        std::size_t n_split = 0;
+
+        for (auto& p : polylines)
+        {
+            const std::vector<lsdtt_xy>& xy = p.xy;
+            if (xy.size() < 2) { noded.push_back(std::move(p)); continue; }
+
+            // Where an endpoint touches p's INTERIOR: record (segment, t, point).
+            struct split_pt { std::size_t seg; double t; lsdtt_xy pt; };
+            std::vector<split_pt> splits;
+            const std::size_t nseg = xy.size() - 1;
+            for (const lsdtt_xy& q : endpoints)
+            {
+                double best_d = std::numeric_limits<double>::max();
+                std::size_t best_seg = 0; double best_t = 0.0; lsdtt_xy best_pt{};
+                for (std::size_t s = 0; s < nseg; ++s)
+                {
+                    double t; lsdtt_xy pr;
+                    const double d = project(xy[s], xy[s + 1], q, t, pr);
+                    if (d < best_d) { best_d = d; best_seg = s; best_t = t; best_pt = pr; }
+                }
+                if (best_d > vertex_tol) continue;            // not on this line
+                // Ignore touches at p's own ends (handled by endpoint noding).
+                if (best_seg == 0 && best_t < 1e-6) continue;
+                if (best_seg == nseg - 1 && best_t > 1.0 - 1e-6) continue;
+                splits.push_back({best_seg, best_t, best_pt});
+            }
+
+            if (splits.empty()) { noded.push_back(std::move(p)); continue; }
+
+            std::sort(splits.begin(), splits.end(),
+                [](const split_pt& a, const split_pt& b)
+                { return a.seg != b.seg ? a.seg < b.seg : a.t < b.t; });
+
+            // Walk segments, inserting split points and cutting arcs.
+            std::vector<lsdtt_xy> cur; cur.push_back(xy[0]);
+            std::size_t si = 0;
+            auto close_arc = [&](const lsdtt_xy& at)
+            {
+                if (cur.size() >= 2) { raw_polyline a; a.xy = cur;
+                                       noded.push_back(std::move(a)); }
+                cur.clear(); cur.push_back(at);
+            };
+            for (std::size_t s = 0; s < nseg; ++s)
+            {
+                while (si < splits.size() && splits[si].seg == s)
+                {
+                    const lsdtt_xy& pt = splits[si].pt;
+                    if (std::hypot(pt.x - cur.back().x,
+                                   pt.y - cur.back().y) > 1e-6)
+                        cur.push_back(pt);
+                    close_arc(pt);
+                    ++si;
+                }
+                if (std::hypot(xy[s + 1].x - cur.back().x,
+                               xy[s + 1].y - cur.back().y) > 1e-6)
+                    cur.push_back(xy[s + 1]);
+            }
+            if (cur.size() >= 2) { raw_polyline a; a.xy = cur;
+                                   noded.push_back(std::move(a)); }
+            ++n_split;
+        }
+
+        if (n_split > 0)
+            std::cout << "Noded vector linework: split " << n_split
+                      << " polyline(s) at interior junctions ("
+                      << polylines.size() << " -> " << noded.size()
+                      << " arcs)\n";
+        polylines = std::move(noded);
+    }
+
+    // -------------------------------------------------------------------------
     // Build raw endpoint graph from clipped linework.
     // -------------------------------------------------------------------------
     std::map<quantised_key, std::int32_t> vertex_lookup;
@@ -736,10 +953,19 @@ void lsdtt_vector_to_junction_network::create(
                 return it->second;
             }
 
+            const double elev = sample_dem_elevation_nearest_valid(dem, p.x, p.y);
+            if (!std::isfinite(elev))
+            {
+                // Endpoint is over NoData with no valid cell nearby: mark the key
+                // invalid so the fragment is dropped (and not re-sampled).
+                vertex_lookup[key] = -1;
+                return -1;
+            }
+
             raw_vertex v;
             v.x = p.x;
             v.y = p.y;
-            v.elevation = sample_dem_elevation_nearest_valid(dem, p.x, p.y);
+            v.elevation = elev;
             v.is_dem_edge = point_is_on_dem_edge(meta, p.x, p.y, edge_tol);
 
             const std::int32_t id =
@@ -754,6 +980,7 @@ void lsdtt_vector_to_junction_network::create(
     {
         const std::int32_t v0 = get_or_make_vertex(poly.xy.front());
         const std::int32_t v1 = get_or_make_vertex(poly.xy.back());
+        if (v0 < 0 || v1 < 0) continue;   // endpoint over NoData: drop fragment
 
         raw_edge e;
         e.raw_edge_id = static_cast<std::int32_t>(raw_edges.size());

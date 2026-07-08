@@ -14,25 +14,46 @@
 //
 // Pipeline:
 //   1. Local relief threshold → raw relief mask
+//      Threshold is either relief_threshold_metres or, with
+//      adaptive_relief_threshold, chosen by CDF divergence and scaled by
+//      relief_threshold_multiplier.
 //   2. Optional morphological closing  (flat_closing_radius_metres; 0 = skip)
 //      Seals small holes and narrow gaps inside flat blobs.
 //   3. Optional morphological opening  (flat_opening_radius_metres; 0 = skip)
 //      Removes thin connections between blobs that should be separate.
 //      Order of steps 2 and 3 is controlled by open_then_close.
 //   4. Remove components < min_component_pixels → working flat mask
-//   5. Progressive Canny annealing for slope break detection (requires OpenCV)
-//        vertical_excess_curvature and profile_curvature at thresholds {50, 25, 15}
+//   5. Slope break detection (requires OpenCV): adaptive thresholding of
+//      vertical_excess_curvature → closing → Zhang-Suen skeleton → spur and
+//      terminal-loop pruning → optional elevation-based endpoint bridging.
+//   6. Optional channel breaks (break_flats_with_channels): D8 drainage-area
+//      threshold, with optional drainage-area injection.
+//   7. Combined labelling: flat mask minus slope-break and channel-break
+//      pixels → labelled flat mask.
+//   8. Optional plane analysis (run_plane_analysis): per-label plane fits with
+//      split/merge detection, then a residual-relief second pass that
+//      re-breaks, re-labels, and merges the flat surfaces.
+//   9. Optional channel network and flat-surface → channel connections
+//      (write_channel_network, connect_flat_surfaces_to_channels), seeded
+//      from user-supplied source points.
 //
 // Outputs (always written):
 //   <stem>_labelled_flat_mask.tif
 //   <stem>_relief_cdf.csv
 //   <stem>_relief_dist_fits.csv
 //   <stem>_flat_vertical_excess_curvature.tif
-//   <stem>_flat_profile_curvature.tif
-//   <stem>_slope_break_step<N>_canny_vert.tif
-//   <stem>_slope_break_step<N>_canny_prof.tif
-//   <stem>_slope_break_step<N>_break_mask_vert.tif
-//   <stem>_slope_break_step<N>_break_mask_prof.tif
+//   <stem>_slope_break_adaptive_binary.tif
+//
+// Frequently used optional outputs (see help for the full list):
+//   <stem>_combined_flat_mask.tif                (write_combined_flat_mask)
+//   <stem>_slope_break_centreline.tif            (write_slope_break_centreline)
+//   <stem>_slope_break_centreline_connected.tif  (write_slope_break_centreline_connected)
+//   <stem>_slope_break_bridge_mask.tif           (write_slope_break_bridge_mask)
+//   <stem>_plane_fits.csv, _plane_residual.tif, _residual_relief*.tif,
+//   <stem>_merged_residual_relief_labelled_flat_mask.tif  (run_plane_analysis)
+//   <stem>_flat_surface_polygons.fgb, _label_source_connections.csv
+//                                                (connect_flat_surfaces_to_channels)
+//   <stem>_channel_network_lines.fgb             (write_channel_network)
 //
 // Usage:
 //   lsdtt-flat-surface-finder <path> <parameter_file>
@@ -63,6 +84,8 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
+#include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
+#include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_finder.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_flat_surface_plane_analysis.hpp"
@@ -297,6 +320,68 @@ int main(int argc, char* argv[])
         "Write the healed flat mask (after directional closing, if enabled).",
         "Only written when directional_close_line_length_pixels >= 3."};
 
+    // --- Floodplain / terrace classification (height above channel) ---
+    bool_default_map["find_floodplain"] = false;
+    help_map["find_floodplain"] = {"bool","false",
+        "Classify labelled flat surfaces into floodplain and terrace.",
+        "Uses height above the in-scope channel network (HAND). Requires a "
+        "channel scope (source points, or the drainage-area threshold). "
+        "Writes _surface_class.tif, _floodplain_mask.tif, _surface_class.csv."};
+
+    float_default_map["floodplain_max_height_metres"] = 0.0f;
+    help_map["floodplain_max_height_metres"] = {"float","0",
+        "Max median height-above-channel (m) for a label to be floodplain.",
+        "A channel-adjacent label with median HAND at or below this is the "
+        "floodplain (lowest surface next to the channel). 0 or negative = use "
+        "the flat-mask relief threshold."};
+
+    float_default_map["terrace_min_height_metres"] = 0.0f;
+    help_map["terrace_min_height_metres"] = {"float","0",
+        "Min median height-above-channel (m) for a non-floodplain label to be a terrace.",
+        "Legacy minimum_terrace_height analogue. Labels below this (and not "
+        "floodplain) are left unclassified."};
+
+    float_default_map["channel_adjacency_radius_metres"] = 0.0f;
+    help_map["channel_adjacency_radius_metres"] = {"float","0",
+        "Distance (m) within which a label counts as channel-adjacent.",
+        "Used for the floodplain 'next to the channel' test. 0 = one cell "
+        "(8-neighbour touch)."};
+
+    float_default_map["terrace_max_distance_to_channel_metres"] = 0.0f;
+    help_map["terrace_max_distance_to_channel_metres"] = {"float","0",
+        "Valley-corridor half-width (m): max distance from an in-scope channel "
+        "for a label to be a terrace.",
+        "Excludes the regional upland/interfluve (flat and elevated, but not a "
+        "fluvial terrace) from the terrace class. 0 = no corridor limit."};
+
+    bool_default_map["enable_leak_split"] = true;
+    help_map["enable_leak_split"] = {"bool","true",
+        "Split a labelled flat whose HAND straddles the floodplain and terrace "
+        "bands (broken/absent riser leak) at the antimode HAND.",
+        "Low-side pixels classify as floodplain, high-side as terrace. Makes "
+        "classification robust to road-cut riser gaps and unsegmented valley "
+        "floors (Phase 2a backstop)."};
+
+    float_default_map["leak_split_min_side_fraction"] = 0.15f;
+    help_map["leak_split_min_side_fraction"] = {"float","0.15",
+        "Minimum HAND-mass fraction on each side of the class bands for a label "
+        "to be treated as a straddling leak.",""};
+
+    bool_default_map["write_height_above_channel_raster"] = false;
+    help_map["write_height_above_channel_raster"] = {"bool","false",
+        "Write the height-above-channel (HAND) raster.",
+        "Output suffix: _height_above_channel.tif  Requires find_floodplain."};
+
+    bool_default_map["write_surface_class_raster"] = true;
+    help_map["write_surface_class_raster"] = {"bool","true",
+        "Write the floodplain/terrace class raster (0 none, 1 floodplain, 2 terrace).",
+        "Output suffix: _surface_class.tif  Requires find_floodplain."};
+
+    bool_default_map["write_floodplain_mask"] = true;
+    help_map["write_floodplain_mask"] = {"bool","true",
+        "Write the binary floodplain mask.",
+        "Output suffix: _floodplain_mask.tif  Requires find_floodplain."};
+
     // --- Plane analysis ---
     bool_default_map["run_plane_analysis"] = false;
     help_map["run_plane_analysis"] = {"bool","false",
@@ -432,6 +517,76 @@ int main(int argc, char* argv[])
     help_map["source_points_longitude_field_name"] = {"string","longitude",
         "Longitude field name for CSV source-point input.",""};
 
+    // --- Outlet (downstream) points: bound channel segments in user-source modes ---
+    string_default_map["outlet_points_path"] = "";
+    help_map["outlet_points_path"] = {"string","",
+        "Path to a downstream/outlet point file bounding channel segments.",
+        "Only used when source_points_path is supplied. Each outlet is snapped "
+        "onto the nearest traced channel path and truncates that channel there. "
+        "Same input formats as source_points_path."};
+
+    string_default_map["outlet_points_layer_name"] = "";
+    help_map["outlet_points_layer_name"] = {"string","",
+        "Layer name for vector outlet-point input. Empty = first layer.",""};
+
+    string_default_map["outlet_points_input_format"] = "auto_detect";
+    help_map["outlet_points_input_format"] = {"string","auto_detect",
+        "Format hint for outlet-point input.",
+        "auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer."};
+
+    string_default_map["outlet_points_latitude_field_name"] = "latitude";
+    help_map["outlet_points_latitude_field_name"] = {"string","latitude",
+        "Latitude field name for CSV outlet-point input.",""};
+
+    string_default_map["outlet_points_longitude_field_name"] = "longitude";
+    help_map["outlet_points_longitude_field_name"] = {"string","longitude",
+        "Longitude field name for CSV outlet-point input.",""};
+
+    // --- Channel scope resolution ---
+    bool_default_map["auto_detect_outlet_points"] = true;
+    help_map["auto_detect_outlet_points"] = {"bool","true",
+        "Auto-classify points in source_points_path into sources and outlets.",
+        "When true and no outlet_points_path is given, any supplied point that "
+        "snaps strictly downstream of another supplied point is treated as an "
+        "outlet (it truncates that channel); points downstream of none are "
+        "sources. Lets one combined file select mode 2 vs 3. Ignored when "
+        "outlet_points_path is supplied (roles are then explicit)."};
+
+    bool_default_map["snap_sources_to_channel_threshold"] = true;
+    help_map["snap_sources_to_channel_threshold"] = {"bool","true",
+        "Snap user source points to the nearest channel-threshold pixel.",
+        "Expanding-square search to the nearest cell whose contributing-pixel "
+        "count meets channel_threshold_contributing_pixels."};
+
+    int_default_map["source_snap_max_radius_pixels"] = 25;
+    help_map["source_snap_max_radius_pixels"] = {"int","25",
+        "Maximum expanding-square search radius (pixels) for source snapping.",""};
+
+    float_default_map["outlet_snap_max_distance_metres"] = 0.0f;
+    help_map["outlet_snap_max_distance_metres"] = {"float","0",
+        "Maximum distance (m) between a raw outlet point and its channel path.",
+        "Outlets farther than this from every traced channel are ignored. "
+        "0 = unlimited."};
+
+    bool_default_map["write_channel_scope_raster"] = false;
+    help_map["write_channel_scope_raster"] = {"bool","false",
+        "Write the in-scope channel source-id raster.",
+        "Value = source index claiming the pixel, nodata elsewhere. "
+        "Output suffix: _channel_scope.tif"};
+
+    bool_default_map["write_channel_scope_nodes"] = false;
+    help_map["write_channel_scope_nodes"] = {"bool","false",
+        "Write per-source ordered channel node CSV.",
+        "Columns: source_id, node_seq, x, y, elevation, contributing_pixels. "
+        "Output suffix: _channel_scope_nodes.csv"};
+
+    bool_default_map["write_point_snap_csv"] = false;
+    help_map["write_point_snap_csv"] = {"bool","false",
+        "Write raw-vs-snapped point diagnostics for sources and outlets.",
+        "Columns: role, point_id, status, raw_x, raw_y, snapped_x, snapped_y, "
+        "snap_distance_m, contributing_pixels. "
+        "Output suffix: _point_snaps.csv"};
+
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool","true",
         "Write channel links as a vector line layer.",""};
@@ -504,7 +659,7 @@ int main(int argc, char* argv[])
 
     std::cout << "Switches for analysis are:\n";
     std::cout << "  relief: always on\n";
-    std::cout << "  slope break finder (progressive Canny): always on\n";
+    std::cout << "  slope break finder (VEC adaptive skeleton): always on\n";
 
     // -------------------------------------------------------------------------
     // Load DEM
@@ -589,9 +744,8 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Post-process the relief flat mask:
-    //   1. optional morphological closing
-    //   2. optional morphological dilation
-    //   3. remove components below min_component_pixels
+    //   1. optional morphological closing / opening (order set by open_then_close)
+    //   2. remove components below min_component_pixels
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu flat_mask = result.relief_flat_mask;
 
@@ -656,7 +810,11 @@ int main(int argc, char* argv[])
 
     const bool need_any_flow = bf["break_flats_with_channels"] ||
                                bf["write_channel_network"] ||
-                               bf["connect_flat_surfaces_to_channels"];
+                               bf["connect_flat_surfaces_to_channels"] ||
+                               bf["write_channel_scope_raster"] ||
+                               bf["write_channel_scope_nodes"] ||
+                               bf["write_point_snap_csv"] ||
+                               bf["find_floodplain"];
 
     if (need_any_flow)
     {
@@ -690,6 +848,293 @@ int main(int argc, char* argv[])
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Channel scope resolution
+    //
+    // Resolves which channels are "in scope" for all channel-linked features.
+    // Mode is implicit: no source points = whole-DEM threshold (mode 1);
+    // source points = subset/single channel (modes 2/3); outlet points bound
+    // each traced channel to a segment.
+    // -------------------------------------------------------------------------
+    lsdtt::channel_scope_result ch_scope;
+    bool ch_scope_resolved = false;
+
+    if (ch_flow)
+    {
+        std::cout << "\n--- Channel scope resolution ---\n";
+        try
+        {
+            auto resolve_pt_fmt =
+                [](const std::string& fmt) -> lsdtt::lsdtt_point_input_format
+            {
+                if (fmt == "auto_detect" || fmt == "auto")
+                    return lsdtt::lsdtt_point_input_format::auto_detect;
+                if (fmt == "csv" || fmt == "csv_latitude_longitude_epsg4326")
+                    return lsdtt::lsdtt_point_input_format::
+                        csv_latitude_longitude_epsg4326;
+                if (fmt == "ogr_vector_layer" || fmt == "vector" || fmt == "ogr")
+                    return lsdtt::lsdtt_point_input_format::ogr_vector_layer;
+                throw std::runtime_error("Unknown point input format: " + fmt);
+            };
+
+            auto load_role_flats = [&](const std::string& role)
+                -> std::vector<std::int64_t>
+            {
+                const std::string path = sf[role + "_points_path"];
+                if (path.empty()) return {};
+
+                lsdtt::lsdtt_point_input_options popts;
+                popts.input_format =
+                    resolve_pt_fmt(sf[role + "_points_input_format"]);
+                popts.vector_layer_name = sf[role + "_points_layer_name"];
+                popts.csv_latitude_field_name =
+                    sf[role + "_points_latitude_field_name"];
+                popts.csv_longitude_field_name =
+                    sf[role + "_points_longitude_field_name"];
+                popts.keep_points_outside_raster = true;
+
+                std::cout << "Loading " << role << " points from: "
+                          << path << "\n";
+                std::vector<lsdtt::lsdtt_input_point> pts =
+                    lsdtt::load_points_in_raster_crs(
+                        path, routing_dem.get_meta(), popts);
+                std::vector<std::int64_t> flats =
+                    lsdtt::successfully_mapped_input_points_to_flats(pts);
+                std::cout << "  " << pts.size() << " point(s) loaded, "
+                          << flats.size() << " mapped to valid cells\n";
+                return flats;
+            };
+
+            lsdtt::channel_scope_request scope_req;
+            scope_req.threshold_contributing_pixels =
+                ip["channel_threshold_contributing_pixels"];
+            scope_req.source_flats = load_role_flats("source");
+            scope_req.outlet_flats = load_role_flats("outlet");
+            scope_req.snap_sources = bf["snap_sources_to_channel_threshold"];
+            scope_req.source_snap_max_radius_pixels =
+                ip["source_snap_max_radius_pixels"];
+            scope_req.outlet_snap_max_distance_metres =
+                static_cast<double>(ff["outlet_snap_max_distance_metres"]);
+
+            // Auto-detect roles among the source points unless an explicit
+            // outlet file is supplied (then roles are stated directly).
+            scope_req.auto_detect_roles =
+                bf["auto_detect_outlet_points"] &&
+                sf["outlet_points_path"].empty() &&
+                !scope_req.source_flats.empty();
+
+            ch_scope = lsdtt::resolve_channel_scope(*ch_flow, scope_req);
+            ch_scope_resolved = true;
+
+            const char* mode_name =
+                ch_scope.mode == lsdtt::channel_scope_mode::all_channels_threshold
+                    ? "all channels (threshold)"
+                : ch_scope.mode == lsdtt::channel_scope_mode::user_sources
+                    ? "user sources"
+                    : "user sources, outlet-bounded";
+            std::cout << "  Mode: " << mode_name << "\n"
+                      << "  " << ch_scope.resolved_sources.size()
+                      << " channel source(s) in scope\n";
+            if (!ch_scope.input_point_role.empty())
+            {
+                std::size_t n_src = 0, n_out = 0, n_fail = 0;
+                for (const std::int32_t r : ch_scope.input_point_role)
+                    (r == 0 ? n_src : r == 1 ? n_out : n_fail)++;
+                std::cout << "  Auto-detected roles: " << n_src << " source(s), "
+                          << n_out << " outlet(s), " << n_fail
+                          << " unsnapped\n";
+            }
+
+            const std::string scope_stem = pp.get_full_write_path();
+
+            if (bf["write_channel_scope_raster"])
+            {
+                // source_id + 1 so 0 = background, matching labelled masks.
+                std::vector<float> scope_vals(
+                    ch_scope.channel_source_id.size(), 0.0f);
+                for (std::size_t i = 0; i < scope_vals.size(); ++i)
+                    if (ch_scope.channel_source_id[i] >= 0)
+                        scope_vals[i] = static_cast<float>(
+                            ch_scope.channel_source_id[i] + 1);
+                const std::string p = scope_stem + "_channel_scope.tif";
+                std::cout << "Writing channel scope raster (UInt32): "
+                          << p << "\n";
+                loader.write_full(scope_vals, dem.get_meta(), p, out_format,
+                                  GDT_UInt32);
+            }
+
+            if (bf["write_channel_scope_nodes"])
+            {
+                const std::string p = scope_stem + "_channel_scope_nodes.csv";
+                std::cout << "Writing channel scope nodes: " << p << "\n";
+                const std::vector<float>& dem_d = dem.get_data();
+                std::vector<std::vector<std::string>> rows;
+                for (std::size_t s = 0;
+                     s < ch_scope.channel_node_lists.size(); ++s)
+                {
+                    const auto& nodes = ch_scope.channel_node_lists[s];
+                    for (std::size_t n = 0; n < nodes.size(); ++n)
+                    {
+                        const int r = ch_flow->row_from_flat_unchecked(nodes[n]);
+                        const int c = ch_flow->col_from_flat_unchecked(nodes[n]);
+                        const lsdtt::lsdtt_xy xy =
+                            lsdtt::cell_center_from_row_col(dem.get_meta(), r, c);
+                        rows.push_back({
+                            std::to_string(s),
+                            std::to_string(n),
+                            std::to_string(xy.x),
+                            std::to_string(xy.y),
+                            std::to_string(dem_d[nodes[n]]),
+                            std::to_string(ch_flow->s_vector_size(nodes[n])) });
+                    }
+                }
+                loader.write_csv(p,
+                    {"source_id","node_seq","x","y","elevation",
+                     "contributing_pixels"},
+                    rows);
+            }
+
+            if (bf["write_point_snap_csv"])
+            {
+                // CSV diagnostics plus raw/snapped FlatGeobuf point layers so
+                // both styles can be overlaid in one QC figure.
+                auto status_name = [](lsdtt::lsdtt_snap_status st)
+                {
+                    switch (st)
+                    {
+                        case lsdtt::lsdtt_snap_status::success:
+                            return "success";
+                        case lsdtt::lsdtt_snap_status::input_out_of_bounds:
+                            return "input_out_of_bounds";
+                        case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
+                            return "input_invalid_flow_cell";
+                        case lsdtt::lsdtt_snap_status::
+                             threshold_not_found_in_search_window:
+                            return "threshold_not_found";
+                        default:
+                            return "outlet_reached_before_threshold";
+                    }
+                };
+
+                auto xy_of_rc = [&](int r, int c)
+                { return lsdtt::cell_center_from_row_col(dem.get_meta(), r, c); };
+
+                std::vector<std::vector<std::string>> rows;
+
+                struct scope_pt { double x, y; std::string role; int id; };
+                std::vector<scope_pt> raw_pts, snapped_pts;
+
+                // In auto-role mode the role comes from input_point_role
+                // (a supplied point may be a source or an auto-detected outlet).
+                const bool auto_roles = !ch_scope.input_point_role.empty();
+
+                for (std::size_t i = 0; i < ch_scope.source_snaps.size(); ++i)
+                {
+                    const lsdtt::lsdtt_snap_result& sr = ch_scope.source_snaps[i];
+                    const std::string role =
+                        (auto_roles && i < ch_scope.input_point_role.size() &&
+                         ch_scope.input_point_role[i] == 1)
+                        ? "outlet" : "source";
+                    const lsdtt::lsdtt_xy raw =
+                        xy_of_rc(sr.input_row, sr.input_col);
+                    const bool ok =
+                        sr.status == lsdtt::lsdtt_snap_status::success;
+                    lsdtt::lsdtt_xy snp{0.0, 0.0};
+                    double snap_dist = -1.0;
+                    if (ok)
+                    {
+                        snp = xy_of_rc(sr.snapped_row, sr.snapped_col);
+                        const double dx = snp.x - raw.x, dy = snp.y - raw.y;
+                        snap_dist = std::sqrt(dx*dx + dy*dy);
+                    }
+                    rows.push_back({
+                        role, std::to_string(i), status_name(sr.status),
+                        std::to_string(raw.x), std::to_string(raw.y),
+                        ok ? std::to_string(snp.x) : "",
+                        ok ? std::to_string(snp.y) : "",
+                        std::to_string(snap_dist),
+                        std::to_string(sr.snapped_contributing_pixels) });
+                    raw_pts.push_back({raw.x, raw.y, role,
+                                       static_cast<int>(i)});
+                    if (ok)
+                        snapped_pts.push_back({snp.x, snp.y, role,
+                                               static_cast<int>(i)});
+                }
+
+                // Explicit-outlet mode only: separate outlet file diagnostics.
+                for (std::size_t o = 0;
+                     o < (auto_roles ? 0 : ch_scope.outlet_matched_source.size());
+                     ++o)
+                {
+                    const std::int32_t ms = ch_scope.outlet_matched_source[o];
+                    const bool ok = ms >= 0;
+                    std::string sx, sy;
+                    if (ok && ch_scope.resolved_outlets[ms] >= 0)
+                    {
+                        const std::int64_t of = ch_scope.resolved_outlets[ms];
+                        const lsdtt::lsdtt_xy oxy = xy_of_rc(
+                            ch_flow->row_from_flat_unchecked(of),
+                            ch_flow->col_from_flat_unchecked(of));
+                        sx = std::to_string(oxy.x);
+                        sy = std::to_string(oxy.y);
+                        snapped_pts.push_back({oxy.x, oxy.y, "outlet",
+                                               static_cast<int>(o)});
+                    }
+                    rows.push_back({
+                        "outlet", std::to_string(o),
+                        ok ? "matched" : "unmatched",
+                        "", "", sx, sy,
+                        std::to_string(
+                            ch_scope.outlet_snap_distance_metres.empty()
+                            ? -1.0
+                            : ch_scope.outlet_snap_distance_metres[o]),
+                        "" });
+                }
+
+                const std::string p = scope_stem + "_point_snaps.csv";
+                std::cout << "Writing point snap diagnostics: " << p << "\n";
+                loader.write_csv(p,
+                    {"role","point_id","status","raw_x","raw_y",
+                     "snapped_x","snapped_y","snap_distance_m",
+                     "contributing_pixels"},
+                    rows);
+
+                auto write_pt_layer = [&](const std::vector<scope_pt>& pts,
+                                          const std::string& suffix,
+                                          const std::string& layer)
+                {
+                    if (pts.empty()) return;
+                    const std::string vp = scope_stem + suffix;
+                    std::cout << "Writing " << pts.size()
+                              << " point(s): " << vp << "\n";
+                    lsdtt::lsdtt_vector_schema schema;
+                    schema.field_names = {"role", "point_id"};
+                    schema.field_types = {
+                        lsdtt::lsdtt_vector_field_type::string_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type };
+                    loader.begin_vector_write(
+                        vp, layer, schema, dem.get_meta().crs_wkt,
+                        lsdtt::vector_output_format::flatgeobuf, false);
+                    for (const scope_pt& pt : pts)
+                        loader.write_point(pt.x, pt.y,
+                            { pt.role,
+                              static_cast<std::int64_t>(pt.id) });
+                    loader.finish_vector_write();
+                };
+
+                write_pt_layer(raw_pts, "_scope_points_raw.fgb",
+                               "scope_points_raw");
+                write_pt_layer(snapped_pts, "_scope_points_snapped.fgb",
+                               "scope_points_snapped");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: channel scope resolution failed: "
+                      << e.what() << "\n";
+        }
+    }
+
     if (bf["break_flats_with_channels"])
     {
         if (!ch_flow)
@@ -697,25 +1142,19 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: flow routing unavailable — "
                          "skipping break_flats_with_channels.\n";
         }
-        else
+        else if (!sf["drainage_injection_vector_file"].empty())
         {
-            std::cout << "\n--- Breaking flats with channel pixels ---\n";
+            // Injection changes drainage area, which the scope engine does not
+            // yet honour — keep the DA-threshold path for injected runs.
+            std::cout << "\n--- Breaking flats with channel pixels "
+                         "(drainage-area injection) ---\n";
             try
             {
                 const std::string inj_path = sf["drainage_injection_vector_file"];
-
-                lsdtt::lsdtt_raster_result da_result;
-                if (!inj_path.empty())
-                {
-                    std::cout << "Computing drainage area with injection from: "
-                              << inj_path << "\n";
-                    da_result = ch_flow->get_drainage_area_raster_with_injection(inj_path);
-                }
-                else
-                {
-                    std::cout << "Computing drainage area...\n";
-                    da_result = ch_flow->get_drainage_area_raster();
-                }
+                std::cout << "Computing drainage area with injection from: "
+                          << inj_path << "\n";
+                lsdtt::lsdtt_raster_result da_result =
+                    ch_flow->get_drainage_area_raster_with_injection(inj_path);
 
                 const double pixel_area =
                     dem.get_meta().cell_size * dem.get_meta().cell_size;
@@ -742,6 +1181,22 @@ int main(int argc, char* argv[])
                 std::cerr << "Warning: channel break identification failed: "
                           << e.what() << "\n";
             }
+        }
+        else if (ch_scope_resolved)
+        {
+            // Scoped channel mask: in single-channel / subset modes only the
+            // in-scope channels break the flats.
+            std::cout << "\n--- Breaking flats with in-scope channel pixels ---\n";
+            const std::size_t n =
+                std::min(n_flat_pixels, ch_scope.channel_mask.size());
+            for (std::size_t i = 0; i < n; ++i)
+                if (ch_scope.channel_mask[i] != 0)
+                    channel_break_pixels[i] = 1;
+        }
+        else
+        {
+            std::cerr << "Warning: channel scope unavailable — "
+                         "skipping break_flats_with_channels.\n";
         }
     }
 
@@ -772,7 +1227,7 @@ int main(int argc, char* argv[])
     if (bf["write_combined_flat_mask"])
     {
         const std::string p = stem + "_combined_flat_mask.tif";
-        std::cout << "Writing flat mask (post closing/dilation/filtering): " << p << "\n";
+        std::cout << "Writing flat mask (post closing/opening/filtering): " << p << "\n";
         loader.write_full(flat_mask.get_data(), flat_mask.get_meta(), p, out_format);
     }
 
@@ -1003,6 +1458,134 @@ int main(int argc, char* argv[])
             loader.write_full(labelled_flat_mask.get_data(),
                               labelled_flat_mask.get_meta(), p, out_format,
                               GDT_UInt32);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Floodplain / terrace classification (height above channel)
+    //
+    // Classifies the labelled surfaces using height above the in-scope channel
+    // network. Floodplain = lowest surface adjacent to the channel; terrace =
+    // an elevated surface linked to the channel.
+    // -------------------------------------------------------------------------
+    if (bf["find_floodplain"])
+    {
+        std::cout << "\n--- Floodplain / terrace classification ---\n";
+        if (!ch_flow || !ch_scope_resolved)
+        {
+            std::cerr << "Warning: channel scope unavailable — "
+                         "skipping find_floodplain.\n";
+        }
+        else
+        {
+            try
+            {
+                // Height above the IN-SCOPE channels (not every threshold rill),
+                // so terraces read their true height above the trunk channel.
+                std::cout << "Computing height above in-scope channel network...\n";
+                std::vector<uint8_t> hac_channel_mask(
+                    ch_scope.channel_mask.begin(), ch_scope.channel_mask.end());
+                lsdtt::lsdtt_raster_cpu hand(
+                    ch_flow->get_height_above_channel_mask_raster(
+                        dem.get_data(), dem.get_mask(), hac_channel_mask));
+
+                if (bf["write_height_above_channel_raster"])
+                {
+                    const std::string p = stem + "_height_above_channel.tif";
+                    std::cout << "Writing height above channel: " << p << "\n";
+                    loader.write_full(hand.get_data(), hand.get_meta(),
+                                      p, out_format);
+                }
+
+                lsdtt::flat_surface_classify_request creq;
+                double fp_max =
+                    static_cast<double>(ff["floodplain_max_height_metres"]);
+                if (fp_max <= 0.0) fp_max = req.relief_threshold_metres;
+                creq.floodplain_max_height_metres    = fp_max;
+                creq.terrace_min_height_metres       =
+                    static_cast<double>(ff["terrace_min_height_metres"]);
+                creq.channel_adjacency_radius_metres =
+                    static_cast<double>(ff["channel_adjacency_radius_metres"]);
+                creq.terrace_max_distance_to_channel_metres =
+                    static_cast<double>(ff["terrace_max_distance_to_channel_metres"]);
+                creq.n_threads                       = ip["n_threads"];
+                creq.enable_leak_split               = bf["enable_leak_split"];
+                creq.leak_split_min_side_fraction    =
+                    static_cast<double>(ff["leak_split_min_side_fraction"]);
+
+                std::cout << "Classifying surfaces "
+                          << "(floodplain <= " << fp_max << " m, terrace >= "
+                          << creq.terrace_min_height_metres << " m)...\n";
+
+                lsdtt::flat_surface_classify_result cres =
+                    lsdtt::classify_flat_surfaces_by_channel(
+                        labelled_flat_mask, hand,
+                        ch_scope.channel_mask, ch_scope.channel_source_id,
+                        creq);
+
+                std::cout << "  " << cres.n_floodplain_labels
+                          << " floodplain label(s), " << cres.n_terrace_labels
+                          << " terrace label(s)";
+                if (cres.n_leak_split_labels > 0)
+                    std::cout << ", " << cres.n_leak_split_labels
+                              << " leak-split label(s)";
+                std::cout << "\n";
+
+                if (bf["write_surface_class_raster"])
+                {
+                    const std::string p = stem + "_surface_class.tif";
+                    std::cout << "Writing surface class raster: " << p << "\n";
+                    loader.write_full(cres.surface_class_raster.get_data(),
+                                      cres.surface_class_raster.get_meta(),
+                                      p, out_format, GDT_Byte);
+                }
+
+                if (bf["write_floodplain_mask"])
+                {
+                    const std::string p = stem + "_floodplain_mask.tif";
+                    std::cout << "Writing floodplain mask: " << p << "\n";
+                    loader.write_full(cres.floodplain_mask.get_data(),
+                                      cres.floodplain_mask.get_meta(),
+                                      p, out_format, GDT_Byte);
+                }
+
+                {
+                    const std::string p = stem + "_surface_class.csv";
+                    std::cout << "Writing surface class table: " << p << "\n";
+                    std::vector<std::vector<std::string>> rows;
+                    rows.reserve(cres.labels.size());
+                    for (const lsdtt::flat_surface_label_class& r : cres.labels)
+                    {
+                        const char* cname =
+                            r.cls == lsdtt::surface_class::floodplain ? "floodplain"
+                          : r.cls == lsdtt::surface_class::terrace    ? "terrace"
+                                                                      : "none";
+                        rows.push_back({
+                            std::to_string(r.label), cname,
+                            std::to_string(r.source_id),
+                            std::to_string(r.n_pixels),
+                            std::to_string(r.median_height),
+                            std::to_string(r.mean_height),
+                            std::to_string(r.min_height),
+                            std::to_string(r.max_height),
+                            std::to_string(r.min_distance_to_channel_metres),
+                            r.adjacent_to_channel ? "true" : "false",
+                            r.split_leak ? "true" : "false",
+                            std::to_string(r.split_hand_metres) });
+                    }
+                    loader.write_csv(p,
+                        {"label","class","source_id","n_pixels",
+                         "median_hand_m","mean_hand_m","min_hand_m","max_hand_m",
+                         "min_dist_to_channel_m","adjacent_to_channel",
+                         "leak_split","split_hand_m"},
+                        rows);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: floodplain classification failed: "
+                          << e.what() << "\n";
+            }
         }
     }
 

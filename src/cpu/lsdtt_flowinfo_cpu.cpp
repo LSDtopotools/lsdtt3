@@ -2131,6 +2131,79 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_raster(
 }
 
 // -----------------------------------------------------------------------------
+// get_height_above_channel_mask_raster
+//
+// As get_height_above_channel_raster, but the channel set is an explicit mask
+// rather than a contributing-pixel threshold. Same forward s_vector pass.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_mask_raster(
+    const std::vector<float>&   elev,
+    const std::vector<uint8_t>& elev_mask,
+    const std::vector<uint8_t>& channel_mask) const
+{
+    require_built();
+
+    if (!has_s_vector_)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo::get_height_above_channel_mask_raster(): "
+            "s_vector not built"
+        );
+    }
+
+    const std::size_t n = mask_.size();
+
+    if (elev.size() != n || elev_mask.size() != n || channel_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowinfo::get_height_above_channel_mask_raster(): "
+            "elev, elev_mask and channel_mask must have the same flat-index "
+            "size as the DEM"
+        );
+    }
+
+    const float ndv = static_cast<float>(meta_.no_data_value);
+
+    std::vector<float>   nearest_ch_elev(n, 0.0f);
+    std::vector<uint8_t> ch_valid(n, 0u);
+
+    for (std::size_t i = 0; i < s_vector_.size(); ++i)
+    {
+        const std::int64_t flat = s_vector_[i];
+        if (mask_.data()[flat] == 0 || elev_mask[flat] == 0) continue;
+
+        if (channel_mask[static_cast<std::size_t>(flat)] != 0)
+        {
+            nearest_ch_elev[flat] = elev[flat];
+            ch_valid[flat]        = 1u;
+        }
+        else
+        {
+            const std::int64_t rec = receiver_.data()[flat];
+            if (rec != outlet_receiver && ch_valid[static_cast<std::size_t>(rec)])
+            {
+                nearest_ch_elev[flat] = nearest_ch_elev[static_cast<std::size_t>(rec)];
+                ch_valid[flat]        = 1u;
+            }
+        }
+    }
+
+    lsdtt_raster_result r;
+    r.meta = meta_;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, 0u);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (mask_.data()[i] == 0 || elev_mask[i] == 0 || ch_valid[i] == 0) continue;
+        r.data[i] = elev[i] - nearest_ch_elev[i];
+        r.mask[i] = 1u;
+    }
+
+    return r;
+}
+
+// -----------------------------------------------------------------------------
 // get_distance_to_channel_raster
 //
 // Forward s_vector pass.  Channel threshold same as height_above_channel.

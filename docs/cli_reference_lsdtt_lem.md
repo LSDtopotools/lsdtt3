@@ -131,9 +131,27 @@ Two mutually exclusive modes are available. Select one by setting `run_steady_st
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `hillslope_model` | string | `cidre` | Hillslope transport model for the time-stepping LEM. `linear`: explicit FD of D·∇²z (no flow graph, stable at any typical LEM timestep). `roering`: explicit FD of the Roering (1999) nonlinear law; auto-subcycles when near Sc. `cidre`: Carretier et al. (2016) finite-volume forward sweep with D-infinity routing. Requires `enable_hillslope_transport: true`. |
+| `hillslope_model` | string | `cidre` | Hillslope transport model for the time-stepping LEM. `linear`: explicit FD of D·∇²z (no flow graph, stable at any typical LEM timestep). `roering`: explicit FD of the Roering (1999) nonlinear law; auto-subcycles when near Sc. `cidre`: Carretier et al. (2016) finite-volume forward sweep with D-infinity routing. `roering_implicit`: implicit (unconditionally stable) backward-Euler / TR-BDF2 solver for the Roering law with channels as Dirichlet sinks — no CFL collapse on fine, near-critical grids (requires Eigen; falls back to explicit `roering` if Eigen is absent). Requires `enable_hillslope_transport: true`. |
 | `hillslope_diffusivity` | float | `1e-3` | Hillslope diffusivity κ (m² yr⁻¹). |
 | `critical_hillslope_slope` | float | `0.8` | Critical slope Sc (m/m) for nonlinear hillslope transport. |
+| `channel_mask_fname` | string | `` | Optional raster (in `read_path`) whose cells > 0.5 are fixed-elevation channel pixels for the hillslope Dirichlet set, overriding the drainage-area threshold. Must match the DEM grid. Empty = derive channels from drainage area. |
+
+### `roering_implicit` solver knobs
+
+These only apply when `hillslope_model: roering_implicit`.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `hillslope_implicit_time_integrator` | int | `0` | Time integrator: `0` = backward Euler (1st order, robust), `1` = TR-BDF2 (2nd order, L-stable, embedded-error PI step control — use for time-accurate transients). |
+| `hillslope_implicit_error_tol` | float | `0` | TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller (`0` = auto = a small fraction of the relief). Only used when `time_integrator = 1`. |
+| `hillslope_implicit_solver_choice` | int | `0` | Linear solver: `0` = SimplicialLDLT (robust, moderate grids), `1` = CG + IncompleteCholesky (scales better on very large grids). |
+| `hillslope_implicit_relaxation_omega` | float | `0.7` | Damped-Picard relaxation factor ω (≤ 1) for the nonlinear iteration. |
+| `hillslope_implicit_picard_tol` | float | `1e-4` | Picard convergence tolerance on max\|Δz\| between iterates. |
+| `hillslope_implicit_picard_max_iter` | int | `50` | Maximum Picard iterations per sub-step. |
+| `hillslope_implicit_slope_ratio_cap` | float | `0.99` | Regularised slope-ratio cap r_max (< 1) bounding D_eff near Sc. |
+| `hillslope_implicit_dt_init` | float | `0` | Initial adaptive sub-step (`0` = auto = the LEM timestep). |
+| `hillslope_implicit_dt_min` | float | `0` | Floor on the adaptive sub-step (`0` = auto). |
+| `hillslope_implicit_dt_max` | float | `0` | Cap on the adaptive sub-step (`0` = the LEM timestep). |
 
 ---
 
