@@ -137,6 +137,27 @@ lsdtt_raster_cpu compute_hillshade(
 );
 
 // -----------------------------------------------------------------------------
+// compute_multidirectional_hillshade
+//
+// Computes a mean hillshade from evenly spaced azimuth directions. This reduces
+// directional bias compared to a single-azimuth hillshade and is useful for
+// visual inspection of features that are aspect-sensitive under one illumination.
+//
+// Azimuths are sampled as:
+//   az_k = start_azimuth + k * (360 / n_directions), for k = 0..n_directions-1
+//
+// The output is the per-pixel arithmetic mean of the valid single-azimuth
+// hillshade values.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_multidirectional_hillshade(
+    const lsdtt_raster_cpu& raster,
+    int    n_directions = 8,
+    double altitude     = 45.0,
+    double z_factor     = 1.0,
+    double start_azimuth = 0.0
+);
+
+// -----------------------------------------------------------------------------
 // 3x3 gradient (optimised for speed. Very fast.)
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(

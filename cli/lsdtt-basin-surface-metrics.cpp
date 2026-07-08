@@ -53,6 +53,8 @@
 #include <utility>
 #include <stdexcept>
 #include <variant>
+#include <numeric>
+
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
@@ -199,6 +201,12 @@ int main(int argc, char* argv[])
         "same_as_input: match input format."};
 
     // --- Input & Routing ---
+    bool_default_map["raster_is_filled"] = false;
+    help_map["raster_is_filled"] = {"bool", "false", 
+        "Whether the input raster is already pit-filled and ready for routing.", 
+        "If false (default), the CLI will call fill_pits() before building flow routing. "
+        "If true, the DEM is assumed to already be suitable for routing."};
+
     string_default_map["basin_outlet_csv"] = "NULL";
     help_map["basin_outlet_csv"] = {"string", "NULL", 
         "Required file of requested basin outlet points (CSV format).", 
@@ -366,7 +374,7 @@ int main(int argc, char* argv[])
         auto& req = requested_metric_strings;
         if (std::find(req.begin(), req.end(), "slope") == req.end()) {
             std::cout << "Injecting 'slope' into polyfit metrics to "
-                      << "support shape-area analysis.\n";
+                      << "support slope-area analysis.\n";
             req.push_back("slope");
         }
     }
@@ -406,9 +414,15 @@ int main(int argc, char* argv[])
     loader.get_meta().check_projected_metres();
     lsdtt::lsdtt_raster_cpu dem(loader);
 
-    std::cout << "\n--- Flow Preprocessing ---\nFilling Pits...\n";
-    lsdtt::lsdtt_raster_cpu routed_dem = lsdtt::fill_pits(
-        dem, ff["fill_min_slope"], ifs["n_threads"]);
+    lsdtt::lsdtt_raster_cpu routed_dem = dem;
+    if (!bf["raster_is_filled"]) {
+        std::cout << "\n--- Flow Preprocessing ---\nFilling Pits...\n";
+        routed_dem = lsdtt::fill_pits(
+            dem, ff["fill_min_slope"], ifs["n_threads"]);
+    } else {
+        std::cout << "\nRaster is marked as already filled. Skipping fill step.\n";
+    }
+
 
     std::cout << "\nBuilding D8 Flow Routing...\n";
     lsdtt::lsdtt_flowinfo_options fi_opts;
@@ -943,7 +957,14 @@ int main(int argc, char* argv[])
             out_path, "basin_polygons", schema, dem.get_meta().crs_wkt, 
             poly_fmt, false);
 
-        for (std::size_t i = 0; i < basin_manager.size(); ++i) {
+        // Sort indices downstream to upstream (largest area to smallest) so that nested basins render on top.
+        std::vector<std::size_t> write_order(basin_manager.size());
+        std::iota(write_order.begin(), write_order.end(), 0);
+        std::sort(write_order.begin(), write_order.end(), [&](std::size_t a, std::size_t b) {
+            return basin_manager.basin_at(a).get_slice().size() > basin_manager.basin_at(b).get_slice().size();
+        });
+
+        for (std::size_t i : write_order) {
             const auto& bd = basin_data_store[i];
             
             auto outline = basin_manager.basin_at(i).get_basin_outline();

@@ -24,6 +24,7 @@
 //   lsdtt-feature-finder -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -38,6 +39,7 @@
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_version  = "0.2.0";
@@ -192,7 +194,8 @@ int main(int argc, char* argv[])
     help_map["feature_type"] = {"string","channel_candidates",
         "Feature mode to run.",
         "Supported values: channel_candidates, find_drains, relief_ratio, "
-        "find_valleys, find_roads, flow_road_discrimination, path_opening."};
+        "local_median_relative_elevation, find_valleys, find_roads, "
+        "flow_road_discrimination, path_opening."};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -337,6 +340,80 @@ int main(int argc, char* argv[])
     help_map["relief_ratio_long_radius"] = {"float","8.0",
         "Long moving-window radius for local relief, in metres.",
         "Use a broader radius that captures channel-scale topographic relief."};
+
+    // --- Local median + relative elevation ---
+    float_default_map["local_median_window_radius_metres"] = 6.0f;
+    help_map["local_median_window_radius_metres"] = {"float","6.0",
+        "Circular moving-window radius for local median, in metres.",
+        "Increase to compare each pixel against broader neighbourhood context."};
+
+    bool_default_map["write_local_median_raster"] = true;
+    help_map["write_local_median_raster"] = {"bool","true",
+        "Write local median elevation raster.",
+        "Output: <write_fname>_local_median.tif."};
+
+    bool_default_map["write_local_median_relative_elevation_raster"] = true;
+    help_map["write_local_median_relative_elevation_raster"] = {"bool","true",
+        "Write relative elevation with respect to local median.",
+        "relative = dem - local_median. Negative = below local median; "
+        "positive = above local median. Output: "
+        "<write_fname>_local_median_relative_elevation.tif."};
+
+    float_default_map["local_median_drain_negative_threshold_metres"] = 0.15f;
+    help_map["local_median_drain_negative_threshold_metres"] = {"float","0.15",
+        "Magnitude threshold (m) for drain-candidate trough pixels.",
+        "Drain candidate mask keeps pixels where relative_elevation <= -threshold."};
+
+    float_default_map["local_median_top_positive_threshold_metres"] = 0.15f;
+    help_map["local_median_top_positive_threshold_metres"] = {"float","0.15",
+        "Positive threshold (m) for top-surface candidate pixels.",
+        "Top mask keeps pixels where relative_elevation >= threshold."};
+
+    float_default_map["local_median_bottom_negative_threshold_metres"] = 0.15f;
+    help_map["local_median_bottom_negative_threshold_metres"] = {"float","0.15",
+        "Magnitude threshold (m) for bottom-surface candidate pixels.",
+        "Bottom mask keeps pixels where relative_elevation <= -threshold."};
+
+    float_default_map["local_median_hag_intermix_radius_metres"] = 2.0f;
+    help_map["local_median_hag_intermix_radius_metres"] = {"float","2.0",
+        "Radius (m) for local top/bottom intermix detection.",
+        "A pixel is intermix where both top and bottom masks are present within "
+        "this circular neighbourhood."};
+
+    float_default_map["local_median_hag_gradient_threshold"] = 0.25f;
+    help_map["local_median_hag_gradient_threshold"] = {"float","0.25",
+        "Gradient threshold on relative elevation for hag-transition candidates.",
+        "Transition mask keeps intermix pixels where gradient magnitude >= this value."};
+
+    bool_default_map["write_local_median_gradient_raster"] = true;
+    help_map["write_local_median_gradient_raster"] = {"bool","true",
+        "Write gradient magnitude of local-median relative elevation.",
+        "Output: <write_fname>_local_median_relative_elevation_gradient.tif."};
+
+    bool_default_map["write_local_median_drain_candidate_mask_raster"] = true;
+    help_map["write_local_median_drain_candidate_mask_raster"] = {"bool","true",
+        "Write binary drain-candidate mask from negative relative elevation.",
+        "Output: <write_fname>_local_median_drain_candidate_mask.tif."};
+
+    bool_default_map["write_local_median_top_mask_raster"] = true;
+    help_map["write_local_median_top_mask_raster"] = {"bool","true",
+        "Write binary top-surface candidate mask.",
+        "Output: <write_fname>_local_median_top_mask.tif."};
+
+    bool_default_map["write_local_median_bottom_mask_raster"] = true;
+    help_map["write_local_median_bottom_mask_raster"] = {"bool","true",
+        "Write binary bottom-surface candidate mask.",
+        "Output: <write_fname>_local_median_bottom_mask.tif."};
+
+    bool_default_map["write_local_median_hag_intermix_mask_raster"] = true;
+    help_map["write_local_median_hag_intermix_mask_raster"] = {"bool","true",
+        "Write binary top/bottom intermix mask.",
+        "Output: <write_fname>_local_median_hag_intermix_mask.tif."};
+
+    bool_default_map["write_local_median_hag_transition_mask_raster"] = true;
+    help_map["write_local_median_hag_transition_mask_raster"] = {"bool","true",
+        "Write binary hag-transition candidate mask (intermix + high gradient).",
+        "Output: <write_fname>_local_median_hag_transition_mask.tif."};
 
 
     // --- Drain finder ---
@@ -1261,6 +1338,7 @@ int main(int argc, char* argv[])
     if (feature_type != "channel_candidates" &&
         feature_type != "find_drains" &&
         feature_type != "relief_ratio" &&
+        feature_type != "local_median_relative_elevation" &&
         feature_type != "find_valleys" &&
         feature_type != "find_roads" &&
         feature_type != "flow_road_discrimination" &&
@@ -1277,7 +1355,7 @@ int main(int argc, char* argv[])
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
                   << "'. Supported values are channel_candidates, find_drains, "
-                     "relief_ratio, find_valleys, find_roads, "
+                     "relief_ratio, local_median_relative_elevation, find_valleys, find_roads, "
                      "flow_road_discrimination, path_opening, structure_tensor, "
                      "diffusion, ridge_lines, track_spacing, extract_roads, "
                      "extract_roads_smooth, roughness, thin_lines.\n";
@@ -1526,6 +1604,287 @@ int main(int argc, char* argv[])
                 const std::string o = pp.make_output_path( "_relief_ratio.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(relief_ratio.get_data(), relief_ratio.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "local_median_relative_elevation")
+        {
+            const double window_radius =
+                static_cast<double>(ff.at("local_median_window_radius_metres"));
+            const double drain_negative_threshold =
+                static_cast<double>(ff.at("local_median_drain_negative_threshold_metres"));
+            const double top_positive_threshold =
+                static_cast<double>(ff.at("local_median_top_positive_threshold_metres"));
+            const double bottom_negative_threshold =
+                static_cast<double>(ff.at("local_median_bottom_negative_threshold_metres"));
+            const double intermix_radius =
+                static_cast<double>(ff.at("local_median_hag_intermix_radius_metres"));
+            const double hag_gradient_threshold =
+                static_cast<double>(ff.at("local_median_hag_gradient_threshold"));
+
+            std::cout << "\n--- Local median relative elevation ---\n";
+            std::cout << "Window radius        : " << window_radius << " m\n";
+            std::cout << "Drain threshold      : -" << drain_negative_threshold << " m\n";
+            std::cout << "Top threshold        : +" << top_positive_threshold << " m\n";
+            std::cout << "Bottom threshold     : -" << bottom_negative_threshold << " m\n";
+            std::cout << "Intermix radius      : " << intermix_radius << " m\n";
+            std::cout << "Hag gradient thresh. : " << hag_gradient_threshold << "\n";
+
+            lsdtt::lsdtt_raster_cpu local_median =
+                lsdtt::moving_window_median(
+                    dem,
+                    window_radius,
+                    lsdtt::window_shape::circular
+                );
+
+            const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
+            const auto& dem_d = dem.get_data();
+            const auto& dem_m = dem.get_mask();
+            const auto& med_d = local_median.get_data();
+            const auto& med_m = local_median.get_mask();
+
+            std::vector<float> relative_data(
+                dem_d.size(),
+                static_cast<float>(meta.no_data_value)
+            );
+            std::vector<uint8_t> relative_mask(dem_d.size(), uint8_t{0});
+
+            for (std::size_t i = 0; i < dem_d.size(); ++i)
+            {
+                if (dem_m[i] == 0 || med_m[i] == 0 ||
+                    meta.is_nodata(dem_d[i]) || meta.is_nodata(med_d[i]) ||
+                    !std::isfinite(static_cast<double>(dem_d[i])) ||
+                    !std::isfinite(static_cast<double>(med_d[i])))
+                {
+                    continue;
+                }
+
+                relative_data[i] = dem_d[i] - med_d[i];
+                relative_mask[i] = uint8_t{1};
+            }
+
+            lsdtt::lsdtt_raster_cpu relative_elevation(
+                std::move(relative_data),
+                std::move(relative_mask),
+                meta
+            );
+
+            lsdtt::lsdtt_raster_cpu rel_gradient =
+                lsdtt::compute_gradient_magnitude_3x3_square(relative_elevation);
+
+            const auto& rel_d = relative_elevation.get_data();
+            const auto& rel_m = relative_elevation.get_mask();
+            const auto& grad_d = rel_gradient.get_data();
+            const auto& grad_m = rel_gradient.get_mask();
+
+            std::vector<float> drain_mask_data(rel_d.size(), 0.0f);
+            std::vector<uint8_t> drain_mask_mask(rel_d.size(), uint8_t{0});
+
+            std::vector<float> top_mask_data(rel_d.size(), 0.0f);
+            std::vector<uint8_t> top_mask_mask(rel_d.size(), uint8_t{0});
+
+            std::vector<float> bottom_mask_data(rel_d.size(), 0.0f);
+            std::vector<uint8_t> bottom_mask_mask(rel_d.size(), uint8_t{0});
+
+            for (std::size_t i = 0; i < rel_d.size(); ++i)
+            {
+                if (rel_m[i] == 0 || meta.is_nodata(rel_d[i]) ||
+                    !std::isfinite(static_cast<double>(rel_d[i])))
+                {
+                    continue;
+                }
+
+                drain_mask_mask[i] = uint8_t{1};
+                top_mask_mask[i] = uint8_t{1};
+                bottom_mask_mask[i] = uint8_t{1};
+
+                if (static_cast<double>(rel_d[i]) <= -drain_negative_threshold)
+                {
+                    drain_mask_data[i] = 1.0f;
+                }
+                if (static_cast<double>(rel_d[i]) >= top_positive_threshold)
+                {
+                    top_mask_data[i] = 1.0f;
+                }
+                if (static_cast<double>(rel_d[i]) <= -bottom_negative_threshold)
+                {
+                    bottom_mask_data[i] = 1.0f;
+                }
+            }
+
+            lsdtt::lsdtt_raster_cpu drain_candidate_mask(
+                std::move(drain_mask_data),
+                std::move(drain_mask_mask),
+                meta
+            );
+            lsdtt::lsdtt_raster_cpu top_mask(
+                std::move(top_mask_data),
+                std::move(top_mask_mask),
+                meta
+            );
+            lsdtt::lsdtt_raster_cpu bottom_mask(
+                std::move(bottom_mask_data),
+                std::move(bottom_mask_mask),
+                meta
+            );
+
+            lsdtt::lsdtt_raster_cpu top_presence =
+                lsdtt::moving_window_mean(
+                    top_mask,
+                    intermix_radius,
+                    lsdtt::window_shape::circular
+                );
+            lsdtt::lsdtt_raster_cpu bottom_presence =
+                lsdtt::moving_window_mean(
+                    bottom_mask,
+                    intermix_radius,
+                    lsdtt::window_shape::circular
+                );
+
+            const auto& top_p_d = top_presence.get_data();
+            const auto& top_p_m = top_presence.get_mask();
+            const auto& bot_p_d = bottom_presence.get_data();
+            const auto& bot_p_m = bottom_presence.get_mask();
+
+            std::vector<float> intermix_data(rel_d.size(), 0.0f);
+            std::vector<uint8_t> intermix_mask(rel_d.size(), uint8_t{0});
+            std::vector<float> transition_data(rel_d.size(), 0.0f);
+            std::vector<uint8_t> transition_mask(rel_d.size(), uint8_t{0});
+
+            for (std::size_t i = 0; i < rel_d.size(); ++i)
+            {
+                if (rel_m[i] == 0 || top_p_m[i] == 0 || bot_p_m[i] == 0)
+                {
+                    continue;
+                }
+
+                intermix_mask[i] = uint8_t{1};
+                transition_mask[i] = uint8_t{1};
+
+                const bool is_intermix =
+                    top_p_d[i] > 0.0f && bot_p_d[i] > 0.0f;
+                if (is_intermix)
+                {
+                    intermix_data[i] = 1.0f;
+                    if (grad_m[i] != 0 && !meta.is_nodata(grad_d[i]) &&
+                        std::isfinite(static_cast<double>(grad_d[i])) &&
+                        static_cast<double>(grad_d[i]) >= hag_gradient_threshold)
+                    {
+                        transition_data[i] = 1.0f;
+                    }
+                }
+            }
+
+            lsdtt::lsdtt_raster_cpu hag_intermix_mask(
+                std::move(intermix_data),
+                std::move(intermix_mask),
+                meta
+            );
+            lsdtt::lsdtt_raster_cpu hag_transition_mask(
+                std::move(transition_data),
+                std::move(transition_mask),
+                meta
+            );
+
+            if (bf.at("write_local_median_raster"))
+            {
+                const std::string o = pp.make_output_path("_local_median.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    local_median.get_data(),
+                    local_median.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_local_median_relative_elevation_raster"))
+            {
+                const std::string o =
+                    pp.make_output_path("_local_median_relative_elevation.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    relative_elevation.get_data(),
+                    relative_elevation.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_local_median_gradient_raster"))
+            {
+                const std::string o = pp.make_output_path(
+                    "_local_median_relative_elevation_gradient.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    rel_gradient.get_data(),
+                    rel_gradient.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_local_median_drain_candidate_mask_raster"))
+            {
+                const std::string o =
+                    pp.make_output_path("_local_median_drain_candidate_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    drain_candidate_mask.get_data(),
+                    drain_candidate_mask.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_local_median_top_mask_raster"))
+            {
+                const std::string o = pp.make_output_path("_local_median_top_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    top_mask.get_data(),
+                    top_mask.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_local_median_bottom_mask_raster"))
+            {
+                const std::string o =
+                    pp.make_output_path("_local_median_bottom_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    bottom_mask.get_data(),
+                    bottom_mask.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_local_median_hag_intermix_mask_raster"))
+            {
+                const std::string o =
+                    pp.make_output_path("_local_median_hag_intermix_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    hag_intermix_mask.get_data(),
+                    hag_intermix_mask.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_local_median_hag_transition_mask_raster"))
+            {
+                const std::string o =
+                    pp.make_output_path("_local_median_hag_transition_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    hag_transition_mask.get_data(),
+                    hag_transition_mask.get_meta(),
+                    o,
+                    out_fmt
+                );
             }
         }
         else if (feature_type == "find_valleys")

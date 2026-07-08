@@ -40,6 +40,7 @@ Steps run in this order when enabled:
 | 6. Pit filling | `write_fill_raster: true` or `write_fill_diff_raster: true` |
 | 7. Depression polygons | `write_depression_polygons: true` |
 | 8. Hillshade | `write_hillshade_raster: true` |
+| 8b. Multidirectional hillshade | `write_multidirectional_hillshade_raster: true` |
 | 9. Vector clipping | `clip_vector_data_to_raster: true` |
 
 ---
@@ -235,6 +236,24 @@ Output: `<write_fname>_hillshade.tif`
 | `hillshade_azimuth` | float | `315` | Sun azimuth in degrees clockwise from north. 315° (northwest) is the standard cartographic convention. |
 | `hillshade_altitude` | float | `45` | Sun altitude above the horizon in degrees. |
 | `hillshade_z_factor` | float | `1.0` | Vertical exaggeration applied before computing the hillshade. Values greater than 1 emphasise relief in flat terrain. |
+
+---
+
+## Step 8b: Multidirectional hillshade
+
+Compute a multidirectional hillshade by averaging hillshades from evenly spaced azimuth directions. This reduces directional bias and improves visual continuity of features that are only strongly illuminated from certain directions.
+
+When pit filling is also enabled, this step uses the filled DEM (same source choice as Step 8).
+
+Output: `<write_fname>_hillshade_multidirectional.tif`
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_multidirectional_hillshade_raster` | bool | `false` | Enable multidirectional hillshade computation and write the result. |
+| `multidirectional_hillshade_n_directions` | int | `8` | Number of evenly spaced azimuth directions. Must be `>= 2`. Typical values: `8`–`16`. |
+| `multidirectional_hillshade_start_azimuth` | float | `0.0` | Starting azimuth in degrees clockwise from north. Subsequent azimuths are sampled uniformly around 360°. |
+| `hillshade_altitude` | float | `45` | Sun altitude used for each direction. |
+| `hillshade_z_factor` | float | `1.0` | Vertical exaggeration used for each direction. |
 
 ---
 
