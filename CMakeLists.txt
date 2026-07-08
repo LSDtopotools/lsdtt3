@@ -444,9 +444,7 @@ if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
 endif()
 
-if(LSDTT_HAS_EIGEN)
-    lsdtt_cli(lsdtt-chi-analysis cli/lsdtt-chi-analysis.cpp)
-endif()
+lsdtt_cli(lsdtt-chi-analysis cli/lsdtt-chi-analysis.cpp)
 
 
 
