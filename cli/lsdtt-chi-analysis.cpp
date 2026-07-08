@@ -50,7 +50,9 @@
 #include "../src/cpu/lsdtt_chi_data_maps_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_disorder_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
+#if defined(LSDTT_HAS_EIGEN)
 #include "../src/cpu/lsdtt_chi_ksn_inversion_cpu.hpp"
+#endif
 #include "../src/cpu/lsdtt_chi_network_analysis_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -552,7 +554,9 @@ int main(int argc, char* argv[])
     // --- Inversion ---
     bool_default_map["run_inversion"] = false;
     help_map["run_inversion"] = {"bool","false",
-        "Run spatial chi k_sn / u* inversion over the m/n sweep.", ""};
+        "Run spatial chi k_sn / u* inversion over the m/n sweep.",
+        "Requires Eigen3 at build time. If Eigen3 is not available, this flag "
+        "is ignored and inversion is skipped with a warning."};
 
     float_default_map["inversion_coarse_cell_size"] = 2000.0f;
     help_map["inversion_coarse_cell_size"] = {"float","2000.0",
@@ -633,8 +637,10 @@ int main(int argc, char* argv[])
         ifs["n_largest_basins"] > 0
             ? static_cast<std::size_t>(ifs["n_largest_basins"])
             : std::size_t{0};
+    #if defined(LSDTT_HAS_EIGEN)
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
+    #endif
     const lsdtt::vector_output_format chi_dm_lines_fmt =
         lsdtt::resolve_vector_output_format(sf["chi_data_map_lines_output_format"]);
     const lsdtt::vector_output_format chi_fit_lines_fmt =
@@ -672,6 +678,16 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: invalid m/n sweep: " << e.what() << "\n";
         return 1;
     }
+
+#if !defined(LSDTT_HAS_EIGEN)
+    if (bf["run_inversion"])
+    {
+        std::cerr
+            << "Warning: run_inversion=true but this lsdtt-chi-analysis binary "
+            << "was built without Eigen3; skipping inversion.\n";
+        bf["run_inversion"] = false;
+    }
+#endif
 
     // -------------------------------------------------------------------------
     // Open DEM
@@ -881,8 +897,11 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Build inversion networks once (fixed network, chi recomputed per m/n).
     // -------------------------------------------------------------------------
+    #if defined(LSDTT_HAS_EIGEN)
     std::vector<lsdtt::lsdtt_chi_ksn_inversion_network> inversion_networks;
+    #endif
 
+    #if defined(LSDTT_HAS_EIGEN)
     if (bf["run_inversion"])
     {
         std::cout << "\n--- Preparing inversion networks ---\n";
@@ -928,6 +947,7 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
+    #endif
 
     // -------------------------------------------------------------------------
     // chi extraction + fitting + disorder sweep
@@ -1253,6 +1273,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Spatial k_sn / u* inversion
     // -------------------------------------------------------------------------
+    #if defined(LSDTT_HAS_EIGEN)
     if (bf["run_inversion"])
     {
         std::cout << "\n--- Running spatial chi k_sn / u* inversion ---\n";
@@ -1326,6 +1347,7 @@ int main(int argc, char* argv[])
             }
         }
     }
+    #endif
 
     // -------------------------------------------------------------------------
     // Echo parameters
