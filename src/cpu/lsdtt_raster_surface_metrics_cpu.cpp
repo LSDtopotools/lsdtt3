@@ -285,6 +285,84 @@ lsdtt_raster_cpu compute_hillshade(
     );
 }
 
+// -----------------------------------------------------------------------------
+// compute_multidirectional_hillshade
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu compute_multidirectional_hillshade(
+    const lsdtt_raster_cpu& raster,
+    int n_directions,
+    double altitude,
+    double z_factor,
+    double start_azimuth)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_multidirectional_hillshade: input raster metadata is invalid"
+        );
+    }
+
+    if (n_directions < 2)
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_multidirectional_hillshade: n_directions must be >= 2"
+        );
+    }
+
+    if (z_factor <= 0.0)
+    {
+        throw std::runtime_error(
+            "lsdtt::compute_multidirectional_hillshade: z_factor must be > 0"
+        );
+    }
+
+    const std::size_t n_cells =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+
+    std::vector<double> sum(n_cells, 0.0);
+    std::vector<int>    count(n_cells, 0);
+
+    const double d_az = 360.0 / static_cast<double>(n_directions);
+    for (int k = 0; k < n_directions; ++k)
+    {
+        const double az = start_azimuth + static_cast<double>(k) * d_az;
+        lsdtt_raster_cpu hs = compute_hillshade(raster, az, altitude, z_factor);
+
+        const std::vector<float>& hs_data = hs.get_data();
+        const std::vector<std::uint8_t>& hs_mask = hs.get_mask();
+
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (std::size_t i = 0; i < n_cells; ++i)
+        {
+            if (hs_mask[i] == 0) continue;
+            if (!std::isfinite(static_cast<double>(hs_data[i]))) continue;
+
+            sum[i] += static_cast<double>(hs_data[i]);
+            count[i] += 1;
+        }
+    }
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+    std::vector<float> out_data(n_cells, nodata);
+    std::vector<std::uint8_t> out_mask(n_cells, std::uint8_t{0});
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::size_t i = 0; i < n_cells; ++i)
+    {
+        if (count[i] <= 0) continue;
+
+        out_data[i] = static_cast<float>(sum[i] / static_cast<double>(count[i]));
+        out_mask[i] = std::uint8_t{1};
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
 
 
 // -----------------------------------------------------------------------------
