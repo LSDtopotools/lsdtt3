@@ -65,13 +65,15 @@ struct valley_centreline_request
     int    hanc_hist_bins               = 128;
     // Log floor (m): HANC values below this are clamped before the log.
     double min_hanc_metres              = 0.05;
-    // Break acceptance: the density at the break must dip below this fraction
-    // of the wall-peak density.
+    // Break acceptance: the dip must fall below this fraction of the smaller
+    // flanking mode.
     double break_valley_fraction        = 0.6;
-    // The wall/upland mode is the largest-HANC histogram peak whose density
-    // reaches this fraction of the histogram maximum. The valley break is the
-    // last qualifying dip below that peak.
-    double wall_peak_fraction           = 0.25;
+    // Peak-detection floor as a fraction of the histogram maximum. LOW by
+    // design: a valley-floor or terrace mode is tiny next to a mountain wall
+    // peak, but it is the mode that defines the valley. The break is the
+    // FIRST qualifying dip after the first mode above this floor — taking a
+    // later dip admits intermediate benches and the valley climbs the risers.
+    double wall_peak_fraction           = 0.02;
     // Valley HANC threshold used when the population shows no break.
     double fallback_valley_hanc_metres  = 10.0;
     // Floor on a detected break (m): a dip immediately after the valley-floor
@@ -108,6 +110,10 @@ struct valley_centreline_request
     //    ratio ~1; a neighbouring channel's floodplain reached via a long
     //    corridor detour has a large ratio. 0 disables.
     double valley_max_detour_ratio      = 3.0;
+    // Keep each channel's own full valley mask in its record (the combined
+    // raster is first-claim, so a downstream channel's map otherwise misses
+    // pixels claimed by an earlier channel).
+    bool   store_per_channel_valley_masks = true;
     // Refine the valley mask against the centreline baseline after routing:
     // valley = (elevation - baseline of nearest centreline node) <= the
     // reach's break. The first-pass mask references the nearest CHANNEL
@@ -189,6 +195,13 @@ struct valley_channel_centreline
     std::vector<std::int64_t> hanc_hist;
     double hist_lo_log = 0.0;
     double hist_hi_log = 0.0;
+    // Per-window histograms (n_windows x nbins, flattened; same bin range),
+    // for inspecting the reach-adaptive break decisions.
+    std::vector<std::int64_t> window_hanc_hist;
+
+    // This channel's own full valley mask (0/1), populated when
+    // store_per_channel_valley_masks is set.
+    lsdtt_raster_cpu valley_mask;
 };
 
 // -----------------------------------------------------------------------------

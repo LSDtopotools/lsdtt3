@@ -99,6 +99,50 @@ void clean_valley_patches(
     const std::size_t n = valley.size();
     const int n_erode = n_dilate;
 
+    // Growth domain for the final dilation: the ORIGINAL (pre-erosion)
+    // footprint plus its enclosed holes. The dilation must never expand the
+    // valley's outer boundary — a distance cap alone does not bind near the
+    // channel and the regrow rim creeps up the risers. Enclosed holes =
+    // background not 4-connected to the tile border across non-valley
+    // ground.
+    std::vector<std::uint8_t> allowed(valley);
+    {
+        std::vector<std::uint8_t> outside(n, k_off);
+        std::deque<std::int64_t> oq;
+        auto push_bg = [&](int r, int c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            if (!valley[i] && !outside[i])
+            {
+                outside[i] = k_on;
+                oq.push_back(static_cast<std::int64_t>(i));
+            }
+        };
+        for (int c = 0; c < n_cols; ++c)
+        {
+            push_bg(0, c);
+            push_bg(n_rows - 1, c);
+        }
+        for (int r = 0; r < n_rows; ++r)
+        {
+            push_bg(r, 0);
+            push_bg(r, n_cols - 1);
+        }
+        while (!oq.empty())
+        {
+            const std::int64_t flat = oq.front();
+            oq.pop_front();
+            const int r = static_cast<int>(flat / n_cols);
+            const int c = static_cast<int>(flat % n_cols);
+            if (r > 0)          push_bg(r - 1, c);
+            if (r + 1 < n_rows) push_bg(r + 1, c);
+            if (c > 0)          push_bg(r, c - 1);
+            if (c + 1 < n_cols) push_bg(r, c + 1);
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            if (!valley[i] && !outside[i]) allowed[i] = k_on;
+    }
+
     // 0. Erode (channel + neighbours protected) to sever connecting
     //    corridors narrower than ~2 * n_erode + 1 pixels.
     std::vector<std::uint8_t> protect(n, k_off);
@@ -361,7 +405,7 @@ void clean_valley_patches(
             {
                 const std::size_t i =
                     static_cast<std::size_t>(r) * n_cols + c;
-                if (valley[i]) continue;
+                if (valley[i] || !allowed[i]) continue;
                 if (!dist_mask[i] || !std::isfinite(dist_to_channel[i]))
                     continue;
                 // Grow from the neighbouring patch with the largest reach.
@@ -433,27 +477,114 @@ double find_valley_break(
     const double gmax = *std::max_element(sm.begin(), sm.end());
     if (gmax <= 0.0) return -1.0;
 
-    // Wall peak: largest-HANC local maximum (edge-aware) with density above
-    // wall_peak_fraction * gmax.
-    int wall = -1;
-    for (int b = nb - 1; b >= 1; --b)
+    // Segment the histogram into modes at its local minima (excluding the
+    // two lowest bins — the log-floor clamp spike of on-channel pixels),
+    // then clean the segmentation:
+    //  a. merge across NON-QUALIFYING dips (dip > valley_fraction * smaller
+    //     flanking peak) — this absorbs noise bumps;
+    //  b. merge modes whose mass is below wall_peak_fraction of the
+    //     population into their most-connected neighbour — EXCEPT a low
+    //     first mode (peak below ~4 m): the near-channel floor mode defines
+    //     the valley however small it is next to a mountain wall peak.
+    // The break is the boundary dip after the FIRST surviving mode. Taking a
+    // later dip admits intermediate benches and the valley climbs the risers
+    // (Mayoco failure mode); pure first-dip without the merging locks onto
+    // noise (Royalton failure mode).
+    struct seg_t { int lo, hi, peak_bin; double peak, mass; };
+    std::vector<seg_t> segs;
     {
-        const bool is_peak =
-            (b == nb - 1) ? sm[b] > sm[b - 1]
-                          : (sm[b] >= sm[b - 1] && sm[b] > sm[b + 1]);
-        if (is_peak && sm[b] >= wall_peak_fraction * gmax) { wall = b; break; }
+        int lo = 2;
+        for (int b = 3; b < nb; ++b)
+        {
+            const bool is_min =
+                b + 1 < nb && sm[b] <= sm[b - 1] && sm[b] < sm[b + 1];
+            if (is_min || b == nb - 1)
+            {
+                seg_t s{lo, b, lo, 0.0, 0.0};
+                for (int k = lo; k <= b; ++k)
+                {
+                    if (sm[k] > s.peak) { s.peak = sm[k]; s.peak_bin = k; }
+                    s.mass += static_cast<double>(hist[k]);
+                }
+                segs.push_back(s);
+                lo = b;
+            }
+        }
     }
-    if (wall <= 0) return -1.0;
+    if (segs.size() < 2) return -1.0;
 
-    // Last local minimum below the wall peak with a genuine dip.
-    int best = -1;
-    for (int b = 1; b < wall; ++b)
+    auto merge_at = [&](std::size_t i)
     {
-        const bool is_min = sm[b] <= sm[b - 1] && sm[b] < sm[b + 1];
-        if (is_min && sm[b] <= valley_fraction * sm[wall]) best = b;
+        segs[i].hi = segs[i + 1].hi;
+        segs[i].mass += segs[i + 1].mass;
+        if (segs[i + 1].peak > segs[i].peak)
+        {
+            segs[i].peak     = segs[i + 1].peak;
+            segs[i].peak_bin = segs[i + 1].peak_bin;
+        }
+        segs.erase(segs.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+    };
+    auto dip_between = [&](std::size_t i) { return sm[segs[i].hi]; };
+
+    // a. absorb noise bumps.
+    bool changed = true;
+    while (changed && segs.size() > 1)
+    {
+        changed = false;
+        for (std::size_t i = 0; i + 1 < segs.size(); ++i)
+        {
+            if (dip_between(i) >
+                valley_fraction * std::min(segs[i].peak, segs[i + 1].peak))
+            {
+                merge_at(i);
+                changed = true;
+                break;
+            }
+        }
     }
-    if (best < 0) return -1.0;
-    return std::pow(10.0, lo_log + (best + 0.5) * bw);
+    if (segs.size() < 2) return -1.0;
+
+    // b. absorb insignificant-mass modes (low first mode exempt).
+    double total_mass = 0.0;
+    for (const seg_t& s : segs) total_mass += s.mass;
+    const double low_floor_hanc = 4.0;   // m; "low first mode" exemption
+    changed = true;
+    while (changed && segs.size() > 1)
+    {
+        changed = false;
+        for (std::size_t i = 0; i < segs.size(); ++i)
+        {
+            if (segs[i].mass >= wall_peak_fraction * total_mass) continue;
+            if (i == 0)
+            {
+                // A low near-channel floor mode defines the valley even when
+                // it is small next to a mountain wall peak — but it must
+                // still be a real mode, not noise.
+                const double peak_hanc = std::pow(
+                    10.0, lo_log + (segs[i].peak_bin + 0.5) * bw);
+                if (peak_hanc <= low_floor_hanc &&
+                    segs[i].mass >= 0.25 * wall_peak_fraction * total_mass)
+                    continue;
+                merge_at(0);
+            }
+            else if (i + 1 == segs.size())
+            {
+                merge_at(i - 1);
+            }
+            else
+            {
+                // Merge across the shallower dip (the more similar side).
+                if (dip_between(i - 1) >= dip_between(i)) merge_at(i - 1);
+                else                                      merge_at(i);
+            }
+            changed = true;
+            break;
+        }
+    }
+    if (segs.size() < 2) return -1.0;
+
+    const int vb = segs[0].hi;
+    return std::pow(10.0, lo_log + (vb + 0.5) * bw);
 }
 
 } // namespace
@@ -825,9 +956,10 @@ valley_centreline_result extract_valley_centrelines(
                 rec.window_break_own.push_back(own[w]);
             }
 
-            rec.hanc_hist   = std::move(ghist);
-            rec.hist_lo_log = lo_log;
-            rec.hist_hi_log = hi_log;
+            rec.hanc_hist        = std::move(ghist);
+            rec.window_hanc_hist = std::move(whist);
+            rec.hist_lo_log      = lo_log;
+            rec.hist_hi_log      = hi_log;
         }
         else
         {
@@ -1294,6 +1426,15 @@ valley_centreline_result extract_valley_centrelines(
         for (std::size_t i = 0; i < n; ++i)
             if (valley[i] && vm_data[i] == 0.0f)
                 vm_data[i] = static_cast<float>(s + 1);
+
+        if (request.store_per_channel_valley_masks)
+        {
+            std::vector<float> md(n, 0.0f);
+            for (std::size_t i = 0; i < n; ++i)
+                if (valley[i]) md[i] = 1.0f;
+            rec.valley_mask = lsdtt_raster_cpu(
+                std::move(md), std::vector<uint8_t>(dmask), meta);
+        }
 
         result.channels.push_back(std::move(rec));
     }

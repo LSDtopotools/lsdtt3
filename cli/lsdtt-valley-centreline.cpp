@@ -208,11 +208,13 @@ int main(int argc, char* argv[])
         "threshold in each setting. 0 = auto (max of 2 km and channel "
         "length / 8); negative = single whole-channel break."};
 
-    float_default_map["valley_wall_peak_fraction"] = 0.25f;
-    help_map["valley_wall_peak_fraction"] = {"float","0.25",
-        "The wall/upland mode is the largest-HANC population peak reaching "
-        "this fraction of the histogram maximum.",
-        "The valley break is the last qualifying dip below that peak."};
+    float_default_map["valley_wall_peak_fraction"] = 0.02f;
+    help_map["valley_wall_peak_fraction"] = {"float","0.02",
+        "Peak-detection floor for the HANC population, as a fraction of the "
+        "histogram maximum.",
+        "Low by design: a valley-floor mode is tiny next to a mountain wall "
+        "peak. The valley break is the FIRST qualifying dip after the first "
+        "mode above this floor."};
 
     bool_default_map["write_valley_hanc_histogram"] = true;
     help_map["write_valley_hanc_histogram"] = {"bool","true",
@@ -438,6 +440,7 @@ int main(int argc, char* argv[])
     vreq.break_reach_window_metres =
         static_cast<double>(ff["valley_break_reach_window_metres"]);
     vreq.refine_valley_with_baseline = bf["refine_valley_with_baseline"];
+    vreq.store_per_channel_valley_masks = bf["write_valley_mask_raster"];
     vreq.valley_dilation_pixels      = ifs["valley_dilation_pixels"];
     vreq.valley_max_detour_ratio     =
         static_cast<double>(ff["valley_max_detour_ratio"]);
@@ -510,6 +513,20 @@ int main(int argc, char* argv[])
         loader.write_full(vres.valley_mask.get_data(),
                           vres.valley_mask.get_meta(), p, out_format,
                           GDT_UInt32);
+
+        // Per-channel masks: the combined raster is first-claim, so a
+        // downstream channel's shared pixels display under the first channel
+        // only. Each channel's own full valley goes in its own file.
+        for (const lsdtt::valley_channel_centreline& ch : vres.channels)
+        {
+            if (ch.valley_mask.get_data().empty()) continue;
+            const std::string pc = pp.make_output_path(
+                "_valley_mask_ch" + std::to_string(ch.source_id), ".tif");
+            std::cout << "Writing channel valley mask (Byte): " << pc << "\n";
+            loader.write_full(ch.valley_mask.get_data(),
+                              ch.valley_mask.get_meta(), pc, out_format,
+                              GDT_Byte);
+        }
     }
 
     auto node_xy = [&](std::int64_t flat) -> lsdtt::lsdtt_xy
@@ -634,6 +651,39 @@ int main(int argc, char* argv[])
             }
         }
         loader.write_csv(p, {"source_id","hanc_m","n_pixels"}, rows);
+
+        // Per-window histograms, for inspecting each reach-adaptive break.
+        const std::string pw =
+            pp.make_output_path("_valley_hanc_window_hist", ".csv");
+        std::cout << "Writing per-window HANC histograms: " << pw << "\n";
+        std::vector<std::vector<std::string>> wrows;
+        for (const lsdtt::valley_channel_centreline& ch : vres.channels)
+        {
+            const std::size_t nb = ch.hanc_hist.size();
+            const std::size_t nw = ch.window_centre_m.size();
+            if (nb == 0 || ch.window_hanc_hist.size() != nb * nw) continue;
+            const double bw =
+                (ch.hist_hi_log - ch.hist_lo_log) / static_cast<double>(nb);
+            for (std::size_t w = 0; w < nw; ++w)
+            {
+                for (std::size_t b = 0; b < nb; ++b)
+                {
+                    const std::int64_t cnt =
+                        ch.window_hanc_hist[w * nb + b];
+                    if (cnt == 0) continue;
+                    const double centre = std::pow(
+                        10.0,
+                        ch.hist_lo_log + (static_cast<double>(b) + 0.5) * bw);
+                    wrows.push_back({
+                        std::to_string(ch.source_id),
+                        std::to_string(ch.window_centre_m[w]),
+                        std::to_string(centre),
+                        std::to_string(cnt) });
+                }
+            }
+        }
+        loader.write_csv(pw,
+            {"source_id","window_centre_m","hanc_m","n_pixels"}, wrows);
     }
 
     pp.print_parameters();
