@@ -449,10 +449,25 @@ void clean_valley_patches(
 // return the LAST local minimum below it whose density dips under
 // valley_fraction of that wall peak — i.e. the valley is everything below
 // the rise into the valley walls. Returns <= 0 when no such structure exists.
+// Diagnostics captured from a break decision so a reviewer figure can show
+// the ACTUAL metric the break is chosen on — the smoothed log10-HANC density
+// (not the raw, bumpy histogram) — plus the surviving mode segmentation and
+// the chosen break bin. Populated by find_valley_break when a non-null
+// pointer is supplied; left in a partial state on the degenerate early
+// returns (smoothed filled if it got that far; break_bin stays -1).
+struct valley_break_diagnostics
+{
+    std::vector<double> smoothed;       // per bin: the decision metric
+    std::vector<int>    seg_peak_bins;  // surviving mode peak bins
+    std::vector<int>    seg_bound_bins; // surviving inter-mode boundary bins
+    int                 break_bin = -1; // chosen boundary bin (segs[0].hi)
+};
+
 double find_valley_break(
     const std::vector<std::int64_t>& hist,
     double lo_log, double hi_log,
-    double valley_fraction, double wall_peak_fraction)
+    double valley_fraction, double wall_peak_fraction,
+    valley_break_diagnostics* diag = nullptr)
 {
     const int nb = static_cast<int>(hist.size());
     if (nb < 8 || hi_log - lo_log < 1e-9) return -1.0;
@@ -473,6 +488,9 @@ double find_valley_break(
         }
         sm.swap(tmp);
     }
+    // Record the decision metric now — it is defined even on the degenerate
+    // returns below, and it is what the reviewer figure plots.
+    if (diag) diag->smoothed.assign(sm.begin(), sm.end());
 
     const double gmax = *std::max_element(sm.begin(), sm.end());
     if (gmax <= 0.0) return -1.0;
@@ -584,6 +602,16 @@ double find_valley_break(
     if (segs.size() < 2) return -1.0;
 
     const int vb = segs[0].hi;
+    if (diag)
+    {
+        diag->break_bin = vb;
+        for (std::size_t i = 0; i < segs.size(); ++i)
+        {
+            diag->seg_peak_bins.push_back(segs[i].peak_bin);
+            if (i + 1 < segs.size())
+                diag->seg_bound_bins.push_back(segs[i].hi);
+        }
+    }
     return std::pow(10.0, lo_log + (vb + 0.5) * bw);
 }
 
@@ -591,9 +619,9 @@ double find_valley_break(
 
 
 // -----------------------------------------------------------------------------
-// fit_pinned_monotone_baseline (public — see header)
+// fit_pinned_monotonic_baseline (public — see header)
 // -----------------------------------------------------------------------------
-std::vector<float> fit_pinned_monotone_baseline(
+std::vector<float> fit_pinned_monotonic_baseline(
     const std::vector<double>& along_distance,
     const std::vector<float>&  pin_elevation)
 {
@@ -608,14 +636,18 @@ std::vector<float> fit_pinned_monotone_baseline(
         if (std::isfinite(pin_elevation[i])) pin_idx.push_back(i);
     if (pin_idx.empty()) return baseline;
 
-    // Minimal monotone envelope: each pin is raised to the maximum of all
-    // pins at or downstream of it (reverse suffix-max). The result is
-    // non-increasing downstream and >= every original pin.
+    // Monotonic envelope: each pin is lowered to the minimum of all pins at
+    // or upstream of it (forward prefix-min). The result is non-increasing
+    // downstream and <= every original pin, so the baseline sits AT the
+    // channel elevation where the channel descends normally and BELOW it
+    // wherever the projected channel elevation locally rises downstream (a
+    // baseline that rose above the channel would give the channel a negative
+    // height-above-channel, which must never happen).
     std::vector<float> pin_adj(pin_idx.size());
-    float running = -std::numeric_limits<float>::infinity();
-    for (std::size_t p = pin_idx.size(); p-- > 0;)
+    float running = std::numeric_limits<float>::infinity();
+    for (std::size_t p = 0; p < pin_idx.size(); ++p)
     {
-        running = std::max(running, pin_elevation[pin_idx[p]]);
+        running = std::min(running, pin_elevation[pin_idx[p]]);
         pin_adj[p] = running;
     }
 
@@ -657,50 +689,9 @@ valley_centreline_result extract_valley_centrelines(
         throw std::invalid_argument(
             "extract_valley_centrelines: scope / DEM size mismatch.");
 
-    // Nodata voids (reservoirs, water-surface gaps) can swallow the routed
-    // centreline: a path reaching a void shore terminates (nodata = outlet).
-    // Label the nodata components once; per channel, any component the traced
-    // channel approaches closely gets plugged with a high dome in the trough
-    // surface (its tile-border pixels stay nodata so real outlets survive),
-    // and the routed path goes around it instead of dying at its shore.
-    std::vector<std::int32_t> nd_lbl(n, -1);
-    std::int32_t n_nd_components = 0;
-    float void_plug_elev = 0.0f;
-    {
-        std::deque<std::int64_t> queue;
-        for (std::size_t seed = 0; seed < n; ++seed)
-        {
-            if (dmask[seed] || nd_lbl[seed] >= 0) continue;
-            const std::int32_t id = n_nd_components++;
-            nd_lbl[seed] = id;
-            queue.push_back(static_cast<std::int64_t>(seed));
-            while (!queue.empty())
-            {
-                const std::int64_t flat = queue.front();
-                queue.pop_front();
-                const int r = static_cast<int>(flat / n_cols);
-                const int c = static_cast<int>(flat % n_cols);
-                const int rr4[4] = { r - 1, r + 1, r, r };
-                const int cc4[4] = { c, c, c - 1, c + 1 };
-                for (int k = 0; k < 4; ++k)
-                {
-                    if (rr4[k] < 0 || rr4[k] >= n_rows ||
-                        cc4[k] < 0 || cc4[k] >= n_cols) continue;
-                    const std::size_t nf =
-                        static_cast<std::size_t>(rr4[k]) * n_cols + cc4[k];
-                    if (!dmask[nf] && nd_lbl[nf] < 0)
-                    {
-                        nd_lbl[nf] = id;
-                        queue.push_back(static_cast<std::int64_t>(nf));
-                    }
-                }
-            }
-        }
-        float zmax = -std::numeric_limits<float>::infinity();
-        for (std::size_t i = 0; i < n; ++i)
-            if (dmask[i]) zmax = std::max(zmax, elev[i]);
-        void_plug_elev = zmax + 100.0f;
-    }
+    // (The medial-axis least-cost centreline is confined to the valley mask,
+    // which excludes nodata, so reservoir/water-surface voids are rounded
+    // rather than routed into — no nodata plugging is needed.)
 
     valley_centreline_result result;
     std::vector<float>   vm_data(n, 0.0f);
@@ -878,15 +869,26 @@ valley_centreline_result extract_valley_centrelines(
                 ++wcount[w];
             }
 
+            valley_break_diagnostics gdiag;
             const double gbrk = find_valley_break(
                 ghist, lo_log, hi_log,
-                request.break_valley_fraction, request.wall_peak_fraction);
+                request.break_valley_fraction, request.wall_peak_fraction,
+                &gdiag);
             if (gbrk > 0.0)
             {
                 break_hanc =
                     std::max(gbrk, request.min_valley_hanc_metres);
                 rec.used_fallback_break = false;
             }
+            rec.hanc_smoothed          = std::move(gdiag.smoothed);
+            rec.hanc_seg_peak_bins     = std::move(gdiag.seg_peak_bins);
+            rec.hanc_seg_boundary_bins = std::move(gdiag.seg_bound_bins);
+            rec.hanc_break_bin         = gdiag.break_bin;
+
+            // Per-window decision metric (all-zero rows for inherited windows).
+            rec.window_hanc_smoothed.assign(
+                static_cast<std::size_t>(n_windows) * nbins, 0.0);
+            rec.window_break_bin.assign(n_windows, -1);
 
             std::vector<char> own(n_windows, 0);
             for (int w = 0; w < n_windows; ++w)
@@ -904,15 +906,23 @@ valley_centreline_result extract_valley_centrelines(
                 }
                 if (cnt >= request.break_min_window_pixels)
                 {
+                    valley_break_diagnostics wdiag;
                     const double brk = find_valley_break(
                         h, lo_log, hi_log,
                         request.break_valley_fraction,
-                        request.wall_peak_fraction);
+                        request.wall_peak_fraction, &wdiag);
+                    // Store the pooled+smoothed decision metric for this window
+                    // (defined even when no break was found).
+                    if (!wdiag.smoothed.empty())
+                        std::copy(wdiag.smoothed.begin(), wdiag.smoothed.end(),
+                                  rec.window_hanc_smoothed.begin() +
+                                  static_cast<std::ptrdiff_t>(w) * nbins);
                     if (brk > 0.0)
                     {
                         window_break[w] =
                             std::max(brk, request.min_valley_hanc_metres);
                         own[w] = 1;
+                        rec.window_break_bin[w] = wdiag.break_bin;
                     }
                 }
             }
@@ -1035,269 +1045,147 @@ valley_centreline_result extract_valley_centrelines(
             request.n_threads);
         const std::vector<float>& wd = wall_dist.get_data();
 
-        // Nearest-wall elevation, inflated across the hole.
-        std::vector<float>   sv(n, 0.0f);
-        std::vector<uint8_t> sm(n, 0u);
-        std::vector<float>   pd(n, 1.0f);
-        std::vector<uint8_t> pm(n, 0u);
-        for (std::size_t i = 0; i < n; ++i)
-        {
-            if (!dmask[i]) continue;
-            pm[i] = 1u;
-            if (!hole[i]) { sv[i] = elev[i]; sm[i] = 1u; }
-        }
-        lsdtt_raster_cpu wall_elev = inflate_values_to_nearest_source(
-            lsdtt_raster_cpu(std::move(sv), std::move(sm), meta),
-            lsdtt_raster_cpu(std::move(pd), std::move(pm), meta),
-            request.n_threads);
-        const std::vector<float>&   we = wall_elev.get_data();
-        const std::vector<uint8_t>& wem = wall_elev.get_mask();
-
-        // Circular local-minimum filter -> "minimum bank elevation".
-        const int r_px = std::max(1, static_cast<int>(std::lround(
-            request.min_bank_elevation_window_radius_metres / cell)));
-        std::vector<float> min_bank(n, 0.0f);
-        for (int r = 0; r < n_rows; ++r)
-        {
-            for (int c = 0; c < n_cols; ++c)
-            {
-                const std::size_t i =
-                    static_cast<std::size_t>(r) * n_cols + c;
-                if (!hole[i] || !wem[i]) continue;
-                float mn = we[i];
-                for (int dr2 = -r_px; dr2 <= r_px; ++dr2)
-                {
-                    const int rr = r + dr2;
-                    if (rr < 0 || rr >= n_rows) continue;
-                    const int half = static_cast<int>(std::sqrt(
-                        static_cast<double>(r_px) * r_px -
-                        static_cast<double>(dr2) * dr2));
-                    for (int dc2 = -half; dc2 <= half; ++dc2)
-                    {
-                        const int cc = c + dc2;
-                        if (cc < 0 || cc >= n_cols) continue;
-                        const std::size_t j =
-                            static_cast<std::size_t>(rr) * n_cols + cc;
-                        if (wem[j]) mn = std::min(mn, we[j]);
-                    }
-                }
-                min_bank[i] = mn;
-            }
-        }
-
         // ---------------------------------------------------------------------
-        // 5. Route on the trough; retry with a deeper trough on failure.
+        // 5. Centreline = least-cost path down the medial axis.
         // ---------------------------------------------------------------------
-        // REACTIVE void plugging. Proactive plugging of nodata regions is
-        // unsafe: it can seal the trough's only natural exit (the sea / a
-        // collar contact beyond the outlet) and the whole filled bowl then
-        // drains backwards out the upstream end. Plug nothing up front; when
-        // a routing attempt terminates at a void that is not the channel's
-        // terminus, plug THAT component and retry.
-        std::vector<char> plug_component(
-            static_cast<std::size_t>(std::max(n_nd_components, 1)), 0);
+        // The legacy trough (min_bank - k*dist_to_wall - tilt*along), filled
+        // and D8-routed, CANNOT trace the centreline of a WIDE valley: filling
+        // flattens the broad-topped distance-to-wall basin into a lake whose
+        // priority-flood drainage runs straight to the pour point with
+        // right-angle artifacts, and the path is invariant to k_scale, tilt
+        // and loop count (verified). Instead walk a Dijkstra LEAST-COST PATH
+        // from the channel head to the outlet whose per-step cost penalises
+        // proximity to a wall, (Wmax - dist_to_wall): the cheapest route hugs
+        // the locus of MAXIMUM distance-to-wall — the medial axis / geometric
+        // centreline (the point equidistant from the two nearest walls) — at
+        // any valley width. It is confined to the valley (hole) mask, so it
+        // rounds reservoir voids and never leaves the valley; the head/outlet
+        // anchors fix the downstream direction, so no synthetic tilt is
+        // needed and the path cannot drain out the wrong tile edge.
 
-        double k_scale = request.trough_scaling_factor;
-        double tilt    = request.trough_along_channel_slope;
-        for (int attempt = 0; attempt <= request.max_trough_retries; ++attempt)
+        // Snap the head and terminus onto the nearest hole pixel.
+        auto snap_to_hole = [&](std::int64_t f) -> std::int64_t
         {
-            std::vector<float>   td(elev);
-            std::vector<uint8_t> tm(dmask);
+            if (f >= 0 && f < static_cast<std::int64_t>(n) &&
+                hole[static_cast<std::size_t>(f)]) return f;
+            const int fr = f >= 0 ? static_cast<int>(f / n_cols) : 0;
+            const int fc = f >= 0 ? static_cast<int>(f % n_cols) : 0;
+            std::int64_t best = -1;
+            double best_d2 = std::numeric_limits<double>::max();
             for (std::size_t i = 0; i < n; ++i)
             {
-                if (hole[i] && wem[i])
-                    td[i] = min_bank[i] -
-                            static_cast<float>(k_scale) * wd[i] -
-                            static_cast<float>(tilt *
-                                (along_mask[i] ? along_tilt[i] : 0.0f));
-                else if (!dmask[i] && nd_lbl[i] >= 0 &&
-                         plug_component[nd_lbl[i]])
+                if (!hole[i]) continue;
+                const int rr = static_cast<int>(i / n_cols);
+                const int cc = static_cast<int>(i % n_cols);
+                const double d2 = static_cast<double>(rr - fr) * (rr - fr) +
+                                  static_cast<double>(cc - fc) * (cc - fc);
+                if (d2 < best_d2)
                 {
-                    // Plug reservoirs / water-surface voids the channel runs
-                    // into so the routed path goes around, not into, them —
-                    // but only nodata DEEPER than ~300 m from the tile
-                    // border: the outer collar ribbon stays nodata so real
-                    // outlets at the tile edge survive.
-                    const int r = static_cast<int>(i / n_cols);
-                    const int c = static_cast<int>(i % n_cols);
-                    const double border_dist = cell * std::min(
-                        std::min(r, n_rows - 1 - r),
-                        std::min(c, n_cols - 1 - c));
-                    if (border_dist > 300.0)
+                    best_d2 = d2;
+                    best = static_cast<std::int64_t>(i);
+                }
+            }
+            return best;
+        };
+
+        const bool outlet_bounded =
+            s < scope.resolved_outlets.size() &&
+            scope.resolved_outlets[s] >= 0;
+        const std::int64_t start_f = snap_to_hole(nodes.front());
+        const std::int64_t target_f = snap_to_hole(
+            outlet_bounded ? scope.resolved_outlets[s] : nodes.back());
+
+        std::vector<std::int64_t> path;
+        if (start_f >= 0 && target_f >= 0 && start_f != target_f)
+        {
+            float wmax = 0.0f;
+            for (std::size_t i = 0; i < n; ++i)
+                if (hole[i]) wmax = std::max(wmax, wd[i]);
+            // Small positive length penalty (m): keeps every step cost > 0 so
+            // the path does not take absurd detours to gain a millimetre of
+            // centrality, and breaks ties toward the shorter central route.
+            const double eps = 0.5;
+
+            std::vector<double> cost(
+                n, std::numeric_limits<double>::infinity());
+            std::vector<std::int64_t> prev(n, -1);
+            using qnode = std::pair<double, std::int64_t>;
+            std::priority_queue<qnode, std::vector<qnode>,
+                                std::greater<qnode>> pq;
+            cost[static_cast<std::size_t>(start_f)] = 0.0;
+            pq.emplace(0.0, start_f);
+            const double straight = cell;
+            const double diag = cell * std::sqrt(2.0);
+            while (!pq.empty())
+            {
+                const auto [d, flat] = pq.top();
+                pq.pop();
+                const std::size_t fi = static_cast<std::size_t>(flat);
+                if (d > cost[fi]) continue;
+                if (flat == target_f) break;
+                const int r = static_cast<int>(flat / n_cols);
+                const int c = static_cast<int>(flat % n_cols);
+                for (int k = 0; k < 8; ++k)
+                {
+                    const int rr = r + k_dr[k], cc = c + k_dc[k];
+                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
+                        continue;
+                    const std::size_t nf =
+                        static_cast<std::size_t>(rr) * n_cols + cc;
+                    if (!hole[nf]) continue;
+                    const double step =
+                        (k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight;
+                    const double w = step *
+                        (static_cast<double>(wmax - wd[nf]) + eps);
+                    const double nd = d + w;
+                    if (nd < cost[nf])
                     {
-                        td[i] = void_plug_elev;
-                        tm[i] = 1u;
+                        cost[nf] = nd;
+                        prev[nf] = flat;
+                        pq.emplace(nd, static_cast<std::int64_t>(nf));
                     }
                 }
             }
-            lsdtt_raster_cpu trough(std::move(td), std::move(tm), meta);
-
-            lsdtt_raster_cpu routed = trough;
-            for (int loop = 0; loop < request.centreline_loops; ++loop)
+            if (std::isfinite(cost[static_cast<std::size_t>(target_f)]))
             {
-                std::vector<float>& rd = routed.get_data();
-                for (std::size_t i = 0; i < n; ++i)
-                    if (hole[i] && wem[i])
-                        rd[i] -= static_cast<float>(k_scale) * wd[i];
-                // NOTE: no breaching. breach_depressions carves from a pit
-                // to the NEAREST low edge, which on a through-valley (open at
-                // both tile ends) can trench the trough out the UPSTREAM end
-                // and defeat the downstream tilt. Filling alone raises pits
-                // to their spill level, and with the tilt the spill is always
-                // downstream.
-                routed = fill_pits(routed,
-                                   static_cast<float>(request.fill_min_slope),
-                                   request.n_threads);
-            }
-
-            lsdtt_flowinfo_options fopts;
-            fopts.build_topological_order = false;
-            fopts.build_s_vector          = false;
-            fopts.n_threads               = request.n_threads;
-            std::unique_ptr<lsdtt_flow_base> tflow;
-            try
-            {
-                tflow = make_flow_base(routed.get_data_array(),
-                                       routed.get_mask_array(),
-                                       routed.get_meta(), fopts);
-            }
-            catch (const std::exception&)
-            {
-                tflow.reset();
-            }
-
-            std::vector<std::int64_t> path;
-            if (tflow && !tflow->empty())
-            {
-                std::int64_t flat = nodes.front();   // channel head
-                std::size_t guard = 0;
-                while (tflow->is_valid_cell(flat) && guard++ < n)
+                std::int64_t cur = target_f;
+                while (cur != -1)
                 {
-                    path.push_back(flat);
-                    if (tflow->is_outlet_unchecked(flat)) break;
-                    const std::int64_t rcv =
-                        tflow->receiver_of_unchecked(flat);
-                    if (rcv == flat || rcv < 0) break;
-                    flat = rcv;
+                    path.push_back(cur);
+                    if (cur == start_f) break;
+                    cur = prev[static_cast<std::size_t>(cur)];
                 }
-            }
-
-            // Success requires a long-enough path AND, for an outlet-bounded
-            // channel, that the path actually approaches its outlet. A path
-            // that drained out the wrong side of the valley (e.g. the nearest
-            // tile edge) is a routing failure and triggers a retry with a
-            // deeper, more strongly tilted trough.
-            bool ok = static_cast<int>(path.size()) >=
-                      request.min_centreline_nodes;
-            std::size_t truncate_at = path.empty() ? 0 : path.size() - 1;
-            const bool outlet_bounded =
-                s < scope.resolved_outlets.size() &&
-                scope.resolved_outlets[s] >= 0;
-            // Generous tolerance: half the corridor width.
-            const double tol = 0.5 * request.corridor_width_metres / cell;
-            if (ok && outlet_bounded)
-            {
-                const std::int64_t of = scope.resolved_outlets[s];
-                const int orow = static_cast<int>(of / n_cols);
-                const int ocol = static_cast<int>(of % n_cols);
-                double best_d2 = std::numeric_limits<double>::max();
-                for (std::size_t p = 0; p < path.size(); ++p)
-                {
-                    const int pr = static_cast<int>(path[p] / n_cols);
-                    const int pc = static_cast<int>(path[p] % n_cols);
-                    const double d2 =
-                        static_cast<double>(pr - orow) * (pr - orow) +
-                        static_cast<double>(pc - ocol) * (pc - ocol);
-                    if (d2 < best_d2) { best_d2 = d2; truncate_at = p; }
-                }
-                if (best_d2 > tol * tol) ok = false;
-            }
-            else if (ok)
-            {
-                // Unbounded channel: the routed path must finish near the
-                // traced channel's own end. A path that terminated mid-way
-                // (e.g. at a reservoir void) is a failure — the reactive
-                // plugging below then closes that void and retries.
-                const std::int64_t tf = nodes.back();
-                const int trow = static_cast<int>(tf / n_cols);
-                const int tcol = static_cast<int>(tf % n_cols);
-                const int pr = static_cast<int>(path.back() / n_cols);
-                const int pc = static_cast<int>(path.back() % n_cols);
-                const double d2 =
-                    static_cast<double>(pr - trow) * (pr - trow) +
-                    static_cast<double>(pc - tcol) * (pc - tcol);
-                if (d2 > tol * tol) ok = false;
-            }
-
-            if (ok)
-            {
-                path.resize(truncate_at + 1);
-                const std::vector<float>& rd2 = routed.get_data();
-                rec.centreline_trough_elevation.reserve(path.size());
-                for (const std::int64_t f : path)
-                    rec.centreline_trough_elevation.push_back(
-                        rd2[static_cast<std::size_t>(f)]);
-                rec.centreline_flats = std::move(path);
-                rec.routing_succeeded = true;
-                break;
-            }
-
-            rec.trough_retries = attempt + 1;
-
-            // Reactive void plugging: if this attempt died at a nodata shore
-            // (reservoir, water-surface gap), plug that component and retry
-            // with the same trough parameters. Otherwise deepen and tilt the
-            // trough harder.
-            bool plugged_new = false;
-            if (!path.empty())
-            {
-                const std::int64_t ef = path.back();
-                const int er = static_cast<int>(ef / n_cols);
-                const int ec = static_cast<int>(ef % n_cols);
-                for (int dr2 = -3; dr2 <= 3; ++dr2)
-                {
-                    const int rr = er + dr2;
-                    if (rr < 0 || rr >= n_rows) continue;
-                    for (int dc2 = -3; dc2 <= 3; ++dc2)
-                    {
-                        const int cc = ec + dc2;
-                        if (cc < 0 || cc >= n_cols) continue;
-                        const std::size_t nf =
-                            static_cast<std::size_t>(rr) * n_cols + cc;
-                        if (nd_lbl[nf] >= 0 && !plug_component[nd_lbl[nf]])
-                        {
-                            plug_component[nd_lbl[nf]] = 1;
-                            plugged_new = true;
-                        }
-                    }
-                }
-            }
-            if (!plugged_new)
-            {
-                k_scale *= 2.0;
-                tilt    *= 2.0;
-            }
-
-            // Keep the final attempt's path as a flagged diagnostic so a
-            // failure can be inspected on the map.
-            if (attempt == request.max_trough_retries && !path.empty())
-            {
-                const std::vector<float>& rd2 = routed.get_data();
-                rec.centreline_trough_elevation.reserve(path.size());
-                for (const std::int64_t f : path)
-                    rec.centreline_trough_elevation.push_back(
-                        rd2[static_cast<std::size_t>(f)]);
-                rec.centreline_flats = std::move(path);
+                std::reverse(path.begin(), path.end());
             }
         }
 
+        rec.routing_succeeded =
+            static_cast<int>(path.size()) >= request.min_centreline_nodes;
+        if (!path.empty())
+        {
+            // Synthetic monotonic thalweg for the trough-elevation field: the
+            // running minimum of the DEM downstream along the centreline (the
+            // real profile is the pinned baseline computed in step 6).
+            rec.centreline_trough_elevation.reserve(path.size());
+            float run = std::numeric_limits<float>::infinity();
+            for (const std::int64_t f : path)
+            {
+                const std::size_t fi = static_cast<std::size_t>(f);
+                if (dmask[fi] && elev[fi] < run) run = elev[fi];
+                rec.centreline_trough_elevation.push_back(
+                    std::isfinite(run) ? run : elev[fi]);
+            }
+            rec.centreline_flats = std::move(path);
+        }
+
         // ---------------------------------------------------------------------
-        // 6. Pinned monotone baseline along the centreline. The centreline,
-        //    resampled on the pre-carve topography, rides up and down risers
-        //    and onto higher surfaces; the baseline pins to the original
-        //    channel elevations wherever the channel crosses (or touches)
-        //    the centreline and interpolates linearly between pins, monotone
-        //    downstream (see fit_pinned_monotone_baseline).
+        // 6. Pinned baseline along the centreline. The centreline, resampled
+        //    on the pre-carve topography, rides up and down risers and onto
+        //    higher surfaces; the baseline pins to the original channel
+        //    elevations wherever the channel crosses (or touches) the
+        //    centreline and interpolates linearly between pins, monotonic
+        //    (non-increasing) downstream and never above the channel (see
+        //    fit_pinned_monotonic_baseline).
         // ---------------------------------------------------------------------
         if (!rec.centreline_flats.empty())
         {
@@ -1328,8 +1216,10 @@ valley_centreline_result extract_valley_centrelines(
             // valley, channel meandering away from the geometric centre)
             // still pins the baseline at its along-valley position — this is
             // what strips the meander noise. Where several channel nodes
-            // project to one centreline node, the HIGHEST elevation wins, so
-            // the baseline never dips below the channel at a crossing.
+            // project to one centreline node, the LOWEST elevation wins: the
+            // baseline is a thalweg reference and must sit at or below the
+            // channel (a higher pin would raise it above the channel and make
+            // the channel's own height-above-channel negative).
             for (const std::int64_t cf : nodes)
             {
                 const double cr = static_cast<double>(cf / n_cols);
@@ -1347,12 +1237,12 @@ valley_centreline_result extract_valley_centrelines(
                     if (d2 < best_d2) { best_d2 = d2; best = p; }
                 }
                 const float ce = elev[static_cast<std::size_t>(cf)];
-                if (!std::isfinite(pins[best]) || ce > pins[best])
+                if (!std::isfinite(pins[best]) || ce < pins[best])
                     pins[best] = ce;
                 rec.centreline_is_pin[best] = 1;
             }
             rec.centreline_baseline_elevation =
-                fit_pinned_monotone_baseline(along_path, pins);
+                fit_pinned_monotonic_baseline(along_path, pins);
         }
 
         // ---------------------------------------------------------------------

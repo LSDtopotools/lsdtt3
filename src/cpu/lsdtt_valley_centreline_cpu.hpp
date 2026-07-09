@@ -182,10 +182,11 @@ struct valley_channel_centreline
 
     // Baseline elevation at each centreline node (real elevations): the
     // pre-carve channel elevations pinned wherever the channel crosses the
-    // centreline, linearly interpolated between pins, and forced monotone
-    // non-increasing downstream without ever dipping below a pinned channel
-    // elevation (see fit_pinned_monotone_baseline). This is the reference
-    // profile for height-above-channel checks along the valley.
+    // centreline, linearly interpolated between pins, and forced monotonic
+    // non-increasing downstream while staying at or below every pinned
+    // channel elevation (see fit_pinned_monotonic_baseline). This is the
+    // reference (thalweg) profile for height-above-channel checks along the
+    // valley; it never rises above the channel.
     std::vector<float> centreline_baseline_elevation;
     // 1 where the node is a pin (coincides with / touches a channel node).
     std::vector<char>  centreline_is_pin;
@@ -198,6 +199,25 @@ struct valley_channel_centreline
     // Per-window histograms (n_windows x nbins, flattened; same bin range),
     // for inspecting the reach-adaptive break decisions.
     std::vector<std::int64_t> window_hanc_hist;
+
+    // --- Break decision diagnostics (reviewer-facing) ---
+    // The break is NOT chosen on the raw histogram above; it is chosen on the
+    // SMOOTHED log10-HANC density (2-pass moving average), after segmenting
+    // that curve into modes and merging noise/insignificant modes. These
+    // fields expose that actual decision surface so a figure can show it.
+    //
+    // Whole-corridor decision (same bin range as hanc_hist):
+    std::vector<double> hanc_smoothed;          // decision metric, per bin
+    std::vector<int>    hanc_seg_peak_bins;     // surviving mode peak bins
+    std::vector<int>    hanc_seg_boundary_bins; // surviving inter-mode dips
+    int                 hanc_break_bin = -1;    // chosen break bin (-1 = none)
+
+    // Per-window decision metric: the pooled (window +/- 1 neighbour) then
+    // smoothed density each window's own break was chosen on. n_windows x
+    // nbins flattened; a window that inherited its break (own == 0) has an
+    // all-zero row and window_break_bin -1.
+    std::vector<double> window_hanc_smoothed;   // n_windows x nbins
+    std::vector<int>    window_break_bin;       // per window (-1 = inherited)
 
     // This channel's own full valley mask (0/1), populated when
     // store_per_channel_valley_masks is set.
@@ -217,15 +237,17 @@ struct valley_centreline_result
 };
 
 // -----------------------------------------------------------------------------
-// fit_pinned_monotone_baseline
+// fit_pinned_monotonic_baseline
 //
 // Fits a baseline elevation profile along a polyline from sparse "pin"
 // elevations: linear interpolation between pins in along-distance, flat
 // extension before the first and after the last pin, with two constraints
-// satisfied simultaneously by taking the minimal monotone envelope of the
-// pins (adjusted_pin_k = max of all pins at or downstream of k):
-//   1. the baseline decreases monotonically downstream, and
-//   2. it never dips below any pinned elevation.
+// satisfied simultaneously by taking the monotonic envelope of the pins
+// (adjusted_pin_k = min of all pins at or upstream of k, a forward
+// prefix-min):
+//   1. the baseline decreases monotonically (non-increasing) downstream, and
+//   2. it never rises above any pinned elevation (so the pinned channel node
+//      always has a non-negative height above the baseline).
 //
 // along_distance : cumulative distance (m) per polyline node, ascending.
 // pin_elevation  : per node; NaN (or any non-finite value) = not pinned.
@@ -235,7 +257,7 @@ struct valley_centreline_result
 // (REM) tool can call this with lidar channel pins and subtract the baseline
 // of the nearest polyline node from every raster pixel.
 // -----------------------------------------------------------------------------
-[[nodiscard]] std::vector<float> fit_pinned_monotone_baseline(
+[[nodiscard]] std::vector<float> fit_pinned_monotonic_baseline(
     const std::vector<double>& along_distance,
     const std::vector<float>&  pin_elevation
 );

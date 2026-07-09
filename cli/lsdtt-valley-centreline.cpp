@@ -49,6 +49,7 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -223,6 +224,17 @@ int main(int argc, char* argv[])
         "Output suffix: _valley_hanc_hist.csv with source_id, hanc_m (bin "
         "centre), n_pixels."};
 
+    bool_default_map["write_valley_break_metric"] = true;
+    help_map["write_valley_break_metric"] = {"bool","true",
+        "Write the actual break-decision metric (the SMOOTHED log10-HANC "
+        "density the mode segmentation and break run on, not the raw "
+        "histogram), with surviving mode peaks/boundaries and the chosen "
+        "break flagged.",
+        "Output suffix: _valley_break_metric.csv (long format) with "
+        "source_id, scope (global/window), window_centre_m, hanc_m, "
+        "raw_count, smoothed, is_peak, is_boundary, is_break. Feeds the "
+        "reviewer break-logic figure (phase3_valley_break_metric.py)."};
+
     // --- Trough carving / routing ---
     float_default_map["trough_scaling_factor"] = 0.1f;
     help_map["trough_scaling_factor"] = {"float","0.1",
@@ -279,6 +291,42 @@ int main(int argc, char* argv[])
         "Write per-node centreline table.",
         "Output suffix: _valley_centreline_nodes.csv with source_id, "
         "node_seq, x, y, elevation, distance_m."};
+
+    bool_default_map["write_valley_cross_sections"] = true;
+    help_map["write_valley_cross_sections"] = {"bool","true",
+        "Write regularly-spaced cross sections orthogonal to each valley "
+        "centreline.",
+        "Outputs _valley_cross_sections.fgb (transect lines), "
+        "_valley_cross_section_sides.fgb (labelled left/right valley-side "
+        "points) and _valley_cross_section_samples.csv (per-sample elevation "
+        "profiles). Each channel's transects share one length = "
+        "cross_section_length_multiplier x the widest valley on that channel."};
+
+    float_default_map["cross_section_spacing_metres"] = 500.0f;
+    help_map["cross_section_spacing_metres"] = {"float","500",
+        "Along-centreline spacing between cross-section stations (m).",""};
+
+    float_default_map["cross_section_length_multiplier"] = 1.5f;
+    help_map["cross_section_length_multiplier"] = {"float","1.5",
+        "Cross-section total length as a multiple of the widest valley width "
+        "for the channel.",
+        "1.5 spans 1.5x the widest valley so every section shows both walls "
+        "with margin."};
+
+    int_default_map["cross_section_tangent_window_nodes"] = 8;
+    help_map["cross_section_tangent_window_nodes"] = {"int","8",
+        "Centreline nodes on each side used to smooth the local direction "
+        "the transect is drawn orthogonal to.",""};
+
+    float_default_map["cross_section_max_half_length_metres"] = 5000.0f;
+    help_map["cross_section_max_half_length_metres"] = {"float","5000",
+        "Hard cap (m) on the outward march when finding a valley side, and "
+        "hence on any transect half-length.",
+        "Where the valley mask connects to a reservoir / coastal flat / the "
+        "sea the in-valley run through the centre can span the whole tile; a "
+        "station still in-valley at this cap has that side marked not found "
+        "and is excluded from the widest-valley statistic. Raise for genuinely "
+        "very wide valleys."};
 
     string_default_map["write_output_format"] = "gtiff";
     help_map["write_output_format"] = {"string","gtiff",
@@ -440,7 +488,8 @@ int main(int argc, char* argv[])
     vreq.break_reach_window_metres =
         static_cast<double>(ff["valley_break_reach_window_metres"]);
     vreq.refine_valley_with_baseline = bf["refine_valley_with_baseline"];
-    vreq.store_per_channel_valley_masks = bf["write_valley_mask_raster"];
+    vreq.store_per_channel_valley_masks =
+        bf["write_valley_mask_raster"] || bf["write_valley_cross_sections"];
     vreq.valley_dilation_pixels      = ifs["valley_dilation_pixels"];
     vreq.valley_max_detour_ratio     =
         static_cast<double>(ff["valley_max_detour_ratio"]);
@@ -684,6 +733,215 @@ int main(int argc, char* argv[])
         }
         loader.write_csv(pw,
             {"source_id","window_centre_m","hanc_m","n_pixels"}, wrows);
+    }
+
+    if (bf["write_valley_break_metric"])
+    {
+        // The break-decision metric: the SMOOTHED log10-HANC density the mode
+        // segmentation runs on, with the surviving mode peaks/boundaries and
+        // the chosen break flagged. This is what a reviewer figure must show
+        // (the raw histogram is bumpy and the break looks arbitrary on it).
+        const std::string p =
+            pp.make_output_path("_valley_break_metric", ".csv");
+        std::cout << "Writing break-decision metric: " << p << "\n";
+        std::vector<std::vector<std::string>> rows;
+
+        auto emit = [&](const lsdtt::valley_channel_centreline& ch,
+                        const std::string& scope, double window_centre_m,
+                        const std::vector<double>& smoothed,
+                        const std::vector<std::int64_t>& raw,
+                        const std::vector<int>& peak_bins,
+                        const std::vector<int>& bound_bins,
+                        int break_bin)
+        {
+            const std::size_t nb = smoothed.size();
+            if (nb == 0) return;
+            const double bw =
+                (ch.hist_hi_log - ch.hist_lo_log) / static_cast<double>(nb);
+            std::vector<char> is_peak(nb, 0), is_bound(nb, 0);
+            for (int b : peak_bins)
+                if (b >= 0 && static_cast<std::size_t>(b) < nb) is_peak[b] = 1;
+            for (int b : bound_bins)
+                if (b >= 0 && static_cast<std::size_t>(b) < nb) is_bound[b] = 1;
+            for (std::size_t b = 0; b < nb; ++b)
+            {
+                const double centre = std::pow(
+                    10.0, ch.hist_lo_log + (static_cast<double>(b) + 0.5) * bw);
+                rows.push_back({
+                    std::to_string(ch.source_id),
+                    scope,
+                    std::to_string(window_centre_m),
+                    std::to_string(centre),
+                    (b < raw.size()) ? std::to_string(raw[b]) : "0",
+                    std::to_string(smoothed[b]),
+                    is_peak[b] ? "1" : "0",
+                    is_bound[b] ? "1" : "0",
+                    (static_cast<int>(b) == break_bin) ? "1" : "0" });
+            }
+        };
+
+        for (const lsdtt::valley_channel_centreline& ch : vres.channels)
+        {
+            emit(ch, "global", -1.0, ch.hanc_smoothed, ch.hanc_hist,
+                 ch.hanc_seg_peak_bins, ch.hanc_seg_boundary_bins,
+                 ch.hanc_break_bin);
+
+            const std::size_t nb = ch.hanc_smoothed.size();
+            const std::size_t nw = ch.window_centre_m.size();
+            if (nb == 0 || ch.window_hanc_smoothed.size() != nb * nw) continue;
+            const std::vector<std::int64_t> no_raw;
+            for (std::size_t w = 0; w < nw; ++w)
+            {
+                const std::vector<double> row(
+                    ch.window_hanc_smoothed.begin() +
+                        static_cast<std::ptrdiff_t>(w * nb),
+                    ch.window_hanc_smoothed.begin() +
+                        static_cast<std::ptrdiff_t>((w + 1) * nb));
+                // Skip inherited windows (all-zero decision metric).
+                bool any = false;
+                for (double v : row) if (v != 0.0) { any = true; break; }
+                if (!any) continue;
+                const int bb = (w < ch.window_break_bin.size())
+                    ? ch.window_break_bin[w] : -1;
+                // Raw omitted for windows: the smoothed metric is pooled
+                // (window +/- 1), so single-window raw bars would not match it.
+                emit(ch, "window", ch.window_centre_m[w], row, no_raw,
+                     {}, {}, bb);
+            }
+        }
+        loader.write_csv(p,
+            {"source_id","scope","window_centre_m","hanc_m","raw_count",
+             "smoothed","is_peak","is_boundary","is_break"}, rows);
+    }
+
+    if (bf["write_valley_cross_sections"])
+    {
+        std::cout << "\n--- Valley cross sections ---\n";
+        lsdtt::valley_cross_section_request xreq;
+        xreq.spacing_metres =
+            static_cast<double>(ff["cross_section_spacing_metres"]);
+        xreq.half_length_multiplier =
+            static_cast<double>(ff["cross_section_length_multiplier"]);
+        xreq.tangent_window_nodes =
+            ifs["cross_section_tangent_window_nodes"];
+        xreq.max_half_length_metres =
+            static_cast<double>(ff["cross_section_max_half_length_metres"]);
+
+        lsdtt::valley_cross_section_result xres =
+            lsdtt::extract_valley_cross_sections(dem, vres, xreq);
+
+        for (std::size_t i = 0; i < xres.channel_source_ids.size(); ++i)
+            std::cout << "  channel " << xres.channel_source_ids[i]
+                      << ": widest valley "
+                      << xres.channel_max_valley_width_metres[i]
+                      << " m -> transect length "
+                      << 2.0 * xres.channel_half_length_metres[i] << " m\n";
+        std::cout << "  " << xres.sections.size()
+                  << " cross-section station(s) total\n";
+
+        // (a) Transect lines.
+        {
+            const std::string p =
+                pp.make_output_path("_valley_cross_sections", ".fgb");
+            std::cout << "Writing cross-section lines: " << p << "\n";
+            lsdtt::lsdtt_vector_schema schema;
+            schema.field_names = {"source_id", "station_seq",
+                                  "along_distance_m", "valley_width_m",
+                                  "left_x", "left_y", "right_x", "right_y"};
+            schema.field_types = {
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type };
+            loader.begin_vector_write(
+                p, "valley_cross_sections", schema, meta.crs_wkt,
+                lsdtt::vector_output_format::flatgeobuf, false);
+            for (const lsdtt::valley_cross_section& xs : xres.sections)
+            {
+                // Endpoints span the full transect (the sample extent).
+                const double off = xs.samples.empty()
+                    ? 0.0
+                    : std::max(-xs.samples.front().offset_metres,
+                               xs.samples.back().offset_metres);
+                const lsdtt::lsdtt_xy a{
+                    xs.centre_x - off * xs.normal_dx,
+                    xs.centre_y - off * xs.normal_dy};
+                const lsdtt::lsdtt_xy b{
+                    xs.centre_x + off * xs.normal_dx,
+                    xs.centre_y + off * xs.normal_dy};
+                loader.write_line({a, b},
+                    { static_cast<std::int64_t>(xs.source_id),
+                      static_cast<std::int64_t>(xs.station_seq),
+                      xs.along_distance_metres,
+                      xs.valley_width_metres,
+                      xs.left_x, xs.left_y, xs.right_x, xs.right_y });
+            }
+            loader.finish_vector_write();
+        }
+
+        // (b) Labelled valley-side points (left + right per station).
+        {
+            const std::string p =
+                pp.make_output_path("_valley_cross_section_sides", ".fgb");
+            std::cout << "Writing valley-side points: " << p << "\n";
+            lsdtt::lsdtt_vector_schema schema;
+            schema.field_names = {"source_id", "station_seq", "side",
+                                  "offset_m"};
+            schema.field_types = {
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::string_type,
+                lsdtt::lsdtt_vector_field_type::double_type };
+            loader.begin_vector_write(
+                p, "valley_cross_section_sides", schema, meta.crs_wkt,
+                lsdtt::vector_output_format::flatgeobuf, false);
+            for (const lsdtt::valley_cross_section& xs : xres.sections)
+            {
+                if (xs.left_found)
+                    loader.write_point(xs.left_x, xs.left_y,
+                        { static_cast<std::int64_t>(xs.source_id),
+                          static_cast<std::int64_t>(xs.station_seq),
+                          std::string("left"), xs.left_offset_metres });
+                if (xs.right_found)
+                    loader.write_point(xs.right_x, xs.right_y,
+                        { static_cast<std::int64_t>(xs.source_id),
+                          static_cast<std::int64_t>(xs.station_seq),
+                          std::string("right"), xs.right_offset_metres });
+            }
+            loader.finish_vector_write();
+        }
+
+        // (c) Per-sample elevation profiles (for the PNG plotter).
+        {
+            const std::string p = pp.make_output_path(
+                "_valley_cross_section_samples", ".csv");
+            std::cout << "Writing cross-section samples: " << p << "\n";
+            std::vector<std::vector<std::string>> rows;
+            for (const lsdtt::valley_cross_section& xs : xres.sections)
+                for (const lsdtt::valley_cross_section_sample& sp : xs.samples)
+                    rows.push_back({
+                        std::to_string(xs.source_id),
+                        std::to_string(xs.station_seq),
+                        std::to_string(xs.along_distance_metres),
+                        std::to_string(sp.offset_metres),
+                        std::to_string(sp.x),
+                        std::to_string(sp.y),
+                        sp.elevation_valid
+                            ? std::to_string(sp.elevation)
+                            : std::string("nan"),
+                        sp.in_valley ? "1" : "0",
+                        std::to_string(xs.left_offset_metres),
+                        std::to_string(xs.right_offset_metres),
+                        std::to_string(xs.valley_width_metres) });
+            loader.write_csv(p,
+                {"source_id","station_seq","along_distance_m","offset_m",
+                 "x","y","elevation","in_valley","left_offset_m",
+                 "right_offset_m","valley_width_m"}, rows);
+        }
     }
 
     pp.print_parameters();
