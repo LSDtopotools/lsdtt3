@@ -13,11 +13,16 @@
 //   1. Projection check and reprojection (if needed)
 //   2. Threshold masking
 //   2b. Binary mask application (optional)
+//   2c. Clip raster to polygon (optional)
 //   3. Interior nodata filling
 //   4. Clip to maximum valid rectangle
 //   5. Depression breaching
 //   6. Pit filling
-//   7. Hillshade
+//   7. Depression polygons
+//   8. Hillshade
+//   8b. Multidirectional hillshade
+//   9. Vector clipping
+//   10. Sample rasters to points
 //
 // All steps after (1) operate on the reprojected raster when reprojection
 // occurs.  Output rasters receive a projection suffix when reprojected:
@@ -555,6 +560,22 @@ int main(int argc, char* argv[])
     help_map["hillshade_z_factor"] = {"float","1.0",
         "Vertical exaggeration factor applied before computing hillshade.",
         "Values greater than 1 emphasise relief in flat terrain."};
+
+    bool_default_map["write_multidirectional_hillshade_raster"] = false;
+    help_map["write_multidirectional_hillshade_raster"] = {"bool","false",
+        "Write a multidirectional hillshade raster.",
+        "Computes hillshade from multiple azimuths and writes the mean "
+        "illumination raster to reduce directional bias."};
+
+    int_default_map["multidirectional_hillshade_n_directions"] = 8;
+    help_map["multidirectional_hillshade_n_directions"] = {"int","8",
+        "Number of evenly spaced azimuth directions used for multidirectional hillshade.",
+        "Must be >= 2. Typical values are 8 to 16."};
+
+    float_default_map["multidirectional_hillshade_start_azimuth"] = 0.0f;
+    help_map["multidirectional_hillshade_start_azimuth"] = {"float","0.0",
+        "Starting azimuth in degrees clockwise from north for multidirectional hillshade.",
+        "Subsequent azimuths are sampled uniformly around 360 degrees."};
 
     // --- Vector clipping ---
     bool_default_map["clip_vector_data_to_raster"] = false;
@@ -1433,6 +1454,50 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "Warning: hillshade failed: " << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 8b — Multidirectional hillshade
+    // -------------------------------------------------------------------------
+    if (bf["write_multidirectional_hillshade_raster"])
+    {
+        std::cout << "\n--- Multidirectional hillshade ---\n";
+        std::cout << "N directions : "
+                  << ifs["multidirectional_hillshade_n_directions"] << "\n";
+        std::cout << "Start azimuth: "
+                  << ff["multidirectional_hillshade_start_azimuth"] << " deg\n";
+        std::cout << "Altitude     : " << ff["hillshade_altitude"] << " deg\n";
+        std::cout << "Z-factor     : " << ff["hillshade_z_factor"] << "\n";
+
+        const lsdtt::lsdtt_raster_cpu& hs_src = did_fill
+            ? filled_dem
+            : working_dem;
+
+        try
+        {
+            lsdtt::lsdtt_raster_cpu hillshade_md =
+                lsdtt::compute_multidirectional_hillshade(
+                    hs_src,
+                    ifs["multidirectional_hillshade_n_directions"],
+                    ff["hillshade_altitude"],
+                    ff["hillshade_z_factor"],
+                    ff["multidirectional_hillshade_start_azimuth"]
+                );
+
+            std::string o = pp.make_output_path("_hillshade_multidirectional.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(
+                hillshade_md.get_data(),
+                hillshade_md.get_meta(),
+                o,
+                out_fmt
+            );
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: multidirectional hillshade failed: "
+                      << e.what() << "\n";
         }
     }
 
