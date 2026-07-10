@@ -79,6 +79,28 @@ struct valley_cross_section_request
     double feature_peak_min_prominence_fraction = 0.15;
     // Ignore peaks within this many samples of the transect ends (edge noise).
     int    feature_peak_edge_margin_samples = 2;
+
+    // --- Hydraulic step-boundary extraction (from the elevation profile).
+    // Flood stage increment used to build W(h) (metres).
+    double hydraulic_stage_step_metres = 0.1;
+    // A new width-step boundary is accepted only once BOTH of these are met
+    // since the previous accepted boundary.
+    double hydraulic_min_step_height_metres = 2.0;
+    int    hydraulic_min_step_width_pixels = 3;
+    // Search resolution for nudging each step midpoint within its own step
+    // interval to minimise profile crossing count.
+    int    hydraulic_midpoint_search_samples = 81;
+    // Prefer candidate midpoint levels with at least this many crossings
+    // (2 = one left/right bank pair) when available.
+    int    hydraulic_min_crossings_preferred = 2;
+};
+
+// One terrace/floodplain boundary point from the hydraulic-step workflow.
+struct valley_cross_section_hydraulic_edge
+{
+    std::int32_t step = -1;
+    double stage_metres = 0.0;
+    double offset_metres = 0.0;
 };
 
 // -----------------------------------------------------------------------------
@@ -136,6 +158,9 @@ struct valley_cross_section
     std::vector<double> channel_crossing_offsets;  // (a) D8 channel pixels
     std::vector<double> curvature_peak_offsets;     // (c) max-curvature peaks
     std::vector<double> hillshade_peak_offsets;      // (d) multidir-hs peaks
+
+    // (e) step-midpoint terrace/floodplain boundaries from hydraulic geometry.
+    std::vector<valley_cross_section_hydraulic_edge> hydraulic_edges;
 };
 
 // -----------------------------------------------------------------------------

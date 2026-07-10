@@ -391,8 +391,10 @@ int main(int argc, char* argv[])
         "centreline.",
         "Outputs _valley_cross_sections.fgb (transect lines), "
         "_valley_cross_section_sides.fgb (labelled left/right valley-side "
-        "points) and _valley_cross_section_samples.csv (per-sample elevation "
-        "profiles). Each channel's transects share one length = "
+        "points), _valley_cross_section_boundaries.fgb (valley sides + "
+        "hydraulic step-midpoint boundary points), and "
+        "_valley_cross_section_samples.csv (per-sample elevation profiles). "
+        "Each channel's transects share one length = "
         "cross_section_length_multiplier x the widest valley on that channel."};
 
     float_default_map["cross_section_spacing_metres"] = 500.0f;
@@ -432,8 +434,8 @@ int main(int argc, char* argv[])
     bool_default_map["write_cross_section_features"] = true;
     help_map["write_cross_section_features"] = {"bool","true",
         "Along each cross section, detect and write features: D8 channel "
-        "crossings, left/right valley walls, maximum-curvature peaks and "
-        "multidirectional-hillshade peaks.",
+        "crossings, left/right valley walls, hydraulic-step boundaries, "
+        "maximum-curvature peaks and multidirectional-hillshade peaks.",
         "Outputs _valley_cross_section_features.csv (one row per feature) and "
         "adds curvature / hillshade / is_channel columns to the per-sample "
         "CSV. Needs the DEM to derive curvature and hillshade; the channel "
@@ -1206,6 +1208,66 @@ int main(int argc, char* argv[])
             loader.finish_vector_write();
         }
 
+        // (b2) Boundary points: valley sides + hydraulic step boundaries.
+        {
+            const std::string p =
+                pp.make_output_path("_valley_cross_section_boundaries", ".fgb");
+            std::cout << "Writing boundary points: " << p << "\n";
+            lsdtt::lsdtt_vector_schema schema;
+            schema.field_names = {
+                "source_id", "station_seq", "along_distance_m",
+                "boundary_type", "offset_m", "step", "stage_m" };
+            schema.field_types = {
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::string_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::double_type };
+            loader.begin_vector_write(
+                p, "valley_cross_section_boundaries", schema, meta.crs_wkt,
+                lsdtt::vector_output_format::flatgeobuf, false);
+
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            for (const lsdtt::valley_cross_section& xs : xres.sections)
+            {
+                if (xs.left_found)
+                    loader.write_point(xs.left_x, xs.left_y,
+                        { static_cast<std::int64_t>(xs.source_id),
+                          static_cast<std::int64_t>(xs.station_seq),
+                          xs.along_distance_metres,
+                          std::string("wall_left"),
+                          xs.left_offset_metres,
+                          static_cast<std::int64_t>(-1),
+                          nan });
+                if (xs.right_found)
+                    loader.write_point(xs.right_x, xs.right_y,
+                        { static_cast<std::int64_t>(xs.source_id),
+                          static_cast<std::int64_t>(xs.station_seq),
+                          xs.along_distance_metres,
+                          std::string("wall_right"),
+                          xs.right_offset_metres,
+                          static_cast<std::int64_t>(-1),
+                          nan });
+
+                for (const auto& he : xs.hydraulic_edges)
+                {
+                    const double x = xs.centre_x + he.offset_metres * xs.normal_dx;
+                    const double y = xs.centre_y + he.offset_metres * xs.normal_dy;
+                    loader.write_point(x, y,
+                        { static_cast<std::int64_t>(xs.source_id),
+                          static_cast<std::int64_t>(xs.station_seq),
+                          xs.along_distance_metres,
+                          std::string("hydraulic_edge"),
+                          he.offset_metres,
+                          static_cast<std::int64_t>(he.step),
+                          he.stage_metres });
+                }
+            }
+            loader.finish_vector_write();
+        }
+
         // (c) Per-sample elevation profiles (for the PNG plotter).
         {
             const std::string p = pp.make_output_path(
@@ -1280,6 +1342,12 @@ int main(int argc, char* argv[])
                 for (double o : xs.hillshade_peak_offsets)
                 { auto q = at(o); emit(xs, "hillshade_peak", o,
                                        q.first, q.second); }
+                for (const auto& he : xs.hydraulic_edges)
+                {
+                    auto q = at(he.offset_metres);
+                    emit(xs, "hydraulic_edge", he.offset_metres,
+                         q.first, q.second);
+                }
             }
             loader.write_csv(p,
                 {"source_id","station_seq","along_distance_m","feature_type",

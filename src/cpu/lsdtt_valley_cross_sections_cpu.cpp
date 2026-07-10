@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 #include "../utils/lsdtt_raster_geometry.hpp"
@@ -118,6 +119,329 @@ std::vector<int> prominent_peaks(
         if (prom >= min_prom) out.push_back(i);
     }
     return out;
+}
+
+struct hydraulic_curves
+{
+    std::vector<double> stage;
+    std::vector<double> width;
+    double ds = 0.0;
+};
+
+// Flood the profile and compute W(h) over the wetted run connected to the
+// thalweg (matching the Python chart routine).
+hydraulic_curves cross_section_hydraulics(
+    const std::vector<double>& offset,
+    const std::vector<float>& elevation,
+    const std::vector<char>& valid,
+    double stage_step)
+{
+    hydraulic_curves out;
+    if (stage_step <= 0.0) return out;
+
+    std::vector<std::pair<double,double>> p;
+    p.reserve(offset.size());
+    for (std::size_t i = 0; i < offset.size() && i < elevation.size(); ++i)
+        if (i < valid.size() && valid[i])
+            p.emplace_back(offset[i], static_cast<double>(elevation[i]));
+    if (p.size() < 3) return out;
+    std::sort(p.begin(), p.end(),
+              [](const auto& a, const auto& b){ return a.first < b.first; });
+
+    std::vector<double> off, z;
+    off.reserve(p.size());
+    z.reserve(p.size());
+    for (const auto& q : p) { off.push_back(q.first); z.push_back(q.second); }
+
+    std::vector<double> d;
+    d.reserve(off.size() - 1);
+    for (std::size_t i = 1; i < off.size(); ++i)
+        d.push_back(off[i] - off[i - 1]);
+    if (d.empty()) return out;
+    std::sort(d.begin(), d.end());
+    out.ds = d[d.size() / 2];
+    if (!(out.ds > 0.0)) return out;
+
+    const auto it_min = std::min_element(z.begin(), z.end());
+    const auto it_max = std::max_element(z.begin(), z.end());
+    if (it_min == z.end() || it_max == z.end()) return out;
+    const double zmin = *it_min;
+    const double zmax = *it_max;
+    if (!(zmax > zmin)) return out;
+
+    const int n = static_cast<int>(z.size());
+    const int thalweg = static_cast<int>(std::distance(z.begin(), it_min));
+    for (double h = zmin + stage_step; h < zmax; h += stage_step)
+    {
+        if (z[thalweg] >= h) continue;
+        int lo = thalweg;
+        while (lo - 1 >= 0 && z[lo - 1] < h) --lo;
+        int hi = thalweg;
+        while (hi + 1 < n && z[hi + 1] < h) ++hi;
+        const int nseg = hi - lo + 1;
+        if (nseg <= 0) continue;
+        const double width = static_cast<double>(nseg) * out.ds;
+        out.stage.push_back(h);
+        out.width.push_back(width);
+    }
+    return out;
+}
+
+void combine_width_steps(
+    const std::vector<double>& stage,
+    const std::vector<double>& width,
+    double ds,
+    double min_step_height_metres,
+    int min_step_width_pixels,
+    std::vector<double>& boundaries,
+    std::vector<double>& mids)
+{
+    boundaries.clear();
+    mids.clear();
+    if (stage.size() < 2 || width.size() != stage.size() || !(ds > 0.0))
+        return;
+
+    std::vector<std::pair<double,double>> sw;
+    sw.reserve(stage.size());
+    for (std::size_t i = 0; i < stage.size(); ++i)
+        if (std::isfinite(stage[i]) && std::isfinite(width[i]))
+            sw.emplace_back(stage[i], width[i]);
+    if (sw.size() < 2) return;
+    std::sort(sw.begin(), sw.end(),
+              [](const auto& a, const auto& b){ return a.first < b.first; });
+
+    std::vector<double> s, w;
+    s.reserve(sw.size());
+    w.reserve(sw.size());
+    for (const auto& q : sw) { s.push_back(q.first); w.push_back(q.second); }
+
+    std::vector<float> dwdh(s.size(), 0.0f);
+    if (s.size() >= 3)
+    {
+        for (std::size_t i = 1; i + 1 < s.size(); ++i)
+        {
+            const double ds_local = s[i + 1] - s[i - 1];
+            dwdh[i] = (std::abs(ds_local) > 0.0)
+                ? static_cast<float>((w[i + 1] - w[i - 1]) / ds_local)
+                : 0.0f;
+        }
+        dwdh.front() = dwdh[1];
+        dwdh.back() = dwdh[dwdh.size() - 2];
+    }
+    std::vector<char> valid(dwdh.size(), 1);
+    const std::vector<int> pk = (dwdh.size() >= 3)
+        ? prominent_peaks(dwdh, valid, 0.10, 1)
+        : std::vector<int>{};
+
+    std::vector<int> cand;
+    cand.reserve(pk.size() + 2);
+    cand.push_back(0);
+    for (int i : pk)
+        if (i > 0 && i < static_cast<int>(s.size()) - 1)
+            cand.push_back(i);
+    cand.push_back(static_cast<int>(s.size()) - 1);
+    std::sort(cand.begin(), cand.end());
+    cand.erase(std::unique(cand.begin(), cand.end()), cand.end());
+    if (cand.size() < 2) return;
+
+    const double min_w = static_cast<double>(std::max(0, min_step_width_pixels))
+                         * ds;
+    std::vector<int> keep;
+    keep.push_back(cand.front());
+    int ref = cand.front();
+    for (std::size_t j = 1; j + 1 < cand.size(); ++j)
+    {
+        const int i = cand[j];
+        if ((w[i] - w[ref]) >= min_w &&
+            (s[i] - s[ref]) >= min_step_height_metres)
+        {
+            keep.push_back(i);
+            ref = i;
+        }
+    }
+    if (keep.back() != cand.back()) keep.push_back(cand.back());
+
+    for (int i : keep)
+    {
+        const double z = s[i];
+        if (boundaries.empty() || (z - boundaries.back()) > 1e-9)
+            boundaries.push_back(z);
+    }
+    if (boundaries.size() < 2) { boundaries.clear(); return; }
+
+    mids.reserve(boundaries.size() - 1);
+    for (std::size_t k = 0; k + 1 < boundaries.size(); ++k)
+        mids.push_back(0.5 * (boundaries[k] + boundaries[k + 1]));
+}
+
+std::vector<double> water_line_crossings(
+    const std::vector<double>& offset,
+    const std::vector<float>& elevation,
+    const std::vector<char>& valid,
+    double level)
+{
+    std::vector<std::pair<double,double>> p;
+    p.reserve(offset.size());
+    for (std::size_t i = 0; i < offset.size() && i < elevation.size(); ++i)
+        if (i < valid.size() && valid[i] && std::isfinite(offset[i]))
+            p.emplace_back(offset[i], static_cast<double>(elevation[i]));
+    if (p.size() < 2) return {};
+    std::sort(p.begin(), p.end(),
+              [](const auto& a, const auto& b){ return a.first < b.first; });
+
+    std::vector<double> out;
+    out.reserve(8);
+    for (std::size_t i = 0; i + 1 < p.size(); ++i)
+    {
+        const double x0 = p[i].first;
+        const double z0 = p[i].second;
+        const double x1 = p[i + 1].first;
+        const double z1 = p[i + 1].second;
+        const double a = z0 - level;
+        const double b = z1 - level;
+        if (a == 0.0) out.push_back(x0);
+        if ((a < 0.0 && b > 0.0) || (a > 0.0 && b < 0.0))
+        {
+            const double t = a / (a - b);
+            out.push_back(x0 + t * (x1 - x0));
+        }
+    }
+    if ((p.back().second - level) == 0.0) out.push_back(p.back().first);
+    return out;
+}
+
+double optimize_step_midpoint(
+    const std::vector<double>& offset,
+    const std::vector<float>& elevation,
+    const std::vector<char>& valid,
+    double zmid,
+    double zlo,
+    double zhi,
+    int n_candidates,
+    int min_crossings)
+{
+    if (!std::isfinite(zlo) || !std::isfinite(zhi) || !(zhi > zlo))
+        return zmid;
+
+    const double eps = std::max(1e-9, 1e-6 * (zhi - zlo));
+    const double lo = zlo + eps;
+    const double hi = zhi - eps;
+    if (!(hi > lo)) return 0.5 * (zlo + zhi);
+
+    double z0 = std::isfinite(zmid) ? zmid : 0.5 * (lo + hi);
+    z0 = std::max(lo, std::min(hi, z0));
+
+    const int n = std::max(5, n_candidates);
+    std::vector<double> cands;
+    cands.reserve(static_cast<std::size_t>(n) + 1);
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = (n > 1) ? static_cast<double>(i) / (n - 1) : 0.0;
+        cands.push_back(lo + t * (hi - lo));
+    }
+    cands.push_back(z0);
+    std::sort(cands.begin(), cands.end());
+    cands.erase(std::unique(cands.begin(), cands.end()), cands.end());
+
+    auto crossings_count = [&](double z)
+    {
+        return static_cast<int>(water_line_crossings(offset, elevation, valid, z)
+                                    .size());
+    };
+
+    int best_any_i = -1;
+    int best_any_n = std::numeric_limits<int>::max();
+    double best_any_dz = std::numeric_limits<double>::infinity();
+
+    int best_pref_i = -1;
+    int best_pref_n = std::numeric_limits<int>::max();
+    double best_pref_dz = std::numeric_limits<double>::infinity();
+
+    for (std::size_t i = 0; i < cands.size(); ++i)
+    {
+        const int ncr = crossings_count(cands[i]);
+        const double dz = std::abs(cands[i] - z0);
+
+        if (ncr < best_any_n || (ncr == best_any_n && dz < best_any_dz))
+        {
+            best_any_i = static_cast<int>(i);
+            best_any_n = ncr;
+            best_any_dz = dz;
+        }
+
+        if (ncr >= min_crossings)
+        {
+            if (ncr < best_pref_n ||
+                (ncr == best_pref_n && dz < best_pref_dz))
+            {
+                best_pref_i = static_cast<int>(i);
+                best_pref_n = ncr;
+                best_pref_dz = dz;
+            }
+        }
+    }
+
+    if (best_pref_i >= 0) return cands[best_pref_i];
+    return (best_any_i >= 0) ? cands[best_any_i] : z0;
+}
+
+std::vector<valley_cross_section_hydraulic_edge> hydraulic_edges_from_samples(
+    const valley_cross_section& xs,
+    const valley_cross_section_request& request)
+{
+    std::vector<valley_cross_section_hydraulic_edge> edges;
+    if (xs.samples.size() < 3) return edges;
+
+    std::vector<double> off;
+    std::vector<float> elev;
+    std::vector<char> valid;
+    off.reserve(xs.samples.size());
+    elev.reserve(xs.samples.size());
+    valid.reserve(xs.samples.size());
+    for (const valley_cross_section_sample& sp : xs.samples)
+    {
+        off.push_back(sp.offset_metres);
+        elev.push_back(sp.elevation);
+        valid.push_back(sp.elevation_valid ? 1 : 0);
+    }
+
+    hydraulic_curves hyd = cross_section_hydraulics(
+        off, elev, valid, request.hydraulic_stage_step_metres);
+    if (hyd.stage.empty()) return edges;
+
+    std::vector<double> boundaries, mids;
+    combine_width_steps(
+        hyd.stage,
+        hyd.width,
+        hyd.ds,
+        request.hydraulic_min_step_height_metres,
+        request.hydraulic_min_step_width_pixels,
+        boundaries,
+        mids);
+    if (boundaries.size() < 2 || mids.empty()) return edges;
+
+    for (std::size_t k = 0; k + 1 < boundaries.size(); ++k)
+    {
+        const double zmid = (k < mids.size()) ? mids[k]
+                                              : 0.5 * (boundaries[k] + boundaries[k + 1]);
+        const double zopt = optimize_step_midpoint(
+            off, elev, valid,
+            zmid,
+            boundaries[k], boundaries[k + 1],
+            request.hydraulic_midpoint_search_samples,
+            request.hydraulic_min_crossings_preferred);
+
+        const std::vector<double> xoff = water_line_crossings(off, elev, valid, zopt);
+        for (double o : xoff)
+        {
+            valley_cross_section_hydraulic_edge e;
+            e.step = static_cast<std::int32_t>(k);
+            e.stage_metres = zopt;
+            e.offset_metres = o;
+            edges.push_back(e);
+        }
+    }
+    return edges;
 }
 
 // Is (x,y) inside the valley mask (per-channel raster, data 1 = valley)?
@@ -414,6 +738,10 @@ valley_cross_section_result extract_valley_cross_sections(
             };
             if (curvature) xs.curvature_peak_offsets = peak_offsets(true);
             if (hillshade) xs.hillshade_peak_offsets = peak_offsets(false);
+
+            // (e) Hydraulic step-midpoint boundaries (terrace/floodplain
+            // edges) from the sampled elevation profile.
+            xs.hydraulic_edges = hydraulic_edges_from_samples(xs, request);
 
             result.sections.push_back(std::move(xs));
         }
