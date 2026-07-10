@@ -32,6 +32,12 @@ struct poly_node
     double x = 0.0, y = 0.0, along = 0.0;
 };
 
+struct station_geom
+{
+    double cx = 0.0, cy = 0.0, nx = 0.0, ny = 0.0;
+    std::size_t node = 0;
+};
+
 // Sample the DEM at a world coordinate (nearest cell). Returns validity.
 bool sample_dem(const lsdtt_raster_meta& meta,
                 const std::vector<float>& elev,
@@ -501,6 +507,37 @@ double find_valley_side(const lsdtt_raster_meta& meta,
     return march_limit;
 }
 
+double neighbour_clip_limit(
+    const std::vector<station_geom>& geom,
+    std::size_t s,
+    int dir,
+    int k_window,
+    double base_limit)
+{
+    const station_geom& gs = geom[s];
+    double limit = base_limit;
+    const int n = static_cast<int>(geom.size());
+    const int is = static_cast<int>(s);
+    const int k = std::max(1, k_window);
+    for (int dt = -k; dt <= k; ++dt)
+    {
+        if (dt == 0) continue;
+        const int t = is + dt;
+        if (t < 0 || t >= n) continue;
+        const station_geom& gt = geom[static_cast<std::size_t>(t)];
+        const double dx = gt.cx - gs.cx;
+        const double dy = gt.cy - gs.cy;
+        const double d2 = dx * dx + dy * dy;
+        if (!(d2 > 0.0)) continue;
+        const double proj = gs.nx * dx + gs.ny * dy;
+        const double denom = 2.0 * static_cast<double>(dir) * proj;
+        if (denom <= 1e-9) continue;
+        const double oeq = d2 / denom;
+        if (oeq > 0.0) limit = std::min(limit, oeq);
+    }
+    return limit;
+}
+
 } // namespace
 
 valley_cross_section_result extract_valley_cross_sections(
@@ -563,7 +600,6 @@ valley_cross_section_result extract_valley_cross_sections(
 
         // For each station: interpolate the centre and compute the smoothed
         // local tangent/normal. Also record the nearest node index.
-        struct station_geom { double cx, cy, nx, ny; std::size_t node; };
         std::vector<station_geom> geom(station_along.size());
 
         auto node_at_along = [&](double d) -> std::size_t
@@ -578,6 +614,7 @@ valley_cross_section_result extract_valley_cross_sections(
             return lo;
         };
 
+        int station_seq_out = 0;
         for (std::size_t s = 0; s < station_along.size(); ++s)
         {
             const double d = station_along[s];
@@ -644,32 +681,75 @@ valley_cross_section_result extract_valley_cross_sections(
         result.channel_half_length_metres.push_back(half_len);
         result.channel_max_valley_width_metres.push_back(max_width);
 
-        // Pass 2: sample each transect over [-half_len, +half_len].
+        // Pass 2: sample each transect over clipped limits (Phase-1 non-overlap
+        // clips concave-side rays at neighbour bisectors).
+        std::vector<double> left_limit(station_along.size(), half_len);
+        std::vector<double> right_limit(station_along.size(), half_len);
+        std::vector<char> left_trunc(station_along.size(), 0);
+        std::vector<char> right_trunc(station_along.size(), 0);
+        if (request.clip_overlapping_sections)
+        {
+            for (std::size_t s = 0; s < station_along.size(); ++s)
+            {
+                const double l = neighbour_clip_limit(
+                    geom, s, -1, request.neighbour_clip_window, half_len);
+                const double r = neighbour_clip_limit(
+                    geom, s, +1, request.neighbour_clip_window, half_len);
+                left_limit[s] = std::max(step, std::min(half_len, l));
+                right_limit[s] = std::max(step, std::min(half_len, r));
+                left_trunc[s] = (left_limit[s] < (half_len - 1e-6)) ? 1 : 0;
+                right_trunc[s] = (right_limit[s] < (half_len - 1e-6)) ? 1 : 0;
+            }
+        }
+
         for (std::size_t s = 0; s < station_along.size(); ++s)
         {
+            const double full_len = 2.0 * half_len;
+            const double clipped_len = left_limit[s] + right_limit[s];
+            if (request.clip_overlapping_sections && full_len > 0.0)
+            {
+                const double frac = clipped_len / full_len;
+                if (frac < request.min_section_reach_fraction) continue;
+            }
+
             valley_cross_section xs;
             xs.source_id   = ch.source_id;
-            xs.station_seq = static_cast<std::int32_t>(s);
+            xs.station_seq = static_cast<std::int32_t>(station_seq_out++);
             xs.along_distance_metres = station_along[s];
             xs.centre_x = geom[s].cx;
             xs.centre_y = geom[s].cy;
             xs.normal_dx = geom[s].nx;
             xs.normal_dy = geom[s].ny;
+            xs.left_truncated_by_neighbour = left_trunc[s] ? true : false;
+            xs.right_truncated_by_neighbour = right_trunc[s] ? true : false;
 
-            xs.left_found  = left_ok[s];
-            xs.right_found = right_ok[s];
-            xs.left_offset_metres  = -left_off[s];
-            xs.right_offset_metres =  right_off[s];
-            xs.left_x  = geom[s].cx - left_off[s]  * geom[s].nx;
-            xs.left_y  = geom[s].cy - left_off[s]  * geom[s].ny;
-            xs.right_x = geom[s].cx + right_off[s] * geom[s].nx;
-            xs.right_y = geom[s].cy + right_off[s] * geom[s].ny;
-            xs.valley_width_metres = left_off[s] + right_off[s];
+            const double march_left = left_limit[s];
+            const double march_right = right_limit[s];
 
-            const int n_side =
-                static_cast<int>(std::floor(half_len / step + 0.5));
-            xs.samples.reserve(2 * n_side + 1);
-            for (int j = -n_side; j <= n_side; ++j)
+            // Re-evaluate valley sides against this station's clip limits.
+            bool lf = false, rf = false;
+            const double lo = find_valley_side(
+                meta, vmask, geom[s].cx, geom[s].cy,
+                geom[s].nx, geom[s].ny, -1, step, march_left, gap_tol, lf);
+            const double ro = find_valley_side(
+                meta, vmask, geom[s].cx, geom[s].cy,
+                geom[s].nx, geom[s].ny, +1, step, march_right, gap_tol, rf);
+            xs.left_found  = lf;
+            xs.right_found = rf;
+            xs.left_offset_metres  = -lo;
+            xs.right_offset_metres =  ro;
+            xs.left_x  = geom[s].cx - lo * geom[s].nx;
+            xs.left_y  = geom[s].cy - lo * geom[s].ny;
+            xs.right_x = geom[s].cx + ro * geom[s].nx;
+            xs.right_y = geom[s].cy + ro * geom[s].ny;
+            xs.valley_width_metres = lo + ro;
+
+            const int n_left = static_cast<int>(
+                std::floor(march_left / step + 0.5));
+            const int n_right = static_cast<int>(
+                std::floor(march_right / step + 0.5));
+            xs.samples.reserve(n_left + n_right + 1);
+            for (int j = -n_left; j <= n_right; ++j)
             {
                 const double off = j * step;
                 valley_cross_section_sample sp;

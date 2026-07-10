@@ -431,6 +431,26 @@ int main(int argc, char* argv[])
         "and is excluded from the widest-valley statistic. Raise for genuinely "
         "very wide valleys."};
 
+    bool_default_map["clip_overlapping_sections"] = true;
+    help_map["clip_overlapping_sections"] = {"bool","true",
+        "Phase-1 non-overlap: clip each transect side where that ray becomes "
+        "closer to a neighbouring station centre than its own centre (local "
+        "Voronoi bisector clipping).",
+        "Removes concave-side overlap while keeping straight orthogonal "
+        "transects."};
+
+    int_default_map["neighbour_clip_window"] = 2;
+    help_map["neighbour_clip_window"] = {"int","2",
+        "Number of neighbouring stations on each side considered for overlap "
+        "clipping.",
+        "2 checks s±1 and s±2; larger is more conservative."};
+
+    float_default_map["min_section_reach_fraction"] = 0.35f;
+    help_map["min_section_reach_fraction"] = {"float","0.35",
+        "Drop a station if the clipped transect length is below this fraction "
+        "of the nominal full length.",
+        "Avoids tiny degenerate sections in tight hairpins."};
+
     bool_default_map["write_cross_section_features"] = true;
     help_map["write_cross_section_features"] = {"bool","true",
         "Along each cross section, detect and write features: D8 channel "
@@ -1059,6 +1079,10 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["cross_section_max_half_length_metres"]);
         xreq.min_half_length_metres =
             static_cast<double>(ff["cross_section_min_half_length_metres"]);
+        xreq.clip_overlapping_sections = bf["clip_overlapping_sections"];
+        xreq.neighbour_clip_window = ifs["neighbour_clip_window"];
+        xreq.min_section_reach_fraction =
+            static_cast<double>(ff["min_section_reach_fraction"]);
         xreq.feature_peak_min_prominence_fraction = static_cast<double>(
             ff["cross_section_feature_prominence_fraction"]);
 
@@ -1155,17 +1179,15 @@ int main(int argc, char* argv[])
                 lsdtt::vector_output_format::flatgeobuf, false);
             for (const lsdtt::valley_cross_section& xs : xres.sections)
             {
-                // Endpoints span the full transect (the sample extent).
-                const double off = xs.samples.empty()
-                    ? 0.0
-                    : std::max(-xs.samples.front().offset_metres,
-                               xs.samples.back().offset_metres);
-                const lsdtt::lsdtt_xy a{
-                    xs.centre_x - off * xs.normal_dx,
-                    xs.centre_y - off * xs.normal_dy};
-                const lsdtt::lsdtt_xy b{
-                    xs.centre_x + off * xs.normal_dx,
-                    xs.centre_y + off * xs.normal_dy};
+                // Endpoints follow the sampled extent (can be asymmetric after
+                // neighbour overlap clipping).
+                lsdtt::lsdtt_xy a{xs.centre_x, xs.centre_y};
+                lsdtt::lsdtt_xy b{xs.centre_x, xs.centre_y};
+                if (!xs.samples.empty())
+                {
+                    a = {xs.samples.front().x, xs.samples.front().y};
+                    b = {xs.samples.back().x, xs.samples.back().y};
+                }
                 loader.write_line({a, b},
                     { static_cast<std::int64_t>(xs.source_id),
                       static_cast<std::int64_t>(xs.station_seq),

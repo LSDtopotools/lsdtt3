@@ -80,6 +80,14 @@ struct valley_cross_section_request
     // Ignore peaks within this many samples of the transect ends (edge noise).
     int    feature_peak_edge_margin_samples = 2;
 
+    // Phase-1 non-overlap: clip each transect side where the station's ray
+    // crosses the Voronoi bisector to nearby station centres (concave-side trim).
+    bool   clip_overlapping_sections = true;
+    int    neighbour_clip_window = 2;
+    // Drop a station if clipped reach is below this fraction of the nominal
+    // full transect length (2 * half_len).
+    double min_section_reach_fraction = 0.35;
+
     // --- Hydraulic step-boundary extraction (from the elevation profile).
     // Flood stage increment used to build W(h) (metres).
     double hydraulic_stage_step_metres = 0.1;
@@ -146,6 +154,8 @@ struct valley_cross_section
     // Valley sides (margins). *_found is false if the transect reaches its
     // end still inside the valley (valley wider than the transect).
     bool   left_found = false,  right_found = false;
+    bool   left_truncated_by_neighbour = false;
+    bool   right_truncated_by_neighbour = false;
     double left_offset_metres = 0.0, right_offset_metres = 0.0;
     double left_x = 0.0, left_y = 0.0;
     double right_x = 0.0, right_y = 0.0;
