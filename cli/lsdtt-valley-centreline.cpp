@@ -9,18 +9,36 @@
 // -----------------------------------------------------------------------------
 // lsdtt-valley-centreline
 //
-// Broad per-channel valley identification and trough-routed valley
-// centrelines. For each channel in scope (user source points, optionally
-// bounded by outlets) the tool:
+// Broad per-channel valley identification and a medial-axis valley centreline.
+// For each channel in scope (user source points, optionally bounded by
+// outlets) the tool:
 //
 //   1. computes the Euclidean height above that single channel (HANC) for
 //      every pixel in a wide corridor,
 //   2. finds the break in the corridor's HANC population that separates the
-//      valley from the valley walls,
-//   3. tags valley pixels (channel-connected, holes filled), and
-//   4. carves a trough down the valley and routes flow through it — the
-//      routed path is the valley centreline (after Clubb et al. 2022,
-//      https://doi.org/10.5194/esurf-10-437-2022).
+//      valley from the valley walls (reach-adaptive: the break is detected
+//      per along-channel window so the threshold adapts from a confined
+//      canyon to a broad valley floor),
+//   3. tags valley pixels and cleans the mask with a channel-distance-
+//      constrained opening (erode / channel-adjacency / detour-ratio /
+//      capped dilation) so tributary threads and neighbouring floodplains
+//      do not leak in, and
+//   4. traces the centreline as the LEAST-COST PATH from the channel head to
+//      the outlet, confined to the valley mask, whose per-step cost rewards
+//      distance to the nearest valley wall — so the cheapest route hugs the
+//      medial axis (the locus equidistant from the two nearest walls) at any
+//      valley width. (This replaces the legacy trough-carve-and-route
+//      approach of Clubb et al. 2022, https://doi.org/10.5194/esurf-10-437-2022,
+//      which cannot trace a wide valley: filling flattens the broad
+//      distance-to-wall basin into a lake that drains straight to the pour
+//      point.)
+//
+// A pinned, monotonic-downstream baseline (the pre-carve channel elevations
+// interpolated along the centreline and forced to sit at or below every
+// channel pin) is the thalweg reference profile, and the future entry point
+// for a relative-elevation raster (REM). The tool can also emit regularly
+// spaced cross sections orthogonal to the centreline, and the HANC-break
+// decision metric for review.
 //
 // This is deliberately separate from, and much less restrictive than, the
 // floodplain/terrace classification in lsdtt-flat-surface-finder, which is
@@ -50,6 +68,7 @@
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -217,6 +236,51 @@ int main(int argc, char* argv[])
         "peak. The valley break is the FIRST qualifying dip after the first "
         "mode above this floor."};
 
+    float_default_map["valley_break_fraction"] = 0.6f;
+    help_map["valley_break_fraction"] = {"float","0.6",
+        "Dip acceptance threshold for the HANC break: two adjacent modes of "
+        "the smoothed HANC density are kept SEPARATE (a valley break placed "
+        "in the trough between them) only when the trough falls below this "
+        "fraction of the smaller flanking peak; a shallower trough merges the "
+        "modes.",
+        "Raise it (e.g. 0.65-0.7) to accept shallower valley-floor/wall "
+        "separations, so more marginal valley-floor modes become breaks; "
+        "lower it to demand deeper, cleaner troughs. Used as-is by the 'fixed' "
+        "method; ignored by 'relief_adaptive' (which derives it per reach)."};
+
+    string_default_map["valley_break_method"] = "fixed";
+    help_map["valley_break_method"] = {"string","fixed",
+        "HANC break acceptance-fraction method. 'fixed' uses "
+        "valley_break_fraction for every reach. 'relief_adaptive' derives the "
+        "fraction per reach from local topographic relief: confined, "
+        "high-relief reaches get a more permissive fraction (a real valley "
+        "wall makes a deep trough), low-relief plateau reaches get a stricter "
+        "fraction (a broad shallow saddle is not a valley wall). The "
+        "relative-depth test is unchanged; only the fraction varies.",
+        "Use 'relief_adaptive' when a single fraction over- or under-grows "
+        "different reaches of the same channel (e.g. a channel that runs from "
+        "a confined canyon onto a glacial plateau)."};
+
+    float_default_map["valley_break_fraction_min"] = 0.5f;
+    help_map["valley_break_fraction_min"] = {"float","0.5",
+        "relief_adaptive method: acceptance fraction for the lowest-relief "
+        "reaches (strictest; resists growing valleys onto flat plateaus).",
+        "Lower it to make plateau reaches even stricter."};
+
+    float_default_map["valley_break_fraction_max"] = 0.7f;
+    help_map["valley_break_fraction_max"] = {"float","0.7",
+        "relief_adaptive method: acceptance fraction for the highest-relief "
+        "reaches (most permissive; captures shallow floors in confined "
+        "valleys).",
+        "Raise it to fill more of a confined valley floor."};
+
+    float_default_map["valley_break_relief_window_metres"] = 300.0f;
+    help_map["valley_break_relief_window_metres"] = {"float","300",
+        "relief_adaptive method: moving-window radius (m) for the local-relief "
+        "raster (max-min elevation) that drives the adaptive fraction. Should "
+        "span a valley wall.",
+        "Increase for broad valleys, decrease for narrow ones."};
+
     bool_default_map["write_valley_hanc_histogram"] = true;
     help_map["write_valley_hanc_histogram"] = {"bool","true",
         "Write the per-channel corridor HANC histogram used for break "
@@ -232,7 +296,8 @@ int main(int argc, char* argv[])
         "break flagged.",
         "Output suffix: _valley_break_metric.csv (long format) with "
         "source_id, scope (global/window), window_centre_m, hanc_m, "
-        "raw_count, smoothed, is_peak, is_boundary, is_break. Feeds the "
+        "raw_count, smoothed, is_peak (surviving mode peak), is_boundary, "
+        "is_raw_peak (candidate peak before merging), is_break. Feeds the "
         "reviewer break-logic figure (phase3_valley_break_metric.py)."};
 
     // --- Trough carving / routing ---
@@ -280,6 +345,34 @@ int main(int argc, char* argv[])
         "channel's valley).",
         "Output suffix: _valley_mask.tif"};
 
+    bool_default_map["write_valley_reach_id_raster"] = true;
+    help_map["write_valley_reach_id_raster"] = {"bool","true",
+        "Write a per-channel reach-id raster: every corridor pixel is tagged "
+        "with the along-channel reach (window) of its nearest channel node — "
+        "the exact population each per-reach HANC break histogram is built "
+        "from.",
+        "Output suffix: _valley_reach_id_ch<sid>.tif (Int16, nodata outside "
+        "the corridor). Feeds the reach map (phase3_valley_reach_map.py / "
+        "lsdviztools3.charts.plot_valley_reach_map)."};
+
+    bool_default_map["write_hillshade_raster"] = false;
+    help_map["write_hillshade_raster"] = {"bool","false",
+        "Write a standard single-azimuth hillshade of the DEM (a natural-looking "
+        "terrain backdrop for the cross-section / feature figures).",
+        "Output suffix: _hillshade.tif."};
+
+    bool_default_map["write_multidirectional_hillshade_raster"] = false;
+    help_map["write_multidirectional_hillshade_raster"] = {"bool","false",
+        "Write a multidirectional hillshade of the DEM (mean of hillshades "
+        "from several evenly spaced azimuths). It reduces directional bias and "
+        "highlights slope breaks (valley/terrace margins) well.",
+        "Output suffix: _multidirectional_hillshade.tif."};
+
+    int_default_map["multidirectional_hillshade_n_directions"] = 8;
+    help_map["multidirectional_hillshade_n_directions"] = {"int","8",
+        "Number of evenly spaced azimuths for the multidirectional hillshade.",
+        ""};
+
     bool_default_map["write_valley_centreline"] = true;
     help_map["write_valley_centreline"] = {"bool","true",
         "Write the valley centrelines as vector lines.",
@@ -318,6 +411,14 @@ int main(int argc, char* argv[])
         "Centreline nodes on each side used to smooth the local direction "
         "the transect is drawn orthogonal to.",""};
 
+    float_default_map["cross_section_min_half_length_metres"] = 0.0f;
+    help_map["cross_section_min_half_length_metres"] = {"float","0",
+        "Minimum transect half-length (m). Floors the transect length so a "
+        "narrow channel's sections still extend a sensible distance beyond the "
+        "valley to show wall/upland context.",
+        "0 = length purely from valley width; set e.g. 800-1500 for narrow "
+        "tributaries. Still capped by cross_section_max_half_length_metres."};
+
     float_default_map["cross_section_max_half_length_metres"] = 5000.0f;
     help_map["cross_section_max_half_length_metres"] = {"float","5000",
         "Hard cap (m) on the outward march when finding a valley side, and "
@@ -327,6 +428,29 @@ int main(int argc, char* argv[])
         "station still in-valley at this cap has that side marked not found "
         "and is excluded from the widest-valley statistic. Raise for genuinely "
         "very wide valleys."};
+
+    bool_default_map["write_cross_section_features"] = true;
+    help_map["write_cross_section_features"] = {"bool","true",
+        "Along each cross section, detect and write features: D8 channel "
+        "crossings, left/right valley walls, maximum-curvature peaks and "
+        "multidirectional-hillshade peaks.",
+        "Outputs _valley_cross_section_features.csv (one row per feature) and "
+        "adds curvature / hillshade / is_channel columns to the per-sample "
+        "CSV. Needs the DEM to derive curvature and hillshade; the channel "
+        "mask comes from the resolved channel scope."};
+
+    float_default_map["cross_section_curvature_window_metres"] = 60.0f;
+    help_map["cross_section_curvature_window_metres"] = {"float","60",
+        "Polynomial-fit window diameter (m) for the maximum-curvature raster "
+        "used to find slope-break peaks along the cross sections.",
+        "Larger smooths over fine breaks (fewer, coarser peaks); smaller "
+        "resolves finer risers but is noisier."};
+
+    float_default_map["cross_section_feature_prominence_fraction"] = 0.15f;
+    help_map["cross_section_feature_prominence_fraction"] = {"float","0.15",
+        "Minimum prominence of a curvature / hillshade peak as a fraction of "
+        "that profile's value range over the transect, for it to be reported.",
+        "Raise to keep only the strongest breaks; lower to catch subtler ones."};
 
     string_default_map["write_output_format"] = "gtiff";
     help_map["write_output_format"] = {"string","gtiff",
@@ -483,13 +607,24 @@ int main(int argc, char* argv[])
         static_cast<double>(ff["valley_max_hanc_metres"]);
     vreq.wall_peak_fraction =
         static_cast<double>(ff["valley_wall_peak_fraction"]);
+    vreq.break_valley_fraction =
+        static_cast<double>(ff["valley_break_fraction"]);
+    vreq.break_method =
+        (sf["valley_break_method"] == "relief_adaptive") ? 1 : 0;
+    vreq.break_fraction_min =
+        static_cast<double>(ff["valley_break_fraction_min"]);
+    vreq.break_fraction_max =
+        static_cast<double>(ff["valley_break_fraction_max"]);
+    vreq.break_relief_window_metres =
+        static_cast<double>(ff["valley_break_relief_window_metres"]);
     vreq.min_valley_hanc_metres =
         static_cast<double>(ff["valley_min_hanc_metres"]);
     vreq.break_reach_window_metres =
         static_cast<double>(ff["valley_break_reach_window_metres"]);
     vreq.refine_valley_with_baseline = bf["refine_valley_with_baseline"];
     vreq.store_per_channel_valley_masks =
-        bf["write_valley_mask_raster"] || bf["write_valley_cross_sections"];
+        bf["write_valley_mask_raster"] || bf["write_valley_cross_sections"] ||
+        bf["write_valley_reach_id_raster"];
     vreq.valley_dilation_pixels      = ifs["valley_dilation_pixels"];
     vreq.valley_max_detour_ratio     =
         static_cast<double>(ff["valley_max_detour_ratio"]);
@@ -575,6 +710,69 @@ int main(int argc, char* argv[])
             loader.write_full(ch.valley_mask.get_data(),
                               ch.valley_mask.get_meta(), pc, out_format,
                               GDT_Byte);
+        }
+    }
+
+    if (bf["write_valley_reach_id_raster"])
+    {
+        // Per-channel reach-id raster: each corridor pixel = the reach
+        // (window) of its nearest channel node. -1 (nodata) outside the
+        // corridor, so a viewer can drape it semi-transparently.
+        for (const lsdtt::valley_channel_centreline& ch : vres.channels)
+        {
+            if (ch.reach_id.get_data().empty()) continue;
+            const std::string pc = pp.make_output_path(
+                "_valley_reach_id_ch" + std::to_string(ch.source_id), ".tif");
+            std::cout << "Writing channel reach-id raster (Int16): "
+                      << pc << "\n";
+            // Write reach id where valid, the meta nodata value elsewhere
+            // (write_full tags nodata from meta.no_data_value).
+            const std::vector<float>&   rd = ch.reach_id.get_data();
+            const std::vector<std::uint8_t>& rm = ch.reach_id.get_mask();
+            const float ndv = static_cast<float>(
+                ch.reach_id.get_meta().no_data_value);
+            std::vector<float> out(rd.size(), ndv);
+            for (std::size_t i = 0; i < rd.size(); ++i)
+                if (rm[i]) out[i] = rd[i];
+            loader.write_full(out, ch.reach_id.get_meta(), pc, out_format,
+                              GDT_Int16);
+        }
+    }
+
+    if (bf["write_hillshade_raster"])
+    {
+        std::cout << "\n--- Hillshade ---\n";
+        try
+        {
+            lsdtt::lsdtt_raster_cpu hs = lsdtt::compute_hillshade(dem);
+            const std::string p = pp.make_output_path("_hillshade", ".tif");
+            std::cout << "Writing: " << p << "\n";
+            loader.write_full(hs.get_data(), hs.get_meta(), p, out_format);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: hillshade failed: " << e.what() << "\n";
+        }
+    }
+
+    if (bf["write_multidirectional_hillshade_raster"])
+    {
+        std::cout << "\n--- Multidirectional hillshade ---\n";
+        const int nd = std::max(2, ifs["multidirectional_hillshade_n_directions"]);
+        std::cout << "N directions: " << nd << "\n";
+        try
+        {
+            lsdtt::lsdtt_raster_cpu hs =
+                lsdtt::compute_multidirectional_hillshade(dem, nd);
+            const std::string p =
+                pp.make_output_path("_multidirectional_hillshade", ".tif");
+            std::cout << "Writing: " << p << "\n";
+            loader.write_full(hs.get_data(), hs.get_meta(), p, out_format);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: multidirectional hillshade failed: "
+                      << e.what() << "\n";
         }
     }
 
@@ -668,13 +866,21 @@ int main(int argc, char* argv[])
         std::vector<std::vector<std::string>> rows;
         for (const lsdtt::valley_channel_centreline& ch : vres.channels)
             for (std::size_t w = 0; w < ch.window_break_m.size(); ++w)
+            {
+                const std::string frac = (w < ch.window_break_fraction.size())
+                    ? std::to_string(ch.window_break_fraction[w]) : "";
+                const std::string rel = (w < ch.window_relief_m.size())
+                    ? std::to_string(ch.window_relief_m[w]) : "";
                 rows.push_back({
                     std::to_string(ch.source_id),
                     std::to_string(ch.window_centre_m[w]),
                     std::to_string(ch.window_break_m[w]),
-                    ch.window_break_own[w] ? "true" : "false" });
+                    ch.window_break_own[w] ? "true" : "false",
+                    frac, rel });
+            }
         loader.write_csv(p,
-            {"source_id","window_centre_m","break_m","own_break"}, rows);
+            {"source_id","window_centre_m","break_m","own_break",
+             "break_fraction","relief_m"}, rows);
     }
 
     if (bf["write_valley_hanc_histogram"])
@@ -752,17 +958,22 @@ int main(int argc, char* argv[])
                         const std::vector<std::int64_t>& raw,
                         const std::vector<int>& peak_bins,
                         const std::vector<int>& bound_bins,
+                        const std::vector<int>& raw_peak_bins,
                         int break_bin)
         {
             const std::size_t nb = smoothed.size();
             if (nb == 0) return;
             const double bw =
                 (ch.hist_hi_log - ch.hist_lo_log) / static_cast<double>(nb);
-            std::vector<char> is_peak(nb, 0), is_bound(nb, 0);
+            std::vector<char> is_peak(nb, 0), is_bound(nb, 0),
+                              is_raw_peak(nb, 0);
             for (int b : peak_bins)
                 if (b >= 0 && static_cast<std::size_t>(b) < nb) is_peak[b] = 1;
             for (int b : bound_bins)
                 if (b >= 0 && static_cast<std::size_t>(b) < nb) is_bound[b] = 1;
+            for (int b : raw_peak_bins)
+                if (b >= 0 && static_cast<std::size_t>(b) < nb)
+                    is_raw_peak[b] = 1;
             for (std::size_t b = 0; b < nb; ++b)
             {
                 const double centre = std::pow(
@@ -776,6 +987,7 @@ int main(int argc, char* argv[])
                     std::to_string(smoothed[b]),
                     is_peak[b] ? "1" : "0",
                     is_bound[b] ? "1" : "0",
+                    is_raw_peak[b] ? "1" : "0",
                     (static_cast<int>(b) == break_bin) ? "1" : "0" });
             }
         };
@@ -784,7 +996,7 @@ int main(int argc, char* argv[])
         {
             emit(ch, "global", -1.0, ch.hanc_smoothed, ch.hanc_hist,
                  ch.hanc_seg_peak_bins, ch.hanc_seg_boundary_bins,
-                 ch.hanc_break_bin);
+                 ch.hanc_raw_peak_bins, ch.hanc_break_bin);
 
             const std::size_t nb = ch.hanc_smoothed.size();
             const std::size_t nw = ch.window_centre_m.size();
@@ -803,15 +1015,32 @@ int main(int argc, char* argv[])
                 if (!any) continue;
                 const int bb = (w < ch.window_break_bin.size())
                     ? ch.window_break_bin[w] : -1;
+                // Per-window surviving mode peaks / boundaries (from the
+                // pooled break decision), so the figure can show each reach's
+                // mode structure and the flanking peaks at the break.
+                std::vector<int> wpeaks, wbounds, wraw_peaks;
+                if (ch.window_is_peak.size() == nb * nw)
+                    for (std::size_t b = 0; b < nb; ++b)
+                        if (ch.window_is_peak[w * nb + b])
+                            wpeaks.push_back(static_cast<int>(b));
+                if (ch.window_is_boundary.size() == nb * nw)
+                    for (std::size_t b = 0; b < nb; ++b)
+                        if (ch.window_is_boundary[w * nb + b])
+                            wbounds.push_back(static_cast<int>(b));
+                if (ch.window_is_raw_peak.size() == nb * nw)
+                    for (std::size_t b = 0; b < nb; ++b)
+                        if (ch.window_is_raw_peak[w * nb + b])
+                            wraw_peaks.push_back(static_cast<int>(b));
                 // Raw omitted for windows: the smoothed metric is pooled
                 // (window +/- 1), so single-window raw bars would not match it.
                 emit(ch, "window", ch.window_centre_m[w], row, no_raw,
-                     {}, {}, bb);
+                     wpeaks, wbounds, wraw_peaks, bb);
             }
         }
         loader.write_csv(p,
             {"source_id","scope","window_centre_m","hanc_m","raw_count",
-             "smoothed","is_peak","is_boundary","is_break"}, rows);
+             "smoothed","is_peak","is_boundary","is_raw_peak","is_break"},
+            rows);
     }
 
     if (bf["write_valley_cross_sections"])
@@ -826,9 +1055,71 @@ int main(int argc, char* argv[])
             ifs["cross_section_tangent_window_nodes"];
         xreq.max_half_length_metres =
             static_cast<double>(ff["cross_section_max_half_length_metres"]);
+        xreq.min_half_length_metres =
+            static_cast<double>(ff["cross_section_min_half_length_metres"]);
+        xreq.feature_peak_min_prominence_fraction = static_cast<double>(
+            ff["cross_section_feature_prominence_fraction"]);
+
+        // Feature rasters (curvature, multidirectional hillshade, channel
+        // mask). Computed once here so the per-section search can co-sample
+        // them. Skipped when write_cross_section_features is off.
+        const bool do_features = bf["write_cross_section_features"];
+        lsdtt::lsdtt_raster_cpu curv_r, hs_r, chan_r;
+        const lsdtt::lsdtt_raster_cpu* curv_p = nullptr;
+        const lsdtt::lsdtt_raster_cpu* hs_p   = nullptr;
+        const lsdtt::lsdtt_raster_cpu* chan_p = nullptr;
+        if (do_features)
+        {
+            try
+            {
+                const double lambda = static_cast<double>(
+                    ff["cross_section_curvature_window_metres"]);
+                lsdtt::poly_fit_coeffs fit =
+                    lsdtt::direct_polyfit(dem, lambda, ifs["n_threads"]);
+                lsdtt::polyfit_metric_request mreq;
+                mreq.metrics = {lsdtt::polyfit_metric::maximum_curvature};
+                mreq.n_threads = ifs["n_threads"];
+                lsdtt::polyfit_metric_result mres =
+                    lsdtt::compute_polyfit_metrics(fit, mreq);
+                if (mres.has(lsdtt::polyfit_metric::maximum_curvature))
+                {
+                    curv_r = mres.at(lsdtt::polyfit_metric::maximum_curvature);
+                    curv_p = &curv_r;
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: curvature for features failed: "
+                          << e.what() << "\n";
+            }
+            try
+            {
+                const int nd = std::max(
+                    2, ifs["multidirectional_hillshade_n_directions"]);
+                hs_r = lsdtt::compute_multidirectional_hillshade(dem, nd);
+                hs_p = &hs_r;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: hillshade for features failed: "
+                          << e.what() << "\n";
+            }
+            // Channel-mask raster from the resolved scope (1 = D8 channel).
+            if (scope.channel_mask.size() == dem.get_data().size())
+            {
+                std::vector<float> cd(scope.channel_mask.size(), 0.0f);
+                for (std::size_t i = 0; i < cd.size(); ++i)
+                    cd[i] = scope.channel_mask[i] ? 1.0f : 0.0f;
+                chan_r = lsdtt::lsdtt_raster_cpu(
+                    std::move(cd),
+                    std::vector<std::uint8_t>(dem.get_mask()), meta);
+                chan_p = &chan_r;
+            }
+        }
 
         lsdtt::valley_cross_section_result xres =
-            lsdtt::extract_valley_cross_sections(dem, vres, xreq);
+            lsdtt::extract_valley_cross_sections(
+                dem, vres, xreq, curv_p, hs_p, chan_p);
 
         for (std::size_t i = 0; i < xres.channel_source_ids.size(); ++i)
             std::cout << "  channel " << xres.channel_source_ids[i]
@@ -936,11 +1227,63 @@ int main(int argc, char* argv[])
                         sp.in_valley ? "1" : "0",
                         std::to_string(xs.left_offset_metres),
                         std::to_string(xs.right_offset_metres),
-                        std::to_string(xs.valley_width_metres) });
+                        std::to_string(xs.valley_width_metres),
+                        sp.curvature_valid
+                            ? std::to_string(sp.curvature) : std::string("nan"),
+                        sp.hillshade_valid
+                            ? std::to_string(sp.hillshade) : std::string("nan"),
+                        sp.is_channel ? "1" : "0" });
             loader.write_csv(p,
                 {"source_id","station_seq","along_distance_m","offset_m",
                  "x","y","elevation","in_valley","left_offset_m",
-                 "right_offset_m","valley_width_m"}, rows);
+                 "right_offset_m","valley_width_m",
+                 "curvature","hillshade","is_channel"}, rows);
+        }
+
+        // (d) Detected features (one row per feature).
+        if (do_features)
+        {
+            const std::string p = pp.make_output_path(
+                "_valley_cross_section_features", ".csv");
+            std::cout << "Writing cross-section features: " << p << "\n";
+            std::vector<std::vector<std::string>> rows;
+            auto emit = [&](const lsdtt::valley_cross_section& xs,
+                            const std::string& type, double off,
+                            double x, double y)
+            {
+                rows.push_back({
+                    std::to_string(xs.source_id),
+                    std::to_string(xs.station_seq),
+                    std::to_string(xs.along_distance_metres),
+                    type, std::to_string(off),
+                    std::to_string(x), std::to_string(y) });
+            };
+            for (const lsdtt::valley_cross_section& xs : xres.sections)
+            {
+                auto at = [&](double off)
+                {
+                    return std::pair<double,double>{
+                        xs.centre_x + off * xs.normal_dx,
+                        xs.centre_y + off * xs.normal_dy };
+                };
+                if (xs.left_found)
+                    emit(xs, "wall_left", xs.left_offset_metres,
+                         xs.left_x, xs.left_y);
+                if (xs.right_found)
+                    emit(xs, "wall_right", xs.right_offset_metres,
+                         xs.right_x, xs.right_y);
+                for (double o : xs.channel_crossing_offsets)
+                { auto q = at(o); emit(xs, "channel", o, q.first, q.second); }
+                for (double o : xs.curvature_peak_offsets)
+                { auto q = at(o); emit(xs, "curvature_peak", o,
+                                       q.first, q.second); }
+                for (double o : xs.hillshade_peak_offsets)
+                { auto q = at(o); emit(xs, "hillshade_peak", o,
+                                       q.first, q.second); }
+            }
+            loader.write_csv(p,
+                {"source_id","station_seq","along_distance_m","feature_type",
+                 "offset_m","x","y"}, rows);
         }
     }
 

@@ -27,6 +27,7 @@
 #include "../core/lsdtt_flow_base.hpp"
 #include "lsdtt_proximity_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "lsdtt_raster_surface_metrics_cpu.hpp"
 
 namespace lsdtt
 {
@@ -458,7 +459,8 @@ void clean_valley_patches(
 struct valley_break_diagnostics
 {
     std::vector<double> smoothed;       // per bin: the decision metric
-    std::vector<int>    seg_peak_bins;  // surviving mode peak bins
+    std::vector<int>    raw_peak_bins;  // candidate mode peaks BEFORE merging
+    std::vector<int>    seg_peak_bins;  // surviving mode peak bins (post-merge)
     std::vector<int>    seg_bound_bins; // surviving inter-mode boundary bins
     int                 break_bin = -1; // chosen boundary bin (segs[0].hi)
 };
@@ -529,6 +531,11 @@ double find_valley_break(
             }
         }
     }
+    // Snapshot the candidate mode peaks BEFORE any merging, so a reviewer
+    // figure can show which bumps were detected and then merged away (the
+    // surviving peaks are the post-merge subset in seg_peak_bins).
+    if (diag)
+        for (const seg_t& s : segs) diag->raw_peak_bins.push_back(s.peak_bin);
     if (segs.size() < 2) return -1.0;
 
     auto merge_at = [&](std::size_t i)
@@ -697,6 +704,21 @@ valley_centreline_result extract_valley_centrelines(
     std::vector<float>   vm_data(n, 0.0f);
     std::vector<uint8_t> vm_mask = dmask;
 
+    // Local topographic relief (max-min elevation in a moving window) drives
+    // the relief-adaptive acceptance fraction: a confined, high-relief reach
+    // has steep walls that produce a deep valley-floor/wall trough (so a more
+    // permissive fraction is warranted), whereas a low-relief plateau reach
+    // has only broad, shallow saddles that must NOT be read as valley walls
+    // (so it gets a stricter fraction). Computed once; sampled per reach.
+    // Only needed for the relief-adaptive method.
+    lsdtt_raster_cpu relief_raster =
+        (request.break_method == 1)
+            ? moving_window_local_relief(
+                  dem, std::max(request.break_relief_window_metres, cell))
+            : dem;   // placeholder, unused when method != 1
+    const std::vector<float>&   reld = relief_raster.get_data();
+    const std::vector<uint8_t>& relm = relief_raster.get_mask();
+
     for (std::size_t s = 0; s < scope.channel_node_lists.size(); ++s)
     {
         const std::vector<std::int64_t>& nodes = scope.channel_node_lists[s];
@@ -856,6 +878,9 @@ valley_centreline_result extract_valley_centrelines(
             std::vector<std::int64_t> whist(
                 static_cast<std::size_t>(n_windows) * nbins, 0);
             std::vector<std::int64_t> wcount(n_windows, 0);
+            // Per-window local-relief accumulation for the adaptive fraction.
+            std::vector<double>       wrelief_sum(n_windows, 0.0);
+            std::vector<std::int64_t> wrelief_cnt(n_windows, 0);
             for (std::size_t i = 0; i < n; ++i)
             {
                 if (!in_corridor(i)) continue;
@@ -867,13 +892,60 @@ valley_centreline_result extract_valley_centrelines(
                 const int w = window_of(i);
                 ++whist[static_cast<std::size_t>(w) * nbins + b];
                 ++wcount[w];
+                if (request.break_method == 1 && relm[i] &&
+                    std::isfinite(reld[i]))
+                {
+                    wrelief_sum[w] += static_cast<double>(reld[i]);
+                    ++wrelief_cnt[w];
+                }
             }
+
+            // Reach relief -> acceptance fraction. Mean local relief per
+            // window; the scale is the median of those means (self-calibrating
+            // per tile), so the midpoint fraction lands at typical relief.
+            std::vector<double> window_relief(n_windows, -1.0);
+            double relief_sum_all = 0.0; std::int64_t relief_cnt_all = 0;
+            for (int w = 0; w < n_windows; ++w)
+                if (wrelief_cnt[w] > 0)
+                {
+                    window_relief[w] = wrelief_sum[w] / wrelief_cnt[w];
+                    relief_sum_all += wrelief_sum[w];
+                    relief_cnt_all += wrelief_cnt[w];
+                }
+            double relief_scale = 0.0;
+            {
+                std::vector<double> vals;
+                for (int w = 0; w < n_windows; ++w)
+                    if (window_relief[w] >= 0.0) vals.push_back(window_relief[w]);
+                if (!vals.empty())
+                {
+                    std::sort(vals.begin(), vals.end());
+                    relief_scale = vals[vals.size() / 2];
+                }
+            }
+            const double global_relief =
+                relief_cnt_all > 0
+                    ? relief_sum_all / static_cast<double>(relief_cnt_all)
+                    : 0.0;
+            const double fmin = std::min(request.break_fraction_min,
+                                         request.break_fraction_max);
+            const double fmax = std::max(request.break_fraction_min,
+                                         request.break_fraction_max);
+            auto fraction_for = [&](double relief) -> double
+            {
+                if (request.break_method != 1)
+                    return request.break_valley_fraction;
+                if (relief_scale <= 0.0) return 0.5 * (fmin + fmax);
+                const double t = relief / (relief + relief_scale);
+                return fmin + (fmax - fmin) * t;
+            };
+            const double global_frac = fraction_for(global_relief);
+            rec.hanc_break_fraction = global_frac;
 
             valley_break_diagnostics gdiag;
             const double gbrk = find_valley_break(
-                ghist, lo_log, hi_log,
-                request.break_valley_fraction, request.wall_peak_fraction,
-                &gdiag);
+                ghist, lo_log, hi_log, global_frac,
+                request.wall_peak_fraction, &gdiag);
             if (gbrk > 0.0)
             {
                 break_hanc =
@@ -883,16 +955,30 @@ valley_centreline_result extract_valley_centrelines(
             rec.hanc_smoothed          = std::move(gdiag.smoothed);
             rec.hanc_seg_peak_bins     = std::move(gdiag.seg_peak_bins);
             rec.hanc_seg_boundary_bins = std::move(gdiag.seg_bound_bins);
+            rec.hanc_raw_peak_bins     = std::move(gdiag.raw_peak_bins);
             rec.hanc_break_bin         = gdiag.break_bin;
 
             // Per-window decision metric (all-zero rows for inherited windows).
             rec.window_hanc_smoothed.assign(
                 static_cast<std::size_t>(n_windows) * nbins, 0.0);
             rec.window_break_bin.assign(n_windows, -1);
+            rec.window_is_peak.assign(
+                static_cast<std::size_t>(n_windows) * nbins, 0);
+            rec.window_is_boundary.assign(
+                static_cast<std::size_t>(n_windows) * nbins, 0);
+            rec.window_is_raw_peak.assign(
+                static_cast<std::size_t>(n_windows) * nbins, 0);
 
             std::vector<char> own(n_windows, 0);
+            // Per-window relief and the fraction it maps to (a window with no
+            // relief samples falls back to the corridor mean relief).
+            std::vector<double> window_frac(n_windows, global_frac);
+            std::vector<double> window_rel(n_windows, global_relief);
             for (int w = 0; w < n_windows; ++w)
             {
+                window_rel[w] =
+                    (window_relief[w] >= 0.0) ? window_relief[w] : global_relief;
+                window_frac[w] = fraction_for(window_rel[w]);
                 // Pool each window with its neighbours (sliding window).
                 std::vector<std::int64_t> h(nbins, 0);
                 std::int64_t cnt = 0;
@@ -908,8 +994,7 @@ valley_centreline_result extract_valley_centrelines(
                 {
                     valley_break_diagnostics wdiag;
                     const double brk = find_valley_break(
-                        h, lo_log, hi_log,
-                        request.break_valley_fraction,
+                        h, lo_log, hi_log, window_frac[w],
                         request.wall_peak_fraction, &wdiag);
                     // Store the pooled+smoothed decision metric for this window
                     // (defined even when no break was found).
@@ -917,12 +1002,29 @@ valley_centreline_result extract_valley_centrelines(
                         std::copy(wdiag.smoothed.begin(), wdiag.smoothed.end(),
                                   rec.window_hanc_smoothed.begin() +
                                   static_cast<std::ptrdiff_t>(w) * nbins);
+                    // Candidate (pre-merge) peaks for every populated window,
+                    // even one that produced no own break.
+                    {
+                        const std::size_t base =
+                            static_cast<std::size_t>(w) * nbins;
+                        for (int pb : wdiag.raw_peak_bins)
+                            if (pb >= 0 && pb < nbins)
+                                rec.window_is_raw_peak[base + pb] = 1;
+                    }
                     if (brk > 0.0)
                     {
                         window_break[w] =
                             std::max(brk, request.min_valley_hanc_metres);
                         own[w] = 1;
                         rec.window_break_bin[w] = wdiag.break_bin;
+                        const std::size_t base =
+                            static_cast<std::size_t>(w) * nbins;
+                        for (int pb : wdiag.seg_peak_bins)
+                            if (pb >= 0 && pb < nbins)
+                                rec.window_is_peak[base + pb] = 1;
+                        for (int bb : wdiag.seg_bound_bins)
+                            if (bb >= 0 && bb < nbins)
+                                rec.window_is_boundary[base + bb] = 1;
                     }
                 }
             }
@@ -964,6 +1066,8 @@ valley_centreline_result extract_valley_centrelines(
                 rec.window_centre_m.push_back((w + 0.5) * wstep);
                 rec.window_break_m.push_back(window_break[w]);
                 rec.window_break_own.push_back(own[w]);
+                rec.window_break_fraction.push_back(window_frac[w]);
+                rec.window_relief_m.push_back(window_rel[w]);
             }
 
             rec.hanc_hist        = std::move(ghist);
@@ -1324,6 +1428,20 @@ valley_centreline_result extract_valley_centrelines(
                 if (valley[i]) md[i] = 1.0f;
             rec.valley_mask = lsdtt_raster_cpu(
                 std::move(md), std::vector<uint8_t>(dmask), meta);
+
+            // Reach-id raster: every corridor pixel tagged with the reach
+            // (window) of its nearest channel node — the exact population each
+            // per-reach HANC histogram is built from.
+            std::vector<float>   rd(n, 0.0f);
+            std::vector<uint8_t> rmask(n, 0u);
+            for (std::size_t i = 0; i < n; ++i)
+                if (in_corridor(i))
+                {
+                    rd[i] = static_cast<float>(window_of(i));
+                    rmask[i] = 1u;
+                }
+            rec.reach_id = lsdtt_raster_cpu(
+                std::move(rd), std::move(rmask), meta);
         }
 
         result.channels.push_back(std::move(rec));

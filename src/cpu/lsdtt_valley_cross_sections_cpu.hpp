@@ -46,6 +46,12 @@ struct valley_cross_section_request
     // width for the channel (stations where both valley sides were found).
     // 1.5 gives a comfortable margin beyond both valley sides.
     double half_length_multiplier  = 1.5;
+    // Minimum transect half-length (m). Narrow channels (a tight valley
+    // ribbon) otherwise get transects barely longer than the valley, showing
+    // no wall/upland context; this floors the half-length so every section
+    // extends a sensible distance beyond the valley. Still capped by
+    // max_half_length_metres. 0 => no floor (length purely from valley width).
+    double min_half_length_metres  = 0.0;
     // Hard cap on the outward march (m) when locating a valley side, and hence
     // on any transect half-length. Where the valley mask connects to a broad
     // flat (a reservoir, a coastal plain, the sea) the in-valley run through
@@ -63,6 +69,16 @@ struct valley_cross_section_request
     // consecutive out-of-valley steps before declaring the side (bridges
     // single-pixel holes in the mask). The run must still contain the centre.
     int    side_gap_tolerance_steps = 1;
+
+    // --- Per-section feature detection (channel crossings, curvature peaks,
+    //     hillshade peaks). Only used when the corresponding raster is passed
+    //     to extract_valley_cross_sections. ---
+    // A curvature / hillshade local maximum is reported only if its prominence
+    // (peak value minus the higher of the two flanking minima) is at least this
+    // fraction of the profile's value range over the transect.
+    double feature_peak_min_prominence_fraction = 0.15;
+    // Ignore peaks within this many samples of the transect ends (edge noise).
+    int    feature_peak_edge_margin_samples = 2;
 };
 
 // -----------------------------------------------------------------------------
@@ -78,6 +94,13 @@ struct valley_cross_section_sample
     float        elevation = 0.0f;
     std::uint8_t elevation_valid = 0;   // DEM valid at this sample
     std::uint8_t in_valley = 0;         // inside this channel's valley mask
+    // Optional co-sampled rasters (valid = 0 when the raster was not supplied
+    // or the sample fell on nodata).
+    float        curvature = 0.0f;
+    std::uint8_t curvature_valid = 0;
+    float        hillshade = 0.0f;
+    std::uint8_t hillshade_valid = 0;
+    std::uint8_t is_channel = 0;        // a D8 channel pixel at this sample
 };
 
 // -----------------------------------------------------------------------------
@@ -106,6 +129,13 @@ struct valley_cross_section
     double right_x = 0.0, right_y = 0.0;
 
     std::vector<valley_cross_section_sample> samples;
+
+    // Detected features, as signed offsets from the centreline (same sign
+    // convention as sample offsets). Populated only when the relevant raster
+    // was supplied. (b) valley walls are already the left/right margins above.
+    std::vector<double> channel_crossing_offsets;  // (a) D8 channel pixels
+    std::vector<double> curvature_peak_offsets;     // (c) max-curvature peaks
+    std::vector<double> hillshade_peak_offsets;      // (d) multidir-hs peaks
 };
 
 // -----------------------------------------------------------------------------
@@ -134,10 +164,21 @@ struct valley_cross_section_result
 // Channels whose centreline is empty, or whose valley_mask is empty, are
 // skipped. Throws std::invalid_argument on a raster/mask size mismatch.
 // -----------------------------------------------------------------------------
+// Optional co-sampled rasters enable per-section feature detection:
+//   curvature    : a curvature raster (e.g. maximum_curvature); local maxima
+//                  along the transect are reported as curvature_peak_offsets.
+//   hillshade    : a multidirectional hillshade; local maxima are reported as
+//                  hillshade_peak_offsets.
+//   channel_mask : nonzero where a D8 channel pixel sits; crossings are
+//                  reported as channel_crossing_offsets.
+// Pass nullptr to skip a given feature.
 [[nodiscard]] valley_cross_section_result extract_valley_cross_sections(
     const lsdtt_raster_cpu&             dem,
     const valley_centreline_result&     centrelines,
-    const valley_cross_section_request& request
+    const valley_cross_section_request& request,
+    const lsdtt_raster_cpu*             curvature    = nullptr,
+    const lsdtt_raster_cpu*             hillshade    = nullptr,
+    const lsdtt_raster_cpu*             channel_mask = nullptr
 );
 
 } // namespace lsdtt

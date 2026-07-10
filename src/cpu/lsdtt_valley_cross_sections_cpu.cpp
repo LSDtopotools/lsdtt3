@@ -51,6 +51,75 @@ bool sample_dem(const lsdtt_raster_meta& meta,
     return true;
 }
 
+// Sample an arbitrary raster at a world coordinate (nearest cell). Returns
+// validity (in-bounds and the raster's own mask valid).
+bool sample_raster(const lsdtt_raster_meta& meta,
+                   const lsdtt_raster_cpu& r,
+                   double x, double y, float& out)
+{
+    if (!point_within_raster(meta, x, y)) return false;
+    const double fcol = (x - meta.x_min) / meta.cell_size;
+    const double frow = (meta.y_max() - y) / meta.cell_size;
+    int col = static_cast<int>(std::floor(fcol));
+    int row = static_cast<int>(std::floor(frow));
+    if (col < 0 || col >= meta.n_cols || row < 0 || row >= meta.n_rows)
+        return false;
+    const std::size_t i =
+        static_cast<std::size_t>(row) * meta.n_cols + col;
+    const std::vector<std::uint8_t>& m = r.get_mask();
+    if (i >= m.size() || !m[i]) return false;
+    out = r.get_data()[i];
+    return true;
+}
+
+// Report prominent local maxima of a 1-D profile as sample INDICES. A value is
+// a peak if it is a strict local maximum whose prominence (peak minus the
+// higher of the two flanking valley minima, walking until a higher peak or an
+// end) is at least min_prom_frac of the profile's valid value range. Invalid
+// samples break runs. Edge-margin samples are ignored.
+std::vector<int> prominent_peaks(
+    const std::vector<float>& v, const std::vector<char>& valid,
+    double min_prom_frac, int edge_margin)
+{
+    std::vector<int> out;
+    const int n = static_cast<int>(v.size());
+    if (n < 3) return out;
+    float vmin = 0.0f, vmax = 0.0f; bool any = false;
+    for (int i = 0; i < n; ++i)
+        if (valid[i])
+        {
+            if (!any) { vmin = vmax = v[i]; any = true; }
+            else { vmin = std::min(vmin, v[i]); vmax = std::max(vmax, v[i]); }
+        }
+    if (!any) return out;
+    const double range = static_cast<double>(vmax - vmin);
+    if (range <= 0.0) return out;
+    const double min_prom = min_prom_frac * range;
+    const int lo = std::max(1, edge_margin);
+    const int hi = std::min(n - 2, n - 1 - edge_margin);
+    for (int i = lo; i <= hi; ++i)
+    {
+        if (!valid[i] || !valid[i - 1] || !valid[i + 1]) continue;
+        if (!(v[i] > v[i - 1] && v[i] >= v[i + 1])) continue;
+        // Left key col: walk left to a higher sample or an invalid/end.
+        double left_min = v[i];
+        for (int j = i - 1; j >= 0 && valid[j]; --j)
+        {
+            if (v[j] > v[i]) break;
+            left_min = std::min(left_min, static_cast<double>(v[j]));
+        }
+        double right_min = v[i];
+        for (int j = i + 1; j < n && valid[j]; ++j)
+        {
+            if (v[j] > v[i]) break;
+            right_min = std::min(right_min, static_cast<double>(v[j]));
+        }
+        const double prom = v[i] - std::max(left_min, right_min);
+        if (prom >= min_prom) out.push_back(i);
+    }
+    return out;
+}
+
 // Is (x,y) inside the valley mask (per-channel raster, data 1 = valley)?
 bool in_valley_at(const lsdtt_raster_meta& meta,
                   const std::vector<float>& vmask,
@@ -113,7 +182,10 @@ double find_valley_side(const lsdtt_raster_meta& meta,
 valley_cross_section_result extract_valley_cross_sections(
     const lsdtt_raster_cpu&             dem,
     const valley_centreline_result&     centrelines,
-    const valley_cross_section_request& request)
+    const valley_cross_section_request& request,
+    const lsdtt_raster_cpu*             curvature,
+    const lsdtt_raster_cpu*             hillshade,
+    const lsdtt_raster_cpu*             channel_mask)
 {
     const lsdtt_raster_meta& meta = dem.get_meta();
     const std::vector<float>&        elev  = dem.get_data();
@@ -241,6 +313,7 @@ valley_cross_section_result extract_valley_cross_sections(
         if (max_width <= 0.0) max_width = 2.0 * march_limit;
 
         double half_len = 0.5 * request.half_length_multiplier * max_width;
+        half_len = std::max(half_len, request.min_half_length_metres);
         half_len = std::min(half_len, march_limit);
 
         result.channel_source_ids.push_back(ch.source_id);
@@ -285,8 +358,63 @@ valley_cross_section_result extract_valley_cross_sections(
                 sp.elevation = e;
                 sp.in_valley =
                     in_valley_at(meta, vmask, sp.x, sp.y) ? 1 : 0;
+                float cv = 0.0f;
+                if (curvature &&
+                    sample_raster(meta, *curvature, sp.x, sp.y, cv))
+                { sp.curvature = cv; sp.curvature_valid = 1; }
+                float hs = 0.0f;
+                if (hillshade &&
+                    sample_raster(meta, *hillshade, sp.x, sp.y, hs))
+                { sp.hillshade = hs; sp.hillshade_valid = 1; }
+                float ch_v = 0.0f;
+                if (channel_mask &&
+                    sample_raster(meta, *channel_mask, sp.x, sp.y, ch_v))
+                    sp.is_channel = (ch_v > 0.5f) ? 1 : 0;
                 xs.samples.push_back(sp);
             }
+
+            // --- Per-section feature detection ------------------------------
+            const int ns = static_cast<int>(xs.samples.size());
+            // (a) D8 channel crossings: the centre offset of each contiguous
+            //     run of channel pixels.
+            if (channel_mask)
+            {
+                int run_lo = -1;
+                for (int j = 0; j <= ns; ++j)
+                {
+                    const bool ch = (j < ns) && xs.samples[j].is_channel;
+                    if (ch && run_lo < 0) run_lo = j;
+                    else if (!ch && run_lo >= 0)
+                    {
+                        const int mid = (run_lo + j - 1) / 2;
+                        xs.channel_crossing_offsets.push_back(
+                            xs.samples[mid].offset_metres);
+                        run_lo = -1;
+                    }
+                }
+            }
+            // (c)/(d) prominent local maxima of curvature and hillshade.
+            auto peak_offsets = [&](bool use_curv)
+            {
+                std::vector<float> vals(ns, 0.0f);
+                std::vector<char>  ok(ns, 0);
+                for (int j = 0; j < ns; ++j)
+                {
+                    const valley_cross_section_sample& sp = xs.samples[j];
+                    vals[j] = use_curv ? sp.curvature : sp.hillshade;
+                    ok[j]   = use_curv ? sp.curvature_valid : sp.hillshade_valid;
+                }
+                std::vector<double> offs;
+                for (int idx : prominent_peaks(
+                         vals, ok,
+                         request.feature_peak_min_prominence_fraction,
+                         request.feature_peak_edge_margin_samples))
+                    offs.push_back(xs.samples[idx].offset_metres);
+                return offs;
+            };
+            if (curvature) xs.curvature_peak_offsets = peak_offsets(true);
+            if (hillshade) xs.hillshade_peak_offsets = peak_offsets(false);
+
             result.sections.push_back(std::move(xs));
         }
     }
