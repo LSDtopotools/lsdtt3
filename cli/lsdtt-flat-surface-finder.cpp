@@ -324,14 +324,14 @@ int main(int argc, char* argv[])
     bool_default_map["find_floodplain"] = false;
     help_map["find_floodplain"] = {"bool","false",
         "Classify labelled flat surfaces into floodplain and terrace.",
-        "Uses height above the in-scope channel network (HANC). Requires a "
+        "Uses height above the in-scope channel network (HAND). Requires a "
         "channel scope (source points, or the drainage-area threshold). "
         "Writes _surface_class.tif, _floodplain_mask.tif, _surface_class.csv."};
 
     float_default_map["floodplain_max_height_metres"] = 0.0f;
     help_map["floodplain_max_height_metres"] = {"float","0",
         "Max median height-above-channel (m) for a label to be floodplain.",
-        "A channel-adjacent label with median HANC at or below this is the "
+        "A channel-adjacent label with median HAND at or below this is the "
         "floodplain (lowest surface next to the channel). 0 or negative = use "
         "the flat-mask relief threshold."};
 
@@ -356,41 +356,41 @@ int main(int argc, char* argv[])
 
     bool_default_map["enable_leak_split"] = true;
     help_map["enable_leak_split"] = {"bool","true",
-        "Split a labelled flat whose HANC straddles the floodplain and terrace "
-        "bands (broken/absent riser leak) at the antimode HANC.",
+        "Split a labelled flat whose HAND straddles the floodplain and terrace "
+        "bands (broken/absent riser leak) at the antimode HAND.",
         "Low-side pixels classify as floodplain, high-side as terrace. Makes "
         "classification robust to road-cut riser gaps and unsegmented valley "
         "floors (Phase 2a backstop)."};
 
     float_default_map["leak_split_min_side_fraction"] = 0.15f;
     help_map["leak_split_min_side_fraction"] = {"float","0.15",
-        "Minimum HANC-mass fraction on each side of the class bands for a label "
+        "Minimum HAND-mass fraction on each side of the class bands for a label "
         "to be treated as a straddling leak.",""};
 
-    bool_default_map["enable_hanc_banding"] = true;
-    help_map["enable_hanc_banding"] = {"bool","true",
-        "Band the HANC population at its antimodes (reach-relative) and split "
-        "wide-HANC labels into per-band sub-labels before classification.",
+    bool_default_map["enable_hand_banding"] = true;
+    help_map["enable_hand_banding"] = {"bool","true",
+        "Band the HAND population at its antimodes (reach-relative) and split "
+        "wide-HAND labels into per-band sub-labels before classification.",
         "Fixes wholesale riser under-segmentation: a label smearing across the "
-        "full HANC range is cut at the population breaks of its along-channel "
+        "full HAND range is cut at the population breaks of its along-channel "
         "reach, so no classified surface spans an implausible height range."};
 
     float_default_map["band_reach_window_metres"] = 0.0f;
     help_map["band_reach_window_metres"] = {"float","0",
-        "Along-channel window length (m) for the reach-relative HANC "
+        "Along-channel window length (m) for the reach-relative HAND "
         "populations.",
         "0 = auto (max of 2 km and an eighth of each channel's length). "
         "Windows with too few pixels fall back to the whole-DEM breaks."};
 
     float_default_map["band_split_min_label_spread_metres"] = 10.0f;
     help_map["band_split_min_label_spread_metres"] = {"float","10",
-        "Only labels whose robust HANC spread (p98-p02, m) exceeds this are "
+        "Only labels whose robust HAND spread (p98-p02, m) exceeds this are "
         "band-split; coherent labels are classified whole.",
         "0 = split every label that crosses a band break."};
 
-    float_default_map["terrace_max_hanc_spread_metres"] = 50.0f;
-    help_map["terrace_max_hanc_spread_metres"] = {"float","50",
-        "Sanity guard: a (sub-)label whose robust HANC spread (m) exceeds this "
+    float_default_map["terrace_max_hand_spread_metres"] = 50.0f;
+    help_map["terrace_max_hand_spread_metres"] = {"float","50",
+        "Sanity guard: a (sub-)label whose robust HAND spread (m) exceeds this "
         "cannot classify as terrace.",
         "A real terrace tread sits at one coherent level above its channel. "
         "0 disables the guard."};
@@ -402,23 +402,23 @@ int main(int argc, char* argv[])
         "A flat upland that reaches the valley edge qualifies as a label but "
         "no longer carries the terrace class across the whole interfluve."};
 
-    bool_default_map["write_hanc_band_raster"] = false;
-    help_map["write_hanc_band_raster"] = {"bool","false",
-        "Write the per-pixel HANC band index raster.",
-        "Output suffix: _hanc_band.tif  Requires find_floodplain and "
-        "enable_hanc_banding."};
+    bool_default_map["write_hand_band_raster"] = false;
+    help_map["write_hand_band_raster"] = {"bool","false",
+        "Write the per-pixel HAND band index raster.",
+        "Output suffix: _hand_band.tif  Requires find_floodplain and "
+        "enable_hand_banding."};
 
-    bool_default_map["write_hanc_profile_csv"] = false;
-    help_map["write_hanc_profile_csv"] = {"bool","false",
-        "Write per-pixel HANC vs along-channel distance for classified "
+    bool_default_map["write_hand_profile_csv"] = false;
+    help_map["write_hand_profile_csv"] = {"bool","false",
+        "Write per-pixel HAND vs along-channel distance for classified "
         "(floodplain/terrace) pixels.",
-        "Output suffix: _hanc_profile.csv with x, y, hanc_m, "
-        "channel_flow_distance_m, source_id, class, label, hanc_band. Input "
-        "for the lsdviztools3 HANC-profile figure. Requires find_floodplain."};
+        "Output suffix: _hand_profile.csv with x, y, hand_m, "
+        "channel_flow_distance_m, source_id, class, label, hand_band. Input "
+        "for the lsdviztools3 HAND-profile figure. Requires find_floodplain."};
 
     bool_default_map["write_height_above_channel_raster"] = false;
     help_map["write_height_above_channel_raster"] = {"bool","false",
-        "Write the height-above-channel (HANC) raster.",
+        "Write the height-above-channel (HAND) raster.",
         "Output suffix: _height_above_channel.tif  Requires find_floodplain."};
 
     bool_default_map["write_surface_class_raster"] = true;
@@ -1532,15 +1532,15 @@ int main(int argc, char* argv[])
                 // Height above the IN-SCOPE channels (not every threshold rill),
                 // so terraces read their true height above the trunk channel.
                 // The donor variant also records which channel node each pixel
-                // drains to, so HANC values can be placed along the channel
-                // (reach-relative banding, HANC-vs-distance profiles).
+                // drains to, so HAND values can be placed along the channel
+                // (reach-relative banding, HAND-vs-distance profiles).
                 std::cout << "Computing height above in-scope channel network...\n";
                 std::vector<uint8_t> hac_channel_mask(
                     ch_scope.channel_mask.begin(), ch_scope.channel_mask.end());
-                lsdtt::height_above_channel_donor_result hanc_donor =
+                lsdtt::height_above_channel_donor_result hand_donor =
                     ch_flow->get_height_above_channel_mask_donor_raster(
                         dem.get_data(), dem.get_mask(), hac_channel_mask);
-                lsdtt::lsdtt_raster_cpu hanc(std::move(hanc_donor.height));
+                lsdtt::lsdtt_raster_cpu hand(std::move(hand_donor.height));
                 lsdtt::lsdtt_raster_cpu flow_dist(
                     ch_flow->get_distance_from_outlet_raster());
 
@@ -1548,7 +1548,7 @@ int main(int argc, char* argv[])
                 {
                     const std::string p = stem + "_height_above_channel.tif";
                     std::cout << "Writing height above channel: " << p << "\n";
-                    loader.write_full(hanc.get_data(), hanc.get_meta(),
+                    loader.write_full(hand.get_data(), hand.get_meta(),
                                       p, out_format);
                 }
 
@@ -1567,28 +1567,28 @@ int main(int argc, char* argv[])
                 creq.enable_leak_split               = bf["enable_leak_split"];
                 creq.leak_split_min_side_fraction    =
                     static_cast<double>(ff["leak_split_min_side_fraction"]);
-                creq.enable_hanc_banding             = bf["enable_hanc_banding"];
+                creq.enable_hand_banding             = bf["enable_hand_banding"];
                 creq.band_reach_window_metres        =
                     static_cast<double>(ff["band_reach_window_metres"]);
                 creq.band_split_min_label_spread_metres =
                     static_cast<double>(ff["band_split_min_label_spread_metres"]);
-                creq.terrace_max_hanc_spread_metres  =
-                    static_cast<double>(ff["terrace_max_hanc_spread_metres"]);
+                creq.terrace_max_hand_spread_metres  =
+                    static_cast<double>(ff["terrace_max_hand_spread_metres"]);
                 creq.terrace_corridor_per_pixel      =
                     bf["terrace_corridor_per_pixel"];
 
                 std::cout << "Classifying surfaces "
                           << "(floodplain <= " << fp_max << " m, terrace >= "
                           << creq.terrace_min_height_metres << " m"
-                          << (creq.enable_hanc_banding
-                                  ? ", reach-relative HANC banding on" : "")
+                          << (creq.enable_hand_banding
+                                  ? ", reach-relative HAND banding on" : "")
                           << ")...\n";
 
                 lsdtt::flat_surface_classify_result cres =
                     lsdtt::classify_flat_surfaces_by_channel(
-                        labelled_flat_mask, hanc,
+                        labelled_flat_mask, hand,
                         ch_scope.channel_mask, ch_scope.channel_source_id,
-                        creq, &hanc_donor.donor_flat, &flow_dist);
+                        creq, &hand_donor.donor_flat, &flow_dist);
 
                 std::cout << "  " << cres.n_floodplain_labels
                           << " floodplain label(s), " << cres.n_terrace_labels
@@ -1602,7 +1602,7 @@ int main(int argc, char* argv[])
                 std::cout << "\n";
                 if (!cres.global_breaks_m.empty())
                 {
-                    std::cout << "  HANC population breaks (m):";
+                    std::cout << "  HAND population breaks (m):";
                     for (const double b : cres.global_breaks_m)
                         std::cout << " " << b;
                     std::cout << "\n";
@@ -1648,40 +1648,40 @@ int main(int argc, char* argv[])
                             std::to_string(r.min_distance_to_channel_metres),
                             r.adjacent_to_channel ? "true" : "false",
                             r.split_leak ? "true" : "false",
-                            std::to_string(r.split_hanc_metres),
-                            std::to_string(r.hanc_band),
+                            std::to_string(r.split_hand_metres),
+                            std::to_string(r.hand_band),
                             r.band_split ? "true" : "false",
-                            std::to_string(r.hanc_spread_metres),
+                            std::to_string(r.hand_spread_metres),
                             r.spread_guard_failed ? "true" : "false",
                             std::to_string(r.median_channel_distance_metres) });
                     }
                     loader.write_csv(p,
                         {"label","class","source_id","n_pixels",
-                         "median_hanc_m","mean_hanc_m","min_hanc_m","max_hanc_m",
+                         "median_hand_m","mean_hand_m","min_hand_m","max_hand_m",
                          "min_dist_to_channel_m","adjacent_to_channel",
-                         "leak_split","split_hanc_m",
-                         "hanc_band","band_split","hanc_spread_m",
+                         "leak_split","split_hand_m",
+                         "hand_band","band_split","hand_spread_m",
                          "spread_guard_failed","median_channel_distance_m"},
                         rows);
                 }
 
-                if (bf["write_hanc_band_raster"] &&
-                    !cres.hanc_band_raster.get_data().empty())
+                if (bf["write_hand_band_raster"] &&
+                    !cres.hand_band_raster.get_data().empty())
                 {
-                    const std::string p = stem + "_hanc_band.tif";
-                    std::cout << "Writing HANC band raster: " << p << "\n";
-                    loader.write_full(cres.hanc_band_raster.get_data(),
-                                      cres.hanc_band_raster.get_meta(),
+                    const std::string p = stem + "_hand_band.tif";
+                    std::cout << "Writing HAND band raster: " << p << "\n";
+                    loader.write_full(cres.hand_band_raster.get_data(),
+                                      cres.hand_band_raster.get_meta(),
                                       p, out_format);
                 }
 
                 if (!cres.band_windows.empty())
                 {
-                    const std::string p = stem + "_hanc_band_breaks.csv";
-                    std::cout << "Writing HANC band breaks table: " << p << "\n";
+                    const std::string p = stem + "_hand_band_breaks.csv";
+                    std::cout << "Writing HAND band breaks table: " << p << "\n";
                     std::vector<std::vector<std::string>> rows;
                     rows.reserve(cres.band_windows.size());
-                    for (const lsdtt::hanc_band_window& w : cres.band_windows)
+                    for (const lsdtt::hand_band_window& w : cres.band_windows)
                     {
                         std::string breaks;
                         for (const double b : w.breaks_m)
@@ -1702,29 +1702,29 @@ int main(int argc, char* argv[])
                         rows);
                 }
 
-                if (bf["write_hanc_profile_csv"])
+                if (bf["write_hand_profile_csv"])
                 {
-                    // Per-pixel HANC vs along-channel distance for classified
-                    // pixels: the input for the lsdviztools3 HANC-profile
+                    // Per-pixel HAND vs along-channel distance for classified
+                    // pixels: the input for the lsdviztools3 HAND-profile
                     // figure (and any reach-relative diagnostics).
-                    const std::string p = stem + "_hanc_profile.csv";
-                    std::cout << "Writing HANC profile table: " << p << "\n";
+                    const std::string p = stem + "_hand_profile.csv";
+                    std::cout << "Writing HAND profile table: " << p << "\n";
                     const std::vector<float>&   cd = cres.surface_class_raster.get_data();
-                    const std::vector<float>&   hd = hanc.get_data();
-                    const std::vector<uint8_t>& hm = hanc.get_mask();
+                    const std::vector<float>&   hd = hand.get_data();
+                    const std::vector<uint8_t>& hm = hand.get_mask();
                     const std::vector<float>&   fdd = flow_dist.get_data();
                     const std::vector<uint8_t>& fdm = flow_dist.get_mask();
                     const std::vector<float>&   ld = labelled_flat_mask.get_data();
                     const std::vector<float>*   bd = nullptr;
-                    if (!cres.hanc_band_raster.get_data().empty())
-                        bd = &cres.hanc_band_raster.get_data();
+                    if (!cres.hand_band_raster.get_data().empty())
+                        bd = &cres.hand_band_raster.get_data();
 
                     std::vector<std::vector<std::string>> rows;
                     for (std::size_t i = 0; i < cd.size(); ++i)
                     {
                         if (cd[i] < 0.5f) continue;            // unclassified
                         if (!hm[i] || !std::isfinite(hd[i])) continue;
-                        const std::int64_t donor = hanc_donor.donor_flat[i];
+                        const std::int64_t donor = hand_donor.donor_flat[i];
                         if (donor < 0) continue;
                         const std::size_t dfi = static_cast<std::size_t>(donor);
                         if (!fdm[dfi] || !std::isfinite(fdd[dfi])) continue;
@@ -1748,8 +1748,8 @@ int main(int argc, char* argv[])
                                : std::string("-1") });
                     }
                     loader.write_csv(p,
-                        {"x","y","hanc_m","channel_flow_distance_m",
-                         "source_id","class","label","hanc_band"},
+                        {"x","y","hand_m","channel_flow_distance_m",
+                         "source_id","class","label","hand_band"},
                         rows);
                 }
             }

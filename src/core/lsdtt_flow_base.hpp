@@ -90,7 +90,7 @@ struct lsdtt_flowinfo_options
 //
 // Return type of get_height_above_channel_mask_donor_raster. donor_flat has
 // flat-index size n_rows * n_cols; donor_flat[i] is the flat index of the
-// channel pixel whose elevation defines pixel i's HANC (-1 where undefined).
+// channel pixel whose elevation defines pixel i's HAND (-1 where undefined).
 // -----------------------------------------------------------------------------
 struct height_above_channel_donor_result
 {
@@ -331,6 +331,16 @@ public:
     // -------------------------------------------------------------------------
     // Channel-relative height and distance
     //
+    // The height-above-channel raster is the HAND (Height Above the Nearest
+    // Drainage) terrain model: the elevation of each pixel relative to the
+    // elevation of the channel (drainage) pixel it drains to. See
+    //   Nobre, A. D., Cuartas, L. A., Hodnett, M., Renno, C. D., Rodrigues, G.,
+    //   Silveira, A., and Saleska, S.: Height Above the Nearest Drainage - a
+    //   hydrologically relevant new terrain model, Journal of Hydrology, 404,
+    //   13-29, 2011.
+    // (These functions keep "channel" in their names because the drainage set
+    // they reference is this object's channel network / channel mask.)
+    //
     // A pixel is classified as a channel when its contributing pixel count
     // (include-self convention) >= threshold_contributing_pixels.
     //
@@ -365,10 +375,10 @@ public:
     // get_height_above_channel_mask_donor_raster:
     //   As get_height_above_channel_mask_raster, but also records, per pixel,
     //   the flat index of the nearest downstream channel pixel ("donor") whose
-    //   elevation defines that pixel's HANC (-1 where HANC is undefined;
+    //   elevation defines that pixel's HAND (-1 where HAND is undefined;
     //   channel pixels are their own donor). The donor links every off-channel
-    //   pixel to a specific channel node, so callers can attribute HANC values
-    //   to along-channel position (reach-relative statistics, HANC-vs-distance
+    //   pixel to a specific channel node, so callers can attribute HAND values
+    //   to along-channel position (reach-relative statistics, HAND-vs-distance
     //   profiles).
     [[nodiscard]] virtual height_above_channel_donor_result
     get_height_above_channel_mask_donor_raster(

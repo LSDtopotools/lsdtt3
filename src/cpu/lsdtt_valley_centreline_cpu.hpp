@@ -21,14 +21,14 @@
 //
 // 1. Wide corridor: Euclidean distance to that single channel's pixels, kept
 //    within corridor_width_metres.
-// 2. Height above THAT channel (HANC) for every corridor pixel — the
-//    EUCLIDEAN nearest-channel-pixel elevation difference, not flow-path HANC.
+// 2. Height above THAT channel (HAND) for every corridor pixel — the
+//    EUCLIDEAN nearest-channel-pixel elevation difference, not flow-path HAND.
 //    It is defined everywhere in the corridor, and because the reference is a
 //    single channel it is immune to the step artifacts that appear when the
 //    nearest channel switches between two channels.
-// 3. Break search in the corridor's HANC population (the antimode break
-//    finder shared with the banding classifier). Valley = HANC at or below
-//    the first break. If the population shows no break, a fallback HANC
+// 3. Break search in the corridor's HAND population (the antimode break
+//    finder shared with the banding classifier). Valley = HAND at or below
+//    the first break. If the population shows no break, a fallback HAND
 //    threshold is used.
 // 4. Valley pixels connected to the channel are kept, enclosed holes filled.
 // 5. Trough carving + routing (mirrors the legacy Clubb et al. 2022 valley
@@ -59,12 +59,12 @@ struct valley_centreline_request
 {
     // --- Valley identification ---
     // Corridor half-width: only pixels within this Euclidean distance of the
-    // channel participate in the HANC population and can be valley pixels.
+    // channel participate in the HAND population and can be valley pixels.
     double corridor_width_metres        = 5000.0;
-    // Histogram bins for the log10-HANC break search.
-    int    hanc_hist_bins               = 128;
-    // Log floor (m): HANC values below this are clamped before the log.
-    double min_hanc_metres              = 0.05;
+    // Histogram bins for the log10-HAND break search.
+    int    hand_hist_bins               = 128;
+    // Log floor (m): HAND values below this are clamped before the log.
+    double min_hand_metres              = 0.05;
     // Break acceptance: the dip must fall below this fraction of the smaller
     // flanking mode.
     double break_valley_fraction        = 0.6;
@@ -93,13 +93,13 @@ struct valley_centreline_request
     // FIRST qualifying dip after the first mode above this floor — taking a
     // later dip admits intermediate benches and the valley climbs the risers.
     double wall_peak_fraction           = 0.02;
-    // Valley HANC threshold used when the population shows no break.
-    double fallback_valley_hanc_metres  = 10.0;
+    // Valley HAND threshold used when the population shows no break.
+    double fallback_valley_hand_metres  = 10.0;
     // Floor on a detected break (m): a dip immediately after the valley-floor
     // spike can otherwise yield a degenerate, channel-hugging "valley".
-    double min_valley_hanc_metres       = 2.0;
+    double min_valley_hand_metres       = 2.0;
     // Cap on the detected break (m); 0 = no cap.
-    double max_valley_hanc_metres       = 0.0;
+    double max_valley_hand_metres       = 0.0;
     // Along-channel window length (m) for reach-adaptive breaks: the break
     // is detected per window of the corridor population (binned by each
     // pixel's nearest channel node), so a channel running from a confined
@@ -176,9 +176,9 @@ struct valley_centreline_request
 struct valley_channel_centreline
 {
     std::int32_t source_id                = -1;
-    // Whole-corridor HANC break (also the fallback for windows without their
+    // Whole-corridor HAND break (also the fallback for windows without their
     // own break), and whether it came from a population break.
-    double       valley_hanc_break_metres = 0.0;
+    double       valley_hand_break_metres = 0.0;
     bool         used_fallback_break      = false;
 
     // Reach-adaptive breaks: one entry per along-channel window.
@@ -215,37 +215,37 @@ struct valley_channel_centreline
     // 1 where the node is a pin (coincides with / touches a channel node).
     std::vector<char>  centreline_is_pin;
 
-    // Corridor HANC population diagnostics: log10-HANC histogram over
+    // Corridor HAND population diagnostics: log10-HAND histogram over
     // [hist_lo_log, hist_hi_log] (empty when the corridor had no population).
-    std::vector<std::int64_t> hanc_hist;
+    std::vector<std::int64_t> hand_hist;
     double hist_lo_log = 0.0;
     double hist_hi_log = 0.0;
     // Per-window histograms (n_windows x nbins, flattened; same bin range),
     // for inspecting the reach-adaptive break decisions.
-    std::vector<std::int64_t> window_hanc_hist;
+    std::vector<std::int64_t> window_hand_hist;
 
     // --- Break decision diagnostics (reviewer-facing) ---
     // The break is NOT chosen on the raw histogram above; it is chosen on the
-    // SMOOTHED log10-HANC density (2-pass moving average), after segmenting
+    // SMOOTHED log10-HAND density (2-pass moving average), after segmenting
     // that curve into modes and merging noise/insignificant modes. These
     // fields expose that actual decision surface so a figure can show it.
     //
-    // Whole-corridor decision (same bin range as hanc_hist):
-    std::vector<double> hanc_smoothed;          // decision metric, per bin
-    std::vector<int>    hanc_raw_peak_bins;     // candidate peaks pre-merge
-    std::vector<int>    hanc_seg_peak_bins;     // surviving mode peak bins
-    std::vector<int>    hanc_seg_boundary_bins; // surviving inter-mode dips
-    int                 hanc_break_bin = -1;    // chosen break bin (-1 = none)
+    // Whole-corridor decision (same bin range as hand_hist):
+    std::vector<double> hand_smoothed;          // decision metric, per bin
+    std::vector<int>    hand_raw_peak_bins;     // candidate peaks pre-merge
+    std::vector<int>    hand_seg_peak_bins;     // surviving mode peak bins
+    std::vector<int>    hand_seg_boundary_bins; // surviving inter-mode dips
+    int                 hand_break_bin = -1;    // chosen break bin (-1 = none)
     // Acceptance fraction actually applied to the whole-corridor decision
     // (equals break_valley_fraction for the fixed method; relief-derived for
     // the relief-adaptive method).
-    double              hanc_break_fraction = 0.6;
+    double              hand_break_fraction = 0.6;
 
     // Per-window decision metric: the pooled (window +/- 1 neighbour) then
     // smoothed density each window's own break was chosen on. n_windows x
     // nbins flattened; a window that inherited its break (own == 0) has an
     // all-zero row and window_break_bin -1.
-    std::vector<double> window_hanc_smoothed;   // n_windows x nbins
+    std::vector<double> window_hand_smoothed;   // n_windows x nbins
     std::vector<int>    window_break_bin;       // per window (-1 = inherited)
     // Per-window surviving mode segmentation (same n_windows x nbins layout),
     // so a reviewer figure can show, for each reach, the mode peaks and the
@@ -265,7 +265,7 @@ struct valley_channel_centreline
 
     // Per-pixel reach (window) id: every corridor pixel is tagged with the
     // along-channel window of its NEAREST channel node (the same window_of
-    // used to build the per-reach HANC histograms), nodata outside the
+    // used to build the per-reach HAND histograms), nodata outside the
     // corridor. Also populated when store_per_channel_valley_masks is set.
     // This is the map of "which pixels each reach histogram is built from".
     lsdtt_raster_cpu reach_id;
