@@ -34,21 +34,28 @@ Key improvements over LSDTopoTools2:
 - 64-bit pixel indexing — can process DEMs larger than 40,000 × 40,000 pixels. Elswhere data types are used to reduce memory consumption (8 bit, and 32 bit data used where approriate).
 - D8 and DAG (D-infinity / MFD) flow routing. D8 uses the s-vector for O(1) upslope-set queries.
 - CPU and GPU backends behind a shared abstract interface (GPU is a placeholder for now).
-- Analysis routines as stateless free functions — editing one analysis file no longer triggers a full rebuild. Analyses are also clustered by task so (hopefully) it is easier to find the functions you want. 
+- Analysis routines as stateless free functions — editing one analysis file no longer triggers a full rebuild. Analyses are also clustered by task so (hopefully) it is easier to find the functions you want (although a side effect of this is that there are many more command line interfaces than previously). 
 - OpenMP multithreading for selected routines; many operations are substantially faster than the equivalent LSDTopoTools2 code.
 - Many algorithms made more robust and/or faster (e.g., Spectral analysis, proximity tools, metrics based on moving windows). 
 - Overall, users should have more flexibility/ease for file I/O, should see less memory consumption (and as a result be able to process bigger datasets and have fewer segmentation faults), and should see speedup of a number of key algorithms.
+
+LLM Usage:
+
+Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, Claude Haiku, Sonnet, and Opus) and to port legacy code and write new routines, with testing against baselines (e.g., lsdtt2 outputs, previous iterations of algorithms) and regular code review. 
 
 ---
 
 ## Beta testing: quick install (Windows / WSL2)
 
-lsdtt3 is currently in private beta. If you have been invited to test it you do
-not need to compile anything. Pre-built executables for Ubuntu 22.04 are
-attached to each [GitHub Release](../../releases/latest) as
-`lsdtt3-ubuntu-22.04.tar.gz`.
+`lsdtt3` is currently in private beta. 
 
-### Step 1 — get a Linux terminal
+Pre-built executables for Ubuntu 22.04 are attached to each [GitHub Release](../../releases/latest) as `lsdtt3-ubuntu-22.04.tar.gz`.
+
+If you wish to test the latest development routines you will need to compile the code. 
+
+Full explanations of these steps are in the `/docs` folder of this repository. 
+
+### Step 1 - get a Linux terminal
 
 On Windows, install WSL2 and Ubuntu 22.04 if you have not already done so:
 
@@ -56,7 +63,9 @@ On Windows, install WSL2 and Ubuntu 22.04 if you have not already done so:
 2. Restart, then install **Ubuntu 22.04 LTS** from the Microsoft Store.
 3. Launch Ubuntu and set a username and password when prompted.
 
-### Step 2 — install lsdtt3
+For more details see the `/docs` directory of this repository. 
+
+### Step 2a - install tagged versions of lsdtt3
 
 Download `lsdtt3-ubuntu-22.04.tar.gz` from the Releases page (or from the
 link the developer sent you) and run:
@@ -68,6 +77,10 @@ bash install.sh /mnt/c/Users/YourName/Desktop/lsdtt3-ubuntu-22.04.tar.gz
 The installer installs the required system libraries, unpacks all the
 command-line tools to `~/.local/lsdtt3/bin`, and adds them to your `PATH`.
 
+### Step 2b
+
+Compile (if you want the latest versions). See the `/docs` directory. 
+
 ### Step 3 — open a new terminal and verify
 
 ```bash
@@ -77,6 +90,8 @@ lsdtt-channel-extraction --help
 If you see a list of parameters the installation succeeded.
 
 ### Reporting bugs
+
+**WARNING** This is software built by academics for academic use within a research group. It is not supported commercial software. The developers are happy to help if you have questions, comments, bug reports etc, but keep in mind the developers may be working on other things (teaching, doing research, etc) and adjust expectations of response timescales accordingly. 
 
 Please include:
 - the exact command you ran
@@ -89,7 +104,7 @@ Please include:
 
 ## Dependencies
 
-`lsdtt3` has more dependencies than `lsdtopotools2`. However all dependencies are stabile and easily installable on Linux (and by extension linux subsystems for Windows and MacOS). We also provide an apptainer container that allows running of the softare without having to manage installation. 
+`lsdtt3` has more dependencies than `lsdtopotools2`. However all dependencies are stabile and easily installable on Linux (and by extension linux subsystems for Windows and MacOS). We also provide an apptainer container (although not frequently updated) that allows running of the softare without having to manage installation. 
 
 | Dependency | Required | Enables |
 |---|---|---|

@@ -68,6 +68,25 @@ struct valley_centreline_request
     // Break acceptance: the dip must fall below this fraction of the smaller
     // flanking mode.
     double break_valley_fraction        = 0.6;
+    // Break-detection method: 0 = fixed (break_valley_fraction is used for
+    // every reach); 1 = relief-adaptive (the acceptance fraction is derived
+    // per reach from local topographic relief — confined, high-relief reaches
+    // get a more permissive fraction because a real valley wall produces a
+    // deep trough, while low-relief plateau reaches get a stricter fraction so
+    // a broad shallow saddle is not mistaken for a valley wall). The
+    // relative-depth test itself is unchanged; only the fraction varies.
+    int    break_method                 = 0;
+    // Relief-adaptive method only: the fraction ramps between these bounds.
+    // frac(reach) = frac_min + (frac_max - frac_min) *
+    //               relief / (relief + relief_scale), where relief is the
+    //               reach's mean local relief and relief_scale is the
+    //               corridor's median reach relief (self-calibrating, so the
+    //               midpoint fraction lands at typical relief for the tile).
+    double break_fraction_min           = 0.5;
+    double break_fraction_max           = 0.7;
+    // Moving-window radius (m) for the local-relief raster that drives the
+    // adaptive fraction. Should span a valley wall (a few hundred m).
+    double break_relief_window_metres   = 300.0;
     // Peak-detection floor as a fraction of the histogram maximum. LOW by
     // design: a valley-floor or terrace mode is tiny next to a mountain wall
     // peak, but it is the mode that defines the valley. The break is the
@@ -168,6 +187,11 @@ struct valley_channel_centreline
     std::vector<double> window_centre_m;
     std::vector<double> window_break_m;
     std::vector<char>   window_break_own;
+    // Acceptance fraction applied per window (relief-adaptive method varies it;
+    // fixed method repeats break_valley_fraction). Same length as window_*.
+    std::vector<double> window_break_fraction;
+    // Median local relief (m) per window that drove the adaptive fraction.
+    std::vector<double> window_relief_m;
     std::int64_t n_valley_pixels          = 0;
     int          trough_retries           = 0;
     bool         routing_succeeded        = false;
@@ -208,9 +232,14 @@ struct valley_channel_centreline
     //
     // Whole-corridor decision (same bin range as hanc_hist):
     std::vector<double> hanc_smoothed;          // decision metric, per bin
+    std::vector<int>    hanc_raw_peak_bins;     // candidate peaks pre-merge
     std::vector<int>    hanc_seg_peak_bins;     // surviving mode peak bins
     std::vector<int>    hanc_seg_boundary_bins; // surviving inter-mode dips
     int                 hanc_break_bin = -1;    // chosen break bin (-1 = none)
+    // Acceptance fraction actually applied to the whole-corridor decision
+    // (equals break_valley_fraction for the fixed method; relief-derived for
+    // the relief-adaptive method).
+    double              hanc_break_fraction = 0.6;
 
     // Per-window decision metric: the pooled (window +/- 1 neighbour) then
     // smoothed density each window's own break was chosen on. n_windows x
@@ -218,10 +247,28 @@ struct valley_channel_centreline
     // all-zero row and window_break_bin -1.
     std::vector<double> window_hanc_smoothed;   // n_windows x nbins
     std::vector<int>    window_break_bin;       // per window (-1 = inherited)
+    // Per-window surviving mode segmentation (same n_windows x nbins layout),
+    // so a reviewer figure can show, for each reach, the mode peaks and the
+    // inter-mode boundaries the break was chosen from (the break is the first
+    // set boundary). All-zero for a window that produced no own break.
+    std::vector<char>   window_is_peak;         // n_windows x nbins
+    std::vector<char>   window_is_boundary;     // n_windows x nbins
+    // Per-window candidate mode peaks BEFORE merging (same layout): the bumps
+    // detected in the smoothed curve, of which window_is_peak is the surviving
+    // subset. Filled for every populated window (even one with no own break),
+    // so the figure can show which candidates were merged away.
+    std::vector<char>   window_is_raw_peak;     // n_windows x nbins
 
     // This channel's own full valley mask (0/1), populated when
     // store_per_channel_valley_masks is set.
     lsdtt_raster_cpu valley_mask;
+
+    // Per-pixel reach (window) id: every corridor pixel is tagged with the
+    // along-channel window of its NEAREST channel node (the same window_of
+    // used to build the per-reach HANC histograms), nodata outside the
+    // corridor. Also populated when store_per_channel_valley_masks is set.
+    // This is the map of "which pixels each reach histogram is built from".
+    lsdtt_raster_cpu reach_id;
 };
 
 // -----------------------------------------------------------------------------
