@@ -110,6 +110,7 @@ Runs before `fit_chi_networks`. Use to verify basin and network geometry before 
 |---|---|---|---|
 | `fit_chi_networks` | bool | `false` | Run the piecewise-linear chi-network fitting and disorder sweep over the m/n range. |
 | `chi_A0` | float | `1.0` | Reference drainage area A₀ (m²) for chi integration. χ = ∫(A₀/A)^(m/n) ds from outlet. |
+| `m_over_n` | string | _(empty)_ | Optional explicit m/n value(s) for chi extraction and fitting. Comma-separated list (e.g. `0.45` or `0.35,0.45,0.55`). When set, it overrides `mn_min`, `mn_max`, and `mn_step`. |
 | `mn_min` | float | `0.3` | Minimum m/n ratio for the disorder sweep. |
 | `mn_max` | float | `0.6` | Maximum m/n ratio for the disorder sweep. |
 | `mn_step` | float | `0.02` | Step size for the m/n disorder sweep. Must be > 0. |
@@ -175,6 +176,7 @@ source_pixels_threshold:    1000
 print_chi_data_maps:        true
 chi_data_maps_output_format: flatgeobuf
 write_chi_data_map_lines:   true
+m_over_n:                   0.45
 ```
 
 ```
