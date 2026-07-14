@@ -10,6 +10,10 @@
 namespace lsdtt
 {
 
+namespace {
+constexpr double kPi = 3.14159265358979323846;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 lsdtt_crn_parameters::lsdtt_crn_parameters()
 {
@@ -573,7 +577,7 @@ double lsdtt_crn_parameters::stone_factor_at_rc(double Rc_GV, double P_mbar)
     // and corresponding spallation factors at this pressure
     std::vector<double> i_Rc(7), i_sf(7);
     for (int k = 0; k < 7; ++k) {
-        double lat_r = ilat[k] * M_PI / 180.0;
+        double lat_r = ilat[k] * kPi / 180.0;
         double c4 = std::pow(std::cos(lat_r), 4.0);
         i_Rc[k] = 14.3 * c4;
         i_sf[k] = sa[k] + sb[k] * eP + sc[k] * P + sd[k] * P2 + se[k] * P3;
@@ -619,7 +623,7 @@ double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
     if (!nc.loaded || nc.muscheler_time.empty() || age_yr <= 0.0)
         return stone2000sp(lat_deg, P_mbar, Fsp);
 
-    const double lat_rad = std::fabs(lat_deg) * M_PI / 180.0;
+    const double lat_rad = std::fabs(lat_deg) * kPi / 180.0;
     const double cos4lat = std::pow(std::cos(lat_rad), 4.0);
 
     // Rc [GV] from VDM [10²² Am²]: dipole formula (Störmer unit)

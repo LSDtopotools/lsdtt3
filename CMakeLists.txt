@@ -18,12 +18,20 @@ endif()
 # =============================================================================
 # Compiler warnings — all targets inherit these
 # =============================================================================
-add_compile_options(
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wno-unused-parameter   # OGR headers trigger this; suppress globally
-)
+if(MSVC)
+    add_compile_definitions(_USE_MATH_DEFINES)
+    add_compile_options(
+        /W4
+        /wd4100              # unreferenced formal parameter
+    )
+else()
+    add_compile_options(
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wno-unused-parameter   # OGR headers trigger this; suppress globally
+    )
+endif()
 
 # =============================================================================
 # Options
