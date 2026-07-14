@@ -11,6 +11,7 @@ points to the detailed instructions for each platform.
 |---|---|
 | Try lsdtt3 without compiling anything | [Pre-built install (beta)](#pre-built-install-beta) |
 | Run lsdtt3 on a Windows machine | [Windows (WSL2)](#windows-wsl2) |
+| Build a limited native Windows backend for QGIS plugin development | [Windows native (developers only, limited)](#windows-native-developers-only-limited) |
 | Run lsdtt3 on a Mac | [macOS (Multipass)](#macos-multipass) |
 | Run lsdtt3 on a Linux machine | [Build from source on Linux](#build-from-source-on-linux) |
 | Develop or modify lsdtt3 | [Build from source on Linux](#build-from-source-on-linux) |
@@ -58,6 +59,91 @@ walkthrough:
 4. Build with CMake
 5. Add the executables to your PATH
 6. Access Windows files from the Ubuntu environment
+
+---
+
+## Windows native (developers only, limited)
+
+This path is intended for plugin/backend developers who need a native Windows
+build for a subset of tools used by the QGIS plugin. It is not the primary
+development route.
+
+Important limitations:
+
+- Full `lsdtt3` functionality is available on Linux (including WSL2).
+- Native Windows builds are currently treated as a reduced-feature profile.
+- Optional components such as Eigen/OpenCV/FFTW may be disabled in this mode.
+
+### What you need
+
+- Visual Studio Community 2022 with C++ build tools
+- Developer shell from Visual Studio (`Developer PowerShell for VS 2022`)
+- CMake and Ninja available in that shell
+- `vcpkg` in your user folder to install dependencies without admin rights
+
+### Open Developer PowerShell
+
+Open Start menu and launch `Developer PowerShell for VS 2022`.
+
+If Start menu shortcuts are unavailable, open PowerShell and run:
+
+```powershell
+& "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64
+```
+
+Verify toolchain setup:
+
+```powershell
+cmake --version
+ninja --version
+cl
+```
+
+### Install GDAL via vcpkg (no admin)
+
+Install `vcpkg` in your user profile and use it to install GDAL:
+
+```powershell
+git clone https://github.com/microsoft/vcpkg "$env:USERPROFILE\tools\vcpkg"
+& "$env:USERPROFILE\tools\vcpkg\bootstrap-vcpkg.bat"
+& "$env:USERPROFILE\tools\vcpkg\vcpkg.exe" install gdal:x64-windows
+```
+
+Notes:
+
+- GDAL is required.
+- FFTW is optional and not needed for the minimal QGIS-plugin-oriented build.
+- If Visual Studio sets a conflicting `VCPKG_ROOT`, clear it in-session with
+  `Remove-Item Env:VCPKG_ROOT`.
+
+### Configure and build minimal Windows profile
+
+From the repository root:
+
+```powershell
+cmake -S . -B build\minimal-windows -G "Ninja" `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\tools\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows `
+  -DLSDTT_EIGEN=OFF `
+  -DLSDTT_OPENCV=OFF `
+  -DLSDTT_GPU=OFF `
+  -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON `
+  -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=ON
+
+cmake --build build\minimal-windows
+```
+
+Optional verification:
+
+```powershell
+Get-ChildItem build\minimal-windows\bin\lsdtt-*.exe
+.\build\minimal-windows\bin\lsdtt-raster-preprocessing.exe --version
+```
+
+This profile is the recommended starting point for native Windows work related
+to QGIS plugin packaging/testing. For complete capability and general lsdtt3
+development, use Linux (native, WSL2, or Multipass).
 
 ---
 
