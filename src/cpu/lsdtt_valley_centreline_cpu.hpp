@@ -95,6 +95,9 @@ struct valley_centreline_request
     double wall_peak_fraction           = 0.02;
     // Valley HAND threshold used when the population shows no break.
     double fallback_valley_hand_metres  = 10.0;
+    // Force a constant valley HAND threshold (m) and bypass break detection.
+    // <= 0 disables and uses automatic break detection.
+    double force_valley_hand_metres     = 0.0;
     // Floor on a detected break (m): a dip immediately after the valley-floor
     // spike can otherwise yield a degenerate, channel-hugging "valley".
     double min_valley_hand_metres       = 2.0;

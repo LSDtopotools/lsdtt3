@@ -868,10 +868,18 @@ valley_centreline_result extract_valley_centrelines(
         };
 
         // Whole-corridor + per-window histograms.
-        double break_hand = request.fallback_valley_hand_metres;
-        rec.used_fallback_break = true;
+        const bool force_break = request.force_valley_hand_metres > 0.0;
+        double break_hand = force_break
+            ? request.force_valley_hand_metres
+            : request.fallback_valley_hand_metres;
+        rec.used_fallback_break = !force_break;
         std::vector<double> window_break(n_windows, -1.0);
-        if (hi_log > lo_log + 1e-6)
+        if (force_break)
+        {
+            break_hand = std::max(break_hand, request.min_valley_hand_metres);
+            window_break.assign(n_windows, break_hand);
+        }
+        else if (hi_log > lo_log + 1e-6)
         {
             hi_log += 1e-6;
             std::vector<std::int64_t> ghist(nbins, 0);
@@ -1080,7 +1088,22 @@ valley_centreline_result extract_valley_centrelines(
             window_break.assign(n_windows, break_hand);
         }
         if (request.max_valley_hand_metres > 0.0)
+        {
             break_hand = std::min(break_hand, request.max_valley_hand_metres);
+            for (double& wb : window_break)
+                wb = std::min(wb, request.max_valley_hand_metres);
+        }
+        if (rec.window_centre_m.empty())
+        {
+            for (int w = 0; w < n_windows; ++w)
+            {
+                rec.window_centre_m.push_back((w + 0.5) * wstep);
+                rec.window_break_m.push_back(window_break[w]);
+                rec.window_break_own.push_back(0);
+                rec.window_break_fraction.push_back(rec.hand_break_fraction);
+                rec.window_relief_m.push_back(0.0);
+            }
+        }
         rec.valley_hand_break_metres = break_hand;
 
         // ---------------------------------------------------------------------

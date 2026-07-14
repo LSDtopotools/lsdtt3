@@ -98,6 +98,7 @@ Point files can be CSV (`latitude`/`longitude` in EPSG:4326 by default) or OGR v
 |---|---|---|---|
 | `valley_corridor_width_metres` | float | `5000` | Corridor half-width around channel used for HAND populations and candidate valley pixels. |
 | `valley_fallback_hand_metres` | float | `10` | Fallback HAND break if no clear break is detected. |
+| `valley_force_hand_metres` | float | `0` | Force a constant HAND threshold for valley extraction (`>0` enables; bypasses break detection). |
 | `valley_min_hand_metres` | float | `2` | Floor on detected break to avoid channel-hugging degenerate valleys. |
 | `valley_max_hand_metres` | float | `0` | Optional cap on break (`0` = no cap). |
 | `valley_break_reach_window_metres` | float | `0` | Reach window length for adaptive breaks (`0` auto, `<0` single global break). |

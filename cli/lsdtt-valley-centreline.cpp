@@ -187,6 +187,12 @@ int main(int argc, char* argv[])
         "Valley HAND threshold used when the corridor population shows no "
         "break.",""};
 
+    float_default_map["valley_force_hand_metres"] = 0.0f;
+    help_map["valley_force_hand_metres"] = {"float","0",
+        "Force a constant valley HAND threshold (m).",
+        "When > 0, bypasses break detection and uses this threshold for all "
+        "reaches/channels. <= 0 disables forced mode."};
+
     float_default_map["valley_min_hand_metres"] = 2.0f;
     help_map["valley_min_hand_metres"] = {"float","2",
         "Floor on a detected valley HAND break (m).",
@@ -686,6 +692,8 @@ int main(int argc, char* argv[])
         static_cast<double>(ff["valley_corridor_width_metres"]);
     vreq.fallback_valley_hand_metres =
         static_cast<double>(ff["valley_fallback_hand_metres"]);
+    vreq.force_valley_hand_metres =
+        static_cast<double>(ff["valley_force_hand_metres"]);
     vreq.max_valley_hand_metres =
         static_cast<double>(ff["valley_max_hand_metres"]);
     vreq.wall_peak_fraction =
