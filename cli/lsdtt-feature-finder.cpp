@@ -28,15 +28,19 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
@@ -194,7 +198,7 @@ int main(int argc, char* argv[])
     help_map["feature_type"] = {"string","channel_candidates",
         "Feature mode to run.",
         "Supported values: channel_candidates, find_drains, relief_ratio, "
-        "local_median_relative_elevation, find_valleys, find_roads, "
+        "relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, "
         "flow_road_discrimination, path_opening."};
 
     int_default_map["n_threads"] = 0;
@@ -340,6 +344,55 @@ int main(int argc, char* argv[])
     help_map["relief_ratio_long_radius"] = {"float","8.0",
         "Long moving-window radius for local relief, in metres.",
         "Use a broader radius that captures channel-scale topographic relief."};
+
+    // --- Relative Path Impact Index (Tarolli-style, D8 adaptation) ---
+    float_default_map["rpii_smoothing_window_metres"] = 30.0f;
+    help_map["rpii_smoothing_window_metres"] = {"float","30.0",
+        "Surface-fitting window (lambda, metres) for the smoothed reference DEM.",
+        "Computed using direct polyfit fitted_surface."};
+
+    float_default_map["rpii_fill_min_slope"] = 0.0001f;
+    help_map["rpii_fill_min_slope"] = {"float","0.0001",
+        "Minimum slope used when pit-filling original and smoothed DEMs.",
+        "Passed to fill_pits() before D8 routing."};
+
+    string_default_map["rpii_boundary_conditions"] = "oooo";
+    help_map["rpii_boundary_conditions"] = {"string","oooo",
+        "Boundary conditions for D8 routing (N,E,S,W).",
+        "o=open, n=no-flux."};
+
+    string_default_map["rpii_flow_routing_method"] = "d8";
+    help_map["rpii_flow_routing_method"] = {"string","d8",
+        "Flow routing method for drainage-area rasters in RPII.",
+        "Allowed values: d8, dinf (d-infinity)."};
+
+    int_default_map["rpii_max_steps"] = 400;
+    help_map["rpii_max_steps"] = {"int","400",
+        "Legacy parameter retained for backwards compatibility.",
+        "Not used by the current algebraic RPII definition."};
+
+    bool_default_map["write_rpii_raster"] = true;
+    help_map["write_rpii_raster"] = {"bool","true",
+        "Write Relative Path Impact Index raster.",
+        "After Tarolli et al. (2013, https://doi.org/10.5721/EuJRS20134610): "
+        "RPII = ln((A_r - A_sm) / A_sm), where A_r is drainage area on the "
+        "filled original DEM and A_sm is drainage area on the filled smoothed DEM. "
+        "Output: <write_fname>_relative_path_impact_index.tif."};
+
+    bool_default_map["write_rpii_log10_area_raw_raster"] = true;
+    help_map["write_rpii_log10_area_raw_raster"] = {"bool","true",
+        "Write log10(A_r) where A_r is drainage area on the filled original DEM.",
+        "Output: <write_fname>_rpii_log10_area_raw.tif."};
+
+    bool_default_map["write_rpii_log10_area_smoothed_raster"] = true;
+    help_map["write_rpii_log10_area_smoothed_raster"] = {"bool","true",
+        "Write log10(A_sm) where A_sm is drainage area on the filled smoothed DEM.",
+        "Output: <write_fname>_rpii_log10_area_smoothed.tif."};
+
+    bool_default_map["write_rpii_smoothed_surface_raster"] = false;
+    help_map["write_rpii_smoothed_surface_raster"] = {"bool","false",
+        "Write the surface-fitted DEM used by RPI.",
+        "Output: <write_fname>_rpii_smoothed_surface.tif."};
 
     // --- Local median + relative elevation ---
     float_default_map["local_median_window_radius_metres"] = 6.0f;
@@ -1338,6 +1391,7 @@ int main(int argc, char* argv[])
     if (feature_type != "channel_candidates" &&
         feature_type != "find_drains" &&
         feature_type != "relief_ratio" &&
+        feature_type != "relative_path_impact" &&
         feature_type != "local_median_relative_elevation" &&
         feature_type != "find_valleys" &&
         feature_type != "find_roads" &&
@@ -1355,7 +1409,7 @@ int main(int argc, char* argv[])
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
                   << "'. Supported values are channel_candidates, find_drains, "
-                     "relief_ratio, local_median_relative_elevation, find_valleys, find_roads, "
+                     "relief_ratio, relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, "
                      "flow_road_discrimination, path_opening, structure_tensor, "
                      "diffusion, ridge_lines, track_spacing, extract_roads, "
                      "extract_roads_smooth, roughness, thin_lines.\n";
@@ -1604,6 +1658,217 @@ int main(int argc, char* argv[])
                 const std::string o = pp.make_output_path( "_relief_ratio.tif");
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(relief_ratio.get_data(), relief_ratio.get_meta(), o, out_fmt);
+            }
+        }
+        else if (feature_type == "relative_path_impact")
+        {
+            const double smooth_window =
+                static_cast<double>(ff.at("rpii_smoothing_window_metres"));
+            const double fill_min_slope =
+                static_cast<double>(ff.at("rpii_fill_min_slope"));
+            const std::string bc = sf.at("rpii_boundary_conditions");
+            const std::string flow_method = sf.at("rpii_flow_routing_method");
+            const int max_steps = ifs.at("rpii_max_steps");
+
+            std::cout << "\n--- Relative Path Impact Index ---\n";
+            std::cout << "Smooth window        : " << smooth_window << " m\n";
+            std::cout << "Fill min slope       : " << fill_min_slope << "\n";
+            std::cout << "Boundary conditions  : " << bc << "\n";
+            std::cout << "Flow routing method  : " << flow_method << "\n";
+            std::cout << "Max steps (legacy)   : " << max_steps << "\n";
+
+            lsdtt::poly_fit_coeffs fitted_coeffs =
+                lsdtt::direct_polyfit(dem, smooth_window, n_threads);
+
+            lsdtt::polyfit_metric_request pmr;
+            pmr.metrics = {lsdtt::polyfit_metric::fitted_surface};
+            pmr.n_threads = n_threads;
+            lsdtt::polyfit_metric_result pmres =
+                lsdtt::compute_polyfit_metrics(fitted_coeffs, pmr);
+            lsdtt::lsdtt_raster_cpu smoothed =
+                pmres.at(lsdtt::polyfit_metric::fitted_surface);
+
+            lsdtt::lsdtt_raster_cpu filled_orig = lsdtt::fill_pits(
+                dem,
+                static_cast<float>(fill_min_slope),
+                n_threads
+            );
+            lsdtt::lsdtt_raster_cpu filled_smooth = lsdtt::fill_pits(
+                smoothed,
+                static_cast<float>(fill_min_slope),
+                n_threads
+            );
+
+            lsdtt::lsdtt_flowinfo_options fopts;
+            fopts.boundary_conditions = bc;
+            fopts.interior_nodata_is_outlet = true;
+            fopts.require_acyclic_graph = true;
+            fopts.build_topological_order = true;
+            fopts.build_s_vector = true;
+            fopts.n_threads = n_threads;
+
+            lsdtt::lsdtt_raster_cpu area_raw;
+            lsdtt::lsdtt_raster_cpu area_smoothed;
+            if (flow_method == "d8")
+            {
+                std::unique_ptr<lsdtt::lsdtt_flow_base> flow_orig = lsdtt::make_flow_base(
+                    filled_orig.get_data_array(),
+                    filled_orig.get_mask_array(),
+                    filled_orig.get_meta(),
+                    fopts
+                );
+                std::unique_ptr<lsdtt::lsdtt_flow_base> flow_smooth = lsdtt::make_flow_base(
+                    filled_smooth.get_data_array(),
+                    filled_smooth.get_mask_array(),
+                    filled_smooth.get_meta(),
+                    fopts
+                );
+                area_raw = lsdtt::lsdtt_raster_cpu(flow_orig->get_drainage_area_raster());
+                area_smoothed = lsdtt::lsdtt_raster_cpu(flow_smooth->get_drainage_area_raster());
+            }
+            else if (flow_method == "dinf" || flow_method == "d-infinity" || flow_method == "d_infinity")
+            {
+                lsdtt::lsdtt_flowgraph_options fg_opts;
+                fg_opts.boundary_conditions = bc;
+                fg_opts.interior_nodata_is_outlet = true;
+                fg_opts.method = lsdtt::lsdtt_flowgraph_method::d_infinity;
+                fg_opts.n_threads = n_threads;
+
+                lsdtt::lsdtt_flowgraph_cpu graph_orig(
+                    filled_orig.get_data_array(),
+                    filled_orig.get_mask_array(),
+                    filled_orig.get_meta(),
+                    fg_opts
+                );
+                lsdtt::lsdtt_flowgraph_cpu graph_smooth(
+                    filled_smooth.get_data_array(),
+                    filled_smooth.get_mask_array(),
+                    filled_smooth.get_meta(),
+                    fg_opts
+                );
+
+                area_raw = lsdtt::lsdtt_raster_cpu(graph_orig.accumulate_raster());
+                area_smoothed = lsdtt::lsdtt_raster_cpu(graph_smooth.accumulate_raster());
+            }
+            else
+            {
+                throw std::runtime_error(
+                    "rpii_flow_routing_method must be one of: d8, dinf"
+                );
+            }
+
+            const lsdtt::lsdtt_raster_meta& rmeta = dem.get_meta();
+            const auto& ar_d = area_raw.get_data();
+            const auto& ar_m = area_raw.get_mask();
+            const auto& as_d = area_smoothed.get_data();
+            const auto& as_m = area_smoothed.get_mask();
+
+            std::vector<float> rpi_data(ar_d.size(), static_cast<float>(rmeta.no_data_value));
+            std::vector<uint8_t> rpi_mask(ar_d.size(), uint8_t{0});
+
+            std::vector<float> log_ar_data(ar_d.size(), static_cast<float>(rmeta.no_data_value));
+            std::vector<uint8_t> log_ar_mask(ar_d.size(), uint8_t{0});
+            std::vector<float> log_as_data(ar_d.size(), static_cast<float>(rmeta.no_data_value));
+            std::vector<uint8_t> log_as_mask(ar_d.size(), uint8_t{0});
+
+            for (std::size_t i = 0; i < ar_d.size(); ++i)
+            {
+                if (ar_m[i] == 0 || as_m[i] == 0 ||
+                    rmeta.is_nodata(ar_d[i]) || rmeta.is_nodata(as_d[i]) ||
+                    !std::isfinite(static_cast<double>(ar_d[i])) ||
+                    !std::isfinite(static_cast<double>(as_d[i])))
+                {
+                    continue;
+                }
+
+                const double Ar = static_cast<double>(ar_d[i]);
+                const double Asm = static_cast<double>(as_d[i]);
+                if (Ar > 0.0)
+                {
+                    log_ar_data[i] = static_cast<float>(std::log10(Ar));
+                    log_ar_mask[i] = uint8_t{1};
+                }
+                if (Asm > 0.0)
+                {
+                    log_as_data[i] = static_cast<float>(std::log10(Asm));
+                    log_as_mask[i] = uint8_t{1};
+                }
+
+                const double denom = Asm;
+                const double numer = Ar - Asm;
+                if (denom > 0.0)
+                {
+                    const double ratio = numer / denom;
+                    if (ratio > 0.0 && std::isfinite(ratio))
+                    {
+                        rpi_data[i] = static_cast<float>(std::log(ratio));
+                        rpi_mask[i] = uint8_t{1};
+                    }
+                }
+            }
+
+            lsdtt::lsdtt_raster_cpu rpi(
+                std::move(rpi_data),
+                std::move(rpi_mask),
+                rmeta
+            );
+            lsdtt::lsdtt_raster_cpu log10_area_raw(
+                std::move(log_ar_data),
+                std::move(log_ar_mask),
+                rmeta
+            );
+            lsdtt::lsdtt_raster_cpu log10_area_smoothed(
+                std::move(log_as_data),
+                std::move(log_as_mask),
+                rmeta
+            );
+
+            if (bf.at("write_rpii_smoothed_surface_raster"))
+            {
+                const std::string o = pp.make_output_path("_rpii_smoothed_surface.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    smoothed.get_data(),
+                    smoothed.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_rpii_raster"))
+            {
+                const std::string o = pp.make_output_path("_relative_path_impact_index.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    rpi.get_data(),
+                    rpi.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_rpii_log10_area_raw_raster"))
+            {
+                const std::string o = pp.make_output_path("_rpii_log10_area_raw.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    log10_area_raw.get_data(),
+                    log10_area_raw.get_meta(),
+                    o,
+                    out_fmt
+                );
+            }
+
+            if (bf.at("write_rpii_log10_area_smoothed_raster"))
+            {
+                const std::string o = pp.make_output_path("_rpii_log10_area_smoothed.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(
+                    log10_area_smoothed.get_data(),
+                    log10_area_smoothed.get_meta(),
+                    o,
+                    out_fmt
+                );
             }
         }
         else if (feature_type == "local_median_relative_elevation")
