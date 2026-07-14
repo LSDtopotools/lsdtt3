@@ -2149,9 +2149,10 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_above_channel_mask_raster(
 // get_height_above_channel_mask_donor_raster
 //
 // As get_height_above_channel_mask_raster, but the forward pass also carries
-// the flat index of the nearest downstream channel pixel, so every HANC value
+// the flat index of the nearest downstream channel pixel, so every HAND value
 // can be attributed to a specific channel node (reach-relative statistics,
-// HANC-vs-distance profiles).
+// HAND-vs-distance profiles). HAND = Height Above the Nearest Drainage (Nobre
+// et al., Journal of Hydrology 404, 13-29, 2011).
 // -----------------------------------------------------------------------------
 height_above_channel_donor_result
 lsdtt_flowinfo::get_height_above_channel_mask_donor_raster(

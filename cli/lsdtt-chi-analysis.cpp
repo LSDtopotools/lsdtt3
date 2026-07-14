@@ -117,6 +117,29 @@ static std::vector<double> build_mn_vector(double mn_min, double mn_max, double 
     return tested;
 }
 
+static std::vector<double> parse_mn_override(
+    const lsdtt::lsdtt_param_parser& pp,
+    const std::string& key)
+{
+    std::vector<double> parsed = pp.parse_double_vector(key);
+    if (parsed.empty())
+        return parsed;
+
+    std::vector<double> cleaned;
+    cleaned.reserve(parsed.size());
+    for (double mn : parsed)
+    {
+        if (!std::isfinite(mn) || mn <= 0.0)
+            throw std::invalid_argument(
+                "m_over_n entries must be finite and > 0.");
+
+        const auto it = std::find(cleaned.begin(), cleaned.end(), mn);
+        if (it == cleaned.end())
+            cleaned.push_back(mn);
+    }
+    return cleaned;
+}
+
 // Counts used only within the disorder sweep.
 static std::int32_t count_unique_branch_ids(
     const lsdtt::lsdtt_chi_network_fit_result& fit_result)
@@ -509,6 +532,12 @@ int main(int argc, char* argv[])
     help_map["mn_step"] = {"float","0.02",
         "Step size for the m/n disorder sweep.", "Must be > 0."};
 
+    string_default_map["m_over_n"] = "";
+    help_map["m_over_n"] = {"string","",
+        "Optional explicit m/n value(s) for chi extraction and fitting.",
+        "Comma-separated list (e.g. 0.45 or 0.35,0.45,0.55). When set, this "
+        "overrides mn_min/mn_max/mn_step for chi data maps, fitting, and inversion."};
+
     float_default_map["fit_critical_divergence_m"] = 5.0f;
     help_map["fit_critical_divergence_m"] = {"float","5.0",
         "Critical elevation divergence (m) used to split chi-elevation branches.", ""};
@@ -667,15 +696,32 @@ int main(int argc, char* argv[])
     std::vector<double> tested_mn;
     try
     {
-        tested_mn = build_mn_vector(
-            static_cast<double>(ff["mn_min"]),
-            static_cast<double>(ff["mn_max"]),
-            static_cast<double>(ff["mn_step"])
-        );
+        tested_mn = parse_mn_override(pp, "m_over_n");
+        if (tested_mn.empty())
+        {
+            tested_mn = build_mn_vector(
+                static_cast<double>(ff["mn_min"]),
+                static_cast<double>(ff["mn_max"]),
+                static_cast<double>(ff["mn_step"])
+            );
+            std::cout << "Using m/n sweep from mn_min/mn_max/mn_step with "
+                      << tested_mn.size() << " value(s).\n";
+        }
+        else
+        {
+            std::cout << "Using explicit m_over_n list with "
+                      << tested_mn.size() << " value(s): ";
+            for (std::size_t i = 0; i < tested_mn.size(); ++i)
+            {
+                if (i > 0) std::cout << ", ";
+                std::cout << tested_mn[i];
+            }
+            std::cout << "\n";
+        }
     }
     catch (const std::exception& e)
     {
-        std::cerr << "FATAL: invalid m/n sweep: " << e.what() << "\n";
+        std::cerr << "FATAL: invalid m/n configuration: " << e.what() << "\n";
         return 1;
     }
 
@@ -812,6 +858,13 @@ int main(int argc, char* argv[])
     if (bf["print_chi_data_maps"])
     {
         std::cout << "\n--- Chi data maps ---\n";
+
+        if (tested_mn.size() > 1)
+        {
+            std::cout << "  Note: chi data maps use one m/n value per run; "
+                      << "using the first value from m_over_n: "
+                      << tested_mn.front() << "\n";
+        }
 
         const lsdtt::point_output_format dm_fmt =
             lsdtt::resolve_point_output_format(sf["chi_data_maps_output_format"]);

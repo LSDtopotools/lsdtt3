@@ -88,6 +88,33 @@ struct valley_cross_section_request
     // full transect length (2 * half_len).
     double min_section_reach_fraction = 0.35;
 
+    // --- Curved (boundary-fitted) cross sections ---
+    // When true, each section is traced as an isocontour of a smooth
+    // along-valley (streamwise) coordinate field instead of a straight ray:
+    // straight in straight reaches, curving gradually through bends like the
+    // "constant-streamwise" grid lines of a boundary-fitted mesh. Every section
+    // still spans the same fixed half-length L (so widths are ~uniform), and a
+    // greedy pass decimates stations in tight bends (where full-length sections
+    // would overlap) so the survivors stay long. Sides are clipped at the
+    // Voronoi bisector with the nearest kept neighbours, never shorter than the
+    // valley wall plus curved_wall_clearance_fraction.
+    bool   curved_sections = false;
+    // A shortened side never clips below (1 + this) * distance to the valley
+    // wall, so a section always clears the pre-existing valley by this margin.
+    double curved_wall_clearance_fraction = 0.10;
+    // Smoothing passes for the streamwise coordinate field (Laplacian smoothing
+    // anchored on the centreline). Higher = smoother sections, fewer creases.
+    int    curved_streamwise_smoothing_passes = 40;
+    // Coarse-to-fine placement: stations are accepted in a DYADIC order — a
+    // sparse backbone at this spacing first, then the midpoints between accepted
+    // sections (this spacing halved, quartered, ... down to spacing_metres).
+    // This keeps coverage even; a plain downstream sweep lets one section bent
+    // around a bend clip out every station downstream of it, leaving dense
+    // clusters next to empty gaps. Rounded down to a power-of-two multiple of
+    // spacing_metres so the halving is exact. <= spacing_metres disables the
+    // hierarchy (single level at spacing_metres).
+    double curved_coarse_spacing_metres = 700.0;
+
     // --- Hydraulic step-boundary extraction (from the elevation profile).
     // Flood stage increment used to build W(h) (metres).
     double hydraulic_stage_step_metres = 0.1;
@@ -101,6 +128,14 @@ struct valley_cross_section_request
     // Prefer candidate midpoint levels with at least this many crossings
     // (2 = one left/right bank pair) when available.
     int    hydraulic_min_crossings_preferred = 2;
+    // Store the full per-stage hydraulic-geometry curve (stage, width, wetted
+    // area, wetted perimeter, hydraulic depth A/W) on each section, so it can
+    // be written out. This is the BankfullMapper hydraulic-depth function
+    // (Delchiaro et al. 2025, Computers & Geosciences,
+    // doi:10.1016/j.cageo.2025.106001): elevation above the thalweg plotted
+    // against the area-to-width ratio, whose breakpoints mark bankfull / flat
+    // surface levels. Off by default (the curve is only needed when exported).
+    bool   compute_hydraulic_depth = false;
 };
 
 // One terrace/floodplain boundary point from the hydraulic-step workflow.
@@ -109,6 +144,20 @@ struct valley_cross_section_hydraulic_edge
     std::int32_t step = -1;
     double stage_metres = 0.0;
     double offset_metres = 0.0;
+};
+
+// One stage level of the BankfullMapper-style hydraulic-geometry curve for a
+// section (see valley_cross_section_request::compute_hydraulic_depth). The
+// hydraulic depth (area-to-width ratio) plotted against depth_above_thalweg is
+// the function whose breakpoints identify bankfull / flat-surface levels.
+struct valley_cross_section_hydraulic_sample
+{
+    double stage_metres = 0.0;              // absolute water-surface elevation
+    double depth_above_thalweg_metres = 0.0; // stage minus the thalweg elevation
+    double width_metres = 0.0;              // total flow width W
+    double area_metres2 = 0.0;              // wetted cross-sectional area A
+    double wetted_perimeter_metres = 0.0;   // wetted perimeter P
+    double hydraulic_depth_metres = 0.0;    // A / W (the BankfullMapper metric)
 };
 
 // -----------------------------------------------------------------------------
@@ -171,6 +220,18 @@ struct valley_cross_section
 
     // (e) step-midpoint terrace/floodplain boundaries from hydraulic geometry.
     std::vector<valley_cross_section_hydraulic_edge> hydraulic_edges;
+
+    // (e2) Hydraulic BREAK elevations: the absolute stage elevations of the
+    // flat-surface separators from combine_width_steps. Element 0 is the
+    // thalweg (profile minimum), 1 the first break (bankfull / floodplain top),
+    // 2 the second break (first terrace top), etc. The LOCAL HAND of break k is
+    // hydraulic_break_stages[k] - hydraulic_break_stages[0]. Populated whenever
+    // the feature path runs (same combine_width_steps call as hydraulic_edges).
+    std::vector<double> hydraulic_break_stages;
+
+    // (f) full per-stage hydraulic-geometry curve (BankfullMapper hydraulic
+    // depth function). Populated only when request.compute_hydraulic_depth.
+    std::vector<valley_cross_section_hydraulic_sample> hydraulic_curve;
 };
 
 // -----------------------------------------------------------------------------
@@ -214,6 +275,39 @@ struct valley_cross_section_result
     const lsdtt_raster_cpu*             curvature    = nullptr,
     const lsdtt_raster_cpu*             hillshade    = nullptr,
     const lsdtt_raster_cpu*             channel_mask = nullptr
+);
+
+// -----------------------------------------------------------------------------
+// cross_section_informed_valley_mask
+//
+// A valley-floor mask built from the cross sections' HYDRAULIC BREAKS instead
+// of the corridor HAND histogram. For every corridor pixel the height above the
+// nearest centreline node's baseline (thalweg) is compared with the channel's
+// MEDIAN lowest hydraulic break (break 1, from the sections'
+// hydraulic_break_stages) — a single robust floodplain HAND level, so an
+// individual section with an anomalously high break cannot streak laterally or
+// leak the mask onto the upland plateau:
+//   value 0 = above the break (not valley floor)
+//   value 1 = at/below the median lowest break HAND (bankfull / floodplain)
+// The corridor domain and baseline reference are taken from each channel's
+// reach_id raster and centreline_baseline_elevation (so this SUPPLEMENTS the
+// existing valley_mask, using the same reference surface). Channels without a
+// populated reach_id / baseline, or with no usable breaks, are skipped.
+// -----------------------------------------------------------------------------
+struct cross_section_informed_valley_result
+{
+    // Combined mask over all channels (float {0,1}; first claim wins).
+    lsdtt_raster_cpu valley_mask;
+    // Per-channel masks (parallel vectors), same {0,1} encoding.
+    std::vector<std::int32_t> channel_source_ids;
+    std::vector<lsdtt_raster_cpu> channel_masks;
+};
+
+[[nodiscard]] cross_section_informed_valley_result
+cross_section_informed_valley_mask(
+    const lsdtt_raster_cpu&             dem,
+    const valley_centreline_result&     centrelines,
+    const valley_cross_section_result&  sections
 );
 
 } // namespace lsdtt

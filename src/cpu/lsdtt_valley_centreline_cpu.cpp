@@ -441,17 +441,17 @@ void clean_valley_patches(
     }
 }
 
-// Valley break from a corridor HANC histogram (log10 bins over [lo_log,
+// Valley break from a corridor HAND histogram (log10 bins over [lo_log,
 // hi_log]). Corridor populations differ from flat-mask populations: the
 // valley-floor mode sits AT the low edge (values clamp at the log floor) and
 // hillslopes form a continuum, so the generic antimode finder fails. Rule
-// used here: identify the dominant wall/upland peak (the largest-HANC peak
+// used here: identify the dominant wall/upland peak (the largest-HAND peak
 // whose density reaches wall_peak_fraction of the histogram maximum) and
 // return the LAST local minimum below it whose density dips under
 // valley_fraction of that wall peak — i.e. the valley is everything below
 // the rise into the valley walls. Returns <= 0 when no such structure exists.
 // Diagnostics captured from a break decision so a reviewer figure can show
-// the ACTUAL metric the break is chosen on — the smoothed log10-HANC density
+// the ACTUAL metric the break is chosen on — the smoothed log10-HAND density
 // (not the raw, bumpy histogram) — plus the surviving mode segmentation and
 // the chosen break bin. Populated by find_valley_break when a non-null
 // pointer is supplied; left in a partial state on the degenerate early
@@ -572,7 +572,7 @@ double find_valley_break(
     // b. absorb insignificant-mass modes (low first mode exempt).
     double total_mass = 0.0;
     for (const seg_t& s : segs) total_mass += s.mass;
-    const double low_floor_hanc = 4.0;   // m; "low first mode" exemption
+    const double low_floor_hand = 4.0;   // m; "low first mode" exemption
     changed = true;
     while (changed && segs.size() > 1)
     {
@@ -585,9 +585,9 @@ double find_valley_break(
                 // A low near-channel floor mode defines the valley even when
                 // it is small next to a mountain wall peak — but it must
                 // still be a real mode, not noise.
-                const double peak_hanc = std::pow(
+                const double peak_hand = std::pow(
                     10.0, lo_log + (segs[i].peak_bin + 0.5) * bw);
-                if (peak_hanc <= low_floor_hanc &&
+                if (peak_hand <= low_floor_hand &&
                     segs[i].mass >= 0.25 * wall_peak_fraction * total_mass)
                     continue;
                 merge_at(0);
@@ -731,7 +731,7 @@ valley_centreline_result extract_valley_centrelines(
         }
 
         // ---------------------------------------------------------------------
-        // 1. Corridor and Euclidean HANC relative to THIS channel only.
+        // 1. Corridor and Euclidean HAND relative to THIS channel only.
         // ---------------------------------------------------------------------
         std::vector<float> chan_data(n, 0.0f);
         for (const std::int64_t f : nodes)
@@ -741,19 +741,19 @@ valley_centreline_result extract_valley_centrelines(
 
         lsdtt_raster_cpu dist =
             euclidean_distance_transform(chan_binary, request.n_threads);
-        lsdtt_raster_cpu hanc = difference_to_nearest_true_mask_value(
+        lsdtt_raster_cpu hand = difference_to_nearest_true_mask_value(
             chan_binary, dem, request.n_threads);
 
         const std::vector<float>&   dd = dist.get_data();
         const std::vector<uint8_t>& dm = dist.get_mask();
-        const std::vector<float>&   hd = hanc.get_data();
-        const std::vector<uint8_t>& hm = hanc.get_mask();
+        const std::vector<float>&   hd = hand.get_data();
+        const std::vector<uint8_t>& hm = hand.get_mask();
 
         // ---------------------------------------------------------------------
-        // 2. Break search in the corridor HANC population.
+        // 2. Break search in the corridor HAND population.
         // ---------------------------------------------------------------------
-        const int    nbins   = std::max(request.hanc_hist_bins, 16);
-        const double floor_m = std::max(request.min_hanc_metres, 1e-3);
+        const int    nbins   = std::max(request.hand_hist_bins, 16);
+        const double floor_m = std::max(request.min_hand_metres, 1e-3);
         const double lo_log  = std::log10(floor_m);
         double hi_log = lo_log;
 
@@ -868,10 +868,18 @@ valley_centreline_result extract_valley_centrelines(
         };
 
         // Whole-corridor + per-window histograms.
-        double break_hanc = request.fallback_valley_hanc_metres;
-        rec.used_fallback_break = true;
+        const bool force_break = request.force_valley_hand_metres > 0.0;
+        double break_hand = force_break
+            ? request.force_valley_hand_metres
+            : request.fallback_valley_hand_metres;
+        rec.used_fallback_break = !force_break;
         std::vector<double> window_break(n_windows, -1.0);
-        if (hi_log > lo_log + 1e-6)
+        if (force_break)
+        {
+            break_hand = std::max(break_hand, request.min_valley_hand_metres);
+            window_break.assign(n_windows, break_hand);
+        }
+        else if (hi_log > lo_log + 1e-6)
         {
             hi_log += 1e-6;
             std::vector<std::int64_t> ghist(nbins, 0);
@@ -940,7 +948,7 @@ valley_centreline_result extract_valley_centrelines(
                 return fmin + (fmax - fmin) * t;
             };
             const double global_frac = fraction_for(global_relief);
-            rec.hanc_break_fraction = global_frac;
+            rec.hand_break_fraction = global_frac;
 
             valley_break_diagnostics gdiag;
             const double gbrk = find_valley_break(
@@ -948,18 +956,18 @@ valley_centreline_result extract_valley_centrelines(
                 request.wall_peak_fraction, &gdiag);
             if (gbrk > 0.0)
             {
-                break_hanc =
-                    std::max(gbrk, request.min_valley_hanc_metres);
+                break_hand =
+                    std::max(gbrk, request.min_valley_hand_metres);
                 rec.used_fallback_break = false;
             }
-            rec.hanc_smoothed          = std::move(gdiag.smoothed);
-            rec.hanc_seg_peak_bins     = std::move(gdiag.seg_peak_bins);
-            rec.hanc_seg_boundary_bins = std::move(gdiag.seg_bound_bins);
-            rec.hanc_raw_peak_bins     = std::move(gdiag.raw_peak_bins);
-            rec.hanc_break_bin         = gdiag.break_bin;
+            rec.hand_smoothed          = std::move(gdiag.smoothed);
+            rec.hand_seg_peak_bins     = std::move(gdiag.seg_peak_bins);
+            rec.hand_seg_boundary_bins = std::move(gdiag.seg_bound_bins);
+            rec.hand_raw_peak_bins     = std::move(gdiag.raw_peak_bins);
+            rec.hand_break_bin         = gdiag.break_bin;
 
             // Per-window decision metric (all-zero rows for inherited windows).
-            rec.window_hanc_smoothed.assign(
+            rec.window_hand_smoothed.assign(
                 static_cast<std::size_t>(n_windows) * nbins, 0.0);
             rec.window_break_bin.assign(n_windows, -1);
             rec.window_is_peak.assign(
@@ -1000,7 +1008,7 @@ valley_centreline_result extract_valley_centrelines(
                     // (defined even when no break was found).
                     if (!wdiag.smoothed.empty())
                         std::copy(wdiag.smoothed.begin(), wdiag.smoothed.end(),
-                                  rec.window_hanc_smoothed.begin() +
+                                  rec.window_hand_smoothed.begin() +
                                   static_cast<std::ptrdiff_t>(w) * nbins);
                     // Candidate (pre-merge) peaks for every populated window,
                     // even one that produced no own break.
@@ -1014,7 +1022,7 @@ valley_centreline_result extract_valley_centrelines(
                     if (brk > 0.0)
                     {
                         window_break[w] =
-                            std::max(brk, request.min_valley_hanc_metres);
+                            std::max(brk, request.min_valley_hand_metres);
                         own[w] = 1;
                         rec.window_break_bin[w] = wdiag.break_bin;
                         const std::size_t base =
@@ -1039,7 +1047,7 @@ valley_centreline_result extract_valley_centrelines(
                                    std::abs(k - w) < std::abs(best - w)))
                         best = k;
                 window_break[w] =
-                    (best >= 0) ? window_break[best] : break_hanc;
+                    (best >= 0) ? window_break[best] : break_hand;
             }
             // Median-of-three across windows: a single window whose own
             // break detection locked onto the wrong population mode (e.g. a
@@ -1060,9 +1068,9 @@ valley_centreline_result extract_valley_centrelines(
             }
             for (int w = 0; w < n_windows; ++w)
             {
-                if (request.max_valley_hanc_metres > 0.0)
+                if (request.max_valley_hand_metres > 0.0)
                     window_break[w] = std::min(
-                        window_break[w], request.max_valley_hanc_metres);
+                        window_break[w], request.max_valley_hand_metres);
                 rec.window_centre_m.push_back((w + 0.5) * wstep);
                 rec.window_break_m.push_back(window_break[w]);
                 rec.window_break_own.push_back(own[w]);
@@ -1070,18 +1078,33 @@ valley_centreline_result extract_valley_centrelines(
                 rec.window_relief_m.push_back(window_rel[w]);
             }
 
-            rec.hanc_hist        = std::move(ghist);
-            rec.window_hanc_hist = std::move(whist);
+            rec.hand_hist        = std::move(ghist);
+            rec.window_hand_hist = std::move(whist);
             rec.hist_lo_log      = lo_log;
             rec.hist_hi_log      = hi_log;
         }
         else
         {
-            window_break.assign(n_windows, break_hanc);
+            window_break.assign(n_windows, break_hand);
         }
-        if (request.max_valley_hanc_metres > 0.0)
-            break_hanc = std::min(break_hanc, request.max_valley_hanc_metres);
-        rec.valley_hanc_break_metres = break_hanc;
+        if (request.max_valley_hand_metres > 0.0)
+        {
+            break_hand = std::min(break_hand, request.max_valley_hand_metres);
+            for (double& wb : window_break)
+                wb = std::min(wb, request.max_valley_hand_metres);
+        }
+        if (rec.window_centre_m.empty())
+        {
+            for (int w = 0; w < n_windows; ++w)
+            {
+                rec.window_centre_m.push_back((w + 0.5) * wstep);
+                rec.window_break_m.push_back(window_break[w]);
+                rec.window_break_own.push_back(0);
+                rec.window_break_fraction.push_back(rec.hand_break_fraction);
+                rec.window_relief_m.push_back(0.0);
+            }
+        }
+        rec.valley_hand_break_metres = break_hand;
 
         // ---------------------------------------------------------------------
         // 3. Valley mask: below the reach's break, connected to the channel,
@@ -1431,7 +1454,7 @@ valley_centreline_result extract_valley_centrelines(
 
             // Reach-id raster: every corridor pixel tagged with the reach
             // (window) of its nearest channel node — the exact population each
-            // per-reach HANC histogram is built from.
+            // per-reach HAND histogram is built from.
             std::vector<float>   rd(n, 0.0f);
             std::vector<uint8_t> rmask(n, 0u);
             for (std::size_t i = 0; i < n; ++i)

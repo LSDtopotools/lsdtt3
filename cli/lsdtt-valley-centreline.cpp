@@ -13,9 +13,9 @@
 // For each channel in scope (user source points, optionally bounded by
 // outlets) the tool:
 //
-//   1. computes the Euclidean height above that single channel (HANC) for
+//   1. computes the Euclidean height above that single channel (HAND) for
 //      every pixel in a wide corridor,
-//   2. finds the break in the corridor's HANC population that separates the
+//   2. finds the break in the corridor's HAND population that separates the
 //      valley from the valley walls (reach-adaptive: the break is detected
 //      per along-channel window so the threshold adapts from a confined
 //      canyon to a broad valley floor),
@@ -37,7 +37,7 @@
 // interpolated along the centreline and forced to sit at or below every
 // channel pin) is the thalweg reference profile, and the future entry point
 // for a relative-elevation raster (REM). The tool can also emit regularly
-// spaced cross sections orthogonal to the centreline, and the HANC-break
+// spaced cross sections orthogonal to the centreline, and the HAND-break
 // decision metric for review.
 //
 // This is deliberately separate from, and much less restrictive than, the
@@ -178,24 +178,30 @@ int main(int argc, char* argv[])
     float_default_map["valley_corridor_width_metres"] = 5000.0f;
     help_map["valley_corridor_width_metres"] = {"float","5000",
         "Corridor half-width (m): pixels within this Euclidean distance of "
-        "the channel form the HANC population and can be valley pixels.",
-        "Deliberately wide; the HANC break, not the corridor, defines the "
+        "the channel form the HAND population and can be valley pixels.",
+        "Deliberately wide; the HAND break, not the corridor, defines the "
         "valley."};
 
-    float_default_map["valley_fallback_hanc_metres"] = 10.0f;
-    help_map["valley_fallback_hanc_metres"] = {"float","10",
-        "Valley HANC threshold used when the corridor population shows no "
+    float_default_map["valley_fallback_hand_metres"] = 10.0f;
+    help_map["valley_fallback_hand_metres"] = {"float","10",
+        "Valley HAND threshold used when the corridor population shows no "
         "break.",""};
 
-    float_default_map["valley_min_hanc_metres"] = 2.0f;
-    help_map["valley_min_hanc_metres"] = {"float","2",
-        "Floor on a detected valley HANC break (m).",
+    float_default_map["valley_force_hand_metres"] = 0.0f;
+    help_map["valley_force_hand_metres"] = {"float","0",
+        "Force a constant valley HAND threshold (m).",
+        "When > 0, bypasses break detection and uses this threshold for all "
+        "reaches/channels. <= 0 disables forced mode."};
+
+    float_default_map["valley_min_hand_metres"] = 2.0f;
+    help_map["valley_min_hand_metres"] = {"float","2",
+        "Floor on a detected valley HAND break (m).",
         "Stops a dip right after the valley-floor spike from producing a "
         "degenerate channel-hugging valley."};
 
-    float_default_map["valley_max_hanc_metres"] = 0.0f;
-    help_map["valley_max_hanc_metres"] = {"float","0",
-        "Cap on the detected valley HANC break (m).","0 = no cap."};
+    float_default_map["valley_max_hand_metres"] = 0.0f;
+    help_map["valley_max_hand_metres"] = {"float","0",
+        "Cap on the detected valley HAND break (m).","0 = no cap."};
 
     int_default_map["valley_dilation_pixels"] = 4;
     help_map["valley_dilation_pixels"] = {"int","4",
@@ -223,14 +229,14 @@ int main(int argc, char* argv[])
     float_default_map["valley_break_reach_window_metres"] = 0.0f;
     help_map["valley_break_reach_window_metres"] = {"float","0",
         "Along-channel window length (m) for reach-adaptive valley breaks.",
-        "The valley HANC break is detected per window, so a channel running "
+        "The valley HAND break is detected per window, so a channel running "
         "from a confined canyon onto a broad valley floor gets a different "
         "threshold in each setting. 0 = auto (max of 2 km and channel "
         "length / 8); negative = single whole-channel break."};
 
     float_default_map["valley_wall_peak_fraction"] = 0.02f;
     help_map["valley_wall_peak_fraction"] = {"float","0.02",
-        "Peak-detection floor for the HANC population, as a fraction of the "
+        "Peak-detection floor for the HAND population, as a fraction of the "
         "histogram maximum.",
         "Low by design: a valley-floor mode is tiny next to a mountain wall "
         "peak. The valley break is the FIRST qualifying dip after the first "
@@ -238,8 +244,8 @@ int main(int argc, char* argv[])
 
     float_default_map["valley_break_fraction"] = 0.6f;
     help_map["valley_break_fraction"] = {"float","0.6",
-        "Dip acceptance threshold for the HANC break: two adjacent modes of "
-        "the smoothed HANC density are kept SEPARATE (a valley break placed "
+        "Dip acceptance threshold for the HAND break: two adjacent modes of "
+        "the smoothed HAND density are kept SEPARATE (a valley break placed "
         "in the trough between them) only when the trough falls below this "
         "fraction of the smaller flanking peak; a shallower trough merges the "
         "modes.",
@@ -250,7 +256,7 @@ int main(int argc, char* argv[])
 
     string_default_map["valley_break_method"] = "fixed";
     help_map["valley_break_method"] = {"string","fixed",
-        "HANC break acceptance-fraction method. 'fixed' uses "
+        "HAND break acceptance-fraction method. 'fixed' uses "
         "valley_break_fraction for every reach. 'relief_adaptive' derives the "
         "fraction per reach from local topographic relief: confined, "
         "high-relief reaches get a more permissive fraction (a real valley "
@@ -281,21 +287,21 @@ int main(int argc, char* argv[])
         "span a valley wall.",
         "Increase for broad valleys, decrease for narrow ones."};
 
-    bool_default_map["write_valley_hanc_histogram"] = true;
-    help_map["write_valley_hanc_histogram"] = {"bool","true",
-        "Write the per-channel corridor HANC histogram used for break "
+    bool_default_map["write_valley_hand_histogram"] = true;
+    help_map["write_valley_hand_histogram"] = {"bool","true",
+        "Write the per-channel corridor HAND histogram used for break "
         "detection.",
-        "Output suffix: _valley_hanc_hist.csv with source_id, hanc_m (bin "
+        "Output suffix: _valley_hand_hist.csv with source_id, hand_m (bin "
         "centre), n_pixels."};
 
     bool_default_map["write_valley_break_metric"] = true;
     help_map["write_valley_break_metric"] = {"bool","true",
-        "Write the actual break-decision metric (the SMOOTHED log10-HANC "
+        "Write the actual break-decision metric (the SMOOTHED log10-HAND "
         "density the mode segmentation and break run on, not the raw "
         "histogram), with surviving mode peaks/boundaries and the chosen "
         "break flagged.",
         "Output suffix: _valley_break_metric.csv (long format) with "
-        "source_id, scope (global/window), window_centre_m, hanc_m, "
+        "source_id, scope (global/window), window_centre_m, hand_m, "
         "raw_count, smoothed, is_peak (surviving mode peak), is_boundary, "
         "is_raw_peak (candidate peak before merging), is_break. Feeds the "
         "reviewer break-logic figure (phase3_valley_break_metric.py)."};
@@ -349,7 +355,7 @@ int main(int argc, char* argv[])
     help_map["write_valley_reach_id_raster"] = {"bool","true",
         "Write a per-channel reach-id raster: every corridor pixel is tagged "
         "with the along-channel reach (window) of its nearest channel node — "
-        "the exact population each per-reach HANC break histogram is built "
+        "the exact population each per-reach HAND break histogram is built "
         "from.",
         "Output suffix: _valley_reach_id_ch<sid>.tif (Int16, nodata outside "
         "the corridor). Feeds the reach map (phase3_valley_reach_map.py / "
@@ -439,6 +445,42 @@ int main(int argc, char* argv[])
         "Removes concave-side overlap while keeping straight orthogonal "
         "transects."};
 
+    bool_default_map["curved_cross_sections"] = false;
+    help_map["curved_cross_sections"] = {"bool","false",
+        "Trace each cross section as an isocontour of a smooth along-valley "
+        "(streamwise) coordinate field instead of a straight ray: straight in "
+        "straight reaches, curving gradually through bends like the "
+        "constant-streamwise grid lines of a boundary-fitted mesh. Sections keep "
+        "a uniform length and a greedy pass decimates stations in tight bends so "
+        "survivors stay long.",
+        "Boundary-fitted valley-floor refinement. Sides are clipped at the "
+        "Voronoi bisector of the nearest kept neighbours, never below the valley "
+        "wall plus curved_wall_clearance_fraction."};
+
+    float_default_map["curved_wall_clearance_fraction"] = 0.10f;
+    help_map["curved_wall_clearance_fraction"] = {"float","0.10",
+        "For curved cross sections: a shortened side never clips below "
+        "(1 + this) x the distance to the valley wall, so a section always "
+        "clears the pre-existing valley by this margin.",
+        "Only used when curved_cross_sections is true."};
+
+    int_default_map["curved_streamwise_smoothing_passes"] = 40;
+    help_map["curved_streamwise_smoothing_passes"] = {"int","40",
+        "For curved cross sections: number of anchored Laplacian smoothing "
+        "passes applied to the streamwise coordinate field. Higher = smoother "
+        "sections with fewer creases at bends.",
+        "Only used when curved_cross_sections is true."};
+
+    float_default_map["curved_coarse_spacing_metres"] = 700.0f;
+    help_map["curved_coarse_spacing_metres"] = {"float","700",
+        "For curved cross sections: sections are placed coarse-to-fine — a "
+        "sparse backbone at this spacing first, then midpoints between accepted "
+        "sections (this halved, quartered, ... down to cross_section_spacing_"
+        "metres). Keeps coverage even instead of dense clusters next to gaps.",
+        "Rounded down to a power-of-two multiple of the base spacing. Set <= the "
+        "base spacing to disable the hierarchy. Only used when "
+        "curved_cross_sections is true."};
+
     int_default_map["neighbour_clip_window"] = 2;
     help_map["neighbour_clip_window"] = {"int","2",
         "Number of neighbouring stations on each side considered for overlap "
@@ -460,6 +502,31 @@ int main(int argc, char* argv[])
         "adds curvature / hillshade / is_channel columns to the per-sample "
         "CSV. Needs the DEM to derive curvature and hillshade; the channel "
         "mask comes from the resolved channel scope."};
+
+    bool_default_map["write_cross_section_hydraulics"] = false;
+    help_map["write_cross_section_hydraulics"] = {"bool","false",
+        "For every cross section, write the BankfullMapper-style hydraulic "
+        "depth function: the profile is flooded stage by stage and, at each "
+        "stage, the flow width, wetted area, wetted perimeter and hydraulic "
+        "depth (area-to-width ratio A/W) are recorded. Breakpoints in the "
+        "hydraulic depth vs elevation-above-thalweg curve mark bankfull / "
+        "inset flat-surface levels (Delchiaro et al. 2025, Computers & "
+        "Geosciences, doi:10.1016/j.cageo.2025.106001).",
+        "Outputs _valley_cross_section_hydraulics.csv (one row per stage per "
+        "station: stage_m, depth_above_thalweg_m, width_m, area_m2, "
+        "wetted_perimeter_m, hydraulic_depth_m)."};
+
+    bool_default_map["write_cross_section_informed_valley_mask"] = false;
+    help_map["write_cross_section_informed_valley_mask"] = {"bool","false",
+        "Build a valley-floor mask from the cross sections' HYDRAULIC BREAKS "
+        "instead of the corridor HAND histogram: each corridor pixel's height "
+        "above the nearest centreline node's thalweg baseline is compared with "
+        "the channel's MEDIAN lowest hydraulic break (a single robust floodplain "
+        "level, so an anomalous section cannot streak or leak onto the plateau). "
+        "Needs write_cross_section_features (the breaks come from that path).",
+        "Outputs _cross_section_informed_valley_mask.tif (Byte; 0 = above the "
+        "break, 1 = at/below the median lowest break [floodplain]) plus "
+        "per-channel _cross_section_informed_valley_mask_ch<sid>.tif."};
 
     float_default_map["cross_section_curvature_window_metres"] = 60.0f;
     help_map["cross_section_curvature_window_metres"] = {"float","60",
@@ -623,10 +690,12 @@ int main(int argc, char* argv[])
     lsdtt::valley_centreline_request vreq;
     vreq.corridor_width_metres =
         static_cast<double>(ff["valley_corridor_width_metres"]);
-    vreq.fallback_valley_hanc_metres =
-        static_cast<double>(ff["valley_fallback_hanc_metres"]);
-    vreq.max_valley_hanc_metres =
-        static_cast<double>(ff["valley_max_hanc_metres"]);
+    vreq.fallback_valley_hand_metres =
+        static_cast<double>(ff["valley_fallback_hand_metres"]);
+    vreq.force_valley_hand_metres =
+        static_cast<double>(ff["valley_force_hand_metres"]);
+    vreq.max_valley_hand_metres =
+        static_cast<double>(ff["valley_max_hand_metres"]);
     vreq.wall_peak_fraction =
         static_cast<double>(ff["valley_wall_peak_fraction"]);
     vreq.break_valley_fraction =
@@ -639,8 +708,8 @@ int main(int argc, char* argv[])
         static_cast<double>(ff["valley_break_fraction_max"]);
     vreq.break_relief_window_metres =
         static_cast<double>(ff["valley_break_relief_window_metres"]);
-    vreq.min_valley_hanc_metres =
-        static_cast<double>(ff["valley_min_hanc_metres"]);
+    vreq.min_valley_hand_metres =
+        static_cast<double>(ff["valley_min_hand_metres"]);
     vreq.break_reach_window_metres =
         static_cast<double>(ff["valley_break_reach_window_metres"]);
     vreq.refine_valley_with_baseline = bf["refine_valley_with_baseline"];
@@ -666,7 +735,7 @@ int main(int argc, char* argv[])
     try
     {
         // The pit-filled DEM keeps the trough walk from terminating in
-        // interior pits (legacy also ran on filled DEMs); HANC is then
+        // interior pits (legacy also ran on filled DEMs); HAND is then
         // referenced to filled elevations, which is consistent for both the
         // channel and the corridor.
         vres = lsdtt::extract_valley_centrelines(routing_dem, scope, vreq);
@@ -684,16 +753,16 @@ int main(int argc, char* argv[])
 
     for (const lsdtt::valley_channel_centreline& ch : vres.channels)
     {
-        double bmin = ch.valley_hanc_break_metres;
-        double bmax = ch.valley_hanc_break_metres;
+        double bmin = ch.valley_hand_break_metres;
+        double bmax = ch.valley_hand_break_metres;
         for (const double b : ch.window_break_m)
         {
             bmin = std::min(bmin, b);
             bmax = std::max(bmax, b);
         }
         std::cout << "  channel " << ch.source_id << ": "
-                  << ch.n_valley_pixels << " valley px, HANC break "
-                  << ch.valley_hanc_break_metres << " m"
+                  << ch.n_valley_pixels << " valley px, HAND break "
+                  << ch.valley_hand_break_metres << " m"
                   << " (reach range " << bmin << "-" << bmax << " m, "
                   << ch.window_break_m.size() << " windows)"
                   << (ch.used_fallback_break ? " (fallback)" : "")
@@ -811,7 +880,7 @@ int main(int argc, char* argv[])
             pp.make_output_path("_valley_centreline", ".fgb");
         std::cout << "Writing valley centrelines: " << p << "\n";
         lsdtt::lsdtt_vector_schema schema;
-        schema.field_names = {"source_id", "n_nodes", "valley_hanc_break_m",
+        schema.field_names = {"source_id", "n_nodes", "valley_hand_break_m",
                               "routing_ok"};
         schema.field_types = {
             lsdtt::lsdtt_vector_field_type::int64_type,
@@ -831,7 +900,7 @@ int main(int argc, char* argv[])
             loader.write_line(pts,
                 { static_cast<std::int64_t>(ch.source_id),
                   static_cast<std::int64_t>(ch.centreline_flats.size()),
-                  ch.valley_hanc_break_metres,
+                  ch.valley_hand_break_metres,
                   static_cast<std::int64_t>(ch.routing_succeeded ? 1 : 0) });
         }
         loader.finish_vector_write();
@@ -905,15 +974,15 @@ int main(int argc, char* argv[])
              "break_fraction","relief_m"}, rows);
     }
 
-    if (bf["write_valley_hanc_histogram"])
+    if (bf["write_valley_hand_histogram"])
     {
         const std::string p =
-            pp.make_output_path("_valley_hanc_hist", ".csv");
-        std::cout << "Writing corridor HANC histograms: " << p << "\n";
+            pp.make_output_path("_valley_hand_hist", ".csv");
+        std::cout << "Writing corridor HAND histograms: " << p << "\n";
         std::vector<std::vector<std::string>> rows;
         for (const lsdtt::valley_channel_centreline& ch : vres.channels)
         {
-            const std::size_t nb = ch.hanc_hist.size();
+            const std::size_t nb = ch.hand_hist.size();
             if (nb == 0) continue;
             const double bw =
                 (ch.hist_hi_log - ch.hist_lo_log) / static_cast<double>(nb);
@@ -924,21 +993,21 @@ int main(int argc, char* argv[])
                 rows.push_back({
                     std::to_string(ch.source_id),
                     std::to_string(centre),
-                    std::to_string(ch.hanc_hist[b]) });
+                    std::to_string(ch.hand_hist[b]) });
             }
         }
-        loader.write_csv(p, {"source_id","hanc_m","n_pixels"}, rows);
+        loader.write_csv(p, {"source_id","hand_m","n_pixels"}, rows);
 
         // Per-window histograms, for inspecting each reach-adaptive break.
         const std::string pw =
-            pp.make_output_path("_valley_hanc_window_hist", ".csv");
-        std::cout << "Writing per-window HANC histograms: " << pw << "\n";
+            pp.make_output_path("_valley_hand_window_hist", ".csv");
+        std::cout << "Writing per-window HAND histograms: " << pw << "\n";
         std::vector<std::vector<std::string>> wrows;
         for (const lsdtt::valley_channel_centreline& ch : vres.channels)
         {
-            const std::size_t nb = ch.hanc_hist.size();
+            const std::size_t nb = ch.hand_hist.size();
             const std::size_t nw = ch.window_centre_m.size();
-            if (nb == 0 || ch.window_hanc_hist.size() != nb * nw) continue;
+            if (nb == 0 || ch.window_hand_hist.size() != nb * nw) continue;
             const double bw =
                 (ch.hist_hi_log - ch.hist_lo_log) / static_cast<double>(nb);
             for (std::size_t w = 0; w < nw; ++w)
@@ -946,7 +1015,7 @@ int main(int argc, char* argv[])
                 for (std::size_t b = 0; b < nb; ++b)
                 {
                     const std::int64_t cnt =
-                        ch.window_hanc_hist[w * nb + b];
+                        ch.window_hand_hist[w * nb + b];
                     if (cnt == 0) continue;
                     const double centre = std::pow(
                         10.0,
@@ -960,12 +1029,12 @@ int main(int argc, char* argv[])
             }
         }
         loader.write_csv(pw,
-            {"source_id","window_centre_m","hanc_m","n_pixels"}, wrows);
+            {"source_id","window_centre_m","hand_m","n_pixels"}, wrows);
     }
 
     if (bf["write_valley_break_metric"])
     {
-        // The break-decision metric: the SMOOTHED log10-HANC density the mode
+        // The break-decision metric: the SMOOTHED log10-HAND density the mode
         // segmentation runs on, with the surviving mode peaks/boundaries and
         // the chosen break flagged. This is what a reviewer figure must show
         // (the raw histogram is bumpy and the break looks arbitrary on it).
@@ -1016,20 +1085,20 @@ int main(int argc, char* argv[])
 
         for (const lsdtt::valley_channel_centreline& ch : vres.channels)
         {
-            emit(ch, "global", -1.0, ch.hanc_smoothed, ch.hanc_hist,
-                 ch.hanc_seg_peak_bins, ch.hanc_seg_boundary_bins,
-                 ch.hanc_raw_peak_bins, ch.hanc_break_bin);
+            emit(ch, "global", -1.0, ch.hand_smoothed, ch.hand_hist,
+                 ch.hand_seg_peak_bins, ch.hand_seg_boundary_bins,
+                 ch.hand_raw_peak_bins, ch.hand_break_bin);
 
-            const std::size_t nb = ch.hanc_smoothed.size();
+            const std::size_t nb = ch.hand_smoothed.size();
             const std::size_t nw = ch.window_centre_m.size();
-            if (nb == 0 || ch.window_hanc_smoothed.size() != nb * nw) continue;
+            if (nb == 0 || ch.window_hand_smoothed.size() != nb * nw) continue;
             const std::vector<std::int64_t> no_raw;
             for (std::size_t w = 0; w < nw; ++w)
             {
                 const std::vector<double> row(
-                    ch.window_hanc_smoothed.begin() +
+                    ch.window_hand_smoothed.begin() +
                         static_cast<std::ptrdiff_t>(w * nb),
-                    ch.window_hanc_smoothed.begin() +
+                    ch.window_hand_smoothed.begin() +
                         static_cast<std::ptrdiff_t>((w + 1) * nb));
                 // Skip inherited windows (all-zero decision metric).
                 bool any = false;
@@ -1060,7 +1129,7 @@ int main(int argc, char* argv[])
             }
         }
         loader.write_csv(p,
-            {"source_id","scope","window_centre_m","hanc_m","raw_count",
+            {"source_id","scope","window_centre_m","hand_m","raw_count",
              "smoothed","is_peak","is_boundary","is_raw_peak","is_break"},
             rows);
     }
@@ -1085,6 +1154,14 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["min_section_reach_fraction"]);
         xreq.feature_peak_min_prominence_fraction = static_cast<double>(
             ff["cross_section_feature_prominence_fraction"]);
+        xreq.compute_hydraulic_depth = bf["write_cross_section_hydraulics"];
+        xreq.curved_sections = bf["curved_cross_sections"];
+        xreq.curved_wall_clearance_fraction =
+            static_cast<double>(ff["curved_wall_clearance_fraction"]);
+        xreq.curved_streamwise_smoothing_passes =
+            ifs["curved_streamwise_smoothing_passes"];
+        xreq.curved_coarse_spacing_metres =
+            static_cast<double>(ff["curved_coarse_spacing_metres"]);
 
         // Feature rasters (curvature, multidirectional hillshade, channel
         // mask). Computed once here so the per-section search can co-sample
@@ -1324,6 +1401,35 @@ int main(int argc, char* argv[])
                  "curvature","hillshade","is_channel"}, rows);
         }
 
+        // (c2) BankfullMapper hydraulic-depth curves (one row per stage per
+        // station). The hydraulic depth column is the area-to-width ratio whose
+        // breakpoints against depth-above-thalweg mark bankfull / flat-surface
+        // levels (Delchiaro et al. 2025).
+        if (bf["write_cross_section_hydraulics"])
+        {
+            const std::string p = pp.make_output_path(
+                "_valley_cross_section_hydraulics", ".csv");
+            std::cout << "Writing cross-section hydraulics: " << p << "\n";
+            std::vector<std::vector<std::string>> rows;
+            for (const lsdtt::valley_cross_section& xs : xres.sections)
+                for (const lsdtt::valley_cross_section_hydraulic_sample& hs :
+                         xs.hydraulic_curve)
+                    rows.push_back({
+                        std::to_string(xs.source_id),
+                        std::to_string(xs.station_seq),
+                        std::to_string(xs.along_distance_metres),
+                        std::to_string(hs.stage_metres),
+                        std::to_string(hs.depth_above_thalweg_metres),
+                        std::to_string(hs.width_metres),
+                        std::to_string(hs.area_metres2),
+                        std::to_string(hs.wetted_perimeter_metres),
+                        std::to_string(hs.hydraulic_depth_metres) });
+            loader.write_csv(p,
+                {"source_id","station_seq","along_distance_m","stage_m",
+                 "depth_above_thalweg_m","width_m","area_m2",
+                 "wetted_perimeter_m","hydraulic_depth_m"}, rows);
+        }
+
         // (d) Detected features (one row per feature).
         if (do_features)
         {
@@ -1374,6 +1480,62 @@ int main(int argc, char* argv[])
             loader.write_csv(p,
                 {"source_id","station_seq","along_distance_m","feature_type",
                  "offset_m","x","y"}, rows);
+        }
+
+        // (e) Hydraulic breaks: one row per flat-surface separator per section,
+        // with its absolute stage and its LOCAL HAND (stage minus the section's
+        // thalweg). break_index 0 = thalweg (hand 0), 1 = first break, etc.
+        if (do_features)
+        {
+            const std::string p = pp.make_output_path(
+                "_valley_cross_section_hydraulic_breaks", ".csv");
+            std::cout << "Writing cross-section hydraulic breaks: " << p << "\n";
+            std::vector<std::vector<std::string>> rows;
+            for (const lsdtt::valley_cross_section& xs : xres.sections)
+            {
+                const std::vector<double>& bs = xs.hydraulic_break_stages;
+                if (bs.empty()) continue;
+                const double thalweg = bs.front();
+                for (std::size_t k = 0; k < bs.size(); ++k)
+                    rows.push_back({
+                        std::to_string(xs.source_id),
+                        std::to_string(xs.station_seq),
+                        std::to_string(xs.along_distance_metres),
+                        std::to_string(static_cast<int>(k)),
+                        std::to_string(bs[k]),
+                        std::to_string(bs[k] - thalweg) });
+            }
+            loader.write_csv(p,
+                {"source_id","station_seq","along_distance_m","break_index",
+                 "stage_m","hand_m"}, rows);
+        }
+
+        // (f) Cross-section-informed valley mask from the hydraulic breaks.
+        if (bf["write_cross_section_informed_valley_mask"] && do_features)
+        {
+            lsdtt::cross_section_informed_valley_result cim =
+                lsdtt::cross_section_informed_valley_mask(dem, vres, xres);
+
+            const std::string p = pp.make_output_path(
+                "_cross_section_informed_valley_mask", ".tif");
+            std::cout << "Writing cross-section-informed valley mask (Byte): "
+                      << p << "\n";
+            loader.write_full(cim.valley_mask.get_data(),
+                              cim.valley_mask.get_meta(), p, out_format,
+                              GDT_Byte);
+
+            for (std::size_t i = 0; i < cim.channel_source_ids.size(); ++i)
+            {
+                if (cim.channel_masks[i].get_data().empty()) continue;
+                const std::string pc = pp.make_output_path(
+                    "_cross_section_informed_valley_mask_ch" +
+                    std::to_string(cim.channel_source_ids[i]), ".tif");
+                std::cout << "Writing channel cross-section-informed valley "
+                             "mask (Byte): " << pc << "\n";
+                loader.write_full(cim.channel_masks[i].get_data(),
+                                  cim.channel_masks[i].get_meta(), pc,
+                                  out_format, GDT_Byte);
+            }
         }
     }
 

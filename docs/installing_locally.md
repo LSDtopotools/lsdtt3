@@ -85,11 +85,28 @@ Important limitations:
 
 Open Start menu and launch `Developer PowerShell for VS 2022`.
 
+> [!WARNING]
+> Some Visual Studio shell entries start in an `x86` toolchain context. If this
+> happens, CMake uses a 32-bit compiler and will reject `gdal:x64-windows` as
+> incompatible.
+>
+> Always verify `cl` reports `for x64` before configuring.
+
 If Start menu shortcuts are unavailable, open PowerShell and run:
 
 ```powershell
-& "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64
+& "$env:ProgramW6432\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64
 ```
+
+If `cl` still reports `for x86`, switch to x64 explicitly:
+
+```powershell
+& "$env:ProgramW6432\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64
+cl
+```
+
+You can also launch `x64 Native Tools Command Prompt for VS 2022`, then run
+PowerShell commands from there.
 
 Verify toolchain setup:
 
@@ -97,6 +114,12 @@ Verify toolchain setup:
 cmake --version
 ninja --version
 cl
+```
+
+Expected compiler line:
+
+```text
+Microsoft (R) C/C++ Optimizing Compiler Version ... for x64
 ```
 
 ### Install GDAL via vcpkg (no admin)
@@ -134,11 +157,62 @@ cmake -S . -B build\minimal-windows -G "Ninja" `
 cmake --build build\minimal-windows
 ```
 
+### Troubleshooting (Windows native)
+
+- If configure fails with GDAL "configuration files were considered but not
+  accepted" and mentions `64bit`, your shell is likely using an x86 toolchain.
+  Re-open an x64 Visual Studio shell and confirm `cl` reports `for x64`.
+- If build fails with `cl : Command line error D8021 : invalid numeric argument
+  '/Wextra'`, update to a revision that includes MSVC-specific warning flags in
+  `CMakeLists.txt` (`/W4` on MSVC instead of GCC-style `-Wextra`).
+
 Optional verification:
 
 ```powershell
 Get-ChildItem build\minimal-windows\bin\lsdtt-*.exe
 .\build\minimal-windows\bin\lsdtt-raster-preprocessing.exe --version
+```
+
+### Package a redistributable Windows backend zip
+
+After a successful build, create a runtime bundle that users can run without
+installing Visual Studio, vcpkg, or GDAL themselves.
+
+From the repository root (x64 Visual Studio developer shell):
+
+```powershell
+.\tools\package_windows_backend.ps1 -Version 0.2.0
+```
+
+This creates:
+
+- `dist/lsdtt3-backend-win64-minimal-v0.2.0.zip` (the file to distribute)
+- `dist/lsdtt3-backend-win64-minimal-v0.2.0/` (staging folder used to build the zip)
+
+What the bundle includes:
+
+- `bin/` with the MVP CLIs (`lsdtt-raster-preprocessing`,
+  `lsdtt-channel-extraction`, `lsdtt-chi-analysis`,
+  `lsdtt-basin-extraction`)
+- required runtime DLLs discovered from those executables
+- `share/gdal` and `share/proj` data folders (including `proj.db`)
+- `manifest.json`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and `setenv.ps1`
+
+How recipients run it:
+
+```powershell
+cd <unzipped-backend-folder>
+. .\setenv.ps1
+.\bin\lsdtt-raster-preprocessing.exe --version
+```
+
+Advanced options:
+
+```powershell
+.\tools\package_windows_backend.ps1 `
+  -Version 0.2.0 `
+  -BuildDir build/minimal-windows `
+  -OutDir dist
 ```
 
 This profile is the recommended starting point for native Windows work related
