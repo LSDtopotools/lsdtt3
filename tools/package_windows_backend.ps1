@@ -1,3 +1,8 @@
+# Packages a minimal, redistributable Windows backend bundle for QGIS plugin use.
+#
+# The script stages selected lsdtt executables, discovers and copies dependent
+# DLLs from vcpkg, copies GDAL/PROJ data folders, writes metadata files, and
+# creates a final zip artifact.
 param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
@@ -19,6 +24,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Resolve a CLI executable from either:
+# - <build_dir>/<cli>.exe
+# - <build_dir>/bin/<cli>.exe
 function Resolve-ExePath {
     param(
         [string]$BaseDir,
@@ -39,6 +47,8 @@ function Resolve-ExePath {
     throw "Could not find $CliName.exe in '$BaseDir' (checked root and bin/)."
 }
 
+# Uses dumpbin to list direct DLL dependencies of a PE binary (.exe or .dll).
+# This intentionally requires a VS developer shell where dumpbin.exe is present.
 function Get-PeDependents {
     param([string]$BinaryPath)
 
@@ -57,6 +67,14 @@ function Get-PeDependents {
     return ($deps | Sort-Object -Unique)
 }
 
+# Copies transitive runtime DLL dependencies for the selected executables.
+#
+# Strategy:
+# 1) Seed queue with direct exe dependencies.
+# 2) For each DLL found in vcpkg bin, copy it into stage/bin.
+# 3) Parse that DLL's dependencies and continue until closure.
+#
+# Only DLLs that exist in vcpkg's triplet bin directory are copied.
 function Copy-RuntimeDllClosure {
     param(
         [string[]]$ExePaths,
@@ -93,7 +111,10 @@ function Copy-RuntimeDllClosure {
     }
 }
 
-$repoRoot = (Get-Location).Path
+# Resolve key input/output locations from script parameters.
+# Use repository root (parent of this tools directory) so the script works even
+# when launched from inside tools/ or any other working directory.
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $buildAbs = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
 $outAbs = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutDir))
 $vcpkgAbs = [System.IO.Path]::GetFullPath($VcpkgRoot)
@@ -102,6 +123,7 @@ $vcpkgBin = Join-Path $vcpkgAbs (Join-Path "installed" (Join-Path $Triplet "bin"
 $gdalData = Join-Path $vcpkgAbs (Join-Path "installed" (Join-Path $Triplet "share/gdal"))
 $projData = Join-Path $vcpkgAbs (Join-Path "installed" (Join-Path $Triplet "share/proj"))
 
+# Preflight checks fail early with actionable messages.
 if (-not (Test-Path $buildAbs)) {
     throw "Build directory not found: $buildAbs"
 }
@@ -120,6 +142,7 @@ $stage = Join-Path $outAbs $bundleName
 $stageBin = Join-Path $stage "bin"
 $stageShare = Join-Path $stage "share"
 
+# Recreate clean staging tree.
 if (Test-Path $stage) {
     Remove-Item -Recurse -Force $stage
 }
@@ -127,6 +150,7 @@ if (Test-Path $stage) {
 New-Item -ItemType Directory -Path $stageBin -Force | Out-Null
 New-Item -ItemType Directory -Path $stageShare -Force | Out-Null
 
+# Copy selected CLI executables into stage/bin.
 $exePaths = @()
 foreach ($cli in $CliNames) {
     $exe = Resolve-ExePath -BaseDir $buildAbs -CliName $cli
@@ -134,6 +158,7 @@ foreach ($cli in $CliNames) {
     $exePaths += $exe
 }
 
+# Populate runtime closure and required data directories.
 Copy-RuntimeDllClosure -ExePaths $exePaths -VcpkgBin $vcpkgBin -TargetBin $stageBin
 Copy-Item -Path $gdalData -Destination (Join-Path $stageShare "gdal") -Recurse -Force
 Copy-Item -Path $projData -Destination (Join-Path $stageShare "proj") -Recurse -Force
@@ -143,6 +168,7 @@ if (Test-Path $licensePath) {
     Copy-Item -Path $licensePath -Destination (Join-Path $stage "LICENSE") -Force
 }
 
+# Record lightweight bundle contents for traceability.
 $thirdParty = @(
     "This backend bundle includes runtime components from vcpkg package builds.",
     "Triplet: $Triplet",
@@ -156,6 +182,7 @@ $thirdParty += "Included runtime DLLs:"
 $thirdParty += (Get-ChildItem $stageBin -Filter *.dll | Sort-Object Name | ForEach-Object { "- $($_.Name)" })
 Set-Content -Path (Join-Path $stage "THIRD_PARTY_NOTICES.txt") -Value $thirdParty -Encoding utf8
 
+# setenv.ps1 makes the bundle runnable from an arbitrary folder.
 $envScript = @(
     "`$ErrorActionPreference = 'Stop'",
     "`$root = Split-Path -Parent `$MyInvocation.MyCommand.Path",
@@ -166,6 +193,7 @@ $envScript = @(
 )
 Set-Content -Path (Join-Path $stage "setenv.ps1") -Value $envScript -Encoding utf8
 
+# Build manifest with metadata and per-file SHA256 checksums.
 $manifest = [ordered]@{
     backend_version = $Version
     profile = "minimal-windows"
@@ -193,6 +221,7 @@ foreach ($cli in $CliNames) {
 $manifestJson = $manifest | ConvertTo-Json -Depth 8
 Set-Content -Path (Join-Path $stage "manifest.json") -Value $manifestJson -Encoding utf8
 
+# Zip staged contents into the distributable backend artifact.
 if (-not (Test-Path $outAbs)) {
     New-Item -ItemType Directory -Path $outAbs -Force | Out-Null
 }
