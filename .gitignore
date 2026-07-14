@@ -76,6 +76,11 @@ cmake-build-*/
 # -----------------------------------------------------------------------------
 Thumbs.db
 Desktop.ini
+*.exe
+*.dll
+
+# Packaged artifacts
+*.zip
 
 # -----------------------------------------------------------------------------
 # Python (scripts, notebooks, test helpers)
