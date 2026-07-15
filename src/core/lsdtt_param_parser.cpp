@@ -505,6 +505,529 @@ std::pair<std::string, std::string> lsdtt_param_parser::parse_args(
 }
 
 // -----------------------------------------------------------------------------
+// lsdtt_help_registry
+// -----------------------------------------------------------------------------
+
+std::vector<std::string>& lsdtt_help_registry::operator[](const std::string& key)
+{
+    auto it = entries_.find(key);
+    if (it == entries_.end())
+    {
+        key_order_.push_back(key);
+        return entries_[key];
+    }
+    return it->second;
+}
+
+std::string lsdtt_help_registry::field(
+    const std::vector<std::string>& entry, std::size_t index)
+{
+    return index < entry.size() ? entry[index] : std::string();
+}
+
+// -----------------------------------------------------------------------------
+// Deferred argument parsing and terminal help
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// Entry field indices (see lsdtt_help_registry documentation).
+constexpr std::size_t k_help_type    = 0;
+constexpr std::size_t k_help_default = 1;
+constexpr std::size_t k_help_short   = 2;
+constexpr std::size_t k_help_long    = 3;
+constexpr std::size_t k_help_group   = 4;
+constexpr std::size_t k_help_role    = 5;
+constexpr std::size_t k_help_parent  = 6;
+
+constexpr std::size_t k_help_wrap_width = 100;
+
+// Wrap text at word boundaries; every output line starts with indent.
+void write_wrapped(std::ostream& os, const std::string& text,
+                   const std::string& indent)
+{
+    std::istringstream words(text);
+    std::string word;
+    std::string line = indent;
+    bool line_has_word = false;
+    while (words >> word)
+    {
+        if (line_has_word &&
+            line.size() + 1 + word.size() > k_help_wrap_width)
+        {
+            os << line << "\n";
+            line = indent;
+            line_has_word = false;
+        }
+        if (line_has_word) line += " ";
+        line += word;
+        line_has_word = true;
+    }
+    if (line_has_word) os << line << "\n";
+}
+
+// One overview line: "<indent><key> (<type>=<default>)  <short_desc>",
+// with the description wrapped onto its own indented line when too long.
+void write_overview_line(std::ostream& os,
+                         const std::string& indent,
+                         const std::string& key,
+                         const std::vector<std::string>& entry)
+{
+    const std::string type    = lsdtt_help_registry::field(entry, k_help_type);
+    const std::string dflt    = lsdtt_help_registry::field(entry, k_help_default);
+    const std::string short_d = lsdtt_help_registry::field(entry, k_help_short);
+
+    std::string head = indent + key;
+    if (!type.empty())
+    {
+        head += " (" + type;
+        if (!dflt.empty()) head += "=" + dflt;
+        head += ")";
+    }
+
+    if (!short_d.empty() &&
+        head.size() + 2 + short_d.size() <= k_help_wrap_width)
+    {
+        os << head << "  " << short_d << "\n";
+    }
+    else
+    {
+        os << head << "\n";
+        if (!short_d.empty()) write_wrapped(os, short_d, indent + "    ");
+    }
+}
+
+std::string group_of(const std::vector<std::string>& entry)
+{
+    std::string g = lsdtt_help_registry::field(entry, k_help_group);
+    return g.empty() ? std::string("General") : g;
+}
+
+std::string role_of(const std::vector<std::string>& entry)
+{
+    return lsdtt_help_registry::field(entry, k_help_role);
+}
+
+std::string parent_of(const std::vector<std::string>& entry)
+{
+    return lsdtt_help_registry::field(entry, k_help_parent);
+}
+
+// Detailed view for "-h <parameter_name>".
+void write_topic_help(std::ostream& os,
+                      const std::string& tool_name,
+                      const lsdtt_help_registry& help,
+                      const std::string& topic)
+{
+    const auto& entries = help.entries();
+    auto it = entries.find(topic);
+    if (it == entries.end())
+    {
+        os << "Unknown parameter: " << topic << "\n";
+        std::vector<std::string> close;
+        for (const auto& key : help.key_order())
+        {
+            if (key.find(topic) != std::string::npos) close.push_back(key);
+        }
+        if (!close.empty())
+        {
+            os << "Close matches:\n";
+            for (const auto& key : close) os << "  " << key << "\n";
+        }
+        os << "Run \"" << tool_name << " -h\" for the full parameter list.\n";
+        return;
+    }
+
+    const auto& e = it->second;
+    os << topic << "\n";
+    os << "  type    : " << lsdtt_help_registry::field(e, k_help_type) << "\n";
+    os << "  default : " << lsdtt_help_registry::field(e, k_help_default) << "\n";
+    os << "  group   : " << group_of(e) << "\n";
+    const std::string role = role_of(e);
+    if (!role.empty()) os << "  role    : " << role << "\n";
+    const std::string parent = parent_of(e);
+    if (!parent.empty()) os << "  used by : " << parent << "\n";
+    os << "\n";
+    write_wrapped(os, lsdtt_help_registry::field(e, k_help_short), "  ");
+    const std::string long_d = lsdtt_help_registry::field(e, k_help_long);
+    if (!long_d.empty())
+    {
+        os << "\n";
+        write_wrapped(os, long_d, "  ");
+    }
+
+    if (role == "switch")
+    {
+        std::vector<std::string> children;
+        for (const auto& key : help.key_order())
+        {
+            auto child = entries.find(key);
+            if (child != entries.end() && parent_of(child->second) == topic)
+            {
+                children.push_back(key);
+            }
+        }
+        if (!children.empty())
+        {
+            os << "\nParameters controlled by this switch:\n";
+            for (const auto& key : children) os << "  " << key << "\n";
+        }
+    }
+}
+
+// Grouped overview for plain "-h".
+void write_overview_help(std::ostream& os,
+                         const std::string& tool_name,
+                         const std::string& version,
+                         const std::string& citation,
+                         const lsdtt_help_registry& help)
+{
+    os << tool_name << " " << version << "\n";
+    os << "Citation: " << citation << "\n\n";
+    os << "Usage: " << tool_name << " <path> <parameter_file>\n";
+    os << "       " << tool_name << " <parameter_file>\n";
+    os << "Parameter file lines are \"key: value\"; # starts a comment.\n";
+
+    const auto& entries = help.entries();
+    const auto& order   = help.key_order();
+
+    // File I/O and run control first.
+    bool io_header_written = false;
+    for (const auto& key : order)
+    {
+        const auto& e = entries.at(key);
+        if (role_of(e) != "io") continue;
+        if (!io_header_written)
+        {
+            os << "\nFile I/O and run control:\n";
+            io_header_written = true;
+        }
+        write_overview_line(os, "  ", key, e);
+    }
+
+    // Group order = first appearance among non-io entries.
+    std::vector<std::string> group_order;
+    for (const auto& key : order)
+    {
+        const auto& e = entries.at(key);
+        if (role_of(e) == "io") continue;
+        const std::string g = group_of(e);
+        if (std::find(group_order.begin(), group_order.end(), g) ==
+            group_order.end())
+        {
+            group_order.push_back(g);
+        }
+    }
+
+    for (const auto& group : group_order)
+    {
+        os << "\n" << group << ":\n";
+
+        // Switches first, each followed by its dependent parameters.
+        for (const auto& key : order)
+        {
+            const auto& e = entries.at(key);
+            if (role_of(e) == "io" || group_of(e) != group) continue;
+            if (role_of(e) != "switch") continue;
+            write_overview_line(os, "  ", key, e);
+            for (const auto& child_key : order)
+            {
+                const auto& c = entries.at(child_key);
+                if (parent_of(c) == key && group_of(c) == group)
+                {
+                    write_overview_line(os, "    ", child_key, c);
+                }
+            }
+        }
+
+        // Remaining parameters in the group (no parent switch, not io).
+        for (const auto& key : order)
+        {
+            const auto& e = entries.at(key);
+            if (role_of(e) == "io" || group_of(e) != group) continue;
+            if (role_of(e) == "switch" || !parent_of(e).empty()) continue;
+            write_overview_line(os, "  ", key, e);
+        }
+    }
+
+    os << "\nRun \"" << tool_name
+       << " -h <parameter_name>\" for full guidance on one parameter.\n";
+    os << "Run \"" << tool_name
+       << " -h html\" to write an HTML/CSV reference to the current directory.\n";
+}
+
+// Escape minimal HTML special characters.
+std::string html_escape(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s)
+    {
+        switch (c)
+        {
+            case '&':  out += "&amp;";  break;
+            case '<':  out += "&lt;";   break;
+            case '>':  out += "&gt;";   break;
+            case '"':  out += "&quot;"; break;
+            default:   out += c;        break;
+        }
+    }
+    return out;
+}
+
+// CSV-quote a field (always quoted so commas in prose are safe).
+std::string csv_quote(const std::string& s)
+{
+    std::string out = "\"";
+    for (char c : s)
+    {
+        if (c == '"') out += "\"\"";
+        else          out += c;
+    }
+    out += "\"";
+    return out;
+}
+
+} // anonymous namespace
+
+lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
+    int argc, char* argv[],
+    const std::string& tool_name,
+    const std::string& version,
+    const std::string& citation)
+{
+    auto is_flag = [](const std::string& s,
+                      std::initializer_list<const char*> flags)
+    {
+        for (const auto* f : flags) if (s == f) return true;
+        return false;
+    };
+
+    lsdtt_cli_args args;
+
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string a = argv[i];
+
+        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
+        {
+            args.help_requested = true;
+            if (i + 1 < argc)
+            {
+                const std::string next = argv[i + 1];
+                if (next == "html")
+                {
+                    args.help_html = true;
+                }
+                else if (!next.empty() && next[0] != '-')
+                {
+                    args.help_topic = next;
+                }
+            }
+            return args;
+        }
+        if (is_flag(a, {"-v", "--version", "version", "-V"}))
+        {
+            std::cout << tool_name << " version " << version << "\n";
+            std::exit(0);
+        }
+        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
+        {
+            std::cout << "Citation: " << citation << "\n";
+            std::exit(0);
+        }
+    }
+
+    if (argc == 1)
+    {
+        std::cerr << "No parameter file specified. Use -h for help.\n";
+        std::exit(1);
+    }
+    else if (argc == 2)
+    {
+        args.fname = argv[1];
+    }
+    else
+    {
+        args.path  = argv[1];
+        args.fname = argv[2];
+    }
+
+    return args;
+}
+
+void lsdtt_param_parser::print_terminal_help(
+    const std::string& tool_name,
+    const std::string& version,
+    const std::string& citation,
+    const lsdtt_help_registry& help,
+    const lsdtt_cli_args& args,
+    std::ostream& os)
+{
+    if (args.help_html)
+    {
+        write_reference_files(tool_name, version, citation, help,
+                              "./" + tool_name + "_help");
+        os << "Reference files written to:\n"
+           << "  ./" << tool_name << "_help.html\n"
+           << "  ./" << tool_name << "_help.csv\n";
+        return;
+    }
+
+    if (!args.help_topic.empty())
+    {
+        write_topic_help(os, tool_name, help, args.help_topic);
+        return;
+    }
+
+    write_overview_help(os, tool_name, version, citation, help);
+}
+
+void lsdtt_param_parser::print_terminal_help(
+    const std::string& tool_name,
+    const std::string& version,
+    const std::string& citation,
+    const lsdtt_help_registry& help,
+    const lsdtt_cli_args& args)
+{
+    print_terminal_help(tool_name, version, citation, help, args, std::cout);
+}
+
+void lsdtt_param_parser::write_reference_files(
+    const std::string& tool_name,
+    const std::string& version,
+    const std::string& citation,
+    const lsdtt_help_registry& help,
+    const std::string& out_prefix)
+{
+    const auto& entries = help.entries();
+    const auto& order   = help.key_order();
+
+    // ---- CSV (flat, grouped columns appended) ----
+    {
+        std::ofstream csv(out_prefix + ".csv");
+        if (csv.is_open())
+        {
+            csv << "name,type,default,description,guidance,group,role,parent\n";
+            csv << "version," << csv_quote(version) << ",citation,"
+                << csv_quote(citation) << ",,,,\n";
+            for (const auto& key : order)
+            {
+                const auto& e = entries.at(key);
+                csv << key << ","
+                    << csv_quote(lsdtt_help_registry::field(e, k_help_type))    << ","
+                    << csv_quote(lsdtt_help_registry::field(e, k_help_default)) << ","
+                    << csv_quote(lsdtt_help_registry::field(e, k_help_short))   << ","
+                    << csv_quote(lsdtt_help_registry::field(e, k_help_long))    << ","
+                    << csv_quote(lsdtt_help_registry::field(e, k_help_group))   << ","
+                    << csv_quote(lsdtt_help_registry::field(e, k_help_role))    << ","
+                    << csv_quote(lsdtt_help_registry::field(e, k_help_parent))  << "\n";
+            }
+        }
+    }
+
+    // ---- HTML (grouped layout) ----
+    std::ofstream html(out_prefix + ".html");
+    if (!html.is_open()) return;
+
+    html << "<!DOCTYPE html>\n<html>\n<head>\n"
+         << "<title>Help: " << html_escape(tool_name) << "</title>\n"
+         << "<style>table,th,td{border:1px solid black;"
+         << "border-collapse:collapse;padding:4px;}"
+         << "h2{margin-top:1.5em;}</style>\n"
+         << "</head>\n<body>\n";
+
+    html << "<h1>Help: " << html_escape(tool_name) << "</h1>\n";
+    html << "<p>Version: " << html_escape(version) << "</p>\n";
+    html << "<p>Citation: " << html_escape(citation) << "</p>\n";
+    html << "<h2>Usage</h2>\n"
+         << "<p><code>" << html_escape(tool_name)
+         << " my_params.driver</code></p>\n"
+         << "<p>Parameter file format: <code>key: value</code> "
+         << "(one per line, # for comments)</p>\n";
+
+    auto write_row = [&html](const std::string& key,
+                             const std::vector<std::string>& e,
+                             bool indent = false)
+    {
+        html << "<tr><td>" << (indent ? "&nbsp;&nbsp;" : "")
+             << html_escape(key) << "</td><td>"
+             << html_escape(lsdtt_help_registry::field(e, k_help_type))
+             << "</td><td>"
+             << html_escape(lsdtt_help_registry::field(e, k_help_default))
+             << "</td><td>"
+             << html_escape(lsdtt_help_registry::field(e, k_help_short))
+             << "</td><td>"
+             << html_escape(lsdtt_help_registry::field(e, k_help_long))
+             << "</td></tr>\n";
+    };
+
+    const char* table_header =
+        "<table>\n<tr><th>name</th><th>type</th><th>default</th>"
+        "<th>description</th><th>guidance</th></tr>\n";
+
+    // File I/O section.
+    bool io_open = false;
+    for (const auto& key : order)
+    {
+        const auto& e = entries.at(key);
+        if (role_of(e) != "io") continue;
+        if (!io_open)
+        {
+            html << "<h2>File I/O and run control</h2>\n" << table_header;
+            io_open = true;
+        }
+        write_row(key, e);
+    }
+    if (io_open) html << "</table>\n";
+
+    // Groups in declaration order.
+    std::vector<std::string> group_order;
+    for (const auto& key : order)
+    {
+        const auto& e = entries.at(key);
+        if (role_of(e) == "io") continue;
+        const std::string g = group_of(e);
+        if (std::find(group_order.begin(), group_order.end(), g) ==
+            group_order.end())
+        {
+            group_order.push_back(g);
+        }
+    }
+
+    for (const auto& group : group_order)
+    {
+        html << "<h2>" << html_escape(group) << "</h2>\n" << table_header;
+        // Switches with their children directly beneath, then loose params.
+        for (const auto& key : order)
+        {
+            const auto& e = entries.at(key);
+            if (role_of(e) == "io" || group_of(e) != group) continue;
+            if (role_of(e) != "switch") continue;
+            write_row(key, e);
+            for (const auto& child_key : order)
+            {
+                const auto& c = entries.at(child_key);
+                if (parent_of(c) == key && group_of(c) == group)
+                {
+                    write_row(child_key, c, true);
+                }
+            }
+        }
+        for (const auto& key : order)
+        {
+            const auto& e = entries.at(key);
+            if (role_of(e) == "io" || group_of(e) != group) continue;
+            if (role_of(e) == "switch" || !parent_of(e).empty()) continue;
+            write_row(key, e);
+        }
+        html << "</table>\n";
+    }
+
+    html << "</body>\n</html>\n";
+}
+
+// -----------------------------------------------------------------------------
 // Output / diagnostics
 // -----------------------------------------------------------------------------
 
@@ -563,9 +1086,12 @@ void lsdtt_param_parser::print_help(
     std::ofstream csv(csv_path);
     if (csv.is_open())
     {
-        csv << "name,type,default,description,guidance\n";
+        // group/role/parent columns are appended so readers of the previous
+        // five-column format keep working; entries without the grouped
+        // metadata leave those columns empty.
+        csv << "name,type,default,description,guidance,group,role,parent\n";
         csv << "version," << version << ",citation," << citation
-            << ",see code output for additional algorithm citations\n";
+            << ",see code output for additional algorithm citations,,,\n";
 
         for (const auto& key : all_keys)
         {
@@ -573,13 +1099,16 @@ void lsdtt_param_parser::print_help(
             if (it == help_map.end() || it->second.size() < 4)
             {
                 csv << key << ",not available,not available,"
-                    << "not available,not available\n";
+                    << "not available,not available,,,\n";
             }
             else
             {
                 const auto& h = it->second;
                 csv << key << "," << h[0] << "," << h[1] << ","
-                    << h[2] << "," << h[3] << "\n";
+                    << h[2] << "," << h[3] << ","
+                    << lsdtt_help_registry::field(h, 4) << ","
+                    << lsdtt_help_registry::field(h, 5) << ","
+                    << lsdtt_help_registry::field(h, 6) << "\n";
             }
         }
         csv.close();
@@ -613,7 +1142,8 @@ void lsdtt_param_parser::print_help(
         html << "<h2>Parameters</h2>\n"
              << "<table>\n"
              << "<tr><th>name</th><th>type</th><th>default</th>"
-             << "<th>description</th><th>guidance</th></tr>\n";
+             << "<th>description</th><th>guidance</th>"
+             << "<th>group</th><th>role</th><th>parent</th></tr>\n";
 
         for (const auto& key : all_keys)
         {
@@ -621,14 +1151,17 @@ void lsdtt_param_parser::print_help(
             if (it == help_map.end() || it->second.size() < 4)
             {
                 html << "<tr><td>" << key
-                     << "</td><td colspan=\"4\">not available</td></tr>\n";
+                     << "</td><td colspan=\"7\">not available</td></tr>\n";
             }
             else
             {
                 const auto& h = it->second;
                 html << "<tr><td>" << key << "</td><td>" << h[0]
                      << "</td><td>" << h[1] << "</td><td>" << h[2]
-                     << "</td><td>" << h[3] << "</td></tr>\n";
+                     << "</td><td>" << h[3] << "</td><td>"
+                     << lsdtt_help_registry::field(h, 4) << "</td><td>"
+                     << lsdtt_help_registry::field(h, 5) << "</td><td>"
+                     << lsdtt_help_registry::field(h, 6) << "</td></tr>\n";
             }
         }
         html << "</table>\n</body>\n</html>\n";
@@ -638,6 +1171,16 @@ void lsdtt_param_parser::print_help(
     std::cout << "lsdtt_param_parser: help files written to:\n"
               << "  " << csv_path  << "\n"
               << "  " << html_path << "\n";
+}
+
+void lsdtt_param_parser::print_help(
+    const lsdtt_help_registry& help,
+    const std::string& file_prefix,
+    const std::string& version,
+    const std::string& citation
+) const
+{
+    print_help(help.entries(), file_prefix, version, citation);
 }
 
 void lsdtt_param_parser::replace_and_print_parameter_file(

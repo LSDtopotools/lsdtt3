@@ -95,121 +95,123 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
-
-    // -------------------------------------------------------------------------
-    // Parameter file
-    // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
 
     // -------------------------------------------------------------------------
     // Parameter declarations
     //
     // Parameters are grouped by workflow step.
-    // help_map entry format: { type, default, short_desc, long_desc }
+    // help_map entry format:
+    //   { type, default, short_desc, long_desc, group, role, parent }
+    // (see lsdtt_help_registry in lsdtt_param_parser.hpp)
     // None are const - cross-parameter logic below may adjust them.
     // -------------------------------------------------------------------------
     std::map<std::string, bool>                        bool_default_map;
     std::map<std::string, float>                       float_default_map;
     std::map<std::string, int>                         int_default_map;
     std::map<std::string, std::string>                 string_default_map;
-    std::map<std::string, std::vector<std::string>>    help_map;
+    lsdtt::lsdtt_help_registry                         help_map;
 
     // --- Threading / routing ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
         "0 = use all available hardware threads. "
-        "Applies to pit filling and flow-routing construction."};
+        "Applies to pit filling and flow-routing construction.",
+        "Run control", "io", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for flow routing.",
         "Four-character string for north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "Flow routing", "param", ""};
 
     // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool","false",
         "Whether the input raster is already pit-filled and ready for routing.",
         "If false (default), the CLI will call fill_pits() before building flow routing. "
-        "If true, the DEM is assumed to already be suitable for routing."};
+        "If true, the DEM is assumed to already be suitable for routing.",
+        "Pit filling", "switch", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
         "Used only when raster_is_filled is false. "
-        "Passed to fill_pits() to gently enforce downstream descent."};
+        "Passed to fill_pits() to gently enforce downstream descent.",
+        "Pit filling", "param", ""};
 
     // --- Source extraction ---
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used to define source channel heads.",
         "Channel heads are extracted from the flow-routing object using a "
-        "contributing-pixel threshold. Reduce this value to extract denser networks."};
+        "contributing-pixel threshold. Reduce this value to extract denser networks.",
+        "Channel sources", "param", ""};
 
     string_default_map["source_extraction_algorithm_choice"] = "threshold";
     help_map["source_extraction_algorithm_choice"] = {"string","threshold",
         "Source extraction algorithm.",
         "Allowed values: threshold, wiener. Threshold uses source_pixels_threshold. "
-        "Wiener uses filtered-DEM curvature, QQ thresholding, and area pruning."};
+        "Wiener uses filtered-DEM curvature, QQ thresholding, and area pruning.",
+        "Channel sources", "switch", ""};
 
     float_default_map["wiener_pruning_drainage_area_m2"] = 1000.0f;
     help_map["wiener_pruning_drainage_area_m2"] = {"float","1000.0",
         "Minimum drainage area for Wiener channel pixels (m^2).",
         "Wiener-only parameter. Channel pixels with drainage area below this "
-        "physical-area threshold are removed before skeleton endpoint extraction."};
+        "physical-area threshold are removed before skeleton endpoint extraction.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     float_default_map["wiener_surface_fitting_radius_m"] = 6.0f;
     help_map["wiener_surface_fitting_radius_m"] = {"float","6.0",
         "Surface-fitting radius for Wiener tangential curvature (m).",
         "Wiener-only parameter. Passed to local polynomial fitting used for "
-        "tangential curvature computation."};
+        "tangential curvature computation.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     int_default_map["wiener_connected_components_threshold_pixels"] = 100;
     help_map["wiener_connected_components_threshold_pixels"] = {"int","100",
         "Minimum connected-component size in Wiener channel mask (pixels).",
         "Wiener-only parameter. Components smaller than this are removed before "
-        "skeletonisation."};
+        "skeletonisation.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     bool_default_map["wiener_write_filtered_dem"] = false;
     help_map["wiener_write_filtered_dem"] = {"bool","false",
         "Write Wiener-filtered DEM diagnostic raster.",
         "If true, writes <write_fname>_wiener_filtered_dem with the format set by "
-        "wiener_diagnostics_raster_format."};
+        "wiener_diagnostics_raster_format.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     bool_default_map["wiener_write_tangential_curvature"] = false;
     help_map["wiener_write_tangential_curvature"] = {"bool","false",
         "Write Wiener tangential-curvature diagnostic raster.",
         "If true, writes <write_fname>_wiener_tangential_curvature with the format "
-        "set by wiener_diagnostics_raster_format."};
+        "set by wiener_diagnostics_raster_format.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     bool_default_map["wiener_write_qq_table"] = false;
     help_map["wiener_write_qq_table"] = {"bool","false",
         "Write Wiener QQ diagnostic table as CSV.",
         "If true, writes QQ data to wiener_qq_output_csv, or to "
-        "<write_fname>_wiener_qq.csv when that parameter is empty."};
+        "<write_fname>_wiener_qq.csv when that parameter is empty.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     string_default_map["wiener_diagnostics_raster_format"] = "same_as_input";
     help_map["wiener_diagnostics_raster_format"] = {"string","same_as_input",
         "Raster format for Wiener diagnostic rasters.",
-        "Allowed values: cog, gtiff, same_as_input, png."};
+        "Allowed values: cog, gtiff, same_as_input, png.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     string_default_map["wiener_qq_output_csv"] = "";
     help_map["wiener_qq_output_csv"] = {"string","",
         "Output CSV path for Wiener QQ diagnostics.",
         "Wiener-only parameter. If empty and wiener_write_qq_table is true, "
-        "the CLI writes <write_fname>_wiener_qq.csv."};
+        "the CLI writes <write_fname>_wiener_qq.csv.",
+        "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     // --- Output --- general
     bool_default_map["calculate_spatial_index"] = true;
@@ -220,7 +222,8 @@ int main(int argc, char* argv[])
         "the entire vector layer to sit in memory, preventing feature-by-feature "
         "writes and adding a lot of overhead. In some cases (e.g. large datasets) it "
         "may therefore be preferred to generate vectors without spatial index - "
-        "these can always be calculated later on using e.g. gdal."
+        "these can always be calculated later on using e.g. gdal.",
+        "Run control", "io", ""
     };
 
     // --- Output --- channel network points
@@ -230,7 +233,8 @@ int main(int argc, char* argv[])
         "is a feature with attribute values, such as drainage_area.",
         "Compared to write_channel_network_lines, this write will be larger "
         "because there are more features, but it does record the drainage "
-        "area at each channel pixel."
+        "area at each channel pixel.",
+        "Channel network output", "switch", ""
     };
 
     string_default_map["channel_network_points_output_format"] = "flatgeobuf";
@@ -238,7 +242,8 @@ int main(int argc, char* argv[])
         "Output format for the exported channel network.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "
-        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
+        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
+        "Channel network output", "param", "write_channel_network_points"};
 
     // --- Output --- channel network lines
     bool_default_map["write_channel_network_lines"] = false;
@@ -249,7 +254,8 @@ int main(int argc, char* argv[])
         "Does not support csv writes, only gpkg and flatgeobuf/fgb. "
         "Compared to write_channel_network as points, the lines filesize "
         "will be smaller (there are fewer features), at the cost of not "
-        "recording drainage area at each channel pixel."
+        "recording drainage area at each channel pixel.",
+        "Channel network output", "switch", ""
     };
 
     string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
@@ -257,7 +263,8 @@ int main(int argc, char* argv[])
         "Output format for D8 flow-line visualisation.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
         "GeoPackage may have file I/O issues on some filesystems."
-        "CSV is not allowed for channel network lines."
+        "CSV is not allowed for channel network lines.",
+        "Channel network output", "param", "write_channel_network_lines"
     };
 
         // --- Output --- junctions
@@ -265,7 +272,8 @@ int main(int argc, char* argv[])
     help_map["write_channel_network_junctions"] = {"bool", "false",
         "Write the channel network junctions as point data",
         "Contains feature attributes: junction_number, receiver_junction"
-        "and stream_order"
+        "and stream_order",
+        "Channel network output", "switch", ""
     };
 
     string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
@@ -273,7 +281,8 @@ int main(int argc, char* argv[])
         "Output format for the exported channel network.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "
-        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS."};
+        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
+        "Channel network output", "param", "write_channel_network_junctions"};
 
 
     // --- Output --- flow lines
@@ -281,25 +290,29 @@ int main(int argc, char* argv[])
     help_map["write_flow_lines"] = {"bool","false",
         "Write D8 receiver links as a vector line layer.",
         "Writes one line from each valid donor pixel centre to its receiver "
-        "pixel centre, following the D8 directions."};
+        "pixel centre, following the D8 directions.",
+        "Flow routing output", "switch", ""};
 
     string_default_map["flow_lines_output_format"] = "flatgeobuf";
     help_map["flow_lines_output_format"] = {"string","flatgeobuf",
         "Output format for D8 flow-line visualisation.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
-        "GeoPackage may have file I/O issues on some filesystems."};
+        "GeoPackage may have file I/O issues on some filesystems.",
+        "Flow routing output", "param", "write_flow_lines"};
 
     // --- Output --- flow direction raster
     bool_default_map["write_arcmap_d8_flowdirection_raster"] = false;
     help_map["write_arcmap_d8_flowdirection_raster"] = {"bool","false",
         "Write a D8 flow-direction raster using ArcMap conventions.",
         "ArcMap D8 codes are used: E=1, SE=2, S=4, SW=8, W=16, NW=32, "
-        "N=64, NE=128. Outlet pixels are written as 0."};
+        "N=64, NE=128. Outlet pixels are written as 0.",
+        "Flow routing output", "switch", ""};
 
     string_default_map["flow_direction_output_format"] = "cog";
     help_map["flow_direction_output_format"] = {"string","cog",
         "Output format for the ArcMap D8 flow-direction raster.",
-        "Allowed values: cog, gtiff, same_as_input."};
+        "Allowed values: cog, gtiff, same_as_input.",
+        "Flow routing output", "param", "write_arcmap_d8_flowdirection_raster"};
 
     // --- Output --- burned stream profiles from vector input
     bool_default_map["write_burned_stream_profiles"] = false;
@@ -310,7 +323,8 @@ int main(int argc, char* argv[])
         "beneath each polyline feature, builds a flow-distance/elevation "
         "profile, and enforces a downhill-flow constraint on the burned "
         "elevation. Output columns: feature_id, flow_distance, x, y, "
-        "dem_elevation, burned_elevation."
+        "dem_elevation, burned_elevation.",
+        "Stream burning", "switch", ""
     };
 
     string_default_map["stream_vector_path"] = "";
@@ -319,7 +333,8 @@ int main(int argc, char* argv[])
         "Required when write_burned_stream_profiles is true. The file must "
         "contain polyline or multilinestring geometries in the same CRS as "
         "the DEM. Supported formats: GeoPackage (.gpkg), FlatGeobuf (.fgb), "
-        "Shapefile (.shp), and any other GDAL/OGR-supported format."
+        "Shapefile (.shp), and any other GDAL/OGR-supported format.",
+        "Stream burning", "param", "write_burned_stream_profiles"
     };
 
     string_default_map["stream_burn_mode"] = "burn_in_place";
@@ -328,7 +343,8 @@ int main(int argc, char* argv[])
         "burn_in_place: pixels directly beneath the input polyline are "
         "sampled from the DEM and a monotone-decreasing burned elevation is "
         "computed by linking low-lying points along the profile. "
-        "snap_to_network: not yet implemented."
+        "snap_to_network: not yet implemented.",
+        "Stream burning", "param", "write_burned_stream_profiles"
     };
 
     string_default_map["burned_stream_profiles_output_format"] = "csv";
@@ -336,8 +352,33 @@ int main(int argc, char* argv[])
         "Output format for the burned stream profile table.",
         "csv: writes a plain CSV table with one row per channel pixel. "
         "gpkg: writes a GeoPackage point layer in the raster CRS. "
-        "flatgeobuf or fgb: writes a FlatGeobuf point layer in the raster CRS."
+        "flatgeobuf or fgb: writes a FlatGeobuf point layer in the raster CRS.",
+        "Stream burning", "param", "write_burned_stream_profiles"
     };
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Parse
@@ -943,8 +984,10 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Parameter echo
+    // Help files and parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-channel-extraction: done.\n";

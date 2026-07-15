@@ -57,11 +57,77 @@
 #pragma once
 
 #include <fstream>
+#include <iosfwd>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace lsdtt {
+
+// -----------------------------------------------------------------------------
+// lsdtt_cli_args
+//
+// Result of parse_args_deferred(). Unlike the legacy parse_args(), help
+// requests do not exit immediately: the CLI declares its parameter maps
+// first and then renders help from them, so -h can show real parameter
+// documentation. See docs/cli_help_plan.md.
+// -----------------------------------------------------------------------------
+struct lsdtt_cli_args
+{
+    std::string path = "./";
+    std::string fname;
+    bool        help_requested = false;  // -h / --help
+    bool        help_html      = false;  // -h html (write reference files)
+    std::string help_topic;              // -h <parameter_name>
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_help_registry
+//
+// Drop-in replacement for the plain help map
+// (std::map<std::string, std::vector<std::string>>) that additionally
+// records the order in which keys were first inserted. Declaration order
+// follows the pipeline in every CLI, so help output can be grouped in
+// pipeline order rather than alphabetically.
+//
+// Help entry format (positional, entries with only the first 4 elements
+// remain valid):
+//   0 type        "bool" / "int" / "float" / "string"
+//   1 default     default value as string
+//   2 short_desc  one-line description
+//   3 long_desc   guidance paragraph
+//   4 group       pipeline-step label (matches the // --- Section --- comment)
+//   5 role        "switch" (enables an analysis/output), "param" (tunes one),
+//                 "io" (paths, formats, threading)
+//   6 parent      key of the switch this parameter belongs to ("" = none)
+// -----------------------------------------------------------------------------
+class lsdtt_help_registry
+{
+public:
+
+    // Map-compatible accessor; records insertion order on first use of a key.
+    std::vector<std::string>& operator[](const std::string& key);
+
+    const std::map<std::string, std::vector<std::string>>& entries() const
+    {
+        return entries_;
+    }
+
+    // Keys in first-insertion order.
+    const std::vector<std::string>& key_order() const { return key_order_; }
+
+    bool empty() const { return entries_.empty(); }
+
+    // Field access that tolerates short (4-element) entries: returns ""
+    // when the index is out of range for the entry.
+    static std::string field(const std::vector<std::string>& entry,
+                             std::size_t index);
+
+private:
+
+    std::map<std::string, std::vector<std::string>> entries_;
+    std::vector<std::string> key_order_;
+};
 
 class lsdtt_param_parser
 {
@@ -176,6 +242,61 @@ public:
         const std::string& citation
     );
 
+    // Deferred-help variant of parse_args (see docs/cli_help_plan.md).
+    // -v and -c print and exit as before. Help flags do NOT exit: they are
+    // recorded in the returned struct so the CLI can declare its parameter
+    // maps and then call print_terminal_help(). Accepted help forms:
+    //   -h / --help            grouped parameter overview to stdout
+    //   -h <parameter_name>    full guidance for one parameter
+    //   -h html                write <tool>_help.html/.csv to the current dir
+    // When no help is requested, path/fname resolution matches parse_args()
+    // exactly (including the exit(1) when no parameter file is given).
+    static lsdtt_cli_args parse_args_deferred(
+        int argc, char* argv[],
+        const std::string& tool_name,
+        const std::string& version,
+        const std::string& citation
+    );
+
+    // Render help for a CLI from its help registry. Static: needs no
+    // parameter file and no parser instance. Behaviour depends on args:
+    //   help_topic set  - detailed entry for that parameter (with close-match
+    //                     suggestions when the name is unknown)
+    //   help_html set   - write grouped <tool>_help.html/.csv to the current
+    //                     directory
+    //   otherwise       - grouped overview: io keys first, then one block per
+    //                     group in declaration order, switches first with
+    //                     their dependent parameters indented beneath
+    // Output goes to os (default std::cout) except the html/csv files.
+    static void print_terminal_help(
+        const std::string& tool_name,
+        const std::string& version,
+        const std::string& citation,
+        const lsdtt_help_registry& help,
+        const lsdtt_cli_args& args,
+        std::ostream& os
+    );
+
+    // Convenience overload writing to std::cout.
+    static void print_terminal_help(
+        const std::string& tool_name,
+        const std::string& version,
+        const std::string& citation,
+        const lsdtt_help_registry& help,
+        const lsdtt_cli_args& args
+    );
+
+    // Write the grouped HTML + CSV reference files for a tool to
+    // out_prefix + ".html" / ".csv" (used by "-h html"; independent of any
+    // run outputs).
+    static void write_reference_files(
+        const std::string& tool_name,
+        const std::string& version,
+        const std::string& citation,
+        const lsdtt_help_registry& help,
+        const std::string& out_prefix
+    );
+
     // -------------------------------------------------------------------------
     // Output / diagnostics
     // -------------------------------------------------------------------------
@@ -194,6 +315,16 @@ public:
     //   citation    - citation URL or string to embed
     void print_help(
         const std::map<std::string, std::vector<std::string>>& help_map,
+        const std::string& file_prefix,
+        const std::string& version,
+        const std::string& citation
+    ) const;
+
+    // Overload taking a help registry; identical output (the end-of-run
+    // files list the parameters of THIS run, flat table). Entries with
+    // group/role/parent metadata get those values in appended columns.
+    void print_help(
+        const lsdtt_help_registry& help,
         const std::string& file_prefix,
         const std::string& version,
         const std::string& citation

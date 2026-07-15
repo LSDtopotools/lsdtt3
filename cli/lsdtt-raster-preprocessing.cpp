@@ -245,22 +245,8 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
-
-    // -------------------------------------------------------------------------
-    // Load parameter file
-    // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
 
     // -------------------------------------------------------------------------
     // Parameter declarations
@@ -270,20 +256,23 @@ int main(int argc, char* argv[])
     // one place.  Parameters are grouped by the pipeline step that uses them.
     // None are const - some booleans conditionally modify others below.
     //
-    // help_map entry format: { type, default, short_desc, long_desc }
+    // help_map entry format:
+    //   { type, default, short_desc, long_desc, group, role, parent }
+    // (see lsdtt_help_registry in lsdtt_param_parser.hpp)
     // -------------------------------------------------------------------------
     std::map<std::string, bool>                        bool_default_map;
     std::map<std::string, float>                       float_default_map;
     std::map<std::string, int>                         int_default_map;
     std::map<std::string, std::string>                 string_default_map;
-    std::map<std::string, std::vector<std::string>>    help_map;
+    lsdtt::lsdtt_help_registry                         help_map;
 
     // --- Threading ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
         "0 = use all hardware threads. 1 = single-threaded. "
-        "Applies to filling, breaching, nodata repair, and wavelet steps."};
+        "Applies to filling, breaching, nodata repair, and wavelet steps.",
+        "Run control", "io", ""};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -291,7 +280,8 @@ int main(int argc, char* argv[])
         "Output raster format.",
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format."};
+        "same_as_input: match the input raster format.",
+        "Run control", "io", ""};
 
     // --- Projection ---
     bool_default_map["enforce_projection"] = true;
@@ -300,33 +290,38 @@ int main(int argc, char* argv[])
         "If true and the raster is geographic or Web Mercator, it is "
         "reprojected automatically before any analysis. "
         "If false and the raster is not projected, the program exits with "
-        "an error."};
+        "an error.",
+        "Projection", "switch", ""};
 
     string_default_map["resampling_method"] = "cubic";
     help_map["resampling_method"] = {"string","cubic",
         "GDAL resampling algorithm used during reprojection.",
         "Accepted values: near, bilinear, cubic (default), cubicspline, "
-        "lanczos, average, mode, max, min, med, q1, q3, sum."};
+        "lanczos, average, mode, max, min, med, q1, q3, sum.",
+        "Projection", "param", "enforce_projection"};
 
     float_default_map["grid_spacing"] = -1.0f;
     help_map["grid_spacing"] = {"float","-1",
         "Target grid spacing in metres after reprojection.",
         "If negative (default), spacing is inferred from the input pixel size "
         "and rounded: >=20 m -> nearest 5 m; 5-20 m -> nearest 2 m; "
-        "<5 m -> nearest 1 m. Set a positive value to enforce a specific spacing."};
+        "<5 m -> nearest 1 m. Set a positive value to enforce a specific spacing.",
+        "Projection", "param", "enforce_projection"};
 
     bool_default_map["allow_lambert_projection"] = false;
     help_map["allow_lambert_projection"] = {"bool","false",
         "Use Lambert Azimuthal Equal Area for rasters spanning 3+ UTM zones.",
         "If true and the raster is very wide (>=3 UTM zones), a LAEA projection "
         "centred on the raster is used instead of UTM. "
-        "Output files receive the suffix _lambert."};
+        "Output files receive the suffix _lambert.",
+        "Projection", "param", "enforce_projection"};
 
     int_default_map["warp_mem_mb"] = 512;
     help_map["warp_mem_mb"] = {"int","512",
         "GDALWarp working memory in MB.",
         "Larger values reduce source tile re-reads for large rasters. "
-        "Reduce on memory-constrained systems (minimum ~64 MB)."};
+        "Reduce on memory-constrained systems (minimum ~64 MB).",
+        "Projection", "param", "enforce_projection"};
 
     // projection forcing
     bool_default_map["force_reproject"] = false;
@@ -335,31 +330,36 @@ int main(int argc, char* argv[])
         "If true, the raster is reprojected to the recommended CRS even when "
         "the input raster is already projected. This allows conversion from an "
         "existing projected CRS to the preferred UTM, polar stereographic, or "
-        "Lambert Azimuthal Equal Area analysis projection."};
+        "Lambert Azimuthal Equal Area analysis projection.",
+        "Projection", "switch", ""};
 
     bool_default_map["force_resampling"] = false;
     help_map["force_resampling"] = {"bool","false",
         "Force a user-specified grid spacing during reprojection.",
         "If true, forced_grid_spacing is used as the target grid spacing "
-        "instead of the automatically estimated or user-supplied grid_spacing."};
+        "instead of the automatically estimated or user-supplied grid_spacing.",
+        "Projection", "switch", ""};
 
     float_default_map["forced_grid_spacing"] = -1.0f;
     help_map["forced_grid_spacing"] = {"float","-1",
         "Target grid spacing in metres when force_resampling is true.",
-        "Must be positive when force_resampling is true. Ignored otherwise."};
+        "Must be positive when force_resampling is true. Ignored otherwise.",
+        "Projection", "param", "force_resampling"};
 
     // --- Threshold masking ---
     float_default_map["minimum_elevation"] = 0.0f;
     help_map["minimum_elevation"] = {"float","0.0",
         "Pixels at or below this elevation (metres) are set to nodata.",
         "Default of 0.0 removes ocean and below-sea-level artefacts common "
-        "in global DEMs. Set to a large negative number to disable."};
+        "in global DEMs. Set to a large negative number to disable.",
+        "Threshold masking", "param", ""};
 
     float_default_map["maximum_elevation"] = 30000.0f;
     help_map["maximum_elevation"] = {"float","30000",
         "Pixels above this elevation (metres) are set to nodata.",
         "Default covers the full range of terrestrial elevations. "
-        "Reduce to remove artefacts in low-relief study areas."};
+        "Reduce to remove artefacts in low-relief study areas.",
+        "Threshold masking", "param", ""};
 
     // --- Binary mask application ---
     bool_default_map["apply_binary_mask"] = false;
@@ -371,7 +371,8 @@ int main(int argc, char* argv[])
         "The mask must cover the same spatial extent and have the same "
         "cell size and origin as the (possibly reprojected) DEM. "
         "Runs after threshold masking. "
-        "Output suffix: _binary_masked.tif"};
+        "Output suffix: _binary_masked.tif",
+        "Binary mask", "switch", ""};
 
     string_default_map["binary_mask_fname"] = "";
     help_map["binary_mask_fname"] = {"string","",
@@ -379,89 +380,104 @@ int main(int argc, char* argv[])
         "Any GDAL-readable single-band raster is accepted. "
         "Pixels > 0.5 are treated as keep (foreground); "
         "all others set the DEM pixel to nodata. "
-        "Required when apply_binary_mask = true."};
+        "Required when apply_binary_mask = true.",
+        "Binary mask", "param", "apply_binary_mask"};
 
     // --- Interior nodata filling ---
     bool_default_map["write_filled_nodata_raster"] = false;
     help_map["write_filled_nodata_raster"] = {"bool","false",
         "Write a DEM with interior nodata pixels filled.",
         "Only fills nodata pixels completely surrounded by valid data. "
-        "Does not fill nodata that touches the raster edge."};
+        "Does not fill nodata that touches the raster edge.",
+        "Interior nodata filling", "switch", ""};
 
     string_default_map["nodata_fill_method_choice"] = "laplacian";
     help_map["nodata_fill_method_choice"] = {"string","laplacian",
         "Method for filling interior nodata pixels.",
         "laplacian: smooth Dirichlet interpolation (recommended). "
-        "iterative_weighted_average: fast, well-suited to thin voids."};
+        "iterative_weighted_average: fast, well-suited to thin voids.",
+        "Interior nodata filling", "param", "write_filled_nodata_raster"};
 
     int_default_map["nodata_fill_max_iter"] = 10000;
     help_map["nodata_fill_max_iter"] = {"int","10000",
         "Maximum iterations for iterative nodata fill methods.",
         "Only used when nodata_fill_method_choice is laplacian or "
-        "iterative_weighted_average."};
+        "iterative_weighted_average.",
+        "Interior nodata filling", "param", "write_filled_nodata_raster"};
 
     // --- Clip to rectangle ---
     bool_default_map["write_clipped_rectangle_raster"] = false;
     help_map["write_clipped_rectangle_raster"] = {"bool","false",
         "Write a DEM clipped to the largest rectangle of all-valid pixels.",
-        "Run write_filled_nodata_raster first to maximise the rectangle size."};
+        "Run write_filled_nodata_raster first to maximise the rectangle size.",
+        "Clip to rectangle", "switch", ""};
 
     // --- Depression breaching ---
     bool_default_map["write_breached_raster"] = false;
     help_map["write_breached_raster"] = {"bool","false",
         "Write a depression-breached DEM.",
-        "Use breach_algorithm_choice to select the algorithm."};
+        "Use breach_algorithm_choice to select the algorithm.",
+        "Depression breaching", "switch", ""};
 
     bool_default_map["write_carve_diff_raster"] = false;
     help_map["write_carve_diff_raster"] = {"bool","false",
         "Write the difference raster: breached minus original.",
-        "Negative values show where breaching lowered the surface."};
+        "Negative values show where breaching lowered the surface.",
+        "Depression breaching", "switch", ""};
 
     bool_default_map["breach_before_fill"] = false;
     help_map["breach_before_fill"] = {"bool","false",
         "Breach depressions before filling pits.",
         "Recommended for lidar DEMs where channelised flow paths "
-        "must be carved before residual pits are filled."};
+        "must be carved before residual pits are filled.",
+        "Depression breaching", "switch", ""};
 
     bool_default_map["fill_remainder_after_breach"] = true;
     help_map["fill_remainder_after_breach"] = {"bool","true",
         "Fill pits that could not be fully breached.",
-        "Used with breach_before_fill or least-cost breaching."};
+        "Used with breach_before_fill or least-cost breaching.",
+        "Depression breaching", "param", "breach_before_fill"};
 
     string_default_map["breach_algorithm_choice"] = "lindsay2016";
     help_map["breach_algorithm_choice"] = {"string","lindsay2016",
         "Algorithm for depression breaching.",
         "lindsay2016: Lindsay (2016) efficient breaching. "
-        "least_cost: Lindsay (2020) pit-centric least-cost breaching."};
+        "least_cost: Lindsay (2020) pit-centric least-cost breaching.",
+        "Depression breaching", "param", "write_breached_raster"};
 
     int_default_map["breach_lc_max_dist"] = 1000;
     help_map["breach_lc_max_dist"] = {"int","1000",
         "Maximum search radius in pixels for least-cost breaching.",
-        "Only used when breach_algorithm_choice is least_cost."};
+        "Only used when breach_algorithm_choice is least_cost.",
+        "Depression breaching", "param", "write_breached_raster"};
 
     float_default_map["breach_lc_max_cost"] = std::numeric_limits<float>::max();
     help_map["breach_lc_max_cost"] = {"float","unlimited",
         "Maximum total elevation lowering allowed for a breach path.",
         "Only used when breach_algorithm_choice is least_cost. "
-        "Paths that would require more lowering than this are skipped."};
+        "Paths that would require more lowering than this are skipped.",
+        "Depression breaching", "param", "write_breached_raster"};
 
     float_default_map["breach_lc_flat_increment"] = 0.0f;
     help_map["breach_lc_flat_increment"] = {"float","0.0",
         "Small elevation increment added along flat breach paths.",
-        "Only used when breach_algorithm_choice is least_cost."};
+        "Only used when breach_algorithm_choice is least_cost.",
+        "Depression breaching", "param", "write_breached_raster"};
 
     // --- Pit filling ---
     bool_default_map["write_fill_raster"] = false;
     help_map["write_fill_raster"] = {"bool","false",
         "Write a pit-filled DEM.",
-        "Use fill_algorithm_choice to select the algorithm."};
+        "Use fill_algorithm_choice to select the algorithm.",
+        "Pit filling", "switch", ""};
 
     bool_default_map["write_fill_diff_raster"] = false;
     help_map["write_fill_diff_raster"] = {"bool","false",
         "Write the difference raster: filled minus original.",
         "Positive values show where filling raised the surface."
         "If fill_agorithm_choice is barnesetal2021, this represents"
-        " the water depth standing in topographic depressions."};
+        " the water depth standing in topographic depressions.",
+        "Pit filling", "switch", ""};
 
     string_default_map["fill_algorithm_choice"] = "barnes2014";
     help_map["fill_algorithm_choice"] = {"string","barnes2014",
@@ -469,21 +485,24 @@ int main(int argc, char* argv[])
         "barnes2014: Improved Priority-Flood (Barnes et al. 2014). "
         "barnesetal2021: The fill-spill-merge algorithm (note this intentionally"
         " does not guarantee that all depressions are filled, see" 
-        " https://doi.org/10.5194/esurf-9-105-2021)."};
+        " https://doi.org/10.5194/esurf-9-105-2021).",
+        "Pit filling", "param", "write_fill_raster"};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum gradient imposed between adjacent filled cells.",
         "Prevents flat regions that cause ambiguous flow direction. "
         "Increase slightly for very coarse DEMs."
-        "This does not apply to fill-spill-merge."};
+        "This does not apply to fill-spill-merge.",
+        "Pit filling", "param", "write_fill_raster"};
 
     float_default_map["fill_spill_merge_rainfall_rate"] = 0.1f;
-    help_map["fill_spill_merge_rainfall_depth"] = {"float", "0.1",
+    help_map["fill_spill_merge_rainfall_rate"] = {"float", "0.1",
         "Uniform rainfall depth in elevation units per cell for "
         "fill-spill-merge flow routing (Barnes et al., 2021).",
         "Spatial patterns in rainfall to route into and over "
-        "depressions are not currently supported."    
+        "depressions are not currently supported.",
+        "Pit filling", "param", "write_fill_raster"    
     };
 
     string_default_map["fsm_boundary_conditions"] = "oooo";
@@ -495,7 +514,8 @@ int main(int argc, char* argv[])
         "n = no-flux (edge is NOT an ocean boundary). "
         "p = periodic (edge wraps; NOT an ocean boundary). "
         "Example: oooo = all four edges are open ocean (typical for a DEM tile). "
-        "Example: nnnn = closed basin (no edge is ocean; requires interior pits)."};
+        "Example: nnnn = closed basin (no edge is ocean; requires interior pits).",
+        "Pit filling", "param", "write_fill_raster"};
  
     // --- Depression polygons ---
     bool_default_map["write_depression_polygons"] = false;
@@ -503,26 +523,30 @@ int main(int argc, char* argv[])
         "Write a vector polygon layer of topographic depressions, "
         "based on the fill diff raster.",
         "Each polygon carries depression_id, area_m2, and volume_m3 attributes. "
-        "Output format is controlled by write_vector_format."};
+        "Output format is controlled by write_vector_format.",
+        "Depression polygons", "switch", ""};
 
     int_default_map["depression_min_pixels"] = 1;
     help_map["depression_min_pixels"] = {"int","1",
         "Minimum depression size in pixels.",
         "Depressions with fewer pixels than this are removed before "
-        "polygon tracing. Useful for suppressing single-cell fill artefacts."};
+        "polygon tracing. Useful for suppressing single-cell fill artefacts.",
+        "Depression polygons", "param", "write_depression_polygons"};
 
     float_default_map["depression_min_depth"] = 0.0f;
     help_map["depression_min_depth"] = {"float","0.0",
         "Minimum fill depth in metres for a cell to be considered a depression.",
         "Cells where fill_diff <= this value are treated as background. "
-        "A small positive value (e.g. 0.01) suppresses near-zero fill artefacts."};
+        "A small positive value (e.g. 0.01) suppresses near-zero fill artefacts.",
+        "Depression polygons", "param", "write_depression_polygons"};
 
     string_default_map["depression_polygons_output_format"] = "flatgeobuf";
     help_map["depression_polygons_output_format"] = {"string", "flatgeobuf",
         "Output format for depression polygons.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
         "GeoPackage may have file I/O issues on some filesystems."
-        "CSV is not allowed for polygons."
+        "CSV is not allowed for polygons.",
+        "Depression polygons", "param", "write_depression_polygons"
     };
 
 
@@ -531,17 +555,20 @@ int main(int argc, char* argv[])
     help_map["write_hillshade_raster"] = {"bool","false",
         "Write a hillshade raster.",
         "Uses the Zevenbergen and Thorne (1987) algorithm. "
-        "Computed from the filled DEM when write_fill_raster is also true."};
+        "Computed from the filled DEM when write_fill_raster is also true.",
+        "Hillshade", "switch", ""};
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
         "Sun azimuth in degrees clockwise from north.",
-        "315 (northwest) is the cartographic convention."};
+        "315 (northwest) is the cartographic convention.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
     help_map["hillshade_altitude"] = {"float","45",
         "Sun altitude above the horizon in degrees.",
-        "45 degrees is a typical default."};
+        "45 degrees is a typical default.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     // --- Mosaic ---
     string_default_map["mosaic_file_list"] = "";
@@ -554,28 +581,33 @@ int main(int argc, char* argv[])
         "over earlier ones in overlap regions, matching gdal_merge.py default). "
         "The mosaic is written to write_path/write_fname_mosaic.tif and used "
         "as the input DEM for all subsequent pipeline steps. "
-        "Lines starting with # and blank lines are ignored in the file list."};
+        "Lines starting with # and blank lines are ignored in the file list.",
+        "Mosaic", "switch", ""};
 
     float_default_map["hillshade_z_factor"] = 1.0f;
     help_map["hillshade_z_factor"] = {"float","1.0",
         "Vertical exaggeration factor applied before computing hillshade.",
-        "Values greater than 1 emphasise relief in flat terrain."};
+        "Values greater than 1 emphasise relief in flat terrain.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     bool_default_map["write_multidirectional_hillshade_raster"] = false;
     help_map["write_multidirectional_hillshade_raster"] = {"bool","false",
         "Write a multidirectional hillshade raster.",
         "Computes hillshade from multiple azimuths and writes the mean "
-        "illumination raster to reduce directional bias."};
+        "illumination raster to reduce directional bias.",
+        "Hillshade", "switch", ""};
 
     int_default_map["multidirectional_hillshade_n_directions"] = 8;
     help_map["multidirectional_hillshade_n_directions"] = {"int","8",
         "Number of evenly spaced azimuth directions used for multidirectional hillshade.",
-        "Must be >= 2. Typical values are 8 to 16."};
+        "Must be >= 2. Typical values are 8 to 16.",
+        "Hillshade", "param", "write_multidirectional_hillshade_raster"};
 
     float_default_map["multidirectional_hillshade_start_azimuth"] = 0.0f;
     help_map["multidirectional_hillshade_start_azimuth"] = {"float","0.0",
         "Starting azimuth in degrees clockwise from north for multidirectional hillshade.",
-        "Subsequent azimuths are sampled uniformly around 360 degrees."};
+        "Subsequent azimuths are sampled uniformly around 360 degrees.",
+        "Hillshade", "param", "write_multidirectional_hillshade_raster"};
 
     // --- Vector clipping ---
     bool_default_map["clip_vector_data_to_raster"] = false;
@@ -583,20 +615,23 @@ int main(int argc, char* argv[])
         "Clip a vector file to the bounding box of the output raster.",
         "The vector CRS need not match the raster CRS - the raster bbox is "
         "reprojected into the vector's native CRS before clipping. "
-        "Set vector_data_fname to the path of the input vector file."};
+        "Set vector_data_fname to the path of the input vector file.",
+        "Vector clipping", "switch", ""};
 
     string_default_map["vector_data_fname"] = "";
     help_map["vector_data_fname"] = {"string","",
         "Path to the input vector file to clip.",
         "Any OGR-readable format is accepted (Shapefile, GeoPackage, "
         "FlatGeobuf, GeoJSON, etc.). Required when "
-        "clip_vector_data_to_raster is true."};
+        "clip_vector_data_to_raster is true.",
+        "Vector clipping", "param", "clip_vector_data_to_raster"};
 
     string_default_map["vector_clip_output_format"] = "flatgeobuf";
     help_map["vector_clip_output_format"] = {"string","flatgeobuf",
         "Output format for the clipped vector file.",
         "Allowed values: flatgeobuf, fgb, gpkg. "
-        "FlatGeobuf is preferred, especially on WSL2."};
+        "FlatGeobuf is preferred, especially on WSL2.",
+        "Vector clipping", "param", "clip_vector_data_to_raster"};
 
     // --- Clip raster to polygon ---
     bool_default_map["clip_raster_to_polygon"] = false;
@@ -609,14 +644,16 @@ int main(int argc, char* argv[])
         "If the file contains more than one polygon, a warning is issued and "
         "only the first polygon is used. "
         "Set polygon_clip_fname to the path of the polygon file. "
-        "Output suffix: _polygon_clipped.tif"};
+        "Output suffix: _polygon_clipped.tif",
+        "Clip raster to polygon", "switch", ""};
 
     string_default_map["polygon_clip_fname"] = "";
     help_map["polygon_clip_fname"] = {"string","",
         "Path to the polygon vector file used to clip the DEM.",
         "Any OGR-readable polygon format is accepted (GeoPackage, FlatGeobuf, "
         "Shapefile, GeoJSON, etc.). The first layer and first polygon are used. "
-        "Required when clip_raster_to_polygon is true."};
+        "Required when clip_raster_to_polygon is true.",
+        "Clip raster to polygon", "param", "clip_raster_to_polygon"};
 
     bool_default_map["force_rectangular_raster"] = false;
     help_map["force_rectangular_raster"] = {"bool","false",
@@ -625,7 +662,8 @@ int main(int argc, char* argv[])
         "outside the polygon shape are set to nodata. "
         "If true, all pixels within the bounding box are kept regardless of "
         "whether they fall inside the polygon - the output is a plain "
-        "rectangular crop. Only used when clip_raster_to_polygon is true."};
+        "rectangular crop. Only used when clip_raster_to_polygon is true.",
+        "Clip raster to polygon", "param", "clip_raster_to_polygon"};
 
     string_default_map["polygon_clip_rule"] = "majority_coverage";
     help_map["polygon_clip_rule"] = {"string","majority_coverage",
@@ -635,7 +673,8 @@ int main(int argc, char* argv[])
         "any_coverage: pixel is kept if the polygon touches any part of it. "
         "majority_coverage: pixel is kept if the polygon centre falls inside "
         "(approximately 50% coverage, default). "
-        "full_coverage: pixel is kept only if the polygon covers it fully."};
+        "full_coverage: pixel is kept only if the polygon covers it fully.",
+        "Clip raster to polygon", "param", "clip_raster_to_polygon"};
 
     // --- Point sampling ---
     bool_default_map["sample_rasters_to_points"] = false;
@@ -643,7 +682,8 @@ int main(int argc, char* argv[])
         "Sample a list of rasters onto a point dataset.",
         "Reads a point dataset and a CSV file with columns raster,attribute. "
         "Each raster is sampled at each point and written as a new attribute "
-        "in an output point file."};
+        "in an output point file.",
+        "Point sampling", "switch", ""};
 
     string_default_map["point_data_fname"] = "";
     help_map["point_data_fname"] = {"string","",
@@ -651,28 +691,56 @@ int main(int argc, char* argv[])
         "Recommended input is an OGR-readable point vector file such as "
         "FlatGeobuf, GeoPackage, Shapefile, or GeoJSON. "
         "CSV latitude/longitude support can also be added, but vector input is "
-        "the cleanest first implementation because existing attributes are preserved."};
+        "the cleanest first implementation because existing attributes are preserved.",
+        "Point sampling", "param", "sample_rasters_to_points"};
 
     string_default_map["point_data_layer_name"] = "";
     help_map["point_data_layer_name"] = {"string","",
         "Optional layer name for the input point dataset.",
-        "If empty, the first layer is used, or the only layer if the file has one."};
+        "If empty, the first layer is used, or the only layer if the file has one.",
+        "Point sampling", "param", "sample_rasters_to_points"};
 
     string_default_map["raster_attribute_csv"] = "";
     help_map["raster_attribute_csv"] = {"string","",
         "CSV file listing rasters to sample, with columns raster,attribute.",
         "The raster column gives the raster filename or path. "
         "The attribute column gives the name of the output attribute to append "
-        "to the point file."};
+        "to the point file.",
+        "Point sampling", "param", "sample_rasters_to_points"};
 
     string_default_map["sampled_points_output_format"] = "flatgeobuf";
     help_map["sampled_points_output_format"] = {"string","flatgeobuf",
         "Output format for sampled point data.",
         "Allowed values: flatgeobuf, fgb, gpkg. "
-        "FlatGeobuf is recommended."};
+        "FlatGeobuf is recommended.",
+        "Point sampling", "param", "sample_rasters_to_points"};
 
 
 
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Parse - fills maps from the parameter file, falling back to defaults
@@ -1700,6 +1768,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo - always printed so runs are reproducible from the log
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-raster-preprocessing: done.\n";

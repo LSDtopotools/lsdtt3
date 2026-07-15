@@ -725,29 +725,42 @@ CLI source files follow this layout, in order:
 4. `print_banner()` — fixed-width box to stdout
 5. helper free functions (if unavoidable — see helper rule below)
 6. `main()`:
-   a. call `print_banner()` and `lsdtt_param_parser::parse_args()`
-   b. construct `lsdtt_param_parser`
-   c. declare all five maps and fill defaults + help (see below)
-   d. call `parse_all_parameters`
-   e. read results back from the parser
-   f. cross-parameter validation / derived values
-   g. load DEM and verify projection
-   h. build flow routing and channel network (if needed)
-   i. run analysis pipeline
-   j. write outputs
-   k. call `pp.print_help(...)` then `pp.print_parameters()`
+   a. call `print_banner()` and `lsdtt_param_parser::parse_args_deferred()`
+   b. declare all five maps and fill defaults + help (see below)
+   c. if `cli_args.help_requested`, call
+      `lsdtt_param_parser::print_terminal_help(...)` and return 0
+      (help is rendered from the declarations, so no parameter file is needed)
+   d. construct `lsdtt_param_parser` from `cli_args.path` / `cli_args.fname`
+   e. call `parse_all_parameters`
+   f. read results back from the parser
+   g. cross-parameter validation / derived values
+   h. load DEM and verify projection
+   i. build flow routing and channel network (if needed)
+   j. run analysis pipeline
+   k. write outputs
+   l. call `pp.print_help(...)` then `pp.print_parameters()`
+
+Legacy note: un-migrated CLIs still call `parse_args()` (which handles `-h`
+with a short usage message and exits) and construct the parser before the
+maps. Migrate to the deferred flow when touching a CLI; see
+`cli/lsdtt-raster-preprocessing.cpp` and `cli/lsdtt-channel-extraction.cpp`
+for the migrated pattern and `docs/cli_help_plan.md` for the design.
 
 ### Parameter map pattern (mandatory)
 
 Every CLI declares exactly **five maps**:
 
 ```cpp
-std::map<std::string, bool>                     bool_default_map;
-std::map<std::string, float>                    float_default_map;
-std::map<std::string, int>                      int_default_map;
-std::map<std::string, std::string>              string_default_map;
-std::map<std::string, std::vector<std::string>> help_map;
+std::map<std::string, bool>        bool_default_map;
+std::map<std::string, float>       float_default_map;
+std::map<std::string, int>         int_default_map;
+std::map<std::string, std::string> string_default_map;
+lsdtt::lsdtt_help_registry         help_map;
 ```
+
+(`lsdtt_help_registry` is a drop-in replacement for the older
+`std::map<std::string, std::vector<std::string>>` that additionally records
+declaration order so `-h` can group parameters in pipeline order.)
 
 For every parameter, the default and the help entry are declared on **consecutive lines**:
 
@@ -757,16 +770,27 @@ float_default_map["my_param_m"] = 10.0f;
 help_map["my_param_m"] = {"float","10.0",
     "Short one-line description including units [m].",
     "Longer explanation: valid range, physical meaning, cross-references to "
-    "related parameters, caveats. Be specific about units and defaults."};
+    "related parameters, caveats. Be specific about units and defaults.",
+    "Section label", "param", "write_my_raster"};
 
 bool_default_map["write_my_raster"] = false;
 help_map["write_my_raster"] = {"bool","false",
     "Write the result raster.",
-    "Output file: <write_fname>_my_result.tif."};
+    "Output file: <write_fname>_my_result.tif.",
+    "Section label", "switch", ""};
 ```
 
-The `help_map` entry format is always `{type_string, default_string, short_desc, long_desc}`.
-Valid type strings: `"bool"`, `"int"`, `"float"`, `"string"`.
+The `help_map` entry format is
+`{type, default, short_desc, long_desc, group, role, parent}`:
+
+- `type`: `"bool"`, `"int"`, `"float"`, or `"string"`.
+- `group`: must match the `// --- Section label ---` comment above the block.
+- `role`: `"switch"` (bool/enum that enables an analysis or output),
+  `"param"` (tunes an analysis), or `"io"` (paths, formats, threading).
+- `parent`: the switch key this parameter belongs to; `""` if none.
+
+Entries with only the first four elements remain valid (legacy CLIs) but all
+new parameters must declare all seven.
 
 ### Parsing and reading parameters back
 
@@ -793,14 +817,14 @@ Parameters are not declared `const` because cross-parameter logic may adjust the
 At the end of every successful run:
 
 ```cpp
-pp.print_help(
-    help_map,
-    pp.get_full_write_path() + "_README",
-    k_version,
-    k_citation
-);
+pp.print_help(help_map, pp.get_write_fname() + "_README",
+              k_version, k_citation);
 pp.print_parameters();
 ```
+
+Note: `print_help` prepends `write_path_` internally, so pass
+`get_write_fname()` (not `get_full_write_path()`, which would double the
+path).
 
 `print_help` writes a CSV and an HTML reference file alongside the outputs so
 users can look up every parameter, its type, default, and description without

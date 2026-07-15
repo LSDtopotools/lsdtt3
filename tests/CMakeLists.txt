@@ -161,3 +161,13 @@ add_lsdtt_cli_smoke_test(
     tiny_chi_fit_nodes_mn_0p500.csv
     --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:5ef85f68c63b5bd16d45051be2a2a645fd48c73a98123024724e58987902adab
 )
+
+# -----------------------------------------------------------------------------
+# C++ unit tests
+# -----------------------------------------------------------------------------
+
+add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
+target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
+
+add_test(NAME unit_param_parser_help COMMAND lsdtt-test-param-parser-help)
+set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
