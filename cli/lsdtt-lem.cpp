@@ -503,6 +503,42 @@ int main(int argc, char* argv[])
         "Must match the DEM grid. Empty (default) = derive channels from "
         "incision_threshold_area. Useful for prescribed-channel / hillslope-strip runs."};
 
+    bool_default_map["hold_channel_mask_fixed"] = false;
+    help_map["hold_channel_mask_fixed"] = {"bool","false",
+        "Hold the channel_mask_fname pixels at fixed elevation through every step.",
+        "Requires channel_mask_fname. The masked pixels join the open-edge boundary "
+        "pixels as fixed-elevation cells, so uplift does not lift the channel network "
+        "away from the hillslopes relaxing toward it. Use for hillslopes-only runs on a "
+        "frozen network; leave false for coupled runs where the channels must incise."};
+
+    bool_default_map["write_channel_mask_raster"] = false;
+    help_map["write_channel_mask_raster"] = {"bool","false",
+        "Write the hillslope Dirichlet channel mask (1 = channel).",
+        "Output file: <write_fname>_channel_mask.tif for the final topography, plus "
+        "<write_fname>_model_iteration_<N>_channel_mask.tif at every output frame when "
+        "frequency_of_output_writing > 0 (the migrating network of an animation). The mask "
+        "is the one the hillslope step would use: the channel_mask_fname raster when "
+        "supplied, else the pixels whose D-infinity drainage area reaches "
+        "incision_threshold_area (or channel_mask_threshold_area). Feed it back in as "
+        "channel_mask_fname to freeze a fluvially-evolved network for a hillslopes-only run."};
+
+    bool_default_map["write_erosion_rate_raster"] = false;
+    help_map["write_erosion_rate_raster"] = {"bool","false",
+        "Write the per-pixel erosion rate (m/yr, positive = erosion, uplift backed out).",
+        "Output file: <write_fname>_model_iteration_<N>_erosion_rate.tif at every output "
+        "frame (needs frequency_of_output_writing > 0), plus <write_fname>_erosion_rate.tif "
+        "for the final step. This is the field in which a transient pulse of incision is "
+        "visible: knickpoints appear as a band of high erosion rate migrating up the "
+        "channel network. Deposition appears as negative values."};
+
+    float_default_map["channel_mask_threshold_area"] = 0.0f;
+    help_map["channel_mask_threshold_area"] = {"float","0",
+        "Drainage-area threshold defining the written channel mask (0 = use incision_threshold_area).",
+        "Only affects write_channel_mask_raster; the model itself is unchanged. Lets a run "
+        "erode fluvially everywhere (incision_threshold_area: 0) while still writing a "
+        "channel network defined at a positive area threshold. Same units as "
+        "incision_threshold_area (see divide_area_by_dx)."};
+
     bool_default_map["enable_uplift"] = true;
     help_map["enable_uplift"] = {"bool","true",
         "Apply uniform tectonic uplift.",
@@ -512,7 +548,29 @@ int main(int argc, char* argv[])
     float_default_map["uplift_rate"] = 1e-4f;
     help_map["uplift_rate"] = {"float","1e-4",
         "Tectonic uplift rate (m/yr).",
-        "Applied uniformly to all valid pixels."};
+        "Applied uniformly to all valid pixels. Constant unless overridden by "
+        "forcing_history_fname."};
+
+    float_default_map["baselevel_fall_rate"] = 0.0f;
+    help_map["baselevel_fall_rate"] = {"float","0",
+        "Rate at which base level falls (m/yr, positive = down).",
+        "The fixed-elevation boundary pixels are lowered at this rate instead of being "
+        "held at their pre-step elevation, so a wave of incision propagates up the "
+        "channel network. 0 (default) = static base level. Constant unless overridden "
+        "by forcing_history_fname."};
+
+    string_default_map["forcing_history_fname"] = "";
+    help_map["forcing_history_fname"] = {"string","",
+        "Optional CSV (in read_path) making uplift_rate and baselevel_fall_rate functions of model time.",
+        "Columns: time_yr, uplift_rate, baselevel_fall_rate (the latter two optional, "
+        "default 0; any column order). Applied as a piecewise-constant step function of "
+        "model time -- the row in force is the last one with time_yr <= t -- so a pulse "
+        "has sharp on/off edges. Overrides the constant uplift_rate and "
+        "baselevel_fall_rate parameters for the whole run. Use it to impose a pulse of "
+        "incision: a window of rapid base-level fall that sends knickpoints up the "
+        "network, which the hillslopes then respond to. The forcing actually applied at "
+        "each step is recorded in the uplift_rate / baselevel_fall_rate columns of "
+        "<write_fname>_model_elevation_stats.csv."};
 
     float_default_map["erodibility"] = 1e-3f;
     help_map["erodibility"] = {"float","1e-3",
@@ -725,6 +783,8 @@ int main(int argc, char* argv[])
     opts.critical_hillslope_slope        = ff["critical_hillslope_slope"];
     opts.deposit_on_hillslope_baselevels = true;
     opts.uplift_rate                     = ff["uplift_rate"];
+    opts.baselevel_fall_rate             = ff["baselevel_fall_rate"];
+    opts.compute_erosion_rate_field      = bf["write_erosion_rate_raster"];
     opts.enable_d8_fluvial_erosion       = bf["enable_d8_fluvial_erosion"];
     opts.enable_dinf_fluvial_erosion     = bf["enable_dinf_fluvial_erosion"];
     // Safeguard: If D-inf was explicitly requested, turn off D8
@@ -997,6 +1057,76 @@ int main(int argc, char* argv[])
     };
 
     enforce_baselevel(); // Clear off any white/red/fractal noise immediately
+
+    // Lambda to write the hillslope Dirichlet channel mask of a surface, so a
+    // fluvial run can freeze its network for a later hillslopes-only run, and so an
+    // animation can show the network migrating.  `descriptor` names the output.
+    auto write_channel_mask = [&](const lsdtt::lsdtt_raster_cpu& final_dem,
+                                  const std::string& descriptor) {
+        if (!bf["write_channel_mask_raster"]) return;
+
+        const std::string mask_path =
+            pp.make_output_path(descriptor, fmt_ext(out_fmt));
+        std::cout << "Writing channel mask: " << mask_path << "\n";
+        try
+        {
+            // The mask may be defined at its own area threshold, so that a run
+            // eroding fluvially everywhere can still emit a channel network.
+            lsdtt::lsdtt_lem_options mask_opts = opts;
+            if (ff["channel_mask_threshold_area"] > 0.0f)
+                mask_opts.incision_threshold_area = ff["channel_mask_threshold_area"];
+
+            const std::vector<std::uint8_t> is_channel =
+                lsdtt::compute_lem_channel_mask(final_dem, mask_opts);
+
+            const std::vector<std::uint8_t>& valid = final_dem.get_mask();
+            const lsdtt::lsdtt_raster_meta&  mm    = final_dem.get_meta();
+            const float ndv = static_cast<float>(mm.no_data_value);
+
+            std::vector<float> mask_z(is_channel.size());
+            std::size_t n_ch = 0;
+            for (std::size_t i = 0; i < is_channel.size(); ++i)
+            {
+                if (!valid[i]) { mask_z[i] = ndv; continue; }
+                mask_z[i] = is_channel[i] ? 1.0f : 0.0f;
+                if (is_channel[i]) ++n_ch;
+            }
+            std::cout << "  channel pixels: " << n_ch << "\n";
+
+            loader.write_full(mask_z, mm, mask_path, out_fmt);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: channel mask write failed: " << e.what() << "\n";
+        }
+    };
+
+    // Lambda to write the per-pixel erosion rate of a step (m/yr).  The field comes
+    // straight from the step statistics, so it is the rate the model actually
+    // applied over that step, not a re-derivation.
+    auto write_erosion_rate = [&](const std::vector<float>& erosion_rate,
+                                  const lsdtt::lsdtt_raster_cpu& state,
+                                  const std::string& descriptor) {
+        if (!bf["write_erosion_rate_raster"] || erosion_rate.empty()) return;
+
+        const std::string path = pp.make_output_path(descriptor, fmt_ext(out_fmt));
+        try
+        {
+            const std::vector<std::uint8_t>& valid = state.get_mask();
+            const lsdtt::lsdtt_raster_meta&  mm    = state.get_meta();
+            const float ndv = static_cast<float>(mm.no_data_value);
+
+            std::vector<float> e = erosion_rate;
+            for (std::size_t i = 0; i < e.size() && i < valid.size(); ++i)
+                if (!valid[i]) e[i] = ndv;
+
+            loader.write_full(e, mm, path, out_fmt);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: erosion rate write failed: " << e.what() << "\n";
+        }
+    };
 
 
     // -------------------------------------------------------------------------
@@ -1373,6 +1503,8 @@ int main(int argc, char* argv[])
             }
         }
 
+        write_channel_mask(ss_result.elevation, "_channel_mask");
+
         pp.print_parameters();
         return 0;
     }
@@ -1394,6 +1526,65 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
+    // Pixels held at fixed elevation through every step: the open-edge boundary
+    // pixels, plus — when hold_channel_mask_fixed is set — the explicit channel
+    // mask.  Holding the channels fixed freezes the network, so uplift cannot
+    // lift it away from the hillslopes that are relaxing toward it.  This is
+    // built after the enforce_baselevel calls above, which must only ever snap
+    // the domain edges to base level, never the channels.
+    // -------------------------------------------------------------------------
+    std::vector<std::int64_t> fixed_flats = boundary_flats;
+    if (bf["hold_channel_mask_fixed"] && !opts.explicit_channel_mask.empty())
+    {
+        for (std::size_t i = 0; i < opts.explicit_channel_mask.size(); ++i)
+            if (opts.explicit_channel_mask[i])
+                fixed_flats.push_back(static_cast<std::int64_t>(i));
+
+        std::sort(fixed_flats.begin(), fixed_flats.end());
+        fixed_flats.erase(std::unique(fixed_flats.begin(), fixed_flats.end()),
+                          fixed_flats.end());
+        std::cout << "Channel mask held at fixed elevation; fixed pixels: "
+                  << fixed_flats.size() << "\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // Optional time-varying forcing (uplift rate and/or base-level fall as step
+    // functions of model time -- e.g. a pulse of incision).  When absent the
+    // constant uplift_rate / baselevel_fall_rate parameters are used throughout.
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_lem_forcing_history forcing;
+    if (!sf["forcing_history_fname"].empty())
+    {
+        const std::string forcing_path =
+            pp.get_read_path() + sf["forcing_history_fname"];
+        std::cout << "Loading forcing history: " << forcing_path << "\n";
+        try
+        {
+            forcing = lsdtt::load_lem_forcing_history(forcing_path);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: could not load forcing history: " << e.what() << "\n";
+            return 1;
+        }
+
+        if (forcing.empty())
+        {
+            std::cerr << "FATAL: forcing history " << forcing_path
+                      << " has no data rows.\n";
+            return 1;
+        }
+
+        std::cout << "  " << forcing.points.size() << " forcing intervals:\n";
+        for (const auto& p : forcing.points)
+        {
+            std::cout << "    t >= " << std::setw(12) << p.time_yr << " yr :"
+                      << "  U = " << p.uplift_rate << " m/yr"
+                      << "   baselevel fall = " << p.baselevel_fall_rate << " m/yr\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Prepare stats CSV
     // -------------------------------------------------------------------------
     const std::string stats_csv_path = pp.make_output_path( "_model_elevation_stats", ".csv");
@@ -1402,7 +1593,8 @@ int main(int argc, char* argv[])
         "iteration", "time_yr",
         "delta_max_z", "delta_mean_z",
         "max_local_delta_z",
-        "mean_erosion_rate", "max_erosion_rate"
+        "mean_erosion_rate", "max_erosion_rate",
+        "uplift_rate", "baselevel_fall_rate"
     };
 
     // -------------------------------------------------------------------------
@@ -1412,7 +1604,6 @@ int main(int argc, char* argv[])
     const int    write_freq      = ifs["frequency_of_output_writing"];
     const bool   steady_state    = bf["stop_at_steady_state"];
     const float  dt              = opts.timestep;
-    const float  U               = opts.uplift_rate;
 
     // Steady-state detection state
     int   ss_consecutive = 0;
@@ -1425,16 +1616,29 @@ int main(int argc, char* argv[])
     float total_time = 0.0f;
     int   iter       = 0;
 
+    // Kept so the final erosion-rate raster is the rate of the last step actually run.
+    lsdtt::lsdtt_lem_step_stats last_stats{};
+
     auto do_step = [&]()
     {
         try
         {
-            auto [next, stats] = lsdtt::run_lem_step(current, opts, boundary_flats);
+            // Time-varying forcing: the step from total_time to total_time + dt is
+            // driven by the forcing in force at the start of the step.
+            if (!forcing.empty())
+            {
+                const lsdtt::lsdtt_lem_forcing_point f = forcing.at(total_time);
+                opts.uplift_rate         = f.uplift_rate;
+                opts.baselevel_fall_rate = f.baselevel_fall_rate;
+            }
+
+            auto [next, stats] = lsdtt::run_lem_step(current, opts, fixed_flats);
             current    = std::move(next);
+            last_stats = stats;
             total_time += dt;
             ++iter;
 
-            // Store stats
+            // Store stats, including the forcing actually applied this step
             stats_rows.push_back({
                 std::to_string(iter),
                 std::to_string(total_time),
@@ -1442,7 +1646,9 @@ int main(int argc, char* argv[])
                 std::to_string(stats.delta_mean_elevation),
                 std::to_string(stats.max_local_elevation_change),
                 std::to_string(stats.mean_erosion_rate),
-                std::to_string(stats.max_erosion_rate)
+                std::to_string(stats.max_erosion_rate),
+                std::to_string(opts.uplift_rate),
+                std::to_string(opts.baselevel_fall_rate)
             });
 
             // Progress reporting every 10 steps
@@ -1456,17 +1662,23 @@ int main(int argc, char* argv[])
                           << std::defaultfloat;
             }
 
-              // Intermediate raster
+              // Intermediate rasters: the animation frame for this iteration --
+              // elevation, plus the erosion rate and channel network that show a
+              // pulse of incision working its way up the network.
             if (write_freq > 0 && iter % write_freq == 0)
             {
-                const std::string p = pp.make_output_path("_model_iteration_" + std::to_string(iter), fmt_ext(out_fmt));
-                try { 
-                    safe_write(current, p); 
+                const std::string frame = "_model_iteration_" + std::to_string(iter);
+                const std::string p = pp.make_output_path(frame, fmt_ext(out_fmt));
+                try {
+                    safe_write(current, p);
                 }
                 catch (const std::exception& e)
                 {
                     std::cerr << "Warning: intermediate write failed: " << e.what() << "\n";
                 }
+
+                write_erosion_rate(stats.erosion_rate, current, frame + "_erosion_rate");
+                write_channel_mask(current, frame + "_channel_mask");
             }
 
             return stats;
@@ -1498,6 +1710,9 @@ int main(int argc, char* argv[])
             if (!ss_phase2)
             {
                 // Phase 1: detect steady state
+                // Read the uplift rate back from opts, not a value cached before the
+                // loop: under a forcing history it changes from step to step.
+                const float U   = opts.uplift_rate;
                 const float tol = 0.01f * U;
                 if (std::abs(stats.mean_erosion_rate - U) < tol)
                     ++ss_consecutive;
@@ -1546,6 +1761,9 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
+
+    write_erosion_rate(last_stats.erosion_rate, current, "_erosion_rate");
+    write_channel_mask(current, "_channel_mask");
 
     // -------------------------------------------------------------------------
     // Write stats CSV

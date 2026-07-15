@@ -11,6 +11,10 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <fstream>
+#include <optional>
+#include <sstream>
+#include <stdexcept>
 #include <vector>
 
 #include "lsdtt_flowgraph_cpu.hpp"
@@ -21,6 +25,166 @@
 
 namespace lsdtt
 {
+
+namespace
+{
+
+// Shared core of the channel-mask logic: the explicit mask when the caller
+// supplied one, else a drainage-area threshold on an already-built flow graph.
+// `flow` may be null when an explicit mask makes the flow graph unnecessary.
+std::vector<uint8_t>
+build_channel_mask(
+    const lsdtt_flowgraph_cpu* flow,
+    const lsdtt_raster_meta&   meta,
+    const lsdtt_lem_options&   opts)
+{
+    const std::int64_t n_cells =
+        static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
+    const float dx = static_cast<float>(meta.cell_size);
+
+    std::vector<uint8_t> is_channel(static_cast<std::size_t>(n_cells), 0);
+
+    if (opts.explicit_channel_mask.size() == static_cast<std::size_t>(n_cells))
+    {
+        for (std::int64_t flat = 0; flat < n_cells; ++flat)
+            is_channel[static_cast<std::size_t>(flat)] =
+                opts.explicit_channel_mask[static_cast<std::size_t>(flat)] ? 1 : 0;
+    }
+    else if (opts.incision_threshold_area > 0.0f && flow != nullptr)
+    {
+        std::vector<double> area = flow->accumulate();
+        for (std::int64_t flat = 0; flat < n_cells; ++flat)
+        {
+            if (!flow->is_valid_flat(flat)) continue;
+            double a = area[static_cast<std::size_t>(flat)];
+            if (opts.divide_area_by_dx) a /= static_cast<double>(dx);
+            if (a >= static_cast<double>(opts.incision_threshold_area))
+                is_channel[static_cast<std::size_t>(flat)] = 1;
+        }
+    }
+    return is_channel;
+}
+
+// The D-infinity flow graph the hillslope step builds for channel identification.
+lsdtt_flowgraph_cpu
+build_hillslope_flowgraph(
+    const lsdtt_raster_cpu&  dem,
+    const lsdtt_lem_options& opts)
+{
+    lsdtt_flowgraph_options fg_opts;
+    fg_opts.boundary_conditions       = opts.boundary_conditions;
+    fg_opts.interior_nodata_is_outlet = true;
+    fg_opts.method                    = lsdtt_flowgraph_method::d_infinity;
+    fg_opts.n_threads                 = opts.n_threads;
+
+    return lsdtt_flowgraph_cpu(
+        dem.get_data_array(),
+        dem.get_mask_array(),
+        dem.get_meta(),
+        fg_opts
+    );
+}
+
+} // namespace
+
+lsdtt_lem_forcing_point
+lsdtt_lem_forcing_history::at(float time_yr) const
+{
+    if (points.empty()) return lsdtt_lem_forcing_point{};
+
+    // Piecewise constant: the last row whose time_yr <= t.  Before the first
+    // row, the first row applies.
+    lsdtt_lem_forcing_point in_force = points.front();
+    for (const lsdtt_lem_forcing_point& p : points)
+    {
+        if (p.time_yr > time_yr) break;
+        in_force = p;
+    }
+    return in_force;
+}
+
+lsdtt_lem_forcing_history
+load_lem_forcing_history(const std::string& csv_path)
+{
+    std::ifstream in(csv_path);
+    if (!in.is_open())
+        throw std::runtime_error("could not open forcing history CSV: " + csv_path);
+
+    auto split = [](const std::string& line)
+    {
+        std::vector<std::string> cells;
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, ','))
+        {
+            // trim whitespace
+            const auto b = cell.find_first_not_of(" \t\r\n");
+            const auto e = cell.find_last_not_of(" \t\r\n");
+            cells.push_back(b == std::string::npos
+                                ? std::string()
+                                : cell.substr(b, e - b + 1));
+        }
+        return cells;
+    };
+
+    std::string line;
+    if (!std::getline(in, line))
+        throw std::runtime_error("forcing history CSV is empty: " + csv_path);
+
+    // Column order is taken from the header, so columns may appear in any order.
+    const std::vector<std::string> header = split(line);
+    int col_time = -1, col_uplift = -1, col_fall = -1;
+    for (std::size_t i = 0; i < header.size(); ++i)
+    {
+        if (header[i] == "time_yr")             col_time   = static_cast<int>(i);
+        else if (header[i] == "uplift_rate")    col_uplift = static_cast<int>(i);
+        else if (header[i] == "baselevel_fall_rate") col_fall = static_cast<int>(i);
+    }
+    if (col_time < 0)
+        throw std::runtime_error(
+            "forcing history CSV needs a time_yr column: " + csv_path);
+
+    lsdtt_lem_forcing_history hist;
+    while (std::getline(in, line))
+    {
+        if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
+
+        const std::vector<std::string> cells = split(line);
+        auto cell_value = [&](int col) -> float
+        {
+            if (col < 0 || col >= static_cast<int>(cells.size())) return 0.0f;
+            if (cells[static_cast<std::size_t>(col)].empty())      return 0.0f;
+            return std::stof(cells[static_cast<std::size_t>(col)]);
+        };
+
+        lsdtt_lem_forcing_point p;
+        p.time_yr             = cell_value(col_time);
+        p.uplift_rate         = cell_value(col_uplift);
+        p.baselevel_fall_rate = cell_value(col_fall);
+        hist.points.push_back(p);
+    }
+
+    std::sort(hist.points.begin(), hist.points.end(),
+              [](const lsdtt_lem_forcing_point& a, const lsdtt_lem_forcing_point& b)
+              { return a.time_yr < b.time_yr; });
+
+    return hist;
+}
+
+std::vector<std::uint8_t>
+compute_lem_channel_mask(
+    const lsdtt_raster_cpu&  dem,
+    const lsdtt_lem_options& opts)
+{
+    // An explicit mask needs no flow graph at all.
+    const std::size_t n_cells =
+        static_cast<std::size_t>(dem.get_meta().n_rows) * dem.get_meta().n_cols;
+    if (opts.explicit_channel_mask.size() == n_cells)
+        return opts.explicit_channel_mask;
+
+    lsdtt_flowgraph_cpu flow = build_hillslope_flowgraph(dem, opts);
+    return build_channel_mask(&flow, dem.get_meta(), opts);
+}
 
 std::pair<lsdtt_raster_cpu, lsdtt_lem_step_stats>
 run_lem_step(
@@ -126,52 +290,28 @@ run_lem_step(
                 opts.boundary_conditions
             );
         }
-        else 
+        else
         {
-            // The linear/roering and cidre hillslope options require a flow
-            // graph to be made.
-            lsdtt_flowgraph_options fg_opts;
-            fg_opts.boundary_conditions       = opts.boundary_conditions;
-            fg_opts.interior_nodata_is_outlet = true;
-            fg_opts.method                    = lsdtt_flowgraph_method::d_infinity;
-            fg_opts.n_threads                 = opts.n_threads;
+            // Cidre routes sediment on the flow graph, so it always needs one.
+            // The explicit-FD models (linear / roering / roering_implicit) use the
+            // flow graph only to identify channels — which an explicit channel mask
+            // already does — so skip the rebuild in that case.  It is otherwise
+            // rebuilt every step, and on a long fixed-network run that dominates.
+            const bool have_explicit_mask =
+                opts.explicit_channel_mask.size() == n_cells;
+            const bool is_cidre = (opts.hillslope_transport_model == "cidre");
 
-            lsdtt_flowgraph_cpu flow_hillslope(
-                current.get_data_array(),
-                current.get_mask_array(),
-                current.get_meta(),
-                fg_opts
-            );
+            std::optional<lsdtt_flowgraph_cpu> flow_hillslope;
+            if (is_cidre || !have_explicit_mask)
+                flow_hillslope.emplace(build_hillslope_flowgraph(current, opts));
 
             // Build the Dirichlet channel mask once for the channel-using explicit
             // FD models: prefer an explicit channel mask when supplied (§8), else
             // derive it from the drainage-area threshold.
-            const std::int64_t n_hs =
-                static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
             auto build_is_channel = [&]() -> std::vector<uint8_t>
             {
-                const float dx = static_cast<float>(meta.cell_size);
-                std::vector<uint8_t> is_channel(static_cast<std::size_t>(n_hs), 0);
-                if (opts.explicit_channel_mask.size()
-                        == static_cast<std::size_t>(n_hs))
-                {
-                    for (std::int64_t flat = 0; flat < n_hs; ++flat)
-                        is_channel[static_cast<std::size_t>(flat)] =
-                            opts.explicit_channel_mask[static_cast<std::size_t>(flat)] ? 1 : 0;
-                }
-                else if (opts.incision_threshold_area > 0.0f)
-                {
-                    std::vector<double> area = flow_hillslope.accumulate();
-                    for (std::int64_t flat = 0; flat < n_hs; ++flat)
-                    {
-                        if (!flow_hillslope.is_valid_flat(flat)) continue;
-                        double a = area[static_cast<std::size_t>(flat)];
-                        if (opts.divide_area_by_dx) a /= static_cast<double>(dx);
-                        if (a >= static_cast<double>(opts.incision_threshold_area))
-                            is_channel[static_cast<std::size_t>(flat)] = 1;
-                    }
-                }
-                return is_channel;
+                return build_channel_mask(
+                    flow_hillslope ? &*flow_hillslope : nullptr, meta, opts);
             };
 
             if (opts.hillslope_transport_model == "linear" ||
@@ -232,7 +372,7 @@ run_lem_step(
             else  // "cidre"
             {
                 current = compute_cidre_hillslope_transport(
-                    current, flow_hillslope,
+                    current, *flow_hillslope,
                     opts.hillslope_diffusivity,
                     opts.timestep,
                     opts.enable_nonlinear_hillslopes,
@@ -275,6 +415,10 @@ run_lem_step(
         double max_erosion = 0.0;
         std::int64_t n_valid = 0;
 
+        const double inv_dt_rate = 1.0 / static_cast<double>(opts.timestep);
+        if (opts.compute_erosion_rate_field)
+            stats.erosion_rate.assign(n_cells, 0.0f);
+
         for (std::size_t i = 0; i < n_cells; ++i)
         {
             if (!mask[i])
@@ -297,6 +441,12 @@ run_lem_step(
                 ? static_cast<double>(opts.uplift_rate * opts.timestep)
                 : 0.0;
             const double erosion = zb - (za - uplift_dz);  // positive = erosion
+
+            // The per-pixel field keeps the sign: deposition is a real, negative
+            // erosion rate, and clamping it away would hide sediment accumulation.
+            if (opts.compute_erosion_rate_field)
+                stats.erosion_rate[i] = static_cast<float>(erosion * inv_dt_rate);
+
             if (erosion > 0.0)
             {
                 sum_erosion += erosion;
@@ -316,13 +466,19 @@ run_lem_step(
     }
 
     // -------------------------------------------------------------------------
-    // 5. Restore fixed-elevation boundary pixels
+    // 5. Restore fixed-elevation boundary pixels.
+    //
+    //    With a base-level fall the boundary is not restored to its pre-step
+    //    elevation but lowered by fall_rate * dt, so base level drops away from
+    //    the domain and a wave of incision propagates up the channel network.
     // -------------------------------------------------------------------------
+    const float baselevel_dz = opts.baselevel_fall_rate * opts.timestep;
+
     for (std::size_t i = 0; i < boundary_flats.size(); ++i)
     {
         const auto flat = static_cast<std::size_t>(boundary_flats[i]);
         if (flat < n_cells)
-            z[flat] = boundary_elev[i];
+            z[flat] = boundary_elev[i] - baselevel_dz;
     }
 
     return {std::move(current), stats};

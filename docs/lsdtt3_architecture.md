@@ -2191,22 +2191,56 @@ Per-step sequence:
 1. **Fluvial** — D8 (`compute_d8_stream_power_incision`) or D-inf
    (`compute_dinf_stream_power_incision`); D-inf takes priority and the CLI forces
    D8 off if D-inf is requested.
-2. **Hillslope** (optional) — `adi` runs without a flow graph; `linear` / `roering`
-   build a D-inf graph only for channel identification then apply an explicit FD
-   stencil; `cidre` uses the D-inf topological forward sweep.
+2. **Hillslope** (optional) — `adi` runs without a flow graph; `linear` / `roering` /
+   `roering_implicit` need a D-inf graph only for channel identification, and skip
+   building one entirely when an explicit channel mask is supplied (it is otherwise
+   rebuilt every step, which dominates a long fixed-network run); `cidre` always
+   builds one, because it routes sediment on the D-inf topological forward sweep.
 3. **Uplift** (optional) — uniform `uplift_rate * timestep` added to valid pixels.
-4. **Statistics** — computed full-domain *before* boundary restoration.
+4. **Statistics** — computed full-domain *before* boundary restoration. When
+   `compute_erosion_rate_field` is set, the per-pixel erosion rate (m/yr, uplift
+   backed out, deposition negative) is returned in `lsdtt_lem_step_stats::erosion_rate`.
 5. **Boundary restore** — pixels in `boundary_flats` are reset to their pre-step
-   elevation (fixed-elevation baselevels).
+   elevation (fixed-elevation baselevels), *less* `baselevel_fall_rate * timestep`.
 
 `lsdtt_lem_options` carries all per-step knobs (fluvial K/m/n, threshold area,
-hillslope model + diffusivity + Sc, uplift rate, process switches, boundary
-conditions). `lsdtt_lem_step_stats` reports `delta_max_elevation`,
+hillslope model + diffusivity + Sc, uplift rate, base-level fall rate, process
+switches, boundary conditions). `lsdtt_lem_step_stats` reports `delta_max_elevation`,
 `delta_mean_elevation`, `max_local_elevation_change`, `mean_erosion_rate`,
-`max_erosion_rate`.
+`max_erosion_rate`, and optionally the `erosion_rate` field.
 
 The fluvial flow object is built with `allow_pits_as_outlets = true` because the
 transient LEM surface may contain pits that must not stall routing.
+
+**Channel mask.** `compute_lem_channel_mask(dem, opts)` returns the Dirichlet
+channel set the hillslope step would use for a surface — the explicit mask when
+`opts.explicit_channel_mask` is supplied, else the pixels whose D-inf drainage area
+reaches `incision_threshold_area`. It shares its implementation with the hillslope
+step, so the mask a run *writes* is exactly the one it *used*. The CLI exposes it as
+`write_channel_mask_raster` (with an independent `channel_mask_threshold_area`, so a
+run that erodes fluvially everywhere can still emit a network), which lets a fluvial
+run freeze its network and feed it back as `channel_mask_fname` to a hillslopes-only
+run. `hold_channel_mask_fixed` additionally adds the masked pixels to `boundary_flats`,
+so uplift cannot lift the frozen network away from the hillslopes relaxing toward it.
+
+### Time-varying forcing (pulses of incision)
+
+`lsdtt_lem_forcing_history` (in `lsdtt_lem_cpu`) makes `uplift_rate` and
+`baselevel_fall_rate` functions of model time, read from a CSV
+(`forcing_history_fname`) with columns `time_yr, uplift_rate, baselevel_fall_rate`.
+It is applied as a **piecewise-constant step function** — the row in force at time
+`t` is the last one with `time_yr <= t` — so a pulse has sharp on/off edges rather
+than being smeared across the surrounding rows by interpolation. The CLI resolves
+the forcing at the start of each step, and records what it applied in the
+`uplift_rate` / `baselevel_fall_rate` columns of the stats CSV.
+
+`baselevel_fall_rate` lowers the fixed-elevation boundary pixels instead of
+restoring them, which drops base level away from the domain and sends a wave of
+incision up the channel network. Together with `write_erosion_rate_raster` and
+`write_channel_mask_raster` (both written per frame at every
+`frequency_of_output_writing`), this is what `lsdviztools3`'s
+`render/lem_pulse.py` animates: the pulse is essentially invisible in elevation
+but obvious in the erosion-rate field.
 
 ### lsdtt_stream_power_cpu (transient incision)
 

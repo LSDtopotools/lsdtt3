@@ -235,8 +235,21 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
     {
         // -----------------------------------------------------------------
         // Determine stable sub-step size.
-        // For the nonlinear case scan the current field for α_max.
-        // For the linear case α = 1 and dt_stable is fixed.
+        // For the nonlinear case scan the current field for the largest
+        // tangent modulus.  For the linear case it is 1 and dt_stable is fixed.
+        //
+        // The stability limit of an explicit step is set by the TANGENT
+        // modulus dq_s/dS, not by the secant (effective) diffusivity
+        // D_eff = D/(1-r²) that appears in the flux law.  Linearising
+        // q_s(S) = D·S/(1-r²), r = S/Sc, about the current slope gives
+        //
+        //     dq_s/dS = D · (1 + r²) / (1 - r²)²
+        //
+        // which diverges much faster than D_eff as r -> 1 (a factor
+        // (1+r²)/(1-r²) larger; ~13x at r = 0.93).  Using D_eff here takes
+        // steps far above the true limit on near-critical slopes, which
+        // overshoots, drives faces supercritical, and then runs away through
+        // the singularity.  Perron (2011) makes the same point.
         // -----------------------------------------------------------------
         float dt_sub;
         if (!nonlinear)
@@ -246,9 +259,9 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
         }
         else
         {
-            float alpha_max = 1.0f;
+            float tangent_max = 1.0f;
 #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) reduction(max : alpha_max)
+            #pragma omp parallel for schedule(static) reduction(max : tangent_max)
 #endif
             for (std::int64_t idx = 0; idx < n_cells; ++idx)
             {
@@ -257,7 +270,6 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
 
                 const int row = static_cast<int>(idx / ncols);
                 const int col = static_cast<int>(idx % ncols);
-                const float zc = z[sidx];
 
                 const float zN = nbr_z(row, col, -1,  0);
                 const float zS = nbr_z(row, col, +1,  0);
@@ -267,14 +279,14 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
                 // Full gradient magnitude squared / Sc² at this cell centre
                 const float gx = (zE - zW) / (2.0f * h);
                 const float gy = (zN - zS) / (2.0f * h);
-                const float s2 = std::min((gx*gx + gy*gy) / Sc2, 0.9999f);
-                const float alpha = 1.0f / (1.0f - s2);
-                if (alpha > alpha_max) alpha_max = alpha;
+                const float r2 = std::min((gx*gx + gy*gy) / Sc2, 0.9999f);
 
-                (void)zc;
+                const float one_minus = 1.0f - r2;
+                const float tangent = (1.0f + r2) / (one_minus * one_minus);
+                if (tangent > tangent_max) tangent_max = tangent;
             }
-            // dt_stable = h²/(4·D·α_max)
-            const float dt_stable = h2 / (4.0f * kappa * alpha_max);
+            // dt_stable = h² / (4 · D · max(dq_s/dS)/D)
+            const float dt_stable = h2 / (4.0f * kappa * tangent_max);
             dt_sub = std::min(dt_remaining, dt_stable);
         }
 
