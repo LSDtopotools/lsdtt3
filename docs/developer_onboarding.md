@@ -23,6 +23,10 @@ if (condition)
 
 And we use a 4 space tab for indentation. 
 
+Code text should be ASCII-only in source files, build scripts, and machine-read
+config files. Replace Unicode punctuation/symbols with ASCII equivalents (for
+example `-`, `->`, `<=`, `>=`, `x`).
+
 Output raster parameters follow the convention `write_*_raster`. Algorithm
 selection parameters follow `*_algorithm_choice`. These conventions exist so
 parameter files are self-documenting and consistent across CLIs.

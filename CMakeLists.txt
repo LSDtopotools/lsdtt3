@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(lsdtt3 VERSION 0.2.0 LANGUAGES CXX)
 
+include(CTest)
+
 # =============================================================================
 # C++ standard
 # =============================================================================
@@ -455,6 +457,10 @@ if(LSDTT_HAS_FFTW)
 endif()
 
 lsdtt_cli(lsdtt-chi-analysis cli/lsdtt-chi-analysis.cpp)
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
 
 

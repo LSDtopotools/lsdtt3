@@ -15,6 +15,12 @@ Can also be used as a developer guide.
 - **C++ standard:** C++17
 - **Build system:** CMake 3.15+
 
+### Code text policy
+
+- In source code, build scripts, and machine-read config files, use ASCII characters only.
+- Replace typographic punctuation and Unicode symbols with ASCII equivalents (for example: `-`, `->`, `<=`, `>=`, `x`).
+- Keep Unicode only in user-facing documentation where needed.
+
 ---
 
 ## Directory structure
@@ -2401,4 +2407,3 @@ The `graphflood/` directory contains third-party header-only graph-based flood r
     so `src/core` stays CUDA-free. GPU kernels take POD pointers only (no
     `lsdtt_raster_cpu`/GDAL), accumulate in double for CPU parity, and always have
     a CPU fallback. See `docs/gpu_compute.md`.
-

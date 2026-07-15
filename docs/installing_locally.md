@@ -64,15 +64,14 @@ walkthrough:
 
 ## Windows native (developers only, limited)
 
-This path is intended for plugin/backend developers who need a native Windows
-build for a subset of tools used by the QGIS plugin. It is not the primary
-development route.
+This path is intended for plugin/backend developers who need a native Windows build for a subset of tools used by the QGIS plugin. It is not the primary development route.
 
 Important limitations:
 
 - Full `lsdtt3` functionality is available on Linux (including WSL2).
 - Native Windows builds are currently treated as a reduced-feature profile.
 - Optional components such as Eigen/OpenCV/FFTW may be disabled in this mode.
+- Testing suggests that the Linux version run within a windows computer actually runs faster than versions compiled for Windows and run on Windows. So these builds are really only for use as the backend for the QGIS pluging. 
 
 ### What you need
 
@@ -124,7 +123,14 @@ Microsoft (R) C/C++ Optimizing Compiler Version ... for x64
 
 ### Install GDAL via vcpkg (no admin)
 
-Install `vcpkg` in your user profile and use it to install GDAL:
+
+This installs required dependencies for `lsdtt3` on windows. 
+
+
+> [!WARNING]
+> This process takes a very long time: on a standard laptop in 2026 it took the author of this documentation 2 hours.
+ 
+To install `vcpkg` in your user profile and use it to install GDAL:
 
 ```powershell
 git clone https://github.com/microsoft/vcpkg "$env:USERPROFILE\tools\vcpkg"
