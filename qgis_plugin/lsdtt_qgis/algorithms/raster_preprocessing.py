@@ -1,0 +1,627 @@
+import os
+
+from qgis.core import (
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingException,
+    QgsProcessingOutputRasterLayer,
+    QgsProcessingOutputVectorLayer,
+    QgsProcessingParameterBoolean,
+    QgsProcessingParameterDefinition,
+    QgsProcessingParameterEnum,
+    QgsProcessingParameterFolderDestination,
+    QgsProcessingParameterNumber,
+    QgsProcessingParameterRasterLayer,
+    QgsProcessingParameterString,
+)
+
+from .support import (
+    extension_for_format,
+    require_output,
+    run_lsdtt_tool,
+    split_layer_source,
+)
+
+
+class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
+    INPUT_DEM = "INPUT_DEM"
+    OUTPUT_FOLDER = "OUTPUT_FOLDER"
+    OUTPUT_PREFIX = "OUTPUT_PREFIX"
+    OUTPUT_FORMAT = "OUTPUT_FORMAT"
+    ENFORCE_PROJECTION = "ENFORCE_PROJECTION"
+    MINIMUM_ELEVATION = "MINIMUM_ELEVATION"
+    MAXIMUM_ELEVATION = "MAXIMUM_ELEVATION"
+    WRITE_FILL = "WRITE_FILL"
+    WRITE_BREACHED = "WRITE_BREACHED"
+    WRITE_HILLSHADE = "WRITE_HILLSHADE"
+
+    # Advanced: threading and reprojection
+    THREADS = "THREADS"
+    RESAMPLING_METHOD = "RESAMPLING_METHOD"
+    GRID_SPACING = "GRID_SPACING"
+    FORCE_REPROJECT = "FORCE_REPROJECT"
+    FORCE_RESAMPLING = "FORCE_RESAMPLING"
+    FORCED_GRID_SPACING = "FORCED_GRID_SPACING"
+    ALLOW_LAMBERT = "ALLOW_LAMBERT"
+    WARP_MEM_MB = "WARP_MEM_MB"
+
+    # Advanced: masking and nodata repair
+    BINARY_MASK = "BINARY_MASK"
+    WRITE_NODATA_FILLED = "WRITE_NODATA_FILLED"
+    NODATA_FILL_METHOD = "NODATA_FILL_METHOD"
+    NODATA_FILL_MAX_ITER = "NODATA_FILL_MAX_ITER"
+    WRITE_CLIPPED_RECT = "WRITE_CLIPPED_RECT"
+
+    # Advanced: breaching
+    BREACH_BEFORE_FILL = "BREACH_BEFORE_FILL"
+    FILL_REMAINDER_AFTER_BREACH = "FILL_REMAINDER_AFTER_BREACH"
+    BREACH_ALGORITHM = "BREACH_ALGORITHM"
+    BREACH_LC_MAX_DIST = "BREACH_LC_MAX_DIST"
+    BREACH_LC_MAX_COST = "BREACH_LC_MAX_COST"
+    BREACH_LC_FLAT_INCREMENT = "BREACH_LC_FLAT_INCREMENT"
+    WRITE_CARVE_DIFF = "WRITE_CARVE_DIFF"
+
+    # Advanced: filling
+    FILL_ALGORITHM = "FILL_ALGORITHM"
+    FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
+    WRITE_FILL_DIFF = "WRITE_FILL_DIFF"
+
+    # Advanced: depression polygons
+    WRITE_DEPRESSION_POLYGONS = "WRITE_DEPRESSION_POLYGONS"
+    DEPRESSION_MIN_PIXELS = "DEPRESSION_MIN_PIXELS"
+    DEPRESSION_MIN_DEPTH = "DEPRESSION_MIN_DEPTH"
+    DEPRESSION_FORMAT = "DEPRESSION_FORMAT"
+
+    # Advanced: hillshade
+    HILLSHADE_AZIMUTH = "HILLSHADE_AZIMUTH"
+    HILLSHADE_ALTITUDE = "HILLSHADE_ALTITUDE"
+    HILLSHADE_Z_FACTOR = "HILLSHADE_Z_FACTOR"
+    WRITE_MD_HILLSHADE = "WRITE_MD_HILLSHADE"
+    MD_N_DIRECTIONS = "MD_N_DIRECTIONS"
+    MD_START_AZIMUTH = "MD_START_AZIMUTH"
+
+    OUTPUT_FILL = "OUTPUT_FILL"
+    OUTPUT_BREACHED = "OUTPUT_BREACHED"
+    OUTPUT_HILLSHADE = "OUTPUT_HILLSHADE"
+    OUTPUT_MD_HILLSHADE = "OUTPUT_MD_HILLSHADE"
+    OUTPUT_NODATA_FILLED = "OUTPUT_NODATA_FILLED"
+    OUTPUT_CLIPPED_RECT = "OUTPUT_CLIPPED_RECT"
+    OUTPUT_FILL_DIFF = "OUTPUT_FILL_DIFF"
+    OUTPUT_CARVE_DIFF = "OUTPUT_CARVE_DIFF"
+    OUTPUT_BINARY_MASKED = "OUTPUT_BINARY_MASKED"
+    OUTPUT_DEPRESSIONS = "OUTPUT_DEPRESSIONS"
+
+    OUTPUT_FORMAT_OPTIONS = ["cog", "gtiff"]
+    RESAMPLING_OPTIONS = [
+        "cubic", "near", "bilinear", "cubicspline", "lanczos",
+        "average", "mode", "max", "min", "med", "q1", "q3", "sum",
+    ]
+    NODATA_FILL_OPTIONS = ["laplacian", "iterative_weighted_average"]
+    BREACH_ALGORITHM_OPTIONS = ["lindsay2016", "least_cost"]
+    FILL_ALGORITHM_OPTIONS = ["barnes2014", "barnesetal2021"]
+    VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg"]
+
+    def _add_advanced(self, param):
+        param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(param)
+
+    def initAlgorithm(self, config=None):
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.INPUT_DEM,
+                "Input DEM",
+                [QgsProcessing.TypeRaster],
+            )
+        )
+        self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
+        self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_preprocess"))
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.OUTPUT_FORMAT,
+                "Output raster format",
+                options=self.OUTPUT_FORMAT_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self.addParameter(QgsProcessingParameterBoolean(self.ENFORCE_PROJECTION, "Enforce projection", True))
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.MINIMUM_ELEVATION,
+                "Minimum elevation (pixels at or below become nodata; negative disables)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=0.0,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.MAXIMUM_ELEVATION,
+                "Maximum elevation (pixels above become nodata)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=30000.0,
+            )
+        )
+        self.addParameter(QgsProcessingParameterBoolean(self.WRITE_FILL, "Write fill raster", True))
+        self.addParameter(QgsProcessingParameterBoolean(self.WRITE_BREACHED, "Write breached raster", False))
+        self.addParameter(QgsProcessingParameterBoolean(self.WRITE_HILLSHADE, "Write hillshade raster", False))
+
+        # --- Advanced: threading and reprojection ---
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.THREADS,
+                "Threads (0 = auto)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.RESAMPLING_METHOD,
+                "Reprojection resampling method",
+                options=self.RESAMPLING_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.GRID_SPACING,
+                "Reprojection grid spacing in metres (negative = auto)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=-1.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.FORCE_REPROJECT,
+                "Force reprojection to the recommended analysis CRS",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.FORCE_RESAMPLING,
+                "Force a user-specified grid spacing",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.FORCED_GRID_SPACING,
+                "Forced grid spacing in metres (used when forcing resampling)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=-1.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.ALLOW_LAMBERT,
+                "Allow Lambert Azimuthal Equal Area for very wide rasters",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.WARP_MEM_MB,
+                "GDALWarp working memory (MB)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=64,
+                defaultValue=512,
+            )
+        )
+
+        # --- Advanced: masking and nodata repair ---
+        self._add_advanced(
+            QgsProcessingParameterRasterLayer(
+                self.BINARY_MASK,
+                "Binary mask raster (pixels > 0.5 kept; others set to nodata)",
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_NODATA_FILLED,
+                "Write raster with interior nodata filled",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.NODATA_FILL_METHOD,
+                "Interior nodata fill method",
+                options=self.NODATA_FILL_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.NODATA_FILL_MAX_ITER,
+                "Maximum iterations for nodata filling",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=10000,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_CLIPPED_RECT,
+                "Write raster clipped to largest all-valid rectangle",
+                False,
+            )
+        )
+
+        # --- Advanced: breaching ---
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.BREACH_BEFORE_FILL,
+                "Breach depressions before filling pits",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.FILL_REMAINDER_AFTER_BREACH,
+                "Fill pits that could not be fully breached",
+                True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.BREACH_ALGORITHM,
+                "Breach algorithm",
+                options=self.BREACH_ALGORITHM_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.BREACH_LC_MAX_DIST,
+                "Least-cost breaching: maximum search radius (pixels)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=1000,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.BREACH_LC_MAX_COST,
+                "Least-cost breaching: maximum total lowering (negative = unlimited)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=-1.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.BREACH_LC_FLAT_INCREMENT,
+                "Least-cost breaching: flat path elevation increment",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_CARVE_DIFF,
+                "Write carve difference raster (breached minus original)",
+                False,
+            )
+        )
+
+        # --- Advanced: filling ---
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.FILL_ALGORITHM,
+                "Fill algorithm",
+                options=self.FILL_ALGORITHM_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.FILL_MIN_SLOPE,
+                "Fill minimum slope",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=0.0001,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_FILL_DIFF,
+                "Write fill difference raster (filled minus original)",
+                False,
+            )
+        )
+
+        # --- Advanced: depression polygons ---
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_DEPRESSION_POLYGONS,
+                "Write depression polygons (vector layer with area and volume)",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.DEPRESSION_MIN_PIXELS,
+                "Minimum depression size (pixels)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=1,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.DEPRESSION_MIN_DEPTH,
+                "Minimum depression depth (metres)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.DEPRESSION_FORMAT,
+                "Depression polygons format",
+                options=self.VECTOR_FORMAT_OPTIONS,
+                defaultValue=0,
+            )
+        )
+
+        # --- Advanced: hillshade ---
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.HILLSHADE_AZIMUTH,
+                "Hillshade azimuth (degrees clockwise from north)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=360.0,
+                defaultValue=315.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.HILLSHADE_ALTITUDE,
+                "Hillshade sun altitude (degrees)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=90.0,
+                defaultValue=45.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.HILLSHADE_Z_FACTOR,
+                "Hillshade vertical exaggeration",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=1.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_MD_HILLSHADE,
+                "Write multidirectional hillshade raster",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.MD_N_DIRECTIONS,
+                "Multidirectional hillshade: number of directions",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=2,
+                defaultValue=8,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.MD_START_AZIMUTH,
+                "Multidirectional hillshade: starting azimuth (degrees)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=360.0,
+                defaultValue=0.0,
+            )
+        )
+
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_FILL, "Fill raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_BREACHED, "Breached raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_HILLSHADE, "Hillshade raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_MD_HILLSHADE, "Multidirectional hillshade raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_NODATA_FILLED, "Nodata-filled raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_CLIPPED_RECT, "Clipped rectangle raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_FILL_DIFF, "Fill difference raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_CARVE_DIFF, "Carve difference raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_BINARY_MASKED, "Binary-masked raster"))
+        self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_DEPRESSIONS, "Depression polygons"))
+
+    def processAlgorithm(self, parameters, context, feedback):
+        dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)
+        if dem_layer is None:
+            raise QgsProcessingException("Input DEM is required.")
+        read_path, read_fname = split_layer_source(dem_layer.source(), "DEM")
+
+        output_folder = self.parameterAsString(parameters, self.OUTPUT_FOLDER, context)
+        output_prefix = self.parameterAsString(parameters, self.OUTPUT_PREFIX, context)
+        if not output_folder:
+            raise QgsProcessingException("Output folder is required.")
+        if not output_prefix:
+            raise QgsProcessingException("Output prefix is required.")
+        os.makedirs(output_folder, exist_ok=True)
+
+        output_format = self.OUTPUT_FORMAT_OPTIONS[
+            self.parameterAsEnum(parameters, self.OUTPUT_FORMAT, context)
+        ]
+
+        write_fill = self.parameterAsBool(parameters, self.WRITE_FILL, context)
+        write_breached = self.parameterAsBool(parameters, self.WRITE_BREACHED, context)
+        write_hillshade = self.parameterAsBool(parameters, self.WRITE_HILLSHADE, context)
+        write_md_hillshade = self.parameterAsBool(parameters, self.WRITE_MD_HILLSHADE, context)
+        write_nodata_filled = self.parameterAsBool(parameters, self.WRITE_NODATA_FILLED, context)
+        write_clipped_rect = self.parameterAsBool(parameters, self.WRITE_CLIPPED_RECT, context)
+        write_fill_diff = self.parameterAsBool(parameters, self.WRITE_FILL_DIFF, context)
+        write_carve_diff = self.parameterAsBool(parameters, self.WRITE_CARVE_DIFF, context)
+        write_depressions = self.parameterAsBool(parameters, self.WRITE_DEPRESSION_POLYGONS, context)
+        breach_before_fill = self.parameterAsBool(parameters, self.BREACH_BEFORE_FILL, context)
+
+        force_resampling = self.parameterAsBool(parameters, self.FORCE_RESAMPLING, context)
+        forced_grid_spacing = self.parameterAsDouble(parameters, self.FORCED_GRID_SPACING, context)
+        if force_resampling and forced_grid_spacing <= 0.0:
+            raise QgsProcessingException(
+                "Forced grid spacing must be positive when forcing resampling."
+            )
+
+        mask_layer = self.parameterAsRasterLayer(parameters, self.BINARY_MASK, context)
+
+        depression_format = self.VECTOR_FORMAT_OPTIONS[
+            self.parameterAsEnum(parameters, self.DEPRESSION_FORMAT, context)
+        ]
+
+        param_values = {
+            "read_path": read_path,
+            "read_fname": read_fname,
+            "write_path": output_folder,
+            "write_fname": output_prefix,
+            "write_output_format": output_format,
+            "n_threads": self.parameterAsInt(parameters, self.THREADS, context),
+            # projection
+            "enforce_projection": self.parameterAsBool(parameters, self.ENFORCE_PROJECTION, context),
+            "resampling_method": self.RESAMPLING_OPTIONS[
+                self.parameterAsEnum(parameters, self.RESAMPLING_METHOD, context)
+            ],
+            "grid_spacing": self.parameterAsDouble(parameters, self.GRID_SPACING, context),
+            "force_reproject": self.parameterAsBool(parameters, self.FORCE_REPROJECT, context),
+            "force_resampling": force_resampling,
+            "forced_grid_spacing": forced_grid_spacing,
+            "allow_lambert_projection": self.parameterAsBool(parameters, self.ALLOW_LAMBERT, context),
+            "warp_mem_mb": self.parameterAsInt(parameters, self.WARP_MEM_MB, context),
+            # masking
+            "minimum_elevation": self.parameterAsDouble(parameters, self.MINIMUM_ELEVATION, context),
+            "maximum_elevation": self.parameterAsDouble(parameters, self.MAXIMUM_ELEVATION, context),
+            # nodata repair
+            "write_filled_nodata_raster": write_nodata_filled,
+            "nodata_fill_method_choice": self.NODATA_FILL_OPTIONS[
+                self.parameterAsEnum(parameters, self.NODATA_FILL_METHOD, context)
+            ],
+            "nodata_fill_max_iter": self.parameterAsInt(parameters, self.NODATA_FILL_MAX_ITER, context),
+            "write_clipped_rectangle_raster": write_clipped_rect,
+            # breaching
+            "write_breached_raster": write_breached,
+            "write_carve_diff_raster": write_carve_diff,
+            "breach_before_fill": breach_before_fill,
+            "fill_remainder_after_breach": self.parameterAsBool(
+                parameters, self.FILL_REMAINDER_AFTER_BREACH, context
+            ),
+            "breach_algorithm_choice": self.BREACH_ALGORITHM_OPTIONS[
+                self.parameterAsEnum(parameters, self.BREACH_ALGORITHM, context)
+            ],
+            "breach_lc_max_dist": self.parameterAsInt(parameters, self.BREACH_LC_MAX_DIST, context),
+            "breach_lc_flat_increment": self.parameterAsDouble(
+                parameters, self.BREACH_LC_FLAT_INCREMENT, context
+            ),
+            # filling
+            "write_fill_raster": write_fill,
+            "write_fill_diff_raster": write_fill_diff,
+            "fill_algorithm_choice": self.FILL_ALGORITHM_OPTIONS[
+                self.parameterAsEnum(parameters, self.FILL_ALGORITHM, context)
+            ],
+            "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
+            # depression polygons
+            "write_depression_polygons": write_depressions,
+            "depression_min_pixels": self.parameterAsInt(parameters, self.DEPRESSION_MIN_PIXELS, context),
+            "depression_min_depth": self.parameterAsDouble(parameters, self.DEPRESSION_MIN_DEPTH, context),
+            "depression_polygons_output_format": depression_format,
+            # hillshade
+            "write_hillshade_raster": write_hillshade,
+            "hillshade_azimuth": self.parameterAsDouble(parameters, self.HILLSHADE_AZIMUTH, context),
+            "hillshade_altitude": self.parameterAsDouble(parameters, self.HILLSHADE_ALTITUDE, context),
+            "hillshade_z_factor": self.parameterAsDouble(parameters, self.HILLSHADE_Z_FACTOR, context),
+            "write_multidirectional_hillshade_raster": write_md_hillshade,
+            "multidirectional_hillshade_n_directions": self.parameterAsInt(
+                parameters, self.MD_N_DIRECTIONS, context
+            ),
+            "multidirectional_hillshade_start_azimuth": self.parameterAsDouble(
+                parameters, self.MD_START_AZIMUTH, context
+            ),
+        }
+
+        # The CLI default for breach_lc_max_cost is unlimited (float max);
+        # only pass the key when the user sets a positive limit.
+        breach_lc_max_cost = self.parameterAsDouble(parameters, self.BREACH_LC_MAX_COST, context)
+        if breach_lc_max_cost > 0.0:
+            param_values["breach_lc_max_cost"] = breach_lc_max_cost
+
+        if mask_layer is not None:
+            param_values["apply_binary_mask"] = True
+            param_values["binary_mask_fname"] = mask_layer.source().split("|")[0]
+
+        run_lsdtt_tool(
+            "lsdtt-raster-preprocessing", param_values, output_folder, output_prefix, feedback
+        )
+
+        outputs = {}
+        if write_fill:
+            outputs[self.OUTPUT_FILL] = require_output(
+                output_folder, output_prefix, "_fill.tif", "fill"
+            )
+        if write_breached or breach_before_fill:
+            outputs[self.OUTPUT_BREACHED] = require_output(
+                output_folder, output_prefix, "_breached.tif", "breached"
+            )
+        if write_hillshade:
+            outputs[self.OUTPUT_HILLSHADE] = require_output(
+                output_folder, output_prefix, "_hillshade.tif", "hillshade"
+            )
+        if write_md_hillshade:
+            outputs[self.OUTPUT_MD_HILLSHADE] = require_output(
+                output_folder, output_prefix, "_hillshade_multidirectional.tif",
+                "multidirectional hillshade",
+            )
+        if write_nodata_filled:
+            outputs[self.OUTPUT_NODATA_FILLED] = require_output(
+                output_folder, output_prefix, "_nodata_filled.tif", "nodata-filled"
+            )
+        if write_clipped_rect:
+            outputs[self.OUTPUT_CLIPPED_RECT] = require_output(
+                output_folder, output_prefix, "_clipped_rect.tif", "clipped rectangle"
+            )
+        if write_fill_diff or write_depressions:
+            outputs[self.OUTPUT_FILL_DIFF] = require_output(
+                output_folder, output_prefix, "_fill_diff.tif", "fill difference"
+            )
+        if write_carve_diff:
+            outputs[self.OUTPUT_CARVE_DIFF] = require_output(
+                output_folder, output_prefix, "_carve_diff.tif", "carve difference"
+            )
+        if mask_layer is not None:
+            outputs[self.OUTPUT_BINARY_MASKED] = require_output(
+                output_folder, output_prefix, "_binary_masked.tif", "binary-masked"
+            )
+        if write_depressions:
+            outputs[self.OUTPUT_DEPRESSIONS] = require_output(
+                output_folder, output_prefix,
+                "_depressions.{}".format(extension_for_format(depression_format)),
+                "depression polygons",
+            )
+        return outputs
+
+    def name(self):
+        return "raster_preprocessing"
+
+    def displayName(self):
+        return "Raster Preprocessing"
+
+    def group(self):
+        return "lsdtt3"
+
+    def groupId(self):
+        return "lsdtt"
+
+    def shortHelpString(self):
+        return (
+            "Runs lsdtt-raster-preprocessing using a generated parameter file. "
+            "Covers reprojection, elevation and binary masking, interior nodata "
+            "filling, depression breaching and pit filling (with difference "
+            "rasters and depression polygons), and single or multidirectional "
+            "hillshade. Backend path is managed in plugin settings."
+        )
+
+    def createInstance(self):
+        return RasterPreprocessingAlgorithm()
