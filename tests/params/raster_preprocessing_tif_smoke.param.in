@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+read_fname: tiny30_dem.tif
+write_path: __WRITE_PATH__
+write_fname: tiny30
+
+enforce_projection: true
+write_output_format: gtiff
+
+write_fill_raster: true
+write_fill_diff_raster: false
+write_breached_raster: false
+write_hillshade_raster: false

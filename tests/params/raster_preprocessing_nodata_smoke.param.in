@@ -1,0 +1,16 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem_nodata.asc
+write_path: __WRITE_PATH__
+write_fname: tiny_nodata
+
+enforce_projection: false
+write_output_format: gtiff
+
+write_filled_nodata_raster: true
+nodata_fill_method_choice: laplacian
+nodata_fill_max_iter: 10000
+
+write_fill_raster: false
+write_fill_diff_raster: false
+write_breached_raster: false
+write_hillshade_raster: false

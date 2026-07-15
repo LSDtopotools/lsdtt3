@@ -1,0 +1,23 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny
+
+raster_is_filled: false
+fill_min_slope: 0.0001
+source_pixels_threshold: 1
+minimum_channel_pixels: 1
+n_largest_basins: 0
+
+mn_min: 0.5
+mn_max: 0.5
+mn_step: 0.1
+
+fit_chi_networks: true
+write_fit_tables: true
+write_ksn_basin_summary: true
+write_chi_fit_segment_lines: false
+run_subset_sensitivity: false
+run_jackknife: false
+run_bootstrap: false
+run_inversion: false

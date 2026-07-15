@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny
+
+raster_is_filled: false
+source_pixels_threshold: 1
+source_extraction_algorithm_choice: threshold
+
+write_channel_network_points: false
+write_channel_network_lines: true
+channel_network_lines_output_format: flatgeobuf
+write_channel_network_junctions: false
+calculate_spatial_index: false

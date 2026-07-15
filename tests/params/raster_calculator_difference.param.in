@@ -1,0 +1,18 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny
+
+second_raster_fname: tiny_dem_plus1.asc
+second_raster_path: __READ_PATH__
+resample_second_to_first_grid: false
+
+write_output_format: gtiff
+write_sum: false
+write_multiply: false
+write_ratio: false
+write_difference: true
+write_absolute_difference: false
+write_first_on_overlap: false
+write_second_on_overlap: false
+write_overlap_mask: false
