@@ -168,137 +168,150 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Step 1 - Parse parameters and cross-parameter logic
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    } catch (const std::exception& e) {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     std::map<std::string, bool>                     bool_default_map;
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading & I/O ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int", "0", 
         "Number of OpenMP threads.", 
-        "0 = use all hardware threads. 1 = serial (default)."};
+        "0 = use all hardware threads. 1 = serial (default).",
+        "Threading & I/O", "io", ""};
     
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string", "cog", 
         "Output raster format.", 
         "cog: Cloud Optimised GeoTIFF (default). gtiff: plain compressed. "
-        "same_as_input: match input format."};
+        "same_as_input: match input format.",
+        "Threading & I/O", "io", ""};
 
     // --- Input & Routing ---
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool", "false", 
         "Whether the input raster is already pit-filled and ready for routing.", 
         "If false (default), the CLI will call fill_pits() before building flow routing. "
-        "If true, the DEM is assumed to already be suitable for routing."};
+        "If true, the DEM is assumed to already be suitable for routing.",
+        "Input & Routing", "param", ""};
 
     string_default_map["basin_outlet_csv"] = "NULL";
     help_map["basin_outlet_csv"] = {"string", "NULL", 
         "Required file of requested basin outlet points (CSV format).", 
-        "Must contain columns exactly named 'latitude' and 'longitude'."};
+        "Must contain columns exactly named 'latitude' and 'longitude'.",
+        "Input & Routing", "param", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string", "oooo", 
         "Boundary conditions for flow routing.", 
         "Four characters (north, east, south, west). o = open, "
-        "n = no-flux, p = periodic, b = forced baselevel outlet."};
+        "n = no-flux, p = periodic, b = forced baselevel outlet.",
+        "Input & Routing", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float", "0.0001", 
         "Minimum slope imposed by pit filling.", 
-        "Passed to fill_pits() gently enforcing downstream descent."};
+        "Passed to fill_pits() gently enforcing downstream descent.",
+        "Input & Routing", "param", ""};
 
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int", "1000", 
         "Contributing area threshold in pixels.", 
         "Used to generate the initial D8 channel junction network from "
-        "which topologies and nested relationships are derived."};
+        "which topologies and nested relationships are derived.",
+        "Input & Routing", "param", ""};
 
     // --- Snapping options ---
     string_default_map["basin_outlet_snapping_method"] = "downstream";
     help_map["basin_outlet_snapping_method"] = {"string", "downstream", 
         "Method to snap CSV points to the routing object.", 
         "none: uses mapped pixel. downstream: follows flow path. "
-        "expanding_square: searches outward until channel hit."};
+        "expanding_square: searches outward until channel hit.",
+        "Snapping options", "param", ""};
     
     int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
     help_map["basin_outlet_contributing_pixels_threshold"] = {"int", "1000", 
         "Pixel threshold for confirming an outlet snap.", 
-        "Defines the required D8 accumulation to arrest snapping."};
+        "Defines the required D8 accumulation to arrest snapping.",
+        "Snapping options", "param", ""};
 
     // --- Smoothing Scales & Polyfit ---
     string_default_map["lambda_scales"] = "10,50,100";
     help_map["lambda_scales"] = {"string", "10,50,100", 
         "List of lambda scales (metres) separating multi-scale sweeps.", 
         "These characteristic lengthscales dictate the moving window for "
-        "the polynomial fit and represent roughness at varying scopes."};
+        "the polynomial fit and represent roughness at varying scopes.",
+        "Smoothing Scales & Polyfit", "param", "write_polyfit_rasters"};
 
     string_default_map["polyfit_metrics"] = "slope,maximum_curvature";
     help_map["polyfit_metrics"] = {"string", "slope,maximum_curvature", 
         "List of derived polyfit metrics to extract.", 
         "Supported metrics: slope, slope_degrees, aspect_radians, "
         "maximum_curvature, minimum_curvature, mean_curvature, laplacian, "
-        "plan_curvature, profile_curvature, etc."};
+        "plan_curvature, profile_curvature, etc.",
+        "Smoothing Scales & Polyfit", "param", "write_polyfit_rasters"};
 
     string_default_map["polyfit_method"] = "direct";
     help_map["polyfit_method"] = {"string", "direct", 
         "Algorithm for surface fitting.", 
-        "direct: rolling-moment O(n) fit. wavelet: FFT Gaussian fit."};
+        "direct: rolling-moment O(n) fit. wavelet: FFT Gaussian fit.",
+        "Smoothing Scales & Polyfit", "param", "write_polyfit_rasters"};
     
     bool_default_map["write_polyfit_rasters"] = false;
     help_map["write_polyfit_rasters"] = {"bool", "false", 
-        "Output all generated polyfit representations directly to disk.", ""};
+        "Output all generated polyfit representations directly to disk.", "",
+        "Smoothing Scales & Polyfit", "switch", ""};
 
     // --- Outline Outputs ---
     bool_default_map["write_basin_outlines_csv"] = false;
     help_map["write_basin_outlines_csv"] = {"bool", "false", 
         "Write 1D outline geometries and sampled surface metrics to CSVs.", 
-        "Outputs one file per basin tracking exact values atop the divide."};
+        "Outputs one file per basin tracking exact values atop the divide.",
+        "Outline Outputs", "switch", ""};
 
     bool_default_map["write_outline_curvature_flips"] = false;
     help_map["write_outline_curvature_flips"] = {"bool", "false", 
         "Count spatial sign flips of maximum_curvature.", 
         "Requires 'maximum_curvature' polyfit metric. Outputs "
-        "_outline_curvature_flips.csv charting frequency and spacing."};
+        "_outline_curvature_flips.csv charting frequency and spacing.",
+        "Outline Outputs", "switch", ""};
 
     // --- Slope-Area Outputs ---
     bool_default_map["write_dinf_area_raster"] = false;
     help_map["write_dinf_area_raster"] = {"bool", "false", 
-        "Dump spatial D-Infinity flow accumulation (in m2) as a GeoTIFF.", ""};
+        "Dump spatial D-Infinity flow accumulation (in m2) as a GeoTIFF.", "",
+        "Slope-Area Outputs", "switch", ""};
 
     bool_default_map["write_dinf_area_raster_log10"] = false;
     help_map["write_dinf_area_raster_log10"] = {"bool", "false", 
-        "Dump spatial log10(D-Inf Area) to disk as a GeoTIFF.", ""};
+        "Dump spatial log10(D-Inf Area) to disk as a GeoTIFF.", "",
+        "Slope-Area Outputs", "switch", ""};
 
     bool_default_map["write_basin_slope_area_csv"] = false;
     help_map["write_basin_slope_area_csv"] = {"bool", "false", 
         "Export log-binned slope-area distributions per basin.", 
-        "Writes percentiles of multi-scalar slope across log area bins."};
+        "Writes percentiles of multi-scalar slope across log area bins.",
+        "Slope-Area Outputs", "switch", ""};
 
     bool_default_map["write_basin_slope_area_stats"] = false;
     help_map["write_basin_slope_area_stats"] = {"bool", "false", 
         "Export global summary locating the Area of maximum median slope.", 
-        "Requires 'slope' polyfit metric. Bins using user specified width."};
+        "Requires 'slope' polyfit metric. Bins using user specified width.",
+        "Slope-Area Outputs", "switch", ""};
 
     float_default_map["slope_area_log_bin_width"] = 0.1f;
     help_map["slope_area_log_bin_width"] = {"float", "0.1", 
         "Resolution of log10(Area) binning.", 
-        "Default 0.1 creates logarithmic intervals equal to 1/10th decade."};
+        "Default 0.1 creates logarithmic intervals equal to 1/10th decade.",
+        "Slope-Area Outputs", "param", ""};
 
 
     // --- Vector Polygon Outputs ---
@@ -306,14 +319,40 @@ int main(int argc, char* argv[])
     help_map["write_outline_polygons_with_flipstats"] = {"bool", "false", 
         "Write FGB/GPKG polygons populated with summary statistics.", 
         "If enabled, forces computation of slope_area_stats and "
-        "curvature_flips, appending results per lambda as attributes."};
+        "curvature_flips, appending results per lambda as attributes.",
+        "Vector Polygon Outputs", "switch", ""};
 
     string_default_map["polygon_output_format"] = "flatgeobuf";
     help_map["polygon_output_format"] = {"string", "flatgeobuf", 
         "Vector output format for basin polygons.", 
-        "Valid formats: flatgeobuf (or fgb) and gpkg."};
+        "Valid formats: flatgeobuf (or fgb) and gpkg.",
+        "Vector Polygon Outputs", "param", "write_outline_polygons_with_flipstats"};
 
     // Parse parameters
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map, int_default_map, 
         bool_default_map, string_default_map);
@@ -999,6 +1038,8 @@ int main(int argc, char* argv[])
         loader.finish_vector_write();
     }
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-basin-surface-metrics: done.\n";
     return 0;

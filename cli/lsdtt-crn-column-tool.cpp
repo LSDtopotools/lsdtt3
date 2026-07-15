@@ -91,122 +91,160 @@ static void write_csv(const std::string& path,
 int main(int argc, char* argv[])
 {
     print_banner();
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     //  Parameter file 
-    lsdtt::lsdtt_param_parser pp;
-    try { pp = lsdtt::lsdtt_param_parser(path, fname); }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     std::map<std::string,bool>        bool_default_map;
     std::map<std::string,float>       float_default_map;
     std::map<std::string,int>         int_default_map;
     std::map<std::string,std::string> string_default_map;
-    std::map<std::string,std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     //  Mode and physics 
     string_default_map["column_mode"] = "steady_state";
     help_map["column_mode"] = {"string","steady_state",
         "Simulation mode.",
-        "Options: steady_state, step_change, full_transient."};
+        "Options: steady_state, step_change, full_transient.",
+        "-", "param", "use_initial_concentration"};
 
     string_default_map["nuclide"] = "Be10";
     help_map["nuclide"] = {"string","Be10",
         "Nuclide for output labelling (all three are always computed).",
-        "Be10, Al26, C14."};
+        "Be10, Al26, C14.",
+        "-", "param", "use_initial_concentration"};
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
         "Muon production parameter scheme.",
-        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS."};
+        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;
     help_map["rock_density_kg_m3"] = {"float","2650",
-        "Rock density (kg/m3). Used to convert depth to effective depth.",""};
+        "Rock density (kg/m3). Used to convert depth to effective depth.","",
+        "-", "param", "use_initial_concentration"};
 
     //  Production scaling 
     float_default_map["production_scaling"] = 1.0f;
     help_map["production_scaling"] = {"float","1.0",
         "Stone 2000 production scaling factor (dimensionless).",
-        "Supply directly, or set latitude/longitude/elevation to compute it."};
+        "Supply directly, or set latitude/longitude/elevation to compute it.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["latitude"]  = -9999.0f;
     float_default_map["longitude"] = -9999.0f;
     float_default_map["elevation"] = -9999.0f;
-    help_map["latitude"]  = {"float","-9999","Site latitude (deg).","If set, Stone scaling is computed from lat/lon/elev."};
-    help_map["longitude"] = {"float","-9999","Site longitude (deg).","Used with latitude and elevation."};
-    help_map["elevation"] = {"float","-9999","Site elevation (m).","Used with latitude and longitude."};
+    help_map["latitude"] = {"float","-9999","Site latitude (deg).","If set, Stone scaling is computed from lat/lon/elev.",
+        "-", "param", "use_initial_concentration"};
+    help_map["longitude"] = {"float","-9999","Site longitude (deg).","Used with latitude and elevation.",
+        "-", "param", "use_initial_concentration"};
+    help_map["elevation"] = {"float","-9999","Site elevation (m).","Used with latitude and longitude.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["total_shielding"] = 1.0f;
     help_map["total_shielding"] = {"float","1.0",
         "Total shielding factor (topographic x snow x self, dimensionless 0-1).",
-        "Applied on top of production_scaling. 1 = fully exposed."};
+        "Applied on top of production_scaling. 1 = fully exposed.",
+        "-", "param", "use_initial_concentration"};
 
     //  Simple mode parameters 
     float_default_map["effective_depth_g_cm2"] = 0.0f;
     help_map["effective_depth_g_cm2"] = {"float","0",
         "Effective depth of sample (g/cm2). 0 = surface.",
-        "Used in steady_state and step_change modes."};
+        "Used in steady_state and step_change modes.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["effective_erosion_rate_g_cm2_yr"] = 0.1f;
     help_map["effective_erosion_rate_g_cm2_yr"] = {"float","0.1",
         "Effective erosion rate (g/cm2/yr). Typical value ~0.01-1.",
-        "Used in steady_state and as new rate in step_change."};
+        "Used in steady_state and as new rate in step_change.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["effective_erosion_rate_old_g_cm2_yr"] = 0.1f;
     help_map["effective_erosion_rate_old_g_cm2_yr"] = {"float","0.1",
         "Old (pre-step) effective erosion rate (g/cm2/yr).",
-        "Used only in step_change mode."};
+        "Used only in step_change mode.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["time_since_step_yr"] = 10000.0f;
     help_map["time_since_step_yr"] = {"float","10000",
         "Time since the erosion-rate step change (yr).",
-        "Used only in step_change mode."};
+        "Used only in step_change mode.",
+        "-", "param", "use_initial_concentration"};
 
     //  Full-transient parameters 
     string_default_map["transient_history_file"] = "erosion_history.csv";
     help_map["transient_history_file"] = {"string","erosion_history.csv",
         "CSV file with erosion history (columns: time,rate,removal).",
         "time in yr BP (ascending); rate in m/yr; removal in m (when rate=0). "
-        "Last row: time=-9999, rate=background rate."};
+        "Last row: time=-9999, rate=background rate.",
+        "-", "param", "use_initial_concentration"};
 
     int_default_map["n_samples"] = 10;
     help_map["n_samples"] = {"int","10",
-        "Number of evenly-spaced depth samples in the column.","Used in full_transient."};
+        "Number of evenly-spaced depth samples in the column.","Used in full_transient.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["sample_spacing_m"] = 0.05f;
     help_map["sample_spacing_m"] = {"float","0.05",
-        "Spacing between depth samples (m).","First sample is at the surface (0 m)."};
+        "Spacing between depth samples (m).","First sample is at the surface (0 m).",
+        "-", "param", "use_initial_concentration"};
 
     bool_default_map["use_initial_concentration"] = false;
     help_map["use_initial_concentration"] = {"bool","false",
         "If true, particles start with a user-specified concentration instead of SS.",
-        "Useful for e.g. re-exposed terraces with a known inherited inventory."};
+        "Useful for e.g. re-exposed terraces with a known inherited inventory.",
+        "-", "switch", ""};
 
     float_default_map["initial_10Be_conc_atoms_g"] = 0.0f;
     help_map["initial_10Be_conc_atoms_g"] = {"float","0",
         "Initial 10Be concentration throughout the column (atoms/g).",
-        "Only used if use_initial_concentration = true."};
+        "Only used if use_initial_concentration = true.",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["initial_26Al_conc_atoms_g"] = 0.0f;
     help_map["initial_26Al_conc_atoms_g"] = {"float","0",
-        "Initial 26Al concentration throughout the column (atoms/g).",""};
+        "Initial 26Al concentration throughout the column (atoms/g).","",
+        "-", "param", "use_initial_concentration"};
 
     float_default_map["initial_14C_conc_atoms_g"] = 0.0f;
     help_map["initial_14C_conc_atoms_g"] = {"float","0",
-        "Initial 14C concentration throughout the column (atoms/g).",""};
+        "Initial 14C concentration throughout the column (atoms/g).","",
+        "-", "param", "use_initial_concentration"};
 
     //  Output 
     string_default_map["output_file"] = "crn_column.csv";
     help_map["output_file"] = {"string","crn_column.csv",
-        "Output CSV filename for column profile (full_transient mode).",""};
+        "Output CSV filename for column profile (full_transient mode).","",
+        "-", "param", "use_initial_concentration"};
 
     //  Parse 
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
     auto bf  = pp.get_bool_parameters();
@@ -359,5 +397,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     return 0;
 }

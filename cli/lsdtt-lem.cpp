@@ -255,23 +255,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -279,126 +269,149 @@ int main(int argc, char* argv[])
     std::map<std::string, float>       float_default_map;
     std::map<std::string, int>         int_default_map;
     std::map<std::string, std::string> string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- DEM loading vs synthetic surface ---
     bool_default_map["read_initial_dem"] = false;
     help_map["read_initial_dem"] = {"bool","false",
         "Load initial topography from read_fname instead of building a synthetic surface.",
-        "If true, the read_path / read_fname / read_ext from the parameter file are used."};
+        "If true, the read_path / read_fname / read_ext from the parameter file are used.",
+        "DEM loading vs synthetic surface", "param", ""};
 
     // --- Grid (when not loading a DEM) ---
     int_default_map["nrows"] = 200;
     help_map["nrows"] = {"int","200",
         "Number of rows in the model domain.",
-        "Used when read_initial_dem is false."};
+        "Used when read_initial_dem is false.",
+        "Grid (when not loading a DEM)", "param", ""};
 
     int_default_map["ncols"] = 400;
     help_map["ncols"] = {"int","400",
         "Number of columns in the model domain.",
-        "Used when read_initial_dem is false."};
+        "Used when read_initial_dem is false.",
+        "Grid (when not loading a DEM)", "param", ""};
 
     float_default_map["grid_resolution"] = 30.0f;
     help_map["grid_resolution"] = {"float","30",
         "Cell size in metres.",
-        "Used when read_initial_dem is false."};
+        "Used when read_initial_dem is false.",
+        "Grid (when not loading a DEM)", "param", ""};
     
     string_default_map["synthetic_crs_wkt"] = "";
     help_map["synthetic_crs_wkt"] = {"string","",
         "Coordinate Reference System WKT string for synthetic surfaces.",
         "If left empty (the default), this automatically assigns EPSG:32601 (UTM Zone 1N) "
-        "and places the lower-left corner at 500000E, 0N."};
+        "and places the lower-left corner at 500000E, 0N.",
+        "Grid (when not loading a DEM)", "param", ""};
 
     // --- Initial conditions ---
     string_default_map["initial_surface_type"] = "flat";
     help_map["initial_surface_type"] = {"string","flat",
         "Initial surface type: flat, white_noise, red_noise, diamond_square.",
         "flat = all zeros; white_noise = uniform random; "
-        "red_noise = low-frequency dominated; diamond_square = fractal terrain."};
+        "red_noise = low-frequency dominated; diamond_square = fractal terrain.",
+        "Initial conditions", "param", ""};
 
     float_default_map["max_initial_elevation"] = 1.0f;
     help_map["max_initial_elevation"] = {"float","1.0",
         "Max elevation of white-noise surface (m). Min is 0.",
-        "Used when initial_surface_type is white_noise."};
+        "Used when initial_surface_type is white_noise.",
+        "Initial conditions", "param", ""};
 
     float_default_map["noise_target_stddev"] = 1.0f;
     help_map["noise_target_stddev"] = {"float","1.0",
         "Target standard deviation of the noise surface (m).",
-        "Used when initial_surface_type is red_noise or diamond_square."};
+        "Used when initial_surface_type is red_noise or diamond_square.",
+        "Initial conditions", "param", ""};
 
     int_default_map["noise_blur_passes"] = 6;
     help_map["noise_blur_passes"] = {"int","6",
         "Number of blur passes for red_noise surface generation.",
-        ""};
+        "",
+        "Initial conditions", "param", ""};
 
     float_default_map["diamond_square_roughness"] = 0.55f;
     help_map["diamond_square_roughness"] = {"float","0.55",
         "Roughness exponent (0-1) for diamond-square surface. Higher = rougher.",
-        ""};
+        "",
+        "Initial conditions", "param", ""};
 
     int_default_map["random_seed"] = 33;
     help_map["random_seed"] = {"int","33",
         "Random seed for the initial noise surface.",
-        ""};
+        "",
+        "Initial conditions", "param", ""};
 
     float_default_map["parabola_relief"] = 0.0f;
     help_map["parabola_relief"] = {"float","0",
         "Peak elevation (m) of a N-S parabola added to random initial surfaces.",
         "The parabola is zero at the north and south boundaries and peaks at the "
         "centre row. Adding it biases drainage toward both N/S boundaries, reducing "
-        "internal basins. Set > 0 to enable; typical values 2-5x the noise relief."};
+        "internal basins. Set > 0 to enable; typical values 2-5x the noise relief.",
+        "Initial conditions", "param", ""};
 
     float_default_map["post_breach_noise_relief"] = 0.0f;
     help_map["post_breach_noise_relief"] = {"float","0",
         "Half-amplitude (m) of uniform noise added after breaching the initial surface.",
         "Breaking up post-breach flats prevents unnaturally regular drainage. "
         "Set > 0 to enable; typical values 0.01-0.1 m. "
-        "Breaching is performed whenever parabola_relief > 0 or post_breach_noise_relief > 0."};
+        "Breaching is performed whenever parabola_relief > 0 or post_breach_noise_relief > 0.",
+        "Initial conditions", "param", ""};
 
     bool_default_map["fill_initial_surface"] = false;
     help_map["fill_initial_surface"] = {"bool","false",
         "Apply pit-filling to the initial surface before running.",
-        "Applied after breaching/noise conditioning when those are also enabled."};
+        "Applied after breaching/noise conditioning when those are also enabled.",
+        "Initial conditions", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
-        "Used when fill_initial_surface is true."};
+        "Used when fill_initial_surface is true.",
+        "Initial conditions", "param", ""};
 
     // --- Sinuous Boundaries ---
     bool_default_map["enable_sinuous_n_boundary"] = false;
     help_map["enable_sinuous_n_boundary"] = {"bool","false",
-        "Apply a sinuous (sine wave) mask to the North domain boundary.", ""};
+        "Apply a sinuous (sine wave) mask to the North domain boundary.", "",
+        "Sinuous Boundaries", "switch", ""};
 
     float_default_map["sinuous_n_amplitude_fraction"] = 0.25f;
     help_map["sinuous_n_amplitude_fraction"] = {"float","0.25",
         "Amplitude of the North sinuous boundary as a fraction of total N-S domain length.", 
-        "This can max be 0.25, as it create waves that span half the N-S domain."};
+        "This can max be 0.25, as it create waves that span half the N-S domain.",
+        "Sinuous Boundaries", "param", ""};
 
     int_default_map["sinuous_n_n_waves"] = 1;
     help_map["sinuous_n_n_waves"] = {"int","1",
-        "Number of complete sine waves along the North boundary.", ""};
+        "Number of complete sine waves along the North boundary.", "",
+        "Sinuous Boundaries", "param", ""};
 
     float_default_map["sinuous_n_phase_offset"] = 0.0f;
     help_map["sinuous_n_phase_offset"] = {"float","0.0",
-        "Phase offset of the North sinuous boundary as a fractional value [0, 1].", ""};
+        "Phase offset of the North sinuous boundary as a fractional value [0, 1].", "",
+        "Sinuous Boundaries", "param", ""};
 
     bool_default_map["enable_sinuous_s_boundary"] = false;
     help_map["enable_sinuous_s_boundary"] = {"bool","false",
-        "Apply a sinuous (sine wave) mask to the South domain boundary.", ""};
+        "Apply a sinuous (sine wave) mask to the South domain boundary.", "",
+        "Sinuous Boundaries", "switch", ""};
 
     float_default_map["sinuous_s_amplitude_fraction"] = 0.25f;
     help_map["sinuous_s_amplitude_fraction"] = {"float","0.25",
         "Amplitude of the South sinuous boundary as a fraction of total N-S domain length.",
-        "This can max be 0.25, as it create waves that span half the N-S domain."};
+        "This can max be 0.25, as it create waves that span half the N-S domain.",
+        "Sinuous Boundaries", "param", ""};
 
     int_default_map["sinuous_s_n_waves"] = 1;
     help_map["sinuous_s_n_waves"] = {"int","1",
-        "Number of complete sine waves along the South boundary.", ""};
+        "Number of complete sine waves along the South boundary.", "",
+        "Sinuous Boundaries", "param", ""};
 
     float_default_map["sinuous_s_phase_offset"] = 0.0f;
     help_map["sinuous_s_phase_offset"] = {"float","0.0",
-        "Phase offset of the South sinuous boundary as a fractional value [0, 1].", ""};
+        "Phase offset of the South sinuous boundary as a fractional value [0, 1].", "",
+        "Sinuous Boundaries", "param", ""};
 
 
     // --- Process switches ---
@@ -406,23 +419,27 @@ int main(int argc, char* argv[])
     help_map["enable_d8_fluvial_erosion"] = {"bool","true",
         "Enable D8 stream-power fluvial incision.",
         "D8 with n=1 always uses closed-form and is therefore very stable. "
-        "For other n uses Newton-Raphson."};
+        "For other n uses Newton-Raphson.",
+        "Process switches", "switch", ""};
 
     bool_default_map["enable_dinf_fluvial_erosion"] = false;
     help_map["enable_dinf_fluvial_erosion"] = {"bool","false",
         "Enable D-infinity stream-power fluvial incision.",
         "Uses stable closed-form for n=1 only on nodes that have only a single "
-        "receiver, otherwise uses Newton-Raphson."};
+        "receiver, otherwise uses Newton-Raphson.",
+        "Process switches", "switch", ""};
 
     bool_default_map["enable_hillslope_transport"] = false;
     help_map["enable_hillslope_transport"] = {"bool","false",
         "Enable Cidre hillslope diffusion.",
-        ""};
+        "",
+        "Process switches", "switch", ""};
 
     bool_default_map["enable_nonlinear_hillslopes"] = false;
     help_map["enable_nonlinear_hillslopes"] = {"bool","false",
         "Use nonlinear transport (Roering 1999 or Carretier et al. 2016 depending on hillslope_model).",
-        "Requires enable_hillslope_transport."};
+        "Requires enable_hillslope_transport.",
+        "Process switches", "switch", ""};
 
     string_default_map["hillslope_model"] = "cidre";
     help_map["hillslope_model"] = {"string","cidre",
@@ -440,68 +457,80 @@ int main(int argc, char* argv[])
         "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
         "unconditionally stable near Sc via slope-restoration. "
         "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps."
-        "Requires enable_hillslope_transport."};
+        "Requires enable_hillslope_transport.",
+        "Process switches", "param", ""};
 
     // --- roering_implicit solver knobs (used only when hillslope_model = roering_implicit) ---
     float_default_map["hillslope_implicit_relaxation_omega"] = 0.7f;
     help_map["hillslope_implicit_relaxation_omega"] = {"float","0.7",
         "Damped-Picard relaxation factor omega (0<omega<=1) for roering_implicit.",
         "Values below 1 stabilise the nonlinear iteration near Sc; the controller "
-        "auto-tunes it down further on divergence. Ignored by other hillslope models."};
+        "auto-tunes it down further on divergence. Ignored by other hillslope models.",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     float_default_map["hillslope_implicit_picard_tol"] = 1e-4f;
     help_map["hillslope_implicit_picard_tol"] = {"float","1e-4",
         "Convergence tolerance max|delta_z| for the Picard iteration (roering_implicit).",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     int_default_map["hillslope_implicit_picard_max_iter"] = 50;
     help_map["hillslope_implicit_picard_max_iter"] = {"int","50",
         "Maximum Picard iterations per sub-step (roering_implicit).",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     float_default_map["hillslope_implicit_slope_ratio_cap"] = 0.99f;
     help_map["hillslope_implicit_slope_ratio_cap"] = {"float","0.99",
         "Regularised slope-ratio cap r_max (<1) bounding D_eff near Sc (roering_implicit).",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     int_default_map["hillslope_implicit_solver_choice"] = 0;
     help_map["hillslope_implicit_solver_choice"] = {"int","0",
         "Linear solver for roering_implicit: 0 = SimplicialLDLT, 1 = CG+IncompleteCholesky.",
-        "LDLT is robust for moderate grids; CG+IC scales better on very large grids."};
+        "LDLT is robust for moderate grids; CG+IC scales better on very large grids.",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     int_default_map["hillslope_implicit_time_integrator"] = 0;
     help_map["hillslope_implicit_time_integrator"] = {"int","0",
         "Time integrator for roering_implicit: 0 = backward Euler, 1 = TR-BDF2 (2nd order).",
         "TR-BDF2 is L-stable and time-accurate with embedded PI error control; use it for "
-        "time-accurate transients rather than just the approach to steady state."};
+        "time-accurate transients rather than just the approach to steady state.",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     float_default_map["hillslope_implicit_error_tol"] = 0.0f;
     help_map["hillslope_implicit_error_tol"] = {"float","0",
         "TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller "
         "(0 = auto = a small fraction of the relief). Only used when time_integrator = 1.",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     float_default_map["hillslope_implicit_dt_init"] = 0.0f;
     help_map["hillslope_implicit_dt_init"] = {"float","0",
         "Initial adaptive sub-step for roering_implicit (0 = auto = the LEM timestep).",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     float_default_map["hillslope_implicit_dt_min"] = 0.0f;
     help_map["hillslope_implicit_dt_min"] = {"float","0",
         "Floor on the adaptive sub-step for roering_implicit (0 = auto).",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     float_default_map["hillslope_implicit_dt_max"] = 0.0f;
     help_map["hillslope_implicit_dt_max"] = {"float","0",
         "Cap on the adaptive sub-step for roering_implicit (0 = the LEM timestep).",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     string_default_map["channel_mask_fname"] = "";
     help_map["channel_mask_fname"] = {"string","",
         "Optional raster (in read_path) whose cells > 0.5 are fixed-elevation channel "
         "pixels for the hillslope Dirichlet set, overriding the drainage-area threshold.",
         "Must match the DEM grid. Empty (default) = derive channels from "
-        "incision_threshold_area. Useful for prescribed-channel / hillslope-strip runs."};
+        "incision_threshold_area. Useful for prescribed-channel / hillslope-strip runs.",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     bool_default_map["hold_channel_mask_fixed"] = false;
     help_map["hold_channel_mask_fixed"] = {"bool","false",
@@ -509,7 +538,8 @@ int main(int argc, char* argv[])
         "Requires channel_mask_fname. The masked pixels join the open-edge boundary "
         "pixels as fixed-elevation cells, so uplift does not lift the channel network "
         "away from the hillslopes relaxing toward it. Use for hillslopes-only runs on a "
-        "frozen network; leave false for coupled runs where the channels must incise."};
+        "frozen network; leave false for coupled runs where the channels must incise.",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     bool_default_map["write_channel_mask_raster"] = false;
     help_map["write_channel_mask_raster"] = {"bool","false",
@@ -520,7 +550,8 @@ int main(int argc, char* argv[])
         "is the one the hillslope step would use: the channel_mask_fname raster when "
         "supplied, else the pixels whose D-infinity drainage area reaches "
         "incision_threshold_area (or channel_mask_threshold_area). Feed it back in as "
-        "channel_mask_fname to freeze a fluvially-evolved network for a hillslopes-only run."};
+        "channel_mask_fname to freeze a fluvially-evolved network for a hillslopes-only run.",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "switch", ""};
 
     bool_default_map["write_erosion_rate_raster"] = false;
     help_map["write_erosion_rate_raster"] = {"bool","false",
@@ -529,7 +560,8 @@ int main(int argc, char* argv[])
         "frame (needs frequency_of_output_writing > 0), plus <write_fname>_erosion_rate.tif "
         "for the final step. This is the field in which a transient pulse of incision is "
         "visible: knickpoints appear as a band of high erosion rate migrating up the "
-        "channel network. Deposition appears as negative values."};
+        "channel network. Deposition appears as negative values.",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "switch", ""};
 
     float_default_map["channel_mask_threshold_area"] = 0.0f;
     help_map["channel_mask_threshold_area"] = {"float","0",
@@ -537,19 +569,22 @@ int main(int argc, char* argv[])
         "Only affects write_channel_mask_raster; the model itself is unchanged. Lets a run "
         "erode fluvially everywhere (incision_threshold_area: 0) while still writing a "
         "channel network defined at a positive area threshold. Same units as "
-        "incision_threshold_area (see divide_area_by_dx)."};
+        "incision_threshold_area (see divide_area_by_dx).",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     bool_default_map["enable_uplift"] = true;
     help_map["enable_uplift"] = {"bool","true",
         "Apply uniform tectonic uplift.",
-        ""};
+        "",
+        "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "switch", ""};
 
     // --- Process parameters ---
     float_default_map["uplift_rate"] = 1e-4f;
     help_map["uplift_rate"] = {"float","1e-4",
         "Tectonic uplift rate (m/yr).",
         "Applied uniformly to all valid pixels. Constant unless overridden by "
-        "forcing_history_fname."};
+        "forcing_history_fname.",
+        "Process parameters", "param", ""};
 
     float_default_map["baselevel_fall_rate"] = 0.0f;
     help_map["baselevel_fall_rate"] = {"float","0",
@@ -557,7 +592,8 @@ int main(int argc, char* argv[])
         "The fixed-elevation boundary pixels are lowered at this rate instead of being "
         "held at their pre-step elevation, so a wave of incision propagates up the "
         "channel network. 0 (default) = static base level. Constant unless overridden "
-        "by forcing_history_fname."};
+        "by forcing_history_fname.",
+        "Process parameters", "param", ""};
 
     string_default_map["forcing_history_fname"] = "";
     help_map["forcing_history_fname"] = {"string","",
@@ -570,71 +606,84 @@ int main(int argc, char* argv[])
         "incision: a window of rapid base-level fall that sends knickpoints up the "
         "network, which the hillslopes then respond to. The forcing actually applied at "
         "each step is recorded in the uplift_rate / baselevel_fall_rate columns of "
-        "<write_fname>_model_elevation_stats.csv."};
+        "<write_fname>_model_elevation_stats.csv.",
+        "Process parameters", "param", ""};
 
     float_default_map["erodibility"] = 1e-3f;
     help_map["erodibility"] = {"float","1e-3",
         "Stream-power erodibility K (m^(1-2m) yr^-1).",
-        "Scales fluvial incision rate."};
+        "Scales fluvial incision rate.",
+        "Process parameters", "param", ""};
 
     float_default_map["m_exponent"] = 0.45f;
     help_map["m_exponent"] = {"float","0.45",
         "Drainage area exponent m in stream power law.",
-        ""};
+        "",
+        "Process parameters", "param", ""};
 
     float_default_map["n_exponent"] = 1.0f;
     help_map["n_exponent"] = {"float","1.0",
         "Slope exponent n in stream power law.",
-        "n=1 uses closed-form solver; n!=1 uses Newton-Raphson."};
+        "n=1 uses closed-form solver; n!=1 uses Newton-Raphson.",
+        "Process parameters", "param", ""};
 
     float_default_map["hillslope_diffusivity"] = 1e-3f;
     help_map["hillslope_diffusivity"] = {"float","1e-3",
         "Hillslope diffusivity kappa (m^2/yr).",
-        "Used when enable_hillslope_transport is true."};
+        "Used when enable_hillslope_transport is true.",
+        "Process parameters", "param", ""};
 
     float_default_map["critical_hillslope_slope"] = 0.8f;
     help_map["critical_hillslope_slope"] = {"float","0.8",
         "Critical slope Sc (m/m) for nonlinear hillslope transport.",
-        ""};
+        "",
+        "Process parameters", "param", ""};
 
     float_default_map["incision_threshold_area"] = 0.0f;
     help_map["incision_threshold_area"] = {"float","0",
         "Minimum drainage area (m^2) for fluvial incision. 0 = no threshold.",
-        "Also defines channel pixels for hillslope coupling."};
+        "Also defines channel pixels for hillslope coupling.",
+        "Process parameters", "param", ""};
 
     bool_default_map["divide_area_by_dx"] = true;
     help_map["divide_area_by_dx"] = {"bool","true",
         "Divide drainage area by cell size to get specific area.",
-        "Applies to both fluvial incision and hillslope coupling threshold."};
+        "Applies to both fluvial incision and hillslope coupling threshold.",
+        "Process parameters", "param", ""};
 
     float_default_map["slope_clamp"] = 1e-5f;
     help_map["slope_clamp"] = {"float","1e-5",
         "Minimum slope used as Newton-Raphson fallback in stream power solver.",
-        ""};
+        "",
+        "Process parameters", "param", ""};
 
     // --- Analytical steady-state ---
     bool_default_map["run_steady_state"] = false;
     help_map["run_steady_state"] = {"bool","false",
         "Compute analytical steady-state topography instead of running a time-stepping LEM.",
         "Uses the flow algorithm selected by enable_d8_fluvial_erosion or "
-        "enable_dinf_fluvial_erosion. Writes _steady_state_elevation.tif and returns."};
+        "enable_dinf_fluvial_erosion. Writes _steady_state_elevation.tif and returns.",
+        "Analytical steady-state", "switch", ""};
 
     string_default_map["steady_state_mode"] = "K";
     help_map["steady_state_mode"] = {"string","K",
         "Steady-state solver mode: K or relief.",
         "K-mode: K (erodibility) is specified by the user. "
-        "Relief-mode: target_relief is specified and K is back-calculated."};
+        "Relief-mode: target_relief is specified and K is back-calculated.",
+        "Analytical steady-state", "param", "run_steady_state"};
 
     float_default_map["target_relief"] = 1000.0f;
     help_map["target_relief"] = {"float","1000",
         "Target maximum relief (m) for relief-mode steady-state.",
         "The highest point in the output raster will be "
-        "baselevel_elevation + target_relief."};
+        "baselevel_elevation + target_relief.",
+        "Analytical steady-state", "param", "run_steady_state"};
 
     float_default_map["baselevel_elevation"] = 0.0f;
     help_map["baselevel_elevation"] = {"float","0",
         "Elevation (m) assigned to outlet nodes in the steady-state solution.",
-        ""};
+        "",
+        "Analytical steady-state", "param", "run_steady_state"};
 
     int_default_map["steady_state_n_cycles"] = 1;
     help_map["steady_state_n_cycles"] = {"int","1",
@@ -643,7 +692,8 @@ int main(int argc, char* argv[])
         "allowing drainage divides to migrate one pixel per cycle. "
         "Iterating (typically 5-20 cycles) smooths the sharp elevation breaks "
         "across divides that appear in a single-pass steady-state snap. "
-        "The DEM is pit-filled between cycles."};
+        "The DEM is pit-filled between cycles.",
+        "Analytical steady-state", "param", "run_steady_state"};
 
     // --- Hillslope steady-state ---
     bool_default_map["run_hillslope_steady_state"] = false;
@@ -651,17 +701,20 @@ int main(int argc, char* argv[])
         "Solve for hillslope steady-state elevations after fluvial steady-state.",
         "Solver is selected by hillslope_ss_model: linear, roering, or cidre. "
         "Requires run_steady_state: true and incision_threshold_area > 0. "
-        "Channel pixels (area >= incision_threshold_area) become Dirichlet BCs."};
+        "Channel pixels (area >= incision_threshold_area) become Dirichlet BCs.",
+        "Hillslope steady-state", "switch", ""};
 
     float_default_map["hillslope_ss_tolerance"] = 1e-4f;
     help_map["hillslope_ss_tolerance"] = {"float","1e-4",
         "Convergence criterion for hillslope steady-state: max|delta_z| over hillslope pixels.",
-        ""};
+        "",
+        "Hillslope steady-state", "param", "run_hillslope_steady_state"};
 
     int_default_map["hillslope_ss_max_iterations"] = 10000;
     help_map["hillslope_ss_max_iterations"] = {"int","10000",
         "Maximum SOR iterations for hillslope steady-state solver.",
-        ""};
+        "",
+        "Hillslope steady-state", "param", "run_hillslope_steady_state"};
 
     string_default_map["hillslope_ss_model"] = "roering";
     help_map["hillslope_ss_model"] = {"string","roering",
@@ -673,14 +726,16 @@ int main(int argc, char* argv[])
         "Rebuilds the D-inf flow graph each iteration (Picard update of routing "
         "directions). The nonlinear flag for cidre is taken from enable_nonlinear_hillslopes. "
         "At steady state the nonlinear Cidre and Roering solvers produce the same "
-        "elevation field (Carretier et al. 2016 Sec3.3)."};
+        "elevation field (Carretier et al. 2016 Sec3.3).",
+        "Hillslope steady-state", "param", "run_hillslope_steady_state"};
 
     float_default_map["hillslope_sor_omega"] = 0.0f;
     help_map["hillslope_sor_omega"] = {"float","0",
         "SOR relaxation factor omega for hillslope steady-state (0 = auto).",
         "Values in (1, 2) accelerate convergence. 0 = auto-estimate from grid size "
         "(capped at 1.95). Typical manual values: 1.5 (safe) to 1.9 (fast). "
-        "Reduce toward 1.3 if the nonlinear solver diverges."};
+        "Reduce toward 1.3 if the nonlinear solver diverges.",
+        "Hillslope steady-state", "param", "run_hillslope_steady_state"};
 
     // --- Hillshade output (steady-state runs only) ---
     bool_default_map["write_hillshade_png"] = false;
@@ -689,44 +744,52 @@ int main(int argc, char* argv[])
         "Computes a standard Horn (1981) hillshade and saves it as a PNG alongside "
         "the elevation output. If run_hillslope_steady_state is also true, a second "
         "hillshade of the combined fluvial+hillslope surface is written. "
-        "PNG is always used regardless of write_output_format."};
+        "PNG is always used regardless of write_output_format.",
+        "Hillshade output (steady-state runs only)", "switch", ""};
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
         "Sun azimuth for hillshade, degrees clockwise from north.",
-        "315 = northwest (ESRI/QGIS default)."};
+        "315 = northwest (ESRI/QGIS default).",
+        "Hillshade output (steady-state runs only)", "param", "write_hillshade_png"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
     help_map["hillshade_altitude"] = {"float","45",
         "Sun altitude above the horizon for hillshade, degrees.",
-        "45 is the standard default."};
+        "45 is the standard default.",
+        "Hillshade output (steady-state runs only)", "param", "write_hillshade_png"};
 
     float_default_map["hillshade_z_factor"] = 1.0f;
     help_map["hillshade_z_factor"] = {"float","1",
         "Vertical exaggeration factor for hillshade.",
-        "Use values > 1 to emphasise relief on low-gradient landscapes."};
+        "Use values > 1 to emphasise relief on low-gradient landscapes.",
+        "Hillshade output (steady-state runs only)", "param", "write_hillshade_png"};
 
     // --- Timestepping ---
     float_default_map["timestep"] = 100.0f;
     help_map["timestep"] = {"float","100",
         "Model timestep (yr).",
-        "Stability depends on erodibility, resolution and slope."};
+        "Stability depends on erodibility, resolution and slope.",
+        "Timestepping", "param", ""};
 
     int_default_map["number_of_iterations"] = 100;
     help_map["number_of_iterations"] = {"int","100",
         "Number of timesteps to run.",
-        "Ignored when stop_at_steady_state is true."};
+        "Ignored when stop_at_steady_state is true.",
+        "Timestepping", "param", ""};
 
     bool_default_map["stop_at_steady_state"] = false;
     help_map["stop_at_steady_state"] = {"bool","false",
         "Stop when mean erosion rate is within 1% of uplift rate for 100 consecutive steps.",
-        "After detection, runs 20x that step count more before stopping."};
+        "After detection, runs 20x that step count more before stopping.",
+        "Timestepping", "param", ""};
 
     // --- Output ---
     int_default_map["frequency_of_output_writing"] = 0;
     help_map["frequency_of_output_writing"] = {"int","0",
         "Write an intermediate raster every N iterations. 0 = write final only.",
-        ""};
+        "",
+        "Output", "param", "write_elevation_stats_csv"};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
@@ -734,27 +797,55 @@ int main(int argc, char* argv[])
         "png: 8-bit greyscale PNG for quick visualisation. Float32 elevation is "
         "normalised to 1-255 (nodata->0). A worldfile (.pgw) and GDAL PAM sidecar "
         "(.png.aux.xml) are written alongside for georeferencing. PNG cannot store "
-        "float32 values or embed a CRS natively, so use cog/gtiff for analysis."};
+        "float32 values or embed a CRS natively, so use cog/gtiff for analysis.",
+        "Output", "io", ""};
 
     bool_default_map["write_elevation_stats_csv"] = true;
     help_map["write_elevation_stats_csv"] = {"bool","true",
         "Write per-timestep elevation statistics to a CSV file.",
-        ""};
+        "",
+        "Output", "switch", ""};
 
     // --- Routing and threading ---
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Flow routing boundary conditions (north/east/south/west).",
-        "o=open, n=no-flux, p=periodic, b=forced outlet."};
+        "o=open, n=no-flux, p=periodic, b=forced outlet.",
+        "Routing and threading", "param", ""};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads. 0 = all available.",
-        ""};
+        "",
+        "Routing and threading", "io", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -1785,5 +1876,7 @@ int main(int argc, char* argv[])
               << iter << " iterations, "
               << total_time << " yr total.\n";
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     return 0;
 }

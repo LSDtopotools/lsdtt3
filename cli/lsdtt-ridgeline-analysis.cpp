@@ -572,17 +572,10 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    } catch (const std::exception& e) {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // =========================================================================
     // Parameters declarations (Matching LSDTT basin extraction & ridgelines)
     // =========================================================================
@@ -590,53 +583,61 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading / Routing ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int", "0", 
         "Number of OpenMP threads.", 
-        "0 = use all available hardware threads."};
+        "0 = use all available hardware threads.",
+        "Threading / Routing", "io", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string", "oooo",
         "Boundary conditions for flow routing.",
         "Four-character string (N, E, S, W). o = open, p = periodic. Note "
         "that range_defined_ridgelines relies on open boundaries (o) being "
-        "interpreted as mountain fronts."};
+        "interpreted as mountain fronts.",
+        "Threading / Routing", "param", ""};
 
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool", "false", 
         "Whether the input raster is already pit-filled.", 
-        "If false, the CLI calls fill_pits() before building flow routing."};
+        "If false, the CLI calls fill_pits() before building flow routing.",
+        "Threading / Routing", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float", "0.0001", 
         "Minimum slope imposed by pit filling.", 
-        "Used when raster_is_filled is false."};
+        "Used when raster_is_filled is false.",
+        "Threading / Routing", "param", ""};
 
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int", "1000", 
         "Contributing-pixel threshold defining channel heads.", 
-        "Reduce for denser channels."};
+        "Reduce for denser channels.",
+        "Threading / Routing", "param", ""};
 
     // --- Workflow mode ---
     string_default_map["ridgeline_analysis_mode"] = "basin_outline_ridgelines";
     help_map["ridgeline_analysis_mode"] = {"string", "basin_outline_ridgelines",
         "Main ridgeline analysis mode.",
         "Allowed values: basin_outline_ridgelines, "
-        "interfluvial_divide_ridgelines, range_defined_ridgelines."};
+        "interfluvial_divide_ridgelines, range_defined_ridgelines.",
+        "Workflow mode", "param", "extract_only_mdd"};
 
     bool_default_map["extract_only_mdd"] = false;
     help_map["extract_only_mdd"] = {"bool", "false", 
         "If true, skips the transverse divides and only extracts the main drainage divide.", 
-        "Only applies when ridgeline_analysis_mode is range_defined_ridgelines."};
+        "Only applies when ridgeline_analysis_mode is range_defined_ridgelines.",
+        "Workflow mode", "switch", ""};
 
     // --- Range-defined boundaries ---
     string_default_map["corner_coordinates_csv"] = "NULL";
     help_map["corner_coordinates_csv"] = {"string", "NULL",
         "CSV of DEM corner coordinates for boundary segmentation.",
-        "Required for range_defined_ridgelines if the DEM is not rectangular."};
+        "Required for range_defined_ridgelines if the DEM is not rectangular.",
+        "Range-defined boundaries", "param", ""};
 
     // --- Basin Selection ---
     string_default_map["basin_outlet_file"] = "NULL";
@@ -651,13 +652,15 @@ int main(int argc, char* argv[])
         "which is then transformed to the raster CRS. "
         "For CSV inputs the file must contain columns named exactly "
         "'latitude' and 'longitude'. "
-        "For vector inputs all features must be point geometry."};
+        "For vector inputs all features must be point geometry.",
+        "Basin Selection", "param", ""};
 
     bool_default_map["select_basins_from_outlets"] = false;
     help_map["select_basins_from_outlets"] = {"bool","false",
         "Select basins from supplied basin outlet points.",
         "Reads basin_outlet_file, optionally snaps the mapped pixels, and then "
-        "constructs one lsdtt_junction_basin per supplied basin outlet."};
+        "constructs one lsdtt_junction_basin per supplied basin outlet.",
+        "Basin Selection", "switch", ""};
 
     bool_default_map["select_basins_from_outlets_nested"] = false;
     help_map["select_basins_from_outlets_nested"] = {"bool","false",
@@ -665,13 +668,15 @@ int main(int argc, char* argv[])
         "Reads basin_outlet_file, optionally snaps the mapped pixels, constructs "
         "one lsdtt_junction_basin per supplied basin outlet, and then expands "
         "selection to include all upstream nested basins from the junction-network "
-        "s_vector."};
+        "s_vector.",
+        "Basin Selection", "switch", ""};
 
     bool_default_map["select_all_basins"] = false;
     help_map["select_all_basins"] = {"bool","false",
         "Select one basin for every junction in the junction network.",
         "Uses the junction network to derive a basin outlet flat index for each "
-        "junction and constructs one lsdtt_junction_basin per junction."};
+        "junction and constructs one lsdtt_junction_basin per junction.",
+        "Basin Selection", "switch", ""};
 
     // --- Basin Outline Snapping / Filtering ---
     string_default_map["basin_outlet_snapping_method"] = "downstream";
@@ -682,143 +687,169 @@ int main(int argc, char* argv[])
         "none: use the mapped raster pixel directly. "
         "expanding_square: search outward ring-by-ring until a qualifying pixel "
         "is found. downstream: follow the D8 receiver chain until a qualifying "
-        "pixel is found."};
+        "pixel is found.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
     help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used for optional basin outlet snapping.",
         "This is the total number of upslope contributing pixels from the "
-        "flow-routing object, not the number of direct donors to a pixel."};
+        "flow-routing object, not the number of direct donors to a pixel.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
     help_map["basin_outlet_min_search_radius_pixels"] = {"int", "0", 
         "Minimum expanding-square snapping search radius in pixels.", 
         "Used only when basin_outlet_snapping_method is expanding_square. "
-        "0 means the mapped input pixel is tested first."};
+        "0 means the mapped input pixel is tested first.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_max_search_radius_pixels"] = {"int", "25", 
         "Maximum expanding-square snapping search radius in pixels.", 
         "Used only when basin_outlet_snapping_method is expanding_square. "
-        "The search stops at the first radius containing one or more qualifying pixels."};
+        "The search stops at the first radius containing one or more qualifying pixels.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     int_default_map["basins_min_stream_order"] = -1;
     help_map["basins_min_stream_order"] = {"int", "-1", 
         "Minimum stream order to keep when filtering basins.", 
-        "Inclusive. Defaults to -1, which means ignore minimum."};
+        "Inclusive. Defaults to -1, which means ignore minimum.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     int_default_map["basins_max_stream_order"] = -1;
     help_map["basins_max_stream_order"] = {"int", "-1", 
         "Maximum stream order to keep when filtering basins.", 
-        "Inclusive. Defaults to -1, which means ignore maximum."};
+        "Inclusive. Defaults to -1, which means ignore maximum.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     int_default_map["basins_min_area_pixels"] = -1;
     help_map["basins_min_area_pixels"] = {"int", "-1", 
         "Minimum basin area in pixels to keep when filtering basins by area.", 
-        "Inclusive. Defaults to -1, which means ignore minimum."};
+        "Inclusive. Defaults to -1, which means ignore minimum.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     int_default_map["basins_max_area_pixels"] = -1;
     help_map["basins_max_area_pixels"] = {"int", "-1", 
         "Maximum basin area in pixels to keep when filtering basins by area.", 
-        "Inclusive. Defaults to -1, which means ignore maximum."};
+        "Inclusive. Defaults to -1, which means ignore maximum.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     bool_default_map["filter_incomplete_basins"] = false;
     help_map["filter_incomplete_basins"] = {"bool", "false", 
         "Remove all incomplete basins.", 
         "An incomplete basin has at least one DEM pixel that is adjacent "
         "to an invalid pixel. Off-grid neighbours are invalid, unless "
-        "an n or p boundary is supplied."};
+        "an n or p boundary is supplied.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     bool_default_map["filter_all_but_largest_basin"] = false;
     help_map["filter_all_but_largest_basin"] = {"bool", "false", 
         "Keep only the largest basin.", 
         "Applied later in the filtering order so it can be used after "
-        "completeness or other filters."};
+        "completeness or other filters.",
+        "Basin Outline Snapping / Filtering", "param", ""};
 
     bool_default_map["filter_nested_basins"] = false;
     help_map["filter_nested_basins"] = {"bool", "false", 
         "Remove nested basins.", 
-        "Only the largest non-nested basins in the current selection are retained."};
+        "Only the largest non-nested basins in the current selection are retained.",
+        "Basin Outline Snapping / Filtering", "param", ""};
     
     // --- Basin Output Prints ---
     bool_default_map["write_basin_outlines"] = false;
     help_map["write_basin_outlines"] = {"bool", "false", 
         "Write selected basin outlines as vector features.", 
-        "Features are labelled by their junction number."};
+        "Features are labelled by their junction number.",
+        "Basin Output Prints", "switch", ""};
 
     bool_default_map["write_basin_outlines_as_polygon"] = false;
     help_map["write_basin_outlines_as_polygon"] = {"bool", "false", 
         "Write basin outlines as polygons rather than polylines.", 
-        "Set to true when you want basins printed as areas."};
+        "Set to true when you want basins printed as areas.",
+        "Basin Output Prints", "switch", ""};
 
     string_default_map["basin_outlines_output_format"] = "flatgeobuf";
     help_map["basin_outlines_output_format"] = {"string", "flatgeobuf", 
         "Output format for basin outline visualisation.", 
-        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default."};
+        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default.",
+        "Basin Output Prints", "param", ""};
 
     bool_default_map["write_basin_outlines_to_csv"] = false;
     help_map["write_basin_outlines_to_csv"] = {"bool", "false", 
         "Write basin outlines as a point CSV with distance and elevation.", 
-        "Outputs a _basin_outlines.csv file containing points for all basins."};
+        "Outputs a _basin_outlines.csv file containing points for all basins.",
+        "Basin Output Prints", "switch", ""};
 
     bool_default_map["write_basins_raster"] = false;
     help_map["write_basins_raster"] = {"bool", "false", 
         "Write the selected basins as a labelled raster.", 
-        "Basins are labelled by junction number."};
+        "Basins are labelled by junction number.",
+        "Basin Output Prints", "switch", ""};
 
     // --- Ridgeline Algorithms ---
     string_default_map["outline_splitting_method"] = "longest_channel";
     help_map["outline_splitting_method"] = {"string", "longest_channel", 
         "Determines how basin outlines are split into two ridgelines: max_elevation, longest_channel or equal_length.", 
-        "Only used if ridgeline_analysis_mode is basin_outline_ridgelines."};
+        "Only used if ridgeline_analysis_mode is basin_outline_ridgelines.",
+        "Ridgeline Algorithms", "param", ""};
 
     float_default_map["ridgeline_smoothing_window_fraction"] = 0.05f;
     help_map["ridgeline_smoothing_window_fraction"] = {"float", "0.05", 
         "When analysing the ridgelines along basin outlines, it is necessary to segment the ridge snouts.", 
-        "When segmenting the snout based on max curvature (following Robinson et al. 2025), lowess smoothing is required first with a smoothing window as parameter. This defines the smoothing window as a fraction (0-1) of total ridgeline distance."};
+        "When segmenting the snout based on max curvature (following Robinson et al. 2025), lowess smoothing is required first with a smoothing window as parameter. This defines the smoothing window as a fraction (0-1) of total ridgeline distance.",
+        "Ridgeline Algorithms", "param", ""};
 
     int_default_map["ridgeline_pixels_smoothing_window"] = 1;
     help_map["ridgeline_pixels_smoothing_window"] = {"int", "1", 
         "The pixel window to smooth the detrended ridgeline with when extracting ridgeline extrema. Using a very simple moving average.", 
-        "A pixel window of 1 (default) effectively means no smoothing happens. Note this is NOT the same as ridgeline_smoothing_window_fraction which is used for ridge-snout segmentation."};
+        "A pixel window of 1 (default) effectively means no smoothing happens. Note this is NOT the same as ridgeline_smoothing_window_fraction which is used for ridge-snout segmentation.",
+        "Ridgeline Algorithms", "param", ""};
 
     bool_default_map["use_polynomial_fit_for_ridgeline"] = false;
     help_map["use_polynomial_fit_for_ridgeline"] = {"bool", "false", 
         "When set to true, detrends the ridgeline with a polynomial fit.", 
         "Ridgeline slope and steepness always calculated with linear fit, "
-        "but this alters the detrended elevation outputs."};
+        "but this alters the detrended elevation outputs.",
+        "Ridgeline Algorithms", "switch", ""};
 
     bool_default_map["use_constant_fit_for_mdd_ridgeline"] = false;
     help_map["use_constant_fit_for_mdd_ridgeline"] = {"bool", "false", 
         "When set to true, it will fit a z = constant line through the main drainage divide for detrendeing.", 
-        "Overrules the default linear fit and the optional polynomial fit. Only applicable if ridgeline_analysis_mode is range_defined_ridgelines."};
+        "Overrules the default linear fit and the optional polynomial fit. Only applicable if ridgeline_analysis_mode is range_defined_ridgelines.",
+        "Ridgeline Algorithms", "switch", ""};
 
     float_default_map["m_over_n"] = 0.5f;
     help_map["m_over_n"] = {"float", "0.5", 
         "The concavity index for calculating ridgeline steepness. Usually denoted as the Greek symbol theta.", 
-        "Default is 0.5, can be constrained for the DEM using the lsdtt-chi-mapping program and supply the result here."};
+        "Default is 0.5, can be constrained for the DEM using the lsdtt-chi-mapping program and supply the result here.",
+        "Ridgeline Algorithms", "param", ""};
     
 
     // --- Ridgeline CSV Outputs ---
     bool_default_map["print_ridgelines"] = false;
     help_map["print_ridgelines"] = {"bool", "false", 
         "This triggers ridgeline printing to csv.", 
-        "NOTE for any ridgeline to print, you must select an analysis mode."};
+        "NOTE for any ridgeline to print, you must select an analysis mode.",
+        "Ridgeline CSV Outputs", "switch", ""};
 
     bool_default_map["print_ridgeline_stats"] = false;
     help_map["print_ridgeline_stats"] = {"bool", "false", 
         "This triggers printing of ridgeline statistics (including ridgeline steepness) to csv.", 
-        "Includes slope, R2, normalized steepness, and polynomial coeffs."};
+        "Includes slope, R2, normalized steepness, and polynomial coeffs.",
+        "Ridgeline CSV Outputs", "switch", ""};
 
     bool_default_map["print_ridgeline_extrema"] = false;
     help_map["print_ridgeline_extrema"] = {"bool", "false", 
         "This triggers printing of ridgeline extrema to csv.", 
-        "Includes distance to next extremum, relief, and distance to TDJ."};
+        "Includes distance to next extremum, relief, and distance to TDJ.",
+        "Ridgeline CSV Outputs", "switch", ""};
 
     bool_default_map["print_ridgeline_flow_topological_distance"] = false;
     help_map["print_ridgeline_flow_topological_distance"] = {"bool", "false", 
         "Write the left and right flow topological distances for internal ridgeline nodes.", 
-        "Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node."};
+        "Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node.",
+        "Ridgeline CSV Outputs", "switch", ""};
 
 
     // --- Polynomial surface fit ---
@@ -826,13 +857,15 @@ int main(int argc, char* argv[])
     help_map["write_polyfit_rasters"] = {"bool","false",
         "Write the six quadratic polynomial fit coefficient rasters.",
         "Computes a, b, c, d, e, f where z = ax^2 + by^2 + cxy + dx + ey + f "
-        "over a moving window controlled by polyfit_lambda."};
+        "over a moving window controlled by polyfit_lambda.",
+        "Polynomial surface fit", "switch", ""};
 
     float_default_map["polyfit_lambda_metres"] = 70.0f;
     help_map["polyfit_lambda_metres"] = {"float","70.0",
         "Characteristic lengthscale (metres) for the wavelet quadratic fit.",
         "Controls the size of the moving window. Default (70 m) is tuned for "
-        "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m)."};
+        "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m).",
+        "Polynomial surface fit", "param", ""};
 
     string_default_map["polyfit_metrics"] = "";
     help_map["polyfit_metrics"] = {"string","",
@@ -847,19 +880,22 @@ int main(int argc, char* argv[])
         "profile_curvature, plan_curvature, tangential_curvature, "
         "difference_curvature, horizontal_excess_curvature, "
         "vertical_excess_curvature, accumulation_curvature, "
-        "ring_curvature, rotor."};
+        "ring_curvature, rotor.",
+        "Polynomial surface fit", "param", ""};
 
     float_default_map["polyfit_z_factor"] = 1.0f;
     help_map["polyfit_z_factor"] = {"float","1.0",
         "Vertical scaling applied before interpreting polyfit derivatives.",
         "Scales first and second derivatives consistently in the "
-        "polyfit metric engine."};
+        "polyfit metric engine.",
+        "Polynomial surface fit", "param", ""};
 
     float_default_map["polyfit_flat_slope_tolerance"] = 1e-12f;
     help_map["polyfit_flat_slope_tolerance"] = {"float","1e-12",
         "Slope tolerance below which direction-dependent polyfit metrics are nodata.",
         "Applies to aspect, plan curvature, tangential curvature, "
-        "profile curvature, and rotor."};
+        "profile curvature, and rotor.",
+        "Polynomial surface fit", "param", ""};
 
     string_default_map["polyfit_method"] = "direct";
     help_map["polyfit_method"] = {"string","wavelet",
@@ -867,7 +903,8 @@ int main(int argc, char* argv[])
         "wavelet: FFT-based Gaussian wavelet fit (requires FFTW). "
         "direct: separable rolling-moment O(n) fit (no FFTW needed). "
         "both: run both methods and map outputs from each. "
-        "Outputs are prefixed _wavelet_* or _direct_*."};
+        "Outputs are prefixed _wavelet_* or _direct_*.",
+        "Polynomial surface fit", "param", ""};
 
     bool_default_map["calculate_polyfit_metrics_directly_on_dem"] = false;
     help_map["calculate_polyfit_metrics_directly_on_dem"] = {"bool","false",
@@ -875,13 +912,38 @@ int main(int argc, char* argv[])
         "polyfit metrics directly on the raw DEM.",
         "Internally forces a 3x3 direct Evans (1980) quadratic fit, "
         "overriding polyfit_method and polyfit_lambda_metres. "
-        "Also supports periodic boundaries."};
+        "Also supports periodic boundaries.",
+        "Polynomial surface fit", "switch", ""};
 
 
 
     // =========================================================================
     // Core Setup & Validations
     // =========================================================================
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map
     );
@@ -1831,6 +1893,8 @@ int main(int argc, char* argv[])
     // Finalize
     // =========================================================================
     std::cout << "\n--- Finalizing ---\n";
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     
     std::cout << "\nlsdtt-ridgeline-analysis: done.\n";

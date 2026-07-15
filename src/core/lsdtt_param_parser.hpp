@@ -231,19 +231,9 @@ public:
     // Returns empty string if no dot is found.
     static std::string extension(const std::string& filename);
 
-    // Parse command-line arguments for a standard lsdtt3 CLI.
-    // Handles -h / -v / -c flags (print and exit), then extracts
-    // {path, parameter_file} from argv.  Replaces the boilerplate
-    // parse_args free function that every CLI used to duplicate.
-    static std::pair<std::string, std::string> parse_args(
-        int argc, char* argv[],
-        const std::string& tool_name,
-        const std::string& version,
-        const std::string& citation
-    );
-
-    // Deferred-help variant of parse_args (see docs/cli_help_plan.md).
-    // -v and -c print and exit as before. Help flags do NOT exit: they are
+    // Parse command-line arguments for a standard lsdtt3 CLI
+    // (see docs/cli_help_plan.md).
+    // -v and -c print and exit. Help flags do NOT exit: they are
     // recorded in the returned struct so the CLI can declare its parameter
     // maps and then call print_terminal_help(). Accepted help forms:
     //   -h / --help            grouped parameter overview to stdout

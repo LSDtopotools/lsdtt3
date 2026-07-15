@@ -78,23 +78,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -102,33 +92,37 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                       float_default_map;
     std::map<std::string, int>                         int_default_map;
     std::map<std::string, std::string>                 string_default_map;
-    std::map<std::string, std::vector<std::string>>    help_map;
+    lsdtt::lsdtt_help_registry    help_map;
 
     // --- Threading / routing ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
         "0 = use all available hardware threads. "
-        "Applies to pit filling, flow routing, and polyfit."};
+        "Applies to pit filling, flow routing, and polyfit.",
+        "Threading / routing", "io", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for flow routing.",
         "Four-character string for north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "Threading / routing", "param", ""};
 
     // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool","false",
         "Whether the input raster is already pit-filled and ready for routing.",
         "If false (default), the CLI will call fill_pits() before building "
-        "flow routing. If true, the DEM is assumed to already be suitable."};
+        "flow routing. If true, the DEM is assumed to already be suitable.",
+        "DEM preparation", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
         "Used only when raster_is_filled is false. "
-        "Passed to fill_pits() to gently enforce downstream descent."};
+        "Passed to fill_pits() to gently enforce downstream descent.",
+        "DEM preparation", "param", ""};
 
     // --- MFD options ---
     float_default_map["mfd_exponent"] = 1.0f;
@@ -136,27 +130,31 @@ int main(int argc, char* argv[])
         "Slope-weighting exponent for MFD flow partitioning.",
         "Quinn et al. (1991) use 1.0; Freeman (1991) suggest 1.1. "
         "Only used when write_mfd_drainage_area_raster is true or "
-        "twi_drainage_area_method is MFD."};
+        "twi_drainage_area_method is MFD.",
+        "MFD options", "param", ""};
 
     // --- Drainage area outputs ---
     bool_default_map["write_d8_drainage_area_raster"] = false;
     help_map["write_d8_drainage_area_raster"] = {"bool","false",
         "Write a D8 drainage area raster.",
         "Uses lsdtt_flowinfo (D8 single-receiver routing). "
-        "Area is in square map units (m^2 for projected CRS)."};
+        "Area is in square map units (m^2 for projected CRS).",
+        "Drainage area outputs", "switch", ""};
 
     bool_default_map["write_dinf_drainage_area_raster"] = false;
     help_map["write_dinf_drainage_area_raster"] = {"bool","false",
         "Write a D-infinity drainage area raster.",
         "Uses Tarboton (1997) D-infinity routing via lsdtt_flowgraph_cpu. "
-        "Distributed flow gives smoother hillslope area estimates than D8."};
+        "Distributed flow gives smoother hillslope area estimates than D8.",
+        "Drainage area outputs", "switch", ""};
 
     bool_default_map["write_mfd_drainage_area_raster"] = false;
     help_map["write_mfd_drainage_area_raster"] = {"bool","false",
         "Write a multiple-flow-direction (MFD) drainage area raster.",
         "Uses Quinn et al. (1991) / Freeman (1991) MFD routing via "
         "lsdtt_flowgraph_cpu. Area is partitioned among all downslope "
-        "neighbours weighted by slope^mfd_exponent."};
+        "neighbours weighted by slope^mfd_exponent.",
+        "Drainage area outputs", "switch", ""};
 
     // --- Topographic Wetness Index ---
     bool_default_map["write_twi_raster"] = false;
@@ -165,43 +163,50 @@ int main(int argc, char* argv[])
         "TWI = ln( (A / pixel_area) / slope ), where A is the upstream "
         "drainage area (m^2), pixel_area = cell_size^2, and slope is the "
         "gradient magnitude (m/m) from a local quadratic fit. "
-        "Only valid where area > 0 and slope > 0."};
+        "Only valid where area > 0 and slope > 0.",
+        "Topographic Wetness Index", "switch", ""};
 
     string_default_map["twi_drainage_area_method"] = "Dinf";
     help_map["twi_drainage_area_method"] = {"string","Dinf",
         "Flow routing method used to compute drainage area for TWI.",
         "Allowed values: Dinf (D-infinity) or MFD. "
-        "D-infinity (default) is generally preferred for hillslope TWI."};
+        "D-infinity (default) is generally preferred for hillslope TWI.",
+        "Topographic Wetness Index", "param", "write_twi_raster"};
 
     float_default_map["twi_window_radius"] = 100.0f;
     help_map["twi_window_radius"] = {"float","100.0",
         "Polyfit window radius (metres) for slope computation in TWI.",
         "Passed to direct_polyfit(). Larger values smooth out local "
-        "roughness; smaller values capture fine-scale slope variation."};
+        "roughness; smaller values capture fine-scale slope variation.",
+        "Topographic Wetness Index", "param", "write_twi_raster"};
 
     // --- Soil Topographic Index (STI) ---
     bool_default_map["write_sti_raster"] = false;
     help_map["write_sti_raster"] = {"bool","false",
         "Write STI raster using the ln(Ks*D) denominator term.",
         "Output file: <write_fname>_sti.tif. Requires clipped soil and land-use "
-        "vector overlays and the SSKIB Ksat horizon CSV."};
+        "vector overlays and the SSKIB Ksat horizon CSV.",
+        "Soil Topographic Index (STI)", "switch", ""};
 
     bool_default_map["write_sti_proxy_raster"] = false;
     help_map["write_sti_proxy_raster"] = {"bool","false",
         "Write STI proxy raster using a runoff-based SPR denominator term.",
         "Output file: <write_fname>_sti_proxy.tif. Uses SERIES_SPR.csv "
-        "joined by normalised series code."};
+        "joined by normalised series code.",
+        "Soil Topographic Index (STI)", "switch", ""};
 
     bool_default_map["write_sti_intermediate_rasters"] = false;
     help_map["write_sti_intermediate_rasters"] = {"bool","false",
         "Write STI debugging rasters (coded series, coded land use, term, valid mask).",
-        "Useful for checking joins and nodata coverage."};
+        "Useful for checking joins and nodata coverage.",
+        "Soil Topographic Index (STI)", "switch", ""};
 
     bool_default_map["write_sti_lookup_csv"] = false;
     help_map["write_sti_lookup_csv"] = {"bool","false",
         "Write per-series/land-use lookup diagnostics CSV.",
         "CSV fields: series_code, land_use, n_profiles, ln_kd_median, "
-        "spr_prc, spr_term, source."};
+        "spr_prc, spr_term, source.",
+        "Soil Topographic Index (STI)", "switch", ""};
 
     string_default_map["sti_soil_vector_path"] =
         "data/scotland_soils/hutton_series_code_min.fgb";
@@ -230,47 +235,54 @@ int main(int argc, char* argv[])
         "Write the sediment connectivity index IC = log10(D_up / D_down).",
         "Follows Cavalli et al. (2013). D8 routing is always used for "
         "D_up and D_down path calculations. The area raster method is "
-        "controlled by connectivity_drainage_area_method."};
+        "controlled by connectivity_drainage_area_method.",
+        "Connectivity index (Cavalli et al. 2013)", "switch", ""};
 
     string_default_map["connectivity_drainage_area_method"] = "d8";
     help_map["connectivity_drainage_area_method"] = {"string","d8",
         "Flow routing method for the drainage area fed into D_up.",
         "Allowed values: d8, dinf, mfd. D8 is the simplest; dinf and mfd "
         "give smoother hillslope area estimates. D8 routing is always used "
-        "for the upslope mean and downstream path computations."};
+        "for the upslope mean and downstream path computations.",
+        "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
     float_default_map["connectivity_area_threshold_m2"] = 1.0e6f;
     help_map["connectivity_area_threshold_m2"] = {"float","1e6",
         "Drainage area threshold (m^2) defining channel / sink pixels.",
         "Pixels at or above this threshold are treated as channels. "
-        "D_down accumulation stops when the flow path reaches a channel."};
+        "D_down accumulation stops when the flow path reaches a channel.",
+        "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
     float_default_map["connectivity_window_radius"] = 100.0f;
     help_map["connectivity_window_radius"] = {"float","100.0",
         "Moving-window radius (metres) for slope and roughness computation.",
         "Used for the polyfit slope and for the roughness metric (MADk2 or "
-        "IQR of residuals). Square window always used."};
+        "IQR of residuals). Square window always used.",
+        "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
     string_default_map["connectivity_slope_method"] = "polyfit_direct";
     help_map["connectivity_slope_method"] = {"string","polyfit_direct",
         "Method for computing slope used in IC.",
         "Allowed values: polyfit_direct (fast, square window, no FFTW required), "
         "wavelet (FFT-based, requires FFTW). Both fit a local quadratic surface; "
-        "slope magnitude = sqrt(dz/dx^2 + dz/dy^2)."};
+        "slope magnitude = sqrt(dz/dx^2 + dz/dy^2).",
+        "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
     string_default_map["connectivity_roughness_method"] = "madk2";
     help_map["connectivity_roughness_method"] = {"string","madk2",
         "Roughness metric used to compute the W weighting factor.",
         "Allowed values: madk2 (Median Absolute Deviation of k2 differences, "
         "Trevisani & Guth 2025 - default), iqr_residual (IQR of polyfit "
-        "residuals, square window). W = max(1 - R/R_max, 0.001)."};
+        "residuals, square window). W = max(1 - R/R_max, 0.001).",
+        "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
     bool_default_map["write_height_above_channel_raster"] = false;
     help_map["write_height_above_channel_raster"] = {"bool","false",
         "Write a height-above-channel raster.",
         "For each pixel: elevation difference to the nearest downstream channel "
         "pixel along the D8 flow path. Channel pixels are those whose D8 "
-        "contributing-pixel count >= channel_threshold_contributing_pixels."};
+        "contributing-pixel count >= channel_threshold_contributing_pixels.",
+        "Connectivity index (Cavalli et al. 2013)", "switch", ""};
 
     int_default_map["channel_threshold_contributing_pixels"] = 1000;
     help_map["channel_threshold_contributing_pixels"] = {"int","1000",
@@ -278,17 +290,43 @@ int main(int argc, char* argv[])
         "Used by write_height_above_channel_raster. Pixels with D8 "
         "contributing-pixel count >= this threshold are treated as channels. "
         "Tune relative to DEM resolution: at 5 m a value of 1000 corresponds "
-        "to ~0.025 km^2; at 30 m the same count is ~0.9 km^2."};
+        "to ~0.025 km^2; at 30 m the same count is ~0.9 km^2.",
+        "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output format for all raster outputs.",
-        "Allowed values: cog, gtiff, same_as_input."};
+        "Allowed values: cog, gtiff, same_as_input.",
+        "Output format", "io", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -1464,6 +1502,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-drainage-analysis: done.\n";

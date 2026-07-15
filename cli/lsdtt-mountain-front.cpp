@@ -185,14 +185,10 @@ static lsdtt::lsdtt_raster_cpu prune_upstream_outlets(
 int main(int argc, char* argv[])
 {
     print_banner();
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try { pp = lsdtt::lsdtt_param_parser(path, fname); }
-    catch (const std::exception& e)
-    { std::cerr << "Error loading parameter file: " << e.what() << "\n"; return 1; }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -200,20 +196,23 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     int_default_map["n_threads"] = 0;
-    help_map["n_threads"] = {"int","0","OpenMP thread count.","0 = all hardware threads."};
+    help_map["n_threads"] = {"int","0","OpenMP thread count.","0 = all hardware threads.",
+        "-", "io", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog","Raster output format.",
-        "cog, gtiff, or same_as_input."};
+        "cog, gtiff, or same_as_input.",
+        "-", "io", ""};
 
     // --- Stage 1: relief ---
     int_default_map["relief_window_pixels"] = 5;
     help_map["relief_window_pixels"] = {"int","5",
         "Square window size (pixels) for local relief (max - min).",
-        "Must be odd and >= 3."};
+        "Must be odd and >= 3.",
+        "Stage 1: relief", "param", ""};
 
     // --- Stage 2: relief threshold ---
     bool_default_map["adaptive_relief_threshold"] = true;
@@ -221,83 +220,121 @@ int main(int argc, char* argv[])
         "Automatically select the relief threshold using CDF divergence.",
         "Computes a 500-bin empirical CDF, fits the best parametric distribution, "
         "and picks the x-value where the empirical CDF most exceeds the fitted CDF. "
-        "Set to false to use relief_threshold_metres instead."};
+        "Set to false to use relief_threshold_metres instead.",
+        "Stage 2: relief threshold", "param", ""};
 
     float_default_map["relief_threshold_metres"] = 1.0f;
     help_map["relief_threshold_metres"] = {"float","1.0",
         "Local relief value (m) below which a pixel is classed flat.",
         "Read the threshold directly off the _relief_cdf.csv output.  "
-        "Only used when adaptive_relief_threshold = false."};
+        "Only used when adaptive_relief_threshold = false.",
+        "Stage 2: relief threshold", "param", ""};
 
     // --- Stages 4-7: flat mask post-processing ---
     int_default_map["min_flat_component_pixels"] = 500;
     help_map["min_flat_component_pixels"] = {"int","500",
         "Minimum 8-connected component size (pixels) to keep in the flat mask.",
         "Small isolated flat patches (e.g. individual floodplain pixels) are "
-        "removed before the flat mask is used to define mountain pixels."};
+        "removed before the flat mask is used to define mountain pixels.",
+        "Stages 4-7: flat mask post-processing", "param", ""};
 
     float_default_map["flat_closing_radius_metres"] = 500.0f;
     help_map["flat_closing_radius_metres"] = {"float","500",
         "Radius (m) for morphological closing of the flat mask (Stage 4).",
         "Seals narrow background gaps between adjacent flat patches (e.g. "
-        "riser pixels between floodplain segments).  0 = skip."};
+        "riser pixels between floodplain segments).  0 = skip.",
+        "Stages 4-7: flat mask post-processing", "param", ""};
 
     float_default_map["erosion_radius_metres"] = 500.0f;
     help_map["erosion_radius_metres"] = {"float","500",
         "Erosion radius (m) for morphological opening of the flat mask (Stage 5).",
         "Severs thin flat peninsulas narrower than 2x this radius; broad flat "
-        "bodies are restored to their exact original extent.  0 = skip."};
+        "bodies are restored to their exact original extent.  0 = skip.",
+        "Stages 4-7: flat mask post-processing", "param", ""};
 
     int_default_map["min_component_pixels"] = 1000;
     help_map["min_component_pixels"] = {"int","1000",
         "Minimum 8-connected component size (pixels) to keep in the mountain mask.",
-        "Applied to the eroded mountain mask after neck severing."};
+        "Applied to the eroded mountain mask after neck severing.",
+        "Stages 4-7: flat mask post-processing", "param", ""};
 
     // --- Stage 9: valley infilling ---
     float_default_map["infill_valley_radius_metres"] = 0.0f;
     help_map["infill_valley_radius_metres"] = {"float","0",
         "Radius (m) of the circular SE for morphological closing (valley infilling).",
         "Seals valley notches cut by incised rivers into the mountain front. "
-        "Set to ~half the valley width to be filled.  0 = disabled."};
+        "Set to ~half the valley width to be filled.  0 = disabled.",
+        "Stage 9: valley infilling", "param", ""};
 
     // --- Stage 10: outlets ---
     string_default_map["contributing_pixels_fname"] = "";
     help_map["contributing_pixels_fname"] = {"string","",
         "Filename of a pre-computed n_contributing_pixels raster.",
-        "Leave empty to auto-compute via fill + D8 flow routing."};
+        "Leave empty to auto-compute via fill + D8 flow routing.",
+        "Stage 10: outlets", "param", ""};
 
     int_default_map["min_contributing_pixels"] = 1000;
     help_map["min_contributing_pixels"] = {"int","1000",
         "Minimum upstream contributing pixels for a mountain edge pixel to be an outlet.",
-        "Only used when write_mountain_front_outlets is true."};
+        "Only used when write_mountain_front_outlets is true.",
+        "Stage 10: outlets", "param", ""};
 
     // --- Outputs ---
     bool_default_map["write_relief_raster"] = false;
     help_map["write_relief_raster"] = {"bool","false",
-        "Write the local relief raster.","Useful for threshold inspection."};
+        "Write the local relief raster.","Useful for threshold inspection.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_flat_mask_raster"] = false;
     help_map["write_flat_mask_raster"] = {"bool","false",
         "Write the processed flat mask (after component filter, dilation, hole fill).",
-        "The mountain mask is the inverse of this."};
+        "The mountain mask is the inverse of this.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_mountain_mask_raster"] = true;
     help_map["write_mountain_mask_raster"] = {"bool","true",
-        "Write the final mountain mask raster.","1 = mountain, 0 = flat / piedmont."};
+        "Write the final mountain mask raster.","1 = mountain, 0 = flat / piedmont.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_mountain_labels_raster"] = false;
     help_map["write_mountain_labels_raster"] = {"bool","false",
         "Write a labelled mountain components raster (UInt32).",
-        "Each 8-connected mountain component receives a unique integer label."};
+        "Each 8-connected mountain component receives a unique integer label.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_mountain_front_outlets"] = false;
     help_map["write_mountain_front_outlets"] = {"bool","false",
         "Write mountain front outlet points (FlatGeobuf + CSV).",
-        "Mountain mask edge pixels whose upstream area meets min_contributing_pixels."};
+        "Mountain mask edge pixels whose upstream area meets min_contributing_pixels.",
+        "Outputs", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
     auto bf = pp.get_bool_parameters();
@@ -695,6 +732,8 @@ if (bf["write_mountain_front_outlets"])
     }
 
     std::cout << "\n";
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-mountain-front complete.\n";
     return 0;

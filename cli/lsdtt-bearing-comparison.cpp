@@ -165,62 +165,83 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
+    
+    std::map<std::string, bool>                     bool_default_map;
+    std::map<std::string, float>                    float_default_map;
+    std::map<std::string, int>                      int_default_map;
+    std::map<std::string, std::string>              string_default_map;
+    lsdtt::lsdtt_help_registry help_map;
+
+    string_default_map["bearing_file_1"] = "NULL";
+    help_map["bearing_file_1"] = {"string","NULL",
+        "CSV file for the first bearing sample.",
+        "Must contain the column named by bearing_column.",
+        "-", "param", ""};
+
+    string_default_map["bearing_file_2"] = "NULL";
+    help_map["bearing_file_2"] = {"string","NULL",
+        "CSV file for the second bearing sample.",
+        "Must contain the column named by bearing_column.",
+        "-", "param", ""};
+
+    string_default_map["bearing_column"] = "bearing_deg";
+    help_map["bearing_column"] = {"string","bearing_deg",
+        "Name of the CSV column holding bearings in degrees.",
+        "e.g. bearing_deg from a channel_link_bearings or junction_com_bearings "
+        "output.",
+        "-", "param", ""};
+
+    bool_default_map["data_is_axial"] = false;
+    help_map["data_is_axial"] = {"bool","false",
+        "Treat bearings as axial (orientation) data with period 180 degrees.",
+        "Use for line orientations where theta and theta+180 are equivalent. "
+        "Directional (default) uses period 360 degrees.",
+        "-", "param", ""};
+
+    bool_default_map["rotation_invariant"] = false;
+    help_map["rotation_invariant"] = {"bool","false",
+        "Allow one global rotation of sample 2 before the Wasserstein distance.",
+        "Use when only distribution shape matters, not absolute orientation.",
+        "-", "param", ""};
+
+    int_default_map["stream_order_filter"] = -1;
+    help_map["stream_order_filter"] = {"int","-1",
+        "If > 0, keep only rows whose stream_order_column equals this value.",
+        "-1 (default) uses all rows.",
+        "-", "param", ""};
+
+    string_default_map["stream_order_column"] = "stream_order";
+    help_map["stream_order_column"] = {"string","stream_order",
+        "Column used by stream_order_filter.",
+        "Only consulted when stream_order_filter > 0.",
+        "-", "param", ""};
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
     lsdtt::lsdtt_param_parser pp;
     try
     {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
     }
     catch (const std::exception& e)
     {
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
-
-    std::map<std::string, bool>                     bool_default_map;
-    std::map<std::string, float>                    float_default_map;
-    std::map<std::string, int>                      int_default_map;
-    std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
-
-    string_default_map["bearing_file_1"] = "NULL";
-    help_map["bearing_file_1"] = {"string","NULL",
-        "CSV file for the first bearing sample.",
-        "Must contain the column named by bearing_column."};
-
-    string_default_map["bearing_file_2"] = "NULL";
-    help_map["bearing_file_2"] = {"string","NULL",
-        "CSV file for the second bearing sample.",
-        "Must contain the column named by bearing_column."};
-
-    string_default_map["bearing_column"] = "bearing_deg";
-    help_map["bearing_column"] = {"string","bearing_deg",
-        "Name of the CSV column holding bearings in degrees.",
-        "e.g. bearing_deg from a channel_link_bearings or junction_com_bearings "
-        "output."};
-
-    bool_default_map["data_is_axial"] = false;
-    help_map["data_is_axial"] = {"bool","false",
-        "Treat bearings as axial (orientation) data with period 180 degrees.",
-        "Use for line orientations where theta and theta+180 are equivalent. "
-        "Directional (default) uses period 360 degrees."};
-
-    bool_default_map["rotation_invariant"] = false;
-    help_map["rotation_invariant"] = {"bool","false",
-        "Allow one global rotation of sample 2 before the Wasserstein distance.",
-        "Use when only distribution shape matters, not absolute orientation."};
-
-    int_default_map["stream_order_filter"] = -1;
-    help_map["stream_order_filter"] = {"int","-1",
-        "If > 0, keep only rows whose stream_order_column equals this value.",
-        "-1 (default) uses all rows."};
-
-    string_default_map["stream_order_column"] = "stream_order";
-    help_map["stream_order_column"] = {"string","stream_order",
-        "Column used by stream_order_filter.",
-        "Only consulted when stream_order_filter > 0."};
 
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
@@ -318,6 +339,8 @@ int main(int argc, char* argv[])
     os.close();
     std::cout << "Writing: " << out << "\n";
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\n" << k_tool_name << ": done.\n";
     return 0;

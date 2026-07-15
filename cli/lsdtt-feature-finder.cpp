@@ -167,23 +167,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -191,7 +181,7 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- General ---
     string_default_map["feature_type"] = "channel_candidates";
@@ -199,177 +189,209 @@ int main(int argc, char* argv[])
         "Feature mode to run.",
         "Supported values: channel_candidates, find_drains, relief_ratio, "
         "relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, "
-        "flow_road_discrimination, path_opening."};
+        "flow_road_discrimination, path_opening.",
+        "General", "param", ""};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
         "0 = use all hardware threads. Applies to wavelet fitting and "
-        "polyfit metric computation."};
+        "polyfit metric computation.",
+        "General", "io", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format."};
+        "same_as_input: match the input raster format.",
+        "General", "io", ""};
 
     //  --channel candidates
     float_default_map["channel_lambda_min_metres"] = 3.0f;
     help_map["channel_lambda_min_metres"] = {"float","3.0",
         "Minimum wavelength for multiscale channel-candidate curvature analysis, in metres.",
-        "Use a value near the narrowest expected natural channel width or bottom width."};
+        "Use a value near the narrowest expected natural channel width or bottom width.",
+        "General", "param", ""};
 
     float_default_map["channel_lambda_max_metres"] = 18.0f;
     help_map["channel_lambda_max_metres"] = {"float","18.0",
         "Maximum wavelength for multiscale channel-candidate curvature analysis, in metres.",
-        "Use a broader value that captures larger natural channel forms."};
+        "Use a broader value that captures larger natural channel forms.",
+        "General", "param", ""};
 
     int_default_map["channel_n_scales"] = 5;
     help_map["channel_n_scales"] = {"int","5",
         "Number of scales used in the multiscale channel-candidate detector.",
-        "Scales are log-spaced between channel_lambda_min_metres and channel_lambda_max_metres."};
+        "Scales are log-spaced between channel_lambda_min_metres and channel_lambda_max_metres.",
+        "General", "param", ""};
 
     string_default_map["polyfit_curvature_metric"] = "plan_curvature";
     help_map["polyfit_curvature_metric"] = {"string","plan_curvature",
         "Polyfit curvature metric used for channel-candidate detection.",
-        "Suggested starting values: plan_curvature or tangential_curvature."};
+        "Suggested starting values: plan_curvature or tangential_curvature.",
+        "General", "param", ""};
 
     string_default_map["polyfit_curvature_sign"] = "positive";
     help_map["polyfit_curvature_sign"] = {"string","positive",
         "Whether channel-like pixels correspond to positive or negative curvature.",
         "Allowed values: positive (default), negative. "
         "Positive curvature = concave = convergent (channel); "
-        "negative curvature = convex = divergent (ridge)."};
+        "negative curvature = convex = divergent (ridge).",
+        "General", "param", ""};
 
     string_default_map["polyfit_method"] = "direct";
     help_map["polyfit_method"] = {"string","direct",
         "Polyfit algorithm: direct (rolling-moment, O(n), default) or wavelet (FFT-based).",
-        "direct is faster and better at resolving fine-scale features and is the recommended choice."};
+        "direct is faster and better at resolving fine-scale features and is the recommended choice.",
+        "General", "param", ""};
 
     float_default_map["polyfit_z_factor"] = 1.0f;
     help_map["polyfit_z_factor"] = {"float","1.0",
         "Vertical scaling applied before interpreting polyfit derivatives.",
-        "Usually leave at 1.0 unless experimenting."};
+        "Usually leave at 1.0 unless experimenting.",
+        "General", "param", ""};
 
     float_default_map["polyfit_flat_slope_tolerance"] = 1e-12f;
     help_map["polyfit_flat_slope_tolerance"] = {"float","1e-12",
         "Flat-slope tolerance passed to the polyfit metric engine.",
-        "Very small default."};
+        "Very small default.",
+        "General", "param", ""};
 
     float_default_map["channel_depth_window_radius_metres"] = 12.0f;
     help_map["channel_depth_window_radius_metres"] = {"float","12.0",
         "Radius of moving-window mean used to derive local depth support, in metres.",
-        "Depth signal is positive_part(local_mean - dem)."};
+        "Depth signal is positive_part(local_mean - dem).",
+        "General", "param", ""};
 
     string_default_map["depth_window_shape"] = "circular";
     help_map["depth_window_shape"] = {"string","circular",
         "Shape of moving window used for local depth support.",
-        "Allowed values: square, circular."};
+        "Allowed values: square, circular.",
+        "General", "param", ""};
 
     float_default_map["channel_weight_persistent"] = 0.7f;
     help_map["channel_weight_persistent"] = {"float","0.7",
         "Weight for multiscale curvature persistence in the final score.",
-        "Usually the dominant term."};
+        "Usually the dominant term.",
+        "General", "param", ""};
 
     float_default_map["channel_weight_depth"] = 0.3f;
     help_map["channel_weight_depth"] = {"float","0.3",
         "Weight for local depth support in the final score.",
-        "Helps favour locally low pixels."};
+        "Helps favour locally low pixels.",
+        "General", "param", ""};
 
     float_default_map["channel_weight_slope"] = 0.0f;
     help_map["channel_weight_slope"] = {"float","0.0",
         "Optional slope weight in the final score.",
-        "Recommended to keep small or zero at first."};
+        "Recommended to keep small or zero at first.",
+        "General", "param", ""};
 
     float_default_map["channel_score_threshold"] = 0.5f;
     help_map["channel_score_threshold"] = {"float","0.5",
         "Threshold applied to final channel-candidate score to make a binary mask.",
-        "Lower is more inclusive."};
+        "Lower is more inclusive.",
+        "General", "param", ""};
 
     bool_default_map["write_channel_candidate_score_raster"] = true;
     help_map["write_channel_candidate_score_raster"] = {"bool","true",
         "Write final channel-candidate score raster.",
-        "Continuous score in [0,1]."};
+        "Continuous score in [0,1].",
+        "General", "switch", ""};
 
     bool_default_map["write_channel_candidate_mask_raster"] = true;
     help_map["write_channel_candidate_mask_raster"] = {"bool","true",
         "Write thresholded binary channel-candidate mask.",
-        "1 indicates plausible channel candidate."};
+        "1 indicates plausible channel candidate.",
+        "General", "switch", ""};
 
     bool_default_map["write_channel_best_scale_raster"] = true;
     help_map["write_channel_best_scale_raster"] = {"bool","true",
         "Write best persistent scale raster for channel candidates.",
-        "Useful later for cross-road matching."};
+        "Useful later for cross-road matching.",
+        "General", "switch", ""};
 
     bool_default_map["write_channel_candidate_diagnostics"] = true;
     help_map["write_channel_candidate_diagnostics"] = {"bool","true",
         "Write intermediate diagnostic rasters for the channel-candidate detector.",
-        "Includes persistent response, depth signal, slope signal, and Hessian elongation."};
+        "Includes persistent response, depth signal, slope signal, and Hessian elongation.",
+        "General", "switch", ""};
 
     bool_default_map["write_channel_scale_diagnostics"] = false;
     help_map["write_channel_scale_diagnostics"] = {"bool","false",
         "Write per-scale diagnostic rasters (verbose).",
         "Includes raw curvature, normalised channelness signal, and pairwise "
-        "persistence for every scale. Disabled by default to reduce output volume."};
+        "persistence for every scale. Disabled by default to reduce output volume.",
+        "General", "switch", ""};
 
     // --- Hessian elongation filter ---
     bool_default_map["use_hessian_filter"] = true;
     help_map["use_hessian_filter"] = {"bool","true",
         "Apply a Hessian eigenanalysis filter to retain only line-like features.",
         "Pixels where the dominant curvature eigenvalue does not substantially "
-        "exceed the cross-track eigenvalue are removed from the mask."};
+        "exceed the cross-track eigenvalue are removed from the mask.",
+        "Hessian elongation filter", "switch", ""};
 
     float_default_map["hessian_elongation_threshold"] = 0.6f;
     help_map["hessian_elongation_threshold"] = {"float","0.6",
         "Minimum Hessian elongation to retain in the channel mask.",
         "elongation = |lambda_major| / (|lambda_major| + |lambda_minor|). "
         "0.5 is vacuous (always true); 0.6 removes near-isotropic pits/peaks; "
-        "higher values are more selective."};
+        "higher values are more selective.",
+        "Hessian elongation filter", "param", "use_hessian_filter"};
 
     // --- Relief-ratio detector ---
     bool_default_map["write_relief_ratio_raster"] = true;
     help_map["write_relief_ratio_raster"] = {"bool","true",
         "Write the relief-ratio raster.",
         "The output is local_relief(short_radius) / local_relief(long_radius), "
-        "using circular moving windows."};
+        "using circular moving windows.",
+        "Relief-ratio detector", "switch", ""};
 
     float_default_map["relief_ratio_short_radius"] = 1.8f;
     help_map["relief_ratio_short_radius"] = {"float","1.8",
         "Short moving-window radius for local relief, in metres.",
         "Use a radius matched to the narrow drain scale. This is a radius, "
-        "not a diameter."};
+        "not a diameter.",
+        "Relief-ratio detector", "param", "write_relief_ratio_raster"};
 
     float_default_map["relief_ratio_long_radius"] = 8.0f;
     help_map["relief_ratio_long_radius"] = {"float","8.0",
         "Long moving-window radius for local relief, in metres.",
-        "Use a broader radius that captures channel-scale topographic relief."};
+        "Use a broader radius that captures channel-scale topographic relief.",
+        "Relief-ratio detector", "param", "write_relief_ratio_raster"};
 
     // --- Relative Path Impact Index (Tarolli-style, D8 adaptation) ---
     float_default_map["rpii_smoothing_window_metres"] = 30.0f;
     help_map["rpii_smoothing_window_metres"] = {"float","30.0",
         "Surface-fitting window (lambda, metres) for the smoothed reference DEM.",
-        "Computed using direct polyfit fitted_surface."};
+        "Computed using direct polyfit fitted_surface.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "param", ""};
 
     float_default_map["rpii_fill_min_slope"] = 0.0001f;
     help_map["rpii_fill_min_slope"] = {"float","0.0001",
         "Minimum slope used when pit-filling original and smoothed DEMs.",
-        "Passed to fill_pits() before D8 routing."};
+        "Passed to fill_pits() before D8 routing.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "param", ""};
 
     string_default_map["rpii_boundary_conditions"] = "oooo";
     help_map["rpii_boundary_conditions"] = {"string","oooo",
         "Boundary conditions for D8 routing (N,E,S,W).",
-        "o=open, n=no-flux."};
+        "o=open, n=no-flux.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "param", ""};
 
     string_default_map["rpii_flow_routing_method"] = "d8";
     help_map["rpii_flow_routing_method"] = {"string","d8",
         "Flow routing method for drainage-area rasters in RPII.",
-        "Allowed values: d8, dinf (d-infinity)."};
+        "Allowed values: d8, dinf (d-infinity).",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "param", ""};
 
     int_default_map["rpii_max_steps"] = 400;
     help_map["rpii_max_steps"] = {"int","400",
         "Legacy parameter retained for backwards compatibility.",
-        "Not used by the current algebraic RPII definition."};
+        "Not used by the current algebraic RPII definition.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "param", ""};
 
     bool_default_map["write_rpii_raster"] = true;
     help_map["write_rpii_raster"] = {"bool","true",
@@ -377,193 +399,228 @@ int main(int argc, char* argv[])
         "After Tarolli et al. (2013, https://doi.org/10.5721/EuJRS20134610): "
         "RPII = ln((A_r - A_sm) / A_sm), where A_r is drainage area on the "
         "filled original DEM and A_sm is drainage area on the filled smoothed DEM. "
-        "Output: <write_fname>_relative_path_impact_index.tif."};
+        "Output: <write_fname>_relative_path_impact_index.tif.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_log10_area_raw_raster"] = true;
     help_map["write_rpii_log10_area_raw_raster"] = {"bool","true",
         "Write log10(A_r) where A_r is drainage area on the filled original DEM.",
-        "Output: <write_fname>_rpii_log10_area_raw.tif."};
+        "Output: <write_fname>_rpii_log10_area_raw.tif.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_log10_area_smoothed_raster"] = true;
     help_map["write_rpii_log10_area_smoothed_raster"] = {"bool","true",
         "Write log10(A_sm) where A_sm is drainage area on the filled smoothed DEM.",
-        "Output: <write_fname>_rpii_log10_area_smoothed.tif."};
+        "Output: <write_fname>_rpii_log10_area_smoothed.tif.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_smoothed_surface_raster"] = false;
     help_map["write_rpii_smoothed_surface_raster"] = {"bool","false",
         "Write the surface-fitted DEM used by RPI.",
-        "Output: <write_fname>_rpii_smoothed_surface.tif."};
+        "Output: <write_fname>_rpii_smoothed_surface.tif.",
+        "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     // --- Local median + relative elevation ---
     float_default_map["local_median_window_radius_metres"] = 6.0f;
     help_map["local_median_window_radius_metres"] = {"float","6.0",
         "Circular moving-window radius for local median, in metres.",
-        "Increase to compare each pixel against broader neighbourhood context."};
+        "Increase to compare each pixel against broader neighbourhood context.",
+        "Local median + relative elevation", "param", ""};
 
     bool_default_map["write_local_median_raster"] = true;
     help_map["write_local_median_raster"] = {"bool","true",
         "Write local median elevation raster.",
-        "Output: <write_fname>_local_median.tif."};
+        "Output: <write_fname>_local_median.tif.",
+        "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_relative_elevation_raster"] = true;
     help_map["write_local_median_relative_elevation_raster"] = {"bool","true",
         "Write relative elevation with respect to local median.",
         "relative = dem - local_median. Negative = below local median; "
         "positive = above local median. Output: "
-        "<write_fname>_local_median_relative_elevation.tif."};
+        "<write_fname>_local_median_relative_elevation.tif.",
+        "Local median + relative elevation", "switch", ""};
 
     float_default_map["local_median_drain_negative_threshold_metres"] = 0.15f;
     help_map["local_median_drain_negative_threshold_metres"] = {"float","0.15",
         "Magnitude threshold (m) for drain-candidate trough pixels.",
-        "Drain candidate mask keeps pixels where relative_elevation <= -threshold."};
+        "Drain candidate mask keeps pixels where relative_elevation <= -threshold.",
+        "Local median + relative elevation", "param", ""};
 
     float_default_map["local_median_top_positive_threshold_metres"] = 0.15f;
     help_map["local_median_top_positive_threshold_metres"] = {"float","0.15",
         "Positive threshold (m) for top-surface candidate pixels.",
-        "Top mask keeps pixels where relative_elevation >= threshold."};
+        "Top mask keeps pixels where relative_elevation >= threshold.",
+        "Local median + relative elevation", "param", ""};
 
     float_default_map["local_median_bottom_negative_threshold_metres"] = 0.15f;
     help_map["local_median_bottom_negative_threshold_metres"] = {"float","0.15",
         "Magnitude threshold (m) for bottom-surface candidate pixels.",
-        "Bottom mask keeps pixels where relative_elevation <= -threshold."};
+        "Bottom mask keeps pixels where relative_elevation <= -threshold.",
+        "Local median + relative elevation", "param", ""};
 
     float_default_map["local_median_hag_intermix_radius_metres"] = 2.0f;
     help_map["local_median_hag_intermix_radius_metres"] = {"float","2.0",
         "Radius (m) for local top/bottom intermix detection.",
         "A pixel is intermix where both top and bottom masks are present within "
-        "this circular neighbourhood."};
+        "this circular neighbourhood.",
+        "Local median + relative elevation", "param", ""};
 
     float_default_map["local_median_hag_gradient_threshold"] = 0.25f;
     help_map["local_median_hag_gradient_threshold"] = {"float","0.25",
         "Gradient threshold on relative elevation for hag-transition candidates.",
-        "Transition mask keeps intermix pixels where gradient magnitude >= this value."};
+        "Transition mask keeps intermix pixels where gradient magnitude >= this value.",
+        "Local median + relative elevation", "param", ""};
 
     bool_default_map["write_local_median_gradient_raster"] = true;
     help_map["write_local_median_gradient_raster"] = {"bool","true",
         "Write gradient magnitude of local-median relative elevation.",
-        "Output: <write_fname>_local_median_relative_elevation_gradient.tif."};
+        "Output: <write_fname>_local_median_relative_elevation_gradient.tif.",
+        "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_drain_candidate_mask_raster"] = true;
     help_map["write_local_median_drain_candidate_mask_raster"] = {"bool","true",
         "Write binary drain-candidate mask from negative relative elevation.",
-        "Output: <write_fname>_local_median_drain_candidate_mask.tif."};
+        "Output: <write_fname>_local_median_drain_candidate_mask.tif.",
+        "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_top_mask_raster"] = true;
     help_map["write_local_median_top_mask_raster"] = {"bool","true",
         "Write binary top-surface candidate mask.",
-        "Output: <write_fname>_local_median_top_mask.tif."};
+        "Output: <write_fname>_local_median_top_mask.tif.",
+        "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_bottom_mask_raster"] = true;
     help_map["write_local_median_bottom_mask_raster"] = {"bool","true",
         "Write binary bottom-surface candidate mask.",
-        "Output: <write_fname>_local_median_bottom_mask.tif."};
+        "Output: <write_fname>_local_median_bottom_mask.tif.",
+        "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_hag_intermix_mask_raster"] = true;
     help_map["write_local_median_hag_intermix_mask_raster"] = {"bool","true",
         "Write binary top/bottom intermix mask.",
-        "Output: <write_fname>_local_median_hag_intermix_mask.tif."};
+        "Output: <write_fname>_local_median_hag_intermix_mask.tif.",
+        "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_hag_transition_mask_raster"] = true;
     help_map["write_local_median_hag_transition_mask_raster"] = {"bool","true",
         "Write binary hag-transition candidate mask (intermix + high gradient).",
-        "Output: <write_fname>_local_median_hag_transition_mask.tif."};
+        "Output: <write_fname>_local_median_hag_transition_mask.tif.",
+        "Local median + relative elevation", "switch", ""};
 
 
     // --- Drain finder ---
     float_default_map["frangi_sigma_min_metres"] = 1.0f;
     help_map["frangi_sigma_min_metres"] = {"float","1.0",
         "Minimum Frangi Gaussian scale in metres.",
-        "Use small values for narrow drain bottoms in high-resolution DEMs."};
+        "Use small values for narrow drain bottoms in high-resolution DEMs.",
+        "Drain finder", "param", ""};
 
     float_default_map["frangi_sigma_max_metres"] = 2.5f;
     help_map["frangi_sigma_max_metres"] = {"float","2.5",
         "Maximum Frangi Gaussian scale in metres.",
         "Set this near the expected width of the drain-bottom signal rather "
-        "than the spacing between drains."};
+        "than the spacing between drains.",
+        "Drain finder", "param", ""};
 
     int_default_map["frangi_n_scales"] = 4;
     help_map["frangi_n_scales"] = {"int","4",
         "Number of Frangi scales.",
         "Scales are sampled logarithmically between the minimum and maximum "
-        "Frangi sigma values."};
+        "Frangi sigma values.",
+        "Drain finder", "param", ""};
 
     float_default_map["frangi_beta"] = 0.4f;
     help_map["frangi_beta"] = {"float","0.4",
         "Frangi beta parameter.",
-        "Lower values more strongly prefer line-like over blob-like responses."};
+        "Lower values more strongly prefer line-like over blob-like responses.",
+        "Drain finder", "param", ""};
 
     float_default_map["frangi_c"] = 1.0f;
     help_map["frangi_c"] = {"float","1.0",
         "Frangi c parameter.",
         "Controls suppression of weak-structure responses. Smaller values make "
-        "the filter respond more selectively to subtle narrow drains."};
+        "the filter respond more selectively to subtle narrow drains.",
+        "Drain finder", "param", ""};
 
     float_default_map["drain_max_frangi_scale_metres"] = 1.8f;
     help_map["drain_max_frangi_scale_metres"] = {"float","1.8",
         "Maximum allowed Frangi best scale, in metres, for retained drain candidates.",
         "Use this to suppress broader features such as channels while still "
-        "running Frangi over a wider diagnostic scale range."};
+        "running Frangi over a wider diagnostic scale range.",
+        "Drain finder", "param", ""};
 
     float_default_map["drain_log10_abs_accumulation_curvature_blur_radius_metres"] = 20.0f;
     help_map["drain_log10_abs_accumulation_curvature_blur_radius_metres"] = {"float","20.0",
         "Radius of the moving-window mean used to smooth log10(abs(accumulation_curvature)), in metres.",
         "The blurred log10 accumulation-curvature raster is then used for accumulation-curvature masking in the drain finder. "
-        "Set to 0 to disable smoothing."};
+        "Set to 0 to disable smoothing.",
+        "Drain finder", "param", ""};
 
 
     float_default_map["drain_response_threshold"] = 0.15f;
     help_map["drain_response_threshold"] = {"float","0.15",
         "Threshold applied to the Frangi response before shape filtering.",
         "Lower values retain more candidate pixels; higher values are more "
-        "conservative."};
+        "conservative.",
+        "Drain finder", "param", ""};
 
     int_default_map["drain_min_component_pixels"] = 6;
     help_map["drain_min_component_pixels"] = {"int","6",
         "Minimum connected-component size in pixels.",
-        "Small spotty detections below this size are removed."};
+        "Small spotty detections below this size are removed.",
+        "Drain finder", "param", ""};
 
     float_default_map["drain_min_major_axis_pixels"] = 5.0f;
     help_map["drain_min_major_axis_pixels"] = {"float","5.0",
         "Minimum estimated major-axis length in pixels.",
-        "Retains only components with a sufficiently line-like span."};
+        "Retains only components with a sufficiently line-like span.",
+        "Drain finder", "param", ""};
 
     float_default_map["drain_min_elongation"] = 3.0f;
     help_map["drain_min_elongation"] = {"float","3.0",
         "Minimum component elongation = major_axis / minor_axis.",
-        "Higher values more aggressively reject leopard-spot style detections."};
+        "Higher values more aggressively reject leopard-spot style detections.",
+        "Drain finder", "param", ""};
 
     bool_default_map["write_drain_mask_raster"] = true;
     help_map["write_drain_mask_raster"] = {"bool","true",
         "Write the final filtered binary drain mask.",
-        "Output pixels are 1.0 for retained drain detections and 0.0 otherwise."};
+        "Output pixels are 1.0 for retained drain detections and 0.0 otherwise.",
+        "Drain finder", "switch", ""};
 
     bool_default_map["write_drain_diagnostics"] = true;
     help_map["write_drain_diagnostics"] = {"bool","true",
         "Write intermediate drain-finder diagnostic rasters.",
         "Includes Frangi response, Frangi best scale, and the thresholded "
-        "candidate mask before shape filtering."};
+        "candidate mask before shape filtering.",
+        "Drain finder", "switch", ""};
 
     float_default_map["drain_accumulation_curvature_lambda"] = 4.0f;
     help_map["drain_accumulation_curvature_lambda"] = {"float","4.0",
         "Wavelength used for the polyfit accumulation-curvature veto, in metres.",
         "Use a scale that captures channel and broken-ground curvature structure "
-        "without being so large that subtle drains disappear."};
+        "without being so large that subtle drains disappear.",
+        "Drain finder", "param", ""};
 
     float_default_map["drain_accumulation_curvature_z_factor"] = 1.0f;
     help_map["drain_accumulation_curvature_z_factor"] = {"float","1.0",
         "Vertical scaling applied before interpreting accumulation curvature.",
         "Usually leave at 1.0 unless you deliberately want to amplify or "
-        "suppress curvature magnitudes."};
+        "suppress curvature magnitudes.",
+        "Drain finder", "param", ""};
 
     float_default_map["drain_accumulation_curvature_flat_slope_tolerance"] = 1e-12f;
     help_map["drain_accumulation_curvature_flat_slope_tolerance"] = {"float","1e-12",
         "Flat-slope tolerance passed to the polyfit metric engine for the accumulation-curvature veto.",
-        "Very small default so only nearly flat terrain is treated as directionless."};
+        "Very small default so only nearly flat terrain is treated as directionless.",
+        "Drain finder", "param", ""};
 
     float_default_map["drain_log10_abs_accumulation_curvature_max"] = -5.0f;
     help_map["drain_log10_abs_accumulation_curvature_max"] = {"float","-5.0",
         "Maximum allowed value of log10(abs(accumulation_curvature)) for retained drain candidates.",
-        "Pixels above this value are removed from the thresholded Frangi candidates."};
+        "Pixels above this value are removed from the thresholded Frangi candidates.",
+        "Drain finder", "param", ""};
 
 
     // --- Valley finder (SMAP shape classifier on a smoothed DEM) ---
@@ -572,45 +629,53 @@ int main(int argc, char* argv[])
         "Smoothing window (polyfit lengthscale) applied before shape classification, in metres.",
         "The quadratic-fit window IS the smoothing scale. Larger values (e.g. 50 m) "
         "suppress fine channels and retain broad valley forms; smaller values resolve "
-        "narrower valleys."};
+        "narrower valleys.",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "param", ""};
 
     float_default_map["valley_curvature_threshold"] = 0.0f;
     help_map["valley_curvature_threshold"] = {"float","0.0",
         "Curvature threshold (kt) passed to the SMAP classifier, in 1/m.",
         "Principal curvatures with magnitude <= kt are set to zero before "
         "classification, collapsing weak/long-wavelength structure toward planar "
-        "or cylindrical classes. 0 keeps every pixel in a non-planar class."};
+        "or cylindrical classes. 0 keeps every pixel in a non-planar class.",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "param", ""};
 
     bool_default_map["valley_include_basin"] = true;
     help_map["valley_include_basin"] = {"bool","true",
         "Include the basin class (SMAP -3, concave bowl) in the valley mask.",
-        "Concave-up class with mean curvature > 0."};
+        "Concave-up class with mean curvature > 0.",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "param", ""};
 
     bool_default_map["valley_include_synformal_saddle"] = true;
     help_map["valley_include_synformal_saddle"] = {"bool","true",
         "Include the synformal-saddle class (SMAP -2) in the valley mask.",
-        "Concave-up class with mean curvature > 0 and negative Gaussian curvature."};
+        "Concave-up class with mean curvature > 0 and negative Gaussian curvature.",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "param", ""};
 
     bool_default_map["valley_include_synform"] = true;
     help_map["valley_include_synform"] = {"bool","true",
         "Include the synform class (SMAP -1, cylindrical valley) in the valley mask.",
-        "The canonical broad-valley form: concave across the contour, straight along it."};
+        "The canonical broad-valley form: concave across the contour, straight along it.",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "param", ""};
 
     bool_default_map["write_valley_mask_raster"] = true;
     help_map["write_valley_mask_raster"] = {"bool","true",
         "Write the binary valley mask.",
-        "1 indicates a pixel in one of the selected concave-up SMAP classes."};
+        "1 indicates a pixel in one of the selected concave-up SMAP classes.",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "switch", ""};
 
     bool_default_map["write_valley_shape_class_raster"] = true;
     help_map["write_valley_shape_class_raster"] = {"bool","true",
         "Write the full SMAP shape-class raster.",
-        "Integer codes -4..3 stored as float32 (see surface_shape_class)."};
+        "Integer codes -4..3 stored as float32 (see surface_shape_class).",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "switch", ""};
 
     bool_default_map["write_valley_diagnostics"] = false;
     help_map["write_valley_diagnostics"] = {"bool","false",
         "Write valley-finder diagnostic rasters.",
         "Includes the smoothed fitted surface, the principal curvatures, and the "
-        "post-threshold Gaussian and mean curvatures used by the classifier."};
+        "post-threshold Gaussian and mean curvatures used by the classifier.",
+        "Valley finder (SMAP shape classifier on a smoothed DEM)", "switch", ""};
 
 
     // --- Road finder (along-contour bench detector) ---
@@ -618,91 +683,106 @@ int main(int argc, char* argv[])
     help_map["road_smoothing_window_metres"] = {"float","8.0",
         "Smoothing window (polyfit lengthscale) for road detection, in metres.",
         "Roads are narrow, so use a small window matched to the bench width "
-        "(cut-to-fill cross-section). Larger values blur the bench edges."};
+        "(cut-to-fill cross-section). Larger values blur the bench edges.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_flat_slope_tolerance"] = 1e-4f;
     help_map["road_flat_slope_tolerance"] = {"float","1e-4",
         "Gradient magnitude below which the local aspect is treated as undefined.",
         "On near-flat ground the contour direction is meaningless, so such pixels "
-        "are gated out of the road score."};
+        "are gated out of the road score.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_min_elongation"] = 0.3f;
     help_map["road_min_elongation"] = {"float","0.3",
         "Minimum Hessian line-likeness for retained road pixels.",
         "elongation = (|lam_major| - |lam_minor|) / (|lam_major| + |lam_minor|). "
-        "Higher values demand a more strongly linear curvature signature."};
+        "Higher values demand a more strongly linear curvature signature.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_min_contour_alignment"] = 0.7f;
     help_map["road_min_contour_alignment"] = {"float","0.7",
         "Minimum alignment between the feature's long axis and the contour direction.",
         "|along_feature . contour_unit| in [0,1]. ~1 for along-contour features "
-        "(roads/benches); ~0 for down-slope features (channels). Raise to be stricter."};
+        "(roads/benches); ~0 for down-slope features (channels). Raise to be stricter.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_curvature_half_saturation"] = 0.1f;
     help_map["road_curvature_half_saturation"] = {"float","0.1",
         "Half-saturation curvature (1/m) for the edge-strength weight in the road score.",
         "edge_strength = |cross_curvature| / (|cross_curvature| + this). Smaller values "
         "let gentler curvature breaks score highly; larger values demand sharper edges. "
-        "Set to 0 to disable the edge-strength weighting entirely."};
+        "Set to 0 to disable the edge-strength weighting entirely.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_min_cross_curvature"] = 0.05f;
     help_map["road_min_cross_curvature"] = {"float","0.05",
         "Minimum cross-feature curvature magnitude (1/m) for retained road pixels.",
-        "0 disables the floor. Use to suppress featureless slopes with no real edge."};
+        "0 disables the floor. Use to suppress featureless slopes with no real edge.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_max_cross_curvature"] = 0.0f;
     help_map["road_max_cross_curvature"] = {"float","0.0",
         "Maximum cross-feature curvature magnitude (1/m) for retained road pixels.",
         "0 disables the cap. Use to exclude deeply incised channels and cliffs that "
-        "have very high cross-curvature."};
+        "have very high cross-curvature.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_score_threshold"] = 0.5f;
     help_map["road_score_threshold"] = {"float","0.5",
         "Threshold applied to the road score to make a binary mask.",
-        "score = elongation * contour_alignment * edge_strength. Lower is more inclusive."};
+        "score = elongation * contour_alignment * edge_strength. Lower is more inclusive.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     bool_default_map["road_use_bench_test"] = true;
     help_map["road_use_bench_test"] = {"bool","true",
         "Require road pixels to be a narrow flat ribbon (bench) on a slope.",
         "Samples slope a short distance to each side along the cross-feature "
         "direction; both flanks must be steeper than the tread. This is what "
-        "rejects floodplains and valley floors, which are flat on one flank."};
+        "rejects floodplains and valley floors, which are flat on one flank.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_bench_half_width_metres"] = 6.0f;
     help_map["road_bench_half_width_metres"] = {"float","6.0",
         "Cross-feature sampling distance for the bench test, in metres.",
         "Set a little larger than the road half-width plus its cut/fill batter so "
-        "the samples land on the flanking slopes, not on the tread."};
+        "the samples land on the flanking slopes, not on the tread.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_bench_flank_slope_ratio"] = 1.5f;
     help_map["road_bench_flank_slope_ratio"] = {"float","1.5",
         "Bench test: required ratio of flank slope to tread slope.",
         "Both flanks must have slope >= ratio * tread_slope (and >= "
         "road_bench_min_flank_slope). Higher demands a flatter tread relative to "
-        "its flanks."};
+        "its flanks.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     float_default_map["road_bench_min_flank_slope"] = 0.15f;
     help_map["road_bench_min_flank_slope"] = {"float","0.15",
         "Bench test: minimum absolute flank slope (tan of slope angle).",
         "Both flanks must be at least this steep (0.15 ~ 8.5 degrees). Guards "
         "against near-flat terrain passing the ratio test when the tread slope "
-        "is ~0."};
+        "is ~0.",
+        "Road finder (along-contour bench detector)", "param", ""};
 
     bool_default_map["write_road_score_raster"] = true;
     help_map["write_road_score_raster"] = {"bool","true",
         "Write the continuous road score raster.",
-        "score = elongation * contour_alignment, gated by slope/curvature."};
+        "score = elongation * contour_alignment, gated by slope/curvature.",
+        "Road finder (along-contour bench detector)", "switch", ""};
 
     bool_default_map["write_road_mask_raster"] = true;
     help_map["write_road_mask_raster"] = {"bool","true",
         "Write the thresholded binary road mask.",
-        "1 indicates a plausible along-contour bench/road pixel."};
+        "1 indicates a plausible along-contour bench/road pixel.",
+        "Road finder (along-contour bench detector)", "switch", ""};
 
     bool_default_map["write_road_diagnostics"] = false;
     help_map["write_road_diagnostics"] = {"bool","false",
         "Write road-finder diagnostic rasters.",
         "Includes contour alignment, Hessian elongation, cross-feature curvature, "
-        "along-feature orientation (azimuth from north), and slope."};
+        "along-feature orientation (azimuth from north), and slope.",
+        "Road finder (along-contour bench detector)", "switch", ""};
 
 
     // --- Flow-pathway road/channel discrimination ---
@@ -710,24 +790,28 @@ int main(int argc, char* argv[])
     help_map["flow_regional_smoothing_metres"] = {"float","100.0",
         "Smoothing window (polyfit lengthscale) for the regional slope vector, in metres.",
         "A large window (e.g. 100 m) gives the regional fall-line bearing that flow "
-        "paths are compared against."};
+        "paths are compared against.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     int_default_map["flow_accumulation_threshold_pixels"] = 1000;
     help_map["flow_accumulation_threshold_pixels"] = {"int","1000",
         "Contributing-pixel threshold that defines the D8 channel network.",
-        "Pixels with at least this many upslope pixels are treated as channels."};
+        "Pixels with at least this many upslope pixels are treated as channels.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     int_default_map["flow_path_half_window"] = 5;
     help_map["flow_path_half_window"] = {"int","5",
         "Number of pixels traced up- and downstream when measuring the flow-path bearing.",
         "The bearing is taken over a window of (2*this + 1) pixels along the D8 path "
-        "(default 5 gives an 11-pixel segment)."};
+        "(default 5 gives an 11-pixel segment).",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_short_curvature_radius_metres"] = 0.0f;
     help_map["flow_short_curvature_radius_metres"] = {"float","0.0",
         "Radius for the short-wavelength tangential curvature, in metres.",
         "The short polyfit half-wavelength is 2 * this radius; 0 uses ~3 pixels. "
-        "Output: _flow_short_tangential_curvature.tif."};
+        "Output: _flow_short_tangential_curvature.tif.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_intermediate_window_metres"] = 15.0f;
     help_map["flow_intermediate_window_metres"] = {"float","15.0",
@@ -735,24 +819,28 @@ int main(int argc, char* argv[])
         "Produces tangential, minimum, and maximum curvature at this scale. "
         "Outputs: _flow_intermediate_tangential_curvature.tif, "
         "_flow_intermediate_minimum_curvature.tif, "
-        "_flow_intermediate_maximum_curvature.tif."};
+        "_flow_intermediate_maximum_curvature.tif.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_roughness_radius_metres"] = 2.5f;
     help_map["flow_roughness_radius_metres"] = {"float","2.5",
         "Window radius for the local roughness (elevation standard deviation), in metres.",
-        "Roads are smoother than the surrounding landscape, so they show low roughness."};
+        "Roads are smoother than the surrounding landscape, so they show low roughness.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     bool_default_map["flow_dem_is_filled"] = false;
     help_map["flow_dem_is_filled"] = {"bool","false",
         "Treat the input DEM as already pit-filled (skip internal fill).",
-        "Set true when supplying a pre-filled DEM (e.g. sd_fill.tif) to save time."};
+        "Set true when supplying a pre-filled DEM (e.g. sd_fill.tif) to save time.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     bool_default_map["write_flow_discrimination_rasters"] = true;
     help_map["write_flow_discrimination_rasters"] = {"bool","true",
         "Write the flow-pathway discrimination diagnostic rasters.",
         "Outputs: regional slope bearing and gradient, contributing pixels, channel "
         "mask, flow-path bearing, flow-vs-slope angle, short gradient, short total "
-        "curvature, roughness, bearing contrast, and the valley-axis buffer mask."};
+        "curvature, roughness, bearing contrast, and the valley-axis buffer mask.",
+        "Flow-pathway road/channel discrimination", "switch", ""};
 
     string_default_map["flow_valley_curvature_metric"] = "tangential_curvature";
     help_map["flow_valley_curvature_metric"] = {"string","tangential_curvature",
@@ -761,56 +849,65 @@ int main(int argc, char* argv[])
         "convergence) - picks valleys but NOT footslope slope breaks (those are "
         "concave down-slope only). plan_curvature: similar but normalised differently. "
         "laplacian or mean_curvature: total concavity - also flags slope breaks. "
-        "Positive = concave; ridges (convex) are always excluded by sign."};
+        "Positive = concave; ridges (convex) are always excluded by sign.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_valley_curvature_threshold"] = 0.0f;
     help_map["flow_valley_curvature_threshold"] = {"float","0.0",
         "Regional (smoothed) curvature above which a pixel is in the valley zone, in 1/m.",
         "Uses flow_valley_curvature_metric of the heavily smoothed surface: concave-up "
         "(>= this) is the valley zone and convex-up (ridges) is excluded. 0 keeps every "
-        "concave pixel; raise to restrict to stronger valley convergence."};
+        "concave pixel; raise to restrict to stronger valley convergence.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     bool_default_map["flow_valley_require_bearing_contrast"] = false;
     help_map["flow_valley_require_bearing_contrast"] = {"bool","false",
         "Also require the bearing-contrast gate when building the valley-axis mask.",
         "Off by default. On its own, bearing contrast only fires on sharp bearing flips "
         "(missing broad valleys) and cannot separate valleys from ridges; the regional "
-        "curvature does that. Enable only to further restrict the valley zone."};
+        "curvature does that. Enable only to further restrict the valley zone.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_bearing_contrast_window_metres"] = 10.0f;
     help_map["flow_bearing_contrast_window_metres"] = {"float","10.0",
         "Window radius for the regional-bearing-contrast metric, in metres.",
         "contrast = 1 - |mean unit-vector of the regional bearing| over this window. "
-        "High where the bearing flips, e.g. two valley sides facing each other."};
+        "High where the bearing flips, e.g. two valley sides facing each other.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_bearing_contrast_threshold"] = 0.4f;
     help_map["flow_bearing_contrast_threshold"] = {"float","0.4",
         "Bearing-contrast value above which a pixel is flagged as a valley/ridge axis.",
-        "0 (no contrast) to 1 (opposing bearings). 0.4 captures clear facing-slope axes."};
+        "0 (no contrast) to 1 (opposing bearings). 0.4 captures clear facing-slope axes.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_valley_buffer_radius_metres"] = 10.0f;
     help_map["flow_valley_buffer_radius_metres"] = {"float","10.0",
         "Dilation buffer applied around bearing-contrast axes, in metres.",
         "Marks the valley-axis zone where flow-path bearings are expected to be "
-        "ambiguous (not road misdirection)."};
+        "ambiguous (not road misdirection).",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     int_default_map["flow_big_channel_threshold_pixels"] = 5000;
     help_map["flow_big_channel_threshold_pixels"] = {"int","5000",
         "Contributing-pixel threshold for the valley-channel point export.",
         "Channel pixels with more than this many upslope pixels that fall inside the "
-        "valley-axis buffer are exported to a FlatGeobuf point layer."};
+        "valley-axis buffer are exported to a FlatGeobuf point layer.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_divergent_export_min_angle"] = 0.0f;
     help_map["flow_divergent_export_min_angle"] = {"float","0.0",
         "Minimum flow-vs-slope angle (deg) for a channel pixel to be exported as a point.",
         "0 exports every channel pixel (with its angle attribute) so it can be styled "
-        "in a GIS; raise to export only the divergent (road-like) pixels."};
+        "in a GIS; raise to export only the divergent (road-like) pixels.",
+        "Flow-pathway road/channel discrimination", "param", ""};
 
     bool_default_map["write_flow_divergent_points_fgb"] = true;
     help_map["write_flow_divergent_points_fgb"] = {"bool","true",
         "Export channel pixels (with flow-vs-slope angle) to a FlatGeobuf point layer.",
         "Output: <write_fname>_flow_divergent_points.fgb. Attributes: row, col, "
-        "contributing_px, flow_vs_slope_angle, flow_bearing, regional_bearing."};
+        "contributing_px, flow_vs_slope_angle, flow_bearing, regional_bearing.",
+        "Flow-pathway road/channel discrimination", "switch", ""};
 
     bool_default_map["write_flow_valley_channel_points_fgb"] = true;
     help_map["write_flow_valley_channel_points_fgb"] = {"bool","true",
@@ -818,7 +915,8 @@ int main(int argc, char* argv[])
         "Output: <write_fname>_flow_valley_channel_points.fgb. Selects channel pixels "
         "with contributing pixels > flow_big_channel_threshold_pixels that lie within "
         "the bearing-contrast buffer. Attributes: row, col, contributing_px, "
-        "flow_vs_slope_angle, bearing_contrast."};
+        "flow_vs_slope_angle, bearing_contrast.",
+        "Flow-pathway road/channel discrimination", "switch", ""};
 
 
     // --- Path opening (generic curvilinear-feature filter) ---
@@ -828,13 +926,15 @@ int main(int argc, char* argv[])
         "A pixel is kept only if it lies on a connected, near-straight path of "
         "at least L pixels in the input response. Set near the shortest real "
         "road/channel segment to keep; larger L removes more isolated speckle "
-        "but also drops short fragments."};
+        "but also drops short fragments.",
+        "Path opening (generic curvilinear-feature filter)", "param", ""};
 
     int_default_map["path_quantization_levels"] = 256;
     help_map["path_quantization_levels"] = {"int","256",
         "Number of grayscale threshold levels for the path opening.",
         "Higher values preserve the input value range more finely at higher "
-        "cost. 256 is usually plenty for a continuous response raster."};
+        "cost. 256 is usually plenty for a continuous response raster.",
+        "Path opening (generic curvilinear-feature filter)", "param", ""};
 
     int_default_map["path_trim_border_pixels"] = 0;
     help_map["path_trim_border_pixels"] = {"int","0",
@@ -843,19 +943,22 @@ int main(int argc, char* argv[])
         "Removes the boundary-margin artefacts that polyfit/flow/FFT response "
         "rasters carry. Because those artefacts are laterally continuous they "
         "otherwise survive the path opening and masquerade as features. Trims "
-        "from both the grid edge and any irregular nodata footprint."};
+        "from both the grid edge and any irregular nodata footprint.",
+        "Path opening (generic curvilinear-feature filter)", "param", ""};
 
     bool_default_map["path_do_closing"] = false;
     help_map["path_do_closing"] = {"bool","false",
         "Run a path closing instead of a path opening.",
         "A closing fills short dark breaks across an otherwise continuous bright "
         "thread (e.g. a one-pixel gap in a road). Opening (default) suppresses "
-        "isolated bright speckle that lies on no long path."};
+        "isolated bright speckle that lies on no long path.",
+        "Path opening (generic curvilinear-feature filter)", "param", ""};
 
     bool_default_map["write_path_opened_raster"] = true;
     help_map["write_path_opened_raster"] = {"bool","true",
         "Write the path-opened (or path-closed) response raster.",
-        "Output: <write_fname>_path_opened.tif."};
+        "Output: <write_fname>_path_opened.tif.",
+        "Path opening (generic curvilinear-feature filter)", "switch", ""};
 
     bool_default_map["write_path_tophat_raster"] = true;
     help_map["write_path_tophat_raster"] = {"bool","true",
@@ -866,169 +969,199 @@ int main(int argc, char* argv[])
         "bright detail was REMOVED, i.e. the short-scale speckle and blobs that "
         "do NOT lie on a length-L path. Useful as a rejected-noise map or to "
         "flatten background before thresholding. Output: <write_fname>_path_tophat.tif. "
-        "Only meaningful for a path opening (not a closing)."};
+        "Only meaningful for a path opening (not a closing).",
+        "Path opening (generic curvilinear-feature filter)", "switch", ""};
 
     // --- Structure-tensor coherence (orientation / line-likeness) ---
     float_default_map["coherence_derivative_radius_metres"] = 0.0f;
     help_map["coherence_derivative_radius_metres"] = {"float","0.0",
         "Pre-smoothing radius for the gradient in the structure tensor, in metres.",
         "0 = no pre-smoothing (central difference on the raw field). Use a small "
-        "value (~1 pixel) to suppress gradient noise on speckly inputs."};
+        "value (~1 pixel) to suppress gradient noise on speckly inputs.",
+        "Structure-tensor coherence (orientation / line-likeness)", "param", ""};
 
     float_default_map["coherence_integration_radius_metres"] = 2.5f;
     help_map["coherence_integration_radius_metres"] = {"float","2.5",
         "Tensor-averaging (integration) radius for the structure tensor, in metres.",
         "THE key scale: the neighbourhood over which the gradient outer product "
         "is pooled. Set near the feature half-width plus a few pixels. Larger "
-        "values give smoother, more confident coherence but blur close features."};
+        "values give smoother, more confident coherence but blur close features.",
+        "Structure-tensor coherence (orientation / line-likeness)", "param", ""};
 
     bool_default_map["write_coherence_raster"] = true;
     help_map["write_coherence_raster"] = {"bool","true",
         "Write the structure-tensor coherence raster (line-likeness, [0,1]).",
-        "Output: <write_fname>_coherence.tif."};
+        "Output: <write_fname>_coherence.tif.",
+        "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     bool_default_map["write_orientation_raster"] = true;
     help_map["write_orientation_raster"] = {"bool","true",
         "Write the structure-tensor orientation raster (feature azimuth, [0,180) deg).",
         "Azimuth clockwise from north along which the feature runs. Meaningful "
-        "only where coherence is high. Output: <write_fname>_orientation_deg.tif."};
+        "only where coherence is high. Output: <write_fname>_orientation_deg.tif.",
+        "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     bool_default_map["write_energy_raster"] = false;
     help_map["write_energy_raster"] = {"bool","false",
         "Write the structure-tensor energy raster (gradient energy, lam1+lam2).",
         "Distinguishes strong from faint oriented structure. "
-        "Output: <write_fname>_energy.tif."};
+        "Output: <write_fname>_energy.tif.",
+        "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     // --- Track spacing (local directional periodicity) ---
     int_default_map["spacing_window_pixels"] = 64;
     help_map["spacing_window_pixels"] = {"int","64",
         "Analysis window side length for the spacing detector, in pixels.",
         "Must span several periods of the largest spacing of interest "
-        "(a few times spacing_max_metres / cell_size)."};
+        "(a few times spacing_max_metres / cell_size).",
+        "Track spacing (local directional periodicity)", "param", ""};
 
     int_default_map["spacing_step_pixels"] = 32;
     help_map["spacing_step_pixels"] = {"int","32",
         "Window stride for the spacing detector, in pixels.",
-        "Smaller = smoother and slower; typically half the window size."};
+        "Smaller = smoother and slower; typically half the window size.",
+        "Track spacing (local directional periodicity)", "param", ""};
 
     float_default_map["spacing_min_metres"] = 5.0f;
     help_map["spacing_min_metres"] = {"float","5.0",
         "Shortest repeat spacing to search for, in metres.",
-        "Must be >= 2 * cell_size (Nyquist)."};
+        "Must be >= 2 * cell_size (Nyquist).",
+        "Track spacing (local directional periodicity)", "param", ""};
 
     float_default_map["spacing_max_metres"] = 30.0f;
     help_map["spacing_max_metres"] = {"float","30.0",
         "Longest repeat spacing to search for, in metres.",
-        "Must be <= spacing_window_pixels * cell_size."};
+        "Must be <= spacing_window_pixels * cell_size.",
+        "Track spacing (local directional periodicity)", "param", ""};
 
     float_default_map["spacing_min_valid_fraction"] = 0.6f;
     help_map["spacing_min_valid_fraction"] = {"float","0.6",
         "Minimum fraction of valid pixels for a window to be analysed.",
-        "Windows with more nodata than this are skipped."};
+        "Windows with more nodata than this are skipped.",
+        "Track spacing (local directional periodicity)", "param", ""};
 
     bool_default_map["write_spacing_strength_raster"] = true;
     help_map["write_spacing_strength_raster"] = {"bool","true",
         "Write the periodicity strength (peak prominence) raster.",
         "High where a sharp regular spacing dominates. "
-        "Output: <write_fname>_spacing_strength.tif."};
+        "Output: <write_fname>_spacing_strength.tif.",
+        "Track spacing (local directional periodicity)", "switch", ""};
 
     bool_default_map["write_spacing_raster"] = true;
     help_map["write_spacing_raster"] = {"bool","true",
         "Write the dominant spacing raster, in metres.",
         "Use to classify feature families (ditches vs tracks vs wave dams). "
-        "Output: <write_fname>_spacing_metres.tif."};
+        "Output: <write_fname>_spacing_metres.tif.",
+        "Track spacing (local directional periodicity)", "switch", ""};
 
     bool_default_map["write_spacing_orientation_raster"] = false;
     help_map["write_spacing_orientation_raster"] = {"bool","false",
         "Write the spacing orientation raster (line azimuth, [0,180) deg).",
-        "Output: <write_fname>_spacing_orientation_deg.tif."};
+        "Output: <write_fname>_spacing_orientation_deg.tif.",
+        "Track spacing (local directional periodicity)", "switch", ""};
 
     // --- Ridge lines (oriented NMS + hysteresis) ---
     float_default_map["ridge_high_threshold"] = 40.0f;
     help_map["ridge_high_threshold"] = {"float","40.0",
         "Strong-seed threshold (in input response units) for ridge hysteresis.",
         "Thinned-response pixels at or above this start a retained centreline. "
-        "Set relative to the input raster's value range."};
+        "Set relative to the input raster's value range.",
+        "Ridge lines (oriented NMS + hysteresis)", "param", ""};
 
     float_default_map["ridge_low_threshold"] = 20.0f;
     help_map["ridge_low_threshold"] = {"float","20.0",
         "Weak-link threshold (in input response units) for ridge hysteresis.",
         "Thinned pixels at or above this are kept only if connected to a strong "
-        "seed. Must be <= ridge_high_threshold."};
+        "seed. Must be <= ridge_high_threshold.",
+        "Ridge lines (oriented NMS + hysteresis)", "param", ""};
 
     float_default_map["ridge_min_coherence"] = 0.0f;
     help_map["ridge_min_coherence"] = {"float","0.0",
         "Minimum structure-tensor coherence to admit a pixel to the ridge response.",
         "Pixels with coherence below this are zeroed before NMS, removing ridge "
         "maxima that sit in incoherent speckle. 0 disables the gate. Uses the "
-        "coherence_*_radius_metres parameters for the tensor scale."};
+        "coherence_*_radius_metres parameters for the tensor scale.",
+        "Ridge lines (oriented NMS + hysteresis)", "param", ""};
 
     bool_default_map["write_ridge_thinned_raster"] = true;
     help_map["write_ridge_thinned_raster"] = {"bool","true",
         "Write the NMS-thinned ridge response (1-pixel centrelines, response-valued).",
-        "Output: <write_fname>_ridge_thinned.tif."};
+        "Output: <write_fname>_ridge_thinned.tif.",
+        "Ridge lines (oriented NMS + hysteresis)", "switch", ""};
 
     bool_default_map["write_ridge_mask_raster"] = true;
     help_map["write_ridge_mask_raster"] = {"bool","true",
         "Write the binary hysteresis-linked ridge centreline mask.",
-        "Output: <write_fname>_ridge_mask.tif."};
+        "Output: <write_fname>_ridge_mask.tif.",
+        "Ridge lines (oriented NMS + hysteresis)", "switch", ""};
 
     // --- Thin-line extractor (separate lines from blobs/speckle) ---
     float_default_map["thin_threshold"] = 20.0f;
     help_map["thin_threshold"] = {"float","20.0",
-        "Threshold to binarise the input response (keep response >= this).",""};
+        "Threshold to binarise the input response (keep response >= this).","",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     int_default_map["thin_directional_closing_length_pixels"] = 0;
     help_map["thin_directional_closing_length_pixels"] = {"int","0",
         "Line length (pixels) for directional closing to bridge gaps along lines (0 = skip).",
-        "Reconnects fragmented features before component analysis."};
+        "Reconnects fragmented features before component analysis.",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     int_default_map["thin_path_length_pixels"] = 40;
     help_map["thin_path_length_pixels"] = {"int","40",
         "Binary path-opening length L (pixels); 0 = skip.",
         "THE primary thin-vs-blob/speckle tool: keeps pixels on a connected thin "
         "path of at least L pixels (handles curves); removes speckle and any blob "
-        "lacking such a path. Set near the shortest road to keep."};
+        "lacking such a path. Set near the shortest road to keep.",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     float_default_map["thin_blob_removal_radius_metres"] = 0.0f;
     help_map["thin_blob_removal_radius_metres"] = {"float","0.0",
         "Disk-opening top-hat radius (metres) to remove blobs wider than this (0 = skip).",
         "THE thin-vs-blob filter: features wider than ~2x this radius (blobs, "
         "wide patches) are removed; thinner ribbons (roads) survive. Set a little "
-        "above the widest real road half-width."};
+        "above the widest real road half-width.",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     int_default_map["thin_min_component_pixels"] = 40;
     help_map["thin_min_component_pixels"] = {"int","40",
-        "Minimum connected-component size (pixels).",""};
+        "Minimum connected-component size (pixels).","",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     float_default_map["thin_min_major_axis_pixels"] = 0.0f;
     help_map["thin_min_major_axis_pixels"] = {"float","0.0",
-        "Minimum component major-axis length (pixels); 0 = skip.",""};
+        "Minimum component major-axis length (pixels); 0 = skip.","",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     float_default_map["thin_min_elongation"] = 1.0f;
     help_map["thin_min_elongation"] = {"float","1.0",
         "Minimum component elongation = major/minor axis; 1 = skip.",
-        "Raise (e.g. 3) to keep only clearly linear components and drop compact residue."};
+        "Raise (e.g. 3) to keep only clearly linear components and drop compact residue.",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     int_default_map["thin_trim_border_pixels"] = 0;
     help_map["thin_trim_border_pixels"] = {"int","0",
         "Trim this many pixels from the final mask border (0 = none).",
-        "Removes linear edge artefacts that survive the elongation filter."};
+        "Removes linear edge artefacts that survive the elongation filter.",
+        "Thin-line extractor (separate lines from blobs/speckle)", "param", ""};
 
     bool_default_map["write_thin_mask_raster"] = true;
     help_map["write_thin_mask_raster"] = {"bool","true",
         "Write the final thin-line mask.",
-        "Output: <write_fname>_thin_mask.tif."};
+        "Output: <write_fname>_thin_mask.tif.",
+        "Thin-line extractor (separate lines from blobs/speckle)", "switch", ""};
 
     bool_default_map["write_thin_diagnostics"] = false;
     help_map["write_thin_diagnostics"] = {"bool","false",
-        "Write the thresholded binary and the blob-removed intermediate.",""};
+        "Write the thresholded binary and the blob-removed intermediate.","",
+        "Thin-line extractor (separate lines from blobs/speckle)", "switch", ""};
 
     // --- Generic roughness / consistency of an input raster ---
     float_default_map["roughness_input_radius_metres"] = 5.0f;
     help_map["roughness_input_radius_metres"] = {"float","5.0",
         "Moving-window radius for the roughness/consistency metric, in metres.",
-        "Larger windows pool more context (smoother result)."};
+        "Larger windows pool more context (smoother result).",
+        "Generic roughness / consistency of an input raster", "param", ""};
 
     bool_default_map["roughness_circular"] = false;
     help_map["roughness_circular"] = {"bool","false",
@@ -1036,100 +1169,118 @@ int main(int argc, char* argv[])
         "When true, computes circular consistency R = |mean unit-vector| over the "
         "window (1 = perfectly consistent direction, e.g. flow channelled along a "
         "road; 0 = directions cancel). Writes consistency (R) and roughness (1-R). "
-        "When false, computes the linear moving-window standard deviation."};
+        "When false, computes the linear moving-window standard deviation.",
+        "Generic roughness / consistency of an input raster", "param", ""};
 
     bool_default_map["write_roughness_raster"] = true;
     help_map["write_roughness_raster"] = {"bool","true",
         "Write the roughness raster (stddev, or 1-R for circular input).",
-        "Output: <write_fname>_input_roughness.tif."};
+        "Output: <write_fname>_input_roughness.tif.",
+        "Generic roughness / consistency of an input raster", "switch", ""};
 
     bool_default_map["write_consistency_raster"] = true;
     help_map["write_consistency_raster"] = {"bool","true",
         "Write the circular consistency raster R (only for roughness_circular=true).",
         "High where the angle is locally consistent. Output: "
-        "<write_fname>_input_consistency.tif."};
+        "<write_fname>_input_consistency.tif.",
+        "Generic roughness / consistency of an input raster", "switch", ""};
 
     // --- Smoothness road extractor (roads = smooth ribbons) ---
     float_default_map["smooth_roughness_radius_metres"] = 1.5f;
     help_map["smooth_roughness_radius_metres"] = {"float","1.5",
         "Window radius for the local-relief roughness, in metres.",
         "Match to the hillslope speckle scale. Roads are smooth (low roughness) "
-        "ribbons; the surrounding terrain is rough."};
+        "ribbons; the surrounding terrain is rough.",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     float_default_map["smooth_roughness_half_saturation"] = 0.1f;
     help_map["smooth_roughness_half_saturation"] = {"float","0.1",
         "Roughness half-saturation (metres) for smoothness = 1/(1+roughness/h).",
         "Roughness equal to this gives smoothness 0.5. Lower = more selective for "
-        "very smooth surfaces; set near the road-vs-hillslope roughness boundary."};
+        "very smooth surfaces; set near the road-vs-hillslope roughness boundary.",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     int_default_map["smooth_trim_border_pixels"] = 10;
     help_map["smooth_trim_border_pixels"] = {"int","10",
-        "Border trim applied before extraction (0 = none).",""};
+        "Border trim applied before extraction (0 = none).","",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     int_default_map["smooth_path_min_length_pixels"] = 40;
     help_map["smooth_path_min_length_pixels"] = {"int","40",
         "Minimum path length L (pixels) for the smoothness path opening.",
-        "Keeps smooth ribbons at least this long; drops short smooth patches."};
+        "Keeps smooth ribbons at least this long; drops short smooth patches.",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     float_default_map["smooth_threshold"] = 0.5f;
     help_map["smooth_threshold"] = {"float","0.5",
         "Threshold on the path-opened smoothness to make the binary ribbon mask.",
-        "Higher = only the smoothest ribbons; lower = more inclusive."};
+        "Higher = only the smoothest ribbons; lower = more inclusive.",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     int_default_map["smooth_min_component_pixels"] = 40;
     help_map["smooth_min_component_pixels"] = {"int","40",
-        "Minimum connected-component size (pixels) for a retained road.",""};
+        "Minimum connected-component size (pixels) for a retained road.","",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     float_default_map["smooth_min_major_axis_pixels"] = 0.0f;
     help_map["smooth_min_major_axis_pixels"] = {"float","0.0",
         "Minimum component major-axis length (pixels); 0 = skip.",
-        "Use to demand a minimum linear span."};
+        "Use to demand a minimum linear span.",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     float_default_map["smooth_min_elongation"] = 1.0f;
     help_map["smooth_min_elongation"] = {"float","1.0",
         "Minimum component elongation = major/minor axis; 1 = skip.",
-        "Raise (e.g. 3) to reject smooth blobs (fields) and keep thin roads."};
+        "Raise (e.g. 3) to reject smooth blobs (fields) and keep thin roads.",
+        "Smoothness road extractor (roads = smooth ribbons)", "param", ""};
 
     bool_default_map["write_smooth_road_mask_raster"] = true;
     help_map["write_smooth_road_mask_raster"] = {"bool","true",
         "Write the final smoothness-based road mask.",
-        "Output: <write_fname>_smooth_road_mask.tif."};
+        "Output: <write_fname>_smooth_road_mask.tif.",
+        "Smoothness road extractor (roads = smooth ribbons)", "switch", ""};
 
     bool_default_map["write_smooth_diagnostics"] = false;
     help_map["write_smooth_diagnostics"] = {"bool","false",
-        "Write roughness, smoothness, and path-opened smoothness diagnostics.",""};
+        "Write roughness, smoothness, and path-opened smoothness diagnostics.","",
+        "Smoothness road extractor (roads = smooth ribbons)", "switch", ""};
 
     // --- Road extractor (composed pipeline) ---
     int_default_map["road_trim_border_pixels"] = 15;
     help_map["road_trim_border_pixels"] = {"int","15",
         "Border trim applied to the response before road extraction (0 = none).",
         "Removes boundary-margin artefacts that otherwise survive as linear "
-        "features."};
+        "features.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     float_default_map["road_min_coherence"] = 0.5f;
     help_map["road_min_coherence"] = {"float","0.5",
         "Minimum structure-tensor coherence to admit a pixel to the ridge response.",
         "Pixels below this are zeroed before NMS, removing ridge maxima in "
-        "incoherent speckle. 0 disables the gate."};
+        "incoherent speckle. 0 disables the gate.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     int_default_map["road_min_component_pixels"] = 30;
     help_map["road_min_component_pixels"] = {"int","30",
         "Minimum connected-component size (pixels) for a retained road.",
         "Drops short speckle fragments left by the ridge detector while keeping "
-        "long road chains. Set near the shortest real road length in pixels."};
+        "long road chains. Set near the shortest real road length in pixels.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     string_default_map["road_valley_curvature_fname"] = "";
     help_map["road_valley_curvature_fname"] = {"string","",
         "Optional regional-curvature raster for the valley veto (relative to read path).",
         "Typically <prefix>_flow_regional_valley_curvature.tif from "
         "flow_road_discrimination. Empty = no valley veto. Centreline pixels "
-        "where this raster >= road_valley_curvature_veto_threshold are removed."};
+        "where this raster >= road_valley_curvature_veto_threshold are removed.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     float_default_map["road_valley_curvature_veto_threshold"] = 0.0f;
     help_map["road_valley_curvature_veto_threshold"] = {"float","0.0",
         "Curvature threshold for the valley veto (sign per the supplied raster).",
         "Centreline pixels with regional curvature >= this (concave-up valley "
-        "zone) are dropped, removing the in-valley channel false positive."};
+        "zone) are dropped, removing the in-valley channel false positive.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     bool_default_map["road_classify_spacing"] = false;
     help_map["road_classify_spacing"] = {"bool","false",
@@ -1137,19 +1288,22 @@ int main(int argc, char* argv[])
         "Runs the directional-periodicity detector on the response and labels a "
         "component a track when at least road_track_min_fraction of its pixels lie "
         "in a field with periodicity strength >= road_track_min_strength. Uses the "
-        "spacing_* parameters. Output: <write_fname>_road_extract_classified.tif."};
+        "spacing_* parameters. Output: <write_fname>_road_extract_classified.tif.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     float_default_map["road_track_min_strength"] = 6.0f;
     help_map["road_track_min_strength"] = {"float","6.0",
         "Periodicity strength above which a pixel counts as 'in a regular field'.",
         "See track_spacing strength (whitened directional anisotropy). Raise to "
-        "demand stronger regularity before calling a component a track."};
+        "demand stronger regularity before calling a component a track.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     float_default_map["road_track_min_fraction"] = 0.5f;
     help_map["road_track_min_fraction"] = {"float","0.5",
         "Fraction of a component's pixels that must be 'in a regular field' to label it a track.",
         "Higher = stricter (only components mostly inside a regular field become tracks). "
-        "Ignored when road_classify_per_pixel is true."};
+        "Ignored when road_classify_per_pixel is true.",
+        "Road extractor (composed pipeline)", "param", ""};
 
     bool_default_map["road_classify_per_pixel"] = false;
     help_map["road_classify_per_pixel"] = {"bool","false",
@@ -1157,62 +1311,96 @@ int main(int argc, char* argv[])
         "false (default): whole component voted road/track (consistent per feature "
         "but diluted where roads and tracks connect). true: each pixel is a track "
         "where its local periodicity strength >= road_track_min_strength (no "
-        "dilution; road_track_min_fraction is ignored)."};
+        "dilution; road_track_min_fraction is ignored).",
+        "Road extractor (composed pipeline)", "param", ""};
 
     bool_default_map["write_road_extract_mask_raster"] = true;
     help_map["write_road_extract_mask_raster"] = {"bool","true",
         "Write the final extracted road mask.",
-        "Output: <write_fname>_road_extract_mask.tif."};
+        "Output: <write_fname>_road_extract_mask.tif.",
+        "Road extractor (composed pipeline)", "switch", ""};
 
     bool_default_map["write_road_extract_diagnostics"] = false;
     help_map["write_road_extract_diagnostics"] = {"bool","false",
         "Write road-extractor intermediate rasters.",
         "Diffused response, coherence, NMS-thinned ridge, and the pre-cleanup "
-        "ridge mask."};
+        "ridge mask.",
+        "Road extractor (composed pipeline)", "switch", ""};
 
     // --- Coherence-enhancing diffusion ---
     int_default_map["ced_iterations"] = 10;
     help_map["ced_iterations"] = {"int","10",
         "Number of coherence-enhancing diffusion iterations.",
         "More iterations bridge longer gaps and smooth more strongly along "
-        "feature orientation."};
+        "feature orientation.",
+        "Coherence-enhancing diffusion", "param", "write_diffused_raster"};
 
     float_default_map["ced_time_step"] = 0.15f;
     help_map["ced_time_step"] = {"float","0.15",
         "Explicit diffusion time step (tau).",
-        "Must be in (0, 0.25] for stability. 0.15 is a safe default."};
+        "Must be in (0, 0.25] for stability. 0.15 is a safe default.",
+        "Coherence-enhancing diffusion", "param", "write_diffused_raster"};
 
     float_default_map["ced_derivative_radius_metres"] = 0.5f;
     help_map["ced_derivative_radius_metres"] = {"float","0.5",
         "Gradient pre-smoothing radius for the diffusion structure tensor, in metres.",
-        "0 = none. A small value steadies the orientation estimate on noisy input."};
+        "0 = none. A small value steadies the orientation estimate on noisy input.",
+        "Coherence-enhancing diffusion", "param", "write_diffused_raster"};
 
     float_default_map["ced_integration_radius_metres"] = 3.0f;
     help_map["ced_integration_radius_metres"] = {"float","3.0",
         "Structure-tensor integration radius for the diffusion, in metres.",
         "Sets the scale over which a coherent orientation is detected before "
-        "smoothing along it."};
+        "smoothing along it.",
+        "Coherence-enhancing diffusion", "param", "write_diffused_raster"};
 
     float_default_map["ced_contrast"] = 0.2f;
     help_map["ced_contrast"] = {"float","0.2",
         "Coherence contrast (C) controlling along-feature smoothing selectivity.",
         "Uses normalised coherence in [0,1], so C is scale-invariant. Higher = "
-        "smooth only the most coherent threads; lower = smooth more of the field."};
+        "smooth only the most coherent threads; lower = smooth more of the field.",
+        "Coherence-enhancing diffusion", "param", "write_diffused_raster"};
 
     float_default_map["ced_min_diffusivity"] = 0.001f;
     help_map["ced_min_diffusivity"] = {"float","0.001",
         "Floor (across-feature) diffusivity for the diffusion tensor.",
         "Small value in (0,1); controls the tiny amount of smoothing allowed "
-        "across the feature."};
+        "across the feature.",
+        "Coherence-enhancing diffusion", "param", "write_diffused_raster"};
 
     bool_default_map["write_diffused_raster"] = true;
     help_map["write_diffused_raster"] = {"bool","true",
         "Write the coherence-enhanced (diffused) raster.",
-        "Output: <write_fname>_diffused.tif."};
+        "Output: <write_fname>_diffused.tif.",
+        "Coherence-enhancing diffusion", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse parameters
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -2904,6 +3092,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-feature-finder: done.\n";

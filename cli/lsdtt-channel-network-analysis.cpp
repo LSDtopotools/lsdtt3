@@ -86,23 +86,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -110,50 +100,57 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading / routing ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
         "0 = use all available hardware threads. Applies to pit filling and "
-        "flow-routing construction."};
+        "flow-routing construction.",
+        "Threading / routing", "io", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for flow routing.",
         "Four-character string for north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "Threading / routing", "param", ""};
 
     // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool","false",
         "Whether the input raster is already pit-filled and ready for routing.",
-        "If false the CLI will call fill_pits() before building flow routing."};
+        "If false the CLI will call fill_pits() before building flow routing.",
+        "DEM preparation", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
-        "Used only when raster_is_filled is false."};
+        "Used only when raster_is_filled is false.",
+        "DEM preparation", "param", ""};
 
     // --- Source extraction ---
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used to define source channel heads.",
-        "Reduce this value to extract denser channel networks."};
+        "Reduce this value to extract denser channel networks.",
+        "Source extraction", "param", ""};
 
     // --- Selection mode for bearing / junction-angle analyses ---
     bool_default_map["analyse_all_junctions"] = false;
     help_map["analyse_all_junctions"] = {"bool","false",
         "Analyse all junctions in the extracted junction network.",
         "If no explicit analysis-selection mode is chosen, the CLI will default "
-        "to this mode."};
+        "to this mode.",
+        "Selection mode for bearing / junction-angle analyses", "param", ""};
 
     bool_default_map["analyse_upstream_of_all_outlets"] = false;
     help_map["analyse_upstream_of_all_outlets"] = {"bool","false",
         "Analyse all junctions upstream of all outlet junctions.",
         "This expands the selected outlet junctions to their full upstream "
-        "junction subnetworks using the junction-network s_vector."};
+        "junction subnetworks using the junction-network s_vector.",
+        "Selection mode for bearing / junction-angle analyses", "param", ""};
 
     bool_default_map["analyse_upstream_of_outlet_csv"] = false;
     help_map["analyse_upstream_of_outlet_csv"] = {"bool","false",
@@ -161,7 +158,8 @@ int main(int argc, char* argv[])
         "The file (CSV, FlatGeobuf, or GeoPackage) is loaded, optionally snapped "
         "to the channel network, converted to junctions, and expanded to their "
         "full upstream junction subnetworks. "
-        "Set basin_outlet_file to the path of the file."};
+        "Set basin_outlet_file to the path of the file.",
+        "Selection mode for bearing / junction-angle analyses", "param", ""};
 
     // --- Basin outlet input / snapping ---
     string_default_map["basin_outlet_file"] = "NULL";
@@ -172,139 +170,164 @@ int main(int argc, char* argv[])
         "*.csv is read as latitude and longitude columns (EPSG:4326); "
         "*.fgb or *.gpkg is read as a point vector layer. "
         "For CSV inputs columns must be named 'latitude' and 'longitude'. "
-        "For vector inputs all features must be point geometry."};
+        "For vector inputs all features must be point geometry.",
+        "Basin outlet input / snapping", "param", ""};
 
     string_default_map["basin_outlet_snapping_method"] = "downstream";
     help_map["basin_outlet_snapping_method"] = {"string","downstream",
         "Optional snapping of supplied outlet CSV points to channel pixels.",
-        "Allowed values: none, expanding_square, downstream."};
+        "Allowed values: none, expanding_square, downstream.",
+        "Basin outlet input / snapping", "param", ""};
 
     int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
     help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used for optional outlet snapping.",
-        "This is total upslope contributing pixels from the flow-routing object."};
+        "This is total upslope contributing pixels from the flow-routing object.",
+        "Basin outlet input / snapping", "param", ""};
 
     int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
     help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square."};
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Basin outlet input / snapping", "param", ""};
 
     int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square."};
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Basin outlet input / snapping", "param", ""};
 
     // --- Output general ---
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool","true",
         "Whether or not to calculate a spatial index for vector writes.",
-        "Spatial indexes speed up GIS use, but increase memory overhead."};
+        "Spatial indexes speed up GIS use, but increase memory overhead.",
+        "Output general", "io", ""};
 
     // --- Link sampling for bearings / junction angles ---
     string_default_map["link_sampling_mode"] = "full_link";
     help_map["link_sampling_mode"] = {"string","full_link",
         "How link geometry is sampled for bearing fitting.",
         "Allowed values: full_link, fixed_length, fixed_n_pixels. "
-        "full_link is the default and recommended mode."};
+        "full_link is the default and recommended mode.",
+        "Link sampling for bearings / junction angles", "param", ""};
 
     float_default_map["link_sampling_fixed_length_metres"] = 1000.0f;
     help_map["link_sampling_fixed_length_metres"] = {"float","1000.0",
         "Length threshold for fixed_length sampling mode.",
-        "Used only when link_sampling_mode is fixed_length."};
+        "Used only when link_sampling_mode is fixed_length.",
+        "Link sampling for bearings / junction angles", "param", ""};
 
     int_default_map["link_sampling_fixed_n_pixels"] = 10;
     help_map["link_sampling_fixed_n_pixels"] = {"int","10",
         "Pixel-count threshold for fixed_n_pixels sampling mode.",
-        "Used only when link_sampling_mode is fixed_n_pixels."};
+        "Used only when link_sampling_mode is fixed_n_pixels.",
+        "Link sampling for bearings / junction angles", "param", ""};
 
     int_default_map["link_sampling_min_nodes"] = 2;
     help_map["link_sampling_min_nodes"] = {"int","2",
         "Minimum sampled nodes required for fitting a link bearing.",
-        "If sampling returns fewer nodes than this, the bearing fit is skipped."};
+        "If sampling returns fewer nodes than this, the bearing fit is skipped.",
+        "Link sampling for bearings / junction angles", "param", ""};
 
     string_default_map["channel_link_bearing_sample_anchor"] = "upstream_end";
     help_map["channel_link_bearing_sample_anchor"] = {"string","upstream_end",
         "Which end of a compact downstream link to anchor link-bearing sampling.",
         "Allowed values: upstream_end, downstream_end. "
-        "For channel-link bearing output the upstream_end is a sensible default."};
+        "For channel-link bearing output the upstream_end is a sensible default.",
+        "Link sampling for bearings / junction angles", "param", ""};
 
     // --- Bearing outputs ---
     bool_default_map["write_channel_link_bearings"] = false;
     help_map["write_channel_link_bearings"] = {"bool","false",
         "Write channel-link bearing output.",
-        "Writes one record per analysed compact downstream link."};
+        "Writes one record per analysed compact downstream link.",
+        "Bearing outputs", "switch", ""};
 
     string_default_map["channel_link_bearings_output_format"] = "flatgeobuf";
     help_map["channel_link_bearings_output_format"] = {"string","flatgeobuf",
         "Output format for channel-link bearing output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb."};
+        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
+        "Bearing outputs", "param", "write_channel_link_bearings"};
 
     // --- Junction-angle outputs ---
     bool_default_map["write_junction_angles"] = false;
     help_map["write_junction_angles"] = {"bool","false",
         "Write junction-angle output.",
-        "Writes one record per valid two-donor junction."};
+        "Writes one record per valid two-donor junction.",
+        "Junction-angle outputs", "switch", ""};
 
     string_default_map["junction_angles_output_format"] = "flatgeobuf";
     help_map["junction_angles_output_format"] = {"string","flatgeobuf",
         "Output format for junction-angle output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb."};
+        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
+        "Junction-angle outputs", "param", ""};
 
     // little vectors for seeing angle and bearing results
     bool_default_map["write_channel_link_bearing_vectors"] = false;
     help_map["write_channel_link_bearing_vectors"] = {"bool","false",
         "Write short downstream-pointing visual bearing vectors for analysed links.",
         "This writes one short line per analysed compact downstream link. "
-        "It is intended as a visual QA layer rather than a full attribute export."};
+        "It is intended as a visual QA layer rather than a full attribute export.",
+        "Junction-angle outputs", "switch", ""};
 
     bool_default_map["write_junction_angle_bearing_vectors"] = false;
     help_map["write_junction_angle_bearing_vectors"] = {"bool","false",
         "Write visual bearing vectors for junction-angle analysis.",
         "This writes three short centred line features per analysed junction: "
-        "donor_1, donor_2, and receiver. It is intended as a visual QA layer."};
+        "donor_1, donor_2, and receiver. It is intended as a visual QA layer.",
+        "Junction-angle outputs", "switch", ""};
 
     string_default_map["channel_link_bearing_vectors_output_format"] = "flatgeobuf";
     help_map["channel_link_bearing_vectors_output_format"] = {"string","flatgeobuf",
         "Output format for channel-link bearing vector QA output.",
-        "Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported."};
+        "Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported.",
+        "Junction-angle outputs", "param", ""};
 
     string_default_map["junction_angle_bearing_vectors_output_format"] = "flatgeobuf";
     help_map["junction_angle_bearing_vectors_output_format"] = {"string","flatgeobuf",
         "Output format for junction-angle bearing vector QA output.",
-        "Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported."};
+        "Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported.",
+        "Junction-angle outputs", "param", ""};
 
     // --- Strahler outputs ---
     bool_default_map["write_strahler_channels"] = false;
     help_map["write_strahler_channels"] = {"bool","false",
         "Write Strahler-channel output.",
-        "Writes one record per derived Strahler channel."};
+        "Writes one record per derived Strahler channel.",
+        "Strahler outputs", "switch", ""};
 
     string_default_map["strahler_channels_output_format"] = "flatgeobuf";
     help_map["strahler_channels_output_format"] = {"string","flatgeobuf",
         "Output format for Strahler-channel output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb."};
+        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
+        "Strahler outputs", "param", "write_strahler_channels"};
 
     // --- Tokunaga outputs ---
     bool_default_map["write_tokunaga_channels"] = false;
     help_map["write_tokunaga_channels"] = {"bool","false",
         "Write Tokunaga-channel output.",
         "Writes the same Strahler-channel geometry but with Tokunaga-focused "
-        "attributes such as donor order, receiver order, and Tokunaga offset."};
+        "attributes such as donor order, receiver order, and Tokunaga offset.",
+        "Tokunaga outputs", "switch", ""};
 
     string_default_map["tokunaga_channels_output_format"] = "flatgeobuf";
     help_map["tokunaga_channels_output_format"] = {"string","flatgeobuf",
         "Output format for Tokunaga-channel output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb."};
+        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
+        "Tokunaga outputs", "param", ""};
 
     bool_default_map["write_tokunaga_channel_data"] = false;
     help_map["write_tokunaga_channel_data"] = {"bool","false",
         "Write Tokunaga channel attributes to CSV.",
-        "This is a table-only export with no geometry."};
+        "This is a table-only export with no geometry.",
+        "Tokunaga outputs", "switch", ""};
 
     bool_default_map["write_tokunaga_summary_data"] = false;
     help_map["write_tokunaga_summary_data"] = {"bool","false",
         "Write Tokunaga pair counts, offset statistics, and fit summary to CSV.",
-        "This is a summary-of-network export, not a geometry export."};
+        "This is a summary-of-network export, not a geometry export.",
+        "Tokunaga outputs", "switch", ""};
 
     // --- Junction area-ratio outputs (complement to Tokunaga) ---
     bool_default_map["write_junction_area_ratio_data"] = false;
@@ -313,7 +336,8 @@ int main(int argc, char* argv[])
         "One row per interior confluence: the ratio r = A_trib/A_main of the two "
         "merging tributary drainage areas, plus their Strahler orders. A "
         "continuous, high-sample-count complement to order-binned Tokunaga "
-        "analysis. Output: <write_fname>_junction_area_ratios.csv."};
+        "analysis. Output: <write_fname>_junction_area_ratios.csv.",
+        "Junction area-ratio outputs (complement to Tokunaga)", "switch", ""};
 
     bool_default_map["write_junction_area_ratio_summary"] = false;
     help_map["write_junction_area_ratio_summary"] = {"bool","false",
@@ -322,19 +346,22 @@ int main(int argc, char* argv[])
         "area ratio R_A, and a model-dependent Tokunaga-equivalent c=R_A^lambda, "
         "with branch-bootstrap confidence intervals. Also writes an area-decade "
         "collapse table (<write_fname>_junction_area_ratio_decades.csv). Output: "
-        "<write_fname>_junction_area_ratio_summary.csv."};
+        "<write_fname>_junction_area_ratio_summary.csv.",
+        "Junction area-ratio outputs (complement to Tokunaga)", "switch", ""};
 
     int_default_map["junction_area_ratio_bootstrap"] = 1000;
     help_map["junction_area_ratio_bootstrap"] = {"int","1000",
         "Number of branch-bootstrap replicates for area-ratio confidence intervals.",
         "Resampling is over non-mainstem tributary branches (the main stem is "
         "always retained), the correct unit of independence for nested junctions. "
-        "0 disables bootstrapping (CI columns left as nan)."};
+        "0 disables bootstrapping (CI columns left as nan).",
+        "Junction area-ratio outputs (complement to Tokunaga)", "param", ""};
 
     int_default_map["junction_area_ratio_seed"] = 1;
     help_map["junction_area_ratio_seed"] = {"int","1",
         "RNG seed for the area-ratio branch bootstrap.",
-        "Fix for reproducible confidence intervals."};
+        "Fix for reproducible confidence intervals.",
+        "Junction area-ratio outputs (complement to Tokunaga)", "param", ""};
 
     // --- Junction centre-of-mass bearing ---
     bool_default_map["write_junction_centre_of_mass_bearings"] = false;
@@ -344,7 +371,8 @@ int main(int argc, char* argv[])
         "downstream junction (base level for the outlet junction); this writes the "
         "geographic bearing (degrees from North, clockwise) from that outlet to "
         "the basin centre of mass, plus the outlet and centre-of-mass coordinates "
-        "and the basin pixel count. Output: <write_fname>_junction_com_bearings.csv."};
+        "and the basin pixel count. Output: <write_fname>_junction_com_bearings.csv.",
+        "Junction centre-of-mass bearing", "switch", ""};
 
 
     // --- Complete-basin filtering ---
@@ -354,18 +382,44 @@ int main(int argc, char* argv[])
         "A basin is complete if no pixel in its upslope area is influenced by "
         "nodata or the DEM edge. Incomplete (edge-truncated) basins are dropped "
         "before computing channel-link bearings, junction angles, and "
-        "centre-of-mass bearings. Needed for stream-order-based statistics."};
+        "centre-of-mass bearings. Needed for stream-order-based statistics.",
+        "Complete-basin filtering", "param", ""};
 
     int_default_map["minimum_basin_pixels"] = 0;
     help_map["minimum_basin_pixels"] = {"int","0",
         "Drop junctions whose upslope basin has fewer than this many pixels.",
-        "0 disables the size filter. Applied alongside only_complete_basins."};
+        "0 disables the size filter. Applied alongside only_complete_basins.",
+        "Complete-basin filtering", "param", ""};
 
 
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -1523,6 +1577,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-channel-network-analysis: done.\n";

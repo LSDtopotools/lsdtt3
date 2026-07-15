@@ -62,20 +62,10 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameters (five-map pattern)
     // -------------------------------------------------------------------------
@@ -83,118 +73,160 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     string_default_map["input_vector"] = "";
     help_map["input_vector"] = {"string","",
         "Input vector dataset (e.g. a GeoPackage) holding both layers.",
         "Required. Resolved against read_path if not absolute. Both layers must "
-        "share the same CRS (projected metres recommended)."};
+        "share the same CRS (projected metres recommended).",
+        "-", "param", "write_tip_diagnostics"};
 
     string_default_map["water_layer"] = "";
     help_map["water_layer"] = {"string","",
         "Name of the water LINESTRING layer to repair.",
-        "Required. e.g. vml-nr73sw_Water_Line."};
+        "Required. e.g. vml-nr73sw_Water_Line.",
+        "-", "param", "write_tip_diagnostics"};
 
     string_default_map["road_layer"] = "";
     help_map["road_layer"] = {"string","",
         "Name of the road centreline LINESTRING layer used as the crossing test.",
-        "Required. e.g. vml-nr73sw_Road_Centreline."};
+        "Required. e.g. vml-nr73sw_Road_Centreline.",
+        "-", "param", "write_tip_diagnostics"};
 
     string_default_map["road_vector"] = "";
     help_map["road_vector"] = {"string","",
         "Dataset holding the road layer, if different from input_vector.",
         "Use when the water network is in one file (e.g. the centreline .fgb) "
         "and roads are in another (e.g. the source .gpkg). Empty = same as "
-        "input_vector. Resolved against read_path if not absolute."};
+        "input_vector. Resolved against read_path if not absolute.",
+        "-", "param", "write_tip_diagnostics"};
 
     string_default_map["road_name_field"] = "roadName";
     help_map["road_name_field"] = {"string","roadName",
         "Road attribute copied into the bridge crossed_road_name field.",
-        "Falls back to 'roadNumber' when this field is empty/absent."};
+        "Falls back to 'roadNumber' when this field is empty/absent.",
+        "-", "param", "write_tip_diagnostics"};
 
     string_default_map["write_output_format"] = "flatgeobuf";
     help_map["write_output_format"] = {"string","flatgeobuf",
         "Output vector format.",
-        "flatgeobuf (default, single-layer, preferred) or gpkg."};
+        "flatgeobuf (default, single-layer, preferred) or gpkg.",
+        "-", "io", ""};
 
     float_default_map["snap_tolerance"] = 0.5f;
     help_map["snap_tolerance"] = {"float","0.5",
         "Endpoint coincidence tolerance (m) for degree counting.",
         "Endpoints within this distance are treated as the same node, so shared "
-        "confluences are not mistaken for dangling tips."};
+        "confluences are not mistaken for dangling tips.",
+        "-", "param", "write_tip_diagnostics"};
 
     float_default_map["max_gap_length"] = 25.0f;
     help_map["max_gap_length"] = {"float","25.0",
         "Maximum ROAD-crossing bridge length (m); longer road gaps are rejected.",
         "Roads are narrow, but raise for wide / dual-carriageway crossings or "
-        "wide verges where a true crossing gap exceeds the default."};
+        "wide verges where a true crossing gap exceeds the default.",
+        "-", "param", "write_tip_diagnostics"};
 
     float_default_map["max_nonroad_gap"] = 30.0f;
     help_map["max_nonroad_gap"] = {"float","30.0",
         "Maximum bridge length (m) for gaps NOT associated with a road.",
         "Fills digitising breaks regardless of roads. The STRICT facing/heading "
         "gates still apply, so genuine headwaters and parallel streams are not "
-        "joined. Set 0 to disable non-road bridging."};
+        "joined. Set 0 to disable non-road bridging.",
+        "-", "param", "write_tip_diagnostics"};
 
     float_default_map["max_facing_angle"] = 45.0f;
     help_map["max_facing_angle"] = {"float","45.0",
         "Strict tier: max angle (deg) EACH tip's tangent may deviate from the "
         "line to its partner. Used for non-road gaps.",
-        "Both tips must point toward each other across the gap."};
+        "Both tips must point toward each other across the gap.",
+        "-", "param", "write_tip_diagnostics"};
 
     float_default_map["max_heading_misalignment"] = 50.0f;
     help_map["max_heading_misalignment"] = {"float","50.0",
         "Strict tier: max deviation from anti-parallel (deg) between the two "
         "tips' tangents. Used for non-road gaps.",
         "A true continuation has the two outward tangents ~opposite (180 deg). "
-        "Suppresses bridges between parallel unrelated streams."};
+        "Suppresses bridges between parallel unrelated streams.",
+        "-", "param", "write_tip_diagnostics"};
 
     float_default_map["road_max_facing_angle"] = 60.0f;
     help_map["road_max_facing_angle"] = {"float","60.0",
         "Road tier: a road-associated bridge only needs AT LEAST ONE tip to "
         "face within this angle (no heading constraint).",
         "The channel kinks at a road crossing so the dangling tip's own tangent "
-        "is often unreliable; the partner across the road faces well."};
+        "is often unreliable; the partner across the road faces well.",
+        "-", "param", "write_tip_diagnostics"};
 
     float_default_map["tangent_fit_length"] = 15.0f;
     help_map["tangent_fit_length"] = {"float","15.0",
         "Inward arc length (m) used to estimate each tip's outward tangent.",
-        "Longer values smooth over digitising wiggle near the tip."};
+        "Longer values smooth over digitising wiggle near the tip.",
+        "-", "param", "write_tip_diagnostics"};
 
     float_default_map["road_intersection_tolerance"] = 10.0f;
     help_map["road_intersection_tolerance"] = {"float","10.0",
         "Road-association distance (m): a bridge is 'road-associated' if its "
         "connector comes within this distance of a road centreline.",
         "Covers staggered severances where the stub ends sit a few metres off "
-        "the road. Uses segment-to-segment distance, not just a midpoint test."};
+        "the road. Uses segment-to-segment distance, not just a midpoint test.",
+        "-", "param", "write_tip_diagnostics"};
 
     bool_default_map["require_mutual_best"] = true;
     help_map["require_mutual_best"] = {"bool","true",
         "Require each tip to be the other's best partner before bridging.",
-        "Strongly suppresses spurious bridges; disable only to be more inclusive."};
+        "Strongly suppresses spurious bridges; disable only to be more inclusive.",
+        "-", "param", "write_tip_diagnostics"};
 
     bool_default_map["merge_chains"] = false;
     help_map["merge_chains"] = {"bool","false",
         "Dissolve connected chains into single features (NOT yet implemented).",
         "Leave false: keep originals + add bridge lines. Coincident endpoints "
-        "already make the network topologically continuous downstream."};
+        "already make the network topologically continuous downstream.",
+        "-", "param", "write_tip_diagnostics"};
 
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool","true",
         "Build a spatial index when writing the output layer.",
-        "Speeds GIS queries; buffers the layer in memory before writing."};
+        "Speeds GIS queries; buffers the layer in memory before writing.",
+        "-", "io", ""};
 
     bool_default_map["write_tip_diagnostics"] = false;
     help_map["write_tip_diagnostics"] = {"bool","false",
         "Write a diagnostic point layer of every dangling tip.",
         "Output: <write_fname>_repair_tips.fgb. Attributes: bridged (1 if the "
         "tip was joined), road_dist_m (distance to nearest road), line_index. "
-        "Use it to see which tips near roads stayed unbridged and why."};
+        "Use it to see which tips near roads stayed unbridged and why.",
+        "-", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -424,6 +456,8 @@ int main(int argc, char* argv[])
         }
     }
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-water-line-repair: done.\n";
     return 0;

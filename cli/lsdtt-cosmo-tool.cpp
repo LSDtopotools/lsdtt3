@@ -92,23 +92,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -116,116 +106,159 @@ int main(int argc, char* argv[])
     std::map<std::string, float>       float_default_map;
     std::map<std::string, int>         int_default_map;
     std::map<std::string, std::string> string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- CRN physics ---
     string_default_map["nuclide"] = "Be10";
     help_map["nuclide"] = {"string","Be10",
         "Nuclide to use for erosion rate inversion.",
-        "Allowed values: Be10, Al26, C14."};
+        "Allowed values: Be10, Al26, C14.",
+        "CRN physics", "param", ""};
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
         "Muon production parameter scheme.",
-        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS."};
+        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
+        "CRN physics", "param", ""};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;
     help_map["rock_density_kg_m3"] = {"float","2650",
         "Rock (bulk) density in kg/m3.",
-        "Used to convert effective erosion rate (g/cm2/yr) to mm/kyr."};
+        "Used to convert effective erosion rate (g/cm2/yr) to mm/kyr.",
+        "CRN physics", "param", ""};
 
     // --- Atmosphere and palaeomagnetic correction ---
     string_default_map["crn_nc_file"] = "";
     help_map["crn_nc_file"] = {"string","",
         "Path to crn_parameters.nc (ERA40 grids + Muscheler VDM record).",
         "Required for ERA40 atmosphere and paleomagnetic correction. "
-        "Leave empty to use the standard (SLHL) atmosphere with no paleomagetic correction."};
+        "Leave empty to use the standard (SLHL) atmosphere with no paleomagetic correction.",
+        "Atmosphere and palaeomagnetic correction", "param", ""};
 
     float_default_map["sample_age_yr"] = 0.0f;
     help_map["sample_age_yr"] = {"float","0",
         "Sample exposure age in years (yr BP). Used for paleomagnetic correction.",
         "Set > 0 to apply the Muscheler VDM time-integrated Stone/Lal paleomagnetic "
-        "correction. Requires crn_nc_file to be set. Default 0 = no correction (modern field)."};
+        "correction. Requires crn_nc_file to be set. Default 0 = no correction (modern field).",
+        "Atmosphere and palaeomagnetic correction", "param", ""};
 
 
     // --- Sample points ---
     string_default_map["points_filename"] = "CRN_points.csv";
     help_map["points_filename"] = {"string","CRN_points.csv",
         "CSV file containing sample point locations and concentrations.",
-        "Must have latitude and longitude columns."};
+        "Must have latitude and longitude columns.",
+        "Sample points", "param", ""};
 
     string_default_map["sample_column_name"] = "sample_name";
     help_map["sample_column_name"] = {"string","sample_name",
         "Name of the sample identifier column in the points CSV.",
-        "Optional; if absent the column is omitted from output."};
+        "Optional; if absent the column is omitted from output.",
+        "Sample points", "param", ""};
 
     string_default_map["concentration_column_name"] = "";
     help_map["concentration_column_name"] = {"string","",
         "Column name for the measured nuclide concentration (atoms/g).",
-        "Defaults to <nuclide>_CONC (e.g. Be10_CONC) if not set."};
+        "Defaults to <nuclide>_CONC (e.g. Be10_CONC) if not set.",
+        "Sample points", "param", ""};
 
     string_default_map["uncertainty_column_name"] = "";
     help_map["uncertainty_column_name"] = {"string","",
         "Column name for concentration measurement uncertainty (1-sigma, atoms/g).",
-        "Defaults to <nuclide>_uncertainty. If absent, uncertainty bounds are skipped."};
+        "Defaults to <nuclide>_uncertainty. If absent, uncertainty bounds are skipped.",
+        "Sample points", "param", ""};
 
     string_default_map["standardisation_column_name"] = "standardisation";
     help_map["standardisation_column_name"] = {"string","standardisation",
         "Column name for the AMS standardisation name.",
-        "If absent, no standardisation correction is applied."};
+        "If absent, no standardisation correction is applied.",
+        "Sample points", "param", ""};
 
     // --- Shielding ---
     float_default_map["self_shield_eff_thickness"] = 0.0f;
     help_map["self_shield_eff_thickness"] = {"float","0",
         "Sample self-shielding as effective depth (g/cm2).",
-        "0 = surface sample."};
+        "0 = surface sample.",
+        "Shielding", "param", ""};
 
     float_default_map["snow_shield_eff_thickness"] = 0.0f;
     help_map["snow_shield_eff_thickness"] = {"float","0",
         "Snow shielding as effective depth (g/cm2).",
-        "0 = no snow correction. Applied uniformly across the basin."};
+        "0 = no snow correction. Applied uniformly across the basin.",
+        "Shielding", "param", ""};
 
     float_default_map["topo_shield_value"] = 1.0f;
     help_map["topo_shield_value"] = {"float","1",
         "Topographic shielding factor (dimensionless, 0-1).",
-        "1 = no topographic shielding. Applied uniformly across the basin."};
+        "1 = no topographic shielding. Applied uniformly across the basin.",
+        "Shielding", "param", ""};
 
     // --- DEM preparation ---
     bool_default_map["fill_before_routing"] = true;
     help_map["fill_before_routing"] = {"bool","true",
         "Fill DEM pits before building D8 flow routing.",
-        "Set false only if the DEM is already pit-filled."};
+        "Set false only if the DEM is already pit-filled.",
+        "DEM preparation", "param", ""};
 
     float_default_map["min_slope_for_fill"] = 0.0001f;
     help_map["min_slope_for_fill"] = {"float","0.0001",
         "Minimum imposed slope during pit filling (m/m).",
-        "Used only when fill_before_routing is true."};
+        "Used only when fill_before_routing is true.",
+        "DEM preparation", "param", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "D8 flow routing boundary conditions.",
-        "Four-character string (N,E,S,W): o=open, b=forced outlet."};
+        "Four-character string (N,E,S,W): o=open, b=forced outlet.",
+        "DEM preparation", "param", ""};
 
     // --- Channel snapping ---
     int_default_map["threshold_contributing_pixels"] = 1000;
     help_map["threshold_contributing_pixels"] = {"int","1000",
         "Minimum contributing pixels for a node to be considered a channel.",
-        "Sample points are snapped to the nearest node meeting this threshold."};
+        "Sample points are snapped to the nearest node meeting this threshold.",
+        "Channel snapping", "param", ""};
 
     int_default_map["snap_search_radius_pixels"] = 8;
     help_map["snap_search_radius_pixels"] = {"int","8",
         "Maximum search radius (pixels) when snapping points to channel.",
-        "Expanding square search up to this radius."};
+        "Expanding square search up to this radius.",
+        "Channel snapping", "param", ""};
 
     // --- Output ---
     bool_default_map["write_production_raster"] = false;
     help_map["write_production_raster"] = {"bool","false",
         "Write the Stone 2000 production scaling raster to a GeoTIFF.",
-        "Filename: <write_fname>_PROD.tif"};
+        "Filename: <write_fname>_PROD.tif",
+        "Output", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -653,5 +686,7 @@ int main(int argc, char* argv[])
               << "Skipped   : " << n_skipped   << " samples\n"
               << "Output    : " << out_fname   << "\n\n";
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     return 0;
 }

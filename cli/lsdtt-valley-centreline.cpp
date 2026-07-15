@@ -92,31 +92,22 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     std::map<std::string, bool>                     bool_default_map;
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Channel scope (mirrors lsdtt-flat-surface-finder) ---
     int_default_map["channel_threshold_contributing_pixels"] = 1000;
     help_map["channel_threshold_contributing_pixels"] = {"int","1000",
         "Contributing-pixel threshold used to snap source points onto the "
-        "channel network.",""};
+        "channel network.","",
+        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     for (const std::string role : {std::string("source"), std::string("outlet")})
     {
@@ -150,29 +141,35 @@ int main(int argc, char* argv[])
     help_map["auto_detect_outlet_points"] = {"bool","true",
         "Auto-classify points in source_points_path into sources and outlets.",
         "A point downstream of another supplied point becomes an outlet. "
-        "Disabled when an explicit outlet_points_path is given."};
+        "Disabled when an explicit outlet_points_path is given.",
+        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     bool_default_map["snap_sources_to_channel_threshold"] = true;
     help_map["snap_sources_to_channel_threshold"] = {"bool","true",
         "Snap source points to the nearest cell meeting the channel "
-        "threshold.",""};
+        "threshold.","",
+        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     int_default_map["source_snap_max_radius_pixels"] = 25;
     help_map["source_snap_max_radius_pixels"] = {"int","25",
-        "Maximum expanding-square search radius for source snapping.",""};
+        "Maximum expanding-square search radius for source snapping.","",
+        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     float_default_map["outlet_snap_max_distance_metres"] = 0.0f;
     help_map["outlet_snap_max_distance_metres"] = {"float","0",
         "Maximum distance between a raw outlet point and its traced-path "
-        "node.","0 = unlimited."};
+        "node.","0 = unlimited.",
+        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
-        "Flow boundary conditions (N,E,S,W).",""};
+        "Flow boundary conditions (N,E,S,W).","",
+        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     float_default_map["fill_min_slope_for_routing"] = 0.0001f;
     help_map["fill_min_slope_for_routing"] = {"float","0.0001",
-        "Minimum slope used when pit-filling the DEM for flow routing.",""};
+        "Minimum slope used when pit-filling the DEM for flow routing.","",
+        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     // --- Valley identification ---
     float_default_map["valley_corridor_width_metres"] = 5000.0f;
@@ -180,28 +177,33 @@ int main(int argc, char* argv[])
         "Corridor half-width (m): pixels within this Euclidean distance of "
         "the channel form the HAND population and can be valley pixels.",
         "Deliberately wide; the HAND break, not the corridor, defines the "
-        "valley."};
+        "valley.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_fallback_hand_metres"] = 10.0f;
     help_map["valley_fallback_hand_metres"] = {"float","10",
         "Valley HAND threshold used when the corridor population shows no "
-        "break.",""};
+        "break.","",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_force_hand_metres"] = 0.0f;
     help_map["valley_force_hand_metres"] = {"float","0",
         "Force a constant valley HAND threshold (m).",
         "When > 0, bypasses break detection and uses this threshold for all "
-        "reaches/channels. <= 0 disables forced mode."};
+        "reaches/channels. <= 0 disables forced mode.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_min_hand_metres"] = 2.0f;
     help_map["valley_min_hand_metres"] = {"float","2",
         "Floor on a detected valley HAND break (m).",
         "Stops a dip right after the valley-floor spike from producing a "
-        "degenerate channel-hugging valley."};
+        "degenerate channel-hugging valley.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_max_hand_metres"] = 0.0f;
     help_map["valley_max_hand_metres"] = {"float","0",
-        "Cap on the detected valley HAND break (m).","0 = no cap."};
+        "Cap on the detected valley HAND break (m).","0 = no cap.",
+        "Valley identification", "param", ""};
 
     int_default_map["valley_dilation_pixels"] = 4;
     help_map["valley_dilation_pixels"] = {"int","4",
@@ -209,14 +211,16 @@ int main(int argc, char* argv[])
         "Fills interior holes; dilated pixels are only retained when closer "
         "to the channel than the farthest pixel of the patch they grow from, "
         "so patches cannot extend outward away from the channel. Patches not "
-        "adjacent to the channel are then removed. 0 disables dilation."};
+        "adjacent to the channel are then removed. 0 disables dilation.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_max_detour_ratio"] = 3.0f;
     help_map["valley_max_detour_ratio"] = {"float","3.0",
         "Max ratio of through-valley (geodesic) to straight-line distance "
         "from the channel for a valley pixel.",
         "Prunes flats only reachable via a long corridor detour (e.g. a "
-        "neighbouring channel's floodplain). 0 disables."};
+        "neighbouring channel's floodplain). 0 disables.",
+        "Valley identification", "param", ""};
 
     bool_default_map["refine_valley_with_baseline"] = true;
     help_map["refine_valley_with_baseline"] = {"bool","true",
@@ -224,7 +228,8 @@ int main(int argc, char* argv[])
         "elevation) after routing.",
         "Removes the stale-reference wedges the nearest-channel-pixel test "
         "grows onto downstream-sloping terraces where the channel veers "
-        "away."};
+        "away.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_break_reach_window_metres"] = 0.0f;
     help_map["valley_break_reach_window_metres"] = {"float","0",
@@ -232,7 +237,8 @@ int main(int argc, char* argv[])
         "The valley HAND break is detected per window, so a channel running "
         "from a confined canyon onto a broad valley floor gets a different "
         "threshold in each setting. 0 = auto (max of 2 km and channel "
-        "length / 8); negative = single whole-channel break."};
+        "length / 8); negative = single whole-channel break.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_wall_peak_fraction"] = 0.02f;
     help_map["valley_wall_peak_fraction"] = {"float","0.02",
@@ -240,7 +246,8 @@ int main(int argc, char* argv[])
         "histogram maximum.",
         "Low by design: a valley-floor mode is tiny next to a mountain wall "
         "peak. The valley break is the FIRST qualifying dip after the first "
-        "mode above this floor."};
+        "mode above this floor.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_break_fraction"] = 0.6f;
     help_map["valley_break_fraction"] = {"float","0.6",
@@ -252,7 +259,8 @@ int main(int argc, char* argv[])
         "Raise it (e.g. 0.65-0.7) to accept shallower valley-floor/wall "
         "separations, so more marginal valley-floor modes become breaks; "
         "lower it to demand deeper, cleaner troughs. Used as-is by the 'fixed' "
-        "method; ignored by 'relief_adaptive' (which derives it per reach)."};
+        "method; ignored by 'relief_adaptive' (which derives it per reach).",
+        "Valley identification", "param", ""};
 
     string_default_map["valley_break_method"] = "fixed";
     help_map["valley_break_method"] = {"string","fixed",
@@ -265,34 +273,39 @@ int main(int argc, char* argv[])
         "relative-depth test is unchanged; only the fraction varies.",
         "Use 'relief_adaptive' when a single fraction over- or under-grows "
         "different reaches of the same channel (e.g. a channel that runs from "
-        "a confined canyon onto a glacial plateau)."};
+        "a confined canyon onto a glacial plateau).",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_break_fraction_min"] = 0.5f;
     help_map["valley_break_fraction_min"] = {"float","0.5",
         "relief_adaptive method: acceptance fraction for the lowest-relief "
         "reaches (strictest; resists growing valleys onto flat plateaus).",
-        "Lower it to make plateau reaches even stricter."};
+        "Lower it to make plateau reaches even stricter.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_break_fraction_max"] = 0.7f;
     help_map["valley_break_fraction_max"] = {"float","0.7",
         "relief_adaptive method: acceptance fraction for the highest-relief "
         "reaches (most permissive; captures shallow floors in confined "
         "valleys).",
-        "Raise it to fill more of a confined valley floor."};
+        "Raise it to fill more of a confined valley floor.",
+        "Valley identification", "param", ""};
 
     float_default_map["valley_break_relief_window_metres"] = 300.0f;
     help_map["valley_break_relief_window_metres"] = {"float","300",
         "relief_adaptive method: moving-window radius (m) for the local-relief "
         "raster (max-min elevation) that drives the adaptive fraction. Should "
         "span a valley wall.",
-        "Increase for broad valleys, decrease for narrow ones."};
+        "Increase for broad valleys, decrease for narrow ones.",
+        "Valley identification", "param", ""};
 
     bool_default_map["write_valley_hand_histogram"] = true;
     help_map["write_valley_hand_histogram"] = {"bool","true",
         "Write the per-channel corridor HAND histogram used for break "
         "detection.",
         "Output suffix: _valley_hand_hist.csv with source_id, hand_m (bin "
-        "centre), n_pixels."};
+        "centre), n_pixels.",
+        "Valley identification", "switch", ""};
 
     bool_default_map["write_valley_break_metric"] = true;
     help_map["write_valley_break_metric"] = {"bool","true",
@@ -304,52 +317,62 @@ int main(int argc, char* argv[])
         "source_id, scope (global/window), window_centre_m, hand_m, "
         "raw_count, smoothed, is_peak (surviving mode peak), is_boundary, "
         "is_raw_peak (candidate peak before merging), is_break. Feeds the "
-        "reviewer break-logic figure (phase3_valley_break_metric.py)."};
+        "reviewer break-logic figure (phase3_valley_break_metric.py).",
+        "Valley identification", "switch", ""};
 
     // --- Trough carving / routing ---
     float_default_map["trough_scaling_factor"] = 0.1f;
     help_map["trough_scaling_factor"] = {"float","0.1",
         "Trough depth per metre of distance to the valley wall.",
-        "Doubled automatically on routing failure (up to 2 retries)."};
+        "Doubled automatically on routing failure (up to 2 retries).",
+        "Trough carving / routing", "param", ""};
 
     float_default_map["trough_along_channel_slope"] = 0.02f;
     help_map["trough_along_channel_slope"] = {"float","0.02",
         "Synthetic downstream tilt of the trough (m per m along channel).",
         "Stops near-flat / through valleys from routing the centreline out "
-        "the wrong (upstream) tile edge."};
+        "the wrong (upstream) tile edge.",
+        "Trough carving / routing", "param", ""};
 
     int_default_map["centreline_loops"] = 5;
     help_map["centreline_loops"] = {"int","5",
-        "Trough carve/breach/fill iterations.",""};
+        "Trough carve/breach/fill iterations.","",
+        "Trough carving / routing", "param", ""};
 
     float_default_map["min_bank_elevation_window_radius_metres"] = 200.0f;
     help_map["min_bank_elevation_window_radius_metres"] = {"float","200",
         "Radius of the local-minimum filter on the nearest-wall elevation "
-        "field (minimum bank elevation).",""};
+        "field (minimum bank elevation).","",
+        "Trough carving / routing", "param", ""};
 
     int_default_map["trough_nodata_buffer_pixels"] = 2;
     help_map["trough_nodata_buffer_pixels"] = {"int","2",
         "Valley hole is dilated by this many pixels before bank elevations "
-        "are sampled.",""};
+        "are sampled.","",
+        "Trough carving / routing", "param", ""};
 
     float_default_map["trough_fill_min_slope"] = 0.0001f;
     help_map["trough_fill_min_slope"] = {"float","0.0001",
-        "Minimum slope for pit filling of the trough surface.",""};
+        "Minimum slope for pit filling of the trough surface.","",
+        "Trough carving / routing", "param", ""};
 
     int_default_map["min_centreline_nodes"] = 10;
     help_map["min_centreline_nodes"] = {"int","10",
-        "A routed centreline shorter than this counts as a failure.",""};
+        "A routed centreline shorter than this counts as a failure.","",
+        "Trough carving / routing", "param", ""};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
-        "Number of OpenMP threads (0 = all available).",""};
+        "Number of OpenMP threads (0 = all available).","",
+        "Trough carving / routing", "io", ""};
 
     // --- Outputs ---
     bool_default_map["write_valley_mask_raster"] = true;
     help_map["write_valley_mask_raster"] = {"bool","true",
         "Write the valley mask raster (0 outside; source_id + 1 in each "
         "channel's valley).",
-        "Output suffix: _valley_mask.tif"};
+        "Output suffix: _valley_mask.tif",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_valley_reach_id_raster"] = true;
     help_map["write_valley_reach_id_raster"] = {"bool","true",
@@ -359,37 +382,43 @@ int main(int argc, char* argv[])
         "from.",
         "Output suffix: _valley_reach_id_ch<sid>.tif (Int16, nodata outside "
         "the corridor). Feeds the reach map (phase3_valley_reach_map.py / "
-        "lsdviztools3.charts.plot_valley_reach_map)."};
+        "lsdviztools3.charts.plot_valley_reach_map).",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_hillshade_raster"] = false;
     help_map["write_hillshade_raster"] = {"bool","false",
         "Write a standard single-azimuth hillshade of the DEM (a natural-looking "
         "terrain backdrop for the cross-section / feature figures).",
-        "Output suffix: _hillshade.tif."};
+        "Output suffix: _hillshade.tif.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_multidirectional_hillshade_raster"] = false;
     help_map["write_multidirectional_hillshade_raster"] = {"bool","false",
         "Write a multidirectional hillshade of the DEM (mean of hillshades "
         "from several evenly spaced azimuths). It reduces directional bias and "
         "highlights slope breaks (valley/terrace margins) well.",
-        "Output suffix: _multidirectional_hillshade.tif."};
+        "Output suffix: _multidirectional_hillshade.tif.",
+        "Outputs", "switch", ""};
 
     int_default_map["multidirectional_hillshade_n_directions"] = 8;
     help_map["multidirectional_hillshade_n_directions"] = {"int","8",
         "Number of evenly spaced azimuths for the multidirectional hillshade.",
-        ""};
+        "",
+        "Outputs", "param", ""};
 
     bool_default_map["write_valley_centreline"] = true;
     help_map["write_valley_centreline"] = {"bool","true",
         "Write the valley centrelines as vector lines.",
         "Output suffix: _valley_centreline.fgb (one line per channel with "
-        "source_id)."};
+        "source_id).",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_valley_centreline_nodes"] = true;
     help_map["write_valley_centreline_nodes"] = {"bool","true",
         "Write per-node centreline table.",
         "Output suffix: _valley_centreline_nodes.csv with source_id, "
-        "node_seq, x, y, elevation, distance_m."};
+        "node_seq, x, y, elevation, distance_m.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_valley_cross_sections"] = true;
     help_map["write_valley_cross_sections"] = {"bool","true",
@@ -401,23 +430,27 @@ int main(int argc, char* argv[])
         "hydraulic step-midpoint boundary points), and "
         "_valley_cross_section_samples.csv (per-sample elevation profiles). "
         "Each channel's transects share one length = "
-        "cross_section_length_multiplier x the widest valley on that channel."};
+        "cross_section_length_multiplier x the widest valley on that channel.",
+        "Outputs", "switch", ""};
 
     float_default_map["cross_section_spacing_metres"] = 500.0f;
     help_map["cross_section_spacing_metres"] = {"float","500",
-        "Along-centreline spacing between cross-section stations (m).",""};
+        "Along-centreline spacing between cross-section stations (m).","",
+        "Outputs", "param", ""};
 
     float_default_map["cross_section_length_multiplier"] = 1.5f;
     help_map["cross_section_length_multiplier"] = {"float","1.5",
         "Cross-section total length as a multiple of the widest valley width "
         "for the channel.",
         "1.5 spans 1.5x the widest valley so every section shows both walls "
-        "with margin."};
+        "with margin.",
+        "Outputs", "param", ""};
 
     int_default_map["cross_section_tangent_window_nodes"] = 8;
     help_map["cross_section_tangent_window_nodes"] = {"int","8",
         "Centreline nodes on each side used to smooth the local direction "
-        "the transect is drawn orthogonal to.",""};
+        "the transect is drawn orthogonal to.","",
+        "Outputs", "param", ""};
 
     float_default_map["cross_section_min_half_length_metres"] = 0.0f;
     help_map["cross_section_min_half_length_metres"] = {"float","0",
@@ -425,7 +458,8 @@ int main(int argc, char* argv[])
         "narrow channel's sections still extend a sensible distance beyond the "
         "valley to show wall/upland context.",
         "0 = length purely from valley width; set e.g. 800-1500 for narrow "
-        "tributaries. Still capped by cross_section_max_half_length_metres."};
+        "tributaries. Still capped by cross_section_max_half_length_metres.",
+        "Outputs", "param", ""};
 
     float_default_map["cross_section_max_half_length_metres"] = 5000.0f;
     help_map["cross_section_max_half_length_metres"] = {"float","5000",
@@ -435,7 +469,8 @@ int main(int argc, char* argv[])
         "sea the in-valley run through the centre can span the whole tile; a "
         "station still in-valley at this cap has that side marked not found "
         "and is excluded from the widest-valley statistic. Raise for genuinely "
-        "very wide valleys."};
+        "very wide valleys.",
+        "Outputs", "param", ""};
 
     bool_default_map["clip_overlapping_sections"] = true;
     help_map["clip_overlapping_sections"] = {"bool","true",
@@ -443,7 +478,8 @@ int main(int argc, char* argv[])
         "closer to a neighbouring station centre than its own centre (local "
         "Voronoi bisector clipping).",
         "Removes concave-side overlap while keeping straight orthogonal "
-        "transects."};
+        "transects.",
+        "Outputs", "switch", ""};
 
     bool_default_map["curved_cross_sections"] = false;
     help_map["curved_cross_sections"] = {"bool","false",
@@ -455,21 +491,24 @@ int main(int argc, char* argv[])
         "survivors stay long.",
         "Boundary-fitted valley-floor refinement. Sides are clipped at the "
         "Voronoi bisector of the nearest kept neighbours, never below the valley "
-        "wall plus curved_wall_clearance_fraction."};
+        "wall plus curved_wall_clearance_fraction.",
+        "Outputs", "param", ""};
 
     float_default_map["curved_wall_clearance_fraction"] = 0.10f;
     help_map["curved_wall_clearance_fraction"] = {"float","0.10",
         "For curved cross sections: a shortened side never clips below "
         "(1 + this) x the distance to the valley wall, so a section always "
         "clears the pre-existing valley by this margin.",
-        "Only used when curved_cross_sections is true."};
+        "Only used when curved_cross_sections is true.",
+        "Outputs", "param", ""};
 
     int_default_map["curved_streamwise_smoothing_passes"] = 40;
     help_map["curved_streamwise_smoothing_passes"] = {"int","40",
         "For curved cross sections: number of anchored Laplacian smoothing "
         "passes applied to the streamwise coordinate field. Higher = smoother "
         "sections with fewer creases at bends.",
-        "Only used when curved_cross_sections is true."};
+        "Only used when curved_cross_sections is true.",
+        "Outputs", "param", ""};
 
     float_default_map["curved_coarse_spacing_metres"] = 700.0f;
     help_map["curved_coarse_spacing_metres"] = {"float","700",
@@ -479,19 +518,22 @@ int main(int argc, char* argv[])
         "metres). Keeps coverage even instead of dense clusters next to gaps.",
         "Rounded down to a power-of-two multiple of the base spacing. Set <= the "
         "base spacing to disable the hierarchy. Only used when "
-        "curved_cross_sections is true."};
+        "curved_cross_sections is true.",
+        "Outputs", "param", ""};
 
     int_default_map["neighbour_clip_window"] = 2;
     help_map["neighbour_clip_window"] = {"int","2",
         "Number of neighbouring stations on each side considered for overlap "
         "clipping.",
-        "2 checks s+/-1 and s+/-2; larger is more conservative."};
+        "2 checks s+/-1 and s+/-2; larger is more conservative.",
+        "Outputs", "param", ""};
 
     float_default_map["min_section_reach_fraction"] = 0.35f;
     help_map["min_section_reach_fraction"] = {"float","0.35",
         "Drop a station if the clipped transect length is below this fraction "
         "of the nominal full length.",
-        "Avoids tiny degenerate sections in tight hairpins."};
+        "Avoids tiny degenerate sections in tight hairpins.",
+        "Outputs", "param", ""};
 
     bool_default_map["write_cross_section_features"] = true;
     help_map["write_cross_section_features"] = {"bool","true",
@@ -501,7 +543,8 @@ int main(int argc, char* argv[])
         "Outputs _valley_cross_section_features.csv (one row per feature) and "
         "adds curvature / hillshade / is_channel columns to the per-sample "
         "CSV. Needs the DEM to derive curvature and hillshade; the channel "
-        "mask comes from the resolved channel scope."};
+        "mask comes from the resolved channel scope.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_cross_section_hydraulics"] = false;
     help_map["write_cross_section_hydraulics"] = {"bool","false",
@@ -514,7 +557,8 @@ int main(int argc, char* argv[])
         "Geosciences, doi:10.1016/j.cageo.2025.106001).",
         "Outputs _valley_cross_section_hydraulics.csv (one row per stage per "
         "station: stage_m, depth_above_thalweg_m, width_m, area_m2, "
-        "wetted_perimeter_m, hydraulic_depth_m)."};
+        "wetted_perimeter_m, hydraulic_depth_m).",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_cross_section_informed_valley_mask"] = false;
     help_map["write_cross_section_informed_valley_mask"] = {"bool","false",
@@ -526,24 +570,52 @@ int main(int argc, char* argv[])
         "Needs write_cross_section_features (the breaks come from that path).",
         "Outputs _cross_section_informed_valley_mask.tif (Byte; 0 = above the "
         "break, 1 = at/below the median lowest break [floodplain]) plus "
-        "per-channel _cross_section_informed_valley_mask_ch<sid>.tif."};
+        "per-channel _cross_section_informed_valley_mask_ch<sid>.tif.",
+        "Outputs", "switch", ""};
 
     float_default_map["cross_section_curvature_window_metres"] = 60.0f;
     help_map["cross_section_curvature_window_metres"] = {"float","60",
         "Polynomial-fit window diameter (m) for the maximum-curvature raster "
         "used to find slope-break peaks along the cross sections.",
         "Larger smooths over fine breaks (fewer, coarser peaks); smaller "
-        "resolves finer risers but is noisier."};
+        "resolves finer risers but is noisier.",
+        "Outputs", "param", ""};
 
     float_default_map["cross_section_feature_prominence_fraction"] = 0.15f;
     help_map["cross_section_feature_prominence_fraction"] = {"float","0.15",
         "Minimum prominence of a curvature / hillshade peak as a fraction of "
         "that profile's value range over the transect, for it to be reported.",
-        "Raise to keep only the strongest breaks; lower to catch subtler ones."};
+        "Raise to keep only the strongest breaks; lower to catch subtler ones.",
+        "Outputs", "param", ""};
 
     string_default_map["write_output_format"] = "gtiff";
     help_map["write_output_format"] = {"string","gtiff",
-        "Raster output format.","Allowed values: cog, gtiff, same_as_input."};
+        "Raster output format.","Allowed values: cog, gtiff, same_as_input.",
+        "Outputs", "io", ""};
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map,
@@ -1539,6 +1611,8 @@ int main(int argc, char* argv[])
         }
     }
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-valley-centreline complete.\n";
     return 0;

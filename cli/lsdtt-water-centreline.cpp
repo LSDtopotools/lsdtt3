@@ -54,162 +54,202 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     std::map<std::string, bool>                     bool_default_map;
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     string_default_map["input_vector"] = "";
     help_map["input_vector"] = {"string","",
         "Input vector dataset (e.g. a GeoPackage) holding both layers.",
-        "Required. Resolved against read_path if not absolute."};
+        "Required. Resolved against read_path if not absolute.",
+        "-", "param", "clip_lines_to_areas"};
 
     string_default_map["water_area_layer"] = "";
     help_map["water_area_layer"] = {"string","",
         "Name of the water-area POLYGON layer.",
-        "Required. e.g. vml-nr73sw_Water_Area."};
+        "Required. e.g. vml-nr73sw_Water_Area.",
+        "-", "param", "clip_lines_to_areas"};
 
     string_default_map["water_line_layer"] = "";
     help_map["water_line_layer"] = {"string","",
         "Name of the water LINESTRING (tributary) layer.",
-        "Required. e.g. vml-nr73sw_Water_Line."};
+        "Required. e.g. vml-nr73sw_Water_Line.",
+        "-", "param", "clip_lines_to_areas"};
 
     string_default_map["write_output_format"] = "flatgeobuf";
     help_map["write_output_format"] = {"string","flatgeobuf",
         "Output vector format.",
-        "flatgeobuf (default) or gpkg."};
+        "flatgeobuf (default) or gpkg.",
+        "-", "io", ""};
 
     int_default_map["epsg"] = 27700;
     help_map["epsg"] = {"int","27700",
         "EPSG code for the synthesised grids and output CRS.",
-        "Must match the input layers' projected CRS (metres)."};
+        "Must match the input layers' projected CRS (metres).",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["cell_size_m"] = 1.0f;
     help_map["cell_size_m"] = {"float","1.0",
         "Synthesised rasterisation grid resolution (m).",
         "Finer resolves narrow necks but costs memory; auto-coarsens above a "
-        "~50M-cell cap per polygon."};
+        "~50M-cell cap per polygon.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["padding_m"] = 5.0f;
     help_map["padding_m"] = {"float","5.0",
-        "Padding (m) added around each polygon bbox in the synthesised grid.",""};
+        "Padding (m) added around each polygon bbox in the synthesised grid.","",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["preserve_distance_pixels"] = 1.0f;
     help_map["preserve_distance_pixels"] = {"float","1.0",
         "Centreline preference for thin_distance_guided (pixels).",
-        "Higher protects the medial line more on blocky banks."};
+        "Higher protects the medial line more on blocky banks.",
+        "-", "param", "clip_lines_to_areas"};
 
     int_default_map["max_spur_pixels"] = 0;
     help_map["max_spur_pixels"] = {"int","0",
         "Maximum skeleton spur length pruned (pixels); 0 = skip (recommended).",
         "The centreline is the skeleton's longest path, which already ignores "
         "spurs; pruning only trims the centreline ends back from the polygon "
-        "tips, so leave at 0 unless you have a specific reason."};
+        "tips, so leave at 0 unless you have a specific reason.",
+        "-", "param", "clip_lines_to_areas"};
 
     int_default_map["max_loop_pixels"] = 10;
     help_map["max_loop_pixels"] = {"int","10",
-        "Maximum terminal loop ('lollipop') length pruned (pixels); 0 = skip.",""};
+        "Maximum terminal loop ('lollipop') length pruned (pixels); 0 = skip.","",
+        "-", "param", "clip_lines_to_areas"};
 
     bool_default_map["detect_channel_spurs"] = true;
     help_map["detect_channel_spurs"] = {"bool","true",
         "Beyond the main long-axis line, follow narrow channel arms of the water body.",
         "Uses the local half-width (distance to bank) from the EDT: a skeleton "
         "branch whose tip is narrow (a river channel) is retained; wide bays are "
-        "ignored. Helps trace a channel running off a lake."};
+        "ignored. Helps trace a channel running off a lake.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["channel_max_half_width_m"] = 12.0f;
     help_map["channel_max_half_width_m"] = {"float","12.0",
         "Max half-width (m) at a branch tip for it to count as a channel spur.",
         "~half the widest river channel you want followed (full width ~2x this). "
-        "Below this = channel; above = lake/bay."};
+        "Below this = channel; above = lake/bay.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["min_channel_spur_len_m"] = 20.0f;
     help_map["min_channel_spur_len_m"] = {"float","20.0",
         "Minimum length (m) of a channel spur to retain.",
-        "Filters short nubs; raise to keep only substantial channel arms."};
+        "Filters short nubs; raise to keep only substantial channel arms.",
+        "-", "param", "clip_lines_to_areas"};
 
     int_default_map["centreline_smooth_iterations"] = 3;
     help_map["centreline_smooth_iterations"] = {"int","3",
         "Laplacian smoothing passes applied to the centreline before DP.",
-        "Removes the pixel-skeleton staircase wobble (endpoints fixed). 0 = off."};
+        "Removes the pixel-skeleton staircase wobble (endpoints fixed). 0 = off.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["dp_tolerance_m"] = 1.0f;
     help_map["dp_tolerance_m"] = {"float","1.0",
         "Douglas-Peucker tolerance (m) for the output centreline.",
-        "Thins vertices after smoothing; ~1 cell size is a good default."};
+        "Thins vertices after smoothing; ~1 cell size is a good default.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["tributary_snap_tolerance_m"] = 2.0f;
     help_map["tributary_snap_tolerance_m"] = {"float","2.0",
         "Max distance (m) a water-line endpoint may sit from the polygon "
-        "boundary to count as a tributary contact.",""};
+        "boundary to count as a tributary contact.","",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["centreline_snap_max_m"] = 100.0f;
     help_map["centreline_snap_max_m"] = {"float","100.0",
         "Max connector (spur) length (m) from a tributary mouth to the centreline.",
         "Mouth-to-centreline distance ~ the local half-width, so wide water "
-        "bodies need a larger value than narrow rivers."};
+        "bodies need a larger value than narrow rivers.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["min_centreline_component_m"] = 10.0f;
     help_map["min_centreline_component_m"] = {"float","10.0",
         "Drop centreline component pieces shorter than this (m).",
         "Declutters the many tiny components of a fragmented lake skeleton. The "
-        "per-polygon long-axis fallback is exempt, so every polygon keeps a line."};
+        "per-polygon long-axis fallback is exempt, so every polygon keeps a line.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["max_centreline_aspect_for_loch"] = 2.0f;
     help_map["max_centreline_aspect_for_loch"] = {"float","2.0",
         "Feret aspect (d_max/d_min) below which a polygon is treated as a loch.",
-        "Lochs have no meaningful single long axis."};
+        "Lochs have no meaningful single long axis.",
+        "-", "param", "clip_lines_to_areas"};
 
     bool_default_map["fill_holes"] = true;
     help_map["fill_holes"] = {"bool","true",
         "Fill interior holes/islands before skeletonising.",
-        "Avoids skeleton loops; disable to keep braided islands."};
+        "Avoids skeleton loops; disable to keep braided islands.",
+        "-", "param", "clip_lines_to_areas"};
 
     bool_default_map["skip_loch_centreline"] = false;
     help_map["skip_loch_centreline"] = {"bool","false",
         "For lochs, skip the centreline and star-connect tributaries to the centroid.",
-        "When false, a loch still gets its long-axis path, flagged as a loch."};
+        "When false, a loch still gets its long-axis path, flagged as a loch.",
+        "-", "param", "clip_lines_to_areas"};
 
     bool_default_map["clip_lines_to_areas"] = true;
     help_map["clip_lines_to_areas"] = {"bool","true",
         "Remove Water_Line portions that are the OUTLINE of a water area.",
         "OS VectorMap Local draws water-body banks in the line layer. Segments "
         "whose midpoint is inside a Water_Area or within line_overlap_tolerance "
-        "of its boundary are dropped; the outside runs are kept as tributaries."};
+        "of its boundary are dropped; the outside runs are kept as tributaries.",
+        "-", "switch", ""};
 
     float_default_map["line_overlap_tolerance_m"] = 2.0f;
     help_map["line_overlap_tolerance_m"] = {"float","2.0",
         "Distance (m) within which a line segment counts as a water-area outline.",
-        "Raise if bank lines are digitised a little off the polygon edge."};
+        "Raise if bank lines are digitised a little off the polygon edge.",
+        "-", "param", "clip_lines_to_areas"};
 
     float_default_map["min_tributary_length_m"] = 0.0f;
     help_map["min_tributary_length_m"] = {"float","0.0",
         "Drop clipped tributary runs shorter than this (m); 0 = keep all.",
-        "Use to remove tiny stub fragments left at water-body banks."};
+        "Use to remove tiny stub fragments left at water-body banks.",
+        "-", "param", "clip_lines_to_areas"};
 
     bool_default_map["emit_unchanged_tributaries"] = true;
     help_map["emit_unchanged_tributaries"] = {"bool","true",
         "Copy the CLIPPED tributary lines into the output as role='tributary'.",
-        "Gives a single connected network in one layer (outlines removed)."};
+        "Gives a single connected network in one layer (outlines removed).",
+        "-", "param", "clip_lines_to_areas"};
 
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool","true",
-        "Build a spatial index when writing the output layer.",""};
+        "Build a spatial index when writing the output layer.","",
+        "-", "io", ""};
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -351,6 +391,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-water-centreline: done.\n";
     return 0;

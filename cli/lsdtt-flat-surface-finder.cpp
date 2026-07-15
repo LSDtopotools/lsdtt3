@@ -126,14 +126,10 @@ static void print_banner()
 int main(int argc, char* argv[])
 {
     print_banner();
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try { pp = lsdtt::lsdtt_param_parser(path, fname); }
-    catch (const std::exception& e)
-    { std::cerr << "Error loading parameter file: " << e.what() << "\n"; return 1; }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -141,26 +137,30 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     int_default_map["n_threads"] = 0;
-    help_map["n_threads"] = {"int","0","OpenMP thread count.","0 = all hardware threads."};
+    help_map["n_threads"] = {"int","0","OpenMP thread count.","0 = all hardware threads.",
+        "-", "io", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog","Raster output format.",
-        "cog, gtiff, or same_as_input."};
+        "cog, gtiff, or same_as_input.",
+        "-", "io", ""};
 
     // --- Relief (always on) ---
     int_default_map["relief_window_pixels"] = 5;
     help_map["relief_window_pixels"] = {"int","5",
         "Square window size (pixels) for local relief (max - min) computation.",
-        "Must be odd and >= 3.  5 = 5x5 neighbourhood."};
+        "Must be odd and >= 3.  5 = 5x5 neighbourhood.",
+        "Relief (always on)", "param", ""};
 
     float_default_map["relief_threshold_metres"] = 1.0f;
     help_map["relief_threshold_metres"] = {"float","1.0",
         "Local relief value (m) below which a pixel is classed flat.",
         "Read the threshold directly off the _relief_cdf.csv output.  "
-        "Only used when adaptive_relief_threshold = false."};
+        "Only used when adaptive_relief_threshold = false.",
+        "Relief (always on)", "param", ""};
 
     bool_default_map["adaptive_relief_threshold"] = false;
     help_map["adaptive_relief_threshold"] = {"bool","false",
@@ -169,7 +169,8 @@ int main(int argc, char* argv[])
         "and picks the x-value where the empirical CDF most exceeds the fitted CDF "
         "(flat pixels inflate the empirical distribution at low relief values, causing "
         "a positive deviation).  Prints the chosen threshold and writes the CDF to file. "
-        "Overrides relief_threshold_metres."};
+        "Overrides relief_threshold_metres.",
+        "Relief (always on)", "param", ""};
 
     float_default_map["relief_threshold_multiplier"] = 1.0f;
     help_map["relief_threshold_multiplier"] = {"float","1.0",
@@ -177,148 +178,175 @@ int main(int argc, char* argv[])
         "Allows leeway around the auto-detected threshold.  "
         "Values > 1 loosen the criterion (more flat pixels); "
         "values < 1 tighten it.  "
-        "Only used when adaptive_relief_threshold = true."};
+        "Only used when adaptive_relief_threshold = true.",
+        "Relief (always on)", "param", ""};
 
     // --- Morphological post-processing of relief mask ---
     float_default_map["flat_closing_radius_metres"] = 0.0f;
     help_map["flat_closing_radius_metres"] = {"float","0",
         "Radius (m) for morphological closing of the relief flat mask.",
         "Closing (dilation then erosion) seals small holes and narrow gaps "
-        "inside flat blobs without expanding their outer boundary.  0 = disabled."};
+        "inside flat blobs without expanding their outer boundary.  0 = disabled.",
+        "Morphological post-processing of relief mask", "param", ""};
 
     float_default_map["flat_opening_radius_metres"] = 0.0f;
     help_map["flat_opening_radius_metres"] = {"float","0",
         "Radius (m) for morphological opening of the relief flat mask.",
         "Opening (erosion then dilation) removes thin connections between blobs "
         "that should be separate flat surfaces, while restoring the size of the "
-        "surviving blobs.  0 or negative = disabled."};
+        "surviving blobs.  0 or negative = disabled.",
+        "Morphological post-processing of relief mask", "param", ""};
 
     bool_default_map["open_then_close"] = false;
     help_map["open_then_close"] = {"bool","false",
         "Apply opening before closing instead of closing before opening.",
         "false (default): closing first, then opening. "
         "true: opening first, then closing. "
-        "Has no effect when either radius is 0."};
+        "Has no effect when either radius is 0.",
+        "Morphological post-processing of relief mask", "param", ""};
 
     // --- Slope break finder (VEC adaptive threshold skeleton, requires OpenCV) ---
     float_default_map["polyfit_lambda_metres"] = 100.0f;
     help_map["polyfit_lambda_metres"] = {"float","100",
         "Window half-wavelength (m) for the direct polyfit curvature computation.",
-        "Controls the scale of the fitted surface.  Larger values smooth more."};
+        "Controls the scale of the fitted surface.  Larger values smooth more.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     string_default_map["vec_adaptive_method"] = "gaussian";
     help_map["vec_adaptive_method"] = {"string","gaussian",
         "Adaptive thresholding method applied to vertical_excess_curvature.",
         "gaussian: Gaussian-weighted local mean (smoother threshold surface). "
-        "mean: unweighted local mean."};
+        "mean: unweighted local mean.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     int_default_map["vec_adaptive_block_size_pixels"] = 51;
     help_map["vec_adaptive_block_size_pixels"] = {"int","51",
         "Neighbourhood block size (pixels) for adaptive VEC thresholding.",
         "Must be odd and >= 3.  Should be larger than a typical slope-break "
-        "feature width but smaller than the between-feature spacing."};
+        "feature width but smaller than the between-feature spacing.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     float_default_map["vec_adaptive_C"] = 0.0f;
     help_map["vec_adaptive_C"] = {"float","0.0",
         "Constant subtracted from the local neighbourhood mean before thresholding.",
         "Threshold = local_mean - C.  "
         "0 = foreground where VEC is above the local mean.  "
-        "Negative (e.g. -5) = stricter, retains only pixels well above the local mean."};
+        "Negative (e.g. -5) = stricter, retains only pixels well above the local mean.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;
     help_map["vec_adaptive_gaussian_sigma"] = {"float","0.0",
         "Sigma for an optional Gaussian pre-blur before adaptive thresholding.",
-        "0 = no blur.  A small value (e.g. 1.0) suppresses pixel-scale noise."};
+        "0 = no blur.  A small value (e.g. 1.0) suppresses pixel-scale noise.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     float_default_map["slope_break_closing_radius_metres"] = 0.0f;
     help_map["slope_break_closing_radius_metres"] = {"float","0",
         "Closing radius (m) applied to the adaptive binary mask before skeletonisation.",
-        "Seals small gaps in the detected slope-break regions.  0 = disabled."};
+        "Seals small gaps in the detected slope-break regions.  0 = disabled.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     int_default_map["slope_break_binary_min_component_pixels"] = 1;
     help_map["slope_break_binary_min_component_pixels"] = {"int","1",
         "Minimum connected-component size (pixels) retained in the adaptive binary mask.",
-        "Applied before skeletonisation.  1 = keep all components."};
+        "Applied before skeletonisation.  1 = keep all components.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     bool_default_map["write_slope_break_centreline"] = true;
     help_map["write_slope_break_centreline"] = {"bool","true",
         "Write the 1-pixel slope-break skeleton.",
-        "Output suffix: _slope_break_centreline.tif"};
+        "Output suffix: _slope_break_centreline.tif",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
 
     int_default_map["slope_break_centreline_max_spur_pixels"] = 10;
     help_map["slope_break_centreline_max_spur_pixels"] = {"int","10",
         "Maximum endpoint-rooted spur length (pixels) removed from the skeleton.",
-        "0 = skip spur pruning."};
+        "0 = skip spur pruning.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     int_default_map["slope_break_centreline_max_terminal_loop_pixels"] = 10;
     help_map["slope_break_centreline_max_terminal_loop_pixels"] = {"int","10",
         "Maximum endpoint-rooted terminal loop length (pixels) removed from the skeleton.",
-        "0 = skip terminal loop pruning."};
+        "0 = skip terminal loop pruning.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     int_default_map["slope_break_centreline_min_component_pixels"] = 1;
     help_map["slope_break_centreline_min_component_pixels"] = {"int","1",
         "Minimum component size (pixels) retained in the skeleton.",
-        "Applied after thinning and spur pruning."};
+        "Applied after thinning and spur pruning.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     float_default_map["slope_break_connect_search_radius_metres"] = 0.0f;
     help_map["slope_break_connect_search_radius_metres"] = {"float","0",
         "Search radius (m) for elevation-based skeleton endpoint connection.",
-        "Bridges nearby endpoints on the same contour.  0 = disabled."};
+        "Bridges nearby endpoints on the same contour.  0 = disabled.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     float_default_map["slope_break_connect_elevation_tolerance_metres"] = 2.0f;
     help_map["slope_break_connect_elevation_tolerance_metres"] = {"float","2",
-        "Maximum elevation difference (m) allowed between two bridged endpoints.",""};
+        "Maximum elevation difference (m) allowed between two bridged endpoints.","",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     float_default_map["slope_break_connect_corridor_half_width_pixels"] = 12.0f;
     help_map["slope_break_connect_corridor_half_width_pixels"] = {"float","12",
-        "Half-width (pixels) of the A* corridor for contour-routed bridges.",""};
+        "Half-width (pixels) of the A* corridor for contour-routed bridges.","",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     bool_default_map["slope_break_connect_same_component"] = false;
     help_map["slope_break_connect_same_component"] = {"bool","false",
         "Allow bridging between endpoints on the same skeleton component.",
-        "Default false: only bridge endpoints from different components."};
+        "Default false: only bridge endpoints from different components.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
 
     bool_default_map["write_slope_break_endpoints"] = false;
     help_map["write_slope_break_endpoints"] = {"bool","false",
         "Write skeleton endpoints and their DEM elevations to a FlatGeobuf point layer.",
-        "Output suffix: _slope_break_endpoints.fgb  Fields: row, col, elev_m, comp_size."};
+        "Output suffix: _slope_break_endpoints.fgb  Fields: row, col, elev_m, comp_size.",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
 
     bool_default_map["write_slope_break_bridge_mask"] = true;
     help_map["write_slope_break_bridge_mask"] = {"bool","true",
         "Write the raster of newly inserted bridge pixels from skeleton reconnection.",
-        "Output suffix: _slope_break_bridge_mask.tif"};
+        "Output suffix: _slope_break_bridge_mask.tif",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
 
     bool_default_map["write_slope_break_centreline_connected"] = true;
     help_map["write_slope_break_centreline_connected"] = {"bool","true",
         "Write the connected skeleton after accepted bridge routing.",
-        "Output suffix: _slope_break_centreline_connected.tif"};
+        "Output suffix: _slope_break_centreline_connected.tif",
+        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
 
     // --- Component filtering ---
     int_default_map["min_component_pixels"] = 100;
     help_map["min_component_pixels"] = {"int","100",
         "Minimum 8-connected component size for inclusion in the labelled flat mask.",
-        "Smaller components are excluded.  Set to 1 to include all."};
+        "Smaller components are excluded.  Set to 1 to include all.",
+        "Component filtering", "param", ""};
 
     int_default_map["cdf_n_bins"] = 500;
     help_map["cdf_n_bins"] = {"int","500",
-        "Number of histogram bins for the empirical CDF output.",""};
+        "Number of histogram bins for the empirical CDF output.","",
+        "Component filtering", "param", ""};
 
     // --- Directional closing ---
     int_default_map["directional_close_line_length_pixels"] = 0;
     help_map["directional_close_line_length_pixels"] = {"int","0",
         "Line-SE length (pixels) for directional closing of the non-flat mask. "
         "0 = disabled.",
-        "Applied after mask combination, before component labelling."};
+        "Applied after mask combination, before component labelling.",
+        "Directional closing", "param", "write_healed_flat_mask"};
 
     int_default_map["directional_close_n_angles"] = 18;
     help_map["directional_close_n_angles"] = {"int","18",
         "Number of line orientations sampled from [0 deg, 180 deg) for directional closing.",
-        "18 -> 10 deg spacing."};
+        "18 -> 10 deg spacing.",
+        "Directional closing", "param", "write_healed_flat_mask"};
 
     bool_default_map["write_healed_flat_mask"] = true;
     help_map["write_healed_flat_mask"] = {"bool","true",
         "Write the healed flat mask (after directional closing, if enabled).",
-        "Only written when directional_close_line_length_pixels >= 3."};
+        "Only written when directional_close_line_length_pixels >= 3.",
+        "Directional closing", "switch", ""};
 
     // --- Floodplain / terrace classification (height above channel) ---
     bool_default_map["find_floodplain"] = false;
@@ -326,33 +354,38 @@ int main(int argc, char* argv[])
         "Classify labelled flat surfaces into floodplain and terrace.",
         "Uses height above the in-scope channel network (HAND). Requires a "
         "channel scope (source points, or the drainage-area threshold). "
-        "Writes _surface_class.tif, _floodplain_mask.tif, _surface_class.csv."};
+        "Writes _surface_class.tif, _floodplain_mask.tif, _surface_class.csv.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     float_default_map["floodplain_max_height_metres"] = 0.0f;
     help_map["floodplain_max_height_metres"] = {"float","0",
         "Max median height-above-channel (m) for a label to be floodplain.",
         "A channel-adjacent label with median HAND at or below this is the "
         "floodplain (lowest surface next to the channel). 0 or negative = use "
-        "the flat-mask relief threshold."};
+        "the flat-mask relief threshold.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     float_default_map["terrace_min_height_metres"] = 0.0f;
     help_map["terrace_min_height_metres"] = {"float","0",
         "Min median height-above-channel (m) for a non-floodplain label to be a terrace.",
         "Legacy minimum_terrace_height analogue. Labels below this (and not "
-        "floodplain) are left unclassified."};
+        "floodplain) are left unclassified.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     float_default_map["channel_adjacency_radius_metres"] = 0.0f;
     help_map["channel_adjacency_radius_metres"] = {"float","0",
         "Distance (m) within which a label counts as channel-adjacent.",
         "Used for the floodplain 'next to the channel' test. 0 = one cell "
-        "(8-neighbour touch)."};
+        "(8-neighbour touch).",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     float_default_map["terrace_max_distance_to_channel_metres"] = 0.0f;
     help_map["terrace_max_distance_to_channel_metres"] = {"float","0",
         "Valley-corridor half-width (m): max distance from an in-scope channel "
         "for a label to be a terrace.",
         "Excludes the regional upland/interfluve (flat and elevated, but not a "
-        "fluvial terrace) from the terrace class. 0 = no corridor limit."};
+        "fluvial terrace) from the terrace class. 0 = no corridor limit.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     bool_default_map["enable_leak_split"] = true;
     help_map["enable_leak_split"] = {"bool","true",
@@ -360,12 +393,14 @@ int main(int argc, char* argv[])
         "bands (broken/absent riser leak) at the antimode HAND.",
         "Low-side pixels classify as floodplain, high-side as terrace. Makes "
         "classification robust to road-cut riser gaps and unsegmented valley "
-        "floors (Phase 2a backstop)."};
+        "floors (Phase 2a backstop).",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
 
     float_default_map["leak_split_min_side_fraction"] = 0.15f;
     help_map["leak_split_min_side_fraction"] = {"float","0.15",
         "Minimum HAND-mass fraction on each side of the class bands for a label "
-        "to be treated as a straddling leak.",""};
+        "to be treated as a straddling leak.","",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     bool_default_map["enable_hand_banding"] = true;
     help_map["enable_hand_banding"] = {"bool","true",
@@ -373,40 +408,46 @@ int main(int argc, char* argv[])
         "wide-HAND labels into per-band sub-labels before classification.",
         "Fixes wholesale riser under-segmentation: a label smearing across the "
         "full HAND range is cut at the population breaks of its along-channel "
-        "reach, so no classified surface spans an implausible height range."};
+        "reach, so no classified surface spans an implausible height range.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
 
     float_default_map["band_reach_window_metres"] = 0.0f;
     help_map["band_reach_window_metres"] = {"float","0",
         "Along-channel window length (m) for the reach-relative HAND "
         "populations.",
         "0 = auto (max of 2 km and an eighth of each channel's length). "
-        "Windows with too few pixels fall back to the whole-DEM breaks."};
+        "Windows with too few pixels fall back to the whole-DEM breaks.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     float_default_map["band_split_min_label_spread_metres"] = 10.0f;
     help_map["band_split_min_label_spread_metres"] = {"float","10",
         "Only labels whose robust HAND spread (p98-p02, m) exceeds this are "
         "band-split; coherent labels are classified whole.",
-        "0 = split every label that crosses a band break."};
+        "0 = split every label that crosses a band break.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     float_default_map["terrace_max_hand_spread_metres"] = 50.0f;
     help_map["terrace_max_hand_spread_metres"] = {"float","50",
         "Sanity guard: a (sub-)label whose robust HAND spread (m) exceeds this "
         "cannot classify as terrace.",
         "A real terrace tread sits at one coherent level above its channel. "
-        "0 disables the guard."};
+        "0 disables the guard.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     bool_default_map["terrace_corridor_per_pixel"] = true;
     help_map["terrace_corridor_per_pixel"] = {"bool","true",
         "Clip the terrace class per pixel at "
         "terrace_max_distance_to_channel_metres, not just per label.",
         "A flat upland that reaches the valley edge qualifies as a label but "
-        "no longer carries the terrace class across the whole interfluve."};
+        "no longer carries the terrace class across the whole interfluve.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
 
     bool_default_map["write_hand_band_raster"] = false;
     help_map["write_hand_band_raster"] = {"bool","false",
         "Write the per-pixel HAND band index raster.",
         "Output suffix: _hand_band.tif  Requires find_floodplain and "
-        "enable_hand_banding."};
+        "enable_hand_banding.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
 
     bool_default_map["write_hand_profile_csv"] = false;
     help_map["write_hand_profile_csv"] = {"bool","false",
@@ -414,131 +455,157 @@ int main(int argc, char* argv[])
         "(floodplain/terrace) pixels.",
         "Output suffix: _hand_profile.csv with x, y, hand_m, "
         "channel_flow_distance_m, source_id, class, label, hand_band. Input "
-        "for the lsdviztools3 HAND-profile figure. Requires find_floodplain."};
+        "for the lsdviztools3 HAND-profile figure. Requires find_floodplain.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
 
     bool_default_map["write_height_above_channel_raster"] = false;
     help_map["write_height_above_channel_raster"] = {"bool","false",
         "Write the height-above-channel (HAND) raster.",
-        "Output suffix: _height_above_channel.tif  Requires find_floodplain."};
+        "Output suffix: _height_above_channel.tif  Requires find_floodplain.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
 
     bool_default_map["write_surface_class_raster"] = true;
     help_map["write_surface_class_raster"] = {"bool","true",
         "Write the floodplain/terrace class raster (0 none, 1 floodplain, 2 terrace).",
-        "Output suffix: _surface_class.tif  Requires find_floodplain."};
+        "Output suffix: _surface_class.tif  Requires find_floodplain.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
 
     bool_default_map["write_floodplain_mask"] = true;
     help_map["write_floodplain_mask"] = {"bool","true",
         "Write the binary floodplain mask.",
-        "Output suffix: _floodplain_mask.tif  Requires find_floodplain."};
+        "Output suffix: _floodplain_mask.tif  Requires find_floodplain.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
 
     // --- Plane analysis ---
     bool_default_map["run_plane_analysis"] = false;
     help_map["run_plane_analysis"] = {"bool","false",
         "Fit planes to each labelled flat surface and test for splits/merges.",
-        "Runs after labelling.  Writes _plane_fits.csv and _merge_candidates.csv."};
+        "Runs after labelling.  Writes _plane_fits.csv and _merge_candidates.csv.",
+        "Plane analysis", "switch", ""};
 
     int_default_map["plane_min_pixels"] = 10;
     help_map["plane_min_pixels"] = {"int","10",
-        "Minimum pixel count for a label to be included in plane analysis.",""};
+        "Minimum pixel count for a label to be included in plane analysis.","",
+        "Plane analysis", "param", ""};
 
     float_default_map["plane_merge_tolerance_rmse"] = 2.0f;
     help_map["plane_merge_tolerance_rmse"] = {"float","2.0",
-        "Merge threshold in units of RMSE.",""};
+        "Merge threshold in units of RMSE.","",
+        "Plane analysis", "param", ""};
 
     int_default_map["plane_split_histogram_bins"] = 25;
     help_map["plane_split_histogram_bins"] = {"int","25",
-        "Number of histogram bins for bimodal split detection per label.",""};
+        "Number of histogram bins for bimodal split detection per label.","",
+        "Plane analysis", "param", ""};
 
     float_default_map["plane_split_bimodal_threshold"] = 0.4f;
     help_map["plane_split_bimodal_threshold"] = {"float","0.4",
-        "Valley/peak ratio threshold for bimodal split detection.",""};
+        "Valley/peak ratio threshold for bimodal split detection.","",
+        "Plane analysis", "param", ""};
 
     bool_default_map["write_plane_on_label_rmse"] = false;
     help_map["write_plane_on_label_rmse"] = {"bool","false",
         "Write the dense plane-on-label RMSE matrix to CSV.",
-        "Output suffix: _plane_on_label_rmse.csv  Requires run_plane_analysis = true."};
+        "Output suffix: _plane_on_label_rmse.csv  Requires run_plane_analysis = true.",
+        "Plane analysis", "switch", ""};
 
     bool_default_map["write_residual_relief_merge_candidates"] = false;
     help_map["write_residual_relief_merge_candidates"] = {"bool","false",
         "Write merge candidate pairs from the residual-relief plane analysis to CSV.",
-        "Output suffix: _residual_relief_merge_candidates.csv  Requires run_plane_analysis = true."};
+        "Output suffix: _residual_relief_merge_candidates.csv  Requires run_plane_analysis = true.",
+        "Plane analysis", "switch", ""};
 
     bool_default_map["apply_plane_merges"] = false;
     help_map["apply_plane_merges"] = {"bool","false",
         "Apply plane-analysis merge groups to the labelled flat mask.",
-        "Requires run_plane_analysis = true."};
+        "Requires run_plane_analysis = true.",
+        "Plane analysis", "switch", ""};
 
     bool_default_map["write_plane_residual_raster"] = true;
     help_map["write_plane_residual_raster"] = {"bool","true",
         "Write per-pixel residuals between DEM elevation and fitted plane for each label.",
-        "Output suffix: _plane_residual.tif  Requires run_plane_analysis = true."};
+        "Output suffix: _plane_residual.tif  Requires run_plane_analysis = true.",
+        "Plane analysis", "switch", ""};
 
     bool_default_map["write_residual_relief_raster"] = true;
     help_map["write_residual_relief_raster"] = {"bool","true",
         "Write local relief computed on the plane-residual raster.",
         "Uses the same window as the original flat mask. "
-        "Output suffix: _residual_relief.tif  Requires run_plane_analysis = true."};
+        "Output suffix: _residual_relief.tif  Requires run_plane_analysis = true.",
+        "Plane analysis", "switch", ""};
 
     float_default_map["residual_relief_threshold_multiplier"] = 0.5f;
     help_map["residual_relief_threshold_multiplier"] = {"float","0.5",
         "Threshold for the residual relief filter, as a multiplier of the flat-mask relief threshold.",
         "Pixels where residual_relief > multiplier * relief_threshold are removed from the flat mask "
-        "before the residual-relief labelling step."};
+        "before the residual-relief labelling step.",
+        "Plane analysis", "param", ""};
 
     bool_default_map["write_residual_relief_labelled_mask"] = true;
     help_map["write_residual_relief_labelled_mask"] = {"bool","true",
         "Write the labelled flat mask after applying the residual-relief filter.",
-        "Output suffix: _residual_relief_labelled_flat_mask.tif  Requires run_plane_analysis = true."};
+        "Output suffix: _residual_relief_labelled_flat_mask.tif  Requires run_plane_analysis = true.",
+        "Plane analysis", "switch", ""};
 
     int_default_map["residual_relief_spur_max_pixels"] = 10;
     help_map["residual_relief_spur_max_pixels"] = {"int","10",
         "Maximum spur length (pixels) pruned from the residual-relief skeleton.",
-        "0 = skip spur pruning."};
+        "0 = skip spur pruning.",
+        "Plane analysis", "param", ""};
 
     bool_default_map["write_residual_relief_skeleton"] = false;
     help_map["write_residual_relief_skeleton"] = {"bool","false",
         "Write the 1-pixel residual-relief skeleton used as break lines.",
-        "Output suffix: _residual_relief_skeleton.tif  Requires run_plane_analysis = true."};
+        "Output suffix: _residual_relief_skeleton.tif  Requires run_plane_analysis = true.",
+        "Plane analysis", "switch", ""};
 
     int_default_map["merged_residual_relief_min_label_pixels"] = 10;
     help_map["merged_residual_relief_min_label_pixels"] = {"int","10",
         "Minimum pixel count for a label to be retained in the merged residual-relief mask.",
         "Labels smaller than this are set to 0 before writing "
-        "_merged_residual_relief_labelled_flat_mask.tif."};
+        "_merged_residual_relief_labelled_flat_mask.tif.",
+        "Plane analysis", "param", ""};
 
     // --- Channel / river network ---
     bool_default_map["break_flats_with_channels"] = false;
     help_map["break_flats_with_channels"] = {"bool","false",
         "Breaks up the flat surface by turning to false in the flat mask the pixels that are on top of a channel.",
-        "Runs a separate routing step to network"};
+        "Runs a separate routing step to network",
+        "Channel / river network", "param", "write_channel_network"};
 
     bool_default_map["write_channel_network"] = false;
     help_map["write_channel_network"] = {"bool","false",
-        "Build and write a D8 channel/junction network.",""};
+        "Build and write a D8 channel/junction network.","",
+        "Channel / river network", "switch", ""};
 
     bool_default_map["fill_dem_for_flow_routing"] = true;
     help_map["fill_dem_for_flow_routing"] = {"bool","true",
-        "Fill pits in the DEM before D8 flow routing.",""};
+        "Fill pits in the DEM before D8 flow routing.","",
+        "Channel / river network", "param", "write_channel_network"};
 
     float_default_map["fill_min_slope_for_routing"] = 0.0001f;
     help_map["fill_min_slope_for_routing"] = {"float","0.0001",
-        "Minimum gradient imposed between filled cells during pit filling.",""};
+        "Minimum gradient imposed between filled cells during pit filling.","",
+        "Channel / river network", "param", "write_channel_network"};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "D8 flow boundary conditions (north east south west).",
-        "o = open (outlet), n = no-flux."};
+        "o = open (outlet), n = no-flux.",
+        "Channel / river network", "param", "write_channel_network"};
 
     int_default_map["channel_threshold_contributing_pixels"] = 1000;
     help_map["channel_threshold_contributing_pixels"] = {"int","1000",
-        "Minimum D8 contributing-pixel count to classify a pixel as a channel head.",""};
+        "Minimum D8 contributing-pixel count to classify a pixel as a channel head.","",
+        "Channel / river network", "param", "write_channel_network"};
 
     string_default_map["drainage_injection_vector_file"] = "";
     help_map["drainage_injection_vector_file"] = {"string","",
         "Path to a point vector file for upstream drainage area injection.",
         "Features must carry a numeric 'drainage_area' attribute (m^2). "
         "Useful when rivers enter the tile from outside its extent. "
-        "If empty, no injection is applied."};
+        "If empty, no injection is applied.",
+        "Channel / river network", "param", "write_channel_network"};
 
     // --- Channel source points (for network building and flat-surface connections) ---
     string_default_map["source_points_path"] = "";
@@ -547,24 +614,29 @@ int main(int argc, char* argv[])
         "CSV input is interpreted as lat/lon in EPSG:4326. "
         "Georeferenced vector input (GeoPackage, FlatGeobuf) is read via OGR "
         "and transformed into the raster CRS. "
-        "Required when write_channel_network or connect_flat_surfaces_to_channels is true."};
+        "Required when write_channel_network or connect_flat_surfaces_to_channels is true.",
+        "Channel source points (for network building and flat-surface connections)", "param", ""};
 
     string_default_map["source_points_layer_name"] = "";
     help_map["source_points_layer_name"] = {"string","",
-        "Layer name for vector source-point input. Empty = first layer.",""};
+        "Layer name for vector source-point input. Empty = first layer.","",
+        "Channel source points (for network building and flat-surface connections)", "param", ""};
 
     string_default_map["source_points_input_format"] = "auto_detect";
     help_map["source_points_input_format"] = {"string","auto_detect",
         "Format hint for source-point input.",
-        "auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer."};
+        "auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer.",
+        "Channel source points (for network building and flat-surface connections)", "param", ""};
 
     string_default_map["source_points_latitude_field_name"] = "latitude";
     help_map["source_points_latitude_field_name"] = {"string","latitude",
-        "Latitude field name for CSV source-point input.",""};
+        "Latitude field name for CSV source-point input.","",
+        "Channel source points (for network building and flat-surface connections)", "param", ""};
 
     string_default_map["source_points_longitude_field_name"] = "longitude";
     help_map["source_points_longitude_field_name"] = {"string","longitude",
-        "Longitude field name for CSV source-point input.",""};
+        "Longitude field name for CSV source-point input.","",
+        "Channel source points (for network building and flat-surface connections)", "param", ""};
 
     // --- Outlet (downstream) points: bound channel segments in user-source modes ---
     string_default_map["outlet_points_path"] = "";
@@ -572,24 +644,29 @@ int main(int argc, char* argv[])
         "Path to a downstream/outlet point file bounding channel segments.",
         "Only used when source_points_path is supplied. Each outlet is snapped "
         "onto the nearest traced channel path and truncates that channel there. "
-        "Same input formats as source_points_path."};
+        "Same input formats as source_points_path.",
+        "Outlet (downstream) points: bound channel segments in user-source modes", "param", ""};
 
     string_default_map["outlet_points_layer_name"] = "";
     help_map["outlet_points_layer_name"] = {"string","",
-        "Layer name for vector outlet-point input. Empty = first layer.",""};
+        "Layer name for vector outlet-point input. Empty = first layer.","",
+        "Outlet (downstream) points: bound channel segments in user-source modes", "param", ""};
 
     string_default_map["outlet_points_input_format"] = "auto_detect";
     help_map["outlet_points_input_format"] = {"string","auto_detect",
         "Format hint for outlet-point input.",
-        "auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer."};
+        "auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer.",
+        "Outlet (downstream) points: bound channel segments in user-source modes", "param", ""};
 
     string_default_map["outlet_points_latitude_field_name"] = "latitude";
     help_map["outlet_points_latitude_field_name"] = {"string","latitude",
-        "Latitude field name for CSV outlet-point input.",""};
+        "Latitude field name for CSV outlet-point input.","",
+        "Outlet (downstream) points: bound channel segments in user-source modes", "param", ""};
 
     string_default_map["outlet_points_longitude_field_name"] = "longitude";
     help_map["outlet_points_longitude_field_name"] = {"string","longitude",
-        "Longitude field name for CSV outlet-point input.",""};
+        "Longitude field name for CSV outlet-point input.","",
+        "Outlet (downstream) points: bound channel segments in user-source modes", "param", ""};
 
     // --- Channel scope resolution ---
     bool_default_map["auto_detect_outlet_points"] = true;
@@ -599,94 +676,135 @@ int main(int argc, char* argv[])
         "snaps strictly downstream of another supplied point is treated as an "
         "outlet (it truncates that channel); points downstream of none are "
         "sources. Lets one combined file select mode 2 vs 3. Ignored when "
-        "outlet_points_path is supplied (roles are then explicit)."};
+        "outlet_points_path is supplied (roles are then explicit).",
+        "Channel scope resolution", "param", ""};
 
     bool_default_map["snap_sources_to_channel_threshold"] = true;
     help_map["snap_sources_to_channel_threshold"] = {"bool","true",
         "Snap user source points to the nearest channel-threshold pixel.",
         "Expanding-square search to the nearest cell whose contributing-pixel "
-        "count meets channel_threshold_contributing_pixels."};
+        "count meets channel_threshold_contributing_pixels.",
+        "Channel scope resolution", "param", ""};
 
     int_default_map["source_snap_max_radius_pixels"] = 25;
     help_map["source_snap_max_radius_pixels"] = {"int","25",
-        "Maximum expanding-square search radius (pixels) for source snapping.",""};
+        "Maximum expanding-square search radius (pixels) for source snapping.","",
+        "Channel scope resolution", "param", ""};
 
     float_default_map["outlet_snap_max_distance_metres"] = 0.0f;
     help_map["outlet_snap_max_distance_metres"] = {"float","0",
         "Maximum distance (m) between a raw outlet point and its channel path.",
         "Outlets farther than this from every traced channel are ignored. "
-        "0 = unlimited."};
+        "0 = unlimited.",
+        "Channel scope resolution", "param", ""};
 
     bool_default_map["write_channel_scope_raster"] = false;
     help_map["write_channel_scope_raster"] = {"bool","false",
         "Write the in-scope channel source-id raster.",
         "Value = source index claiming the pixel, nodata elsewhere. "
-        "Output suffix: _channel_scope.tif"};
+        "Output suffix: _channel_scope.tif",
+        "Channel scope resolution", "switch", ""};
 
     bool_default_map["write_channel_scope_nodes"] = false;
     help_map["write_channel_scope_nodes"] = {"bool","false",
         "Write per-source ordered channel node CSV.",
         "Columns: source_id, node_seq, x, y, elevation, contributing_pixels. "
-        "Output suffix: _channel_scope_nodes.csv"};
+        "Output suffix: _channel_scope_nodes.csv",
+        "Channel scope resolution", "switch", ""};
 
     bool_default_map["write_point_snap_csv"] = false;
     help_map["write_point_snap_csv"] = {"bool","false",
         "Write raw-vs-snapped point diagnostics for sources and outlets.",
         "Columns: role, point_id, status, raw_x, raw_y, snapped_x, snapped_y, "
         "snap_distance_m, contributing_pixels. "
-        "Output suffix: _point_snaps.csv"};
+        "Output suffix: _point_snaps.csv",
+        "Channel scope resolution", "switch", ""};
 
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool","true",
-        "Write channel links as a vector line layer.",""};
+        "Write channel links as a vector line layer.","",
+        "Channel scope resolution", "switch", ""};
 
     bool_default_map["write_channel_network_points"] = false;
     help_map["write_channel_network_points"] = {"bool","false",
-        "Write channel pixels as a vector point layer.",""};
+        "Write channel pixels as a vector point layer.","",
+        "Channel scope resolution", "switch", ""};
 
     bool_default_map["write_junction_network_points"] = false;
     help_map["write_junction_network_points"] = {"bool","false",
-        "Write junction locations as a vector point layer.",""};
+        "Write junction locations as a vector point layer.","",
+        "Channel scope resolution", "switch", ""};
 
     string_default_map["channel_network_vector_format"] = "flatgeobuf";
     help_map["channel_network_vector_format"] = {"string","flatgeobuf",
         "Vector output format for channel network files.",
-        "flatgeobuf (recommended on WSL2) or gpkg."};
+        "flatgeobuf (recommended on WSL2) or gpkg.",
+        "Channel scope resolution", "param", ""};
 
     // --- Flat-surface to channel connections ---
     bool_default_map["connect_flat_surfaces_to_channels"] = false;
     help_map["connect_flat_surfaces_to_channels"] = {"bool","false",
         "Connect each labelled flat surface to its dominant channel source.",
-        "Requires write_channel_network = true."};
+        "Requires write_channel_network = true.",
+        "Flat-surface to channel connections", "param", "write_nearest_source_id_raster"};
 
     bool_default_map["write_nearest_source_id_raster"] = false;
     help_map["write_nearest_source_id_raster"] = {"bool","false",
-        "Write a raster of the nearest channel source ID for every valid pixel.",""};
+        "Write a raster of the nearest channel source ID for every valid pixel.","",
+        "Flat-surface to channel connections", "switch", ""};
 
     // --- Test surface vector ---
     string_default_map["test_surface_vector_file"] = "";
     help_map["test_surface_vector_file"] = {"string","",
         "Path to a polygon vector file delineating a known flat surface.",
         "When set, the maximum value of each enabled metric within the polygon "
-        "pixels replaces the percentile threshold for that metric."};
+        "pixels replaces the percentile threshold for that metric.",
+        "Test surface vector", "param", ""};
 
     // --- Output toggles ---
     bool_default_map["write_texture_rasters"] = false;
     help_map["write_texture_rasters"] = {"bool","false",
         "Write per-metric texture rasters (IQR residuals, IQR texture).",
-        "Useful for threshold selection and visual inspection."};
+        "Useful for threshold selection and visual inspection.",
+        "Output toggles", "switch", ""};
 
     bool_default_map["write_metric_flat_masks"] = false;
     help_map["write_metric_flat_masks"] = {"bool","false",
-        "Write binary flat masks for each individual enabled metric.",""};
+        "Write binary flat masks for each individual enabled metric.","",
+        "Output toggles", "switch", ""};
 
     bool_default_map["write_combined_flat_mask"] = true;
     help_map["write_combined_flat_mask"] = {"bool","true",
-        "Write the combined binary flat mask.","1 = flat, 0 = not flat."};
+        "Write the combined binary flat mask.","1 = flat, 0 = not flat.",
+        "Output toggles", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
     auto bf = pp.get_bool_parameters();
@@ -2292,6 +2410,8 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "\n";
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-flat-surface-finder complete.\n";
     return 0;

@@ -78,23 +78,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -102,28 +92,31 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading / routing ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int", "0",
         "Number of OpenMP threads.",
         "0 = use all available hardware threads. Applies to pit filling, "
-        "flow routing, and polyfit curvature calculation."
+        "flow routing, and polyfit curvature calculation.",
+        "Threading / routing", "io", ""
     };
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string", "oooo",
         "Boundary conditions for flow routing.",
         "Four-character string for north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "Threading / routing", "param", ""
     };
 
     // --- Raster output ---
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string", "cog",
         "Raster output format.",
-        "Allowed values: cog, gtiff, same_as_input."
+        "Allowed values: cog, gtiff, same_as_input.",
+        "Raster output", "io", ""
     };
 
     // --- DEM preparation ---
@@ -131,20 +124,23 @@ int main(int argc, char* argv[])
     help_map["raster_is_filled"] = {"bool", "false",
         "Whether the input raster is already pit-filled and ready for routing.",
         "If false, the CLI will call fill_pits() before building flow routing. "
-        "If true, the DEM is assumed to already be suitable for routing."
+        "If true, the DEM is assumed to already be suitable for routing.",
+        "DEM preparation", "param", "sample_filled_dem"
     };
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float", "0.0001",
         "Minimum slope imposed by pit filling.",
-        "Used only when raster_is_filled is false."
+        "Used only when raster_is_filled is false.",
+        "DEM preparation", "param", "sample_filled_dem"
     };
 
     bool_default_map["sample_filled_dem"] = false;
     help_map["sample_filled_dem"] = {"bool", "false",
         "Sample cross-section elevations from the filled DEM instead of the original DEM.",
         "Routing always uses the routed DEM. By default the cross sections are "
-        "sampled from the original DEM so that elevations reflect the observed topography."
+        "sampled from the original DEM so that elevations reflect the observed topography.",
+        "DEM preparation", "switch", ""
     };
 
     // --- Source-point input ---
@@ -154,40 +150,46 @@ int main(int argc, char* argv[])
         "CSV input is interpreted as latitude/longitude in EPSG:4326 using the "
         "configured latitude/longitude field names. Georeferenced vector input "
         "such as GeoPackage (.gpkg) and FlatGeobuf (.fgb) is read through OGR "
-        "and transformed into the raster CRS before mapping to pixels."
+        "and transformed into the raster CRS before mapping to pixels.",
+        "Source-point input", "param", ""
     };
 
     string_default_map["source_points_layer_name"] = "";
     help_map["source_points_layer_name"] = {"string", "",
         "Optional layer name for source-point vector input.",
         "Used only for georeferenced vector inputs. If empty, the point-input "
-        "loader uses the only layer if present, otherwise the first layer."
+        "loader uses the only layer if present, otherwise the first layer.",
+        "Source-point input", "param", ""
     };
 
     string_default_map["source_points_input_format"] = "auto_detect";
     help_map["source_points_input_format"] = {"string", "auto_detect",
         "Format hint for the source-point input.",
         "Allowed values: auto_detect, csv_latitude_longitude_epsg4326, "
-        "ogr_vector_layer."
+        "ogr_vector_layer.",
+        "Source-point input", "param", ""
     };
 
     string_default_map["source_points_latitude_field_name"] = "latitude";
     help_map["source_points_latitude_field_name"] = {"string", "latitude",
         "Latitude field name for CSV source-point input.",
-        "Used only when the source-point input is CSV."
+        "Used only when the source-point input is CSV.",
+        "Source-point input", "param", ""
     };
 
     string_default_map["source_points_longitude_field_name"] = "longitude";
     help_map["source_points_longitude_field_name"] = {"string", "longitude",
         "Longitude field name for CSV source-point input.",
-        "Used only when the source-point input is CSV."
+        "Used only when the source-point input is CSV.",
+        "Source-point input", "param", ""
     };
 
     // --- Vertical excess curvature ---
     bool_default_map["write_vertical_excess_curvature_raster"] = false;
     help_map["write_vertical_excess_curvature_raster"] = {"bool", "false",
         "Write the vertical excess curvature raster derived from the DEM.",
-        "Computed using direct polyfit followed by compute_polyfit_metrics."
+        "Computed using direct polyfit followed by compute_polyfit_metrics.",
+        "Vertical excess curvature", "switch", ""
     };
 
     bool_default_map[
@@ -204,13 +206,15 @@ int main(int argc, char* argv[])
     help_map["vertical_excess_curvature_lambda_metres"] = {"float", "50.0",
         "Polyfit half-wavelength in metres used to compute vertical excess curvature.",
         "Controls the smoothing scale of the fitted surface before curvature "
-        "metrics are derived."
+        "metrics are derived.",
+        "Vertical excess curvature", "param", "write_vertical_excess_curvature_raster"
     };
 
     float_default_map["vertical_excess_curvature_z_factor"] = 1.0f;
     help_map["vertical_excess_curvature_z_factor"] = {"float", "1.0",
         "Vertical scaling factor used when interpreting polyfit derivatives.",
-        ""
+        "",
+        "Vertical excess curvature", "param", "write_vertical_excess_curvature_raster"
     };
 
     float_default_map[
@@ -226,13 +230,15 @@ int main(int argc, char* argv[])
     help_map["cross_section_half_length_metres"] = {"float", "50.0",
         "Half-length of each cross section in metres.",
         "Each cross-section line extends this distance to either side of the "
-        "channel centre pixel."
+        "channel centre pixel.",
+        "Cross-section geometry", "param", ""
     };
 
     float_default_map["cross_section_sample_spacing_metres"] = 5.0f;
     help_map["cross_section_sample_spacing_metres"] = {"float", "5.0",
         "Spacing between sampled points along each cross section in metres.",
-        "Sample points are written with elevation attributes."
+        "Sample points are written with elevation attributes.",
+        "Cross-section geometry", "param", ""
     };
 
     float_default_map["bearing_window_length_metres"] = 50.0f;
@@ -240,25 +246,29 @@ int main(int argc, char* argv[])
         "Along-channel window length used to estimate local channel bearing.",
         "A local channel segment of this total length is assembled around each "
         "channel pixel and fitted with orthogonal linear regression. The cross "
-        "section is then drawn orthogonal to that fitted channel direction."
+        "section is then drawn orthogonal to that fitted channel direction.",
+        "Cross-section geometry", "param", ""
     };
 
     int_default_map["cross_section_thinning"] = 1;
     help_map["cross_section_thinning"] = {"int", "1",
         "Keep every Nth channel pixel as a cross-section centre.",
-        "1 = every channel pixel. Larger values thin the output in row-major order."
+        "1 = every channel pixel. Larger values thin the output in row-major order.",
+        "Cross-section geometry", "param", ""
     };
 
     bool_default_map["skip_junction_pixels"] = false;
     help_map["skip_junction_pixels"] = {"bool", "false",
         "Skip cross sections centred on junction pixels.",
-        "If true, no cross sections are generated at source, confluence, or outlet junctions."
+        "If true, no cross sections are generated at source, confluence, or outlet junctions.",
+        "Cross-section geometry", "param", ""
     };
 
     int_default_map["minimum_bearing_window_pixels"] = 3;
     help_map["minimum_bearing_window_pixels"] = {"int", "3",
         "Minimum number of channel pixels required to fit a local bearing.",
-        "Cross sections are skipped where the bearing window contains too few channel pixels."
+        "Cross sections are skipped where the bearing window contains too few channel pixels.",
+        "Cross-section geometry", "param", ""
     };
 
     // --- Output control ---
@@ -266,39 +276,45 @@ int main(int argc, char* argv[])
     help_map["calculate_spatial_index"] = {"bool", "true",
         "Whether or not to calculate a spatial index for vector data writes.",
         "A spatial index can improve GIS performance but requires buffering "
-        "the whole layer in memory."
+        "the whole layer in memory.",
+        "Output control", "io", ""
     };
 
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool", "true",
         "Write the extracted channel network as vector lines.",
-        "Each compact channel link between junctions is written as a line feature."
+        "Each compact channel link between junctions is written as a line feature.",
+        "Output control", "switch", ""
     };
 
     string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
     help_map["channel_network_lines_output_format"] = {"string", "flatgeobuf",
         "Output format for channel-network lines.",
-        "Allowed values: flatgeobuf, fgb, gpkg."
+        "Allowed values: flatgeobuf, fgb, gpkg.",
+        "Output control", "param", ""
     };
 
     bool_default_map["write_cross_section_lines"] = true;
     help_map["write_cross_section_lines"] = {"bool", "true",
         "Write simple cross-section location lines.",
         "Writes one line per cross section. This is the light-weight geometry "
-        "output describing section position and section id."
+        "output describing section position and section id.",
+        "Output control", "switch", ""
     };
 
     string_default_map["cross_section_lines_output_format"] = "flatgeobuf";
     help_map["cross_section_lines_output_format"] = {"string", "flatgeobuf",
         "Output format for cross-section line geometry.",
-        "Allowed values: flatgeobuf, fgb, gpkg."
+        "Allowed values: flatgeobuf, fgb, gpkg.",
+        "Output control", "param", ""
     };
 
     bool_default_map["write_cross_section_sample_points"] = true;
     help_map["write_cross_section_sample_points"] = {"bool", "true",
         "Write sampled cross-section elevations as point data.",
         "Each sampled point stores section id, location, sampled elevation, "
-        "and optional sampled vertical excess curvature."
+        "and optional sampled vertical excess curvature.",
+        "Output control", "switch", ""
     };
 
     string_default_map["cross_section_sample_points_output_format"] =
@@ -306,12 +322,37 @@ int main(int argc, char* argv[])
     help_map["cross_section_sample_points_output_format"] = {"string",
         "flatgeobuf",
         "Output format for sampled cross-section points.",
-        "Allowed values: csv, flatgeobuf, fgb, gpkg."
+        "Allowed values: csv, flatgeobuf, fgb, gpkg.",
+        "Output control", "param", ""
     };
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -832,6 +873,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-cross-sections: done.\n";

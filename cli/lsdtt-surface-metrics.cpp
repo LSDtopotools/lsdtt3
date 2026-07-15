@@ -375,23 +375,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     //
@@ -406,7 +396,7 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
     int_default_map["n_threads"] = 1;
@@ -414,7 +404,8 @@ int main(int argc, char* argv[])
         "Number of OpenMP threads.",
         "0 = use all hardware threads. 1 = serial (default). "
         "Applies to the direct and wavelet quadratic fits, polyfit metric "
-        "engine, and OpenCV normalisation passes."};
+        "engine, and OpenCV normalisation passes.",
+        "Threading", "io", ""};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -422,47 +413,55 @@ int main(int argc, char* argv[])
         "Output raster format.",
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format."};
+        "same_as_input: match the input raster format.",
+        "Output format", "io", ""};
 
     // --- Hillshade ---
     bool_default_map["write_hillshade_raster"] = false;
     help_map["write_hillshade_raster"] = {"bool","false",
         "Write a hillshade raster.",
         "Uses Zevenbergen and Thorne (1987). "
-        "Computed directly from the input DEM - no fill is applied."};
+        "Computed directly from the input DEM - no fill is applied.",
+        "Hillshade", "switch", ""};
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
         "Sun azimuth in degrees clockwise from north.",
-        "315 (northwest) is the cartographic convention."};
+        "315 (northwest) is the cartographic convention.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
     help_map["hillshade_altitude"] = {"float","45",
         "Sun altitude above the horizon in degrees.",
-        "45 degrees is a typical default."};
+        "45 degrees is a typical default.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_z_factor"] = 1.0f;
     help_map["hillshade_z_factor"] = {"float","1.0",
         "Vertical exaggeration factor applied before computing hillshade.",
-        "Values greater than 1 emphasise relief in flat terrain."};
+        "Values greater than 1 emphasise relief in flat terrain.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     // --- Local relief ---
     bool_default_map["write_local_relief_raster"] = false;
     help_map["write_local_relief_raster"] = {"bool","false",
         "Write a local relief raster.",
         "Local relief is computed as local_max - local_min within a moving "
-        "window over valid pixels only."};
+        "window over valid pixels only.",
+        "Local relief", "switch", ""};
 
     float_default_map["local_relief_radius_metres"] = 10.0f;
     help_map["local_relief_radius_metres"] = {"float","10.0",
         "Radius of the local-relief window in metres.",
         "This is a physical radius in the raster CRS. The default window "
-        "shape is circular."};
+        "shape is circular.",
+        "Local relief", "param", "write_local_relief_raster"};
 
     string_default_map["local_relief_window_shape"] = "circular";
     help_map["local_relief_window_shape"] = {"string","circular",
         "Shape of the local-relief window.",
-        "Valid options are circular or square. Default is circular."};
+        "Valid options are circular or square. Default is circular.",
+        "Local relief", "param", "write_local_relief_raster"};
 
 
 
@@ -471,13 +470,15 @@ int main(int argc, char* argv[])
     help_map["write_polyfit_rasters"] = {"bool","false",
         "Write the six quadratic polynomial fit coefficient rasters.",
         "Computes a, b, c, d, e, f where z = ax^2 + by^2 + cxy + dx + ey + f "
-        "over a moving window controlled by polyfit_lambda."};
+        "over a moving window controlled by polyfit_lambda.",
+        "Polynomial surface fit", "switch", ""};
 
     float_default_map["polyfit_lambda_metres"] = 70.0f;
     help_map["polyfit_lambda_metres"] = {"float","70.0",
         "Characteristic lengthscale (metres) for the quadratic polynomial fit.",
         "Controls the size of the moving window. Default (70 m) is tuned for "
-        "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m)."};
+        "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m).",
+        "Polynomial surface fit", "param", ""};
 
     string_default_map["polyfit_metrics"] = "";
     help_map["polyfit_metrics"] = {"string","",
@@ -492,19 +493,22 @@ int main(int argc, char* argv[])
         "profile_curvature, plan_curvature, tangential_curvature, "
         "difference_curvature, horizontal_excess_curvature, "
         "vertical_excess_curvature, accumulation_curvature, "
-        "ring_curvature, rotor."};
+        "ring_curvature, rotor.",
+        "Polynomial surface fit", "param", ""};
 
     float_default_map["polyfit_z_factor"] = 1.0f;
     help_map["polyfit_z_factor"] = {"float","1.0",
         "Vertical scaling applied before interpreting polyfit derivatives.",
         "Scales first and second derivatives consistently in the "
-        "polyfit metric engine."};
+        "polyfit metric engine.",
+        "Polynomial surface fit", "param", ""};
 
     float_default_map["polyfit_flat_slope_tolerance"] = 1e-12f;
     help_map["polyfit_flat_slope_tolerance"] = {"float","1e-12",
         "Slope tolerance below which direction-dependent polyfit metrics are nodata.",
         "Applies to aspect, plan curvature, tangential curvature, "
-        "profile curvature, and rotor."};
+        "profile curvature, and rotor.",
+        "Polynomial surface fit", "param", ""};
 
     string_default_map["polyfit_method"] = "direct";
     help_map["polyfit_method"] = {"string","direct",
@@ -515,7 +519,8 @@ int main(int argc, char* argv[])
         "both: run both methods and write outputs from each; also prints "
         "a timing comparison. "
         "Outputs are prefixed _wavelet_polyfit_* or _direct_polyfit_* "
-        "so results from both methods can coexist in the same directory."};
+        "so results from both methods can coexist in the same directory.",
+        "Polynomial surface fit", "param", ""};
 
     string_default_map["compute_backend"] = "auto";
     help_map["compute_backend"] = {"string","auto",
@@ -525,7 +530,8 @@ int main(int argc, char* argv[])
         "back to CPU per-function when no GPU kernel exists or no device is "
         "present. Currently only direct_polyfit has a GPU port; all other "
         "metrics run on the CPU regardless of this setting. Has no effect in a "
-        "build without GPU support (-DLSDTT_GPU=OFF)."};
+        "build without GPU support (-DLSDTT_GPU=OFF).",
+        "Polynomial surface fit", "param", ""};
 
     // --- slope threshold layers --
     bool_default_map["write_slope_threshold_layers"] = false;
@@ -533,7 +539,8 @@ int main(int argc, char* argv[])
         "Writes layers for each slope threshold where the polyfit metric "
         "slope_degrees exceeds the threshold",
         "Thresholds are to be supplied in a comma-separated string under "
-        "the parameter slope_tresholds."
+        "the parameter slope_tresholds.",
+        "Polynomial surface fit", "switch", ""
     };
 
     bool_default_map["clamp_slope_to_threshold"] = true;
@@ -542,7 +549,8 @@ int main(int argc, char* argv[])
         "threshold where the original slope_degrees layer exceeds the "
         "threshold. If false, slopes from slope_degrees layer are "
         "preserved where slopes exceed threshold.",
-        "In both cases, nodatavalue below threshold. Defaults to true."
+        "In both cases, nodatavalue below threshold. Defaults to true.",
+        "Polynomial surface fit", "param", ""
     };
 
     string_default_map["slope_thresholds"] = "3,7,12";
@@ -550,7 +558,8 @@ int main(int argc, char* argv[])
         "The threshold values for which slope threshold layers are to "
         "be written.",
         "Defaults to the categories used by the Environment Agency's "
-        "ALERT tool."
+        "ALERT tool.",
+        "Polynomial surface fit", "param", ""
     };
 
     // --- Surface shape classification (SMAP, TopoCurve-style) ---
@@ -564,7 +573,8 @@ int main(int argc, char* argv[])
         "synform (-1), synformal saddle (-2), basin (-3), perfect saddle (-4). "
         "Requires the polynomial fit; maximum_curvature and minimum_curvature "
         "are added to the requested metrics automatically. "
-        "Output: _<method>_shape_class.tif."};
+        "Output: _<method>_shape_class.tif.",
+        "Surface shape classification (SMAP, TopoCurve-style)", "switch", ""};
 
     string_default_map["shape_curvature_method"] = "polyfit";
     help_map["shape_curvature_method"] = {"string","polyfit",
@@ -578,7 +588,8 @@ int main(int argc, char* argv[])
         "fundamental_form the polyfit fitted_surface is used as the smoothed "
         "input (smoothing scale set by polyfit_lambda_metres), and the "
         "fundamental-form principal curvatures are written as "
-        "_<method>_ff_maximum_curvature.tif / _<method>_ff_minimum_curvature.tif."};
+        "_<method>_ff_maximum_curvature.tif / _<method>_ff_minimum_curvature.tif.",
+        "Surface shape classification (SMAP, TopoCurve-style)", "param", ""};
 
     float_default_map["shape_curvature_threshold"] = 0.0f;
     help_map["shape_curvature_threshold"] = {"float","0.0",
@@ -588,7 +599,8 @@ int main(int argc, char* argv[])
         "KM collapse toward planar/cylindrical classes. Increase to remove "
         "low-amplitude, long-wavelength structure (e.g. a background basin) "
         "from the classification. Units: 1/m. Default 0 keeps every pixel in a "
-        "non-planar class."};
+        "non-planar class.",
+        "Surface shape classification (SMAP, TopoCurve-style)", "param", ""};
 
     bool_default_map["write_shape_curvature_rasters"] = false;
     help_map["write_shape_curvature_rasters"] = {"bool","false",
@@ -598,7 +610,8 @@ int main(int argc, char* argv[])
         "metrics because they reflect shape_curvature_threshold (kt). "
         "Outputs: _<method>_shape_gaussian_curvature.tif, "
         "_<method>_shape_mean_curvature.tif. "
-        "Only active when write_shape_classification = true."};
+        "Only active when write_shape_classification = true.",
+        "Surface shape classification (SMAP, TopoCurve-style)", "switch", ""};
 
     // --- MADk2 roughness ---
     bool_default_map["write_madk2_rasters"] = false;
@@ -606,65 +619,76 @@ int main(int argc, char* argv[])
         "Write MADk2 roughness rasters.",
         "Writes omnidirectional roughness (OR), direction of maximum "
         "continuity (DMC), and roughness anisotropy (RA) following "
-        "Trevisani et al. (2023)."};
+        "Trevisani et al. (2023).",
+        "MADk2 roughness", "switch", ""};
 
     float_default_map["madk2_window_radius_metres"] = 10.0f;
     help_map["madk2_window_radius_metres"] = {"float","10.0",
         "Circular MADk2 window radius in metres.",
         "This is the radius of the moving circular support window in "
-        "projected map units."};
+        "projected map units.",
+        "MADk2 roughness", "param", "write_madk2_rasters"};
 
     int_default_map["madk2_lag_pixels"] = 1;
     help_map["madk2_lag_pixels"] = {"int","1",
         "Lag in pixels for the MADk2 second-order directional differences.",
-        "Must be >= 1. Typical values are 1 or 2."};
+        "Must be >= 1. Typical values are 1 or 2.",
+        "MADk2 roughness", "param", "write_madk2_rasters"};
 
     // --- Frangi filter ---
     bool_default_map["write_frangi_raster"] = false;
     help_map["write_frangi_raster"] = {"bool","false",
         "Write a Frangi filter response raster.",
         "Enhances line-like terrain features over multiple scales using the "
-        "Hessian of a Gaussian-smoothed DEM."};
+        "Hessian of a Gaussian-smoothed DEM.",
+        "Frangi filter", "switch", ""};
 
     bool_default_map["write_frangi_scale_raster"] = false;
     help_map["write_frangi_scale_raster"] = {"bool","false",
         "Write the scale-at-maximum-Frangi-response raster.",
         "Stores the physical scale in metres at which the maximum Frangi "
-        "response occurred for each pixel."};
+        "response occurred for each pixel.",
+        "Frangi filter", "switch", ""};
 
     float_default_map["frangi_sigma_min_metres"] = 1.0f;
     help_map["frangi_sigma_min_metres"] = {"float","1.0",
         "Minimum Frangi scale in metres.",
         "This is the smallest Gaussian smoothing scale tested by the Frangi "
-        "filter."};
+        "filter.",
+        "Frangi filter", "param", ""};
 
     float_default_map["frangi_sigma_max_metres"] = 5.0f;
     help_map["frangi_sigma_max_metres"] = {"float","5.0",
         "Maximum Frangi scale in metres.",
         "This is the largest Gaussian smoothing scale tested by the Frangi "
-        "filter."};
+        "filter.",
+        "Frangi filter", "param", ""};
 
     int_default_map["frangi_n_scales"] = 4;
     help_map["frangi_n_scales"] = {"int","4",
         "Number of Frangi scales.",
         "Scales are sampled logarithmically between frangi_sigma_min_metres "
-        "and frangi_sigma_max_metres."};
+        "and frangi_sigma_max_metres.",
+        "Frangi filter", "param", ""};
 
     float_default_map["frangi_beta"] = 0.5f;
     help_map["frangi_beta"] = {"float","0.5",
         "Frangi beta parameter.",
         "Controls suppression of blob-like structure relative to line-like "
-        "structure."};
+        "structure.",
+        "Frangi filter", "param", ""};
 
     float_default_map["frangi_c"] = 15.0f;
     help_map["frangi_c"] = {"float","15.0",
         "Frangi c parameter.",
-        "Controls suppression of low-structureness responses."};
+        "Controls suppression of low-structureness responses.",
+        "Frangi filter", "param", ""};
 
     string_default_map["frangi_target"] = "ridges";
     help_map["frangi_target"] = {"string","ridges",
         "Feature polarity for the Frangi filter.",
-        "Valid options are ridges or valleys."};
+        "Valid options are ridges or valleys.",
+        "Frangi filter", "param", ""};
 
 
 
@@ -675,7 +699,8 @@ int main(int argc, char* argv[])
         "Requires OpenCV (LSDTT_HAS_OPENCV). "
         "The DEM is normalised to 8-bit and Otsu's method selects the "
         "threshold that minimises intra-class greyscale variance. "
-        "Output: 1.0 = foreground (above threshold), 0.0 = background."};
+        "Output: 1.0 = foreground (above threshold), 0.0 = background.",
+        "Otsu threshold segmentation (requires OpenCV)", "switch", ""};
 
     // --- Hough line extraction (requires OpenCV) ---
     bool_default_map["write_hough_lines_raster"] = false;
@@ -683,52 +708,61 @@ int main(int argc, char* argv[])
         "Write a binary raster of detected straight line segments.",
         "Requires OpenCV (LSDTT_HAS_OPENCV). "
         "Uses the probabilistic Hough transform (HoughLinesP) on a Canny "
-        "edge image derived from the DEM. Output: 1.0 = line pixel, 0.0 = other."};
+        "edge image derived from the DEM. Output: 1.0 = line pixel, 0.0 = other.",
+        "Hough line extraction (requires OpenCV)", "switch", ""};
 
     float_default_map["hough_rho"] = 1.0f;
     help_map["hough_rho"] = {"float","1.0",
         "Distance resolution of the Hough accumulator in pixels.",
         "Smaller values give finer angular resolution but increase memory "
-        "and compute cost."};
+        "and compute cost.",
+        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
 
     float_default_map["hough_theta_deg"] = 1.0f;
     help_map["hough_theta_deg"] = {"float","1.0",
         "Angle resolution of the Hough accumulator in degrees.",
-        "Converted to radians internally. Typical range: 0.5-2.0 degrees."};
+        "Converted to radians internally. Typical range: 0.5-2.0 degrees.",
+        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
 
     int_default_map["hough_threshold"] = 50;
     help_map["hough_threshold"] = {"int","50",
         "Minimum number of accumulator votes required to accept a line.",
         "Increase to suppress short or faint lines. "
-        "Decrease to detect more lines in noisy data."};
+        "Decrease to detect more lines in noisy data.",
+        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
 
     float_default_map["hough_min_line_length"] = 30.0f;
     help_map["hough_min_line_length"] = {"float","30.0",
         "Minimum line segment length in pixels.",
         "Segments shorter than this are discarded. "
-        "Scale this relative to your pixel resolution."};
+        "Scale this relative to your pixel resolution.",
+        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
 
     float_default_map["hough_max_line_gap"] = 10.0f;
     help_map["hough_max_line_gap"] = {"float","10.0",
         "Maximum gap in pixels between collinear points to bridge into one segment.",
-        "Increase to connect dashed or broken linear features."};
+        "Increase to connect dashed or broken linear features.",
+        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
 
     // --- Shared Canny parameters (used by Hough; also available standalone) ---
     float_default_map["canny_threshold"] = 50.0f;
     help_map["canny_threshold"] = {"float","50.0",
         "Lower Canny hysteresis threshold in 8-bit greyscale space [0,255].",
         "Used internally by the Hough line step. "
-        "Pixels with gradient magnitude below this are definitely not edges."};
+        "Pixels with gradient magnitude below this are definitely not edges.",
+        "Shared Canny parameters (used by Hough; also available standalone)", "param", ""};
 
     float_default_map["canny_ratio"] = 2.0f;
     help_map["canny_ratio"] = {"float","2.0",
         "Ratio of upper to lower Canny threshold (high = canny_threshold * ratio).",
-        "Canny recommends 2.0-3.0. Increase to suppress weak edges."};
+        "Canny recommends 2.0-3.0. Increase to suppress weak edges.",
+        "Shared Canny parameters (used by Hough; also available standalone)", "param", ""};
 
     float_default_map["canny_gaussian_sigma"] = 1.0f;
     help_map["canny_gaussian_sigma"] = {"float","1.0",
         "Sigma for the Gaussian blur applied before Canny edge detection.",
-        "0.0 = no blur. Increase (e.g. 1.5-3.0) for noisy or coarse DEMs."};
+        "0.0 = no blur. Increase (e.g. 1.5-3.0) for noisy or coarse DEMs.",
+        "Shared Canny parameters (used by Hough; also available standalone)", "param", ""};
 
     // --- Curvature skeleton (VEC + plan curvature relief) ---
     bool_default_map["write_curvature_skeletons"] = false;
@@ -742,13 +776,15 @@ int main(int argc, char* argv[])
         "thresholds at plan_relief_threshold, and skeletonises. "
         "Outputs: _vec_skeleton_curvature.tif, _vec_skeleton_binary.tif, "
         "_vec_skeleton.tif, _profile_curvature.tif, _profile_curvature_relief.tif, "
-        "_profile_skeleton_binary.tif, _profile_skeleton.tif."};
+        "_profile_skeleton_binary.tif, _profile_skeleton.tif.",
+        "Curvature skeleton (VEC + plan curvature relief)", "switch", ""};
 
     float_default_map["curvature_skeleton_lambda_metres"] = 100.0f;
     help_map["curvature_skeleton_lambda_metres"] = {"float","100.0",
         "Polyfit half-wavelength (m) for the direct fit used by curvature skeleton.",
         "Controls the smoothing scale of the fitted surface. "
-        "Larger values suppress noise; smaller values resolve finer features."};
+        "Larger values suppress noise; smaller values resolve finer features.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     float_default_map["vec_skeleton_threshold"] = 0.0f;
     help_map["vec_skeleton_threshold"] = {"float","0.0",
@@ -756,38 +792,45 @@ int main(int argc, char* argv[])
         "Pixels with VEC >= this value are classified as slope-break candidates. "
         "Run once with write_curvature_skeletons=true and read the printed CDF "
         "divergence threshold to choose an appropriate value. "
-        "Ignored when vec_skeleton_use_cdf_threshold=true."};
+        "Ignored when vec_skeleton_use_cdf_threshold=true.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     bool_default_map["vec_skeleton_use_cdf_threshold"] = false;
     help_map["vec_skeleton_use_cdf_threshold"] = {"bool","false",
         "Auto-select the VEC threshold using CDF divergence.",
-        "Overrides vec_skeleton_threshold when true."};
+        "Overrides vec_skeleton_threshold when true.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     bool_default_map["vec_skeleton_write_cdf"] = false;
     help_map["vec_skeleton_write_cdf"] = {"bool","false",
         "Write the VEC CDF to a CSV file alongside the skeleton outputs.",
-        "Output suffix: _vec_skeleton_cdf.csv."};
+        "Output suffix: _vec_skeleton_cdf.csv.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     float_default_map["profile_relief_window_metres"] = 50.0f;
     help_map["profile_relief_window_metres"] = {"float","50.0",
         "Circular moving-window radius (m) for the profile curvature local relief.",
-        "Larger windows smooth sign-change boundaries but blur fine features."};
+        "Larger windows smooth sign-change boundaries but blur fine features.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     float_default_map["profile_relief_threshold"] = 0.1f;
     help_map["profile_relief_threshold"] = {"float","0.1",
         "Threshold on profile curvature local relief for binarisation.",
         "Pixels whose within-window profile curvature range >= this value are "
-        "classified as slope-break candidates."};
+        "classified as slope-break candidates.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     int_default_map["curvature_skeleton_spur_max_pixels"] = 10;
     help_map["curvature_skeleton_spur_max_pixels"] = {"int","10",
         "Maximum endpoint-rooted spur length (pixels) pruned from curvature skeletons.",
-        "0 = skip spur pruning."};
+        "0 = skip spur pruning.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     int_default_map["curvature_skeleton_min_component_pixels"] = 1;
     help_map["curvature_skeleton_min_component_pixels"] = {"int","1",
         "Minimum component size (pixels) retained in curvature skeletons.",
-        "Applied after thinning and spur pruning."};
+        "Applied after thinning and spur pruning.",
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
 
     // --- VEC adaptive thresholding (requires OpenCV) ---
     bool_default_map["write_vec_adaptive_threshold"] = false;
@@ -799,7 +842,8 @@ int main(int argc, char* argv[])
         "foreground if its normalised 8-bit value > local_mean - vec_adaptive_C. "
         "Negative C is stricter (retains only locally brightest pixels). "
         "Outputs: _vec_adaptive_mean.tif, _vec_adaptive_gaussian.tif, "
-        "and optionally their Zhang-Suen skeletons."};
+        "and optionally their Zhang-Suen skeletons.",
+        "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
 
     int_default_map["vec_adaptive_block_size_pixels"] = 51;
     help_map["vec_adaptive_block_size_pixels"] = {"int","51",
@@ -807,7 +851,8 @@ int main(int argc, char* argv[])
         "Must be odd and >= 3. Should be larger than the typical feature width "
         "but smaller than the between-feature spacing. "
         "Larger values make the threshold surface smoother and less sensitive to "
-        "local intensity variation."};
+        "local intensity variation.",
+        "VEC adaptive thresholding (requires OpenCV)", "param", ""};
 
     float_default_map["vec_adaptive_C"] = 0.0f;
     help_map["vec_adaptive_C"] = {"float","0.0",
@@ -815,13 +860,15 @@ int main(int argc, char* argv[])
         "Threshold = local_mean - C. "
         "0 = threshold at the local mean (foreground = above-average pixels). "
         "Negative (e.g. -5) = stricter, retains only pixels well above the local mean. "
-        "Positive = looser."};
+        "Positive = looser.",
+        "VEC adaptive thresholding (requires OpenCV)", "param", ""};
 
     float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;
     help_map["vec_adaptive_gaussian_sigma"] = {"float","0.0",
         "Sigma for optional Gaussian pre-blur before adaptive VEC thresholding.",
         "0 = no blur. A small value (e.g. 1.0) smooths pixel-scale noise "
-        "before the local threshold is applied."};
+        "before the local threshold is applied.",
+        "VEC adaptive thresholding (requires OpenCV)", "param", ""};
 
     bool_default_map["write_vec_adaptive_skeletons"] = false;
     help_map["write_vec_adaptive_skeletons"] = {"bool","false",
@@ -829,7 +876,8 @@ int main(int argc, char* argv[])
         "Applies Zhang-Suen thinning (and curvature_skeleton_spur_max_pixels pruning) "
         "to both the mean and Gaussian adaptive outputs. "
         "Outputs: _vec_adaptive_mean_skeleton.tif, _vec_adaptive_gaussian_skeleton.tif."
-        "Only active when write_vec_adaptive_threshold = true."};
+        "Only active when write_vec_adaptive_threshold = true.",
+        "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
 
     // --- Cloth drape ---
     bool_default_map["write_cloth_envelope_raster"] = false;
@@ -839,7 +887,8 @@ int main(int argc, char* argv[])
         "under gravity and comes to rest on ridges and summits. The resting "
         "position is the upper landscape envelope. "
         "Output: _cloth_envelope.tif. "
-        "For best results supply a pit-filled or breached DEM."};
+        "For best results supply a pit-filled or breached DEM.",
+        "Cloth drape", "switch", ""};
 
     bool_default_map["write_cloth_incision_raster"] = false;
     help_map["write_cloth_incision_raster"] = {"bool","false",
@@ -847,7 +896,8 @@ int main(int argc, char* argv[])
         "Positive values indicate how far the terrain surface lies below the "
         "envelope at each pixel (valley incision depth). Negative values "
         "indicate residual pits or nodata artefacts above the envelope. "
-        "Output: _cloth_incision.tif."};
+        "Output: _cloth_incision.tif.",
+        "Cloth drape", "switch", ""};
 
     bool_default_map["write_cloth_crest_mask_raster"] = false;
     help_map["write_cloth_crest_mask_raster"] = {"bool","false",
@@ -855,7 +905,8 @@ int main(int argc, char* argv[])
         "1 = cloth particle was pinned by terrain contact (ridge or summit); "
         "0 = particle settled freely between ridges. Useful for diagnosing "
         "which features govern the envelope shape. "
-        "Output: _cloth_crest_mask.tif."};
+        "Output: _cloth_crest_mask.tif.",
+        "Cloth drape", "switch", ""};
 
     float_default_map["cloth_rigidity"] = 1.0f;
     help_map["cloth_rigidity"] = {"float","1.0",
@@ -863,7 +914,8 @@ int main(int argc, char* argv[])
         "Higher values produce a smoother, longer-wavelength envelope that "
         "bridges across narrow valleys and ridges. Equivalent to the Tension "
         "parameter in the Carretier and Valenti EnvelopSurface script. "
-        "Typical range: 0.5 (closely follows terrain) to 20 (broad smooth drape)."};
+        "Typical range: 0.5 (closely follows terrain) to 20 (broad smooth drape).",
+        "Cloth drape", "param", ""};
 
     float_default_map["cloth_gravity"] = 0.3f;
     help_map["cloth_gravity"] = {"float","0.3",
@@ -871,31 +923,59 @@ int main(int argc, char* argv[])
         "Controls how quickly the cloth descends. Reducing gravity gives the "
         "cloth more time to equilibrate spring forces before contact, which "
         "can improve convergence on complex terrain. Default (0.3) follows "
-        "Zhang et al. (2016) CSF."};
+        "Zhang et al. (2016) CSF.",
+        "Cloth drape", "param", ""};
 
     float_default_map["cloth_class_threshold"] = 0.5f;
     help_map["cloth_class_threshold"] = {"float","0.5",
         "Contact tolerance in metres: cloth is pinned when within this distance of the DEM.",
         "Increase (1-5 m) for coarse-resolution DEMs, noisy data, or DEMs "
         "with residual artefact pits. Decrease (0.1 m) for smooth high-resolution "
-        "lidar where precise ridge contact is desired."};
+        "lidar where precise ridge contact is desired.",
+        "Cloth drape", "param", ""};
 
     int_default_map["cloth_max_iterations"] = 500;
     help_map["cloth_max_iterations"] = {"int","500",
         "Maximum number of Verlet integration steps.",
         "The simulation stops early when max_displacement < cloth_convergence_tol. "
-        "Increase for large or complex DEMs where convergence is slow."};
+        "Increase for large or complex DEMs where convergence is slow.",
+        "Cloth drape", "param", ""};
 
     float_default_map["cloth_convergence_tol"] = 0.005f;
     help_map["cloth_convergence_tol"] = {"float","0.005",
         "Convergence tolerance: maximum cloth displacement (m) per step to declare settled.",
         "Tighten to 0.001 m for precise incision mapping on smooth terrain. "
         "Loosen to 0.01 m for faster runs on coarse DEMs where sub-centimetre "
-        "precision is not needed."};
+        "precision is not needed.",
+        "Cloth drape", "param", ""};
 
     // -------------------------------------------------------------------------
     // Parse - fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -1936,6 +2016,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo - always printed so runs are reproducible from the log
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-surface-metrics: done.\n";

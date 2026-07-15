@@ -102,23 +102,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -126,37 +116,42 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
-        "0 = use all available hardware threads."};
+        "0 = use all available hardware threads.",
+        "Threading", "io", ""};
 
     // --- Routing boundary conditions ---
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for D8 flow routing.",
         "Four-character string: north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "Routing boundary conditions", "param", ""};
 
     // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool","false",
         "Set true if the input DEM is already pit-filled and ready for routing.",
-        "When false (default) the CLI fills pits before building flow routing."};
+        "When false (default) the CLI fills pits before building flow routing.",
+        "DEM preparation", "param", ""};
 
     bool_default_map["carve_before_fill"] = false;
     help_map["carve_before_fill"] = {"bool","false",
         "Run depression breaching before pit filling.",
-        "Useful when the DEM has road or embankment obstructions across channels."};
+        "Useful when the DEM has road or embankment obstructions across channels.",
+        "DEM preparation", "param", ""};
 
     string_default_map["breach_algorithm_choice"] = "lindsay2016";
     help_map["breach_algorithm_choice"] = {"string","lindsay2016",
         "Breaching algorithm used when carve_before_fill is true.",
         "Allowed values: lindsay2016 (unbounded), least_cost (supports bounded "
-        "breaching via breach_max_cost / breach_max_dist_px)."};
+        "breaching via breach_max_cost / breach_max_dist_px).",
+        "DEM preparation", "param", ""};
 
     // --- Bounded least-cost breaching (breach_algorithm_choice = least_cost) ---
     float_default_map["breach_max_cost"] = 0.0f;
@@ -168,19 +163,22 @@ int main(int argc, char* argv[])
         "through road/rail embankments exceed it and are left filled, so those "
         "crossings remain as gaps for the LCP burn (do_lcp_burn) to bridge under "
         "the vector line. Start ~2-5 (m). Only used when breach_algorithm_choice "
-        "is least_cost."};
+        "is least_cost.",
+        "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     int_default_map["breach_max_dist_px"] = 1000;
     help_map["breach_max_dist_px"] = {"int","1000",
         "Maximum breach-path length in pixels for least-cost breaching.",
         "Must be large enough to span the widest water body you want breached. "
-        "Only used when breach_algorithm_choice is least_cost."};
+        "Only used when breach_algorithm_choice is least_cost.",
+        "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     float_default_map["breach_flat_increment"] = 0.0f;
     help_map["breach_flat_increment"] = {"float","0",
         "Per-step elevation drop (m) imposed along a breach channel.",
         "0 = auto (derived from the DEM). Only used when breach_algorithm_choice "
-        "is least_cost."};
+        "is least_cost.",
+        "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     bool_default_map["breach_fill_remainder"] = true;
     help_map["breach_fill_remainder"] = {"bool","true",
@@ -188,12 +186,14 @@ int main(int argc, char* argv[])
         "bounds (so flow still routes off it).",
         "Keep true for bounded breaching: road-dammed depressions that exceed "
         "breach_max_cost are filled (then routed by fill_min_slope) rather than "
-        "carved. Only used when breach_algorithm_choice is least_cost."};
+        "carved. Only used when breach_algorithm_choice is least_cost.",
+        "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed during pit filling.",
-        "Used only when raster_is_filled is false."};
+        "Used only when raster_is_filled is false.",
+        "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     // --- Vector channel input ---
     string_default_map["stream_vector_path"] = "";
@@ -201,7 +201,8 @@ int main(int argc, char* argv[])
         "Path to the input vector file containing the channel network polylines.",
         "Required. Must be a polyline (linestring / multilinestring) layer in "
         "the same CRS as the DEM. Supported: GeoPackage (.gpkg), "
-        "FlatGeobuf (.fgb), Shapefile (.shp), and any GDAL/OGR format."};
+        "FlatGeobuf (.fgb), Shapefile (.shp), and any GDAL/OGR format.",
+        "Vector channel input", "param", ""};
 
     // --- Burn mode ---
     string_default_map["stream_burn_mode"] = "snap_to_network";
@@ -220,7 +221,8 @@ int main(int argc, char* argv[])
         "reaches that follow the LiDAR thalweg, and bridge the remaining "
         "obstruction gaps (roads/embankments) with least-cost-path carving "
         "(do_lcp_burn) to recover one continuous network. Preserves the LiDAR "
-        "thalweg and writes the burned DEM plus the network extracted from it."};
+        "thalweg and writes the burned DEM plus the network extracted from it.",
+        "Burn mode", "param", ""};
 
     // --- snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) ---
     float_default_map["trace_max_divergence_m"] = 10.0f;
@@ -229,7 +231,8 @@ int main(int argc, char* argv[])
         "segment is burned.",
         "Set above the typical offset between the vector lines and the LiDAR "
         "valley bottom, so a channel that merely sits beside the thalweg is not "
-        "burned; only genuine divergences (roads, captures) are."};
+        "burned; only genuine divergences (roads, captures) are.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     bool_default_map["do_stream_burn"] = true;
     help_map["do_stream_burn"] = {"bool","true",
@@ -237,7 +240,8 @@ int main(int argc, char* argv[])
         "fill/flow, the clipped+repaired vector network, the merged vector lines "
         "(<write_fname>_merged_lines.fgb) and the source-seeded D8 network "
         "(<write_fname>_dem_network_lines.fgb) are written, but no burning is done. "
-        "Useful for inspecting the starting point before any burn."};
+        "Useful for inspecting the starting point before any burn.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "switch", ""};
 
     bool_default_map["do_lcp_burn"] = false;
     help_map["do_lcp_burn"] = {"bool","false",
@@ -246,19 +250,22 @@ int main(int argc, char* argv[])
         "intermediate / outlet). Requires segmented_trace_test=true. Writes "
         "<write_fname>_burn_segments.fgb (start->end per gap), _lcp_burn_paths.fgb "
         "(the carved paths), _lcp_burn_raised.fgb (cells raised to block "
-        "diversions), the burned DEM, and re-extracts the connected network."};
+        "diversions), the burned DEM, and re-extracts the connected network.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "switch", ""};
 
     float_default_map["connect_tol_m"] = 0.0f;
     help_map["connect_tol_m"] = {"float","0",
         "Gap tolerance (m) for do_lcp_burn: reaches whose ends are farther apart "
         "than this get a burn segment. Default 0 = EVERY gap between consecutive "
-        "accepted reaches is burned (no short gap is ever dropped)."};
+        "accepted reaches is burned (no short gap is ever dropped).",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     float_default_map["lcp_channel_alpha"] = 4.0f;
     help_map["lcp_channel_alpha"] = {"float","4",
         "Drainage-area weighting for the do_lcp_burn least-cost path: higher = the "
         "path prefers existing channels (high drainage area) more strongly over a "
-        "shorter straight route."};
+        "shorter straight route.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     bool_default_map["segmented_trace_test"] = false;
     help_map["segmented_trace_test"] = {"bool","false",
@@ -268,26 +275,30 @@ int main(int argc, char* argv[])
         "(or reaches the line end / outlet / sink). Writes "
         "<write_fname>_segmented_traces.fgb (fields line_id, seg_id, start_s_m, "
         "max_divergence_m, stop_reason). Runs in the initial stage; pair with "
-        "do_stream_burn=false to stop after it."};
+        "do_stream_burn=false to stop after it.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     float_default_map["segmented_trace_spacing_m"] = 20.0f;
     help_map["segmented_trace_spacing_m"] = {"float","20",
         "Spacing (m) of trace start points along each line for "
-        "segmented_trace_test."};
+        "segmented_trace_test.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     int_default_map["segmented_trace_min_pixels"] = 20;
     help_map["segmented_trace_min_pixels"] = {"int","20",
         "For segmented_trace_test: a trace is ACCEPTED if it reaches the line end "
         "OR stays within trace_max_divergence_m of the line for more than this many "
         "cells. The accepted D8 traces (overlaps merged) are written to "
-        "<write_fname>_accepted_segments.fgb."};
+        "<write_fname>_accepted_segments.fgb.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     int_default_map["segmented_trace_spur_pixels"] = 20;
     help_map["segmented_trace_spur_pixels"] = {"int","20",
         "For segmented_trace_test cleaning: after dropping contained traces, a "
         "remaining trace is removed as a SPUR if the cells unique to it (not shared "
         "with another kept trace) number fewer than this. The cleaned linework is "
-        "written to <write_fname>_accepted_clean.fgb."};
+        "written to <write_fname>_accepted_clean.fgb.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     float_default_map["segmented_trace_endpoint_fraction"] = 0.5f;
     help_map["segmented_trace_endpoint_fraction"] = {"float","0.5",
@@ -295,13 +306,15 @@ int main(int argc, char* argv[])
         "downstream end until its last cell is within this FRACTION of "
         "trace_max_divergence_m of the line. So a trace may wander up to the full "
         "divergence tolerance mid-way, but its endpoint sits close to the channel "
-        "(default 0.5 = half the stop threshold)."};
+        "(default 0.5 = half the stop threshold).",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     bool_default_map["write_merged_lines"] = true;
     help_map["write_merged_lines"] = {"bool","true",
         "Write <write_fname>_merged_lines.fgb: the repaired vector fragments merged "
         "across degree-2 junctions into continuous lines (see merge_snap_tol_m). "
-        "Written in the initial stage, independent of the burn."};
+        "Written in the initial stage, independent of the burn.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "switch", ""};
 
     float_default_map["merge_snap_tol_m"] = 2.0f;
     help_map["merge_snap_tol_m"] = {"float","2",
@@ -314,25 +327,29 @@ int main(int argc, char* argv[])
         "coincident -- keep this SMALL (< the shortest bridge fragment); too large "
         "collapses a short bridge and its two neighbours into one node (degree >=3) "
         "and blocks the merge. Confluences (degree >=3) and free ends (degree 1) "
-        "remain breaks."};
+        "remain breaks.",
+        "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     // --- burn_in_place outputs ---
     bool_default_map["write_burned_profiles_csv"] = true;
     help_map["write_burned_profiles_csv"] = {"bool","true",
         "Write the burned stream elevation profiles as a CSV file.",
         "Only used when stream_burn_mode is burn_in_place. "
-        "Schema: feature_id, flow_distance, x, y, dem_elevation, burned_elevation."};
+        "Schema: feature_id, flow_distance, x, y, dem_elevation, burned_elevation.",
+        "burn_in_place outputs", "switch", ""};
 
     bool_default_map["write_burned_profiles_points"] = false;
     help_map["write_burned_profiles_points"] = {"bool","false",
         "Write the burned stream elevation profiles as a vector point file.",
-        "Only used when stream_burn_mode is burn_in_place."};
+        "Only used when stream_burn_mode is burn_in_place.",
+        "burn_in_place outputs", "switch", ""};
 
     string_default_map["burned_profiles_output_format"] = "flatgeobuf";
     help_map["burned_profiles_output_format"] = {"string","flatgeobuf",
         "Output format for burned profile point output.",
         "Only used when write_burned_profiles_points is true. "
-        "Allowed values: flatgeobuf, fgb, gpkg."};
+        "Allowed values: flatgeobuf, fgb, gpkg.",
+        "burn_in_place outputs", "param", ""};
 
     // --- snap_to_network outputs ---
     bool_default_map["write_junction_comparison"] = true;
@@ -342,12 +359,14 @@ int main(int argc, char* argv[])
         "Only used when stream_burn_mode is snap_to_network. Each pair_id "
         "appears twice: once for the vector junction (is_dem_junction=0) and "
         "once for the DEM junction (is_dem_junction=1). "
-        "Attribute distance_m gives the Euclidean distance between them."};
+        "Attribute distance_m gives the Euclidean distance between them.",
+        "snap_to_network outputs", "switch", ""};
 
     string_default_map["junction_comparison_output_format"] = "flatgeobuf";
     help_map["junction_comparison_output_format"] = {"string","flatgeobuf",
         "Output format for the junction comparison point file.",
-        "Allowed values: flatgeobuf, fgb, gpkg, csv."};
+        "Allowed values: flatgeobuf, fgb, gpkg, csv.",
+        "snap_to_network outputs", "param", ""};
 
     bool_default_map["write_reach_divergence"] = false;
     help_map["write_reach_divergence"] = {"bool","false",
@@ -360,7 +379,8 @@ int main(int argc, char* argv[])
         "<write_fname>_reach_divergence_dem_reach + _vector_reach line layers and "
         "_reach_divergence.csv. Detection is purely geometric; mean channel "
         "score is logged for confirmation only (a road ditch scores like a "
-        "channel). Only used when stream_burn_mode is snap_to_network."};
+        "channel). Only used when stream_burn_mode is snap_to_network.",
+        "snap_to_network outputs", "switch", ""};
 
     float_default_map["reach_divergence_separation_m"] = 25.0f;
     help_map["reach_divergence_separation_m"] = {"float","25.0",
@@ -368,21 +388,24 @@ int main(int argc, char* argv[])
         "the vector edge.",
         "Set above typical digitising offset so a vector that merely fails to "
         "sit on the DEM thalweg is not flagged. Drives divergence_length_m and "
-        "the severity score. Only used when write_reach_divergence is true."};
+        "the severity score. Only used when write_reach_divergence is true.",
+        "snap_to_network outputs", "param", ""};
 
     float_default_map["reach_divergence_min_length_m"] = 100.0f;
     help_map["reach_divergence_min_length_m"] = {"float","100.0",
         "Sustained off-vector length [m] that flags a reach as diverged.",
         "A reach is 'diverged' if its divergence_length_m exceeds this OR its "
         "detour ratio exceeds reach_divergence_detour_ratio. Only used when "
-        "write_reach_divergence is true."};
+        "write_reach_divergence is true.",
+        "snap_to_network outputs", "param", ""};
 
     float_default_map["reach_divergence_detour_ratio"] = 1.5f;
     help_map["reach_divergence_detour_ratio"] = {"float","1.5",
         "Detour ratio (DEM path length / vector length) that flags a reach as "
         "diverged.",
         "Secondary trigger alongside reach_divergence_min_length_m. Only used "
-        "when write_reach_divergence is true."};
+        "when write_reach_divergence is true.",
+        "snap_to_network outputs", "param", ""};
 
     float_default_map["reach_divergence_match_radius_m"] = 50.0f;
     help_map["reach_divergence_match_radius_m"] = {"float","50.0",
@@ -392,7 +415,8 @@ int main(int argc, char* argv[])
         "the reach status 'unmatched_endpoint'. DEM confluences are offset from "
         "vector vertices, so this is generous by default (cf. "
         "junction_tolerance_m in the repair). Only used when "
-        "write_reach_divergence is true."};
+        "write_reach_divergence is true.",
+        "snap_to_network outputs", "param", ""};
 
     // --- snap_to_network: junction gap repair ---
     bool_default_map["repair_junction_gaps"] = false;
@@ -402,7 +426,8 @@ int main(int argc, char* argv[])
         "least-cost terrain path from the DEM junction to the vector junction "
         "and carves the DEM to allow correct D8 routing.  Falls back to burning "
         "under the input vector where no terrain path can be found (tunnels). "
-        "Only used when stream_burn_mode is snap_to_network."};
+        "Only used when stream_burn_mode is snap_to_network.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     bool_default_map["repair_reach_divergence"] = false;
     help_map["repair_reach_divergence"] = {"bool","false",
@@ -413,12 +438,14 @@ int main(int argc, char* argv[])
         "Reuses the same channel-guided narrows repair as the junction gaps, "
         "anchored on the reach's downstream DEM confluence; the vector supplies "
         "topology only. Requires channel guidance; only used when "
-        "repair_junction_gaps is true and stream_burn_mode is snap_to_network."};
+        "repair_junction_gaps is true and stream_burn_mode is snap_to_network.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     float_default_map["junction_tolerance_m"] = 50.0f;
     help_map["junction_tolerance_m"] = {"float","50",
         "Minimum junction-pair distance (m) to trigger gap repair.",
-        "Pairs closer than this are considered correctly matched and skipped."};
+        "Pairs closer than this are considered correctly matched and skipped.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     float_default_map["max_repair_gap_m"] = 100.0f;
     help_map["max_repair_gap_m"] = {"float","100",
@@ -428,30 +455,35 @@ int main(int argc, char* argv[])
         "correct and the vector network is a coarse local representation (e.g. a "
         "confluence whose branches genuinely reunite far downstream). Candidates "
         "beyond this are reported as topology mismatches and left unrepaired "
-        "rather than carving a long spurious channel. Set 0 to disable the cap."};
+        "rather than carving a long spurious channel. Set 0 to disable the cap.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     int_default_map["max_gap_search_px"] = 60;
     help_map["max_gap_search_px"] = {"int","60",
         "Search-window half-width in pixels for gap repair.",
         "The Dijkstra search is bounded to a rectangle that spans the vector "
-        "and DEM junction locations expanded by this many pixels on each side."};
+        "and DEM junction locations expanded by this many pixels on each side.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     float_default_map["gap_uphill_penalty"] = 20.0f;
     help_map["gap_uphill_penalty"] = {"float","20",
         "Cost multiplier applied to uphill elevation steps during gap repair.",
         "Higher values force the repair path to cross obstructions at their "
-        "lowest point; lower values allow more relaxed routing."};
+        "lowest point; lower values allow more relaxed routing.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     float_default_map["max_gap_climb_m"] = 10.0f;
     help_map["max_gap_climb_m"] = {"float","10",
         "Maximum elevation the repair path may climb above the DEM junction (m).",
         "Paths exceeding this limit are rejected as likely tunnels or deep cuts "
-        "and fall back to the vector-burn strategy."};
+        "and fall back to the vector-burn strategy.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     bool_default_map["write_repaired_dem"] = false;
     help_map["write_repaired_dem"] = {"bool","false",
         "Write the modified (gap-repaired) DEM as a raster.",
-        "Only used when repair_junction_gaps is true."};
+        "Only used when repair_junction_gaps is true.",
+        "snap_to_network: junction gap repair", "switch", ""};
 
     bool_default_map["write_burned_outputs"] = true;
     help_map["write_burned_outputs"] = {"bool","true",
@@ -460,37 +492,43 @@ int main(int argc, char* argv[])
         "<write_fname>_burned.tif (the carved elevation surface) and "
         "<write_fname>_burned_network_lines.fgb plus _burned_network_junctions.fgb "
         "(the D8 stream network extracted from the burned DEM, for checking that "
-        "flow paths route correctly under roads and other obstructions)."};
+        "flow paths route correctly under roads and other obstructions).",
+        "snap_to_network: junction gap repair", "switch", ""};
 
     bool_default_map["write_channel_score_raster"] = false;
     help_map["write_channel_score_raster"] = {"bool","false",
         "Write the channel candidate score raster used to guide gap repair.",
         "Values in [0,1]: 1 = strong channel signal, 0 = off-channel. "
         "Useful for diagnosing why a repair path is or is not found. "
-        "Only written when repair_junction_gaps is true and channel guidance is enabled."};
+        "Only written when repair_junction_gaps is true and channel guidance is enabled.",
+        "snap_to_network: junction gap repair", "switch", ""};
 
     bool_default_map["write_divergence_points"] = false;
     help_map["write_divergence_points"] = {"bool","false",
         "Write the divergence point chosen for each repair attempt as a vector point file.",
         "Shows exactly where the channel-guided LCP starts. "
-        "Only written when repair_junction_gaps is true."};
+        "Only written when repair_junction_gaps is true.",
+        "snap_to_network: junction gap repair", "switch", ""};
 
     bool_default_map["write_repair_log"] = true;
     help_map["write_repair_log"] = {"bool","true",
         "Write a CSV log of every junction repair performed.",
-        "Only used when repair_junction_gaps is true."};
+        "Only used when repair_junction_gaps is true.",
+        "snap_to_network: junction gap repair", "switch", ""};
 
     int_default_map["max_repair_phases"] = 10;
     help_map["max_repair_phases"] = {"int","10",
         "Maximum number of candidate-detection/repair phases.",
         "Each phase repairs at most one upstream-most candidate per incomplete "
-        "basin, then re-routes the DEM and re-runs candidate detection."};
+        "basin, then re-routes the DEM and re-runs candidate detection.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     float_default_map["repair_min_slope"] = -1.0f;
     help_map["repair_min_slope"] = {"float","-1",
         "Minimum downhill slope imposed on carved repair paths (m/m).",
         "Values <= 0 default to fill_min_slope. Set 0 explicitly only if "
-        "non-increasing flat burns are desired."};
+        "non-increasing flat burns are desired.",
+        "snap_to_network: junction gap repair", "param", ""};
 
     // --- snap_to_network: inward carving of edge sources ---
     bool_default_map["carve_inward_edge_sources"] = true;
@@ -504,7 +542,8 @@ int main(int argc, char* argv[])
         "OFF the edge (downstream junction off-raster or higher) are left alone. "
         "Used by stream_burn_mode snap_to_network and snap_to_accumulation; for "
         "snap_to_accumulation it runs before the LCP burn so the segmented trace "
-        "and the source-seeded network build on the inward-routed DEM."};
+        "and the source-seeded network build on the inward-routed DEM.",
+        "snap_to_network: inward carving of edge sources", "param", ""};
 
     int_default_map["edge_source_carve_pixels"] = 3;
     help_map["edge_source_carve_pixels"] = {"int","3",
@@ -512,7 +551,8 @@ int main(int argc, char* argv[])
         "The carve extends adaptively beyond this minimum (up to "
         "edge_source_carve_max_pixels) until the terminus reaches "
         "edge_source_min_interior_metres from the nearest DEM boundary. Only "
-        "used when carve_inward_edge_sources is true."};
+        "used when carve_inward_edge_sources is true.",
+        "snap_to_network: inward carving of edge sources", "param", ""};
 
     int_default_map["edge_source_carve_max_pixels"] = 40;
     help_map["edge_source_carve_max_pixels"] = {"int","40",
@@ -520,7 +560,8 @@ int main(int argc, char* argv[])
         "Safety cap on the adaptive carve. The carve normally stops earlier, "
         "once the terminus reaches edge_source_min_interior_metres from the "
         "boundary; this cap only binds for channels that approach the edge at a "
-        "very shallow angle. Only used when carve_inward_edge_sources is true."};
+        "very shallow angle. Only used when carve_inward_edge_sources is true.",
+        "snap_to_network: inward carving of edge sources", "param", ""};
 
     float_default_map["edge_source_min_interior_metres"] = 10.0f;
     help_map["edge_source_min_interior_metres"] = {"float","10.0",
@@ -530,7 +571,8 @@ int main(int argc, char* argv[])
         "channel reaches genuine interior terrain rather than hugging the edge. "
         "A distance test is used rather than a D8-drains-off test because near "
         "the boundary the DEM flow runs along the edge and may never reach an "
-        "outlet. Only used when carve_inward_edge_sources is true."};
+        "outlet. Only used when carve_inward_edge_sources is true.",
+        "snap_to_network: inward carving of edge sources", "param", ""};
 
     // --- Channel-score guidance for gap repair ---
     float_default_map["channel_score_alpha"] = 2.0f;
@@ -539,25 +581,29 @@ int main(int argc, char* argv[])
         "Cost per step = step_distance x (1 + alpha x (1 - channel_score)) "
         "+ max(0, Deltaelev) x gap_uphill_penalty.  "
         "alpha=0 disables channel guidance (terrain cost only).  "
-        "Only used when repair_junction_gaps is true."};
+        "Only used when repair_junction_gaps is true.",
+        "Channel-score guidance for gap repair", "param", ""};
 
     float_default_map["channel_lambda_min_m"] = -1.0f;
     help_map["channel_lambda_min_m"] = {"float","-1",
         "Minimum wavelength (m) for multiscale channel candidate detection.",
         "Values <= 0 default to 3 x DEM cell size.  "
-        "Only used when repair_junction_gaps is true."};
+        "Only used when repair_junction_gaps is true.",
+        "Channel-score guidance for gap repair", "param", ""};
 
     float_default_map["channel_lambda_max_m"] = -1.0f;
     help_map["channel_lambda_max_m"] = {"float","-1",
         "Maximum wavelength (m) for multiscale channel candidate detection.",
         "Values <= 0 default to 10 x DEM cell size.  "
-        "Only used when repair_junction_gaps is true."};
+        "Only used when repair_junction_gaps is true.",
+        "Channel-score guidance for gap repair", "param", ""};
 
     int_default_map["channel_n_scales"] = 4;
     help_map["channel_n_scales"] = {"int","4",
         "Number of wavelength scales for channel candidate detection.",
         "More scales improve robustness but increase compute time.  "
-        "Only used when repair_junction_gaps is true."};
+        "Only used when repair_junction_gaps is true.",
+        "Channel-score guidance for gap repair", "param", ""};
 
     // --- Output - QC/diagnostic ---
     bool_default_map["write_vector_sources"] = true;
@@ -565,48 +611,56 @@ int main(int argc, char* argv[])
         "Write the vector network source tips as a point layer.",
         "Useful for checking that the source detection found the correct "
         "upstream channel heads. The outlet tip is also included with an "
-        "attribute flag to distinguish it."};
+        "attribute flag to distinguish it.",
+        "Output - QC/diagnostic", "switch", ""};
 
     bool_default_map["write_vector_outlet"] = true;
     help_map["write_vector_outlet"] = {"bool","true",
         "Include the vector network outlet tip in the source-tip output.",
         "Only used when write_vector_sources is true. The outlet tip is "
-        "labelled with is_outlet = 1."};
+        "labelled with is_outlet = 1.",
+        "Output - QC/diagnostic", "switch", ""};
 
     string_default_map["vector_sources_output_format"] = "flatgeobuf";
     help_map["vector_sources_output_format"] = {"string","flatgeobuf",
         "Output format for the vector source tip points.",
-        "Allowed values: flatgeobuf, fgb, gpkg, csv."};
+        "Allowed values: flatgeobuf, fgb, gpkg, csv.",
+        "Output - QC/diagnostic", "param", ""};
 
     // --- Output - DEM network (seeded from vector sources) ---
     bool_default_map["write_dem_network_points"] = false;
     help_map["write_dem_network_points"] = {"bool","false",
         "Write the DEM-extracted channel network as a point layer.",
         "Each channel pixel becomes a feature with drainage_area and "
-        "stream_order attributes."};
+        "stream_order attributes.",
+        "Output - DEM network (seeded from vector sources)", "switch", ""};
 
     bool_default_map["write_dem_network_lines"] = true;
     help_map["write_dem_network_lines"] = {"bool","true",
         "Write the DEM-extracted channel network as a line layer.",
         "Each channel link (between junctions or source and junction) "
-        "becomes a polyline feature."};
+        "becomes a polyline feature.",
+        "Output - DEM network (seeded from vector sources)", "switch", ""};
 
     bool_default_map["write_dem_network_junctions"] = false;
     help_map["write_dem_network_junctions"] = {"bool","false",
         "Write the DEM-extracted channel network junctions as a point layer.",
-        "Includes junction_number, receiver_junction, and stream_order."};
+        "Includes junction_number, receiver_junction, and stream_order.",
+        "Output - DEM network (seeded from vector sources)", "switch", ""};
 
     string_default_map["dem_network_output_format"] = "flatgeobuf";
     help_map["dem_network_output_format"] = {"string","flatgeobuf",
         "Output format for DEM network points, lines, and junctions.",
         "Allowed values: flatgeobuf, fgb, gpkg. "
-        "Points also accept csv (lat/lon in EPSG:4326)."};
+        "Points also accept csv (lat/lon in EPSG:4326).",
+        "Output - DEM network (seeded from vector sources)", "param", ""};
 
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool","true",
         "Compute a spatial index when writing vector outputs.",
         "Improves GIS spatial query speed at the cost of buffering the "
-        "entire layer in memory before writing."};
+        "entire layer in memory before writing.",
+        "Output - DEM network (seeded from vector sources)", "io", ""};
 
     // --- D8 cleaning of the clipped vector network (loops + dead ends) ---
     bool_default_map["clean_vector_network_d8"] = true;
@@ -615,25 +669,52 @@ int main(int argc, char* argv[])
         "junction finding.",
         "Resolves loops (removes the arm farthest from a D8 channel) and "
         "dead-ending segments (links the downstream tip to the next segment "
-        "along the D8 flow path). Writes a cleaned-network line layer."};
+        "along the D8 flow path). Writes a cleaned-network line layer.",
+        "D8 cleaning of the clipped vector network (loops + dead ends)", "param", ""};
 
     int_default_map["d8_channel_threshold_pixels"] = 1000;
     help_map["d8_channel_threshold_pixels"] = {"int","1000",
         "Contributing-pixel threshold defining a D8 channel.",
         "A DEM cell belongs to the D8 channel mask when its number of "
         "contributing pixels (include-self) is at least this value. Used to "
-        "score loop arms. Only used when clean_vector_network_d8 is true."};
+        "score loop arms. Only used when clean_vector_network_d8 is true.",
+        "D8 cleaning of the clipped vector network (loops + dead ends)", "param", ""};
 
     float_default_map["d8_dead_end_search_max_metres"] = 750.0f;
     help_map["d8_dead_end_search_max_metres"] = {"float","750.0",
         "Maximum D8 walk distance (m) when reconnecting a dead-ending tip.",
         "If the flow path does not reach another vector segment within this "
         "distance the dead end is left unresolved. Only used when "
-        "clean_vector_network_d8 is true."};
+        "clean_vector_network_d8 is true.",
+        "D8 cleaning of the clipped vector network (loops + dead ends)", "param", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -2889,6 +2970,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-stream-burning: done.\n";

@@ -106,10 +106,9 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [read_path, param_file] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
-    lsdtt::lsdtt_param_parser pp(read_path, param_file);
-
+    
     // -------------------------------------------------------------------------
     // Parameter defaults
     // -------------------------------------------------------------------------
@@ -117,158 +116,189 @@ int main(int argc, char* argv[])
     std::map<std::string,int>         int_default_map;
     std::map<std::string,bool>        bool_default_map;
     std::map<std::string,std::string> string_default_map;
-    std::map<std::string,std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- File I/O ---
     string_default_map["read_fname"] = "";
-    help_map["read_fname"] = {"string","","Input DEM filename (including extension).",""};
+    help_map["read_fname"] = {"string","","Input DEM filename (including extension).","",
+        "File I/O", "param", ""};
 
     string_default_map["write_fname"] = "";
     help_map["write_fname"] = {"string","",
-        "Output filename stem (no extension).  Defaults to read_fname stem.",""};
+        "Output filename stem (no extension).  Defaults to read_fname stem.","",
+        "File I/O", "param", ""};
 
     string_default_map["read_path"] = "./";
-    help_map["read_path"] = {"string","./","Directory containing input files.",""};
+    help_map["read_path"] = {"string","./","Directory containing input files.","",
+        "File I/O", "param", ""};
 
     string_default_map["write_path"] = "./";
-    help_map["write_path"] = {"string","./","Directory for output files.",""};
+    help_map["write_path"] = {"string","./","Directory for output files.","",
+        "File I/O", "param", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
-        "Output raster format: cog, gtiff, or same_as_input.",""};
+        "Output raster format: cog, gtiff, or same_as_input.","",
+        "File I/O", "io", ""};
 
     // --- Nuclide and muon scheme ---
     string_default_map["nuclide"] = "Be10";
     help_map["nuclide"] = {"string","Be10",
-        "Nuclide to predict: Be10, Al26, or C14.",""};
+        "Nuclide to predict: Be10, Al26, or C14.","",
+        "Nuclide and muon scheme", "param", ""};
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.",""};
+        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.","",
+        "Nuclide and muon scheme", "param", ""};
 
     // --- Prediction modes ---
     bool_default_map["calculate_crn_concentration_raster"] = false;
     help_map["calculate_crn_concentration_raster"] = {"bool","false",
         "Compute steady-state CRN concentration at every pixel.",
-        "Requires: erosion raster (or effective_erosion_rate), production raster, shielding."};
+        "Requires: erosion raster (or effective_erosion_rate), production raster, shielding.",
+        "Prediction modes", "switch", ""};
 
     bool_default_map["calculate_step_change_crn_concentration_raster"] = false;
     help_map["calculate_step_change_crn_concentration_raster"] = {"bool","false",
         "Compute transient CRN concentration after a step change in erosion rate.",
-        "Requires: time_since_change raster, step_change_eff_erate_old/new, production raster, topo shielding."};
+        "Requires: time_since_change raster, step_change_eff_erate_old/new, production raster, topo shielding.",
+        "Prediction modes", "switch", ""};
 
     bool_default_map["calculate_accumulated_crn_concentration"] = false;
     help_map["calculate_accumulated_crn_concentration"] = {"bool","false",
         "Accumulate CRN concentration downstream using D8 flow routing.",
-        "Requires a concentration raster (computed in the same run or loaded separately)."};
+        "Requires a concentration raster (computed in the same run or loaded separately).",
+        "Prediction modes", "switch", ""};
 
     // --- Production raster ---
     bool_default_map["load_production_raster"] = false;
     help_map["load_production_raster"] = {"bool","false",
         "Load the Stone 2000 production raster from disk instead of computing it.",
-        "File: read_path + production_raster_prefix + .tif"};
+        "File: read_path + production_raster_prefix + .tif",
+        "Production raster", "param", "write_production_raster"};
 
     string_default_map["production_raster_prefix"] = "NULL";
     help_map["production_raster_prefix"] = {"string","NULL",
         "Filename prefix (no extension) for loading a pre-computed production raster.",
-        "Used when load_production_raster is true."};
+        "Used when load_production_raster is true.",
+        "Production raster", "param", "write_production_raster"};
 
     bool_default_map["write_production_raster"] = false;
     help_map["write_production_raster"] = {"bool","false",
         "Write the production raster to a GeoTIFF.",
-        "Output: write_path + write_fname + _crn_prod.tif"};
+        "Output: write_path + write_fname + _crn_prod.tif",
+        "Production raster", "switch", ""};
 
     string_default_map["crn_nc_file"] = "";
     help_map["crn_nc_file"] = {"string","",
         "Path to crn_parameters.nc for ERA40 atmospheric scaling and palaeomagnetic correction.",
-        "Leave empty for standard-atmosphere Stone 2000 (no palaeomagnetic correction)."};
+        "Leave empty for standard-atmosphere Stone 2000 (no palaeomagnetic correction).",
+        "Production raster", "param", "write_production_raster"};
 
     float_default_map["sample_age_yr"] = 0.0f;
     help_map["sample_age_yr"] = {"float","0",
         "Sample exposure age (yr) for palaeomagnetic correction to Stone 2000 scaling.",
-        "Only used when crn_nc_file is set and > 0."};
+        "Only used when crn_nc_file is set and > 0.",
+        "Production raster", "param", "write_production_raster"};
 
     // --- Topographic shielding ---
     string_default_map["topographic_shielding_raster_prefix"] = "NULL";
     help_map["topographic_shielding_raster_prefix"] = {"string","NULL",
         "Prefix of topographic shielding raster (dimensionless, 0-1).",
-        "If NULL, uniform value topo_shield_value is used."};
+        "If NULL, uniform value topo_shield_value is used.",
+        "Topographic shielding", "param", ""};
 
     float_default_map["topo_shield_value"] = 1.0f;
     help_map["topo_shield_value"] = {"float","1",
         "Uniform topographic shielding factor (dimensionless, 0-1; 1 = unshielded).",
-        "Used when topographic_shielding_raster_prefix is NULL."};
+        "Used when topographic_shielding_raster_prefix is NULL.",
+        "Topographic shielding", "param", ""};
 
     // --- Snow shielding ---
     string_default_map["snow_shielding_raster_prefix"] = "NULL";
     help_map["snow_shielding_raster_prefix"] = {"string","NULL",
         "Prefix of snow shielding raster (effective depth, g/cm2).",
-        "If NULL, uniform value snow_shield_eff_thickness is used."};
+        "If NULL, uniform value snow_shield_eff_thickness is used.",
+        "Snow shielding", "param", ""};
 
     float_default_map["snow_shield_eff_thickness"] = 0.0f;
     help_map["snow_shield_eff_thickness"] = {"float","0",
         "Uniform snow shielding as effective depth (g/cm2; 0 = no snow).",
-        "Used when snow_shielding_raster_prefix is NULL."};
+        "Used when snow_shielding_raster_prefix is NULL.",
+        "Snow shielding", "param", ""};
 
     // --- Self shielding ---
     string_default_map["self_shielding_raster_prefix"] = "NULL";
     help_map["self_shielding_raster_prefix"] = {"string","NULL",
         "Prefix of self/sample shielding raster (effective depth, g/cm2).",
-        "If NULL, uniform value self_shield_eff_thickness is used."};
+        "If NULL, uniform value self_shield_eff_thickness is used.",
+        "Self shielding", "param", ""};
 
     float_default_map["self_shield_eff_thickness"] = 0.0f;
     help_map["self_shield_eff_thickness"] = {"float","0",
         "Uniform self shielding as effective depth (g/cm2; 0 = surface sample).",
-        "Used when self_shielding_raster_prefix is NULL."};
+        "Used when self_shielding_raster_prefix is NULL.",
+        "Self shielding", "param", ""};
 
     // --- Background erosion rate ---
     string_default_map["background_erosion_rate_raster_prefix"] = "NULL";
     help_map["background_erosion_rate_raster_prefix"] = {"string","NULL",
         "Prefix of raster giving effective erosion rate (g/cm2/yr) at each pixel.",
-        "If NULL, uniform value effective_erosion_rate is used."};
+        "If NULL, uniform value effective_erosion_rate is used.",
+        "Background erosion rate", "param", ""};
 
     float_default_map["effective_erosion_rate"] = 0.001f;
     help_map["effective_erosion_rate"] = {"float","0.001",
         "Uniform effective erosion rate (g/cm2/yr) across the raster.",
-        "Used when background_erosion_rate_raster_prefix is NULL. ~0.001 ~= 3.8 mm/kyr for rho=2650."};
+        "Used when background_erosion_rate_raster_prefix is NULL. ~0.001 ~= 3.8 mm/kyr for rho=2650.",
+        "Background erosion rate", "param", ""};
 
     // --- Step change parameters ---
     float_default_map["step_change_eff_erate_old_g_cm2_yr"] = 0.001f;
     help_map["step_change_eff_erate_old_g_cm2_yr"] = {"float","0.001",
-        "Old (pre-change) effective erosion rate for step change calculation (g/cm2/yr).",""};
+        "Old (pre-change) effective erosion rate for step change calculation (g/cm2/yr).","",
+        "Step change parameters", "param", ""};
 
     float_default_map["step_change_eff_erate_new_g_cm2_yr"] = 0.01f;
     help_map["step_change_eff_erate_new_g_cm2_yr"] = {"float","0.01",
-        "New (post-change) effective erosion rate for step change calculation (g/cm2/yr).",""};
+        "New (post-change) effective erosion rate for step change calculation (g/cm2/yr).","",
+        "Step change parameters", "param", ""};
 
     string_default_map["time_since_change_raster_prefix"] = "NULL";
     help_map["time_since_change_raster_prefix"] = {"string","NULL",
         "Prefix of raster giving years since the step change at each pixel.",
-        "Pixels with value 0 receive SS concentration at the new erosion rate."};
+        "Pixels with value 0 receive SS concentration at the new erosion rate.",
+        "Step change parameters", "param", ""};
 
     float_default_map["time_since_change_yr"] = 10000.0f;
     help_map["time_since_change_yr"] = {"float","10000",
-        "Uniform time since step change (yr) used when time_since_change_raster_prefix is NULL.",""};
+        "Uniform time since step change (yr) used when time_since_change_raster_prefix is NULL.","",
+        "Step change parameters", "param", ""};
 
     // --- Concentration raster loading (for accumulation) ---
     string_default_map["concentration_raster_prefix"] = "NULL";
     help_map["concentration_raster_prefix"] = {"string","NULL",
         "Prefix of a pre-computed concentration raster to use for accumulation.",
-        "If NULL and a concentration raster was computed in the same run, that is used."};
+        "If NULL and a concentration raster was computed in the same run, that is used.",
+        "Concentration raster loading (for accumulation)", "param", ""};
 
     // --- Flow routing (for accumulation) ---
     bool_default_map["fill_before_routing"] = true;
     help_map["fill_before_routing"] = {"bool","true",
         "Fill DEM pits before building D8 flow routing.",
-        "Set false only if the DEM is already pit-filled."};
+        "Set false only if the DEM is already pit-filled.",
+        "Flow routing (for accumulation)", "param", ""};
 
     float_default_map["min_slope_for_fill"] = 0.0001f;
     help_map["min_slope_for_fill"] = {"float","0.0001",
-        "Minimum imposed slope during pit filling (m/m).",""};
+        "Minimum imposed slope during pit filling (m/m).","",
+        "Flow routing (for accumulation)", "param", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
-        "D8 flow routing boundary conditions (N,E,S,W): o=open, b=forced outlet.",""};
+        "D8 flow routing boundary conditions (N,E,S,W): o=open, b=forced outlet.","",
+        "Flow routing (for accumulation)", "param", ""};
 
     // --- Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool) ---
     string_default_map["sample_points_filename"] = "NULL";
@@ -280,42 +310,73 @@ int main(int argc, char* argv[])
         "(plus snapped_contributing_pixels, and sample_name if present). The CSV can be read "
         "directly by lsdtt-cosmo-tool (points_filename) to invert back to an erosion rate -- "
         "a forward/inverse round-trip check against the imposed effective_erosion_rate. "
-        "Requires calculate_accumulated_crn_concentration: true."};
+        "Requires calculate_accumulated_crn_concentration: true.",
+        "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
 
     string_default_map["sample_column_name"] = "sample_name";
     help_map["sample_column_name"] = {"string","sample_name",
         "Optional sample identifier column copied through from the points CSV.",
-        "If absent from the points CSV, the column is omitted from the output."};
+        "If absent from the points CSV, the column is omitted from the output.",
+        "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
 
     int_default_map["threshold_contributing_pixels"] = 1000;
     help_map["threshold_contributing_pixels"] = {"int","1000",
         "Minimum contributing pixels for a node to count as a channel when snapping sample points.",
-        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set."};
+        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set.",
+        "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
 
     int_default_map["snap_search_radius_pixels"] = 8;
     help_map["snap_search_radius_pixels"] = {"int","8",
         "Maximum search radius (pixels) when snapping sample points to the channel network.",
-        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set."};
+        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set.",
+        "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
 
     // --- Output write toggles ---
     bool_default_map["write_crn_concentration_raster"] = true;
     help_map["write_crn_concentration_raster"] = {"bool","true",
         "Write the computed CRN concentration raster.",
-        "Output: write_fname + _<nuclide>_crn_conc.tif"};
+        "Output: write_fname + _<nuclide>_crn_conc.tif",
+        "Output write toggles", "switch", ""};
 
     bool_default_map["write_step_change_concentration_raster"] = true;
     help_map["write_step_change_concentration_raster"] = {"bool","true",
         "Write the step-change CRN concentration raster.",
-        "Output: write_fname + _<nuclide>_step_crn_conc.tif"};
+        "Output: write_fname + _<nuclide>_step_crn_conc.tif",
+        "Output write toggles", "switch", ""};
 
     bool_default_map["write_accumulated_crn_raster"] = true;
     help_map["write_accumulated_crn_raster"] = {"bool","true",
         "Write the accumulated CRN concentration raster.",
-        "Output: write_fname + _<nuclide>_crn_acc.tif"};
+        "Output: write_fname + _<nuclide>_crn_acc.tif",
+        "Output write toggles", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -715,6 +776,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Print resolved parameters for reproducibility
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-cosmo-prediction complete.\n";

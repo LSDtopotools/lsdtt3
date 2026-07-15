@@ -373,78 +373,77 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter parsing
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     std::map<std::string, bool>                     bool_default_map;
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading / routing ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
-        "0 = use all available hardware threads."};
+        "0 = use all available hardware threads.",
+        "Threading / routing", "io", ""};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for flow routing.",
         "Four-character string: north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "Threading / routing", "param", ""};
 
     // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool","false",
         "Whether the input raster is already pit-filled.",
-        "If false (default), fill_pits() is called before routing."};
+        "If false (default), fill_pits() is called before routing.",
+        "DEM preparation", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
-        "Used only when raster_is_filled is false."};
+        "Used only when raster_is_filled is false.",
+        "DEM preparation", "param", ""};
 
     // --- Basin outlet input ---
     string_default_map["basin_outlet_file"] = "NULL";
     help_map["basin_outlet_file"] = {"string","NULL",
         "File of basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "If NULL (default), the largest basin outlet in the DEM is used. "
-        "CSV files must have 'latitude' and 'longitude' columns (EPSG:4326)."};
+        "CSV files must have 'latitude' and 'longitude' columns (EPSG:4326).",
+        "Basin outlet input", "param", ""};
 
     string_default_map["basin_outlet_snapping_method"] = "downstream";
     help_map["basin_outlet_snapping_method"] = {"string","downstream",
         "Optional snapping of supplied outlet points to qualifying channel pixels.",
-        "Allowed values: none, expanding_square, downstream."};
+        "Allowed values: none, expanding_square, downstream.",
+        "Basin outlet input", "param", ""};
 
     int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
     help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used for optional outlet snapping.",
-        "Total upslope contributing pixels required at the snapped cell."};
+        "Total upslope contributing pixels required at the snapped cell.",
+        "Basin outlet input", "param", ""};
 
     int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
     help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square."};
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Basin outlet input", "param", ""};
 
     int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square."};
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Basin outlet input", "param", ""};
 
     // --- Diagnostic data maps ---
     bool_default_map["print_chi_data_maps"] = false;
@@ -453,14 +452,16 @@ int main(int argc, char* argv[])
         "Writes nodes (chi, drainage_area, flow_distance, elevation, source_key, "
         "basin_key), valid basin outlets, source-head points, and basin polygons. "
         "Basin keys are 0-based; source keys increment globally across all basins. "
-        "Runs before fit_chi_networks so extraction can be verified independently."};
+        "Runs before fit_chi_networks so extraction can be verified independently.",
+        "Diagnostic data maps", "switch", ""};
 
     string_default_map["chi_data_maps_output_format"] = "csv";
     help_map["chi_data_maps_output_format"] = {"string","csv",
         "Output format for chi data map point files.",
         "csv: latitude/longitude in EPSG:4326 (requires raster CRS). "
         "gpkg: GeoPackage in raster CRS. flatgeobuf/fgb: FlatGeobuf in raster CRS. "
-        "Basin polygons are always vector (flatgeobuf fallback when csv requested)."};
+        "Basin polygons are always vector (flatgeobuf fallback when csv requested).",
+        "Diagnostic data maps", "param", ""};
 
     bool_default_map["write_chi_data_map_lines"] = false;
     help_map["write_chi_data_map_lines"] = {"bool","false",
@@ -468,18 +469,21 @@ int main(int argc, char* argv[])
         "Each source_key represents the continuous channel from a headwater source "
         "to the basin outlet following the primary-donor (longest-path) convention. "
         "Attributes: source_key, basin_key. Only complete basins are written. "
-        "Keys match those in the chi data map point output."};
+        "Keys match those in the chi data map point output.",
+        "Diagnostic data maps", "switch", ""};
 
     string_default_map["chi_data_map_lines_output_format"] = "flatgeobuf";
     help_map["chi_data_map_lines_output_format"] = {"string","flatgeobuf",
         "Output format for chi data map polylines.",
-        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines."};
+        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines.",
+        "Diagnostic data maps", "param", ""};
 
     // --- Source extraction ---
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used to define channel heads.",
-        "Chi is computed only on pixels upstream of channel heads."};
+        "Chi is computed only on pixels upstream of channel heads.",
+        "Source extraction", "param", ""};
 
     int_default_map["minimum_channel_pixels"] = 20;
     help_map["minimum_channel_pixels"] = {"int","20",
@@ -487,7 +491,8 @@ int main(int argc, char* argv[])
         "After chi extraction, any basin with fewer than this number of chi "
         "network nodes (channel pixels) is discarded before fitting, disorder, "
         "and inversion. Very short channels cannot be segmented meaningfully and "
-        "can destabilise fitting. Set to 0 or 1 to keep all basins."};
+        "can destabilise fitting. Set to 0 or 1 to keep all basins.",
+        "Source extraction", "param", ""};
 
     int_default_map["n_pixels_move_outlet_upstream"] = 10;
     help_map["n_pixels_move_outlet_upstream"] = {"int","10",
@@ -496,7 +501,8 @@ int main(int argc, char* argv[])
         "outlet not on the DEM bounding-box edge drains to interior nodata (e.g. "
         "an island coast where the sea is masked); it is walked this many pixels "
         "up the main stem so the resulting basin clears the coastal nodata fringe "
-        "and can pass the completeness test. Set to 0 to disable."};
+        "and can pass the completeness test. Set to 0 to disable.",
+        "Source extraction", "param", ""};
 
     int_default_map["n_largest_basins"] = 5;
     help_map["n_largest_basins"] = {"int","5",
@@ -506,111 +512,135 @@ int main(int argc, char* argv[])
         "remaining complete basins, ranked by total basin pixels (drainage area), "
         "are analysed. This applies consistently to data maps, fitting, disorder, "
         "and inversion so basin keys stay stable. Set to 0 to keep all complete "
-        "basins (no size cap)."};
+        "basins (no size cap).",
+        "Source extraction", "param", ""};
 
     // --- Chi extraction / fitting ---
     bool_default_map["fit_chi_networks"] = false;
     help_map["fit_chi_networks"] = {"bool","false",
         "Run the piecewise-linear chi-network fitting and disorder sweep.",
         "When false (default) only print_chi_data_maps (if enabled) and the "
-        "inversion (if enabled) run. Set to true for the full m/n sweep."};
+        "inversion (if enabled) run. Set to true for the full m/n sweep.",
+        "Chi extraction / fitting", "switch", ""};
 
     float_default_map["chi_A0"] = 1.0f;
     help_map["chi_A0"] = {"float","1.0",
         "Reference drainage area A0 for chi integration (m2).",
-        "Chi = integral of (A0/A)^(m/n) ds from the outlet. Default is 1.0."};
+        "Chi = integral of (A0/A)^(m/n) ds from the outlet. Default is 1.0.",
+        "Chi extraction / fitting", "param", "fit_chi_networks"};
 
     float_default_map["mn_min"] = 0.3f;
     help_map["mn_min"] = {"float","0.3",
-        "Minimum m/n ratio for the disorder sweep.", ""};
+        "Minimum m/n ratio for the disorder sweep.", "",
+        "Chi extraction / fitting", "param", "fit_chi_networks"};
 
     float_default_map["mn_max"] = 0.6f;
     help_map["mn_max"] = {"float","0.6",
-        "Maximum m/n ratio for the disorder sweep.", ""};
+        "Maximum m/n ratio for the disorder sweep.", "",
+        "Chi extraction / fitting", "param", "fit_chi_networks"};
 
     float_default_map["mn_step"] = 0.02f;
     help_map["mn_step"] = {"float","0.02",
-        "Step size for the m/n disorder sweep.", "Must be > 0."};
+        "Step size for the m/n disorder sweep.", "Must be > 0.",
+        "Chi extraction / fitting", "param", "fit_chi_networks"};
 
     string_default_map["m_over_n"] = "";
     help_map["m_over_n"] = {"string","",
         "Optional explicit m/n value(s) for chi extraction and fitting.",
         "Comma-separated list (e.g. 0.45 or 0.35,0.45,0.55). When set, this "
-        "overrides mn_min/mn_max/mn_step for chi data maps, fitting, and inversion."};
+        "overrides mn_min/mn_max/mn_step for chi data maps, fitting, and inversion.",
+        "Chi extraction / fitting", "param", "fit_chi_networks"};
 
     float_default_map["fit_critical_divergence_m"] = 5.0f;
     help_map["fit_critical_divergence_m"] = {"float","5.0",
-        "Critical elevation divergence (m) used to split chi-elevation branches.", ""};
+        "Critical elevation divergence (m) used to split chi-elevation branches.", "",
+        "Chi extraction / fitting", "param", "fit_chi_networks"};
 
     // --- Disorder ---
     bool_default_map["run_subset_sensitivity"] = false;
     help_map["run_subset_sensitivity"] = {"bool","false",
-        "Run subset sensitivity analysis on chi disorder.", ""};
+        "Run subset sensitivity analysis on chi disorder.", "",
+        "Disorder", "switch", ""};
 
     int_default_map["subset_n_side_branches_per_sample"] = 3;
     help_map["subset_n_side_branches_per_sample"] = {"int","3",
-        "Number of side branches selected per subset sensitivity sample.", ""};
+        "Number of side branches selected per subset sensitivity sample.", "",
+        "Disorder", "param", ""};
 
     bool_default_map["run_jackknife"] = false;
     help_map["run_jackknife"] = {"bool","false",
-        "Run jackknife (leave-one-out) analysis on chi disorder.", ""};
+        "Run jackknife (leave-one-out) analysis on chi disorder.", "",
+        "Disorder", "switch", ""};
 
     bool_default_map["run_bootstrap"] = false;
     help_map["run_bootstrap"] = {"bool","false",
-        "Run bootstrap analysis on chi disorder.", ""};
+        "Run bootstrap analysis on chi disorder.", "",
+        "Disorder", "switch", ""};
 
     int_default_map["bootstrap_replicates"] = 1000;
     help_map["bootstrap_replicates"] = {"int","1000",
-        "Number of bootstrap replicates for disorder uncertainty estimation.", ""};
+        "Number of bootstrap replicates for disorder uncertainty estimation.", "",
+        "Disorder", "param", ""};
 
     bool_default_map["bootstrap_sample_full_tributary_count"] = true;
     help_map["bootstrap_sample_full_tributary_count"] = {"bool","true",
         "Whether each bootstrap replicate samples the full number of side branches.",
-        ""};
+        "",
+        "Disorder", "param", ""};
 
     int_default_map["bootstrap_n_side_branches_per_replicate"] = 3;
     help_map["bootstrap_n_side_branches_per_replicate"] = {"int","3",
-        "Number of side branches per bootstrap replicate.", ""};
+        "Number of side branches per bootstrap replicate.", "",
+        "Disorder", "param", ""};
 
     bool_default_map["bootstrap_with_replacement"] = true;
     help_map["bootstrap_with_replacement"] = {"bool","true",
-        "Whether bootstrap resampling is done with replacement.", ""};
+        "Whether bootstrap resampling is done with replacement.", "",
+        "Disorder", "param", ""};
 
     int_default_map["bootstrap_random_seed"] = 5489;
     help_map["bootstrap_random_seed"] = {"int","5489",
-        "Random seed for bootstrap resampling.", ""};
+        "Random seed for bootstrap resampling.", "",
+        "Disorder", "param", ""};
 
     // --- Inversion ---
     bool_default_map["run_inversion"] = false;
     help_map["run_inversion"] = {"bool","false",
         "Run spatial chi k_sn / u* inversion over the m/n sweep.",
         "Requires Eigen3 at build time. If Eigen3 is not available, this flag "
-        "is ignored and inversion is skipped with a warning."};
+        "is ignored and inversion is skipped with a warning.",
+        "Inversion", "switch", ""};
 
     float_default_map["inversion_coarse_cell_size"] = 2000.0f;
     help_map["inversion_coarse_cell_size"] = {"float","2000.0",
-        "Cell size (m) of the coarse grid used in chi k_sn inversion.", ""};
+        "Cell size (m) of the coarse grid used in chi k_sn inversion.", "",
+        "Inversion", "param", ""};
 
     float_default_map["inversion_roughness_weight"] = 1.0e4f;
     help_map["inversion_roughness_weight"] = {"float","10000.0",
-        "Tikhonov regularisation weight for spatial smoothness.", ""};
+        "Tikhonov regularisation weight for spatial smoothness.", "",
+        "Inversion", "param", ""};
 
     float_default_map["inversion_diagonal_jitter"] = 1.0e-8f;
     help_map["inversion_diagonal_jitter"] = {"float","1e-8",
-        "Small diagonal perturbation added to the normal equations.", ""};
+        "Small diagonal perturbation added to the normal equations.", "",
+        "Inversion", "param", ""};
 
     bool_default_map["inversion_use_mae_for_model_selection"] = true;
     help_map["inversion_use_mae_for_model_selection"] = {"bool","true",
-        "Use MAE (true) or RMSE (false) for m/n model selection.", ""};
+        "Use MAE (true) or RMSE (false) for m/n model selection.", "",
+        "Inversion", "param", ""};
 
     bool_default_map["write_inversion_rasters"] = false;
     help_map["write_inversion_rasters"] = {"bool","false",
-        "Write u* and support-count rasters for each basin.", ""};
+        "Write u* and support-count rasters for each basin.", "",
+        "Inversion", "switch", ""};
 
     // --- Outputs ---
     bool_default_map["write_fit_tables"] = true;
     help_map["write_fit_tables"] = {"bool","true",
-        "Write chi network fit node and segment tables to CSV.", ""};
+        "Write chi network fit node and segment tables to CSV.", "",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_ksn_basin_summary"] = true;
     help_map["write_ksn_basin_summary"] = {"bool","true",
@@ -618,7 +648,8 @@ int main(int argc, char* argv[])
         "One row per fitted basin with the number of segments, number of "
         "main-stem segments, total chi length, and mean / median / min / max / "
         "chi-weighted-mean k_sn plus main-stem mean and median k_sn. Written once "
-        "per m/n value tested. Output: <write_fname>_chi_ksn_basin_summary_mn_*.csv."};
+        "per m/n value tested. Output: <write_fname>_chi_ksn_basin_summary_mn_*.csv.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_chi_fit_segment_lines"] = false;
     help_map["write_chi_fit_segment_lines"] = {"bool","false",
@@ -626,27 +657,56 @@ int main(int argc, char* argv[])
         "One polyline feature per piecewise-linear segment. Attributes: "
         "basin_index, outlet_flat, segment_id, branch_id, k_sn (dz/dchi), "
         "downstream_chi, upstream_chi, downstream_elevation, upstream_elevation, "
-        "n_nodes. Written once per m/n value tested."};
+        "n_nodes. Written once per m/n value tested.",
+        "Outputs", "switch", ""};
 
     string_default_map["chi_fit_segment_lines_output_format"] = "flatgeobuf";
     help_map["chi_fit_segment_lines_output_format"] = {"string","flatgeobuf",
         "Output format for fitted chi segment polylines.",
-        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines."};
+        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines.",
+        "Outputs", "param", ""};
 
     bool_default_map["calculate_spatial_index"] = false;
     help_map["calculate_spatial_index"] = {"bool","false",
         "Calculate a spatial index for vector outputs.",
         "A spatial index speeds up GIS spatial queries but requires buffering "
-        "all features in memory before writing. Disable for large datasets."};
+        "all features in memory before writing. Disable for large datasets.",
+        "Outputs", "io", ""};
 
     bool_default_map["write_disorder_sample_tables"] = false;
     help_map["write_disorder_sample_tables"] = {"bool","false",
-        "Write detailed disorder sample tables for each m/n value.", ""};
+        "Write detailed disorder sample tables for each m/n value.", "",
+        "Outputs", "switch", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Raster output format for inversion rasters.",
-        "Allowed values: cog, gtiff, same_as_input."};
+        "Allowed values: cog, gtiff, same_as_input.",
+        "Outputs", "io", ""};
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
@@ -1405,6 +1465,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Echo parameters
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-chi-analysis: done.\n";

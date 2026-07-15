@@ -444,66 +444,6 @@ std::string lsdtt_param_parser::extension(const std::string& filename)
     return filename.substr(pos);  // includes the dot
 }
 
-std::pair<std::string, std::string> lsdtt_param_parser::parse_args(
-    int argc, char* argv[],
-    const std::string& tool_name,
-    const std::string& version,
-    const std::string& citation)
-{
-    auto is_flag = [](const std::string& s,
-                      std::initializer_list<const char*> flags)
-    {
-        for (const auto* f : flags) if (s == f) return true;
-        return false;
-    };
-
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-
-        if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
-        {
-            std::cout
-                << "Usage: " << tool_name << " <path> <parameter_file>\n"
-                << "       " << tool_name << " <parameter_file>\n"
-                << "       " << tool_name << " -h   (this help)\n"
-                << "       " << tool_name << " -v   (version)\n"
-                << "       " << tool_name << " -c   (citation)\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-v", "--version", "version", "-V"}))
-        {
-            std::cout << tool_name << " version " << version << "\n";
-            std::exit(0);
-        }
-        if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))
-        {
-            std::cout << "Citation: " << citation << "\n";
-            std::exit(0);
-        }
-    }
-
-    std::string path = "./";
-    std::string fname;
-
-    if (argc == 1)
-    {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
-        std::exit(1);
-    }
-    else if (argc == 2)
-    {
-        fname = argv[1];
-    }
-    else
-    {
-        path  = argv[1];
-        fname = argv[2];
-    }
-
-    return {path, fname};
-}
-
 // -----------------------------------------------------------------------------
 // lsdtt_help_registry
 // -----------------------------------------------------------------------------

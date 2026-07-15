@@ -740,11 +740,10 @@ CLI source files follow this layout, in order:
    k. write outputs
    l. call `pp.print_help(...)` then `pp.print_parameters()`
 
-Legacy note: un-migrated CLIs still call `parse_args()` (which handles `-h`
-with a short usage message and exits) and construct the parser before the
-maps. Migrate to the deferred flow when touching a CLI; see
-`cli/lsdtt-raster-preprocessing.cpp` and `cli/lsdtt-channel-extraction.cpp`
-for the migrated pattern and `docs/cli_help_plan.md` for the design.
+All CLIs use this deferred flow (the legacy `parse_args()` was removed
+2026-07-15 once the last CLI migrated). See `cli/lsdtt-raster-preprocessing.cpp`
+and `cli/lsdtt-channel-extraction.cpp` for reference implementations and
+`docs/cli_help_plan.md` for the design.
 
 ### Parameter map pattern (mandatory)
 
@@ -1054,9 +1053,13 @@ Parameter file format: `key: value` (snake_case keys, `#` for comments).
 `get_full_write_path()` returns `write_path + write_fname` (no extension).
 
 **Static helpers:** `stem(filename)`, `extension(filename)` (returns dot + ext),
-`parse_args(argc, argv, tool_name, version, citation)` — handles `-h`/`-v`/`-c` flags
-and returns `{path, parameter_file}`. Every CLI uses this instead of a per-file `parse_args`
-free function. Each CLI declares `static const std::string k_tool_name = "lsdtt-foo";`
+`parse_args_deferred(argc, argv, tool_name, version, citation)` — handles
+`-v`/`-c` (print and exit) and records `-h` variants in the returned
+`lsdtt_cli_args` struct so the CLI can render help from its parameter
+declarations via `print_terminal_help()` (see the CLI design rule and
+`docs/cli_help_plan.md`). Every CLI uses this instead of a per-file
+`parse_args` free function. Each CLI declares
+`static const std::string k_tool_name = "lsdtt-foo";`
 alongside `k_version` and `k_citation`.
 
 ---

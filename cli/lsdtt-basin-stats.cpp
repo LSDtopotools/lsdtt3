@@ -544,23 +544,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Load parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -568,13 +558,14 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
-        "0 = use all hardware threads. 1 = single-threaded."};
+        "0 = use all hardware threads. 1 = single-threaded.",
+        "Threading", "io", ""};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -582,7 +573,8 @@ int main(int argc, char* argv[])
         "Output raster format.",
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format."};
+        "same_as_input: match the input raster format.",
+        "Output format", "io", ""};
 
     // --- Basin outlets ---
     string_default_map["basin_outlet_csv"] = "NULL";
@@ -590,7 +582,8 @@ int main(int argc, char* argv[])
         "CSV file of requested basin outlet points.",
         "Required. CSV must contain columns named latitude and longitude. "
         "Optional columns: gauge_id, gauge_name. "
-        "Coordinates are interpreted as WGS84 (EPSG:4326) decimal degrees."};
+        "Coordinates are interpreted as WGS84 (EPSG:4326) decimal degrees.",
+        "Basin outlets", "param", ""};
 
     // --- Basin outlet snapping ---
     string_default_map["basin_outlet_snapping_method"] = "none";
@@ -601,85 +594,99 @@ int main(int argc, char* argv[])
         "none: use the mapped raster pixel directly. "
         "expanding_square: search outward ring-by-ring until a qualifying pixel "
         "is found. downstream: follow the D8 receiver chain until a qualifying "
-        "pixel is found."
+        "pixel is found.",
+        "Basin outlet snapping", "param", ""
     };
 
     int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
     help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used for optional basin outlet snapping.",
         "This is the total number of upslope contributing pixels from the "
-        "flow-routing object, not the number of direct donors to a pixel."
+        "flow-routing object, not the number of direct donors to a pixel.",
+        "Basin outlet snapping", "param", ""
     };
 
     int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
     help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
-        "0 means the mapped input pixel is tested first."
+        "0 means the mapped input pixel is tested first.",
+        "Basin outlet snapping", "param", ""
     };
 
     int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
-        "The search stops at the first radius containing one or more qualifying pixels."
+        "The search stops at the first radius containing one or more qualifying pixels.",
+        "Basin outlet snapping", "param", ""
     };
 
     // --- Sea removal ---
     float_default_map["minimum_elevation"] = 0.0f;
     help_map["minimum_elevation"] = {"float","0.0",
         "Pixels at or below this elevation are set to nodata.",
-        "Default of 0.0 removes sea and ocean pixels from many DEM products."};
+        "Default of 0.0 removes sea and ocean pixels from many DEM products.",
+        "Sea removal", "param", ""};
 
     // --- Routing preparation ---
     bool_default_map["fill_before_routing"] = true;
     help_map["fill_before_routing"] = {"bool","true",
         "Fill pits before constructing flow routing.",
-        "Recommended for basin extraction from DEMs."};
+        "Recommended for basin extraction from DEMs.",
+        "Routing preparation", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed during pit filling.",
-        "Used when fill_before_routing is true."};
+        "Used when fill_before_routing is true.",
+        "Routing preparation", "param", ""};
 
     // --- Basin quality control ---
     bool_default_map["reject_nodata_edge_basins"] = true;
     help_map["reject_nodata_edge_basins"] = {"bool","true",
         "Reject basins whose upslope area touches any nodata or raster-edge pixel.",
         "When true, basins that drain from the edge of the DEM are skipped. "
-        "This prevents incorrect drainage area and statistics for incomplete basins."};
+        "This prevents incorrect drainage area and statistics for incomplete basins.",
+        "Basin quality control", "param", ""};
 
     // --- Hillshade ---
     bool_default_map["write_hillshade_raster"] = false;
     help_map["write_hillshade_raster"] = {"bool","false",
         "Write a hillshade raster after sea masking.",
-        "Useful for quick visual QC of the masked DEM."};
+        "Useful for quick visual QC of the masked DEM.",
+        "Hillshade", "switch", ""};
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
         "Sun azimuth in degrees clockwise from north.",
-        "315 is the standard cartographic northwest illumination."};
+        "315 is the standard cartographic northwest illumination.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
     help_map["hillshade_altitude"] = {"float","45",
         "Sun altitude above horizon in degrees.",
-        "45 degrees is a common default."};
+        "45 degrees is a common default.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_z_factor"] = 1.0f;
     help_map["hillshade_z_factor"] = {"float","1.0",
         "Vertical exaggeration factor for hillshade.",
-        "Values greater than 1 emphasise relief."};
+        "Values greater than 1 emphasise relief.",
+        "Hillshade", "param", "write_hillshade_raster"};
 
     // --- Channel statistics ---
     bool_default_map["calculate_channel_stats"] = true;
     help_map["calculate_channel_stats"] = {"bool","true",
         "Build a channel/junction network and compute channel length by stream order.",
-        "Requires threshold_contributing_pixels to define channel sources."};
+        "Requires threshold_contributing_pixels to define channel sources.",
+        "Channel statistics", "switch", ""};
 
     int_default_map["threshold_contributing_pixels"] = 500;
     help_map["threshold_contributing_pixels"] = {"int","500",
         "Minimum number of contributing pixels to define a channel source.",
-        "Used when calculate_channel_stats is true. Larger values give a sparser network."};
+        "Used when calculate_channel_stats is true. Larger values give a sparser network.",
+        "Channel statistics", "param", ""};
 
     bool_default_map["calculate_junction_area_ratios"] = false;
     help_map["calculate_junction_area_ratios"] = {"bool","false",
@@ -690,12 +697,14 @@ int main(int argc, char* argv[])
         "<write_fname>_junction_area_ratios.csv, "
         "<write_fname>_junction_area_ratio_summary.csv (with branch-bootstrap "
         "confidence intervals), and a _junction_area_ratio_decades.csv collapse "
-        "table."};
+        "table.",
+        "Channel statistics", "switch", ""};
 
     int_default_map["junction_area_ratio_bootstrap"] = 1000;
     help_map["junction_area_ratio_bootstrap"] = {"int","1000",
         "Branch-bootstrap replicates for junction area-ratio confidence intervals.",
-        "Resampling is over non-mainstem tributary branches. 0 disables it."};
+        "Resampling is over non-mainstem tributary branches. 0 disables it.",
+        "Channel statistics", "param", ""};
 
     bool_default_map["write_basin_polygons"] = false;
     help_map["write_basin_polygons"] = {"bool","false",
@@ -703,12 +712,14 @@ int main(int argc, char* argv[])
         "Attaches the hydromorphic stats (and shape metrics / centre-of-mass "
         "bearing when those are enabled) to each basin's outline polygon as a "
         "vector layer. Output: <write_fname>_basin_polygons.<ext>. "
-        "Format set by basin_polygon_format."};
+        "Format set by basin_polygon_format.",
+        "Channel statistics", "switch", ""};
 
     string_default_map["basin_polygon_format"] = "flatgeobuf";
     help_map["basin_polygon_format"] = {"string","flatgeobuf",
         "Vector format for the basin-polygon output.",
-        "flatgeobuf (default) or gpkg."};
+        "flatgeobuf (default) or gpkg.",
+        "Channel statistics", "param", ""};
 
     bool_default_map["calculate_centre_of_mass_bearing"] = false;
     help_map["calculate_centre_of_mass_bearing"] = {"bool","false",
@@ -717,7 +728,8 @@ int main(int argc, char* argv[])
         "upslope pixels (already reported as centroid_x/centroid_y). This adds "
         "com_bearing_deg (geographic bearing from North, clockwise, outlet -> "
         "centre of mass) and com_distance_m columns. The outlet is the user-"
-        "supplied (optionally snapped) outlet pixel; the channel is not followed."};
+        "supplied (optionally snapped) outlet pixel; the channel is not followed.",
+        "Channel statistics", "switch", ""};
 
     // --- Basin shape metrics ---
     bool_default_map["calculate_shape_metrics"] = false;
@@ -729,7 +741,8 @@ int main(int argc, char* argv[])
         "gravelius_compactness, solidity, eccentricity, orientation_deg, and "
         "hypsometric_integral columns to the output CSV. When false, the outline "
         "is not traced and those columns are omitted, reproducing the original "
-        "basin-stats output. See docs/basin_shape_metrics.tex."};
+        "basin-stats output. See docs/basin_shape_metrics.tex.",
+        "Basin shape metrics", "switch", ""};
 
     string_default_map["basin_length_definition"] = "flow_path";
     help_map["basin_length_definition"] = {"string","flow_path",
@@ -738,7 +751,8 @@ int main(int argc, char* argv[])
         "basin length; the default and the usual geomorphic convention). "
         "geometric: the maximum Feret diameter of the basin outline polygon "
         "(longest straight-line caliper). The two are not interchangeable and "
-        "Re, Rf both scale with L_b. See docs/basin_shape_metrics.tex."};
+        "Re, Rf both scale with L_b. See docs/basin_shape_metrics.tex.",
+        "Basin shape metrics", "param", "calculate_shape_metrics"};
 
     float_default_map["shape_perimeter_simplify_cells"] = 1.0f;
     help_map["shape_perimeter_simplify_cells"] = {"float","1.0",
@@ -749,24 +763,51 @@ int main(int argc, char* argv[])
         "two metrics is measured on a ring simplified with tolerance "
         "(this value * cell_size) in metres. Set to 0 to disable simplification "
         "and use the raw staircased perimeter. Area-based metrics (elongation, "
-        "form factor, solidity) are unaffected."};
+        "form factor, solidity) are unaffected.",
+        "Basin shape metrics", "param", "calculate_shape_metrics"};
 
     // --- Basin distribution output ---
     bool_default_map["write_basin_pdf_cdf_csv"] = false;
     help_map["write_basin_pdf_cdf_csv"] = {"bool","false",
         "Write PDF/CDF CSV output for each basin.",
         "If true, writes one CSV per basin containing histogram counts, "
-        "probabilities, PDF, and CDF of basin elevations."};
+        "probabilities, PDF, and CDF of basin elevations.",
+        "Basin distribution output", "switch", ""};
 
     int_default_map["n_histogram_bins"] = 100;
     help_map["n_histogram_bins"] = {"int","100",
         "Number of bins used for basin elevation histogram/PDF/CDF output.",
-        "Used when write_basin_pdf_cdf_csv is true. Default is 100 bins."};
+        "Used when write_basin_pdf_cdf_csv is true. Default is 100 bins.",
+        "Basin distribution output", "param", "write_basin_pdf_cdf_csv"};
 
 
     // -------------------------------------------------------------------------
     // Parse parameters
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -1834,6 +1875,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Echo parameters for reproducibility
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-basin-stats: done.\n";

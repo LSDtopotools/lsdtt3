@@ -73,64 +73,85 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     std::map<std::string, bool>                     bool_default_map;
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Baseline / value input ---
     string_default_map["baseline_vector_fname"] = "";
     help_map["baseline_vector_fname"] = {"string","",
         "Vector file (FlatGeobuf/GeoPackage/Shapefile) with the swath baseline.",
         "The first LineString feature is used as the ordered baseline polyline. "
-        "Coordinates must be in the raster's projected CRS (metres)."};
+        "Coordinates must be in the raster's projected CRS (metres).",
+        "Baseline / value input", "param", ""};
 
     string_default_map["value_raster_fname"] = "NULL";
     help_map["value_raster_fname"] = {"string","NULL",
         "Optional raster whose values are binned along the swath.",
         "If NULL (default), the input DEM's own values (elevation) are binned. "
-        "Must share the input DEM's geometry."};
+        "Must share the input DEM's geometry.",
+        "Baseline / value input", "param", ""};
 
     // --- Swath geometry ---
     float_default_map["half_width_metres"] = 0.0f;
     help_map["half_width_metres"] = {"float","0.0",
         "Only pixels within this distance of the baseline are included.",
-        "Set to 0 to include all valid pixels (full-extent swath)."};
+        "Set to 0 to include all valid pixels (full-extent swath).",
+        "Swath geometry", "param", ""};
 
     float_default_map["bin_width_metres"] = 1000.0f;
     help_map["bin_width_metres"] = {"float","1000.0",
-        "Along-axis bin width in metres. Must be > 0.", ""};
+        "Along-axis bin width in metres. Must be > 0.", "",
+        "Swath geometry", "param", ""};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
-        "Number of OpenMP threads (0 = all available).", ""};
+        "Number of OpenMP threads (0 = all available).", "",
+        "Swath geometry", "io", ""};
 
     // --- Output ---
     bool_default_map["write_distance_rasters"] = true;
     help_map["write_distance_rasters"] = {"bool","true",
         "Write the along-axis, perpendicular, and signed-perpendicular rasters.",
         "Output: <prefix>_swath_along_axis.tif, _swath_perp_distance.tif, "
-        "_swath_signed_perp.tif."};
+        "_swath_signed_perp.tif.",
+        "Output", "switch", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Raster output format for the distance rasters.",
-        "Allowed values: cog, gtiff, same_as_input."};
+        "Allowed values: cog, gtiff, same_as_input.",
+        "Output", "io", ""};
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
@@ -340,6 +361,8 @@ int main(int argc, char* argv[])
         }
     }
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-swath-profile: done.\n";
     return 0;

@@ -357,20 +357,10 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Default parameter maps
     // -------------------------------------------------------------------------
@@ -596,6 +586,39 @@ int main(int argc, char* argv[])
              "Height scale (m): plateau height (raised_plateau), noise amplitude "
              "(perturbed), or crest height (linear_ramp).",""}},
     };
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    // This CLI declares its help map with brace initialisation, so copy it
+    // into a registry for the help renderer (alphabetical order; the
+    // entries carry no group metadata yet).
+    lsdtt::lsdtt_help_registry help_registry;
+    for (const auto& [help_key, help_entry] : help_map)
+    {
+        help_registry[help_key] = help_entry;
+    }
+
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_registry, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     pp.parse_all_parameters(float_defaults, int_defaults, bool_defaults, string_defaults);
 

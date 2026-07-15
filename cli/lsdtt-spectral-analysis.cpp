@@ -86,23 +86,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -110,13 +100,14 @@ int main(int argc, char* argv[])
     std::map<std::string, float>       float_default_map;
     std::map<std::string, int>         int_default_map;
     std::map<std::string, std::string> string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
     int_default_map["n_threads"] = 1;
     help_map["n_threads"] = {"int","1",
         "Number of OpenMP threads.",
-        "0 = use all hardware threads. 1 = serial (default)."};
+        "0 = use all hardware threads. 1 = serial (default).",
+        "Threading", "io", ""};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -124,21 +115,24 @@ int main(int argc, char* argv[])
         "Output raster format.",
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format."};
+        "same_as_input: match the input raster format.",
+        "Output format", "io", ""};
 
     // --- Spectral options ---
     float_default_map["spectral_log_bin_width"] = 0.05f;
     help_map["spectral_log_bin_width"] = {"float","0.05",
         "Log10 bin width for the radial spectrum.",
         "Controls the width of each frequency bin in log10 space. "
-        "Smaller values give finer frequency resolution. Default is 0.05."};
+        "Smaller values give finer frequency resolution. Default is 0.05.",
+        "Spectral options", "param", ""};
 
     int_default_map["n_background_iterations"] = 20;
     help_map["n_background_iterations"] = {"int","20",
         "Number of iterations for synthetic background spectrum estimation.",
         "Each iteration generates a random phase spectrum with the same "
         "amplitude envelope. More iterations give a smoother background. "
-        "Default is 20."};
+        "Default is 20.",
+        "Spectral options", "param", ""};
 
     int_default_map["background_seed"] = -1;
     help_map["background_seed"] = {"int","-1",
@@ -146,31 +140,59 @@ int main(int argc, char* argv[])
         "Iteration i uses seed = background_seed + i. "
         "Default (-1) uses the built-in sequence (base 1000), which is always "
         "reproducible. Set an explicit non-negative integer to pin a specific "
-        "realisation - record the value alongside results to reproduce them exactly."};
+        "realisation - record the value alongside results to reproduce them exactly.",
+        "Spectral options", "param", ""};
 
     // --- Output toggles ---
     bool_default_map["write_2d_spectrum"] = true;
     help_map["write_2d_spectrum"] = {"bool","true",
         "Write the 2D observed and background PSD rasters.",
-        "Writes _psd_2d.tif and _background_psd_2d.tif in frequency space."};
+        "Writes _psd_2d.tif and _background_psd_2d.tif in frequency space.",
+        "Output toggles", "switch", ""};
 
     bool_default_map["write_radial_spectrum"] = false;
     help_map["write_radial_spectrum"] = {"bool","false",
         "Write the log-binned radial spectrum as a CSV.",
         "Writes _radial_spectrum.csv with columns: "
         "frequency, wavelength, psd, background_psd, normalised_psd, "
-        "beta_by_bin, r_sq_by_bin."};
+        "beta_by_bin, r_sq_by_bin.",
+        "Output toggles", "switch", ""};
 
     bool_default_map["write_significant_frequencies"] = true;
     help_map["write_significant_frequencies"] = {"bool","true",
         "Write a CSV of frequencies with significant spectral power.",
         "Writes _significant_frequencies.csv. A frequency is significant if "
         "its normalised PSD exceeds the chi-squared 95% CI threshold (2.9955). "
-        "Also includes rollover summary lines."};
+        "Also includes rollover summary lines.",
+        "Output toggles", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -432,5 +454,7 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "\nDone.\n";
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     return 0;
 }

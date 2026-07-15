@@ -71,20 +71,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try { pp = lsdtt::lsdtt_param_parser(path, fname); }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     //
@@ -98,39 +91,44 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
         "0 = use all available hardware threads. "
-        "Applies to pit filling and flow-routing construction."};
+        "Applies to pit filling and flow-routing construction.",
+        "Threading", "io", ""};
 
     // --- DEM and flow routing ---
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for D8 flow routing.",
         "Four-character string for north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "DEM and flow routing", "param", ""};
 
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool","false",
         "Whether the input raster is already pit-filled and ready for routing.",
         "If false (default), fill_pits() is called before building flow routing. "
-        "If true, the DEM is used as supplied."};
+        "If true, the DEM is used as supplied.",
+        "DEM and flow routing", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
         "Used only when raster_is_filled is false. "
-        "Passed to fill_pits() to gently enforce downstream descent."};
+        "Passed to fill_pits() to gently enforce downstream descent.",
+        "DEM and flow routing", "param", ""};
 
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int","1000",
         "Contributing-pixel threshold used to define channel source heads.",
         "Channel heads are extracted from the flow object by this threshold. "
-        "Reduce to extract a denser network; increase for sparser."};
+        "Reduce to extract a denser network; increase for sparser.",
+        "DEM and flow routing", "param", ""};
 
     // --- Transport formula ---
     string_default_map["transport_formula_choice"] = "wilcock_crowe";
@@ -141,33 +139,38 @@ int main(int argc, char* argv[])
         "wong_parker: Wong & Parker (2006) with Parker (1982) hiding function. "
         "Best for unimodal gravel beds. "
         "engelund_hansen: Engelund & Hansen (1967) total-load formula using D50. "
-        "Simple but does not resolve grain-size classes."};
+        "Simple but does not resolve grain-size classes.",
+        "Transport formula", "param", ""};
 
     // --- Routing time control ---
     int_default_map["n_timesteps"] = 365;
     help_map["n_timesteps"] = {"int","365",
         "Number of routing timesteps.",
         "The model marches upstream-to-downstream this many times. "
-        "Use 365 with timestep_s = 86400 for one year of daily steps."};
+        "Use 365 with timestep_s = 86400 for one year of daily steps.",
+        "Routing time control", "param", ""};
 
     float_default_map["timestep_s"] = 86400.0f;
     help_map["timestep_s"] = {"float","86400",
         "Duration of each routing timestep in seconds.",
         "Default is one day (86400 s). "
-        "Must be consistent with the discharge input if use_giuh_discharge is true."};
+        "Must be consistent with the discharge input if use_giuh_discharge is true.",
+        "Routing time control", "param", ""};
 
     // --- Sediment properties ---
     float_default_map["porosity"] = 0.4f;
     help_map["porosity"] = {"float","0.4",
         "Bed sediment porosity (dimensionless).",
         "Used to convert between bulk volume and solid volume when updating "
-        "the active layer. Typical gravel beds: 0.35-0.45."};
+        "the active layer. Typical gravel beds: 0.35-0.45.",
+        "Sediment properties", "param", ""};
 
     float_default_map["sediment_density_kg_m3"] = 2650.0f;
     help_map["sediment_density_kg_m3"] = {"float","2650",
         "Sediment grain density [kg/m^3].",
         "Quartz density is 2650 kg/m^3. Used in Shields stress and "
-        "transport capacity calculations."};
+        "transport capacity calculations.",
+        "Sediment properties", "param", ""};
 
     float_default_map["active_layer_depth_m"] = -1.0f;
     help_map["active_layer_depth_m"] = {"float","-1",
@@ -175,7 +178,8 @@ int main(int argc, char* argv[])
         "The active layer is the mobile surface sediment that participates in "
         "exchange each timestep. "
         "Values <= 0 (default) use 2 x D90 per reach (Parker 1991), "
-        "which scales with the coarsest grains."};
+        "which scales with the coarsest grains.",
+        "Sediment properties", "param", ""};
 
     // --- Grain-size distribution ---
     string_default_map["psi_mm"] = "4,8,16,32,64";
@@ -184,48 +188,56 @@ int main(int argc, char* argv[])
         "Defines the grain-size classes used in transport calculations. "
         "Values correspond to phi-scale class centres (4, 8, 16, 32, 64 mm "
         "span fine gravel to coarse gravel). "
-        "Must have the same number of entries as gsd_fractions."};
+        "Must have the same number of entries as gsd_fractions.",
+        "Grain-size distribution", "param", ""};
 
     string_default_map["gsd_fractions"] = "0.10,0.25,0.35,0.20,0.10";
     help_map["gsd_fractions"] = {"string","0.10,0.25,0.35,0.20,0.10",
         "Mass fraction per grain class, comma-separated (must sum to 1).",
         "Applied uniformly to all reaches unless overridden. "
-        "Must have the same number of entries as psi_mm."};
+        "Must have the same number of entries as psi_mm.",
+        "Grain-size distribution", "param", ""};
 
     float_default_map["D50_m"] = 0.016f;
     help_map["D50_m"] = {"float","0.016",
         "Median grain diameter [m] used in transport and hydraulic calculations.",
         "Used directly by the Engelund-Hansen formula and as the reference "
-        "grain size for hiding-function calculations in Wong-Parker."};
+        "grain size for hiding-function calculations in Wong-Parker.",
+        "Grain-size distribution", "param", ""};
 
     float_default_map["D84_m"] = 0.045f;
     help_map["D84_m"] = {"float","0.045",
         "D84 grain diameter [m].",
-        "84th percentile grain diameter. Used in Wilcock-Crowe hiding function."};
+        "84th percentile grain diameter. Used in Wilcock-Crowe hiding function.",
+        "Grain-size distribution", "param", ""};
 
     float_default_map["D90_m"] = 0.055f;
     help_map["D90_m"] = {"float","0.055",
         "D90 grain diameter [m].",
         "90th percentile grain diameter. Sets the default active-layer depth "
-        "(2 x D90) when active_layer_depth_m <= 0."};
+        "(2 x D90) when active_layer_depth_m <= 0.",
+        "Grain-size distribution", "param", ""};
 
     float_default_map["mannings_n"] = 0.04f;
     help_map["mannings_n"] = {"float","0.04",
         "Manning's roughness coefficient for flow-depth estimation.",
         "Used to compute normal flow depth from discharge, width, and slope "
-        "via Manning's equation. Typical gravel-bed rivers: 0.03-0.07."};
+        "via Manning's equation. Typical gravel-bed rivers: 0.03-0.07.",
+        "Grain-size distribution", "param", ""};
 
     // --- Channel width (hydraulic geometry) ---
     float_default_map["width_coefficient"] = 2.76f;
     help_map["width_coefficient"] = {"float","2.76",
         "Hydraulic-geometry coefficient for channel width.",
         "Width [m] = width_coefficient x drainage_area [m^2]^width_exponent. "
-        "Default (2.76) is from Leopold & Maddock (1953) for gravel-bed rivers."};
+        "Default (2.76) is from Leopold & Maddock (1953) for gravel-bed rivers.",
+        "Channel width (hydraulic geometry)", "param", ""};
 
     float_default_map["width_exponent"] = 0.40f;
     help_map["width_exponent"] = {"float","0.40",
         "Hydraulic-geometry exponent for channel width.",
-        "Typical range: 0.35-0.50 for natural rivers."};
+        "Typical range: 0.35-0.50 for natural rivers.",
+        "Channel width (hydraulic geometry)", "param", ""};
 
     // --- Discharge (hydraulic geometry fallback) ---
     float_default_map["discharge_coefficient"] = 1.0e-5f;
@@ -233,12 +245,14 @@ int main(int argc, char* argv[])
         "Hydraulic-geometry coefficient for mean discharge when GIUH is not used.",
         "Q [m^3/s] = discharge_coefficient x drainage_area [m^2]^discharge_exponent. "
         "This is a simple power-law scaling. Use use_giuh_discharge for a "
-        "physics-based estimate."};
+        "physics-based estimate.",
+        "Discharge (hydraulic geometry fallback)", "param", ""};
 
     float_default_map["discharge_exponent"] = 0.80f;
     help_map["discharge_exponent"] = {"float","0.80",
         "Hydraulic-geometry exponent for mean discharge.",
-        "Typical range: 0.7-0.9. Used only when use_giuh_discharge is false."};
+        "Typical range: 0.7-0.9. Used only when use_giuh_discharge is false.",
+        "Discharge (hydraulic geometry fallback)", "param", ""};
 
     // --- GIUH discharge estimation ---
     bool_default_map["use_giuh_discharge"] = false;
@@ -248,71 +262,82 @@ int main(int argc, char* argv[])
         "is computed from the channel network geometry. A synthetic rainfall pulse "
         "is convolved with the IUH to produce per-reach discharge at each timestep. "
         "When false, discharge is estimated from drainage area using the "
-        "discharge_coefficient and discharge_exponent power law."};
+        "discharge_coefficient and discharge_exponent power law.",
+        "GIUH discharge estimation", "switch", ""};
 
     float_default_map["giuh_v_ref_m_per_s"] = 1.0f;
     help_map["giuh_v_ref_m_per_s"] = {"float","1.0",
         "Reference channel velocity [m/s] for GIUH travel-time estimation.",
         "Travel velocity in each reach is scaled from this reference: "
         "v = v_ref x (slope / slope_ref)^velocity_exponent. "
-        "Typical bankfull channel velocities are 0.5-2.0 m/s."};
+        "Typical bankfull channel velocities are 0.5-2.0 m/s.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_slope_ref"] = 0.01f;
     help_map["giuh_slope_ref"] = {"float","0.01",
         "Reference slope corresponding to giuh_v_ref_m_per_s.",
         "A reach with slope equal to giuh_slope_ref is assigned velocity "
-        "giuh_v_ref_m_per_s. Steeper reaches are faster; shallower are slower."};
+        "giuh_v_ref_m_per_s. Steeper reaches are faster; shallower are slower.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_velocity_exponent"] = 0.5f;
     help_map["giuh_velocity_exponent"] = {"float","0.5",
         "Exponent beta in the kinematic-wave velocity scaling v proportional_to slope^beta.",
         "beta = 0.5 is consistent with Manning's equation and the kinematic wave "
-        "approximation. Typical range: 0.3-0.6."};
+        "approximation. Typical range: 0.3-0.6.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_hillslope_length_m"] = -1.0f;
     help_map["giuh_hillslope_length_m"] = {"float","-1",
         "Mean hillslope length [m] added as overland-flow travel time per reach.",
         "When > 0, an overland-flow travel time = hillslope_length / v_hillslope "
         "is added to each reach, delaying the IUH peak. "
-        "Values <= 0 disable the hillslope contribution."};
+        "Values <= 0 disable the hillslope contribution.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_v_hillslope_m_per_s"] = 0.005f;
     help_map["giuh_v_hillslope_m_per_s"] = {"float","0.005",
         "Overland-flow velocity [m/s] for hillslope travel time.",
         "Only used when giuh_hillslope_length_m > 0. "
-        "Typical sheet-flow velocities: 0.001-0.01 m/s."};
+        "Typical sheet-flow velocities: 0.001-0.01 m/s.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     int_default_map["giuh_n_bins"] = 200;
     help_map["giuh_n_bins"] = {"int","200",
         "Number of time bins used to discretise the IUH.",
         "More bins give a smoother IUH but use more memory. "
-        "200 bins at 1-hour resolution covers 200 hours of response time."};
+        "200 bins at 1-hour resolution covers 200 hours of response time.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_dt_bin_s"] = 3600.0f;
     help_map["giuh_dt_bin_s"] = {"float","3600",
         "Width of each IUH time bin in seconds.",
         "Set to match or be smaller than timestep_s for accurate convolution. "
-        "Default is 1 hour (3600 s)."};
+        "Default is 1 hour (3600 s).",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_runoff_coefficient"] = 1.0f;
     help_map["giuh_runoff_coefficient"] = {"float","1.0",
         "Fraction of rainfall that becomes runoff (dimensionless, 0-1).",
         "Applied to the rainfall rate before convolving with the IUH. "
         "1.0 = all rain reaches the channel (no infiltration losses). "
-        "Lower values reduce the discharge estimate."};
+        "Lower values reduce the discharge estimate.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_rainfall_rate_m_per_s"] = 1.0e-5f;
     help_map["giuh_rainfall_rate_m_per_s"] = {"float","1e-5",
         "Rainfall rate [m/s] for the synthetic IUH pulse (~= 36 mm/hr).",
         "A uniform pulse of this intensity lasting giuh_pulse_duration_s "
         "is convolved with the IUH to produce the discharge time series. "
-        "Adjust to represent the design storm relevant to your setting."};
+        "Adjust to represent the design storm relevant to your setting.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     float_default_map["giuh_pulse_duration_s"] = 86400.0f;
     help_map["giuh_pulse_duration_s"] = {"float","86400",
         "Duration of the synthetic rainfall pulse in seconds.",
         "The pulse is applied uniformly over this duration at giuh_rainfall_rate_m_per_s. "
-        "Default is 86400 s (one day), matching the default timestep_s."};
+        "Default is 86400 s (one day), matching the default timestep_s.",
+        "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
     // --- Output ---
     string_default_map["write_output_format"] = "cog";
@@ -320,25 +345,52 @@ int main(int argc, char* argv[])
         "Output raster format.",
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format."};
+        "same_as_input: match the input raster format.",
+        "Output", "io", ""};
 
     bool_default_map["write_deposition_raster"] = true;
     help_map["write_deposition_raster"] = {"bool","true",
         "Write cumulative sediment deposition [m^3] per reach as a raster.",
         "Each channel pixel in a reach is assigned the cumulative deposition "
         "volume for that reach summed over all timesteps. "
-        "Output file: <write_fname>_cumulative_deposition.tif."};
+        "Output file: <write_fname>_cumulative_deposition.tif.",
+        "Output", "switch", ""};
 
     bool_default_map["write_d50_raster"] = true;
     help_map["write_d50_raster"] = {"bool","true",
         "Write the final active-layer D50 [m] per reach as a raster.",
         "D50 is computed from the grain-size distribution of the active layer "
         "at the end of the last timestep. "
-        "Output file: <write_fname>_d50_al.tif."};
+        "Output file: <write_fname>_d50_al.tif.",
+        "Output", "switch", ""};
 
     // -------------------------------------------------------------------------
     // Parse - fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -671,7 +723,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     pp.print_help(
         help_map,
-        pp.get_full_write_path() + "_README",
+        pp.get_write_fname() + "_README",
         k_version,
         k_citation
     );

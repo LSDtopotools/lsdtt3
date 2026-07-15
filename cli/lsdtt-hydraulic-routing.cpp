@@ -68,23 +68,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     // -------------------------------------------------------------------------
@@ -92,204 +82,241 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- DEM preparation ---
     bool_default_map["raster_is_filled"] = false;
     help_map["raster_is_filled"] = {"bool","false",
         "Whether the input DEM is already pit-filled.",
-        "If false, fill_pits() is run before flowgraph construction."};
+        "If false, fill_pits() is run before flowgraph construction.",
+        "DEM preparation", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
-        "Used only when raster_is_filled is false."};
+        "Used only when raster_is_filled is false.",
+        "DEM preparation", "param", ""};
 
     // --- Flowgraph routing ---
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for flow routing.",
         "Four-character string for north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet."};
+        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "Flowgraph routing", "param", ""};
 
     string_default_map["flow_routing_method"] = "mfd";
     help_map["flow_routing_method"] = {"string","mfd",
         "Flowgraph routing method.",
-        "Allowed values: mfd or dinf."};
+        "Allowed values: mfd or dinf.",
+        "Flowgraph routing", "param", ""};
 
     float_default_map["mfd_exponent"] = 1.0f;
     help_map["mfd_exponent"] = {"float","1.0",
         "Slope-weighting exponent for MFD routing.",
-        "Used only when flow_routing_method = mfd."};
+        "Used only when flow_routing_method = mfd.",
+        "Flowgraph routing", "param", ""};
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
-        "0 = use all available hardware threads."};
+        "0 = use all available hardware threads.",
+        "Flowgraph routing", "io", ""};
 
     // --- Hydraulic parameters ---
     float_default_map["hydraulic_dt"] = 1.0e-3f;
     help_map["hydraulic_dt"] = {"float","1e-3",
         "Fixed hydraulic timestep in seconds.",
-        "Used for every hydraulic update."};
+        "Used for every hydraulic update.",
+        "Hydraulic parameters", "param", ""};
 
     float_default_map["mannings_n"] = 0.033f;
     help_map["mannings_n"] = {"float","0.033",
         "Manning roughness coefficient.",
-        "Uniform Manning's n for the hydraulic solver."};
+        "Uniform Manning's n for the hydraulic solver.",
+        "Hydraulic parameters", "param", ""};
 
     float_default_map["hydraulic_min_slope"] = 1.0e-8f;
     help_map["hydraulic_min_slope"] = {"float","1e-8",
         "Minimum hydraulic slope used internally.",
-        "Prevents zero-gradient numerical stagnation."};
+        "Prevents zero-gradient numerical stagnation.",
+        "Hydraulic parameters", "param", ""};
 
     float_default_map["max_dh_rate"] = 1.0f;
     help_map["max_dh_rate"] = {"float","1.0",
         "Maximum rate of water-depth change in m/s before applying dt.",
         "Clamps (Qin-Qout)/A per iteration to prevent overshoot. "
-        "Reduce if the solver oscillates; increase to allow faster depth changes."};
+        "Reduce if the solver oscillates; increase to allow faster depth changes.",
+        "Hydraulic parameters", "param", ""};
 
     float_default_map["uniform_rainfall_rate"] = 0.0f;
     help_map["uniform_rainfall_rate"] = {"float","0.0",
         "Uniform rainfall/input rate in m/s.",
-        "Applied to all valid cells at every timestep."};
+        "Applied to all valid cells at every timestep.",
+        "Hydraulic parameters", "param", ""};
 
     float_default_map["receiver_width"] = -1.0f;
     help_map["receiver_width"] = {"float","-1.0",
         "Effective receiver width in metres.",
         "If <= 0, the solver falls back to a geometry-based default "
-        "(currently cell_size)."};
+        "(currently cell_size).",
+        "Hydraulic parameters", "param", ""};
 
     int_default_map["n_steps"] = 100;
     help_map["n_steps"] = {"int","100",
         "Number of hydraulic timesteps to run.",
-        "The routing graph remains fixed throughout the run."};
+        "The routing graph remains fixed throughout the run.",
+        "Hydraulic parameters", "param", ""};
 
     // --- Point inflow ---
     bool_default_map["use_point_inflow"] = false;
     help_map["use_point_inflow"] = {"bool","false",
         "Apply a single point inflow to the hydraulic solver.",
         "If true, the solver adds a fixed discharge at point_inflow_flat_index "
-        "every timestep."};
+        "every timestep.",
+        "Point inflow", "switch", ""};
 
     int_default_map["point_inflow_flat_index"] = 0;
     help_map["point_inflow_flat_index"] = {"int","0",
         "Flat raster index of the point inflow cell.",
-        "Flat index is row * n_cols + col in row-major order."};
+        "Flat index is row * n_cols + col in row-major order.",
+        "Point inflow", "param", ""};
 
     float_default_map["point_inflow_discharge_m3_per_s"] = 0.0f;
     help_map["point_inflow_discharge_m3_per_s"] = {"float","0.0",
         "Point inflow discharge in m^3/s.",
-        "Used only when use_point_inflow is true."};
+        "Used only when use_point_inflow is true.",
+        "Point inflow", "param", ""};
 
     string_default_map["hydraulic_run_mode"] = "stationary";
     help_map["hydraulic_run_mode"] = {"string","stationary",
         "Hydraulic solve mode.",
-        "Allowed values: stationary or transient."};
+        "Allowed values: stationary or transient.",
+        "Point inflow", "param", ""};
 
     bool_default_map["run_until_converged"] = true;
     help_map["run_until_converged"] = {"bool","true",
         "Run until convergence instead of a fixed number of steps.",
-        "Used mainly for stationary mode."};
+        "Used mainly for stationary mode.",
+        "Point inflow", "switch", ""};
 
     int_default_map["report_every"] = 50;
     help_map["report_every"] = {"int","50",
         "Iteration interval for progress reporting.",
-        "Set <= 0 to disable periodic progress output."};
+        "Set <= 0 to disable periodic progress output.",
+        "Point inflow", "param", ""};
 
     int_default_map["convergence_check_every"] = 10;
     help_map["convergence_check_every"] = {"int","10",
         "Iteration interval for convergence checking.",
-        "Used by run_until_converged."};
+        "Used by run_until_converged.",
+        "Point inflow", "param", ""};
 
     float_default_map["tol_median_abs_dhw"] = 1.0e-6f;
     help_map["tol_median_abs_dhw"] = {"float","1e-6",
         "Absolute median dhw convergence threshold in metres.",
-        "Used by run_until_converged."};
+        "Used by run_until_converged.",
+        "Point inflow", "param", ""};
 
     float_default_map["tol_median_rel_dhw"] = 1.0e-4f;
     help_map["tol_median_rel_dhw"] = {"float","1e-4",
         "Relative median dhw convergence threshold.",
-        "Used by run_until_converged."};
+        "Used by run_until_converged.",
+        "Point inflow", "param", ""};
 
     // adaptive timesteps
     bool_default_map["adaptive_dt_enabled"] = false;
     help_map["adaptive_dt_enabled"] = {"bool","false",
         "Enable simple adaptive timestep control in stationary convergence runs.",
-        "Adaptive dt only acts inside run_until_converged."};
+        "Adaptive dt only acts inside run_until_converged.",
+        "Point inflow", "param", ""};
 
     float_default_map["adaptive_dt_min"] = 1.0e-4f;
     help_map["adaptive_dt_min"] = {"float","1e-4",
         "Minimum adaptive timestep in seconds.",
-        "Used only when adaptive_dt_enabled is true."};
+        "Used only when adaptive_dt_enabled is true.",
+        "Point inflow", "param", ""};
 
     float_default_map["adaptive_dt_max"] = 1.0f;
     help_map["adaptive_dt_max"] = {"float","1.0",
         "Maximum adaptive timestep in seconds.",
-        "Used only when adaptive_dt_enabled is true."};
+        "Used only when adaptive_dt_enabled is true.",
+        "Point inflow", "param", ""};
 
     float_default_map["adaptive_target_median_abs_dhw"] = 1.0e-3f;
     help_map["adaptive_target_median_abs_dhw"] = {"float","1e-3",
         "Target median absolute water-depth change per checked iteration in metres.",
-        "Adaptive dt grows or shrinks to keep median |dhw| near this target."};
+        "Adaptive dt grows or shrinks to keep median |dhw| near this target.",
+        "Point inflow", "param", ""};
 
     float_default_map["adaptive_dt_growth_factor"] = 1.5f;
     help_map["adaptive_dt_growth_factor"] = {"float","1.5",
         "Multiplicative factor used to increase adaptive dt.",
-        "Must be > 1."};
+        "Must be > 1.",
+        "Point inflow", "param", ""};
 
     float_default_map["adaptive_dt_shrink_factor"] = 0.5f;
     help_map["adaptive_dt_shrink_factor"] = {"float","0.5",
         "Multiplicative factor used to decrease adaptive dt.",
-        "Must be > 0 and < 1."};
+        "Must be > 0 and < 1.",
+        "Point inflow", "param", ""};
 
     // dynamic routing (i.e., graph is updated with water surface)
     bool_default_map["dynamic_routing_enabled"] = false;
     help_map["dynamic_routing_enabled"] = {"bool","false",
         "Rebuild the routing graph from the evolving water surface.",
-        "If true, routing is refreshed during the hydraulic run."};
+        "If true, routing is refreshed during the hydraulic run.",
+        "Point inflow", "param", ""};
 
     int_default_map["reroute_every"] = 1;
     help_map["reroute_every"] = {"int","1",
         "Number of hydraulic iterations between routing rebuilds.",
-        "Used only when dynamic_routing_enabled is true."};
+        "Used only when dynamic_routing_enabled is true.",
+        "Point inflow", "param", ""};
 
 
     // --- Output controls ---
     bool_default_map["write_water_depth_raster"] = true;
     help_map["write_water_depth_raster"] = {"bool","true",
         "Write final water depth raster.",
-        "Output suffix: _water_depth.tif"};
+        "Output suffix: _water_depth.tif",
+        "Output controls", "switch", ""};
 
     bool_default_map["write_water_surface_raster"] = true;
     help_map["write_water_surface_raster"] = {"bool","true",
         "Write final water surface raster.",
-        "Output suffix: _water_surface.tif"};
+        "Output suffix: _water_surface.tif",
+        "Output controls", "switch", ""};
 
     bool_default_map["write_qin_raster"] = false;
     help_map["write_qin_raster"] = {"bool","false",
         "Write final qin raster.",
-        "Output suffix: _qin.tif"};
+        "Output suffix: _qin.tif",
+        "Output controls", "switch", ""};
 
     bool_default_map["write_qout_raster"] = false;
     help_map["write_qout_raster"] = {"bool","false",
         "Write final qout raster.",
-        "Output suffix: _qout.tif"};
+        "Output suffix: _qout.tif",
+        "Output controls", "switch", ""};
 
     bool_default_map["write_dhw_raster"] = false;
     help_map["write_dhw_raster"] = {"bool","false",
         "Write final timestep water-depth increment raster.",
-        "Output suffix: _dhw.tif"};
+        "Output suffix: _dhw.tif",
+        "Output controls", "switch", ""};
 
     bool_default_map["write_bed_raster"] = false;
     help_map["write_bed_raster"] = {"bool","false",
         "Write bed elevation raster used by the hydraulic solver.",
-        "Output suffix: _bed.tif"};
+        "Output suffix: _bed.tif",
+        "Output controls", "switch", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output format for raster outputs.",
-        "Allowed values: cog, gtiff, same_as_input."};
+        "Allowed values: cog, gtiff, same_as_input.",
+        "Output controls", "io", ""};
 
     bool_default_map["write_hydraulic_slope_raster"] = false;
     bool_default_map["write_specific_discharge_raster"] = false;
@@ -302,6 +329,30 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -803,6 +854,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-hydraulic-routing: done.\n";

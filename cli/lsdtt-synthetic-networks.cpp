@@ -68,20 +68,10 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameters
     // -------------------------------------------------------------------------
@@ -89,30 +79,34 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
-    std::map<std::string, std::vector<std::string>> help_map;
+    lsdtt::lsdtt_help_registry help_map;
 
     // --- Lattice geometry ---
     int_default_map["n_rows"] = 128;
     help_map["n_rows"] = {"int","128",
         "Number of lattice rows.",
         "Lattice has n_rows x n_cols pixels; every pixel is a node of the "
-        "spanning tree. Cost scales with n_iter ~ 40*n_rows*n_cols."};
+        "spanning tree. Cost scales with n_iter ~ 40*n_rows*n_cols.",
+        "Lattice geometry", "param", ""};
 
     int_default_map["n_cols"] = 128;
     help_map["n_cols"] = {"int","128",
         "Number of lattice columns.",
-        "See n_rows."};
+        "See n_rows.",
+        "Lattice geometry", "param", ""};
 
     float_default_map["cell_size"] = 1.0f;
     help_map["cell_size"] = {"float","1.0",
         "Pixel size in map units (metres).",
-        "Sets the grid spacing of the output rasters."};
+        "Sets the grid spacing of the output rasters.",
+        "Lattice geometry", "param", ""};
 
     int_default_map["outlet_col"] = -1;
     help_map["outlet_col"] = {"int","-1",
         "Column of the single outlet on the south (bottom) edge.",
         "-1 places the outlet at the centre column. Only used for outlet_mode "
-        "single."};
+        "single.",
+        "Lattice geometry", "param", ""};
 
     // --- Domain (rectangle vs irregular island) ---
     string_default_map["domain_type"] = "rectangle";
@@ -121,7 +115,8 @@ int main(int argc, char* argv[])
         "rectangle: the full n_rows x n_cols grid. efd_island: a smooth random "
         "island from an Elliptical Fourier descriptor. noise_island: a "
         "radially-tapered red-noise island (fractal coast). polygon: a user "
-        "polygon vector scaled to the grid (set polygon_file)."};
+        "polygon vector scaled to the grid (set polygon_file).",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     string_default_map["outlet_mode"] = "auto";
     help_map["outlet_mode"] = {"string","auto",
@@ -129,32 +124,38 @@ int main(int argc, char* argv[])
         "auto: islands use all_coast, the rectangle uses single. single: one "
         "outlet (whole domain drains through one network; most sensitive to "
         "boundary shape). all_coast: every coastal land pixel is a base level "
-        "(an island draining to its whole coastline)."};
+        "(an island draining to its whole coastline).",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     float_default_map["island_fill_fraction"] = 0.7f;
     help_map["island_fill_fraction"] = {"float","0.7",
         "Approximate fraction of the grid occupied by land (island generators).",
-        "Span (efd) or area fraction (noise) of the island within the grid."};
+        "Span (efd) or area fraction (noise) of the island within the grid.",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     int_default_map["efd_n_harmonics"] = 6;
     help_map["efd_n_harmonics"] = {"int","6",
         "Number of Elliptical Fourier harmonics for efd_island.",
-        "1 = ellipse; more harmonics add lobes and bays. Try 4-12."};
+        "1 = ellipse; more harmonics add lobes and bays. Try 4-12.",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     float_default_map["efd_roughness"] = 1.5f;
     help_map["efd_roughness"] = {"float","1.5",
         "Harmonic amplitude decay exponent for efd_island.",
-        "Higher = smoother coast (high harmonics suppressed); lower = rougher."};
+        "Higher = smoother coast (high harmonics suppressed); lower = rougher.",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     int_default_map["noise_blur_passes"] = 6;
     help_map["noise_blur_passes"] = {"int","6",
         "Smoothing passes for the noise_island coastline.",
-        "More passes = smoother, simpler coastline; fewer = rougher/fractal."};
+        "More passes = smoother, simpler coastline; fewer = rougher/fractal.",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     string_default_map["polygon_file"] = "NULL";
     help_map["polygon_file"] = {"string","NULL",
         "Vector polygon file defining the domain (domain_type = polygon).",
-        "The first polygon's exterior ring is used as the island coastline."};
+        "The first polygon's exterior ring is used as the island coastline.",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     string_default_map["polygon_sizing"] = "scaled";
     help_map["polygon_sizing"] = {"string","scaled",
@@ -162,7 +163,8 @@ int main(int argc, char* argv[])
         "scaled: scale the polygon to fill the n_rows x n_cols grid (shape "
         "preserved, size set by the grid). true_area: derive the grid from the "
         "polygon's real extent and cell_size, preserving real area and the "
-        "polygon's CRS (n_rows/n_cols are computed, not taken from parameters)."};
+        "polygon's CRS (n_rows/n_cols are computed, not taken from parameters).",
+        "Domain (rectangle vs irregular island)", "param", ""};
 
     // --- Energy / branching ---
     float_default_map["energy_exponent_gamma"] = 0.5f;
@@ -170,13 +172,15 @@ int main(int argc, char* argv[])
         "Energy exponent gamma in E = sum(A^gamma) (OCNet expEnergy).",
         "Must be in (0,1). Classical value 0.5. Smaller (more concave) gamma "
         "rewards aggregation more strongly -> larger Tokunaga a,c and Horton "
-        "ratios; gamma -> 1 removes the aggregation incentive."};
+        "ratios; gamma -> 1 removes the aggregation incentive.",
+        "Energy / branching", "param", ""};
 
     // --- Annealing schedule ---
     int_default_map["n_iter"] = 0;
     help_map["n_iter"] = {"int","0",
         "Number of annealing iterations (proposed flips).",
-        "0 selects the OCNet default 40*n_rows*n_cols."};
+        "0 selects the OCNet default 40*n_rows*n_cols.",
+        "Annealing schedule", "param", ""};
 
     float_default_map["cooling_rate"] = 1.0f;
     help_map["cooling_rate"] = {"float","1.0",
@@ -184,24 +188,28 @@ int main(int argc, char* argv[])
         "Temperature after the no-cooling phase decays as "
         "T_k = T0*exp(-cooling_rate*k/N), N = n_rows*n_cols. Faster cooling "
         "freezes a more random network; slower cooling reaches lower-energy, "
-        "more aggregated states."};
+        "more aggregated states.",
+        "Annealing schedule", "param", ""};
 
     float_default_map["initial_no_cooling_fraction"] = 0.0f;
     help_map["initial_no_cooling_fraction"] = {"float","0.0",
         "Fraction of iterations held at the initial temperature before cooling.",
-        "Lets the chain equilibrate at high T (more random) before cooling."};
+        "Lets the chain equilibrate at high T (more random) before cooling.",
+        "Annealing schedule", "param", ""};
 
     float_default_map["initial_temperature"] = 0.0f;
     help_map["initial_temperature"] = {"float","0.0",
         "Manual initial temperature; <= 0 means auto.",
         "When <= 0, T0 = temperature_scale * E0 (E0 = initial-tree energy); "
-        "temperature_scale = 1 reproduces OCNet's native T0 = E0."};
+        "temperature_scale = 1 reproduces OCNet's native T0 = E0.",
+        "Annealing schedule", "param", ""};
 
     float_default_map["temperature_scale"] = 1.0f;
     help_map["temperature_scale"] = {"float","1.0",
         "Multiplier on the auto initial temperature (T0 = scale * E0).",
         "Continuous knob for sweeping Tokunaga statistics: raise toward random "
-        "(c~2), lower toward 0 for the optimised low-T limit (greedy at 0)."};
+        "(c~2), lower toward 0 for the optimised low-T limit (greedy at 0).",
+        "Annealing schedule", "param", ""};
 
     // --- Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem) ---
     string_default_map["steady_state_mode"] = "relief";
@@ -209,66 +217,102 @@ int main(int argc, char* argv[])
         "How the fluvial relief of the synthetic DEM is set.",
         "relief: total relief is set to target_relief (K is back-calculated). "
         "K: erodibility is given directly and relief follows from uplift_rate/"
-        "erodibility. Identical to lsdtt-lem's steady-state solver."};
+        "erodibility. Identical to lsdtt-lem's steady-state solver.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     float_default_map["target_relief"] = 1000.0f;
     help_map["target_relief"] = {"float","1000",
         "Target fluvial relief max(z)-baselevel in metres (relief mode).",
-        "Used when steady_state_mode = relief."};
+        "Used when steady_state_mode = relief.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     float_default_map["uplift_rate"] = 1e-4f;
     help_map["uplift_rate"] = {"float","1e-4",
         "Uplift rate U (m/yr) for the steady-state stream-power solution.",
-        "U = K*A^m*S^n. In relief mode only the resulting steepness matters."};
+        "U = K*A^m*S^n. In relief mode only the resulting steepness matters.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     float_default_map["erodibility"] = 1e-3f;
     help_map["erodibility"] = {"float","1e-3",
         "Erodibility K (K mode only).",
-        "Used when steady_state_mode = K; ignored in relief mode."};
+        "Used when steady_state_mode = K; ignored in relief mode.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     float_default_map["m_exponent"] = 0.45f;
     help_map["m_exponent"] = {"float","0.45",
         "Drainage-area exponent m in the stream-power / chi law.",
-        "Concavity is m/n. Set the same m and n as the LEM run you compare to."};
+        "Concavity is m/n. Set the same m and n as the LEM run you compare to.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     float_default_map["n_exponent"] = 1.0f;
     help_map["n_exponent"] = {"float","1.0",
         "Slope exponent n in the stream-power / chi law.",
-        "Concavity is m/n."};
+        "Concavity is m/n.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     float_default_map["baselevel_elevation"] = 0.0f;
     help_map["baselevel_elevation"] = {"float","0.0",
         "Elevation assigned to the outlet(s) (base level).",
-        "Chi is integrated upstream from this elevation. Fluvial relief only."};
+        "Chi is integrated upstream from this elevation. Fluvial relief only.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     int_default_map["random_seed"] = 1;
     help_map["random_seed"] = {"int","1",
         "Seed for the annealing RNG.",
-        "Fixing the seed makes a run reproducible."};
+        "Fixing the seed makes a run reproducible.",
+        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
     // --- Outputs ---
     bool_default_map["write_dem_raster"] = true;
     help_map["write_dem_raster"] = {"bool","true",
         "Write the synthetic elevation (DEM) raster.",
-        "Output file: <write_fname>_ocn_dem.tif."};
+        "Output file: <write_fname>_ocn_dem.tif.",
+        "Outputs", "switch", ""};
 
     bool_default_map["write_drainage_area_raster"] = true;
     help_map["write_drainage_area_raster"] = {"bool","true",
         "Write the OCN drainage-area (pixel count) raster.",
-        "Output file: <write_fname>_ocn_drainage_cells.tif."};
+        "Output file: <write_fname>_ocn_drainage_cells.tif.",
+        "Outputs", "switch", ""};
 
     bool_default_map["verify_routing"] = true;
     help_map["verify_routing"] = {"bool","true",
         "Route the synthetic DEM through D8 and report graph fidelity.",
         "Fidelity = fraction of interior pixels whose D8 receiver equals the OCN "
-        "receiver. ~1 for relaxed (low-T) networks; lower for random (high-T)."};
+        "receiver. ~1 for relaxed (low-T) networks; lower for random (high-T).",
+        "Outputs", "param", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
-        "cog (default), gtiff, or same_as_input."};
+        "cog (default), gtiff, or same_as_input.",
+        "Outputs", "io", ""};
 
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 

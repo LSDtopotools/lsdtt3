@@ -83,25 +83,15 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     std::map<std::string, bool>                        bool_default_map;
     std::map<std::string, float>                       float_default_map;
     std::map<std::string, int>                         int_default_map;
     std::map<std::string, std::string>                 string_default_map;
-    std::map<std::string, std::vector<std::string>>    help_map;
+    lsdtt::lsdtt_help_registry    help_map;
 
     // -------------------------------------------------------------------------
     // Parameter declarations
@@ -112,80 +102,118 @@ int main(int argc, char* argv[])
     help_map["second_raster_fname"] = {"string","",
         "Second raster filename including extension.",
         "Required. This is the right-hand raster operand in all two-raster "
-        "operations."};
+        "operations.",
+        "Second raster and alignment", "param", ""};
 
     string_default_map["second_raster_path"] = "";
     help_map["second_raster_path"] = {"string","",
         "Optional directory for second_raster_fname.",
         "If empty, read_path is used. If second_raster_fname is an absolute "
-        "path, this parameter is ignored."};
+        "path, this parameter is ignored.",
+        "Second raster and alignment", "param", ""};
 
     bool_default_map["resample_second_to_first_grid"] = true;
     help_map["resample_second_to_first_grid"] = {"bool","true",
         "Warp second raster to first raster grid when needed.",
         "If true, second raster is resampled and aligned to read_fname grid "
-        "before algebra. If false, the CLI errors when grids differ."};
+        "before algebra. If false, the CLI errors when grids differ.",
+        "Second raster and alignment", "param", ""};
 
     string_default_map["resampling_method"] = "bilinear";
     help_map["resampling_method"] = {"string","bilinear",
         "GDAL resampling method used when warping second raster.",
         "Allowed values follow GDAL warp methods: near, bilinear, cubic, "
-        "cubicspline, lanczos, average, mode, max, min, med, q1, q3, sum."};
+        "cubicspline, lanczos, average, mode, max, min, med, q1, q3, sum.",
+        "Second raster and alignment", "param", ""};
 
     bool_default_map["verbose_alignment_report"] = true;
     help_map["verbose_alignment_report"] = {"bool","true",
         "Print grid-compatibility and overlap diagnostics.",
         "If true, reports whether rasters already share a grid and whether "
-        "resampling was required."};
+        "resampling was required.",
+        "Second raster and alignment", "param", ""};
 
     // --- Output format and diagnostics ---
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
-        "Allowed values: cog, gtiff, same_as_input, png."};
+        "Allowed values: cog, gtiff, same_as_input, png.",
+        "Output format and diagnostics", "io", ""};
 
     bool_default_map["write_overlap_mask"] = false;
     help_map["write_overlap_mask"] = {"bool","false",
         "Write overlap mask raster.",
         "Writes <write_fname>_overlap_mask where 1 means both rasters are "
-        "valid and 0 means at least one raster is nodata."};
+        "valid and 0 means at least one raster is nodata.",
+        "Output format and diagnostics", "switch", ""};
 
     // --- Selected outputs ---
     bool_default_map["write_sum"] = false;
     help_map["write_sum"] = {"bool","false",
         "Write sum raster.",
-        "Output file: <write_fname>_sum."};
+        "Output file: <write_fname>_sum.",
+        "Selected outputs", "switch", ""};
 
     bool_default_map["write_multiply"] = false;
     help_map["write_multiply"] = {"bool","false",
         "Write multiply raster.",
-        "Output file: <write_fname>_multiply."};
+        "Output file: <write_fname>_multiply.",
+        "Selected outputs", "switch", ""};
 
     bool_default_map["write_ratio"] = false;
     help_map["write_ratio"] = {"bool","false",
         "Write ratio raster (first / second).",
-        "Output file: <write_fname>_ratio. Division by zero is set to nodata."};
+        "Output file: <write_fname>_ratio. Division by zero is set to nodata.",
+        "Selected outputs", "switch", ""};
 
     bool_default_map["write_difference"] = true;
     help_map["write_difference"] = {"bool","true",
         "Write difference raster (first - second).",
-        "Output file: <write_fname>_difference."};
+        "Output file: <write_fname>_difference.",
+        "Selected outputs", "switch", ""};
 
     bool_default_map["write_absolute_difference"] = false;
     help_map["write_absolute_difference"] = {"bool","false",
         "Write absolute difference raster.",
         "Output file: <write_fname>_absolute_difference, computed as "
-        "abs(first - second)."};
+        "abs(first - second).",
+        "Selected outputs", "switch", ""};
 
     bool_default_map["write_first_on_overlap"] = false;
     help_map["write_first_on_overlap"] = {"bool","false",
         "Write first raster where overlap with second is valid.",
-        "Output file: <write_fname>_first_on_overlap."};
+        "Output file: <write_fname>_first_on_overlap.",
+        "Selected outputs", "switch", ""};
 
     bool_default_map["write_second_on_overlap"] = false;
     help_map["write_second_on_overlap"] = {"bool","false",
         "Write second raster where overlap with first is valid.",
-        "Output file: <write_fname>_second_on_overlap."};
+        "Output file: <write_fname>_second_on_overlap.",
+        "Selected outputs", "switch", ""};
+
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
 
     pp.parse_all_parameters(
         float_default_map,
@@ -523,7 +551,7 @@ int main(int argc, char* argv[])
 
     pp.print_help(
         help_map,
-        pp.get_full_write_path() + "_README",
+        pp.get_write_fname() + "_README",
         k_version,
         k_citation
     );

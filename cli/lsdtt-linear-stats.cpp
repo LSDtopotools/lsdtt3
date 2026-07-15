@@ -128,23 +128,13 @@ int main(int argc, char* argv[])
 {
     print_banner();
 
-    auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
+    lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_param_parser pp;
-    try
-    {
-        pp = lsdtt::lsdtt_param_parser(path, fname);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error loading parameter file: " << e.what() << "\n";
-        return 1;
-    }
-
+    
     // -------------------------------------------------------------------------
     // Parameter declarations
     //
@@ -156,7 +146,7 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                       float_default_map;
     std::map<std::string, int>                         int_default_map;
     std::map<std::string, std::string>                 string_default_map;
-    std::map<std::string, std::vector<std::string>>    help_map;
+    lsdtt::lsdtt_help_registry    help_map;
 
     // --- Threading / routing ---
     /*
@@ -164,29 +154,57 @@ int main(int argc, char* argv[])
     help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
         "0 = use all available hardware threads. "
-        "Applies to pit filling and flow-routing construction."};
+        "Applies to pit filling and flow-routing construction.",
+        "Threading / routing", "io", ""};
     */
 
     // --- Input ---
     string_default_map["vector_fname"] = "";
     help_map["vector_fname"] = {"string","",
-        "File name for the dataset containing linear features."};
+        "File name for the dataset containing linear features.",
+        "Input", "param", ""};
 
     // --- Process parameters ---
     float_default_map["interpolating_step_length"] = 1.0;
-    help_map["interpolating_step_length"] =  {"float", "1.0",
-        "Stride length for sample points when interpolating along linear features."
+    help_map["interpolating_step_length"] = {"float", "1.0",
+        "Stride length for sample points when interpolating along linear features.",
+        "Process parameters", "param", ""
     };
 
     // --- Output ---
     string_default_map["output_format"] = "flatgeobuf";
     help_map["output_format"] = {"string","flatgeobuf",
         "Format for the output file.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb."};
+        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
+        "Output", "param", ""};
 
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Help - rendered from the declarations above; no parameter file needed
+    // -------------------------------------------------------------------------
+    if (cli_args.help_requested)
+    {
+        lsdtt::lsdtt_param_parser::print_terminal_help(
+            k_tool_name, k_version, k_citation, help_map, cli_args);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Load parameter file
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_param_parser pp;
+    try
+    {
+        pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error loading parameter file: " << e.what() << "\n";
+        return 1;
+    }
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -445,6 +463,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter echo
     // -------------------------------------------------------------------------
+    pp.print_help(help_map, pp.get_write_fname() + "_README",
+                  k_version, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-linear-stats: done.\n";
