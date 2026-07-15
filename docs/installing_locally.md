@@ -15,6 +15,7 @@ points to the detailed instructions for each platform.
 | Run lsdtt3 on a Mac | [macOS (Multipass)](#macos-multipass) |
 | Run lsdtt3 on a Linux machine | [Build from source on Linux](#build-from-source-on-linux) |
 | Develop or modify lsdtt3 | [Build from source on Linux](#build-from-source-on-linux) |
+| Create a redistributable Linux bundle | [Build from source on Linux](#build-from-source-on-linux) |
 
 ---
 
@@ -306,6 +307,47 @@ Replace `/path/to/lsdtt3` with the actual path to the repository. Verify with:
 ```bash
 lsdtt-channel-extraction --help
 ```
+
+### Package a redistributable Linux backend tarball
+
+If you want to distribute lsdtt3 on Linux without asking users to install all
+runtime dependencies, create a bundle that includes executables, required
+shared libraries (`.so` files), and GDAL/PROJ data.
+
+From the repository root:
+
+```bash
+chmod +x tools/package_linux_backend.sh
+./tools/package_linux_backend.sh --version 0.2.0
+```
+
+This creates:
+
+- `dist/lsdtt3-backend-linux-x86_64-minimal-v0.2.0.tar.gz` (file to distribute)
+- `dist/lsdtt3-backend-linux-x86_64-minimal-v0.2.0/` (staging folder)
+
+Bundle contents:
+
+- `bin/` with selected `lsdtt-*` CLIs
+- `lib/` with transitive runtime `.so` dependencies (except glibc loader/core)
+- `share/gdal` and `share/proj` (including `proj.db`)
+- `setenv.sh`, `manifest.json`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`
+
+How recipients run it:
+
+```bash
+cd <unzipped-backend-folder>
+source ./setenv.sh
+./bin/lsdtt-raster-preprocessing --version
+```
+
+Compatibility note:
+
+- Linux uses `.so` files as the shared-library equivalent of Windows `.dll`.
+- Build on an older baseline distro (for example Ubuntu 22.04) to maximise
+  compatibility with newer Linux systems.
+- This bundle does not package glibc itself; kernel/glibc compatibility still
+  applies.
 
 ### CMake options
 
