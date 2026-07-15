@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Flow preprocessing — CPU free functions that condition a DEM prior to flow
+// Flow preprocessing - CPU free functions that condition a DEM prior to flow
 // routing. All functions are stateless: they take a raster and return a new
 // raster. The input is never modified.
 //
@@ -106,10 +106,10 @@ struct depression_polygons_result
 //
 // Derives a vector polygon layer from a fill-difference raster.
 // Each polygon represents one topographic depression with attributes:
-//   depression_id  — sequential integer label (int64)
-//   area_m2        — planimetric area of the depression in m²  (double)
-//   volume_m3      — total fill volume in m³, computed as
-//                    sum(fill_diff[i]) * cell_size²             (double)
+//   depression_id  - sequential integer label (int64)
+//   area_m2        - planimetric area of the depression in m^2  (double)
+//   volume_m3      - total fill volume in m^3, computed as
+//                    sum(fill_diff[i]) * cell_size^2             (double)
 //
 // Parameters
 //   fill_diff      - filled minus original DEM; positive values are where

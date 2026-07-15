@@ -30,15 +30,15 @@
 //   Row 0 is the northernmost row, consistent with GDAL's convention.
 //
 // Type parameter T:
-//   float   — standard raster storage, matches GDAL GDT_Float32
-//   double  — high-precision intermediate calculations
-//   uint8_t — nodata masks, binary rasters
-//   int32_t — integer classifications, flow direction grids
+//   float   - standard raster storage, matches GDAL GDT_Float32
+//   double  - high-precision intermediate calculations
+//   uint8_t - nodata masks, binary rasters
+//   int32_t - integer classifications, flow direction grids
 //
 // Conversion helpers are conditionally compiled:
-//   OpenCV  — include <opencv2/core.hpp> before this header
-//   Eigen   — include <Eigen/Core> before this header
-//   FFTW    — no special include needed; use data() directly
+//   OpenCV  - include <opencv2/core.hpp> before this header
+//   Eigen   - include <Eigen/Core> before this header
+//   FFTW    - no special include needed; use data() directly
 //
 // Example usage:
 //
@@ -103,7 +103,7 @@ public:
     // Construction
     // -------------------------------------------------------------------------
 
-    // Default — empty, invalid array
+    // Default - empty, invalid array
     lsdtt_array2d()
         : n_rows_(0), n_cols_(0)
     {}
@@ -123,7 +123,7 @@ public:
 
     // Tag type used to disambiguate the pointer constructor from the fill
     // constructor. Without this tag, passing an integer literal 0 as the
-    // third argument is ambiguous — the compiler cannot decide whether it
+    // third argument is ambiguous - the compiler cannot decide whether it
     // is a fill value or a null pointer.
     //
     // Usage:
@@ -162,7 +162,7 @@ public:
         }
     }
 
-    // Copy and move — default implementations are correct
+    // Copy and move - default implementations are correct
     lsdtt_array2d(const lsdtt_array2d&)            = default;
     lsdtt_array2d& operator=(const lsdtt_array2d&) = default;
     lsdtt_array2d(lsdtt_array2d&&)                 = default;
@@ -186,7 +186,7 @@ public:
         return data_[index(row, col)];
     }
 
-    // Unchecked access — use in performance-critical inner loops
+    // Unchecked access - use in performance-critical inner loops
     // Because stuff is accessed via a pointer anything beyond bounds
     // will still result in a number, but it won't be in the raster
     // so make sure you use this where you are confident in the size of the
@@ -238,7 +238,7 @@ public:
     const std::vector<T>& get_vector() const { return data_; }
 
     // -------------------------------------------------------------------------
-    // Iterators — for range-based for loops and STL algorithms
+    // Iterators - for range-based for loops and STL algorithms
     // -------------------------------------------------------------------------
 
     iterator       begin()        { return data_.begin(); }
@@ -257,7 +257,7 @@ public:
         std::fill(data_.begin(), data_.end(), value);
     }
 
-    // Resize and reinitialise — existing data is discarded
+    // Resize and reinitialise - existing data is discarded
     void resize(int n_rows, int n_cols, T fill_value = T{})
     {
         check_dimensions(n_rows, n_cols);
@@ -267,7 +267,7 @@ public:
     }
 
     // -------------------------------------------------------------------------
-    // Type conversion — create a new array with a different element type
+    // Type conversion - create a new array with a different element type
     // Always produces a copy (explicit, intentional type promotion/demotion)
     // -------------------------------------------------------------------------
 
@@ -286,7 +286,7 @@ public:
     // -------------------------------------------------------------------------
     // OpenCV zero-copy view
     // Requires <opencv2/core.hpp> to be included before this header.
-    // The returned cv::Mat shares memory with this array — do not let the
+    // The returned cv::Mat shares memory with this array - do not let the
     // lsdtt_array2d go out of scope while the cv::Mat is in use.
     // -------------------------------------------------------------------------
 
@@ -298,7 +298,7 @@ public:
 
     cv::Mat to_cv_mat() const
     {
-        // const_cast is safe here — cv::Mat is used read-only
+        // const_cast is safe here - cv::Mat is used read-only
         return cv::Mat(n_rows_, n_cols_, cv_type(),
                        const_cast<T*>(data_.data()));
     }
@@ -316,7 +316,7 @@ private:
             std::is_same_v<T, float> || std::is_same_v<T, double> ||
             std::is_same_v<T, uint8_t> || std::is_same_v<T, int32_t> ||
             std::is_same_v<T, int16_t>,
-            "lsdtt_array2d::to_cv_mat() — unsupported type T"
+            "lsdtt_array2d::to_cv_mat() - unsupported type T"
         );
         return CV_32F;  // unreachable but suppresses warnings
     }
@@ -332,7 +332,7 @@ public:
     // returned map type rather than a plain Eigen::MatrixXf to avoid
     // accidentally re-interpreting the memory as column-major.
     //
-    // The returned map shares memory with this array — do not let the
+    // The returned map shares memory with this array - do not let the
     // lsdtt_array2d go out of scope while the map is in use.
     // -------------------------------------------------------------------------
 

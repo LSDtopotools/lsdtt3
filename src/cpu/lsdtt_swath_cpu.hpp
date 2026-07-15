@@ -9,13 +9,13 @@
 // -----------------------------------------------------------------------------
 // Swath profile analysis along an ordered polyline baseline.
 //
-// The baseline may be any ordered set of projected (x, y) coordinates — a
+// The baseline may be any ordered set of projected (x, y) coordinates - a
 // manually digitised straight line, a channel centreline, a fault trace, etc.
 //
 // Algorithm overview
 // ------------------
 //   1. For every valid pixel in the reference raster, find the nearest point
-//      on the baseline using brute-force segment projection (O(N × S), where
+//      on the baseline using brute-force segment projection (O(N x S), where
 //      N = pixel count, S = segment count). This correctly handles all
 //      baseline geometries, including sinuous channels, without requiring a
 //      kd-tree or a separate "bend scenario" detection step: the globally
@@ -36,9 +36,9 @@
 //
 // Output rasters
 // --------------
-//   along_axis    — arc-length from the baseline start to the projection foot
-//   perp_distance — unsigned perpendicular distance to the baseline (metres)
-//   signed_perp   — signed perpendicular distance:
+//   along_axis    - arc-length from the baseline start to the projection foot
+//   perp_distance - unsigned perpendicular distance to the baseline (metres)
+//   signed_perp   - signed perpendicular distance:
 //                     positive = left of travel direction
 //                     negative = right of travel direction
 //   (pixels outside half_width, or nodata pixels, carry nodata in all three)
@@ -132,23 +132,23 @@ struct swath_profile_result
 //
 // Parameters
 // ----------
-// reference_raster    — used for raster geometry and nodata mask only;
+// reference_raster    - used for raster geometry and nodata mask only;
 //                       its data values are not read.
-// values_raster       — the raster whose values are binned.  Must share the
+// values_raster       - the raster whose values are binned.  Must share the
 //                       same geometry as reference_raster.
-// axis_points         — ordered projected (x, y) coordinates of the baseline.
+// axis_points         - ordered projected (x, y) coordinates of the baseline.
 //                       Requires at least 2 points.
-// half_width_metres   — pixels farther than this from the baseline receive
+// half_width_metres   - pixels farther than this from the baseline receive
 //                       nodata in the distance rasters and are excluded from
 //                       the bin statistics.  Pass 0.0 to include all pixels.
-// bin_width_metres    — along-axis bin size in metres.  Must be > 0.
-// n_threads           — OpenMP thread count (0 = all available).
+// bin_width_metres    - along-axis bin size in metres.  Must be > 0.
+// n_threads           - OpenMP thread count (0 = all available).
 //
 // Throws
 // ------
-//   std::runtime_error     — invalid raster metadata, metadata not in metres,
+//   std::runtime_error     - invalid raster metadata, metadata not in metres,
 //                            or fewer than 2 axis points.
-//   std::invalid_argument  — bin_width_metres <= 0.
+//   std::invalid_argument  - bin_width_metres <= 0.
 // =============================================================================
 swath_profile_result compute_swath_profile(
     const lsdtt_raster_cpu&      reference_raster,

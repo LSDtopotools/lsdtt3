@@ -2311,7 +2311,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_distance_to_channel_raster(
 //           initialise max_upslope_dist = dist_from_outlet and
 //           (for height) farthest_elev = elev.
 //   Pass 2 (reverse, headwaters first): propagate the maximum upstream
-//           distance downstream — each pixel receives the maximum of its own
+//           distance downstream - each pixel receives the maximum of its own
 //           current max and those of all its donors.  When updated, farthest_elev
 //           is updated to track which pixel carries that maximum.
 //
@@ -2367,7 +2367,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_to_farthest_ridge_raster(
         farthest_elev[i] = (mask_.data()[i] != 0 && elev_mask[i] != 0)
             ? elev[i] : 0.0f;
 
-    // Pass 2: reverse pass — propagate max upstream distance downstream.
+    // Pass 2: reverse pass - propagate max upstream distance downstream.
     for (std::int64_t i = static_cast<std::int64_t>(s_vector_.size()) - 1;
          i >= 0; --i)
     {
@@ -2542,7 +2542,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_downstream_path_sum_raster(
 // -----------------------------------------------------------------------------
 // get_upslope_sum_raster
 //
-// Single O(N) reverse-s_vector pass (headwaters → outlets).
+// Single O(N) reverse-s_vector pass (headwaters -> outlets).
 // For each valid pixel: optionally seed with its own value, then propagate
 // the accumulated sum to its receiver.  Pixels with valid_mask[i]==0
 // contribute 0 but still pass accumulated values from upstream downstream.
@@ -2574,7 +2574,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_upslope_sum_raster(
 
     const float ndv = static_cast<float>(meta_.no_data_value);
 
-    // Working accumulator — double precision to avoid float drift over large basins.
+    // Working accumulator - double precision to avoid float drift over large basins.
     std::vector<double> accum(n, 0.0);
 
     // Seed each valid DEM pixel with its own input value (if include_self and input is valid).
@@ -2590,7 +2590,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_upslope_sum_raster(
     }
 
     // Reverse-s_vector pass: headwaters processed before their receivers.
-    // Sequential — each pixel depends on all of its upslope donors having
+    // Sequential - each pixel depends on all of its upslope donors having
     // already propagated their sums.
     for (std::int64_t i = static_cast<std::int64_t>(s_vector_.size()) - 1; i >= 0; --i)
     {

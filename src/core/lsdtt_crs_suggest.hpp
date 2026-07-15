@@ -15,25 +15,25 @@
 // logic for Mars or Titan or any other non-Earth coordinate system.
 //
 // Decision logic
-// ──────────────
+// 
 //   1. Raster must **either** be in a geographic CRS (EPSG:4326 or Web Mercator are the
 //      common cases) **or** the user must call `force_reproject` 
 //
 //   2. The four corners of the raster are unprojected to geographic
 //      coordinates. The geographic centre is taken as the mean lat/lon.
 //
-//   3. Polar test  |centre_lat| > 75°
-//      → North:  NSIDC North Polar Stereographic  (EPSG:3413)
-//      → South:  NSIDC South Polar Stereographic  (EPSG:3976)
+//   3. Polar test  |centre_lat| > 75 deg
+//      -> North:  NSIDC North Polar Stereographic  (EPSG:3413)
+//      -> South:  NSIDC South Polar Stereographic  (EPSG:3976)
 //
 //   4. UTM test  otherwise
-//      → UTM zone chosen from centre longitude; hemisphere from centre lat.
-//      → If the raster spans ≥ 3 UTM zones a warning is emitted and the
+//      -> UTM zone chosen from centre longitude; hemisphere from centre lat.
+//      -> If the raster spans >= 3 UTM zones a warning is emitted and the
 //        caller may request a custom Lambert Azimuthal Equal Area (LAEA)
 //        centred on the raster centre instead.
 //
 // Usage
-// ─────
+// 
 //   lsdtt_crs_suggestion sug = lsdtt_suggest_crs(meta);
 //
 //   if (sug.already_projected)
@@ -54,7 +54,7 @@
 namespace lsdtt {
 
 // -----------------------------------------------------------------------------
-// CrsRecommendationType — what kind of CRS was selected
+// CrsRecommendationType - what kind of CRS was selected
 //  in future we may include a "force_projection" so you can change from
 //  on projection to another and update the gird spacing
 // -----------------------------------------------------------------------------
@@ -145,10 +145,10 @@ struct lsdtt_crs_suggestion
 // Inspect the raster described by `meta` and return a CRS recommendation.
 //
 // Parameters
-//   meta              — raster metadata (must contain a valid crs_wkt)
-//   offer_laea        — if true and the raster spans ≥ 3 UTM zones, also
+//   meta              - raster metadata (must contain a valid crs_wkt)
+//   offer_laea        - if true and the raster spans >= 3 UTM zones, also
 //                       build the laea_wkt alternative (default true)
-//   force_recommend_projected — if true, continue through the recommendation
+//   force_recommend_projected - if true, continue through the recommendation
 //                               logic even when the input raster is already in
 //                               a projected CRS. This is used when a caller
 //                               wants to force reprojection into the preferred

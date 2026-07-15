@@ -149,7 +149,7 @@ std::vector<std::int64_t> vectormap_line_source_cells(
 
     // Candidate head = the upstream (higher) end of each fragment. `edge` flags a
     // head that is a genuine inflow across the DEM boundary / NoData fringe (the
-    // chosen end's original vertex is off-DEM) — these bypass the higher_nearby
+    // chosen end's original vertex is off-DEM) - these bypass the higher_nearby
     // exclusion below so "channels coming in from the edge" are always seeded.
     struct candidate { lsdtt_xy up; double z; bool edge; };
     std::vector<candidate> cands;
@@ -187,7 +187,7 @@ std::vector<std::int64_t> vectormap_line_source_cells(
     }
 
     // A candidate is a GENUINE source only if no channel vertex within
-    // source_exclusion_radius_m is meaningfully HIGHER — i.e. nothing drains
+    // source_exclusion_radius_m is meaningfully HIGHER - i.e. nothing drains
     // toward it from above. The OS VectorMap "repaired" network is not actually
     // joined at the repairs, so every fragment downstream of a road has an
     // upstream end sitting mid-network, just below the road, with the upstream

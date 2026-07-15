@@ -17,19 +17,19 @@
 // The approach follows Rodriguez-Iturbe & Valdes (1979) and Mesa & Mifflin
 // (1986). Each reach (junction link) contributes drainage area that must travel
 // a certain time to the network outlet. Aggregating area by travel time gives
-// the geomorphic width function W(τ). Normalised by total catchment area, W(τ)
+// the geomorphic width function W(tau). Normalised by total catchment area, W(tau)
 // is the IUH: the discharge response at the outlet to a unit rainfall applied
 // instantaneously over the whole catchment.
 //
 // Travel time per link is estimated as:
-//   v_i = v_ref * (S_i / S_ref)^β   (kinematic-wave celerity)
-//   τ_i = L_i / v_i
+//   v_i = v_ref * (S_i / S_ref)^beta   (kinematic-wave celerity)
+//   tau_i = L_i / v_i
 //
 // where S_i is reach slope, L_i reach length (from build_sediment_reaches),
-// v_ref and S_ref are reference velocity and slope, and β = 0.5 by default.
+// v_ref and S_ref are reference velocity and slope, and beta = 0.5 by default.
 //
 // Overland-flow travel time (hillslope contribution) is optionally added to
-// each link's travel time as τ_hf = hillslope_length / v_hillslope.
+// each link's travel time as tau_hf = hillslope_length / v_hillslope.
 //
 // The IUH is then binned into n_bins time steps of width dt_bin_s.
 //
@@ -70,10 +70,10 @@ struct lsdtt_giuh_options
     // Kinematic-wave velocity model: v = v_ref * (slope / slope_ref)^velocity_exponent
     double v_ref_m_per_s   = 1.0;    // reference channel velocity [m/s]
     double slope_ref       = 0.01;   // reference slope for v_ref
-    double velocity_exponent = 0.5;  // exponent β; 0.5 = Manning-like
+    double velocity_exponent = 0.5;  // exponent beta; 0.5 = Manning-like
 
     // Hillslope travel time added to each link
-    // τ_hillslope = hillslope_length_m / v_hillslope_m_per_s
+    // tau_hillslope = hillslope_length_m / v_hillslope_m_per_s
     // Set hillslope_length_m <= 0 to disable.
     double hillslope_length_m       = -1.0;
     double v_hillslope_m_per_s      = 0.005; // typical overland-flow velocity
@@ -90,11 +90,11 @@ struct lsdtt_giuh_options
 };
 
 // ---------------------------------------------------------------------------
-// The computed IUH — one value per time bin
+// The computed IUH - one value per time bin
 // ---------------------------------------------------------------------------
 struct lsdtt_giuh_result
 {
-    // iuh[k] = fraction of catchment area [s⁻¹] contributing in bin k
+    // iuh[k] = fraction of catchment area [s^-^1] contributing in bin k
     // Integral of iuh over all bins * dt_bin_s = 1.0
     std::vector<double> iuh;
 
@@ -104,13 +104,13 @@ struct lsdtt_giuh_result
     // Per-junction travel time to the outlet [s]
     std::vector<double> travel_time_s;
 
-    // Total catchment area used in the computation [m²]
+    // Total catchment area used in the computation [m^2]
     double catchment_area_m2 = 0.0;
 
     double dt_bin_s = 3600.0;
     int    n_bins   = 0;
 
-    // Peak of the IUH [s⁻¹] and time of peak [s]
+    // Peak of the IUH [s^-^1] and time of peak [s]
     double iuh_peak         = 0.0;
     double time_of_peak_s   = 0.0;
 };
@@ -128,10 +128,10 @@ lsdtt_giuh_result compute_giuh(
 // ---------------------------------------------------------------------------
 // Generate a discharge time series from a rainfall input and the GIUH.
 //
-// rainfall_m_per_s[t] — rainfall rate at output timestep t [m/s]
-// dt_rainfall_s       — duration of each rainfall timestep [s]
+// rainfall_m_per_s[t] - rainfall rate at output timestep t [m/s]
+// dt_rainfall_s       - duration of each rainfall timestep [s]
 //
-// Returns Q[t] [m³/s] at the network outlet for each rainfall timestep.
+// Returns Q[t] [m^3/s] at the network outlet for each rainfall timestep.
 // The output vector has the same length as rainfall_m_per_s plus
 // (giuh.n_bins - 1) tail steps so the complete recession is captured.
 // ---------------------------------------------------------------------------

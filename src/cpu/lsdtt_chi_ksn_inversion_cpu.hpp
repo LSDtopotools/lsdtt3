@@ -234,7 +234,7 @@ struct lsdtt_chi_ksn_inversion_collection_result
 // CSV writers for inversion results
 // =============================================================================
 
-// Write a per-trial inversion summary (one row per basin × m/n).
+// Write a per-trial inversion summary (one row per basin x m/n).
 void write_chi_ksn_inversion_trials_csv(
     const std::string& filename,
     const lsdtt_chi_ksn_inversion_collection_result& results

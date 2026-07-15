@@ -67,7 +67,7 @@ void write_chi_data_maps(
     const int                n_cols    = meta.n_cols;
     const double             cell_size = meta.cell_size;
 
-    // Coordinate transform for CSV output (projected → EPSG:4326).
+    // Coordinate transform for CSV output (projected -> EPSG:4326).
     std::optional<lsdtt_coordinate_transform> ct;
     if (is_csv)
     {
@@ -80,7 +80,7 @@ void write_chi_data_maps(
         ct.emplace(lsdtt_coordinate_transform::from_epsg(meta.crs_wkt, 4326));
     }
 
-    // Helpers: flat → projected (x, y) or (lat, lon).
+    // Helpers: flat -> projected (x, y) or (lat, lon).
     auto flat_to_xy = [&](std::int64_t flat) -> lsdtt_xy
     {
         const int row = static_cast<int>(flat / static_cast<std::int64_t>(n_cols));
@@ -173,7 +173,7 @@ void write_chi_data_maps(
         const std::int32_t basin_key = next_basin_key++;
         const std::size_t  n         = basin.flats.size();
 
-        // Local index map (flat → position in basin vectors).
+        // Local index map (flat -> position in basin vectors).
         std::unordered_map<std::int64_t, std::size_t> local_idx;
         local_idx.reserve(n);
         for (std::size_t i = 0; i < n; ++i)

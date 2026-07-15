@@ -10,7 +10,7 @@
 // Factory implementation for make_junction_network_base().
 //
 // Declared in src/core/lsdtt_junction_network_base.hpp.
-// Lives in src/cpu/ so that core does not depend on cpu — the same pattern
+// Lives in src/cpu/ so that core does not depend on cpu - the same pattern
 // used by make_flow_base() in src/cpu/lsdtt_flow_base.cpp.
 // -----------------------------------------------------------------------------
 

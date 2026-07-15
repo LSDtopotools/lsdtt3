@@ -1040,7 +1040,7 @@ std::vector<lsdtt_channel_link_bearing> calculate_channel_link_bearings(
 }
 
 // -----------------------------------------------------------------------------
-// IMPORTANT TERMINOLOGY NOTE — JUNCTION-ANGLE NAMING CONVENTION
+// IMPORTANT TERMINOLOGY NOTE - JUNCTION-ANGLE NAMING CONVENTION
 //
 // This routine uses internally descriptive variable names for the three angular
 // sectors around a two-donor junction, but these names do NOT exactly match the

@@ -307,7 +307,7 @@ struct lsdtt_junction_angle_record
 //
 // If junctions_to_analyse is empty, all junctions in the network are considered.
 // -----------------------------------------------------------------------------
-// IMPORTANT TERMINOLOGY NOTE — JUNCTION-ANGLE NAMING
+// IMPORTANT TERMINOLOGY NOTE - JUNCTION-ANGLE NAMING
 //
 // This code uses descriptive internal names that differ from the historical
 // Strong and Mudd (PNAS, 2023) naming convention.

@@ -9,11 +9,11 @@
 // -----------------------------------------------------------------------------
 // Standalone validation driver for the implicit *Roering nonlinear* hillslope
 // solver (compute_roering_hillslope_transport_implicit), exercising the
-// rectangular-domain tests from docs/roering_implicit_transient_plan.md §9
+// rectangular-domain tests from docs/roering_implicit_transient_plan.md Sec9
 // tests 1 (Roering steady state, two boundary scenarios) and 2 (step-change
 // uplift transient).  It drives the solver directly (NOT through lsdtt-lem),
 // because the LEM's boundary-restore pins edge cells only AFTER the hillslope
-// solve and so cannot act as a fixed Dirichlet sink inside it (plan §3).
+// solve and so cannot act as a fixed Dirichlet sink inside it (plan Sec3).
 //
 // Domain: a rectangular grid a few columns wide, varying along the ROWS, flat
 // initial condition, PERIODIC column edges; fixed-elevation ends imposed by the
@@ -32,7 +32,7 @@
 // supercritical driving (e.g. doubling uplift on the long domain, U*L/D ~ 2.5*Sc)
 // pushes slopes past Sc and needs the Phase-3/5 post-step projection / rejection;
 // those parameter choices are deliberately avoided here.  Damped Picard (omega<1)
-// is required for the nonlinearity — see run_to_steady.
+// is required for the nonlinearity - see run_to_steady.
 // -----------------------------------------------------------------------------
 
 #include <chrono>
@@ -157,7 +157,7 @@ lsdtt::lsdtt_roering_implicit_result run_to_steady_result(
     opts.relaxation_omega = 0.7f;          // Picard damping (controller auto-tunes down)
     opts.picard_max_iter  = 200;
     opts.boundary_conditions = bc;
-    // No is_channel sinks — the fixed ends come from the 'o' boundary code.
+    // No is_channel sinks - the fixed ends come from the 'o' boundary code.
     // Size it to the grid (all zero); an empty vector is unsafe because the
     // Phase-0 explicit fallback indexes is_channel[i] for every cell.
     const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
@@ -226,7 +226,7 @@ std::vector<std::uint8_t> mask_to_is_channel(const lsdtt::lsdtt_raster_cpu& cm)
     return ch;
 }
 
-// Max |z| over a field (its relief above the z_ch = 0 channels) — used as the
+// Max |z| over a field (its relief above the z_ch = 0 channels) - used as the
 // peak scale for relative-error reporting.
 double field_peak_abs(const lsdtt::lsdtt_raster_cpu& f)
 {

@@ -36,11 +36,11 @@
 // A discrete 4-neighbour Laplacian L is built on the active coarse cells.
 // The version-1 inversion solves the regularized unconstrained system:
 //
-//   (AᵀA + λ LᵀL + ε I) u = Aᵀ z_rel
+//   (A^TA + lambda L^TL + epsilon I) u = A^T z_rel
 //
 // where:
-//   λ : roughness_weight
-//   ε : diagonal_jitter
+//   lambda : roughness_weight
+//   epsilon : diagonal_jitter
 //
 // Matlab relation:
 // ----------------
@@ -816,7 +816,7 @@ private:
                 // -------------------------------------------------------------
                 // 5) Solve regularized system
                 //
-                //   (AᵀA + λ LᵀL + ε I) u = Aᵀ z_rel
+                //   (A^TA + lambda L^TL + epsilon I) u = A^T z_rel
                 //
                 // Version 1 uses an unconstrained solve. If LDLT factorization
                 // fails, a SparseQR solve on the stacked system is attempted.

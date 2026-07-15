@@ -93,10 +93,10 @@ lsdtt_raster_cpu raster_min(
 );
 
 /// Element-wise maximum with union validity semantics:
-///   both valid  → result = max(a, b)
-///   only a valid → result = a(i)
-///   only b valid → result = b(i)
-///   neither valid → nodata
+///   both valid  -> result = max(a, b)
+///   only a valid -> result = a(i)
+///   only b valid -> result = b(i)
+///   neither valid -> nodata
 /// Use this to combine independent signal rasters that may have different
 /// spatial coverage (e.g. max signal across adjacent scale pairs where each
 /// pair has its own nodata pattern).
@@ -199,7 +199,7 @@ lsdtt_raster_cpu raster_normalise_unit_interval(
 /// output pixels become 0.  Nodata remains nodata.
 ///
 /// Differs from raster_normalise_unit_interval in that it divides by the
-/// maximum rather than the range — a pixel at zero stays at zero rather than
+/// maximum rather than the range - a pixel at zero stays at zero rather than
 /// mapping to the minimum of the output interval.  This is appropriate for
 /// non-negative signals such as curvature magnitude, depth, or channelness
 /// scores where zero carries physical meaning.
@@ -236,7 +236,7 @@ lsdtt_raster_cpu raster_binary_true_below_threshold(
     float                   threshold
 );
 
-/// Invert a binary raster: 1 → 0, 0 → 1.
+/// Invert a binary raster: 1 -> 0, 0 -> 1.
 /// Nodata pixels remain nodata.
 lsdtt_raster_cpu invert_binary_mask(
     const lsdtt_raster_cpu& a
@@ -329,7 +329,7 @@ float raster_percentile(const lsdtt_raster_cpu& a, double p);
 /// Population standard deviation over all valid pixels.
 float raster_stddev_value(const lsdtt_raster_cpu& a);
 
-/// Range (max − min) over all valid pixels.
+/// Range (max - min) over all valid pixels.
 float raster_range_value(const lsdtt_raster_cpu& a);
 
 

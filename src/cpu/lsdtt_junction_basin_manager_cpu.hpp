@@ -1,6 +1,6 @@
 #pragma once
 
-// lsdtt3 — lsdtt_junction_basin_manager_cpu.hpp
+// lsdtt3 - lsdtt_junction_basin_manager_cpu.hpp
 // Manages a collection of lsdtt_junction_basin_cpu objects: selection,
 // filtering, and per-basin value extraction for use with src/utils/
 //
@@ -118,7 +118,7 @@ public:
 
 
     // -----------------------------------------------------------------------
-    // Per-basin extraction (template — must be defined in header)
+    // Per-basin extraction (template - must be defined in header)
     // -----------------------------------------------------------------------
 
     template <typename Extractor>

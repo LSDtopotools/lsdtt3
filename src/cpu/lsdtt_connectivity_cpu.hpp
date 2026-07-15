@@ -14,7 +14,7 @@
 // D_up  = W_bar * S_bar * sqrt(A)
 //   W_bar = upslope mean of the W weighting factor
 //   S_bar = upslope mean of slope
-//   A     = upslope drainage area (m²)
+//   A     = upslope drainage area (m^2)
 //
 // D_down = sum along D8 path to nearest sink of  d_i / (W_i * S_i)
 //   d_i = step length in cell i (cell_size for cardinal, cell_size*sqrt(2) for diagonal)

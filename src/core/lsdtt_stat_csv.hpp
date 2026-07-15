@@ -34,9 +34,9 @@ namespace lsdtt {
 // write_qq_csv
 //
 // Writes a QQ-plot data table with three columns:
-//   standard_normal_variate — z = Φ⁻¹(p_k)
-//   data_quantile           — empirical quantile of the sample at p_k
-//   normal_reference        — IQR-fitted normal reference line at p_k
+//   standard_normal_variate - z = Phi^-^1(p_k)
+//   data_quantile           - empirical quantile of the sample at p_k
+//   normal_reference        - IQR-fitted normal reference line at p_k
 // -----------------------------------------------------------------------------
 void write_qq_csv(
     lsdtt_data_loader&    loader,
@@ -49,11 +49,11 @@ void write_qq_csv(
 //
 // Writes the empirical CDF alongside the best-fitting parametric CDF.
 // Columns:
-//   bin_centre               — x value at the bin centre
-//   cdf                      — empirical cumulative probability
-//   fitted_cdf_<family>      — parametric CDF of the best valid fit at x
+//   bin_centre               - x value at the bin centre
+//   cdf                      - empirical cumulative probability
+//   fitted_cdf_<family>      - parametric CDF of the best valid fit at x
 //                              (column header includes the family name)
-//   cdf_minus_fitted         — empirical CDF minus fitted CDF (divergence)
+//   cdf_minus_fitted         - empirical CDF minus fitted CDF (divergence)
 //
 // The best fit is the valid entry in `fits` with the lowest KS statistic.
 // If no valid fit exists the third and fourth columns are written as NaN.

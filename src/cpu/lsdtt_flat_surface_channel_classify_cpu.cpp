@@ -138,7 +138,7 @@ hand_leak_split detect_hand_leak(
 } // namespace
 
 // -----------------------------------------------------------------------------
-// find_population_breaks (public — see header; shared with the valley engine)
+// find_population_breaks (public - see header; shared with the valley engine)
 // -----------------------------------------------------------------------------
 std::vector<double> find_population_breaks(
     const std::vector<std::int64_t>& hist,

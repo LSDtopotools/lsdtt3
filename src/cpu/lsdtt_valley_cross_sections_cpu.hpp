@@ -105,7 +105,7 @@ struct valley_cross_section_request
     // Smoothing passes for the streamwise coordinate field (Laplacian smoothing
     // anchored on the centreline). Higher = smoother sections, fewer creases.
     int    curved_streamwise_smoothing_passes = 40;
-    // Coarse-to-fine placement: stations are accepted in a DYADIC order — a
+    // Coarse-to-fine placement: stations are accepted in a DYADIC order - a
     // sparse backbone at this spacing first, then the midpoints between accepted
     // sections (this spacing halved, quartered, ... down to spacing_metres).
     // This keeps coverage even; a plain downstream sweep lets one section bent
@@ -161,7 +161,7 @@ struct valley_cross_section_hydraulic_sample
 };
 
 // -----------------------------------------------------------------------------
-// valley_cross_section_sample — one point along a transect.
+// valley_cross_section_sample - one point along a transect.
 // -----------------------------------------------------------------------------
 struct valley_cross_section_sample
 {
@@ -183,7 +183,7 @@ struct valley_cross_section_sample
 };
 
 // -----------------------------------------------------------------------------
-// valley_cross_section — one station.
+// valley_cross_section - one station.
 // -----------------------------------------------------------------------------
 struct valley_cross_section
 {
@@ -284,7 +284,7 @@ struct valley_cross_section_result
 // of the corridor HAND histogram. For every corridor pixel the height above the
 // nearest centreline node's baseline (thalweg) is compared with the channel's
 // MEDIAN lowest hydraulic break (break 1, from the sections'
-// hydraulic_break_stages) — a single robust floodplain HAND level, so an
+// hydraulic_break_stages) - a single robust floodplain HAND level, so an
 // individual section with an anomalously high break cannot streak laterally or
 // leak the mask onto the upland plateau:
 //   value 0 = above the break (not valley floor)

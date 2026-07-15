@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// FOR ANALYSIS CODE — START HERE
+// FOR ANALYSIS CODE - START HERE
 //
 // If you are writing a new analysis routine that needs flow relationships
 // (which pixels are upslope/downslope, drainage area, flow distance, etc.),
@@ -31,7 +31,7 @@
 //
 // You do not need to know about lsdtt_flow_base.hpp, lsdtt_types.hpp,
 // or lsdtt_flow_base.cpp. Those are infrastructure files used by the build
-// system and CLI layer — they are invisible to analysis code.
+// system and CLI layer - they are invisible to analysis code.
 //
 // The only other flow file you might encounter is lsdtt_flowgraph_cpu.hpp,
 // which hancles D-infinity / MFD routing (fractional multi-receiver flow).
@@ -46,14 +46,14 @@
 // s_vector is an index into upslope pixels, uses fastscape algorithm
 //
 // Relationship to lsdtt_flowgraph_cpu:
-//   lsdtt_flowinfo      — D8 only. One receiver per cell. Flow graph is a
+//   lsdtt_flowinfo      - D8 only. One receiver per cell. Flow graph is a
 //                         forest of trees. s_vector provides O(1) upslope-set
 //                         access by contiguous interval. Intended for all
 //                         repeated upslope queries: chi, steepness, knickpoint
 //                         detection, basin statistics. Requires a pit-free DEM
 //                         (use lsdtt_raster_flow_preprocessing_cpu first).
 //
-//   lsdtt_flowgraph_cpu — D-infinity / MFD. Multiple weighted receivers per
+//   lsdtt_flowgraph_cpu - D-infinity / MFD. Multiple weighted receivers per
 //                         cell. Flow graph is a DAG. No s_vector (upslope sets
 //                         overlap and are fractional). Intended for distributed-
 //                         flow analyses: sediment flux, probabilistic wetness
@@ -66,8 +66,8 @@
 //   5  4  3
 //
 // Sentinel receiver values:
-//   nodata_receiver — cell is nodata / invalid
-//   outlet_receiver — cell drains off-grid or to a boundary outlet
+//   nodata_receiver - cell is nodata / invalid
+//   outlet_receiver - cell drains off-grid or to a boundary outlet
 //
 // Direction-code convention for outlets:
 //   outlet cells carry receiver_ == outlet_receiver and
@@ -119,7 +119,7 @@ class lsdtt_flowinfo : public lsdtt_flow_base
 public:
 
     // -------------------------------------------------------------------------
-    // Sentinel values and helper types — from lsdtt_types.hpp
+    // Sentinel values and helper types - from lsdtt_types.hpp
     // -------------------------------------------------------------------------
     static constexpr std::int64_t nodata_receiver = lsdtt::k_nodata_receiver;
     static constexpr std::int64_t outlet_receiver = lsdtt::k_outlet_receiver;
@@ -208,13 +208,13 @@ public:
     // Boundary-condition string in north / east / south / west order.
     //
     // Codes:
-    //   'o' — open: edge cells may drain out of the domain if no lower
+    //   'o' - open: edge cells may drain out of the domain if no lower
     //         in-grid receiver is found and an outlet path is admissible.
-    //   'n' — no-flux: stepping out of the domain is blocked.
-    //   'p' — periodic: neighbours wrap to the opposite edge.
-    //   'b' — forced baselevel outlet: all cells on this edge are outlets.
+    //   'n' - no-flux: stepping out of the domain is blocked.
+    //   'p' - periodic: neighbours wrap to the opposite edge.
+    //   'b' - forced baselevel outlet: all cells on this edge are outlets.
     //
-    // Periodic pairs must be symmetric (north↔south, east↔west).
+    // Periodic pairs must be symmetric (north<->south, east<->west).
     // Asymmetric periodic specifications are rejected during parsing.
     [[nodiscard]] std::string boundary_conditions() const
     {
@@ -460,8 +460,8 @@ public:
     // propagating each cell's value to its D8 receiver.
     //
     // cell_weights
-    //   Empty (default) → each valid cell contributes cell_size^2 (m^2).
-    //   Sized → caller-supplied per-cell initial values; use this to inject
+    //   Empty (default) -> each valid cell contributes cell_size^2 (m^2).
+    //   Sized -> caller-supplied per-cell initial values; use this to inject
     //   upstream drainage area at edge pixels where a river enters the tile.
     //   nodata cells should have weight 0.  All finite values are accepted.
     //   Size must equal n_rows * n_cols.
@@ -666,7 +666,7 @@ private:
     // build_receiver_graph_d8:
     //   Each cell reads only its own elevation and its 8 neighbours (read-only
     //   DEM access). Each cell writes only to its own receiver_ and receiver_dir_
-    //   entries. No write conflicts between cells — safe for OpenMP parallelism
+    //   entries. No write conflicts between cells - safe for OpenMP parallelism
     //   with #pragma omp parallel for collapse(2) schedule(static).
     void build_receiver_graph_d8(
         const lsdtt_array2d_f&        dem,

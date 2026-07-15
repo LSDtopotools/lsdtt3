@@ -25,7 +25,7 @@
 //      do not leak in, and
 //   4. traces the centreline as the LEAST-COST PATH from the channel head to
 //      the outlet, confined to the valley mask, whose per-step cost rewards
-//      distance to the nearest valley wall — so the cheapest route hugs the
+//      distance to the nearest valley wall - so the cheapest route hugs the
 //      medial axis (the locus equidistant from the two nearest walls) at any
 //      valley width. (This replaces the legacy trough-carve-and-route
 //      approach of Clubb et al. 2022, https://doi.org/10.5194/esurf-10-437-2022,
@@ -354,7 +354,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_valley_reach_id_raster"] = true;
     help_map["write_valley_reach_id_raster"] = {"bool","true",
         "Write a per-channel reach-id raster: every corridor pixel is tagged "
-        "with the along-channel reach (window) of its nearest channel node — "
+        "with the along-channel reach (window) of its nearest channel node - "
         "the exact population each per-reach HAND break histogram is built "
         "from.",
         "Output suffix: _valley_reach_id_ch<sid>.tif (Int16, nodata outside "
@@ -473,7 +473,7 @@ int main(int argc, char* argv[])
 
     float_default_map["curved_coarse_spacing_metres"] = 700.0f;
     help_map["curved_coarse_spacing_metres"] = {"float","700",
-        "For curved cross sections: sections are placed coarse-to-fine — a "
+        "For curved cross sections: sections are placed coarse-to-fine - a "
         "sparse backbone at this spacing first, then midpoints between accepted "
         "sections (this halved, quartered, ... down to cross_section_spacing_"
         "metres). Keeps coverage even instead of dense clusters next to gaps.",
@@ -485,7 +485,7 @@ int main(int argc, char* argv[])
     help_map["neighbour_clip_window"] = {"int","2",
         "Number of neighbouring stations on each side considered for overlap "
         "clipping.",
-        "2 checks s±1 and s±2; larger is more conservative."};
+        "2 checks s+/-1 and s+/-2; larger is more conservative."};
 
     float_default_map["min_section_reach_fraction"] = 0.35f;
     help_map["min_section_reach_fraction"] = {"float","0.35",
@@ -556,7 +556,7 @@ int main(int argc, char* argv[])
 
     if (sf["source_points_path"].empty())
     {
-        std::cerr << "FATAL: source_points_path is required — one valley and "
+        std::cerr << "FATAL: source_points_path is required - one valley and "
                      "centreline is produced per source channel. The "
                      "all-channels threshold mode is not supported here.\n";
         return 1;

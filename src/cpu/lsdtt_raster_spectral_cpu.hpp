@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Spectral raster analysis — FFTW-based CPU free functions.
+// Spectral raster analysis - FFTW-based CPU free functions.
 //
 // Current contents:
 //   wavelet_quadratic_fit
@@ -18,8 +18,8 @@
 //   z(x,y) = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f
 //
 // Coordinate convention:
-//   x  — easting offset from the pixel centre, positive east
-//   y  — northing offset from the pixel centre, positive north
+//   x  - easting offset from the pixel centre, positive east
+//   y  - northing offset from the pixel centre, positive north
 //
 // Notes:
 //   - Gaussian kernel only.
@@ -59,9 +59,9 @@ struct poly_fit_coeffs
 // wavelet_quadratic_fit
 //
 // Parameters:
-//   raster    — input DEM; must be projected in metres
-//   lambda    — target wavelength in metres; must be >= cell_size
-//   n_threads — OpenMP threads for post-FFT coefficient solve (0 = all)
+//   raster    - input DEM; must be projected in metres
+//   lambda    - target wavelength in metres; must be >= cell_size
+//   n_threads - OpenMP threads for post-FFT coefficient solve (0 = all)
 //
 // Returns:
 //   poly_fit_coeffs containing coefficient rasters a..f.
@@ -81,9 +81,9 @@ poly_fit_coeffs wavelet_quadratic_fit(
 // 2D FFT-based spectral filters
 //
 // All filters operate on a full DEM raster through a shared pipeline:
-//   1. Detrend  — fit and subtract an OLS planar trend (all valid pixels)
-//   2. Window   — 2D elliptical taper to suppress edge leakage (optional)
-//   3. Pad      — zero-pad to next power-of-2 dimensions
+//   1. Detrend  - fit and subtract an OLS planar trend (all valid pixels)
+//   2. Window   - 2D elliptical taper to suppress edge leakage (optional)
+//   3. Pad      - zero-pad to next power-of-2 dimensions
 //   4. Forward FFT (real-to-complex, r2c)
 //   5. Apply filter kernel in frequency domain
 //   6. Inverse FFT (complex-to-real, c2r), normalise by Ly * Lx
@@ -95,7 +95,7 @@ poly_fit_coeffs wavelet_quadratic_fit(
 //   Wavelength        lambda = 1 / f           [metres]
 //   Nyquist           f_ny = 1 / (2 * cell_size)
 //
-// Filter shape — Gaussian rolloff, -3 dB at the specified cutoff:
+// Filter shape - Gaussian rolloff, -3 dB at the specified cutoff:
 //
 //   Lowpass   H(f)  = exp( -ln(2) * (f / f_c)^2 )
 //   Highpass  H(f)  = 1 - exp( -ln(2) * (f / f_c)^2 )
@@ -105,7 +105,7 @@ poly_fit_coeffs wavelet_quadratic_fit(
 //
 // Edge nodata handling
 // --------------------
-// DEMs often have nodata around the edges — either triangular slices from
+// DEMs often have nodata around the edges - either triangular slices from
 // reprojection out of a geographic CRS, or irregular boundaries from
 // basin-clipping.  The detrend step sets these pixels to the trend plane level
 // and the windowing taper then drives them to zero before zero-padding.  For
@@ -128,9 +128,9 @@ poly_fit_coeffs wavelet_quadratic_fit(
 // -----------------------------------------------------------------------------
 // spectral_window_type
 //
-// none    — unity window; maximum frequency resolution but prone to edge leakage
-// hann    — 2D elliptical raised-cosine window; recommended for most analyses
-// hamming — 2D elliptical Hamming window; slightly different sidelobe profile
+// none    - unity window; maximum frequency resolution but prone to edge leakage
+// hann    - 2D elliptical raised-cosine window; recommended for most analyses
+// hamming - 2D elliptical Hamming window; slightly different sidelobe profile
 // -----------------------------------------------------------------------------
 enum class spectral_window_type { none, hann, hamming };
 
@@ -142,13 +142,13 @@ enum class spectral_window_type { none, hann, hamming };
 // repeated suffix regressions on the binned spectrum.
 //
 // Units:
-//   frequency      — cycles/m  (= 1/m)
-//   wavelength     — metres    (= 1/frequency)
-//   psd            — m^2 / (cycles/m)
-//   background_psd — m^2 / (cycles/m)
-//   normalised_psd — dimensionless  (psd / background_psd)
-//   beta_by_bin    — dimensionless spectral slope from rollover suffix regression
-//   r_sq_by_bin    — R^2 of that regression (dimensionless, 0–1)
+//   frequency      - cycles/m  (= 1/m)
+//   wavelength     - metres    (= 1/frequency)
+//   psd            - m^2 / (cycles/m)
+//   background_psd - m^2 / (cycles/m)
+//   normalised_psd - dimensionless  (psd / background_psd)
+//   beta_by_bin    - dimensionless spectral slope from rollover suffix regression
+//   r_sq_by_bin    - R^2 of that regression (dimensionless, 0-1)
 // -----------------------------------------------------------------------------
 struct lsdtt_spectral_binned_result
 {
@@ -200,13 +200,13 @@ struct lsdtt_spectral_analysis_options
 //     shifted spectrum. Radial frequency is in cycles/m.
 //
 // Units summary:
-//   dfx, dfy, nyquist_frequency  — cycles/m
-//   radial_frequency             — cycles/m
-//   radial_wavelength            — m
-//   radial_psd, background_psd   — m^2/(cycles/m)
-//   normalised_psd               — dimensionless
-//   rollover_frequency           — cycles/m
-//   rollover_beta, sub_rollover_beta — dimensionless spectral slope
+//   dfx, dfy, nyquist_frequency  - cycles/m
+//   radial_frequency             - cycles/m
+//   radial_wavelength            - m
+//   radial_psd, background_psd   - m^2/(cycles/m)
+//   normalised_psd               - dimensionless
+//   rollover_frequency           - cycles/m
+//   rollover_beta, sub_rollover_beta - dimensionless spectral slope
 // -----------------------------------------------------------------------------
 struct lsdtt_spectral_analysis_result
 {
@@ -347,7 +347,7 @@ lsdtt_raster_cpu fftw2D_wiener_filter(
 //   1. OLS-detrend the DEM using all valid pixels
 //   2. Build a masked field: detrended elevation where mask > 0.5, 0 elsewhere
 //   3. Apply 2D window taper and zero-pad to next power-of-2 dimensions
-//   4. Forward FFT → lowpass filter at lambda_cutoff_metres → inverse FFT
+//   4. Forward FFT -> lowpass filter at lambda_cutoff_metres -> inverse FFT
 //   5. Restore the planar trend
 //
 // The output is valid at every pixel where the input DEM is valid, including
@@ -384,15 +384,15 @@ lsdtt_raster_cpu fftw2D_masked_surface_recovery(
 // detector. Each pixel inherits the result of the most confident overlapping
 // analysis window covering it.
 //
-//   strength       — peak prominence of the dominant spectral peak within the
+//   strength       - peak prominence of the dominant spectral peak within the
 //                    searched spacing band: peak power / mean band power.
 //                    ~1 = no periodicity (peak no stronger than background);
 //                    large = a sharp, regular spacing. The score to threshold
 //                    when deciding "is this a regularly-spaced field".
-//   spacing_metres — dominant repeat spacing (1 / peak frequency), in metres.
+//   spacing_metres - dominant repeat spacing (1 / peak frequency), in metres.
 //                    THE classifier: ditches, forest tracks, and wave dams each
 //                    occupy a distinctive spacing band.
-//   orientation_deg— azimuth ALONG which the parallel features run (perpendicular
+//   orientation_deg- azimuth ALONG which the parallel features run (perpendicular
 //                    to the spacing direction), in [0,180) deg clockwise from
 //                    north.
 // -----------------------------------------------------------------------------
@@ -424,18 +424,18 @@ struct directional_periodicity_result
 //
 // Parameters
 // ----------
-//   field               — input raster (e.g. a filled DEM such as sd_fill.tif,
+//   field               - input raster (e.g. a filled DEM such as sd_fill.tif,
 //                         or a curvature/divergence response).
-//   window_size_pixels  — analysis window side length. Must comfortably span
+//   window_size_pixels  - analysis window side length. Must comfortably span
 //                         several periods of the largest spacing of interest
 //                         (a few * max_spacing_metres / cell_size). >= 8.
-//   step_pixels         — window stride; smaller = smoother, slower. Typically
+//   step_pixels         - window stride; smaller = smoother, slower. Typically
 //                         window_size_pixels / 2. >= 1.
-//   min_spacing_metres  — shortest spacing to search for (> 2*cell_size).
-//   max_spacing_metres  — longest spacing to search for (< window extent).
-//   min_valid_fraction  — minimum fraction of valid pixels for a window to be
+//   min_spacing_metres  - shortest spacing to search for (> 2*cell_size).
+//   max_spacing_metres  - longest spacing to search for (< window extent).
+//   min_valid_fraction  - minimum fraction of valid pixels for a window to be
 //                         analysed (default 0.6); sparser windows are skipped.
-//   n_threads           — OpenMP thread count; 0 = all available.
+//   n_threads           - OpenMP thread count; 0 = all available.
 //
 // Throws
 // ------

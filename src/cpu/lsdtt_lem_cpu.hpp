@@ -54,13 +54,13 @@ struct lsdtt_lem_options
     bool  enable_nonlinear_hillslopes     = false;
     float critical_hillslope_slope        = 0.6f;
     bool  deposit_on_hillslope_baselevels = true;
-    // "linear" = explicit FD D·∇²z,  "roering" = explicit FD Roering 1999,  "cidre" = Carretier 2016
+    // "linear" = explicit FD D*grad^2z,  "roering" = explicit FD Roering 1999,  "cidre" = Carretier 2016
     // "adi" = alternating directions implicit for linear hillslope diffusion only
     // "roering_implicit" = unconditionally-stable backward-Euler Roering solver
     std::string hillslope_transport_model = "cidre";
 
     // Knobs for the "roering_implicit" model (Picard / adaptive / linear-solver
-    // settings).  D, U (forced to 0 — uplift is applied separately below), Sc,
+    // settings).  D, U (forced to 0 - uplift is applied separately below), Sc,
     // nonlinear, boundary_conditions and n_threads are overridden from the LEM
     // options at call time; the remaining fields are taken from here.
     lsdtt_roering_implicit_options roering_implicit_opts;

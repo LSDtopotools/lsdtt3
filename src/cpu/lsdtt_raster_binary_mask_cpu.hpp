@@ -60,12 +60,12 @@ namespace lsdtt {
 // Controls how neighbouring pixels are connected in component labelling and
 // filtering.
 //
-//   d4 — 4-connectivity: north, south, east, west only.
+//   d4 - 4-connectivity: north, south, east, west only.
 //         Diagonal pixels are not considered neighbours.
 //         Use for flat-surface labelling where channels (which cut
 //         diagonally) should separate adjacent flats into distinct components.
 //
-//   d8 — 8-connectivity: all eight surrounding pixels.
+//   d8 - 8-connectivity: all eight surrounding pixels.
 //         Default.  Use for all other binary-mask operations.
 // -----------------------------------------------------------------------------
 enum class pixel_connectivity { d4, d8 };
@@ -216,8 +216,8 @@ lsdtt_raster_cpu binary_fill_holes(
 // Removes foreground components with fewer than min_component_pixels pixels.
 //
 // connectivity
-//   d8 (default) — 8-connected components (includes diagonals).
-//   d4           — 4-connected components (cardinal directions only).
+//   d8 (default) - 8-connected components (includes diagonals).
+//   d4           - 4-connected components (cardinal directions only).
 //
 // Output:
 //   data = 1.0 for retained components
@@ -239,8 +239,8 @@ lsdtt_raster_cpu filter_binary_components_by_size(
 // Labels foreground components that meet a minimum size threshold.
 //
 // connectivity
-//   d8 (default) — 8-connected components (includes diagonals).
-//   d4           — 4-connected components (cardinal directions only).
+//   d8 (default) - 8-connected components (includes diagonals).
+//   d4           - 4-connected components (cardinal directions only).
 //                  Use for flat-surface labelling so that channel pixels
 //                  (which are narrow, often diagonal) cleanly separate
 //                  adjacent flat polygons into distinct labelled regions.

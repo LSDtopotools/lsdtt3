@@ -11,7 +11,7 @@
 //
 // Implements the Fill-Spill-Merge algorithm:
 //   Barnes, Callaghan & Wickert (2021) "Computing water flow through complex
-//   landscapes — Part 3: Fill-Spill-Merge: Flow routing in depression
+//   landscapes - Part 3: Fill-Spill-Merge: Flow routing in depression
 //   hierarchies", Earth Surface Dynamics 9, 105-121.
 //   doi:10.5194/esurf-9-105-2021
 //
@@ -53,18 +53,18 @@ namespace lsdtt {
 //
 // Parameters
 // ----------
-// dem          — original (unfilled) DEM in a projected metric CRS.
-// label        — per-cell leaf depression labels from build_depression_hierarchy.
-// flowdir      — per-cell D8 flow-direction codes from build_depression_hierarchy
+// dem          - original (unfilled) DEM in a projected metric CRS.
+// label        - per-cell leaf depression labels from build_depression_hierarchy.
+// flowdir      - per-cell D8 flow-direction codes from build_depression_hierarchy
 //                (0=N..7=NW, 255=outlet/pit/ocean). Used to route surface
 //                water downhill to pit cells.
-// deps         — the depression hierarchy (taken by value — water_vol fields
+// deps         - the depression hierarchy (taken by value - water_vol fields
 //                are reset and then mutated). Pass a copy to preserve originals.
-// rainfall_m   — uniform rainfall depth in metres per cell (>= 0).
+// rainfall_m   - uniform rainfall depth in metres per cell (>= 0).
 //
 // Returns
 // -------
-// std::vector<float>  — water-depth array (same size as DEM). Value at cell i
+// std::vector<float>  - water-depth array (same size as DEM). Value at cell i
 //   is the depth of standing water above the DEM surface at that cell after
 //   routing. Zero where the cell is above the water surface or is an ocean/
 //   boundary cell. Nodata cells have depth 0.

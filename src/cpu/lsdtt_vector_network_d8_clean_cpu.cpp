@@ -170,7 +170,7 @@ vector_network_d8_clean_result clean_vector_network_with_d8(
     std::vector<std::uint8_t> removed(n_edges, 0);   // 1 = removed (loop arm)
 
     // -----------------------------------------------------------------------
-    // Layer 2b — loop-arm resolution.
+    // Layer 2b - loop-arm resolution.
     // -----------------------------------------------------------------------
     if (options.resolve_loops)
     {
@@ -325,7 +325,7 @@ vector_network_d8_clean_result clean_vector_network_with_d8(
     }
 
     // -----------------------------------------------------------------------
-    // Layer 2a — dead-end resolution.
+    // Layer 2a - dead-end resolution.
     // -----------------------------------------------------------------------
     std::vector<vector_clean_segment> connectors;
     if (options.resolve_dead_ends)
@@ -342,7 +342,7 @@ vector_network_d8_clean_result clean_vector_network_with_d8(
             if (!J.is_outlet) continue;
             if (J.is_dem_edge_junction) continue;
 
-            // Incident (kept) edges of this junction — used to ignore self-hits.
+            // Incident (kept) edges of this junction - used to ignore self-hits.
             std::unordered_set<std::int32_t> own_edges;
             for (const auto& [v, ei] : adj[j])
             {

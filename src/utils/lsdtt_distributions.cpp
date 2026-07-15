@@ -162,7 +162,7 @@ static bool weibull_mle(
     if (!std::isfinite(s_lo) || !std::isfinite(s_hi)) return false;
     if (s_lo >= 0.0 || s_hi <= 0.0) return false;   // unusual; bail out
 
-    // Bisection — 80 iterations gives ~10^-24 precision.
+    // Bisection - 80 iterations gives ~10^-24 precision.
     for (int iter = 0; iter < 80; ++iter)
     {
         const double k_mid = 0.5 * (k_lo + k_hi);
@@ -185,7 +185,7 @@ static bool weibull_mle(
 }
 
 // =============================================================================
-// make_sorted_copy — removes non-finite values and sorts ascending
+// make_sorted_copy - removes non-finite values and sorts ascending
 // =============================================================================
 static std::vector<double> make_sorted_finite(const std::vector<double>& values)
 {

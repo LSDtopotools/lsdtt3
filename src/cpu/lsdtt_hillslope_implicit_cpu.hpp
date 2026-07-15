@@ -11,7 +11,7 @@
 //
 // Integrates the nonlinear hillslope transport law
 //
-//   ∂z/∂t = U + ∇·( D_eff(|∇z|) ∇z ),   D_eff = D / (1 - (|∇z|/Sc)²)
+//   dz/dt = U + grad*( D_eff(|gradz|) gradz ),   D_eff = D / (1 - (|gradz|/Sc)^2)
 //
 // over a requested interval dt_total using backward-Euler time stepping with a
 // damped Picard (lagged-coefficient) iteration for the nonlinearity, on a regular
@@ -27,7 +27,7 @@
 // time-accurate transient trajectories (Phase 6).  The face-centred cross-slope diffusivity keeps the
 // assembled system symmetric positive-definite, allowing a sparse Cholesky
 // (Eigen SimplicialLDLT) solve.  A regularised slope-ratio cap (r_max) keeps
-// slopes strictly sub-critical (|∇z| < Sc).  The solver requires Eigen3; when
+// slopes strictly sub-critical (|gradz| < Sc).  The solver requires Eigen3; when
 // Eigen is unavailable it falls back to the explicit subcycling solver so callers
 // need no #ifdef.
 //
@@ -63,14 +63,14 @@ namespace lsdtt
 // -----------------------------------------------------------------------------
 struct lsdtt_roering_implicit_options
 {
-    float D                 = 1e-3f;   // diffusivity (m²/yr)
+    float D                 = 1e-3f;   // diffusivity (m^2/yr)
     float U                 = 0.0f;    // uplift on hillslope pixels (m/yr)
     float Sc                = 0.8f;    // critical slope (m/m)
-    bool  nonlinear         = true;    // false → linear backward-Euler diffusion
+    bool  nonlinear         = true;    // false -> linear backward-Euler diffusion
     std::string boundary_conditions = "oooo";
 
     // time stepping (integrate over dt_total in adaptive sub-steps)
-    float dt_init           = 0.0f;    // 0 = auto (e.g. dt_total or h²/D heuristic)
+    float dt_init           = 0.0f;    // 0 = auto (e.g. dt_total or h^2/D heuristic)
     float dt_min            = 0.0f;    // 0 = auto floor
     float dt_max            = 0.0f;    // 0 = no cap beyond dt_total
     float grow_factor       = 1.5f;
@@ -80,7 +80,7 @@ struct lsdtt_roering_implicit_options
     // nonlinear iteration + limiter
     float picard_tol        = 1e-4f;
     int   picard_max_iter   = 50;
-    float relaxation_omega  = 1.0f;    // Picard damping (≤ 1)
+    float relaxation_omega  = 1.0f;    // Picard damping (<= 1)
     float slope_ratio_cap   = 0.99f;   // r_max
     int   solver_choice     = 0;       // 0 = SimplicialLDLT, 1 = CG+IncompleteCholesky
 
@@ -105,8 +105,8 @@ struct lsdtt_roering_implicit_result
     int   n_substeps;            // accepted sub-steps taken
     int   n_rejected_substeps;   // steps rejected by the limiter / divergence
     int   total_picard_iters;
-    float final_dt;              // last accepted Δt
-    float max_slope_ratio;       // max |∇z|/Sc in the final field (≤ 1)
+    float final_dt;              // last accepted Deltat
+    float max_slope_ratio;       // max |gradz|/Sc in the final field (<= 1)
     bool  limiter_fired;         // post-step projection ever invoked
 };
 

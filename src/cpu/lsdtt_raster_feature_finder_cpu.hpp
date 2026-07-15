@@ -359,7 +359,7 @@ valley_result find_valleys(
 //
 // Note on limitations:
 //   Natural hillslopes are locally cylindrical, so elongation and contour
-//   alignment alone are NOT selective for roads — the edge_strength term, the
+//   alignment alone are NOT selective for roads - the edge_strength term, the
 //   curvature gates, and especially the bench test are what isolate engineered
 //   benches. Expect to tune curvature_half_saturation, min_cross_curvature,
 //   the bench parameters, and the score threshold.
@@ -379,7 +379,7 @@ struct road_request
     double max_cross_curvature     = 0.0;    // |lam_major| cap  (1/m), 0 = off
     double score_threshold         = 0.5;
 
-    // Bench test — reject wide flat areas (floodplains, valley floors).
+    // Bench test - reject wide flat areas (floodplains, valley floors).
     bool   use_bench_test          = true;
     double bench_half_width_metres = 6.0;    // cross-feature sampling distance
     double bench_flank_slope_ratio = 1.5;    // flank slope >= ratio * tread slope
@@ -417,7 +417,7 @@ road_result find_roads(
 //
 // Flow-pathway-based road/channel discrimination. Builds a regional slope field
 // and a D8 flow network and contrasts, per pixel, the direction water actually
-// runs against the regional fall line — plus short-wavelength gradient,
+// runs against the regional fall line - plus short-wavelength gradient,
 // curvature and roughness. The intent is a diagnostic suite the user combines:
 //
 //   1. Regional slope vector: a heavily smoothed quadratic fit
@@ -530,7 +530,7 @@ road_flow_result find_road_flow_discrimination(
 
 
 // =============================================================================
-// Road extractor — composes the linear-feature primitives into a road mask
+// Road extractor - composes the linear-feature primitives into a road mask
 // =============================================================================
 //
 // Pipeline (each stage is a reusable primitive from lsdtt_raster_linear_features
@@ -546,7 +546,7 @@ road_flow_result find_road_flow_discrimination(
 //     -> filter_binary_components_by_size   (drop short speckle fragments)
 //     = road_mask
 //
-// The response is whatever per-pixel raster makes roads bright — typically the
+// The response is whatever per-pixel raster makes roads bright - typically the
 // flow-path divergence from find_road_flow_discrimination. The optional
 // valley-curvature raster (e.g. road_flow_result::regional_valley_curvature)
 // removes the false channel that runs along a valley axis where the flanking
@@ -594,10 +594,10 @@ struct road_extract_request
     double track_min_strength         = 6.0;   // periodicity strength = "in a regular field"
     double track_min_fraction         = 0.5;   // fraction of a component that must be periodic
     // Labelling mode:
-    //   false (default) — per component: a whole component is road or track by
+    //   false (default) - per component: a whole component is road or track by
     //                     the track_min_fraction vote. Consistent per feature,
     //                     but diluted where road and track components connect.
-    //   true            — per pixel: each mask pixel is track where its local
+    //   true            - per pixel: each mask pixel is track where its local
     //                     periodicity strength >= track_min_strength, else road.
     //                     No dilution; track_min_fraction is ignored.
     bool   classify_per_pixel         = false;
@@ -633,7 +633,7 @@ road_extract_result extract_roads(
 
 
 // =============================================================================
-// Smoothness road extractor — roads are smooth ribbons on a rough hillslope
+// Smoothness road extractor - roads are smooth ribbons on a rough hillslope
 // =============================================================================
 //
 // Engineered roads/tracks are graded smooth surfaces; the surrounding hillslope
@@ -689,11 +689,11 @@ road_smoothness_result extract_roads_smooth(
 
 
 // =============================================================================
-// Thin-line extractor — separate linear features from blobs and speckle
+// Thin-line extractor - separate linear features from blobs and speckle
 // =============================================================================
 //
 // Takes any response raster (e.g. the inflated flow-path divergence), thresholds
-// it, and keeps only the THIN, LONG, ELONGATED parts — removing both speckle and
+// it, and keeps only the THIN, LONG, ELONGATED parts - removing both speckle and
 // compact/blobby regions of any size:
 //
 //   response >= threshold                 -> binary

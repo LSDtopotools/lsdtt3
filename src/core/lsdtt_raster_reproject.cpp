@@ -56,7 +56,7 @@ static GDALResampleAlg resample_algo(const std::string& s)
     if (s == "sum")                              return GRA_Sum;
 
     std::cerr << "lsdtt_reproject: unknown resampling_method '"
-              << s << "' — falling back to cubic.\n";
+              << s << "' - falling back to cubic.\n";
     return GRA_Cubic;
 }
 
@@ -143,7 +143,7 @@ static std::string projection_suffix(CrsRecommendationType type)
 // -----------------------------------------------------------------------------
 // run_gdalwarp
 //
-// Wrap GDALWarp() to reproject in_path → out_path with the given WKT and
+// Wrap GDALWarp() to reproject in_path -> out_path with the given WKT and
 // pixel size. Writes a Cloud Optimised GeoTIFF.
 // -----------------------------------------------------------------------------
 static void run_gdalwarp(
@@ -207,7 +207,7 @@ static void run_gdalwarp(
         warp_opts = CSLAddString(warp_opts, nd.str().c_str());
     }
 
-    // Output format — COG
+    // Output format - COG
     warp_opts = CSLAddString(warp_opts, "-of");
     warp_opts = CSLAddString(warp_opts, "COG");
 
@@ -349,20 +349,20 @@ lsdtt_reproject_result lsdtt_reproject_if_needed(
     if (result.suggestion.already_projected && !opts.force_reproject)
     {
         std::cout << "lsdtt_reproject: raster is already in a projected CRS "
-                     "with metre units — skipping reprojection.\n";
+                     "with metre units - skipping reprojection.\n";
         result.reprojected = false;
         return result;
     }
 
     if (result.suggestion.already_projected && opts.force_reproject)
     {
-        std::cout << "lsdtt_reproject: force_reproject is true — warping "
+        std::cout << "lsdtt_reproject: force_reproject is true - warping "
                      "projected input to the recommended analysis CRS.\n";
     }
 
 
     // ------------------------------------------------------------------
-    // 3. enforce_projection == false — bail out
+    // 3. enforce_projection == false - bail out
     // ------------------------------------------------------------------
     if (!opts.enforce_projection)
     {
@@ -374,7 +374,7 @@ lsdtt_reproject_result lsdtt_reproject_if_needed(
 
     // ------------------------------------------------------------------
     // 4. Choose target WKT
-    //    If allow_lambert_projection is true and the raster spans ≥ 3
+    //    If allow_lambert_projection is true and the raster spans >= 3
     //    UTM zones, prefer the LAEA WKT.
     // ------------------------------------------------------------------
     std::string target_wkt = result.suggestion.recommended_wkt;
@@ -386,14 +386,14 @@ lsdtt_reproject_result lsdtt_reproject_if_needed(
     {
         std::cout << "lsdtt_reproject: raster spans "
                   << result.suggestion.utm_zone_count
-                  << " UTM zones — using custom Lambert Azimuthal Equal Area "
+                  << " UTM zones - using custom Lambert Azimuthal Equal Area "
                      "projection instead of UTM.\n";
         target_wkt   = result.suggestion.laea_wkt;
         chosen_type  = CrsRecommendationType::laea_custom;
     }
     else if (result.suggestion.warn_multi_zone)
     {
-        std::cout << "lsdtt_reproject: WARNING — raster spans "
+        std::cout << "lsdtt_reproject: WARNING - raster spans "
                   << result.suggestion.utm_zone_count
                   << " UTM zones. Consider setting allow_lambert_projection: true "
                      "for a less distorted result.\n";
@@ -417,7 +417,7 @@ lsdtt_reproject_result lsdtt_reproject_if_needed(
 
         grid_m = opts.forced_grid_spacing;
 
-        std::cout << "lsdtt_reproject: force_resampling is true — using "
+        std::cout << "lsdtt_reproject: force_resampling is true - using "
                   << "forced_grid_spacing = " << grid_m << " m\n";
     }
     else if (opts.grid_spacing > 0.0)
@@ -441,7 +441,7 @@ lsdtt_reproject_result lsdtt_reproject_if_needed(
 
     if (grid_m <= 0.0)
     {
-        std::cerr << "lsdtt_reproject: WARNING — computed grid spacing is "
+        std::cerr << "lsdtt_reproject: WARNING - computed grid spacing is "
                   << grid_m << " m; clamping to 0.01 m.\n";
         grid_m = 0.01;
     }

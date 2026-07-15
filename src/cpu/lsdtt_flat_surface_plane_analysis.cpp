@@ -24,7 +24,7 @@ static constexpr double k_rad2deg = 57.2957795130823208768;
 static constexpr double k_nan     = std::numeric_limits<double>::quiet_NaN();
 
 // =============================================================================
-// label_accum  — per-label sufficient statistics accumulated across passes
+// label_accum  - per-label sufficient statistics accumulated across passes
 // =============================================================================
 struct label_accum
 {
@@ -143,7 +143,7 @@ static std::pair<bool, double> detect_bimodal(
 //     - 2 b_i Syz_j
 //     + n_j mean_rji^2
 //
-// where all S terms are centred on label j’s own mean coordinates.
+// where all S terms are centred on label j's own mean coordinates.
 // This gives O(1) cross-surface RMSE per pair without rescanning pixels.
 // =============================================================================
 static double cross_mean_residual(
@@ -282,7 +282,7 @@ plane_analysis_result analyse_flat_surface_planes(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 1 — accumulate n, sum_x, sum_y, sum_z per label.
+    // Pass 1 - accumulate n, sum_x, sum_y, sum_z per label.
     // -------------------------------------------------------------------------
     std::vector<label_accum> accums(static_cast<std::size_t>(max_label + 1));
 
@@ -325,7 +325,7 @@ plane_analysis_result analyse_flat_surface_planes(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 2 — accumulate centred second-order sums per label.
+    // Pass 2 - accumulate centred second-order sums per label.
     // -------------------------------------------------------------------------
     for (int row = 0; row < nrows; ++row)
     {
@@ -362,7 +362,7 @@ plane_analysis_result analyse_flat_surface_planes(
     }
 
     // -------------------------------------------------------------------------
-    // Fit planes — solve 2x2 Cramer per label.
+    // Fit planes - solve 2x2 Cramer per label.
     // -------------------------------------------------------------------------
     std::vector<label_plane_fit> plane_fits(
         static_cast<std::size_t>(max_label + 1));
@@ -405,7 +405,7 @@ plane_analysis_result analyse_flat_surface_planes(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 3 — per-label residual histograms for bimodal split detection.
+    // Pass 3 - per-label residual histograms for bimodal split detection.
     // -------------------------------------------------------------------------
     const int n_bins = request.split_histogram_n_bins;
 
@@ -536,7 +536,7 @@ plane_analysis_result analyse_flat_surface_planes(
     }
 
     // -------------------------------------------------------------------------
-    // Pairwise merge check — O(1) per pair using sufficient statistics.
+    // Pairwise merge check - O(1) per pair using sufficient statistics.
     // -------------------------------------------------------------------------
     std::vector<label_merge_candidate> merge_candidates;
     merge_candidates.reserve(
@@ -595,7 +595,7 @@ plane_analysis_result analyse_flat_surface_planes(
               { return a.normalised_offset < b.normalised_offset; });
 
     // -------------------------------------------------------------------------
-    // Union-find connected components on same_level pairs → merge groups.
+    // Union-find connected components on same_level pairs -> merge groups.
     // -------------------------------------------------------------------------
     std::vector<int> uf_parent(static_cast<std::size_t>(max_label + 1));
     std::vector<int> uf_rank  (static_cast<std::size_t>(max_label + 1), 0);

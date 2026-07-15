@@ -14,7 +14,7 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 lsdtt_crn_parameters::lsdtt_crn_parameters()
 {
     init_defaults();
@@ -22,10 +22,10 @@ lsdtt_crn_parameters::lsdtt_crn_parameters()
     init_standardisation_maps();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::init_defaults()
 {
-    // Vermeesh (2007) default values — overwritten by any set_*_parameters call
+    // Vermeesh (2007) default values - overwritten by any set_*_parameters call
     lambda_10Be_ = 456e-9;
     lambda_26Al_ = 980e-9;
     lambda_14C_  = 121e-6;
@@ -46,11 +46,11 @@ void lsdtt_crn_parameters::init_defaults()
     F_14C_[0]  = 0.83;   F_14C_[1]  = 0.0691; F_14C_[2]  = 0.0809; F_14C_[3]  = 0.02;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::init_standardisation_maps()
 {
     // 10Be: reference standard is 07KNSTD (factor = 1.0)
-    // Values convert measured standard → 07KNSTD equivalent
+    // Values convert measured standard -> 07KNSTD equivalent
     be10_std_map_["07KNSTD"]      = 1.0;
     be10_std_map_["KNSTD"]        = 0.9042;
     be10_std_map_["NIST_Certified"] = 1.0425;
@@ -81,10 +81,10 @@ void lsdtt_crn_parameters::init_standardisation_maps()
     al26_std_map_["Z92-0222"] = 1.0;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::set_braucher_parameters()
 {
-    // Cosmocalc v2.0 (Braucher et al 2011) — Chmeleff/Korschinek decay constant
+    // Cosmocalc v2.0 (Braucher et al 2011) - Chmeleff/Korschinek decay constant
     lambda_10Be_ = 500e-9;
     lambda_26Al_ = 980e-9;
     lambda_14C_  = 121e-6;
@@ -102,7 +102,7 @@ void lsdtt_crn_parameters::set_braucher_parameters()
     F_14C_[0]  = 0.83;   F_14C_[1]  = 0.15;   F_14C_[2]  = 0.0;   F_14C_[3]  = 0.02;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::set_braucher_borchers_parameters()
 {
     // Braucher et al EPSL 2011 F values + Borchers et al 2016 P0 values,
@@ -124,7 +124,7 @@ void lsdtt_crn_parameters::set_braucher_borchers_parameters()
     F_14C_[0]  = 0.788;  F_14C_[1]  = 0.212;  F_14C_[2]  = 0.0;   F_14C_[3]  = 0.0;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::set_granger_parameters()
 {
     lambda_10Be_ = 500e-9;
@@ -144,10 +144,10 @@ void lsdtt_crn_parameters::set_granger_parameters()
     F_14C_[0]  = 0.83;   F_14C_[1]  = 0.0691; F_14C_[2]  = 0.0809; F_14C_[3]  = 0.02;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::set_schaller_parameters()
 {
-    // Schaller et al 2016 — updated Gamma[1] for negative muons
+    // Schaller et al 2016 - updated Gamma[1] for negative muons
     lambda_10Be_ = 500e-9;
     lambda_26Al_ = 980e-9;
     lambda_14C_  = 121e-6;
@@ -165,7 +165,7 @@ void lsdtt_crn_parameters::set_schaller_parameters()
     F_14C_[0]  = 0.83;   F_14C_[1]  = 0.15;   F_14C_[2]  = 0.0;    F_14C_[3]  = 0.02;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::set_new_cronus_parameters()
 {
     // New CRONUS 10Be production curve (Shasta Marrero); all other nuclides
@@ -192,7 +192,7 @@ void lsdtt_crn_parameters::set_new_cronus_parameters()
     F_14C_[0]  = 0.83;   F_14C_[1]  = 0.15;   F_14C_[2]  = 0.0;   F_14C_[3]  = 0.02;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::reset_scaling(const std::string& muon_scheme)
 {
     if      (muon_scheme == "Braucher")          set_braucher_parameters();
@@ -208,10 +208,10 @@ void lsdtt_crn_parameters::reset_scaling(const std::string& muon_scheme)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // scale_one_nuclide: Newton-Raphson to find effective depth x such that
-//   Σᵢ F[i]*exp(-x/Γ[i]) == total_shielding
-// then rescale: F[i] *= exp(-x/Γ[i]).
+//   Sigma_i F[i]*exp(-x/Gamma[i]) == total_shielding
+// then rescale: F[i] *= exp(-x/Gamma[i]).
 // This preserves the relative attenuation shape of each production pathway
 // rather than applying a flat multiplier.
 void lsdtt_crn_parameters::scale_one_nuclide(double total_shielding,
@@ -219,7 +219,7 @@ void lsdtt_crn_parameters::scale_one_nuclide(double total_shielding,
                                               double F[4])
 {
     if (total_shielding >= 1.0)
-        return;   // no shielding — nothing to do
+        return;   // no shielding - nothing to do
 
     const double tolerance    = 1e-7;
     const double displace_x   = 1e-6;
@@ -246,7 +246,7 @@ void lsdtt_crn_parameters::scale_one_nuclide(double total_shielding,
         F[i] *= std::exp(-x / Gamma[i]);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_parameters::scale_F_values(double total_shielding,
                                            const std::string& nuclide)
 {
@@ -263,13 +263,13 @@ void lsdtt_crn_parameters::scale_F_values(double total_shielding,
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double lsdtt_crn_parameters::atmospheric_pressure_standard(double elevation_m)
 {
     // Balco barometric formula with SLHL standard-atmosphere constants.
     // Returns pressure in mbar (hPa).
-    const double gmr   = -0.03417;   // g·M/R (mol⁻¹ K⁻¹)
-    const double dtdz  =  0.0065;    // environmental lapse rate (K m⁻¹)
+    const double gmr   = -0.03417;   // g*M/R (mol^-^1 K^-^1)
+    const double dtdz  =  0.0065;    // environmental lapse rate (K m^-^1)
     const double P_slp =  1013.25;   // standard sea-level pressure (mbar)
     const double T_slp =  288.15;    // standard sea-level temperature (K)
     double T_site = T_slp - dtdz * elevation_m;
@@ -277,7 +277,7 @@ double lsdtt_crn_parameters::atmospheric_pressure_standard(double elevation_m)
     return P_slp * std::exp((gmr / dtdz) * (std::log(T_slp) - std::log(T_site)));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // Stone (2000) spallation scaling.  Faithfully ported from LSDTopoTools2
 // (Balco / Stone 2000 Table 1 coefficients).
 double lsdtt_crn_parameters::stone2000sp(double lat_deg,
@@ -291,8 +291,8 @@ double lsdtt_crn_parameters::stone2000sp(double lat_deg,
         lat_deg = 45.0;
     }
 
-    // Spallogenic production at 7 index latitudes (0–60°), from Stone 2000 Table 1.
-    // S(P) = a + b·exp(-P/150) + c·P + d·P² + e·P³
+    // Spallogenic production at 7 index latitudes (0-60 deg), from Stone 2000 Table 1.
+    // S(P) = a + b*exp(-P/150) + c*P + d*P^2 + e*P^3
     const double a[7] = { 31.8518, 34.3699, 40.3153, 42.0983, 56.7733, 69.0720, 71.8733 };
     const double b[7] = { 250.3193, 258.4759, 308.9894, 512.6857, 649.1343, 832.4566, 863.1927 };
     const double c[7] = { -0.083393, -0.089807, -0.106248, -0.120551, -0.160859, -0.199252, -0.207069 };
@@ -325,7 +325,7 @@ double lsdtt_crn_parameters::stone2000sp(double lat_deg,
     return (S * Fsp) + (M * (1.0 - Fsp));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double lsdtt_crn_parameters::be10_standardisation_factor(
     const std::string& standard_name) const
 {
@@ -352,7 +352,7 @@ double lsdtt_crn_parameters::al26_standardisation_factor(
     return it->second;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 std::vector<double> lsdtt_crn_parameters::apply_standardisation(
     const std::vector<double>& concentrations,
     const std::vector<std::string>& standard_names,
@@ -373,7 +373,7 @@ std::vector<double> lsdtt_crn_parameters::apply_standardisation(
     return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double lsdtt_crn_parameters::interp1d(const std::vector<double>& x,
                                        const std::vector<double>& y,
                                        double xi)
@@ -394,9 +394,9 @@ double lsdtt_crn_parameters::interp1d(const std::vector<double>& x,
     return y[n - 1];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // load_nc_data
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 CrnNcData lsdtt_crn_parameters::load_nc_data(const std::string& nc_path)
 {
     CrnNcData out;
@@ -461,7 +461,7 @@ CrnNcData lsdtt_crn_parameters::load_nc_data(const std::string& nc_path)
                   !out.lifton_lr.empty() && !out.muscheler_vdm.empty());
     if (out.loaded)
         std::cout << "load_nc_data: loaded " << nc_path
-                  << "  ERA40=" << out.era40_lat.size() << "×" << out.era40_lon.size()
+                  << "  ERA40=" << out.era40_lat.size() << "x" << out.era40_lon.size()
                   << "  Muscheler=" << out.muscheler_time.size() << " steps\n";
     else
         std::cerr << "load_nc_data: file opened but variables missing in \"" << nc_path << "\"\n";
@@ -471,10 +471,10 @@ CrnNcData lsdtt_crn_parameters::load_nc_data(const std::string& nc_path)
     return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // bilinear_era40
-// Grid axes: lat_ax descending (90→-90), lon_ax ascending (0→360).
-// ─────────────────────────────────────────────────────────────────────────────
+// Grid axes: lat_ax descending (90->-90), lon_ax ascending (0->360).
+// 
 double lsdtt_crn_parameters::bilinear_era40(const std::vector<double>& lat_ax,
                                              const std::vector<double>& lon_ax,
                                              const std::vector<float>&  grid,
@@ -500,7 +500,7 @@ double lsdtt_crn_parameters::bilinear_era40(const std::vector<double>& lat_ax,
                   ? (lon - lon_ax[jlo]) / (lon_ax[jlo+1] - lon_ax[jlo])
                   : 0.0;
 
-    // Find lat bracket (descending — lat_ax[0] is largest)
+    // Find lat bracket (descending - lat_ax[0] is largest)
     int ilo = 0;
     for (int i = 0; i < nlat - 1; ++i) {
         if (lat <= lat_ax[i] && lat >= lat_ax[i+1]) { ilo = i; break; }
@@ -521,10 +521,10 @@ double lsdtt_crn_parameters::bilinear_era40(const std::vector<double>& lat_ax,
            + tlat*(1-tlon)*v10  + tlat*tlon*v11;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // atmospheric_pressure_era40
 // Mirrors ERA40atm() from lsd.py (Balco/Lifton, CRONUS origin).
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double lsdtt_crn_parameters::atmospheric_pressure_era40(double lat_deg, double lon_deg,
                                                          double elevation_m,
                                                          const CrnNcData& nc)
@@ -538,7 +538,7 @@ double lsdtt_crn_parameters::atmospheric_pressure_era40(double lat_deg, double l
     double P_sl = bilinear_era40(nc.era40_lat, nc.era40_lon, nc.era40_meanP, lat_deg, lon_deg);
     double T_sl = bilinear_era40(nc.era40_lat, nc.era40_lon, nc.era40_meanT, lat_deg, lon_deg);
 
-    // Lifton lapse rate polynomial: dtdz(lat) = -Σ_k lr[k]*lat^k  (K m⁻¹, positive upward)
+    // Lifton lapse rate polynomial: dtdz(lat) = -Sigma_k lr[k]*lat^k  (K m^-^1, positive upward)
     // Signed latitude to match COSPAR CIRA-86 fit (lsd.py uses site_lat signed).
     double dtdz = 0.0;
     double lat_k = 1.0;
@@ -554,11 +554,11 @@ double lsdtt_crn_parameters::atmospheric_pressure_era40(double lat_deg, double l
     return P_sl * std::exp((gmr / dtdz) * (std::log(T_sl) - std::log(T_site)));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // stone_factor_at_rc
 // Converts geomagnetic cutoff rigidity Rc [GV] to Stone 2000 spallation scaling
 // factor at pressure P_mbar.  Mirrors Rc_StoneFactors() from PR_processes.py.
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double lsdtt_crn_parameters::stone_factor_at_rc(double Rc_GV, double P_mbar)
 {
     // Stone table: latitudes, coefficients (same values as in stone2000sp)
@@ -583,7 +583,7 @@ double lsdtt_crn_parameters::stone_factor_at_rc(double Rc_GV, double P_mbar)
         i_sf[k] = sa[k] + sb[k] * eP + sc[k] * P + sd[k] * P2 + se[k] * P3;
     }
 
-    // Extend to Rc = 0: Stone factor at 60° applies below this rigidity
+    // Extend to Rc = 0: Stone factor at 60 deg applies below this rigidity
     i_Rc.push_back(0.0);
     i_sf.push_back(i_sf[6]);
 
@@ -611,11 +611,11 @@ double lsdtt_crn_parameters::stone_factor_at_rc(double Rc_GV, double P_mbar)
     return interp1d(Rc_s, sf_s, Rc_GV);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // stone2000sp_paleomag
 // Stone 2000 scaling with time-integrated paleomagnetic correction via the
 // Muscheler VDM record.  Follows Rc_correctedStoneFactors() / PR_processes.py.
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
                                                    double Fsp, double age_yr,
                                                    const CrnNcData& nc) const
@@ -626,9 +626,9 @@ double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
     const double lat_rad = std::fabs(lat_deg) * kPi / 180.0;
     const double cos4lat = std::pow(std::cos(lat_rad), 4.0);
 
-    // Rc [GV] from VDM [10²² Am²]: dipole formula (Störmer unit)
-    // Rc = (μ₀ × M × 1e22 / 4π) / R² × c × cos⁴(lat) / 1e9
-    // = (1e-7 × M × 1e22 × 3e8) / (6.3712e6)² × cos⁴(lat)  — but must match Python exactly:
+    // Rc [GV] from VDM [10^2^2 Am^2]: dipole formula (Stormer unit)
+    // Rc = (mu_0 x M x 1e22 / 4pi) / R^2 x c x cos^4(lat) / 1e9
+    // = (1e-7 x M x 1e22 x 3e8) / (6.3712e6)^2 x cos^4(lat)  - but must match Python exactly:
     // Python: (p * 1e22 * 4e-7 * 3e8) / (16e9 * (6.3712e6)^2) * cos^4(lat)
     static const double Rc_c = (4e-7 * 3e8 * 1e22) / (16e9 * 6.3712e6 * 6.3712e6);
 
@@ -659,7 +659,7 @@ double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
         return stone2000sp(lat_deg, P_mbar, Fsp);
     double sf_avg = integral / t_span;
 
-    // Modern spallation factor (VDM at t ≈ 0, i.e. index 0)
+    // Modern spallation factor (VDM at t ~= 0, i.e. index 0)
     double Rc_modern = Rc_c * static_cast<double>(nc.muscheler_vdm[0]) * cos4lat;
     double sf_modern = stone_factor_at_rc(Rc_modern, P_mbar);
     if (sf_modern <= 0.0)

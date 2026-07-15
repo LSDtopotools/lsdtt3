@@ -84,7 +84,7 @@ struct lsdtt_sediment_reach
 struct lsdtt_active_layer
 {
     double depth_m = 0.0;
-    std::vector<double> volume_m3;  // m³ per grain class
+    std::vector<double> volume_m3;  // m^3 per grain class
 };
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ struct lsdtt_sediment_reach_result
 // ---------------------------------------------------------------------------
 struct lsdtt_sediment_routing_result
 {
-    // [timestep][junction_index] — one entry per junction per timestep
+    // [timestep][junction_index] - one entry per junction per timestep
     std::vector<std::vector<lsdtt_sediment_reach_result>> timestep_results;
 
     std::vector<double> cumulative_deposition_m3;   // per junction, all timesteps
@@ -126,16 +126,16 @@ struct lsdtt_sediment_routing_options
     double sediment_density_kg_m3         = 2650.0;
     double water_density_kg_m3            = 1000.0;
 
-    // Active layer depth per reach. ≤0 → use 2 × D90 of the reach.
+    // Active layer depth per reach. <=0 -> use 2 x D90 of the reach.
     double active_layer_depth_m           = -1.0;
 
     // Hydraulic geometry for width when not set per-reach by the user:
-    //   W [m] = width_coefficient * (drainage_area [m²])^width_exponent
+    //   W [m] = width_coefficient * (drainage_area [m^2])^width_exponent
     double width_coefficient              = 2.76;
     double width_exponent                 = 0.40;
 
     // Hydraulic geometry for discharge:
-    //   Q [m³/s] = discharge_coefficient * (drainage_area [m²])^discharge_exponent
+    //   Q [m^3/s] = discharge_coefficient * (drainage_area [m^2])^discharge_exponent
     // Used when no per-timestep discharge array is supplied.
     double discharge_coefficient          = 1.0e-5;
     double discharge_exponent             = 0.80;
@@ -172,8 +172,8 @@ std::vector<lsdtt_sediment_reach> build_sediment_reaches(
     const lsdtt_sediment_routing_options& opts);
 
 // Initialise the active layer for every reach.
-// initial_depth_m ≤ 0 → use opts.active_layer_depth_m, or 2×D90 if that is
-// also ≤ 0.
+// initial_depth_m <= 0 -> use opts.active_layer_depth_m, or 2xD90 if that is
+// also <= 0.
 [[nodiscard]]
 std::vector<lsdtt_active_layer> initialise_active_layers(
     const std::vector<lsdtt_sediment_reach>& reaches,
@@ -181,7 +181,7 @@ std::vector<lsdtt_active_layer> initialise_active_layers(
     double                                   initial_depth_m = -1.0);
 
 // Run multi-timestep routing using a precomputed discharge array.
-// discharge[t][j] = discharge [m³/s] for junction j at timestep t.
+// discharge[t][j] = discharge [m^3/s] for junction j at timestep t.
 // If discharge is empty, discharge is computed internally from drainage area
 // using opts.discharge_coefficient and opts.discharge_exponent.
 [[nodiscard]]
@@ -192,7 +192,7 @@ lsdtt_sediment_routing_result run_sediment_routing(
     const std::vector<std::vector<double>>&    discharge,      // [t][j], may be empty
     const lsdtt_sediment_routing_options&      opts);
 
-// Rasterise per-junction cumulative deposition [m³] onto the channel network.
+// Rasterise per-junction cumulative deposition [m^3] onto the channel network.
 // Each pixel that belongs to the link of junction j receives that junction's
 // cumulative deposition value.
 [[nodiscard]]

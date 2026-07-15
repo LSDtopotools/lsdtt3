@@ -9,7 +9,7 @@
 // A port of:
 // Goodwin, G.C.H., Mudd, S.M., Clubb, F.J., 2018. 
 // Unsupervised detection of salt marsh platforms: a topographic method. 
-// Earth Surface Dynamics 6, 239–255. https://doi.org/10.5194/esurf-6-239-2018
+// Earth Surface Dynamics 6, 239-255. https://doi.org/10.5194/esurf-6-239-2018
 #include "lsdtt_marsh_platform_cpu.hpp"
 
 #include <algorithm>

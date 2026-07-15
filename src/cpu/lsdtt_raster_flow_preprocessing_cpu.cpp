@@ -63,12 +63,12 @@ static constexpr int k_queued  =  1;
 static constexpr int k_closed  =  2;
 static constexpr int k_nodata  = -1;
 
-// 8-neighbour offsets — even = cardinal, odd = diagonal
+// 8-neighbour offsets - even = cardinal, odd = diagonal
 static const int k_dr[8] = { -1, -1,  0,  1,  1,  1,  0, -1 };
 static const int k_dc[8] = {  0,  1,  1,  1,  0, -1, -1, -1 };
 static constexpr float k_sqrt2 = 1.41421356f;
 
-// Sentinel value for backlink array — cell has no parent in the traversal
+// Sentinel value for backlink array - cell has no parent in the traversal
 static constexpr uint32_t k_no_backlink = std::numeric_limits<uint32_t>::max();
 
 // -----------------------------------------------------------------------------
@@ -1115,13 +1115,13 @@ lsdtt_raster_cpu breach_depressions_least_cost(
         std::cout << n_remaining << " pits remain";
         if (fill_remainder)
         {
-            std::cout << " — filling remainder with Priority-Flood.\n";
+            std::cout << " - filling remainder with Priority-Flood.\n";
             lsdtt_array2d<int> fill_idx = build_fill_index(mask_arr, nrows, ncols);
             fill_serial(dem, fill_idx, meta, 0.0f);
         }
         else
         {
-            std::cout << " — left unfilled (fill_remainder = false).\n";
+            std::cout << " - left unfilled (fill_remainder = false).\n";
         }
     }
     else
@@ -1149,15 +1149,15 @@ depressions_to_polygons(
         throw std::runtime_error(
             "lsdtt::depressions_to_polygons: min_pixels must be >= 1");
 
-    // Step 1 — threshold: keep only cells where fill_diff > min_depth
+    // Step 1 - threshold: keep only cells where fill_diff > min_depth
     const lsdtt_raster_cpu binary =
         lsdtt::algebra::raster_binary_true_above_but_excluding_threshold(fill_diff, min_depth);
 
-    // Step 2 — label connected components, discarding those below min_pixels
+    // Step 2 - label connected components, discarding those below min_pixels
     const lsdtt_raster_cpu labelled =
         label_binary_components_by_size(binary, min_pixels);
 
-    // Step 3 — build schema
+    // Step 3 - build schema
     depression_polygons_result result;
     result.schema.field_names = { "depression_id", "area_m2",  "volume_m3" };
     result.schema.field_types = {
@@ -1166,9 +1166,9 @@ depressions_to_polygons(
         lsdtt_vector_field_type::double_type
     };
 
-    // Step 4 — trace outlines, compute area and volume per component
+    // Step 4 - trace outlines, compute area and volume per component
     // fill_diff is passed as the scalar raster so binary_components_to_polygon_records
-    // accumulates sum(depth)*cell_size² = volume_m3 for each component.
+    // accumulates sum(depth)*cell_size^2 = volume_m3 for each component.
     result.records = binary_components_to_polygon_records_with_holes(
         labelled, &fill_diff, result.schema);
 

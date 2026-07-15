@@ -243,7 +243,7 @@ load_vector_point_layer_in_raster_crs(
 // lsdtt_drainage_injection_record
 //
 // One drainage-area injection record: a successfully-mapped raster pixel and
-// the upstream drainage area (in raster map units squared, e.g. m²) to add
+// the upstream drainage area (in raster map units squared, e.g. m^2) to add
 // to that pixel's initial weight before downstream accumulation.
 //
 // Typical use: a river crosses a tile edge and enters at a known pixel; the
@@ -273,7 +273,7 @@ struct lsdtt_drainage_injection_record
 //
 // drainage_area_field
 //   Name of the numeric attribute holding the upstream drainage area in raster
-//   map units squared (e.g. m²).  Defaults to "drainage_area".
+//   map units squared (e.g. m^2).  Defaults to "drainage_area".
 //   If the field does not exist in the layer schema, std::runtime_error is thrown.
 //
 // layer_name

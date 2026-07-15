@@ -17,7 +17,7 @@
 //   The returned analytical coefficients are the exact local quadratic
 //   coefficients at each pixel centre in the form:
 //
-//     z(dx,dy) ≈ a*dx^2 + b*dy^2 + c*dx*dy + d*dx + e*dy + f
+//     z(dx,dy) ~= a*dx^2 + b*dy^2 + c*dx*dy + d*dx + e*dy + f
 //
 //   where dx and dy are local coordinate offsets from the pixel centre,
 //   with dx positive east and dy positive north.
@@ -170,10 +170,10 @@ lsdtt_raster_cpu generate_blue_noise_surface(
 // enclosing (2^k + 1) square grid, then cropped to the requested raster size.
 //
 // Parameters:
-//   roughness      — multiplicative decay of perturbation amplitude per level
-//   initial_scale  — initial perturbation amplitude
-//   target_mean    — output mean after normalisation
-//   target_stddev  — output standard deviation after normalisation
+//   roughness      - multiplicative decay of perturbation amplitude per level
+//   initial_scale  - initial perturbation amplitude
+//   target_mean    - output mean after normalisation
+//   target_stddev  - output standard deviation after normalisation
 //
 // Determinism:
 //   Random perturbations are generated from a seed + (step,row,col,phase)
@@ -212,9 +212,9 @@ lsdtt_raster_cpu generate_diamond_square_surface(
 //   - used by full spectral analysis background-spectrum construction
 //
 // Parameters:
-//   beta          — target PSD slope exponent (> 0)
-//   target_mean   — mean of the output raster after normalisation
-//   target_stddev — standard deviation of the output raster after normalisation
+//   beta          - target PSD slope exponent (> 0)
+//   target_mean   - mean of the output raster after normalisation
+//   target_stddev - standard deviation of the output raster after normalisation
 //
 // Notes:
 //   - Same seed => identical surface
@@ -251,8 +251,8 @@ lsdtt_raster_cpu generate_power_law_fractal_surface_fft(
 //   z_n(x,y) = amplitude * cos( 2*pi*(mx*x/Lx + my*y/Ly) + phase )
 //
 // where:
-//   mx, my  — integer mode numbers
-//   Lx, Ly  — full raster lengths in x and y
+//   mx, my  - integer mode numbers
+//   Lx, Ly  - full raster lengths in x and y
 // -----------------------------------------------------------------------------
 struct lsdtt_periodic_wave_component
 {
@@ -265,10 +265,10 @@ struct lsdtt_periodic_wave_component
 // -----------------------------------------------------------------------------
 // lsdtt_periodic_wave_surface
 //
-// dem              — synthetic DEM
-// analytic_taylor  — exact local Taylor coefficients at each pixel centre
-// components       — actual random wave components used
-// offset           — constant offset added to the DEM
+// dem              - synthetic DEM
+// analytic_taylor  - exact local Taylor coefficients at each pixel centre
+// components       - actual random wave components used
+// offset           - constant offset added to the DEM
 // -----------------------------------------------------------------------------
 struct lsdtt_periodic_wave_surface
 {
@@ -302,9 +302,9 @@ struct lsdtt_global_quadratic_coefficients
 // -----------------------------------------------------------------------------
 // lsdtt_global_quadratic_surface
 //
-// dem              — synthetic DEM
-// analytic_taylor  — exact local quadratic coefficients at each pixel centre
-// global_coeffs    — coefficients of the underlying global quadratic surface
+// dem              - synthetic DEM
+// analytic_taylor  - exact local quadratic coefficients at each pixel centre
+// global_coeffs    - coefficients of the underlying global quadratic surface
 // -----------------------------------------------------------------------------
 struct lsdtt_global_quadratic_surface
 {
@@ -387,9 +387,9 @@ lsdtt_global_quadratic_surface generate_global_quadratic_test_surface(
 // Same seed => identical surface.
 //
 // Parameter ranges:
-//   quadratic_abs_max — max absolute value of a, b, c
-//   linear_abs_max    — max absolute value of d, e
-//   constant_abs_max  — max absolute value of f
+//   quadratic_abs_max - max absolute value of a, b, c
+//   linear_abs_max    - max absolute value of d, e
+//   constant_abs_max  - max absolute value of f
 // -----------------------------------------------------------------------------
 lsdtt_global_quadratic_surface generate_random_quadratic_test_surface(
     const lsdtt_raster_meta& meta,
@@ -424,8 +424,8 @@ enum class lsdtt_range_edge { north, south, east, west };
 // -----------------------------------------------------------------------------
 // lsdtt_mountain_range_surface
 //
-// dem        — synthetic elevation raster
-// front_mask — ground-truth zone labels: 1.0 = mountain, 0.0 = piedmont
+// dem        - synthetic elevation raster
+// front_mask - ground-truth zone labels: 1.0 = mountain, 0.0 = piedmont
 //
 // All four mountain-range generators return this type.
 // The front is the boundary of the mask and is what mountain-front detection
@@ -445,8 +445,8 @@ struct lsdtt_mountain_range_surface
 // as fractions of the cross-axis extent so the geometry is resolution-independent.
 //
 // ridge_runs_north_south
-//   true  — ridge runs parallel to the y-axis (N-S); cross-axis is E-W (x)
-//   false — ridge runs parallel to the x-axis (E-W); cross-axis is N-S (y)
+//   true  - ridge runs parallel to the y-axis (N-S); cross-axis is E-W (x)
+//   false - ridge runs parallel to the x-axis (E-W); cross-axis is N-S (y)
 //
 // ridge_position_fraction
 //   Position of the ridge crest along the cross-axis (0 = west/south edge,
@@ -490,7 +490,7 @@ lsdtt_mountain_range_surface generate_linear_range_surface(
 // -----------------------------------------------------------------------------
 // generate_halfspace_range_surface
 //
-// The ridge occupies one DEM edge entirely — analogous to the south face of the
+// The ridge occupies one DEM edge entirely - analogous to the south face of the
 // Himalayas draining to the Ganges plains: the high terrain runs off the edge
 // and only one piedmont side is represented.
 //
@@ -582,7 +582,7 @@ lsdtt_mountain_range_surface generate_circular_range_surface(
 // generate_arc_range_surface
 //
 // A mountain range occupying one DEM edge whose front curves parabolically into
-// the piedmont — deepest at the arc centre, shallowing toward the sides.  This
+// the piedmont - deepest at the arc centre, shallowing toward the sides.  This
 // approximates a concave range front as seen from the foreland (e.g. an eroded
 // dome draining outward, or a range segment with a salient).
 //
@@ -642,21 +642,21 @@ lsdtt_mountain_range_surface generate_arc_range_surface(
 // Hillslope-strip test-domain generator
 //
 // Produces the 1-D hillslope-strip domains used to validate the transient
-// Roering hillslope solver (docs/roering_implicit_transient_plan.md §9, tests
+// Roering hillslope solver (docs/roering_implicit_transient_plan.md Sec9, tests
 // 1-3 and 5).  The strip varies along a single cross-axis; the orthogonal axis
 // is uniform, so every row (or column) is an identical 1-D hillslope profile.
 //
 // Channels are geometry-defined Dirichlet sinks held at baselevel_elevation
-// (§3): either at both cross-axis ends with the divide at the centre (the
+// (Sec3): either at both cross-axis ends with the divide at the centre (the
 // symmetric test-1 parabola case) or at a single end with a no-flux divide at
 // the opposite end.  The returned channel_mask is 1 on channel cells and 0
 // elsewhere, exactly the is_channel convention the solver consumes.
 // -----------------------------------------------------------------------------
 
 // Where the Dirichlet channels sit along the cross-axis.
-//   both_ends       — channels at both ends, no-flux divide at the centre (x=0).
-//   single_end_low  — channel at the low-index end, no-flux divide at the high end.
-//   single_end_high — channel at the high-index end, no-flux divide at the low end.
+//   both_ends       - channels at both ends, no-flux divide at the centre (x=0).
+//   single_end_low  - channel at the low-index end, no-flux divide at the high end.
+//   single_end_high - channel at the high-index end, no-flux divide at the low end.
 enum class lsdtt_strip_channel_config
 {
     both_ends,
@@ -665,16 +665,16 @@ enum class lsdtt_strip_channel_config
 };
 
 // Initial (non-channel) elevation profile.
-//   flat              — every hillslope cell at baselevel_elevation.
-//   analytic_parabola — the steady-state profile (linear parabola, or the
+//   flat              - every hillslope cell at baselevel_elevation.
+//   analytic_parabola - the steady-state profile (linear parabola, or the
 //                       nonlinear Roering 2007 profile when nonlinear_profile
 //                       is true); a discrete fixed point of the steady solver
 //                       when half_width is auto-derived (half_width <= 0).
-//   raised_plateau    — hillslope cells at baselevel_elevation + init_amplitude
+//   raised_plateau    - hillslope cells at baselevel_elevation + init_amplitude
 //                       (a raised block to relax: test-2 transient relaxation).
-//   perturbed         — flat baselevel plus seeded uniform noise of amplitude
+//   perturbed         - flat baselevel plus seeded uniform noise of amplitude
 //                       init_amplitude (a noisy start: test-2 transient).
-//   linear_ramp       — a triangular ridge linear from a crest of init_amplitude
+//   linear_ramp       - a triangular ridge linear from a crest of init_amplitude
 //                       above baselevel at the divide down to baselevel at the
 //                       channel(s).
 enum class lsdtt_strip_init_profile
@@ -689,8 +689,8 @@ enum class lsdtt_strip_init_profile
 // -----------------------------------------------------------------------------
 // lsdtt_hillslope_strip_surface
 //
-// dem          — synthetic elevation raster (the hillslope strip)
-// channel_mask — 1.0 on geometry-defined channel cells, 0.0 elsewhere
+// dem          - synthetic elevation raster (the hillslope strip)
+// channel_mask - 1.0 on geometry-defined channel cells, 0.0 elsewhere
 //
 // Analogous to lsdtt_mountain_range_surface{dem, front_mask}.
 // -----------------------------------------------------------------------------
@@ -704,9 +704,9 @@ struct lsdtt_hillslope_strip_surface
 // generate_hillslope_strip_surface
 //
 // cross_axis_is_x
-//   true  — elevation varies along columns (E-W cross-axis x); channels are
+//   true  - elevation varies along columns (E-W cross-axis x); channels are
 //           full N-S lines at the E/W end column(s).
-//   false — elevation varies along rows (N-S cross-axis); channels are full
+//   false - elevation varies along rows (N-S cross-axis); channels are full
 //           E-W lines at the N/S end row(s).
 //
 // baselevel_elevation
@@ -725,9 +725,9 @@ struct lsdtt_hillslope_strip_surface
 //   (analytic_parabola).  Sc is used only when nonlinear_profile is true.
 //
 // nonlinear_profile
-//   false — analytic_parabola uses the linear steady parabola
+//   false - analytic_parabola uses the linear steady parabola
 //           z(x) = z_ch + (U/2D)(L^2 - x^2).
-//   true  — analytic_parabola uses the nonlinear Roering (2007) steady profile
+//   true  - analytic_parabola uses the nonlinear Roering (2007) steady profile
 //           obtained by integrating D*S/(1-(S/Sc)^2) = U*x.
 //
 // init_amplitude

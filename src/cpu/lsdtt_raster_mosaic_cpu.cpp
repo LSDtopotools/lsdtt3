@@ -33,7 +33,7 @@ lsdtt_raster_cpu raster_mosaic(
         throw std::invalid_argument("raster_mosaic: path list is empty.");
 
     // -------------------------------------------------------------------------
-    // Pass 1 — load metadata, validate, collect accepted entries.
+    // Pass 1 - load metadata, validate, collect accepted entries.
     //
     // The first raster that can be opened sets the reference CRS, cell size,
     // and grid origin.  All subsequent rasters are checked against it.
@@ -63,14 +63,14 @@ lsdtt_raster_cpu raster_mosaic(
         catch (const std::exception& e)
         {
             std::cerr << "raster_mosaic: skipping '" << p
-                      << "' — cannot open: " << e.what() << "\n";
+                      << "' - cannot open: " << e.what() << "\n";
             continue;
         }
 
         if (!meta.is_valid())
         {
             std::cerr << "raster_mosaic: skipping '" << p
-                      << "' — invalid metadata.\n";
+                      << "' - invalid metadata.\n";
             continue;
         }
 
@@ -80,7 +80,7 @@ lsdtt_raster_cpu raster_mosaic(
             if (ref_srs.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE)
             {
                 std::cerr << "raster_mosaic: skipping '" << p
-                          << "' — cannot parse CRS WKT.\n";
+                          << "' - cannot parse CRS WKT.\n";
                 continue;
             }
             ref_cs   = meta.cell_size;
@@ -97,13 +97,13 @@ lsdtt_raster_cpu raster_mosaic(
         if (this_srs.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE)
         {
             std::cerr << "raster_mosaic: skipping '" << p
-                      << "' — cannot parse CRS WKT.\n";
+                      << "' - cannot parse CRS WKT.\n";
             continue;
         }
         if (!ref_srs.IsSame(&this_srs))
         {
             std::cerr << "raster_mosaic: skipping '" << p
-                      << "' — CRS differs from reference.\n";
+                      << "' - CRS differs from reference.\n";
             continue;
         }
 
@@ -113,7 +113,7 @@ lsdtt_raster_cpu raster_mosaic(
         if (cs_rel_diff > 1e-5)
         {
             std::cerr << "raster_mosaic: skipping '" << p
-                      << "' — cell size " << meta.cell_size
+                      << "' - cell size " << meta.cell_size
                       << " differs from reference " << ref_cs
                       << " (relative diff " << cs_rel_diff << ").\n";
             continue;
@@ -133,7 +133,7 @@ lsdtt_raster_cpu raster_mosaic(
         if (misaligned(meta.x_min, ref_xmin) || misaligned(meta.y_min, ref_ymin))
         {
             std::cerr << "raster_mosaic: skipping '" << p
-                      << "' — grid origin is not pixel-aligned with reference "
+                      << "' - grid origin is not pixel-aligned with reference "
                       << "(x_min=" << meta.x_min
                       << " y_min=" << meta.y_min << ").\n";
             continue;
@@ -195,7 +195,7 @@ lsdtt_raster_cpu raster_mosaic(
     std::vector<uint8_t> out_mask(out_npix, uint8_t{0});
 
     // -------------------------------------------------------------------------
-    // Pass 2 — paste each raster in list order (last valid wins)
+    // Pass 2 - paste each raster in list order (last valid wins)
     // -------------------------------------------------------------------------
     for (const auto& e : accepted)
     {
@@ -237,7 +237,7 @@ lsdtt_raster_cpu raster_mosaic(
                 if (out_c < 0 || out_c >= out_cols) continue;
 
                 const std::size_t src_idx = src_row_base + static_cast<std::size_t>(c);
-                if (tile.mask[src_idx] == 0) continue;   // nodata — skip
+                if (tile.mask[src_idx] == 0) continue;   // nodata - skip
 
                 const std::size_t out_idx =
                     out_row_base + static_cast<std::size_t>(out_c);

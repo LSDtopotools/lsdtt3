@@ -17,9 +17,9 @@
 // creates or updates lsdtt_raster_meta instances.
 //
 // The coordinate convention used throughout is:
-//   x_min  — easting  of the left   edge of the leftmost  column
-//   y_min  — northing of the bottom edge of the bottommost row
-//   cell_size — pixel width and height (assumed square)
+//   x_min  - easting  of the left   edge of the leftmost  column
+//   y_min  - northing of the bottom edge of the bottommost row
+//   cell_size - pixel width and height (assumed square)
 //
 // This matches the convention used in LSDTopoTools1 and is consistent with
 // the bottom-left origin used in most GIS software when displaying rasters.
@@ -60,7 +60,7 @@ struct lsdtt_raster_meta
     double y_min      = 0.0;   // northing of bottom edge (metres or degrees)
     double cell_size  = 1.0;   // pixel size in projection units
 
-    // Derived extents — computed from the above, provided for convenience
+    // Derived extents - computed from the above, provided for convenience
     double x_max() const { return x_min + n_cols * cell_size; }
     double y_max() const { return y_min + n_rows * cell_size; }
 
@@ -140,7 +140,7 @@ struct lsdtt_raster_meta
     // Sets crs_wkt and epsg_code from an EPSG code (e.g. 32601 for UTM zone 1
     // North on WGS84). Used to give synthetically generated rasters a sensible
     // default projected CRS. Throws std::runtime_error if the EPSG code cannot
-    // be resolved. Requires OGR — include <ogr_spatialref.h> before using.
+    // be resolved. Requires OGR - include <ogr_spatialref.h> before using.
     void set_crs_from_epsg(int epsg)
     {
         OGRSpatialReference srs;
@@ -164,7 +164,7 @@ struct lsdtt_raster_meta
 
     // Gives a synthetically generated raster (no input DEM) a sensible default
     // georeference: the grid is centred on Teanu Island, Solomon Islands
-    // (11.633 S, 166.967 E) — the real-world location to which Zwift's fictional
+    // (11.633 S, 166.967 E) - the real-world location to which Zwift's fictional
     // "Watopia" is geocoded for Strava. This sits comfortably inside UTM zone
     // 58S (EPSG:32758), well away from the antimeridian and the poles, so
     // generated DEMs carry realistic projected coordinates and round-trip
@@ -213,7 +213,7 @@ struct lsdtt_raster_meta
 
     // Returns true if the CRS is geographic (latitude/longitude).
     // Returns false if projected or if no CRS is defined.
-    // Requires OGR — include <ogr_spatialref.h> before using.
+    // Requires OGR - include <ogr_spatialref.h> before using.
     bool is_geographic() const
     {
         if (crs_wkt.empty()) return false;

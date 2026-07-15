@@ -7,21 +7,21 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Interior nodata filling — CPU free functions that identify and fill nodata
+// Interior nodata filling - CPU free functions that identify and fill nodata
 // pixels completely surrounded by valid data, leaving edge-connected nodata
 // (e.g. the irregular fringe of a shapefile-clipped DEM) untouched.
 //
 // Two-step approach:
 //
-//   Step 1 — classify nodata pixels:
+//   Step 1 - classify nodata pixels:
 //     Seed a flood fill from all nodata pixels on the raster edge.
 //     Expand through 8-connected nodata pixels.
 //     Any nodata pixel NOT reached is interior (surrounded by valid data).
 //
-//   Step 2 — fill interior voids only:
-//     ITERATIVE_WEIGHTED_AVERAGE — distance-weighted mean of valid 8-neighbours,
+//   Step 2 - fill interior voids only:
+//     ITERATIVE_WEIGHTED_AVERAGE - distance-weighted mean of valid 8-neighbours,
 //       repeated until convergence. Fast for thin voids (1-10 pixels wide).
-//     LAPLACIAN — solves a discrete Laplace equation over the void region using
+//     LAPLACIAN - solves a discrete Laplace equation over the void region using
 //       conjugate gradient. Smooth, physically motivated. Recommended for
 //       larger or irregularly shaped voids.
 // -----------------------------------------------------------------------------

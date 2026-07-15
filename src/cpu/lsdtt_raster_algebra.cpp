@@ -74,7 +74,7 @@ void assert_compatible(
     if (!ok)
     {
         throw std::invalid_argument(
-            "lsdtt raster algebra: incompatible rasters —\n" + err.str()
+            "lsdtt raster algebra: incompatible rasters -\n" + err.str()
         );
     }
 }

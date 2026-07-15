@@ -222,7 +222,7 @@ prepend_ignore_comment_if_needed() {
 
     stripped="$first_line"
     # Strip a UTF-8 BOM if present
-    stripped="${stripped#﻿}"
+    stripped="${stripped#}"
 
     if printf '%s\n' "$stripped" | grep -Eq '^(#include|#pragma|from|import)([[:space:]]|$)'; then
         tmp="$(mktemp "$TMP_DIR/prepend.XXXXXX")"
@@ -344,10 +344,10 @@ def emit(node, prefix=""):
     items = [("dir", d) for d in dirs] + [("file", f) for f in files]
     for i, (kind, name) in enumerate(items):
         last = i == len(items) - 1
-        branch = "└── " if last else "├── "
+        branch = " " if last else " "
         if kind == "dir":
             print(prefix + branch + name + "/")
-            emit(node[name], prefix + ("    " if last else "│   "))
+            emit(node[name], prefix + ("    " if last else "   "))
         else:
             print(prefix + branch + name)
 

@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Raster least-cost path — Dijkstra on a projected DEM.
+// Raster least-cost path - Dijkstra on a projected DEM.
 //
 // Two public functions:
 //
@@ -16,7 +16,7 @@
 //     pixel within an optional bounding window.
 //
 //     Cost per step:
-//       step_distance  +  max(0, Δelev) × uphill_mult
+//       step_distance  +  max(0, Deltaelev) x uphill_mult
 //
 //     The uphill multiplier drives the path to cross any elevation barrier at
 //     its lowest available crossing, while the base step distance penalises
@@ -31,7 +31,7 @@
 //     result.max_climb gives the maximum elevation above the start pixel
 //     encountered along the path.  This is useful for deciding whether a
 //     found path is likely crossing a culvert obstruction (small climb) or
-//     boring through a hill (large climb → tunnel candidate).
+//     boring through a hill (large climb -> tunnel candidate).
 //
 //   burn_monotonic_path
 //     Lowers DEM pixels along a path returned by raster_least_cost_path so
@@ -81,8 +81,8 @@ struct lcp_params
     //
     // When channel_score != nullptr and channel_score_alpha > 0, the per-step
     // cost becomes:
-    //   step_distance × (1 + channel_score_alpha × (1 − score[neighbour]))
-    //   + max(0, Δelev) × uphill_mult
+    //   step_distance x (1 + channel_score_alpha x (1 - score[neighbour]))
+    //   + max(0, Deltaelev) x uphill_mult
     //
     // score values are expected in [0, 1]: 1 = strong channel, 0 = off-channel.
     // The vector must be flat-indexed with the same size as the DEM and must
@@ -107,12 +107,12 @@ struct lcp_params
 // lcp_result
 //
 // Output of raster_least_cost_path.
-// path holds flat pixel indices (n_cols × row + col), ordered start→goal.
+// path holds flat pixel indices (n_cols x row + col), ordered start->goal.
 // path is empty when no path was found within the search window.
 // ---------------------------------------------------------------------------
 struct lcp_result
 {
-    std::vector<std::int64_t> path;        // flat indices, start→goal
+    std::vector<std::int64_t> path;        // flat indices, start->goal
     double   total_cost = 0.0;
     double   max_climb  = 0.0;            // max elev above start pixel along path
     bool     found      = false;
@@ -145,8 +145,8 @@ struct lcp_result
 // path must contain flat pixel indices as returned by raster_least_cost_path.
 // An empty path is a no-op.
 //
-// min_slope (m/m): when > 0, enforces a strictly descending profile —
-//   each step is allowed at most (previous_allowed − min_slope × step_length).
+// min_slope (m/m): when > 0, enforces a strictly descending profile -
+//   each step is allowed at most (previous_allowed - min_slope x step_length).
 //   Set to 0 for the original running-minimum behaviour (non-increasing only).
 // ---------------------------------------------------------------------------
 void burn_monotonic_path(
@@ -180,7 +180,7 @@ void burn_monotonic_path(
 // max_depth (m): if > 0, no path cell is carved more than this far below its
 //   own natural elevation. Caps runaway canyons when capturing along a long
 //   path that crosses flat or rising ground (capture may fail where the cap
-//   binds, which is the intended trade — better than a deep artificial gash).
+//   binds, which is the intended trade - better than a deep artificial gash).
 //   <= 0 means unlimited (the original behaviour).
 // capture_ceiling (m): when finite, every interior path cell is additionally
 //   lowered to sit at least capture_margin BELOW this elevation (then kept

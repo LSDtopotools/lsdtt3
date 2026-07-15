@@ -48,7 +48,7 @@ static constexpr double k_pi      = M_PI;
 static constexpr double k_deg2rad = k_pi / 180.0;
 
 // -----------------------------------------------------------------------------
-// Internal helper — build lsdtt_array2d views from a raster base object.
+// Internal helper - build lsdtt_array2d views from a raster base object.
 //
 // These are non-owning views: the array2d objects share memory with the
 // raster's internal vectors. They are used only within this translation
@@ -75,7 +75,7 @@ static lsdtt_array2d<uint8_t> mask_view(const lsdtt_raster_cpu&raster)
 }
 
 // -----------------------------------------------------------------------------
-// Internal helper — check whether all pixels in a 3x3 window are valid.
+// Internal helper - check whether all pixels in a 3x3 window are valid.
 // Used by algorithms that require a full 3x3 neighbourhood.
 // -----------------------------------------------------------------------------
 static bool window3x3_has_nodata(
@@ -222,11 +222,11 @@ lsdtt_raster_cpu compute_hillshade(
     const double sin_alt = std::sin(alt_rad);
     const double cos_alt = std::cos(alt_rad);
 
-    // Output arrays — initialised to nodata / invalid
+    // Output arrays - initialised to nodata / invalid
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
 
-    // Interior pixels only — edge pixels remain nodata because the
+    // Interior pixels only - edge pixels remain nodata because the
     // 3x3 window cannot be fully populated there.
 #ifdef _OPENMP
     #pragma omp parallel for collapse(2) schedule(static)
@@ -255,7 +255,7 @@ lsdtt_raster_cpu compute_hillshade(
             double aspect_rad;
             if (std::abs(p) < 1e-10 && std::abs(q) < 1e-10)
             {
-                aspect_rad = 0.0;  // flat pixel — aspect undefined
+                aspect_rad = 0.0;  // flat pixel - aspect undefined
             }
             else
             {
@@ -502,7 +502,7 @@ lsdtt_raster_cpu compute_plan_curvature_3x3_square(
             const double t_yy = (z_n + z_s - 2.0 * z_c) * inv_L2;
             const double s_xy = (z_ne - z_nw - z_se + z_sw) * inv_4L2;
 
-            // plan_curvature = (q²·r − 2·p·q·s + p²·t) / (p²+q²)^(3/2)
+            // plan_curvature = (q^2*r - 2*p*q*s + p^2*t) / (p^2+q^2)^(3/2)
             // Positive = concave across contour = flow convergence / channel
             const double kh =
                 (q * q * r_xx - 2.0 * p * q * s_xy + p * p * t_yy)
@@ -607,12 +607,12 @@ lsdtt_raster_cpu moving_window_mean(
 // local_relief_square_fast (internal)
 //
 // Separable O(n) local relief using two deque-based sliding min/max passes:
-//   Pass 1 — horizontal: for each row, sweep columns with a deque to get the
+//   Pass 1 - horizontal: for each row, sweep columns with a deque to get the
 //             row-wise min and max within a half-width-W window.
-//   Pass 2 — vertical:   for each column, sweep the horizontal results with a
+//   Pass 2 - vertical:   for each column, sweep the horizontal results with a
 //             second deque to get the global min/max over the full square window.
 //
-// Nodata pixels are replaced by ±infinity sentinels so they are transparently
+// Nodata pixels are replaced by +/-infinity sentinels so they are transparently
 // excluded from min/max without branching in the hot path.
 // -----------------------------------------------------------------------------
 static lsdtt_raster_cpu local_relief_square_fast(
@@ -638,7 +638,7 @@ static lsdtt_raster_cpu local_relief_square_fast(
     std::vector<float> h_max(npix, NEG_INF);
 
     // -------------------------------------------------------------------------
-    // Pass 1 — horizontal.
+    // Pass 1 - horizontal.
     // Each row is independent so trivially parallel.
     // Thread-local deques and row buffers are declared inside the parallel
     // region so each thread gets its own copy.
@@ -703,7 +703,7 @@ static lsdtt_raster_cpu local_relief_square_fast(
     } // end parallel region
 
     // -------------------------------------------------------------------------
-    // Pass 2 — vertical.
+    // Pass 2 - vertical.
     // Each column is independent.  We extract one column at a time from the
     // row-major h_min / h_max arrays (stride = ncols) and sweep with a deque.
     // -------------------------------------------------------------------------
@@ -774,17 +774,17 @@ static lsdtt_raster_cpu local_relief_square_fast(
 // -----------------------------------------------------------------------------
 // local_relief_circular_fast (internal)
 //
-// Row-strip decomposition for circular windows: O(n × pixel_radius).
+// Row-strip decomposition for circular windows: O(n x pixel_radius).
 //
 // For each row offset dr in [-pixel_radius, pixel_radius]:
-//   1. Compute dc_max(dr) = floor(sqrt(r_frac² - dr²)) — the column half-span
+//   1. Compute dc_max(dr) = floor(sqrt(r_frac^2 - dr^2)) - the column half-span
 //      for this horizontal strip of the circle.
 //   2. For each source row, run a 1D deque-based sliding min/max with
 //      half-width dc_max over that row.
 //   3. Accumulate the strip result into shared running min/max arrays.
 //
-// Complexity: O(nrows × ncols × pixel_radius) vs brute-force
-//             O(nrows × ncols × pixel_radius²) ≈ 100× faster at r=67 px.
+// Complexity: O(nrows x ncols x pixel_radius) vs brute-force
+//             O(nrows x ncols x pixel_radius^2) ~= 100x faster at r=67 px.
 //
 // Parallelism: one omp parallel region wraps the dr loop.  The omp for on the
 // inner src_row loop distributes row work; its implicit barrier ensures all
@@ -819,7 +819,7 @@ static lsdtt_raster_cpu local_relief_circular_fast(
     #pragma omp parallel
 #endif
     {
-        // Thread-local work buffers — allocated once per thread.
+        // Thread-local work buffers - allocated once per thread.
         std::deque<int> dq_min, dq_max;
         std::vector<float> vmin(ncols), vmax(ncols);
 
@@ -892,7 +892,7 @@ static lsdtt_raster_cpu local_relief_circular_fast(
                         if (smax > run_max[oidx]) run_max[oidx] = smax;
                     }
                 }
-            } // implicit omp barrier here — serialises dr iterations
+            } // implicit omp barrier here - serialises dr iterations
         }
     } // end parallel region
 
@@ -939,7 +939,7 @@ lsdtt_raster_cpu moving_window_local_relief(
     const int W = std::max(1, static_cast<int>(std::ceil(radius_metres / meta.cell_size)));
 
     // -------------------------------------------------------------------------
-    // Square window: separable O(n) deque pass — fast path.
+    // Square window: separable O(n) deque pass - fast path.
     // -------------------------------------------------------------------------
     if (shape == window_shape::square)
     {
@@ -955,7 +955,7 @@ lsdtt_raster_cpu moving_window_local_relief(
     }
 
     // -------------------------------------------------------------------------
-    // Circular window: row-strip O(n × pixel_radius) fast path.
+    // Circular window: row-strip O(n x pixel_radius) fast path.
     // Note: square window is O(n) and faster still for very large radii.
     // -------------------------------------------------------------------------
     std::cout << "  moving_window_local_relief (circular): "
@@ -1291,8 +1291,8 @@ lsdtt_raster_cpu moving_window_tpi(
 //   t = 2*b
 //
 // Coordinate convention:
-//   x  — positive east
-//   y  — positive north
+//   x  - positive east
+//   y  - positive north
 //
 // The derivative naming convention follows:
 //
@@ -2495,7 +2495,7 @@ poly_fit_coeffs direct_polyfit(
             "lsdtt::direct_polyfit: lambda_metres must be >= cell_size");
 
     // Half-width of the square window in pixels.
-    // Window is (2W+1)×(2W+1); diameter ≈ lambda_metres / cell_size pixels.
+    // Window is (2W+1)x(2W+1); diameter ~= lambda_metres / cell_size pixels.
     const int W = std::max(1, static_cast<int>(std::round(lambda_metres / (2.0 * d))));
 
     const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
@@ -2538,25 +2538,25 @@ poly_fit_coeffs direct_polyfit(
             result.f = lsdtt_raster_cpu(std::move(g_f), std::move(g_mask),            meta);
             return result;
         }
-        // GPU path failed — fall through to the CPU implementation.
+        // GPU path failed - fall through to the CPU implementation.
     }
 #endif
 
     // -------------------------------------------------------------------------
-    // Precompute constant normal-matrix quantities for a (2W+1)×(2W+1) window.
+    // Precompute constant normal-matrix quantities for a (2W+1)x(2W+1) window.
     //
-    //   sk2 = Σ_{k=-W}^{W} k²  = W·(W+1)·(2W+1) / 3
-    //   sk4 = Σ_{k=-W}^{W} k⁴  = 2·W·(W+1)·(2W+1)·(3W²+3W-1) / 30
+    //   sk2 = Sigma_{k=-W}^{W} k^2  = W*(W+1)*(2W+1) / 3
+    //   sk4 = Sigma_{k=-W}^{W} k^4  = 2*W*(W+1)*(2W+1)*(3W^2+3W-1) / 30
     //
-    //   N      = (2W+1)²             (total cells in window)
-    //   Sx2    = Sy2 = (2W+1)·d²·sk2
-    //   Sx4    = Sy4 = (2W+1)·d⁴·sk4
-    //   Sx2y2  = d⁴·sk2²
+    //   N      = (2W+1)^2             (total cells in window)
+    //   Sx2    = Sy2 = (2W+1)*d^2*sk2
+    //   Sx4    = Sy4 = (2W+1)*d^4*sk4
+    //   Sx2y2  = d^4*sk2^2
     //
     // Due to the symmetric centred window all odd spatial moments vanish.
-    // The 6×6 normal matrix therefore factors into:
-    //   — 3 independent scalar equations for C (xy), D (x), E (y)
-    //   — one 3×3 system for a (x²), b (y²), F (constant)
+    // The 6x6 normal matrix therefore factors into:
+    //   - 3 independent scalar equations for C (xy), D (x), E (y)
+    //   - one 3x3 system for a (x^2), b (y^2), F (constant)
     // -------------------------------------------------------------------------
     const double Wd  = static_cast<double>(W);
     const double W3d = static_cast<double>(2 * W + 1);   // 2W+1
@@ -2575,7 +2575,7 @@ poly_fit_coeffs direct_polyfit(
         throw std::runtime_error(
             "lsdtt::direct_polyfit: degenerate window (W too small)");
 
-    // 3×3 system matrix M3 for [a, b, F]:
+    // 3x3 system matrix M3 for [a, b, F]:
     //   M3 = [[Sx4, Sx2y2, Sx2],
     //          [Sx2y2, Sx4,  Sx2],
     //          [Sx2,  Sx2,   N  ]]
@@ -2590,11 +2590,11 @@ poly_fit_coeffs direct_polyfit(
             "lsdtt::direct_polyfit: singular normal matrix");
 
     // -------------------------------------------------------------------------
-    // Pass 1 — Horizontal rolling sums (parallelised over rows).
+    // Pass 1 - Horizontal rolling sums (parallelised over rows).
     //
-    // H0[r][c] = Σ_{dc=-W}^{W} v(r, c+dc)          (v = z if valid, 0 otherwise)
-    // H1[r][c] = Σ_{dc=-W}^{W} dc · v(r, c+dc)
-    // H2[r][c] = Σ_{dc=-W}^{W} dc² · v(r, c+dc)
+    // H0[r][c] = Sigma_{dc=-W}^{W} v(r, c+dc)          (v = z if valid, 0 otherwise)
+    // H1[r][c] = Sigma_{dc=-W}^{W} dc * v(r, c+dc)
+    // H2[r][c] = Sigma_{dc=-W}^{W} dc^2 * v(r, c+dc)
     // Hn[r][c] = count of nodata + OOB in the horizontal window [c-W, c+W]
     //
     // Rolling update from center c-1 to c:
@@ -2602,8 +2602,8 @@ poly_fit_coeffs direct_polyfit(
     //   j_add = (c-1) + W + 1 = c + W   (element entering)
     //
     //   H0[c] = H0[c-1] - v_rem + v_add
-    //   H1[c] = H1[c-1] - H0[c-1] + (W+1)·v_rem + W·v_add
-    //   H2[c] = H2[c-1] - 2·H1[c-1] + H0[c-1] - (W+1)²·v_rem + W²·v_add
+    //   H1[c] = H1[c-1] - H0[c-1] + (W+1)*v_rem + W*v_add
+    //   H2[c] = H2[c-1] - 2*H1[c-1] + H0[c-1] - (W+1)^2*v_rem + W^2*v_add
     // -------------------------------------------------------------------------
     std::vector<double> H0(npix, 0.0);
     std::vector<double> H1(npix, 0.0);
@@ -2700,33 +2700,33 @@ poly_fit_coeffs direct_polyfit(
     std::vector<uint8_t> out_mask(npix, uint8_t{0});
 
     // -------------------------------------------------------------------------
-    // Pass 2 — Vertical prefix sums + per-pixel OLS solve (parallel over cols).
+    // Pass 2 - Vertical prefix sums + per-pixel OLS solve (parallel over cols).
     //
     // For each column c0, build 1-based prefix arrays of length nrows+1:
     //   ph0[r+1]   = ph0[r]   + H0[r][c0]
-    //   ph0r[r+1]  = ph0r[r]  + r · H0[r][c0]
-    //   ph0r2[r+1] = ph0r2[r] + r² · H0[r][c0]
+    //   ph0r[r+1]  = ph0r[r]  + r * H0[r][c0]
+    //   ph0r2[r+1] = ph0r2[r] + r^2 * H0[r][c0]
     //   ph1[r+1]   = ph1[r]   + H1[r][c0]
-    //   ph1r[r+1]  = ph1r[r]  + r · H1[r][c0]
+    //   ph1r[r+1]  = ph1r[r]  + r * H1[r][c0]
     //   ph2[r+1]   = ph2[r]   + H2[r][c0]
     //   phn[r+1]   = phn[r]   + Hn[r][c0]
     //
     // For center (r0, c0) with ra=r0-W, rb=r0+W+1 and Hn_total==0:
     //
     //   raw_S_z    = ph0[rb]  - ph0[ra]
-    //   raw_S_xz   = ph1[rb]  - ph1[ra]           (Σ dc·z, in pixel units)
-    //   raw_S_x2z  = ph2[rb]  - ph2[ra]           (Σ dc²·z)
-    //   raw_S_yz   = (ph0r[rb]-ph0r[ra]) - r0·raw_S_z   (Σ (r-r0)·H0)
+    //   raw_S_xz   = ph1[rb]  - ph1[ra]           (Sigma dc*z, in pixel units)
+    //   raw_S_x2z  = ph2[rb]  - ph2[ra]           (Sigma dc^2*z)
+    //   raw_S_yz   = (ph0r[rb]-ph0r[ra]) - r0*raw_S_z   (Sigma (r-r0)*H0)
     //   raw_S_y2z  = (ph0r2[rb]-ph0r2[ra])
-    //                - 2·r0·(ph0r[rb]-ph0r[ra])
-    //                + r0²·raw_S_z                 (Σ (r-r0)²·H0)
-    //   raw_S_xyz  = (ph1r[rb]-ph1r[ra]) - r0·raw_S_xz  (Σ (r-r0)·H1)
+    //                - 2*r0*(ph0r[rb]-ph0r[ra])
+    //                + r0^2*raw_S_z                 (Sigma (r-r0)^2*H0)
+    //   raw_S_xyz  = (ph1r[rb]-ph1r[ra]) - r0*raw_S_xz  (Sigma (r-r0)*H1)
     //
-    // Converting to projected-coordinate moments (x=dc·d, y=-(r-r0)·d):
-    //   C = -raw_S_xyz / (d²·sk2²)          (x·y cross term)
-    //   D = raw_S_xz   / (W3d·d·sk2)        (x first derivative)
-    //   E = -raw_S_yz  / (W3d·d·sk2)        (y first derivative)
-    //   [a,b,F] = invM3 · [d²·raw_S_x2z, d²·raw_S_y2z, raw_S_z]
+    // Converting to projected-coordinate moments (x=dc*d, y=-(r-r0)*d):
+    //   C = -raw_S_xyz / (d^2*sk2^2)          (x*y cross term)
+    //   D = raw_S_xz   / (W3d*d*sk2)        (x first derivative)
+    //   E = -raw_S_yz  / (W3d*d*sk2)        (y first derivative)
+    //   [a,b,F] = invM3 * [d^2*raw_S_x2z, d^2*raw_S_y2z, raw_S_z]
     // -------------------------------------------------------------------------
 #ifdef _OPENMP
     #pragma omp parallel for schedule(static) num_threads(nthreads)
@@ -2786,16 +2786,16 @@ poly_fit_coeffs direct_polyfit(
             const double raw_S_xyz  = ph1r_sum  - r0d * raw_S_xz;
 
             // --- OLS coefficients ---
-            // C  = S_xyz / Sx2y2  where S_xyz = -d²·raw_S_xyz
+            // C  = S_xyz / Sx2y2  where S_xyz = -d^2*raw_S_xyz
             const double coeff_C = -raw_S_xyz / (d2 * sk2 * sk2);
 
-            // D  = S_xz / Sx2   where S_xz = d·raw_S_xz
+            // D  = S_xz / Sx2   where S_xz = d*raw_S_xz
             const double coeff_D =  raw_S_xz  / (W3d * d * sk2);
 
-            // E  = S_yz / Sx2   where S_yz = -d·raw_S_yz
+            // E  = S_yz / Sx2   where S_yz = -d*raw_S_yz
             const double coeff_E = -raw_S_yz  / (W3d * d * sk2);
 
-            // [a, b, F] = invM3 · [d²·raw_S_x2z, d²·raw_S_y2z, raw_S_z]
+            // [a, b, F] = invM3 * [d^2*raw_S_x2z, d^2*raw_S_y2z, raw_S_z]
             const double rhs0 = d2 * raw_S_x2z;
             const double rhs1 = d2 * raw_S_y2z;
             const double rhs2 = raw_S_z;
@@ -2959,8 +2959,8 @@ surface_shape_result classify_surface_shape(
 // fundamental_form_principal_curvatures
 //
 // Port of the TopoCurve CurveCalc principal-curvature computation. Two passes:
-//   Pass A — central-difference gradients of Z, and the unit normal field N.
-//   Pass B — central-difference gradients of N give the second fundamental
+//   Pass A - central-difference gradients of Z, and the unit normal field N.
+//   Pass B - central-difference gradients of N give the second fundamental
 //            form (e, f, g); the principal curvatures follow from the
 //            fundamental-form quadratic.
 //
@@ -2997,7 +2997,7 @@ principal_curvatures fundamental_form_principal_curvatures(
     (void)threads;   // suppresses unused-variable warning when OpenMP absent
 
     // -------------------------------------------------------------------------
-    // Pass A — surface gradients (Zx, Zy) and the unit normal field (NX,NY,NZ).
+    // Pass A - surface gradients (Zx, Zy) and the unit normal field (NX,NY,NZ).
     // A pixel is valid here when it and its four cardinal neighbours hold data
     // (central differences need the east/west and north/south neighbours).
     // -------------------------------------------------------------------------
@@ -3044,7 +3044,7 @@ principal_curvatures fundamental_form_principal_curvatures(
     }
 
     // -------------------------------------------------------------------------
-    // Pass B — normal-field gradients -> second fundamental form -> principal
+    // Pass B - normal-field gradients -> second fundamental form -> principal
     // curvatures. Needs the pixel and its four cardinal neighbours valid in
     // pass A (one more ring of erosion).
     // -------------------------------------------------------------------------

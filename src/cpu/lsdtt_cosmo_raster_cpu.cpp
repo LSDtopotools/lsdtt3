@@ -17,9 +17,9 @@
 namespace lsdtt
 {
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // Internal helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 
 static OGRCoordinateTransformation* make_to_wgs84(const lsdtt_raster_meta& meta)
 {
@@ -30,24 +30,24 @@ static OGRCoordinateTransformation* make_to_wgs84(const lsdtt_raster_meta& meta)
     return OGRCreateCoordinateTransformation(&src, &dst);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // Precomputed basin summary for O(4) per-evaluation inversion.
 //
-// With a spatially uniform erosion rate ε, the erosion-rate-weighted average
-// concentration reduces to a plain mean (ε cancels). The per-pixel steady-state
+// With a spatially uniform erosion rate epsilon, the erosion-rate-weighted average
+// concentration reduces to a plain mean (epsilon cancels). The per-pixel steady-state
 // formula then factors as:
 //
-//   C_acc(ε) = P0 / n_pixels × Σ_j Bsum[j] / (ε + Gamma[j]×λ)
+//   C_acc(epsilon) = P0 / n_pixels x Sigma_j Bsum[j] / (epsilon + Gamma[j]xlambda)
 //
-// where Bsum[j] = Σ_pixels [ F_scaled[j] × W[j] ] is computed once in O(N).
+// where Bsum[j] = Sigma_pixels [ F_scaled[j] x W[j] ] is computed once in O(N).
 //
-// For a point sample (d_self == 0):  W[j] = Gamma[j] × exp(-d_snow/Gamma[j])
-// For depth-integrated (d_self > 0): W[j] = Gamma[j]² × (exp(-d_top/G) - exp(-d_bot/G))
+// For a point sample (d_self == 0):  W[j] = Gamma[j] x exp(-d_snow/Gamma[j])
+// For depth-integrated (d_self > 0): W[j] = Gamma[j]^2 x (exp(-d_top/G) - exp(-d_bot/G))
 //                                             / d_self
 //
 // The analytic derivative is:
-//   dC_acc/dε = -P0 / n_pixels × Σ_j Bsum[j] / (ε + Gamma[j]×λ)²
-// ─────────────────────────────────────────────────────────────────────────────
+//   dC_acc/depsilon = -P0 / n_pixels x Sigma_j Bsum[j] / (epsilon + Gamma[j]xlambda)^2
+// 
 struct CrnBasinPrecomp
 {
     double P0;
@@ -159,7 +159,7 @@ static CrnBasinPrecomp precompute_basin_crn(
     return pre;
 }
 
-// C_acc(ε) = P0/N × Σ_j Bsum[j] / (ε + Gamma[j]×λ)
+// C_acc(epsilon) = P0/N x Sigma_j Bsum[j] / (epsilon + Gamma[j]xlambda)
 static double eval_conc_analytic(const CrnBasinPrecomp& pre, double erate)
 {
     if (pre.n_pixels == 0) return 0.0;
@@ -169,7 +169,7 @@ static double eval_conc_analytic(const CrnBasinPrecomp& pre, double erate)
     return pre.P0 / pre.n_pixels * sum;
 }
 
-// dC_acc/dε = -P0/N × Σ_j Bsum[j] / (ε + Gamma[j]×λ)²
+// dC_acc/depsilon = -P0/N x Sigma_j Bsum[j] / (epsilon + Gamma[j]xlambda)^2
 static double eval_conc_deriv_analytic(const CrnBasinPrecomp& pre, double erate)
 {
     if (pre.n_pixels == 0) return -1.0;  // non-zero to avoid divide-by-zero
@@ -183,21 +183,21 @@ static double eval_conc_deriv_analytic(const CrnBasinPrecomp& pre, double erate)
 }
 
 // Initial erosion rate guess from average shielding (spallation-only approximation).
-// ε ≈ avg_shield × P0 × Γ₀ / C_meas - Γ₀ × λ
+// epsilon ~= avg_shield x P0 x Gamma_0 / C_meas - Gamma_0 x lambda
 static double erate_initial_guess(double measured_conc,
                                   const CrnBasinPrecomp& pre)
 {
     if (pre.n_pixels == 0 || measured_conc <= 0.0) return 0.01;
 
     // Average Bsum[0]/Gamma[0] approximates avg_shield * P0 * Gamma[0] / Gamma[0] = avg_shield * P0
-    // Simple spallation-only inversion of C ≈ avg_scaled_prod × Gamma[0] / (ε + Gamma[0]×λ)
+    // Simple spallation-only inversion of C ~= avg_scaled_prod x Gamma[0] / (epsilon + Gamma[0]xlambda)
     double avg_prod_term = pre.P0 * pre.Bsum[0] / pre.n_pixels;
     double guess = avg_prod_term / measured_conc - pre.Gamma[0] * pre.lambda;
     if (guess <= 1e-8) guess = 0.001;
     return guess;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               const CrnNcData&         nc,
                                               double                   age_yr)
@@ -243,7 +243,7 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
         return lsdtt_raster_cpu(std::move(prod_data), std::move(prod_mask), meta);
     }
 
-    // Single batch transform: projected → WGS84. Not parallelised — GDAL transforms
+    // Single batch transform: projected -> WGS84. Not parallelised - GDAL transforms
     // are not thread-safe for the same object, and one call is already fast.
     ct->Transform(n_valid, xs.data(), ys.data());
     OCTDestroyCoordinateTransformation(ct);
@@ -279,7 +279,7 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
     return lsdtt_raster_cpu(std::move(prod_data), std::move(prod_mask), meta);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 lsdtt_raster_cpu calculate_crn_concentration_raster(
     const std::string&      nuclide,
     const std::string&      muon_scheme,
@@ -367,7 +367,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const std::string&      nuclide,
     const std::string&      muon_scheme,
@@ -447,7 +447,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     const std::string&      nuclide,
     const std::string&      muon_scheme,
@@ -555,7 +555,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 lsdtt_raster_cpu calculate_accumulated_crn_raster(
     const lsdtt_raster_cpu& conc_raster,
     const lsdtt_raster_cpu& erosion_raster,
@@ -606,7 +606,7 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double calculate_accumulated_crn_concentration(
     const lsdtt_raster_cpu& conc_raster,
     const lsdtt_raster_cpu& erosion_raster,
@@ -638,7 +638,7 @@ double calculate_accumulated_crn_concentration(
     return acc_atoms / acc_mass;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double calculate_eff_erate_from_conc(
     double                  measured_conc,
     const std::string&      nuclide,
@@ -659,8 +659,8 @@ double calculate_eff_erate_from_conc(
         return 0.0;
     }
 
-    // ── Precompute basin summary — O(N_pixels) once ───────────────────────────
-    // All subsequent C(ε) and dC/dε evaluations cost O(4).
+    //  Precompute basin summary - O(N_pixels) once 
+    // All subsequent C(epsilon) and dC/depsilon evaluations cost O(4).
     CrnBasinPrecomp pre = precompute_basin_crn(
         nuclide, muon_scheme, prod_raster, topo_shield,
         snow_shield, self_shield, flow, outlet_node);
@@ -672,20 +672,20 @@ double calculate_eff_erate_from_conc(
         return 0.0;
     }
 
-    // ── Tolerances ────────────────────────────────────────────────────────────
+    //  Tolerances 
     const int    nr_max_steps  = 50;          // N-R iteration cap
-    const double conc_tol_frac = 0.002;       // accept when |ΔC|/C_meas < 0.2%
-    const double erate_min     = 1e-8;        // floor to keep ε > 0
+    const double conc_tol_frac = 0.002;       // accept when |DeltaC|/C_meas < 0.2%
+    const double erate_min     = 1e-8;        // floor to keep epsilon > 0
 
     const double conc_tol = conc_tol_frac * measured_conc;
 
-    // ── Initial guess ─────────────────────────────────────────────────────────
+    //  Initial guess 
     double eff_e = erate_initial_guess(measured_conc, pre);
 
-    // ── Newton-Raphson with analytic derivative ───────────────────────────────
-    // C(ε) is monotonically decreasing, so the derivative is always negative
+    //  Newton-Raphson with analytic derivative 
+    // C(epsilon) is monotonically decreasing, so the derivative is always negative
     // and the N-R step always moves in the correct direction.  The only failure
-    // mode is overshooting to ε ≤ 0, which the step limiter handles.
+    // mode is overshooting to epsilon <= 0, which the step limiter handles.
     //
     // We also track the tightest bracket [lo_e, hi_e] where
     //   C(lo_e) > C_meas  and  C(hi_e) < C_meas.
@@ -708,19 +708,19 @@ double calculate_eff_erate_from_conc(
 
         if (std::fabs(fx) < conc_tol) break;    // converged
 
-        if (deriv == 0.0) break;                 // flat — fall through to bisection
+        if (deriv == 0.0) break;                 // flat - fall through to bisection
 
         double step = fx / deriv;               // deriv < 0, so step sign matches correction
 
-        // Damp step: don't let ε drop below erate_min in one move
+        // Damp step: don't let epsilon drop below erate_min in one move
         if (eff_e - step < erate_min)
-            step = eff_e - erate_min * 2.0;    // bring ε to 2×floor
+            step = eff_e - erate_min * 2.0;    // bring epsilon to 2xfloor
 
         eff_e -= step;
         if (eff_e < erate_min) eff_e = erate_min;
     }
 
-    // ── Check convergence; fall through to bisection if needed ────────────────
+    //  Check convergence; fall through to bisection if needed 
     C_cur = eval_conc_analytic(pre, eff_e);
     double fx_final = C_cur - measured_conc;
     if (std::fabs(fx_final) >= conc_tol)
@@ -729,7 +729,7 @@ double calculate_eff_erate_from_conc(
         if (!(have_lo && have_hi))
         {
             // Scan 40 log-spaced points across the full physical range to find both
-            // sides of the root.  Covers ε in [1e-6, 1000] g/cm²/yr.
+            // sides of the root.  Covers epsilon in [1e-6, 1000] g/cm^2/yr.
             const int scan_n = 40;
             const double log_lo = std::log10(1e-6), log_hi = std::log10(1000.0);
             for (int s = 0; s <= scan_n && !(have_lo && have_hi); ++s)
@@ -743,7 +743,7 @@ double calculate_eff_erate_from_conc(
 
         if (!have_lo || !have_hi)
         {
-            // Solution not in [1e-6, 1000] — extreme concentration value.
+            // Solution not in [1e-6, 1000] - extreme concentration value.
             // Return the closest scan point and warn.
             std::cout << "calculate_eff_erate_from_conc: WARNING -- concentration "
                       << measured_conc << " is outside the bracketed range. "
@@ -755,9 +755,9 @@ double calculate_eff_erate_from_conc(
         // Ensure lo_e < hi_e (bracket is ordered)
         if (lo_e > hi_e) std::swap(lo_e, hi_e);
 
-        // ── Bisection ─────────────────────────────────────────────────────────
-        // lo_e: C(lo_e) > C_meas  (too low ε)
-        // hi_e: C(hi_e) < C_meas  (too high ε)
+        //  Bisection 
+        // lo_e: C(lo_e) > C_meas  (too low epsilon)
+        // hi_e: C(hi_e) < C_meas  (too high epsilon)
         const int bisect_max = 200;
         for (int bs = 0; bs < bisect_max; ++bs)
         {
@@ -785,7 +785,7 @@ double calculate_eff_erate_from_conc(
         }
     }
 
-    // ── Final convergence check ───────────────────────────────────────────────
+    //  Final convergence check 
     double rel_err = std::fabs((C_cur - measured_conc) / measured_conc);
     if (rel_err > 0.05)
     {

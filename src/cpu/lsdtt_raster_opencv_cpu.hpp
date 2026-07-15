@@ -19,13 +19,13 @@
 // The raster data array is a float32 lsdtt_array2d_f.  Where OpenCV accepts
 // a 32-bit float image (CV_32F) we call get_data_array().to_cv_mat() to
 // obtain a zero-copy cv::Mat view backed directly by the lsdtt_array2d
-// buffer — no data is duplicated.  This requires <opencv2/core.hpp> to be
+// buffer - no data is duplicated.  This requires <opencv2/core.hpp> to be
 // included before <lsdtt_array2d.hpp> so that the CV_VERSION guard in
 // lsdtt_array2d enables its to_cv_mat() helpers; the include order is
 // enforced in this header.
 //
-// Where OpenCV requires an 8-bit greyscale image (CV_8UC1) — Otsu, Canny,
-// HoughLinesP — we:
+// Where OpenCV requires an 8-bit greyscale image (CV_8UC1) - Otsu, Canny,
+// HoughLinesP - we:
 //   1. Obtain the zero-copy CV_32F view.
 //   2. Zero nodata pixels in-place on a working copy (OpenMP-parallel).
 //   3. Call cv::normalize(NORM_MINMAX) into a new CV_8UC1 Mat.
@@ -58,7 +58,7 @@
 //        N = restrict OpenCV to N threads
 //     The previous value is restored via cv::setNumThreads(-1) after each
 //     call.  This restoration is not thread-safe if multiple POSIX threads
-//     share one OpenCV context simultaneously — see MPI note below.
+//     share one OpenCV context simultaneously - see MPI note below.
 //
 // -----------------------------------------------------------------------------
 // MPI safety
@@ -72,7 +72,7 @@
 //   auto windows = loader.make_tile_windows(tile_size, halo);
 //   lsdtt_raster_cpu raster(loader.read_tile(windows[my_rank]));
 //
-//   // Each rank runs OpenCV on its own data — no shared state
+//   // Each rank runs OpenCV on its own data - no shared state
 //   auto edges = lsdtt::opencv_cpu::detect_edges_canny(
 //                    raster, 50.0, 2.0, 3, 1.0,
 //                    /*n_threads=*/0,
@@ -124,8 +124,8 @@ namespace opencv_cpu {
 // to a CV_8UC1 Mat via raster_to_mat8u().  Exposed so callers can recover
 // approximate float values from thresholded results if needed:
 //
-//   pixel_8u ≈ (value - shift) * scale      (forward, clamped [0,255])
-//   value    ≈ pixel_8u / scale + shift      (approximate inverse)
+//   pixel_8u ~= (value - shift) * scale      (forward, clamped [0,255])
+//   value    ~= pixel_8u / scale + shift      (approximate inverse)
 //
 // scale == 0.0 indicates a degenerate raster (all nodata, or flat).
 // -----------------------------------------------------------------------------
@@ -153,9 +153,9 @@ struct mat8u_params
 // lsdtt_array2d buffer is not aliased after raster_to_mat8u returns.
 //
 // Parameters:
-//   raster     — source raster; meta.is_valid() must be true
-//   out_params — populated with shift and scale on return
-//   n_threads  — OpenMP thread count for the nodata-zeroing pass in step 3
+//   raster     - source raster; meta.is_valid() must be true
+//   out_params - populated with shift and scale on return
+//   n_threads  - OpenMP thread count for the nodata-zeroing pass in step 3
 //                (0 = omp_get_max_threads(), 1 = single-threaded)
 //
 // Returns: a CV_8UC1 Mat owned by the caller.
@@ -184,9 +184,9 @@ struct mat8u_params
 // are OpenMP-parallelised using n_threads.
 //
 // Parameters:
-//   raster         — input raster (unmodified)
-//   n_threads      — OpenMP thread count; 0 = omp_get_max_threads()
-//   opencv_threads — cv::setNumThreads value; -1 = leave unchanged;
+//   raster         - input raster (unmodified)
+//   n_threads      - OpenMP thread count; 0 = omp_get_max_threads()
+//   opencv_threads - cv::setNumThreads value; -1 = leave unchanged;
 //                    0 = disable OpenCV pool (recommended for MPI)
 //
 // Returns:
@@ -194,7 +194,7 @@ struct mat8u_params
 //
 // Reference:
 //   Otsu, N. (1979) A threshold selection method from grey-level histograms.
-//   IEEE Transactions on Systems, Man, and Cybernetics, 9(1), 62–66.
+//   IEEE Transactions on Systems, Man, and Cybernetics, 9(1), 62-66.
 // -----------------------------------------------------------------------------
 [[nodiscard]] lsdtt_raster_cpu threshold_otsu(
     const lsdtt_raster_cpu& raster,
@@ -209,7 +209,7 @@ struct mat8u_params
 // Binarise the raster using OpenCV's adaptive mean threshold
 // (cv::adaptiveThreshold with cv::ADAPTIVE_THRESH_MEAN_C).
 //
-// Each pixel is compared against the mean of its block_size × block_size
+// Each pixel is compared against the mean of its block_size x block_size
 // neighbourhood minus the constant C:
 //
 //   foreground (1.0)  if pixel_8u  >  local_mean - C
@@ -221,13 +221,13 @@ struct mat8u_params
 // and retains only the locally brightest pixels.
 //
 // Parameters:
-//   raster         — input raster (unmodified)
-//   block_size     — neighbourhood side length in pixels; must be odd >= 3
-//   C              — constant subtracted from the local mean before comparison;
+//   raster         - input raster (unmodified)
+//   block_size     - neighbourhood side length in pixels; must be odd >= 3
+//   C              - constant subtracted from the local mean before comparison;
 //                    0 = threshold at local mean; negative = stricter
-//   gaussian_sigma — sigma for optional pre-smoothing Gaussian blur; 0 = none
-//   n_threads      — OpenMP thread count; 0 = omp_get_max_threads()
-//   opencv_threads — cv::setNumThreads value; -1 = leave unchanged
+//   gaussian_sigma - sigma for optional pre-smoothing Gaussian blur; 0 = none
+//   n_threads      - OpenMP thread count; 0 = omp_get_max_threads()
+//   opencv_threads - cv::setNumThreads value; -1 = leave unchanged
 //
 // Returns:
 //   lsdtt_raster_cpu where data = 1.0 (foreground) / 0.0, mask from input
@@ -249,7 +249,7 @@ struct mat8u_params
 // (cv::adaptiveThreshold with cv::ADAPTIVE_THRESH_GAUSSIAN_C).
 //
 // Each pixel is compared against the Gaussian-weighted mean of its
-// block_size × block_size neighbourhood minus the constant C.  The Gaussian
+// block_size x block_size neighbourhood minus the constant C.  The Gaussian
 // weighting down-weights pixels near the block edge, giving a smoother
 // threshold surface than the plain mean variant.
 //
@@ -279,16 +279,16 @@ struct mat8u_params
 // OpenMP-parallelised via n_threads.
 //
 // Parameters:
-//   raster         — input raster (unmodified)
-//   threshold      — lower Canny hysteresis threshold in 8-bit space [0,255]
+//   raster         - input raster (unmodified)
+//   threshold      - lower Canny hysteresis threshold in 8-bit space [0,255]
 //                    default: 50.0
-//   ratio          — high_threshold = threshold * ratio; default 2.0
-//                    Canny recommends 2.0–3.0
-//   aperture_size  — Sobel kernel size; must be 3, 5, or 7; default 3
-//   gaussian_sigma — sigma for pre-smoothing Gaussian blur; 0.0 = no blur;
+//   ratio          - high_threshold = threshold * ratio; default 2.0
+//                    Canny recommends 2.0-3.0
+//   aperture_size  - Sobel kernel size; must be 3, 5, or 7; default 3
+//   gaussian_sigma - sigma for pre-smoothing Gaussian blur; 0.0 = no blur;
 //                    default 1.0
-//   n_threads      — OpenMP thread count; 0 = omp_get_max_threads()
-//   opencv_threads — cv::setNumThreads value; -1 = leave unchanged;
+//   n_threads      - OpenMP thread count; 0 = omp_get_max_threads()
+//   opencv_threads - cv::setNumThreads value; -1 = leave unchanged;
 //                    0 = disable OpenCV pool (recommended for MPI)
 //
 // Returns:
@@ -297,7 +297,7 @@ struct mat8u_params
 // Reference:
 //   Canny, J. (1986) A computational approach to edge detection.
 //   IEEE Transactions on Pattern Analysis and Machine Intelligence,
-//   8(6), 679–698.
+//   8(6), 679-698.
 // -----------------------------------------------------------------------------
 [[nodiscard]] lsdtt_raster_cpu detect_edges_canny(
     const lsdtt_raster_cpu& raster,
@@ -329,24 +329,24 @@ struct mat8u_params
 //
 // HoughLinesP is single-threaded within OpenCV.  For large rasters, tile
 // the input with lsdtt_data_loader::make_tile_windows() and distribute tiles
-// across MPI ranks — each rank calls this function independently with no
+// across MPI ranks - each rank calls this function independently with no
 // shared state.  The normalisation and rasterisation passes use n_threads.
 //
 // Parameters:
-//   raster           — input raster (unmodified)
-//   rho              — Hough accumulator distance resolution in pixels;
+//   raster           - input raster (unmodified)
+//   rho              - Hough accumulator distance resolution in pixels;
 //                      default 1.0
-//   theta_deg        — Hough accumulator angle resolution in degrees;
+//   theta_deg        - Hough accumulator angle resolution in degrees;
 //                      default 1.0 (converted to radians internally)
-//   hough_threshold  — minimum accumulator votes to accept a line; default 50
-//   min_line_length  — minimum segment length in pixels; default 30.0
-//   max_line_gap     — maximum collinear gap in pixels to bridge; default 10.0
-//   canny_threshold  — lower Canny threshold for the internal edge step;
+//   hough_threshold  - minimum accumulator votes to accept a line; default 50
+//   min_line_length  - minimum segment length in pixels; default 30.0
+//   max_line_gap     - maximum collinear gap in pixels to bridge; default 10.0
+//   canny_threshold  - lower Canny threshold for the internal edge step;
 //                      default 50.0
-//   canny_ratio      — Canny high/low ratio; default 2.0
-//   gaussian_sigma   — sigma for pre-Canny blur; 0.0 = no blur; default 1.0
-//   n_threads        — OpenMP thread count; 0 = omp_get_max_threads()
-//   opencv_threads   — cv::setNumThreads value; -1 = leave unchanged;
+//   canny_ratio      - Canny high/low ratio; default 2.0
+//   gaussian_sigma   - sigma for pre-Canny blur; 0.0 = no blur; default 1.0
+//   n_threads        - OpenMP thread count; 0 = omp_get_max_threads()
+//   opencv_threads   - cv::setNumThreads value; -1 = leave unchanged;
 //                      0 = disable OpenCV pool (recommended for MPI)
 //
 // Returns:
@@ -358,7 +358,7 @@ struct mat8u_params
 // Reference:
 //   Matas, J., Galambos, C. and Kittler, J. (2000) Robust detection of lines
 //   using the randomised Hough transform. Image and Vision Computing,
-//   18(13), 1134–1145.
+//   18(13), 1134-1145.
 // -----------------------------------------------------------------------------
 [[nodiscard]] lsdtt_raster_cpu extract_lines_hough(
     const lsdtt_raster_cpu& raster,

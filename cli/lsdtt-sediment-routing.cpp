@@ -16,8 +16,8 @@
 // or from a geomorphic instantaneous unit hydrograph (GIUH).
 //
 // Outputs
-//   <write_fname>_cumulative_deposition.tif  — cumulative deposited volume [m³]
-//   <write_fname>_d50_al.tif                 — final active-layer D50 [m]
+//   <write_fname>_cumulative_deposition.tif  - cumulative deposited volume [m^3]
+//   <write_fname>_d50_al.tif                 - final active-layer D50 [m]
 //
 // Usage
 //   lsdtt-sediment-routing <path> <parameter_file>
@@ -161,12 +161,12 @@ int main(int argc, char* argv[])
     help_map["porosity"] = {"float","0.4",
         "Bed sediment porosity (dimensionless).",
         "Used to convert between bulk volume and solid volume when updating "
-        "the active layer. Typical gravel beds: 0.35–0.45."};
+        "the active layer. Typical gravel beds: 0.35-0.45."};
 
     float_default_map["sediment_density_kg_m3"] = 2650.0f;
     help_map["sediment_density_kg_m3"] = {"float","2650",
-        "Sediment grain density [kg/m³].",
-        "Quartz density is 2650 kg/m³. Used in Shields stress and "
+        "Sediment grain density [kg/m^3].",
+        "Quartz density is 2650 kg/m^3. Used in Shields stress and "
         "transport capacity calculations."};
 
     float_default_map["active_layer_depth_m"] = -1.0f;
@@ -174,7 +174,7 @@ int main(int argc, char* argv[])
         "Fixed active-layer depth [m] applied to all reaches.",
         "The active layer is the mobile surface sediment that participates in "
         "exchange each timestep. "
-        "Values <= 0 (default) use 2 × D90 per reach (Parker 1991), "
+        "Values <= 0 (default) use 2 x D90 per reach (Parker 1991), "
         "which scales with the coarsest grains."};
 
     // --- Grain-size distribution ---
@@ -207,38 +207,38 @@ int main(int argc, char* argv[])
     help_map["D90_m"] = {"float","0.055",
         "D90 grain diameter [m].",
         "90th percentile grain diameter. Sets the default active-layer depth "
-        "(2 × D90) when active_layer_depth_m <= 0."};
+        "(2 x D90) when active_layer_depth_m <= 0."};
 
     float_default_map["mannings_n"] = 0.04f;
     help_map["mannings_n"] = {"float","0.04",
         "Manning's roughness coefficient for flow-depth estimation.",
         "Used to compute normal flow depth from discharge, width, and slope "
-        "via Manning's equation. Typical gravel-bed rivers: 0.03–0.07."};
+        "via Manning's equation. Typical gravel-bed rivers: 0.03-0.07."};
 
     // --- Channel width (hydraulic geometry) ---
     float_default_map["width_coefficient"] = 2.76f;
     help_map["width_coefficient"] = {"float","2.76",
         "Hydraulic-geometry coefficient for channel width.",
-        "Width [m] = width_coefficient × drainage_area [m²]^width_exponent. "
+        "Width [m] = width_coefficient x drainage_area [m^2]^width_exponent. "
         "Default (2.76) is from Leopold & Maddock (1953) for gravel-bed rivers."};
 
     float_default_map["width_exponent"] = 0.40f;
     help_map["width_exponent"] = {"float","0.40",
         "Hydraulic-geometry exponent for channel width.",
-        "Typical range: 0.35–0.50 for natural rivers."};
+        "Typical range: 0.35-0.50 for natural rivers."};
 
     // --- Discharge (hydraulic geometry fallback) ---
     float_default_map["discharge_coefficient"] = 1.0e-5f;
     help_map["discharge_coefficient"] = {"float","1e-5",
         "Hydraulic-geometry coefficient for mean discharge when GIUH is not used.",
-        "Q [m³/s] = discharge_coefficient × drainage_area [m²]^discharge_exponent. "
+        "Q [m^3/s] = discharge_coefficient x drainage_area [m^2]^discharge_exponent. "
         "This is a simple power-law scaling. Use use_giuh_discharge for a "
         "physics-based estimate."};
 
     float_default_map["discharge_exponent"] = 0.80f;
     help_map["discharge_exponent"] = {"float","0.80",
         "Hydraulic-geometry exponent for mean discharge.",
-        "Typical range: 0.7–0.9. Used only when use_giuh_discharge is false."};
+        "Typical range: 0.7-0.9. Used only when use_giuh_discharge is false."};
 
     // --- GIUH discharge estimation ---
     bool_default_map["use_giuh_discharge"] = false;
@@ -254,8 +254,8 @@ int main(int argc, char* argv[])
     help_map["giuh_v_ref_m_per_s"] = {"float","1.0",
         "Reference channel velocity [m/s] for GIUH travel-time estimation.",
         "Travel velocity in each reach is scaled from this reference: "
-        "v = v_ref × (slope / slope_ref)^velocity_exponent. "
-        "Typical bankfull channel velocities are 0.5–2.0 m/s."};
+        "v = v_ref x (slope / slope_ref)^velocity_exponent. "
+        "Typical bankfull channel velocities are 0.5-2.0 m/s."};
 
     float_default_map["giuh_slope_ref"] = 0.01f;
     help_map["giuh_slope_ref"] = {"float","0.01",
@@ -265,9 +265,9 @@ int main(int argc, char* argv[])
 
     float_default_map["giuh_velocity_exponent"] = 0.5f;
     help_map["giuh_velocity_exponent"] = {"float","0.5",
-        "Exponent β in the kinematic-wave velocity scaling v ∝ slope^β.",
-        "β = 0.5 is consistent with Manning's equation and the kinematic wave "
-        "approximation. Typical range: 0.3–0.6."};
+        "Exponent beta in the kinematic-wave velocity scaling v proportional_to slope^beta.",
+        "beta = 0.5 is consistent with Manning's equation and the kinematic wave "
+        "approximation. Typical range: 0.3-0.6."};
 
     float_default_map["giuh_hillslope_length_m"] = -1.0f;
     help_map["giuh_hillslope_length_m"] = {"float","-1",
@@ -280,7 +280,7 @@ int main(int argc, char* argv[])
     help_map["giuh_v_hillslope_m_per_s"] = {"float","0.005",
         "Overland-flow velocity [m/s] for hillslope travel time.",
         "Only used when giuh_hillslope_length_m > 0. "
-        "Typical sheet-flow velocities: 0.001–0.01 m/s."};
+        "Typical sheet-flow velocities: 0.001-0.01 m/s."};
 
     int_default_map["giuh_n_bins"] = 200;
     help_map["giuh_n_bins"] = {"int","200",
@@ -296,14 +296,14 @@ int main(int argc, char* argv[])
 
     float_default_map["giuh_runoff_coefficient"] = 1.0f;
     help_map["giuh_runoff_coefficient"] = {"float","1.0",
-        "Fraction of rainfall that becomes runoff (dimensionless, 0–1).",
+        "Fraction of rainfall that becomes runoff (dimensionless, 0-1).",
         "Applied to the rainfall rate before convolving with the IUH. "
         "1.0 = all rain reaches the channel (no infiltration losses). "
         "Lower values reduce the discharge estimate."};
 
     float_default_map["giuh_rainfall_rate_m_per_s"] = 1.0e-5f;
     help_map["giuh_rainfall_rate_m_per_s"] = {"float","1e-5",
-        "Rainfall rate [m/s] for the synthetic IUH pulse (≈ 36 mm/hr).",
+        "Rainfall rate [m/s] for the synthetic IUH pulse (~= 36 mm/hr).",
         "A uniform pulse of this intensity lasting giuh_pulse_duration_s "
         "is convolved with the IUH to produce the discharge time series. "
         "Adjust to represent the design storm relevant to your setting."};
@@ -324,7 +324,7 @@ int main(int argc, char* argv[])
 
     bool_default_map["write_deposition_raster"] = true;
     help_map["write_deposition_raster"] = {"bool","true",
-        "Write cumulative sediment deposition [m³] per reach as a raster.",
+        "Write cumulative sediment deposition [m^3] per reach as a raster.",
         "Each channel pixel in a reach is assigned the cumulative deposition "
         "volume for that reach summed over all timesteps. "
         "Output file: <write_fname>_cumulative_deposition.tif."};
@@ -337,7 +337,7 @@ int main(int argc, char* argv[])
         "Output file: <write_fname>_d50_al.tif."};
 
     // -------------------------------------------------------------------------
-    // Parse — fills maps from the parameter file, falling back to defaults
+    // Parse - fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
     pp.parse_all_parameters(
         float_default_map,
@@ -554,11 +554,11 @@ int main(int argc, char* argv[])
         {
             lsdtt::lsdtt_giuh_result giuh = lsdtt::compute_giuh(jn, reaches, giuh_opts);
 
-            std::cout << "  IUH peak      : " << giuh.iuh_peak << " s⁻¹\n"
+            std::cout << "  IUH peak      : " << giuh.iuh_peak << " s^-^1\n"
                       << "  Time of peak  : " << giuh.time_of_peak_s / 3600.0
                       << " hours\n"
                       << "  Catchment area: " << giuh.catchment_area_m2 / 1.0e6
-                      << " km²\n";
+                      << " km^2\n";
 
             // Convolve a synthetic uniform rainfall pulse with the IUH
             std::vector<double> Q_giuh = lsdtt::giuh_pulse_discharge(
@@ -613,7 +613,7 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "  Total sediment flux out of network: "
-              << result.total_flux_out_m3 << " m³\n";
+              << result.total_flux_out_m3 << " m^3\n";
 
     // -------------------------------------------------------------------------
     // Write outputs

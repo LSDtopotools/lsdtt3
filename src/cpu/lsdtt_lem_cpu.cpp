@@ -294,8 +294,8 @@ run_lem_step(
         {
             // Cidre routes sediment on the flow graph, so it always needs one.
             // The explicit-FD models (linear / roering / roering_implicit) use the
-            // flow graph only to identify channels — which an explicit channel mask
-            // already does — so skip the rebuild in that case.  It is otherwise
+            // flow graph only to identify channels - which an explicit channel mask
+            // already does - so skip the rebuild in that case.  It is otherwise
             // rebuilt every step, and on a long fixed-network run that dominates.
             const bool have_explicit_mask =
                 opts.explicit_channel_mask.size() == n_cells;
@@ -306,7 +306,7 @@ run_lem_step(
                 flow_hillslope.emplace(build_hillslope_flowgraph(current, opts));
 
             // Build the Dirichlet channel mask once for the channel-using explicit
-            // FD models: prefer an explicit channel mask when supplied (§8), else
+            // FD models: prefer an explicit channel mask when supplied (Sec8), else
             // derive it from the drainage-area threshold.
             auto build_is_channel = [&]() -> std::vector<uint8_t>
             {
@@ -317,7 +317,7 @@ run_lem_step(
             if (opts.hillslope_transport_model == "linear" ||
                 opts.hillslope_transport_model == "roering")
             {
-                // Explicit FD on the regular grid — flow graph used only for channel ID.
+                // Explicit FD on the regular grid - flow graph used only for channel ID.
                 std::vector<uint8_t> is_channel = build_is_channel();
 
                 const bool nl = (opts.hillslope_transport_model == "roering")
@@ -335,19 +335,19 @@ run_lem_step(
             }
             else if (opts.hillslope_transport_model == "roering_implicit")
             {
-                // Unconditionally-stable backward-Euler Roering solver (§8).
+                // Unconditionally-stable backward-Euler Roering solver (Sec8).
                 std::vector<uint8_t> is_channel = build_is_channel();
 
-                // Transient-coupling rule 2 (§8): with no Dirichlet channel sinks the
+                // Transient-coupling rule 2 (Sec8): with no Dirichlet channel sinks the
                 // solve degenerates to sink-free diffusion toward the edges, which is
-                // meaningless — skip the hillslope step entirely.
+                // meaningless - skip the hillslope step entirely.
                 const bool any_channel =
                     std::any_of(is_channel.begin(), is_channel.end(),
                                 [](uint8_t v) { return v != 0; });
                 if (!any_channel)
                 {
                     std::cout << "[lem] roering_implicit: no channel pixels "
-                                 "(empty is_channel) — skipping the hillslope step "
+                                 "(empty is_channel) - skipping the hillslope step "
                                  "(needs incision_threshold_area > 0 or a non-empty "
                                  "channel_mask_fname).\n";
                 }
@@ -361,7 +361,7 @@ run_lem_step(
                     ri.boundary_conditions = opts.boundary_conditions;
                     ri.n_threads = opts.n_threads;
 
-                    // Transient-coupling rule 1 (§8): integrate exactly one LEM step
+                    // Transient-coupling rule 1 (Sec8): integrate exactly one LEM step
                     // (dt_total = opts.timestep), so channels are re-incised each step.
                     lsdtt_roering_implicit_result ri_res =
                         compute_roering_hillslope_transport_implicit(

@@ -13,7 +13,7 @@
 // lsdtt_vector_layer line data. Holds the small building blocks reused by the
 // water-network vector tools (line repair, area centrelines):
 //
-//   - quantised coordinate snapping (make_snap_key) — coincident endpoints map
+//   - quantised coordinate snapping (make_snap_key) - coincident endpoints map
 //     to the same key, the idiom previously buried privately in
 //     lsdtt_vector_to_junction_network.cpp.
 //   - a polyline endpoint graph: snap every line's two endpoints, assign shared
@@ -71,7 +71,7 @@ struct lsdtt_snap_key
 // One endpoint of a polyline feature in a layer. `at_start` distinguishes
 // points.front() (true) from points.back() (false). `node_id` is the shared
 // snapped-location id; `degree` is how many endpoints (from any line) snap to
-// that node — degree == 1 is a dangling tip.
+// that node - degree == 1 is a dangling tip.
 // ---------------------------------------------------------------------------
 struct lsdtt_line_endpoint
 {
@@ -108,7 +108,7 @@ struct lsdtt_endpoint_graph
 //
 // Lightweight equality of two CRS WKT strings. Two empty strings count as
 // equivalent (unknown == unknown); an empty vs non-empty is not. This is a
-// string comparison, not a projection-aware comparison — sufficient when both
+// string comparison, not a projection-aware comparison - sufficient when both
 // layers come from the same dataset (e.g. one GeoPackage). For cross-dataset
 // reprojection use lsdtt_coordinate_transform in lsdtt_vector_utils.
 // ---------------------------------------------------------------------------

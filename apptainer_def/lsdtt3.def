@@ -29,7 +29,7 @@ From: ubuntu:22.04
         ca-certificates
 
     # -------------------------------------------------------------------------
-    # GDAL — development headers and runtime binaries
+    # GDAL - development headers and runtime binaries
     # -------------------------------------------------------------------------
     apt-get install -y \
         gdal-bin \
@@ -37,27 +37,27 @@ From: ubuntu:22.04
         python3-gdal
 
     # -------------------------------------------------------------------------
-    # FFTW3 — double precision (fftw_* API)
-    # Serial only — lsdtt3 does not use the threaded FFTW API
+    # FFTW3 - double precision (fftw_* API)
+    # Serial only - lsdtt3 does not use the threaded FFTW API
     # -------------------------------------------------------------------------
     apt-get install -y \
         libfftw3-dev \
         libfftw3-3
 
     # -------------------------------------------------------------------------
-    # Eigen3 — header-only linear algebra library
+    # Eigen3 - header-only linear algebra library
     # -------------------------------------------------------------------------
     apt-get install -y \
         libeigen3-dev
 
     # -------------------------------------------------------------------------
-    # OpenCV — development headers
+    # OpenCV - development headers
     # -------------------------------------------------------------------------
     apt-get install -y \
         libopencv-dev
 
     # -------------------------------------------------------------------------
-    # OpenMP — provided by GCC, but make explicit
+    # OpenMP - provided by GCC, but make explicit
     # -------------------------------------------------------------------------
     apt-get install -y \
         libgomp1

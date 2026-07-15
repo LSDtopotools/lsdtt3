@@ -207,7 +207,7 @@ namespace
 
 
 // =============================================================================
-// binary_directional_closing — internal helpers
+// binary_directional_closing - internal helpers
 // =============================================================================
 
 // Build the pixel offsets for a symmetric line SE of the given half-length
@@ -232,7 +232,7 @@ static std::vector<std::pair<int,int>> make_line_se_offsets(
         offsets.emplace_back(dr, dc);
     }
 
-    // Remove duplicates that arise from rounding (common at multiples of 45°).
+    // Remove duplicates that arise from rounding (common at multiples of 45 deg).
     std::sort(offsets.begin(), offsets.end());
     offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
 
@@ -447,7 +447,7 @@ lsdtt_raster_cpu binary_morphological_closing(
 
             if (dilated[idx] == 0)
             {
-                // Was background even after dilation — stays 0
+                // Was background even after dilation - stays 0
                 continue;
             }
 
@@ -664,7 +664,7 @@ lsdtt_raster_cpu binary_opening_by_reconstruction(
     double                  radius_metres,
     window_shape            shape)
 {
-    // Step 1: erode to get seeds — pixels that survive the radius filter.
+    // Step 1: erode to get seeds - pixels that survive the radius filter.
     const lsdtt_raster_cpu eroded =
         binary_morphological_erosion(binary, radius_metres, shape);
 
@@ -831,7 +831,7 @@ lsdtt_raster_cpu binary_fill_holes(
         if (r < 0 || r >= nrows || c < 0 || c >= ncols) return;
         const int i = r * ncols + c;
         if (in_mask[i] == 0 || reachable[i]) return;
-        if (in_data[i] > 0.5f) return;   // foreground — not background
+        if (in_data[i] > 0.5f) return;   // foreground - not background
         reachable[i] = true;
         q.push(i);
     };
@@ -842,7 +842,7 @@ lsdtt_raster_cpu binary_fill_holes(
     constexpr int DR[4] = {-1, 1,  0, 0};
     constexpr int DC[4] = { 0, 0, -1, 1};
 
-    // Also seed valid background pixels adjacent to any nodata pixel — they sit
+    // Also seed valid background pixels adjacent to any nodata pixel - they sit
     // at the effective exterior boundary of the valid DEM region and are outside
     // any real hole even when the grid border is nodata.
     for (int r = 0; r < nrows; ++r)
@@ -868,7 +868,7 @@ lsdtt_raster_cpu binary_fill_holes(
         for (int d = 0; d < 4; ++d) try_enqueue(row + DR[d], col + DC[d]);
     }
 
-    // Unreachable valid background pixels → foreground.
+    // Unreachable valid background pixels -> foreground.
     // Nodata pixels (in_mask==0) get the nodata sentinel in the data array.
     const float nd = static_cast<float>(meta.no_data_value);
     std::vector<float>   out_data(npix, nd);
@@ -877,7 +877,7 @@ lsdtt_raster_cpu binary_fill_holes(
     {
         if (in_mask[i] == 0) continue;
         if (in_data[i] <= 0.5f && !reachable[i])
-            out_data[i] = 1.0f;   // hole → foreground
+            out_data[i] = 1.0f;   // hole -> foreground
         else
             out_data[i] = in_data[i];
     }
@@ -928,8 +928,8 @@ lsdtt_raster_cpu binary_directional_closing(
 
     for (int ai = 0; ai < n_angles; ++ai)
     {
-        // Evenly spaced orientations in [0°, 180°).
-        // A line at θ and θ+180° is the same, so we only need half the circle.
+        // Evenly spaced orientations in [0 deg, 180 deg).
+        // A line at theta and theta+180 deg is the same, so we only need half the circle.
         const double angle = static_cast<double>(ai) * 180.0 /
                              static_cast<double>(n_angles);
 

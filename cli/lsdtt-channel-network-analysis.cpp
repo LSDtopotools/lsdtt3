@@ -665,7 +665,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
-    // Step 1 — Ensure DEM is ready for routing
+    // Step 1 - Ensure DEM is ready for routing
     // -------------------------------------------------------------------------
     if (!bf["raster_is_filled"])
     {
@@ -693,7 +693,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2 — Build D8 flow routing
+    // Step 2 - Build D8 flow routing
     // -------------------------------------------------------------------------
     std::cout << "\n--- Flow routing ---\n";
     std::cout << "Boundary conditions: " << sf["boundary_conditions"] << "\n";
@@ -724,7 +724,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — Extract source pixels
+    // Step 3 - Extract source pixels
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source extraction ---\n";
     std::cout << "Contributing-pixel threshold: "
@@ -754,7 +754,7 @@ int main(int argc, char* argv[])
     std::cout << "Number of source pixels: " << source_flats.size() << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 4 — Build junction / channel network
+    // Step 4 - Build junction / channel network
     // -------------------------------------------------------------------------
     std::cout << "\n--- Channel network construction ---\n";
 
@@ -810,7 +810,7 @@ int main(int argc, char* argv[])
     };
 
     // -------------------------------------------------------------------------
-    // Step 5 — Select junctions for bearing / angle analyses
+    // Step 5 - Select junctions for bearing / angle analyses
     // -------------------------------------------------------------------------
     std::vector<std::int32_t> analysis_junctions;
 
@@ -961,7 +961,7 @@ int main(int argc, char* argv[])
                 }
                 if (n_unsupported_geom > 0)
                     std::cerr << "Warning: " << n_unsupported_geom
-                              << " feature(s) skipped — not point geometry.\n";
+                              << " feature(s) skipped - not point geometry.\n";
                 if (n_missing_crs > 0)
                     std::cerr << "Warning: " << n_missing_crs
                               << " feature(s) had no source CRS and could not "
@@ -1095,7 +1095,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 6 — Bearings
+    // Step 6 - Bearings
     // -------------------------------------------------------------------------
     std::vector<lsdtt::lsdtt_channel_link_bearing> bearing_records;
 
@@ -1183,7 +1183,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 7 — Junction angles
+    // Step 7 - Junction angles
     // -------------------------------------------------------------------------
     std::vector<lsdtt::lsdtt_junction_angle_record> angle_records;
 
@@ -1271,7 +1271,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 8 — Strahler / Tokunaga
+    // Step 8 - Strahler / Tokunaga
     //
     // NOTE:
     // The current Strahler / Tokunaga builder operates on the full extracted

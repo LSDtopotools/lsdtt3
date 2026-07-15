@@ -14,12 +14,12 @@
 // rasterise_polygons
 //   Burns polygon features from the first layer of a vector file into a binary
 //   mask raster. Three coverage rules are supported:
-//     any_coverage      — pixel is 1 if the polygon touches any part of it
+//     any_coverage      - pixel is 1 if the polygon touches any part of it
 //                         (implemented with GDAL ALL_TOUCHED rasterisation)
-//     majority_coverage — pixel is 1 if the polygon covers >= 50% of the pixel
+//     majority_coverage - pixel is 1 if the polygon covers >= 50% of the pixel
 //                         (implemented with GDAL centre-point rasterisation)
-//     full_coverage     — pixel is 1 only if the polygon covers 100% of the
-//                         pixel (implemented with 4× oversample)
+//     full_coverage     - pixel is 1 only if the polygon covers 100% of the
+//                         pixel (implemented with 4x oversample)
 //
 // rasterise_polylines
 //   Burns polyline features from the first layer of a vector file into a binary
@@ -67,8 +67,8 @@ namespace lsdtt {
 enum class polygon_rasterise_rule
 {
     any_coverage,       // touched at all  -> 1
-    majority_coverage,  // centre inside   -> 1  (≈ 50 % coverage)
-    full_coverage       // fully inside    -> 1  (4× oversample)
+    majority_coverage,  // centre inside   -> 1  (~= 50 % coverage)
+    full_coverage       // fully inside    -> 1  (4x oversample)
 };
 
 // -----------------------------------------------------------------------------
@@ -216,19 +216,19 @@ struct macrostrat_geology_rasterise_result
 //   occupies the greatest area within that pixel.
 //
 // Attribute handling:
-//   • Integer field  -> written directly to raster values
-//   • Real field     -> written directly to raster values
-//   • String field   -> raster stores integer category codes and the returned
+//   - Integer field  -> written directly to raster values
+//   - Real field     -> written directly to raster values
+//   - String field   -> raster stores integer category codes and the returned
 //                       lookup_table maps codes back to strings
 //
 // Geometry / masking:
-//   • Output extent, resolution, and CRS are taken from `reference_raster`
-//   • Vector geometries are reprojected to the raster CRS when needed
-//   • Nodata pixels in the reference raster remain nodata in the output
+//   - Output extent, resolution, and CRS are taken from `reference_raster`
+//   - Vector geometries are reprojected to the raster CRS when needed
+//   - Nodata pixels in the reference raster remain nodata in the output
 //
 // Oversampling:
 //   `oversample` controls the subpixel grid used to approximate polygon area
-//   fractions. For example, oversample = 8 evaluates each pixel on an 8×8
+//   fractions. For example, oversample = 8 evaluates each pixel on an 8x8
 //   subgrid.
 // -----------------------------------------------------------------------------
 macrostrat_geology_rasterise_result rasterise_macrostrat_geology(

@@ -16,7 +16,7 @@ import urllib.request
 # redistributed derivative must also be share-alike). See the repo LICENSE.
 #
 # This script simply DOWNLOADS the published file(s) and KEEPS GEM's own
-# nomenclature unchanged. No fields are renamed, dropped, or reclassified — the
+# nomenclature unchanged. No fields are renamed, dropped, or reclassified - the
 # kinematic field `slip_type` and its controlled vocabulary (Normal, Reverse,
 # Dextral, Sinistral, oblique compounds such as Normal-Dextral, etc.) are left
 # exactly as GEM publishes them. Map them to thrust / normal / transform later

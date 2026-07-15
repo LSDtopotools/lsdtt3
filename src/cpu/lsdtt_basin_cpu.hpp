@@ -1,9 +1,9 @@
 #pragma once
 
-// lsdtt3 — lsdtt_basin_cpu.hpp
+// lsdtt3 - lsdtt_basin_cpu.hpp
 // CPU implementation of a single drainage basin.
 // Holds a zero-copy slice into the flow-routing s_vector
-// (lsdtt_flat_index_slice) — no pixel data is copied on construction.
+// (lsdtt_flat_index_slice) - no pixel data is copied on construction.
 //
 // Member functions are limited to operations that require access to
 // private data (the slice and outlet index). Statistical analysis on

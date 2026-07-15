@@ -112,7 +112,7 @@ static std::vector<std::vector<lsdtt_xy>> find_hole_rings(
 
     // Flood-fill exterior background from the border of the local grid (4-conn).
     // Because box is expanded by 1 outside the component, the border is always
-    // background — no foreground pixel can sit on it.
+    // background - no foreground pixel can sit on it.
     std::vector<uint8_t> visited(static_cast<std::size_t>(LR) *
                                  static_cast<std::size_t>(LC), 0u);
 
@@ -197,7 +197,7 @@ static std::vector<std::vector<lsdtt_xy>> find_hole_rings(
                 }
             }
 
-            // Stamp island into its own double-resolution binary and trace —
+            // Stamp island into its own double-resolution binary and trace -
             // identical pipeline to the outer ring in binary_components_to_polygon_records.
             // Bounding box of this island:
             int h_min_r = std::numeric_limits<int>::max();
@@ -281,7 +281,7 @@ binary_components_to_polygon_records(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 1 — collect pixel indices per label + bounding boxes + scalar sums
+    // Pass 1 - collect pixel indices per label + bounding boxes + scalar sums
     // -------------------------------------------------------------------------
     struct ComponentInfo
     {
@@ -330,9 +330,9 @@ binary_components_to_polygon_records(
     div_meta.n_cols  = ncols + 1;
 
     // -------------------------------------------------------------------------
-    // Pass 2 — per component: stamp double-resolution grid, trace, convert
+    // Pass 2 - per component: stamp double-resolution grid, trace, convert
     // -------------------------------------------------------------------------
-    // 3x3 stamp offsets — identical to lsdtt_basin_outline_cpu::stamp9
+    // 3x3 stamp offsets - identical to lsdtt_basin_outline_cpu::stamp9
     static constexpr int stamp9[9][2] = {
         {-1,-1},{-1, 0},{-1, 1},
         { 0,-1},{ 0, 0},{ 0, 1},
@@ -371,7 +371,7 @@ binary_components_to_polygon_records(
             }
         }
 
-        // Trace boundary (4-connectivity) — same call as basin outline
+        // Trace boundary (4-connectivity) - same call as basin outline
         const std::vector<lsdtt_pixel_rc> boundary =
             trace_boundary_pixels(binary, 4);
 
@@ -413,7 +413,7 @@ binary_components_to_polygon_records(
             rec.field_values = {
                 static_cast<std::int64_t>(label),
                 area_m2,
-                ci.scalar_sum * cell_area   // e.g. m³ when scalar is depth in metres
+                ci.scalar_sum * cell_area   // e.g. m^3 when scalar is depth in metres
             };
         }
         else
@@ -462,7 +462,7 @@ binary_components_to_polygon_records_with_holes(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 1 — collect pixel indices per label, bounding boxes, scalar sums
+    // Pass 1 - collect pixel indices per label, bounding boxes, scalar sums
     // (unchanged from previous version)
     // -------------------------------------------------------------------------
     struct ComponentInfo
@@ -515,7 +515,7 @@ binary_components_to_polygon_records_with_holes(
     };
 
     // -------------------------------------------------------------------------
-    // Pass 2 — per component: stamp, trace outer ring, find holes
+    // Pass 2 - per component: stamp, trace outer ring, find holes
     // -------------------------------------------------------------------------
     std::vector<lsdtt_vector_record> records;
     records.reserve(components.size());
@@ -551,7 +551,7 @@ binary_components_to_polygon_records_with_holes(
                                  div_meta);
 
         if (exterior.size() < 4)
-            continue;  // degenerate component — skip
+            continue;  // degenerate component - skip
 
         // --- Hole rings ---
         std::vector<std::vector<lsdtt_xy>> holes =

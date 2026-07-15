@@ -15,7 +15,7 @@
 // Storage:
 //   Data and mask are stored as lsdtt_array2d (which wraps std::vector).
 //   This means get_data() / get_mask() returning std::vector<float>& /
-//   std::vector<uint8_t>& are zero-cost — they return a reference into the
+//   std::vector<uint8_t>& are zero-cost - they return a reference into the
 //   underlying vector of the array2d. get_data_array() / get_mask_array()
 //   return the lsdtt_array2d directly for code that needs 2D indexing.
 //
@@ -48,23 +48,23 @@ public:
     // Constructors
     // -------------------------------------------------------------------------
 
-    // Default — produces an empty, invalid raster
+    // Default - produces an empty, invalid raster
     lsdtt_raster_cpu() = default;
 
-    // Construct from a data loader — reads the full raster into memory
+    // Construct from a data loader - reads the full raster into memory
     explicit lsdtt_raster_cpu(const lsdtt_data_loader& loader);
 
     // Construct from a tile read by the loader
     explicit lsdtt_raster_cpu(const lsdtt_raster_tile& tile);
 
-    // Construct from lsdtt_array2d (move) — preferred for analysis results
+    // Construct from lsdtt_array2d (move) - preferred for analysis results
     lsdtt_raster_cpu(
         lsdtt_array2d_f&&        data,
         lsdtt_array2d_u8&&       mask,
         const lsdtt_raster_meta& meta
     );
 
-    // Construct from std::vector (move) — for backwards compatibility
+    // Construct from std::vector (move) - for backwards compatibility
     // with code that builds result vectors directly
     lsdtt_raster_cpu(
         std::vector<float>&&     data,
@@ -87,7 +87,7 @@ public:
 
 
     // -------------------------------------------------------------------------
-    // lsdtt_array2d accessors — preferred for analysis code
+    // lsdtt_array2d accessors - preferred for analysis code
     // Zero-copy: returns reference into internal storage.
     // -------------------------------------------------------------------------
 
@@ -96,7 +96,7 @@ public:
     const lsdtt_array2d_u8& get_mask_array() const { return mask_; }
 
     // -------------------------------------------------------------------------
-    // std::vector accessors — zero-copy into the array2d-owned vector
+    // std::vector accessors - zero-copy into the array2d-owned vector
     // -------------------------------------------------------------------------
 
     const std::vector<float>&   get_data() const { return data_.get_vector(); }

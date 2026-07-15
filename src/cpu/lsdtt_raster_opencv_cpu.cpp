@@ -65,8 +65,8 @@ void restore_opencv_threads(int opencv_threads)
 // resolve_n_threads
 //
 // Convert the public n_threads convention to a concrete thread count:
-//   0  → omp_get_max_threads() (or 1 if OpenMP not available)
-//   N  → N
+//   0  -> omp_get_max_threads() (or 1 if OpenMP not available)
+//   N  -> N
 // -----------------------------------------------------------------------------
 int resolve_n_threads(int n_threads)
 {
@@ -134,7 +134,7 @@ lsdtt_raster_cpu mat8u_to_binary_raster(
                 out_mask[idx] = 1;
                 out_data[idx] = (row_ptr[c] != 0) ? 1.0f : 0.0f;
             }
-            // nodata: out_data stays 0.0f, out_mask stays 0 — already set
+            // nodata: out_data stays 0.0f, out_mask stays 0 - already set
         }
     }
 
@@ -176,20 +176,20 @@ cv::Mat raster_to_mat8u(
     const int threads  = resolve_n_threads(n_threads);
 
     // -------------------------------------------------------------------------
-    // Step 1 — obtain a zero-copy CV_32F view via lsdtt_array2d::to_cv_mat().
+    // Step 1 - obtain a zero-copy CV_32F view via lsdtt_array2d::to_cv_mat().
     // The view aliases the lsdtt_array2d_f buffer directly; no allocation.
     // -------------------------------------------------------------------------
     const lsdtt_array2d_f& data_arr = raster.get_data_array();
     cv::Mat float_view = data_arr.to_cv_mat();   // CV_32F, zero-copy
 
     // -------------------------------------------------------------------------
-    // Step 2 — clone into a working Mat so we can zero nodata pixels without
+    // Step 2 - clone into a working Mat so we can zero nodata pixels without
     // modifying the source raster.  One allocation of n_rows * n_cols floats.
     // -------------------------------------------------------------------------
     cv::Mat working = float_view.clone();        // CV_32F, owned copy
 
     // -------------------------------------------------------------------------
-    // Step 3 — zero nodata pixels in the working Mat (OpenMP-parallel).
+    // Step 3 - zero nodata pixels in the working Mat (OpenMP-parallel).
     // This ensures nodata regions do not influence cv::normalize's min/max
     // scan and do not appear as spurious histogram entries in Otsu.
     // -------------------------------------------------------------------------
@@ -211,9 +211,9 @@ cv::Mat raster_to_mat8u(
     }
 
     // -------------------------------------------------------------------------
-    // Step 4 — compute shift and scale from the masked working Mat.
+    // Step 4 - compute shift and scale from the masked working Mat.
     // cv::minMaxLoc operates over all pixels; because nodata are zeroed the
-    // min will be at most 0, which is acceptable — the scale is derived from
+    // min will be at most 0, which is acceptable - the scale is derived from
     // the actual valid-data range.
     //
     // We compute our own min/max over valid pixels only so that the params
@@ -222,7 +222,7 @@ cv::Mat raster_to_mat8u(
     float vmin =  std::numeric_limits<float>::max();
     float vmax = -std::numeric_limits<float>::max();
 
-    // Serial scan — small compared to the rest of the pipeline
+    // Serial scan - small compared to the rest of the pipeline
     for (int r = 0; r < n_rows; ++r)
     {
         const float* row_ptr = working.ptr<float>(r);
@@ -253,7 +253,7 @@ cv::Mat raster_to_mat8u(
     out_params.scale = 255.0f / (vmax - vmin);
 
     // -------------------------------------------------------------------------
-    // Step 5 — normalise to [0, 255] and convert to CV_8UC1.
+    // Step 5 - normalise to [0, 255] and convert to CV_8UC1.
     // cv::normalize with NORM_MINMAX uses the actual min/max of the working
     // Mat (which includes zeroed nodata pixels at 0).  This is fine because
     // we use the valid-data range stored in out_params for any inverse mapping
@@ -320,7 +320,7 @@ lsdtt_raster_cpu threshold_adaptive_impl(
 
     if (params.scale == 0.0f)
     {
-        // Degenerate raster — return all-background
+        // Degenerate raster - return all-background
         return mat8u_to_binary_raster(mat8u, raster, n_threads);
     }
 
@@ -490,7 +490,7 @@ lsdtt_raster_cpu extract_lines_hough(
     const int n_cols = meta.n_cols;
 
     // -------------------------------------------------------------------------
-    // Steps 1–2: normalise to 8-bit, optional blur
+    // Steps 1-2: normalise to 8-bit, optional blur
     // -------------------------------------------------------------------------
     mat8u_params params;
     cv::Mat mat8u = raster_to_mat8u(raster, params, n_threads);
@@ -500,7 +500,7 @@ lsdtt_raster_cpu extract_lines_hough(
     apply_gaussian_blur(mat8u, gaussian_sigma);
 
     // -------------------------------------------------------------------------
-    // Step 3: Canny edge detection — produces the edge image for HoughLinesP
+    // Step 3: Canny edge detection - produces the edge image for HoughLinesP
     // -------------------------------------------------------------------------
     cv::Mat edges;
     cv::Canny(
@@ -530,7 +530,7 @@ lsdtt_raster_cpu extract_lines_hough(
     // -------------------------------------------------------------------------
     // Step 5: rasterise line segments onto a blank CV_8UC1 Mat
     // cv::line draws Bresenham 8-connected lines, 1 pixel thick.
-    // This step is serial — cv::line is not thread-safe for concurrent writes
+    // This step is serial - cv::line is not thread-safe for concurrent writes
     // to the same Mat, and the segment count is typically small.
     // -------------------------------------------------------------------------
     cv::Mat line_mat(n_rows, n_cols, CV_8UC1, cv::Scalar(0));

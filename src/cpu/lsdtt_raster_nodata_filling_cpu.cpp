@@ -23,7 +23,7 @@
 namespace lsdtt {
 
 // =============================================================================
-// Step 1 — interior nodata classification
+// Step 1 - interior nodata classification
 // =============================================================================
 
 // 8-neighbour offsets (used throughout this file)
@@ -92,7 +92,7 @@ lsdtt_array2d<uint8_t> identify_interior_nodata(
         enqueue_if_edge_nodata(r, ncols - 1);
     }
 
-    // Flood fill — 8-connected through nodata pixels
+    // Flood fill - 8-connected through nodata pixels
     while (!q.empty())
     {
         auto [r, c] = q.front();
@@ -115,7 +115,7 @@ lsdtt_array2d<uint8_t> identify_interior_nodata(
 }
 
 // =============================================================================
-// Step 2a — iterative distance-weighted average
+// Step 2a - iterative distance-weighted average
 // =============================================================================
 
 // One pass over the interior void pixels.
@@ -131,7 +131,7 @@ static int iterative_average_pass(
 {
     const float nodata = static_cast<float>(meta.no_data_value);
 
-    // Collect pixels to fill this pass — those with at least one valid neighbour
+    // Collect pixels to fill this pass - those with at least one valid neighbour
     // We compute updates into a separate array to avoid order-dependence
     lsdtt_array2d<float>   new_vals(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> filled_this_pass(nrows, ncols, uint8_t{0});
@@ -241,7 +241,7 @@ static void fill_iterative_weighted_average(
 }
 
 // =============================================================================
-// Step 2b — Laplacian inpainting (conjugate gradient solver)
+// Step 2b - Laplacian inpainting (conjugate gradient solver)
 // =============================================================================
 //
 // Formulation:
@@ -254,12 +254,12 @@ static void fill_iterative_weighted_average(
 //     - A is the graph Laplacian matrix of the void region
 //     - b encodes the known boundary values (valid pixels adjacent to the void)
 //
-//   We solve this using a matrix-free conjugate gradient iteration — no
+//   We solve this using a matrix-free conjugate gradient iteration - no
 //   external sparse matrix library is required.
 //
 // The system is symmetric positive definite so CG is guaranteed to converge.
 
-// Index void pixels — assign each interior void pixel a sequential integer ID.
+// Index void pixels - assign each interior void pixel a sequential integer ID.
 // Returns the mapping from (row, col) to void ID, and the reverse mapping.
 static int index_void_pixels(
     const lsdtt_array2d<uint8_t>& interior,
@@ -288,7 +288,7 @@ static int index_void_pixels(
 // Matrix-vector product A*x for the Laplacian system.
 // A*x[i] = n_nbr[i] * x[i] - sum of x[j] for void neighbours j
 //         - sum of dem[j] for known-value neighbours j (contributes to b)
-// Here we compute A*x — the b contribution is handled separately.
+// Here we compute A*x - the b contribution is handled separately.
 static void laplacian_matvec(
     const std::vector<float>&  x,
     std::vector<float>&        result,
@@ -316,7 +316,7 @@ static void laplacian_matvec(
 
             if (interior(nr, nc) != 0)
             {
-                // Void neighbour — contributes to A*x
+                // Void neighbour - contributes to A*x
                 const int j = void_id(nr, nc);
                 result[i] -= x[j];
             }
@@ -349,9 +349,9 @@ static std::vector<float> build_rhs(
             const int nc = c + k_nd_dc[n];
 
             if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
-            if (interior(nr, nc) != 0) continue;  // void neighbour — in A, not b
+            if (interior(nr, nc) != 0) continue;  // void neighbour - in A, not b
 
-            // Known valid neighbour — contributes to b
+            // Known valid neighbour - contributes to b
             b[i] += dem(nr, nc);
         }
     }
@@ -360,7 +360,7 @@ static std::vector<float> build_rhs(
 }
 
 // Conjugate gradient solver for A*x = b.
-// The system matrix A is never formed explicitly — it is applied via matvec.
+// The system matrix A is never formed explicitly - it is applied via matvec.
 //
 // Numerical safety measures:
 //   - Dot products accumulated in double to avoid float32 rounding errors
@@ -384,7 +384,7 @@ static std::vector<float> conjugate_gradient(
     int n_void,
     int max_iter, float tolerance)
 {
-    // Check for a singular system — void with no boundary conditions at all.
+    // Check for a singular system - void with no boundary conditions at all.
     // This happens when a void pixel is entirely surrounded by other void pixels.
     // In this case b is all zero and the system is underdetermined.
     // Return zeros rather than attempting to solve.
@@ -394,7 +394,7 @@ static std::vector<float> conjugate_gradient(
     if (b_norm_sq_d < 1e-30)
     {
         std::cout << "lsdtt::fill_interior_nodata (laplacian): void region has "
-                  << "no boundary conditions — returning zero fill.\n";
+                  << "no boundary conditions - returning zero fill.\n";
         return std::vector<float>(n_void, 0.0f);
     }
 
@@ -474,7 +474,7 @@ static std::vector<float> conjugate_gradient(
         {
             std::cout << "lsdtt::fill_interior_nodata (laplacian): "
                       << "CG breakdown at iteration " << iter
-                      << " — restarting.\n";
+                      << " - restarting.\n";
             laplacian_matvec(x, Ax, interior, void_id, void_rows, void_cols,
                              nrows, ncols, n_void);
             r_dot_r = 0.0;
@@ -557,7 +557,7 @@ static void fill_laplacian(
 }
 
 // =============================================================================
-// fill_interior_nodata — public function
+// fill_interior_nodata - public function
 // =============================================================================
 
 lsdtt_raster_cpu fill_interior_nodata(
@@ -591,7 +591,7 @@ lsdtt_raster_cpu fill_interior_nodata(
     threads = 1;
 #endif
 
-    // Step 1 — classify nodata pixels
+    // Step 1 - classify nodata pixels
     lsdtt_array2d<uint8_t> interior = identify_interior_nodata(raster);
 
     // Count interior void pixels before filling
@@ -620,7 +620,7 @@ lsdtt_raster_cpu fill_interior_nodata(
     std::cout << "lsdtt::fill_interior_nodata: found "
               << n_interior << " interior void pixels to fill.\n";
 
-    // Step 2 — fill using the selected method
+    // Step 2 - fill using the selected method
     if (method == nodata_fill_method::iterative_weighted_average)
     {
         fill_iterative_weighted_average(dem, interior, meta,
@@ -631,7 +631,7 @@ lsdtt_raster_cpu fill_interior_nodata(
         fill_laplacian(dem, interior, nrows, ncols, max_iter, tolerance);
     }
 
-    // Build output mask — valid wherever dem is not nodata
+    // Build output mask - valid wherever dem is not nodata
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
     for (int r = 0; r < nrows; ++r)
     {
@@ -652,7 +652,7 @@ lsdtt_raster_cpu fill_interior_nodata(
 // clip_to_maximum_rectangle
 // =============================================================================
 
-// Largest rectangle in a histogram — classic O(n) stack algorithm.
+// Largest rectangle in a histogram - classic O(n) stack algorithm.
 //
 // Given a histogram of bar heights, finds the largest rectangle that fits
 // entirely within the bars. Returns the rectangle as {left_col, width, height}.
@@ -694,7 +694,7 @@ static hist_rect largest_rect_in_histogram(
 
     for (int c = 0; c < ncols; ++c)
     {
-        // Pop bars taller than the current bar — their rectangles cannot
+        // Pop bars taller than the current bar - their rectangles cannot
         // extend past this column
         while (!stack.empty() && heights[stack.back()] > heights[c])
         {
@@ -783,7 +783,7 @@ lsdtt_raster_cpu clip_to_maximum_rectangle(
     if (best.area() == 0)
     {
         throw std::runtime_error(
-            "lsdtt::clip_to_maximum_rectangle: no valid rectangle found — "
+            "lsdtt::clip_to_maximum_rectangle: no valid rectangle found - "
             "the raster may be entirely nodata"
         );
     }

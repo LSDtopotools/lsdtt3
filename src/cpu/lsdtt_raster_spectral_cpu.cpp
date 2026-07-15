@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Spectral raster analysis — FFTW-based free functions operating on
+// Spectral raster analysis - FFTW-based free functions operating on
 // lsdtt_raster_base objects.
 //
 // Current contents:
@@ -267,7 +267,7 @@ private:
 };
 
 // -----------------------------------------------------------------------------
-// fftw_double_buffer — RAII wrapper for a real double array allocated via FFTW
+// fftw_double_buffer - RAII wrapper for a real double array allocated via FFTW
 // -----------------------------------------------------------------------------
 class fftw_double_buffer
 {
@@ -300,8 +300,8 @@ private:
 // -----------------------------------------------------------------------------
 // fftw_halfcomplex_buffer
 //
-// Holds the r2c output: Ly rows × (Lx/2+1) complex columns.
-// The non-redundant half of the spectrum for a real input of size Ly × Lx.
+// Holds the r2c output: Ly rows x (Lx/2+1) complex columns.
+// The non-redundant half of the spectrum for a real input of size Ly x Lx.
 // -----------------------------------------------------------------------------
 class fftw_halfcomplex_buffer
 {
@@ -338,7 +338,7 @@ private:
 //
 // RAII plan handles for real-to-complex and complex-to-real 2D transforms.
 // Always uses FFTW_ESTIMATE so planning never touches the data arrays.
-// The c2r transform may destroy its complex input on execution — this is
+// The c2r transform may destroy its complex input on execution - this is
 // expected and accounted for in spectral_filter_pipeline.
 // -----------------------------------------------------------------------------
 class fftw_r2c_plan_handle
@@ -432,8 +432,8 @@ struct support_sample
 //      correspond to a local weighted fit with the expected sign convention.
 //
 // Coordinate convention:
-//   x  — positive east
-//   y  — positive north
+//   x  - positive east
+//   y  - positive north
 // -----------------------------------------------------------------------------
 static std::vector<support_sample> build_support_samples(
     int    pad_size,
@@ -828,7 +828,7 @@ static int next_pow2(int n)
 // -----------------------------------------------------------------------------
 // fit_detrend_plane
 //
-// Fits z = a*col + b*row + c to all valid pixels using 3×3 normal equations
+// Fits z = a*col + b*row + c to all valid pixels using 3x3 normal equations
 // with partial pivoting.  Row/col are used as x/y (pixel index coordinates)
 // since the trend is only used as a DC/tilt removal step before FFT; physical
 // coordinates are not needed.
@@ -925,7 +925,7 @@ static bool fit_detrend_plane(
 // -----------------------------------------------------------------------------
 // build_2d_window
 //
-// Returns a flat (nrows × ncols, row-major) array of window weights in [0, 1].
+// Returns a flat (nrows x ncols, row-major) array of window weights in [0, 1].
 //
 // For hann:    w(r) = 0.5 * (1 + cos(pi * r / r'))
 // For hamming: w(r) = 0.54 + 0.46 * cos(pi * r / r')
@@ -976,7 +976,7 @@ static std::vector<double> build_2d_window(
                 const double ratio = k_pi * dist / r_prime;
                 if (win_type == spectral_window_type::hann)
                     coeff = 0.5 * (1.0 + std::cos(ratio));
-                else   // hamming — corrected formula, equals 1 at centre
+                else   // hamming - corrected formula, equals 1 at centre
                     coeff = 0.54 + 0.46 * std::cos(ratio);
             }
 
@@ -991,7 +991,7 @@ static std::vector<double> build_2d_window(
 // radial_freq_r2c
 //
 // Radial frequency (cycles/metre) of element (i, j) in the UNSHIFTED r2c
-// output of a transform with padded dimensions Ly × Lx:
+// output of a transform with padded dimensions Ly x Lx:
 //
 //   f_x = j / (Lx * cell_size)                        j in [0, Lx/2]
 //   f_y = i / (Ly * cell_size)      for i in [0, Ly/2]
@@ -1009,14 +1009,14 @@ static inline double radial_freq_r2c(
 // spectral_filter_pipeline
 //
 // Shared forward / inverse FFT pipeline.  The caller provides apply_kernel,
-// which receives a pointer to the r2c spectrum (Ly × Lx_half complex elements,
+// which receives a pointer to the r2c spectrum (Ly x Lx_half complex elements,
 // row-major, unshifted) and modifies it in place.
 //
 // Parameters passed to apply_kernel:
-//   spec     — pointer to Ly × Lx_half fftw_complex array
-//   Ly, Lx   — padded dimensions
-//   Lx_half  — Lx/2 + 1
-//   dfx, dfy — frequency increments in cycles/metre
+//   spec     - pointer to Ly x Lx_half fftw_complex array
+//   Ly, Lx   - padded dimensions
+//   Lx_half  - Lx/2 + 1
+//   dfx, dfy - frequency increments in cycles/metre
 // -----------------------------------------------------------------------------
 static lsdtt_raster_cpu spectral_filter_pipeline(
     const lsdtt_raster_cpu& dem,
@@ -1108,7 +1108,7 @@ static lsdtt_raster_cpu spectral_filter_pipeline(
 
     // -------------------------------------------------------------------------
     // 6. Inverse FFT (c2r), normalise, restore trend, re-apply nodata mask
-    //    c2r may destroy cplx_buf — that is expected.
+    //    c2r may destroy cplx_buf - that is expected.
     // -------------------------------------------------------------------------
     fftw_execute(c2r_plan.get());
 
@@ -2242,7 +2242,7 @@ poly_fit_coeffs wavelet_quadratic_fit(
     fftw_complex_buffer out_space(n_complex, "out_space");
 
     std::cout << " done.\n"
-              << "  Planning FFT transforms (FFTW_MEASURE — may take a moment)..."
+              << "  Planning FFT transforms (FFTW_MEASURE - may take a moment)..."
               << std::flush;
 
     fftw_plan_handle plan_dem(
@@ -2487,7 +2487,7 @@ poly_fit_coeffs wavelet_quadratic_fit(
 //
 // H(0)   = 1.0   (DC and low frequencies pass unchanged)
 // H(f_c) = 0.5   (-3 dB at the cutoff)
-// H >> f_c → 0  (high frequencies suppressed)
+// H >> f_c -> 0  (high frequencies suppressed)
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu fftw2D_lowpass_filter(
     const lsdtt_raster_cpu& dem,
@@ -2547,7 +2547,7 @@ lsdtt_raster_cpu fftw2D_lowpass_filter(
 //
 // H(0) = 0   (DC removed)
 // H(f_c) = 0.5   (-3 dB at cutoff)
-// H >> f_c → 1   (high frequencies pass unchanged)
+// H >> f_c -> 1   (high frequencies pass unchanged)
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu fftw2D_highpass_filter(
     const lsdtt_raster_cpu& dem,
@@ -2608,8 +2608,8 @@ lsdtt_raster_cpu fftw2D_highpass_filter(
 //   f_low  = 1 / lambda_long_metres   (low-frequency edge, long-wavelength cutoff)
 //   f_high = 1 / lambda_short_metres  (high-frequency edge, short-wavelength cutoff)
 //
-// H_high(f, f_low)  = 1 - exp(-ln2 * (f/f_low)^2)   — passes f >> f_low
-// H_low(f, f_high)  =     exp(-ln2 * (f/f_high)^2)   — passes f << f_high
+// H_high(f, f_low)  = 1 - exp(-ln2 * (f/f_low)^2)   - passes f >> f_low
+// H_low(f, f_high)  =     exp(-ln2 * (f/f_high)^2)   - passes f << f_high
 //
 // The combined response is 0.25 (-6 dB) at each edge and peaks near the
 // geometric mean of f_low and f_high.
@@ -2643,8 +2643,8 @@ lsdtt_raster_cpu fftw2D_bandpass_filter(
         clip_to_valid_rectangle ? clip_to_maximum_rectangle(dem) : lsdtt_raster_cpu{};
     const lsdtt_raster_cpu& work = clip_to_valid_rectangle ? clipped_storage : dem;
 
-    // f_low  = 1/lambda_long  (lower frequency edge — long-wavelength cutoff)
-    // f_high = 1/lambda_short (higher frequency edge — short-wavelength cutoff)
+    // f_low  = 1/lambda_long  (lower frequency edge - long-wavelength cutoff)
+    // f_high = 1/lambda_short (higher frequency edge - short-wavelength cutoff)
     const double f_low   = 1.0 / lambda_long_metres;
     const double f_high  = 1.0 / lambda_short_metres;
     const double ln2     = std::log(2.0);
@@ -2776,7 +2776,7 @@ lsdtt_raster_cpu fftw2D_wiener_filter(
                     const double deg = (j == 0 || j == Lx_half - 1) ? 1.0 : 2.0;
                     const double psd = deg * (re*re + im*im) * inv_n;
 
-                    // Signal band — log-log regression
+                    // Signal band - log-log regression
                     if (f >= f_sig_low && f <= f_sig_high && psd > 0.0)
                     {
                         const double lf = std::log10(f);
@@ -2788,7 +2788,7 @@ lsdtt_raster_cpu fftw2D_wiener_filter(
                         ++n_sig;
                     }
 
-                    // Noise region — near Nyquist
+                    // Noise region - near Nyquist
                     if (f >= f_noise_lo)
                     {
                         noise_sum += psd;
@@ -3204,7 +3204,7 @@ lsdtt_raster_cpu fftw2D_masked_surface_recovery(
 
             if (dem_valid[i] != 0 && !meta.is_nodata(dem_data[i]))
                 detrended[i] = static_cast<double>(dem_data[i]) - t;
-            // else: stays 0 — zero-fill for nodata and non-candidate pixels
+            // else: stays 0 - zero-fill for nodata and non-candidate pixels
         }
     }
 
@@ -3233,7 +3233,7 @@ lsdtt_raster_cpu fftw2D_masked_surface_recovery(
     fftw_c2r_plan_handle c2r_plan(Ly, Lx, cplx_buf.get(), real_buf.get(), "c2r");
 
     // Fill real buffer: windowed detrended signal only where mask > 0.5.
-    // Pixels excluded from the mask (mountains) stay at 0 — they become the gap
+    // Pixels excluded from the mask (mountains) stay at 0 - they become the gap
     // that the lowpass filter interpolates across.
     std::fill(real_buf.get(), real_buf.get() + n_real, 0.0);
     for (int r = 0; r < NRows; ++r)
@@ -3282,7 +3282,7 @@ lsdtt_raster_cpu fftw2D_masked_surface_recovery(
 
     // -------------------------------------------------------------------------
     // 6. Inverse FFT, normalise, restore trend, apply DEM nodata mask.
-    //    Output is valid wherever the DEM is valid — including non-mask pixels —
+    //    Output is valid wherever the DEM is valid - including non-mask pixels -
     //    so the recovered surface covers the full domain.
     // -------------------------------------------------------------------------
     fftw_execute(c2r_plan.get());

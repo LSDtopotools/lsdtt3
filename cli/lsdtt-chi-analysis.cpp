@@ -280,7 +280,7 @@ static std::vector<std::int64_t> resolve_outlet_flats(
         }
         if (n_unsupported_geom > 0)
             std::cerr << "Warning: " << n_unsupported_geom
-                      << " feature(s) skipped — not point geometry.\n";
+                      << " feature(s) skipped - not point geometry.\n";
         if (n_missing_crs > 0)
             std::cerr << "Warning: " << n_missing_crs
                       << " feature(s) had no source CRS.\n";
@@ -847,13 +847,13 @@ int main(int argc, char* argv[])
         const std::int64_t f = outlet_flats[i];
         const bool valid = flow->is_valid_cell(f);
         std::cout << "  outlet[" << i << "] flat=" << f
-                  << (valid ? "  [valid]" : "  [INVALID — will be skipped]")
+                  << (valid ? "  [valid]" : "  [INVALID - will be skipped]")
                   << "\n";
     }
     std::cout.flush();
 
     // -------------------------------------------------------------------------
-    // Chi data maps (diagnostic — verify chi extraction before fitting)
+    // Chi data maps (diagnostic - verify chi extraction before fitting)
     // -------------------------------------------------------------------------
     if (bf["print_chi_data_maps"])
     {

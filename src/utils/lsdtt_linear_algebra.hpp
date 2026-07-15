@@ -13,9 +13,9 @@
 // Dependencies: <array>, <algorithm>, <cmath> only.
 //
 // Current contents:
-//   - sym3x3_eigenvalues              analytical eigenvalues of a real symmetric 3×3 matrix
-//   - sym2x2_eigen                    eigenvalues + major-axis orientation of a symmetric 2×2 matrix
-//   - invert3x3                       Gauss-Jordan inversion of a general 3×3 matrix
+//   - sym3x3_eigenvalues              analytical eigenvalues of a real symmetric 3x3 matrix
+//   - sym2x2_eigen                    eigenvalues + major-axis orientation of a symmetric 2x2 matrix
+//   - invert3x3                       Gauss-Jordan inversion of a general 3x3 matrix
 //   - angle_between_vectors_degrees   angle between two 2D vectors, in degrees
 //   - point_to_segment_distance       point-to-segment distance in 2D
 //   - segment_segment_intersection    proper 2D segment-segment crossing test
@@ -33,9 +33,9 @@ namespace lsdtt {
 // -----------------------------------------------------------------------------
 // sym3x3_eigenvalues
 //
-// Analytically computes the eigenvalues of a real symmetric 3×3 matrix using
+// Analytically computes the eigenvalues of a real symmetric 3x3 matrix using
 // Cardano's method (Kopp 2008).  Returns eigenvalues in descending order
-// (λ0 ≥ λ1 ≥ λ2).
+// (lambda0 >= lambda1 >= lambda2).
 //
 // The matrix is passed as its six independent elements (upper triangle):
 //
@@ -44,20 +44,20 @@ namespace lsdtt {
 //   | a02  a12  a22 |
 //
 // Intended use: orientation-tensor eigenanalysis in Normal Vector Dispersion
-// and similar fabric metrics where 3×3 symmetric matrices arise from sums of
+// and similar fabric metrics where 3x3 symmetric matrices arise from sums of
 // outer products of unit vectors.
 //
 // Numerical behaviour:
-//   - Off-diagonal elements < 1e-30 in magnitude → diagonal case, eigenvalues
+//   - Off-diagonal elements < 1e-30 in magnitude -> diagonal case, eigenvalues
 //     are the three diagonal elements sorted descending.
-//   - Degenerate case (p near zero after shift) → all three eigenvalues equal
+//   - Degenerate case (p near zero after shift) -> all three eigenvalues equal
 //     to the mean diagonal.
 //   - The Cardano intermediate value r is clamped to [-1, 1] before acos to
 //     prevent domain errors from floating-point rounding.
 //
 // Reference:
 //   Kopp, J. (2008) Efficient numerical diagonalization of hermitian 3x3
-//   matrices. Int. J. Mod. Phys. C 19(3), 523–548.  arXiv:physics/0610206.
+//   matrices. Int. J. Mod. Phys. C 19(3), 523-548.  arXiv:physics/0610206.
 // -----------------------------------------------------------------------------
 inline std::array<double, 3> sym3x3_eigenvalues(
     double a00, double a11, double a22,
@@ -113,23 +113,23 @@ inline std::array<double, 3> sym3x3_eigenvalues(
 // -----------------------------------------------------------------------------
 // sym2x2_eigen
 //
-// Eigenvalues and major-axis orientation of a real symmetric 2×2 matrix
+// Eigenvalues and major-axis orientation of a real symmetric 2x2 matrix
 //
 //   | a  b |
 //   | b  c |
 //
-// Returns the eigenvalues in descending order (lambda1 ≥ lambda2) together with
+// Returns the eigenvalues in descending order (lambda1 >= lambda2) together with
 // the orientation theta_rad of the eigenvector belonging to lambda1 (the
 // major axis), measured anticlockwise from the +x axis in radians, in the
-// range (-π/2, π/2].
+// range (-pi/2, pi/2].
 //
 // Closed form:
-//   lambda_{1,2} = (a+c)/2 ± 0.5·sqrt((a-c)² + 4b²)
-//   theta        = 0.5·atan2(2b, a-c)
+//   lambda_{1,2} = (a+c)/2 +/- 0.5*sqrt((a-c)^2 + 4b^2)
+//   theta        = 0.5*atan2(2b, a-c)
 //
 // Intended use: principal-axis analysis of the second-moment (inertia) tensor
 // of a polygon, giving moment-based eccentricity and shape orientation
-// (see lsdtt_polygon_geometry.hpp). The atan2 form handles the b ≈ 0 case
+// (see lsdtt_polygon_geometry.hpp). The atan2 form handles the b ~= 0 case
 // (already axis-aligned) without special casing.
 // -----------------------------------------------------------------------------
 struct lsdtt_sym2x2_eigen
@@ -155,7 +155,7 @@ inline lsdtt_sym2x2_eigen sym2x2_eigen(double a, double b, double c)
 // -----------------------------------------------------------------------------
 // invert3x3
 //
-// Gauss-Jordan inversion of a general 3×3 matrix A[3][3] (row-major).
+// Gauss-Jordan inversion of a general 3x3 matrix A[3][3] (row-major).
 // Writes the inverse into inv[3][3].
 // Returns true on success; returns false if the matrix is singular to
 // working precision (pivot magnitude < 1e-30).

@@ -73,10 +73,10 @@ struct vector_clean_segment
 {
     std::vector<lsdtt_xy> xy;
 
-    // "channel"             — retained network edge
-    // "removed_loop_arm"    — loop edge/arm removed because it is farthest from
+    // "channel"             - retained network edge
+    // "removed_loop_arm"    - loop edge/arm removed because it is farthest from
     //                         the D8 channel
-    // "dead_end_connector"  — new D8-derived link from a dead-ending tip to the
+    // "dead_end_connector"  - new D8-derived link from a dead-ending tip to the
     //                         next vector segment
     std::string role = "channel";
 

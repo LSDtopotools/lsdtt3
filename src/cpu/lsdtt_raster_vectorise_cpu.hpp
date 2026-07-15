@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Raster-to-vector conversion — CPU free functions.
+// Raster-to-vector conversion - CPU free functions.
 //
 // These functions convert labelled integer rasters to vector polygon layers.
 // Each unique label value becomes one polygon feature with the label as an
@@ -26,11 +26,11 @@
 // Polygon boundary algorithm
 // --------------------------
 //   A double-resolution binary image is built for each label by mapping every
-//   labelled pixel to a 3×3 "stamp" centred on its double-res position.
+//   labelled pixel to a 3x3 "stamp" centred on its double-res position.
 //   Neighbouring same-label pixels share edge cells in the double-res image, so
 //   the Moore boundary trace of that image follows cell edges (not cell centres).
 //
-//   After tracing, only the odd-row × odd-col pixels of the double-res boundary
+//   After tracing, only the odd-row x odd-col pixels of the double-res boundary
 //   are kept; these correspond to corners of original pixels in the georeferenced
 //   grid.  The resulting polygon ring therefore traces the actual raster cell
 //   edges of the labelled region.
@@ -43,7 +43,7 @@
 //   Field        Type     Description
 //   label_id     int64    The integer label value
 //   pixel_count  int64    Number of raster pixels carrying this label
-//   area_m2      double   Pixel count × cell_size² in projected map units
+//   area_m2      double   Pixel count x cell_size^2 in projected map units
 //   source_id    int64    (optional) channel source ID from label_source_id[label]
 //                         Written only when label_source_id is non-empty.
 //
@@ -82,19 +82,19 @@ struct lsdtt_vectorise_options
 // the result to a vector file.
 //
 // Parameters:
-//   labelled   — CPU raster whose float32 pixel values are integer labels.
+//   labelled   - CPU raster whose float32 pixel values are integer labels.
 //                Pixels with mask==0 or with the raster's no_data_value are
 //                treated as background regardless of their value.
-//   loader     — An open lsdtt_data_loader (used only for write calls and
+//   loader     - An open lsdtt_data_loader (used only for write calls and
 //                to inherit the CRS WKT from the raster metadata).
-//   out_path   — Full path to the output vector file (extension determines
+//   out_path   - Full path to the output vector file (extension determines
 //                nothing; format is set by options.format).
-//   options    — Layer name, output format, background label, spatial index.
+//   options    - Layer name, output format, background label, spatial index.
 //
 // Throws:
 //   std::runtime_error if the raster metadata is invalid or not projected.
 // -----------------------------------------------------------------------------
-// label_source_id (optional) — if non-empty, element [L] is the channel source
+// label_source_id (optional) - if non-empty, element [L] is the channel source
 // ID for flat-surface label L.  Size must be >= max_label + 1.  Pass an empty
 // vector (default) to omit the source_id attribute.
 void trace_labelled_polygons(

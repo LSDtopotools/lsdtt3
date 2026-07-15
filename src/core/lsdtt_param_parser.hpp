@@ -21,17 +21,17 @@
 //
 // File I/O parameters recognised directly by the parser:
 //
-//   read_path   — directory from which input files are read (default: ./)
-//   write_path  — directory to which output files are written (default: read_path)
-//   read_fname  — input filename (no path; may include extension, e.g. my_dem.tif)
-//   write_fname — output filename prefix (no path, no extension)
+//   read_path   - directory from which input files are read (default: ./)
+//   write_path  - directory to which output files are written (default: read_path)
+//   read_fname  - input filename (no path; may include extension, e.g. my_dem.tif)
+//   write_fname - output filename prefix (no path, no extension)
 //
 // If read_fname includes an extension, the parser splits it internally into
 // stem + extension. lsdtt3 uses GDAL for all raster I/O, so no separate file
 // extension parameter is needed.
 //
 // Boundary conditions:
-//   boundary_conditions — a string of characters, one per boundary segment.
+//   boundary_conditions - a string of characters, one per boundary segment.
 //                         Valid characters: o (open), n (no flux), p (periodic)
 //                         Example: boundary_conditions: ono
 //
@@ -71,7 +71,7 @@ public:
     // Construction
     // -------------------------------------------------------------------------
 
-    // Default — produces an empty parser. Always prefer the path+file constructor.
+    // Default - produces an empty parser. Always prefer the path+file constructor.
     lsdtt_param_parser();
 
     // Construct from a path and filename. Immediately parses the file.
@@ -157,11 +157,11 @@ public:
     std::string add_read_path_if_needed(const std::string& this_string) const;
 
     // Returns the part of a string before the last dot.
-    // e.g. "my_dem.tif" → "my_dem"
+    // e.g. "my_dem.tif" -> "my_dem"
     static std::string stem(const std::string& filename);
 
     // Returns the extension of a filename including the dot.
-    // e.g. "my_dem.tif" → ".tif"
+    // e.g. "my_dem.tif" -> ".tif"
     // Returns empty string if no dot is found.
     static std::string extension(const std::string& filename);
 
@@ -188,10 +188,10 @@ public:
     void print_parameters(const std::string& fname_prefix) const;
 
     // Write a help file (CSV + HTML) from a help map.
-    //   help_map    — key → {type, default, description, guidance}
-    //   file_prefix — output filename prefix
-    //   version     — version string to embed in the help file
-    //   citation    — citation URL or string to embed
+    //   help_map    - key -> {type, default, description, guidance}
+    //   file_prefix - output filename prefix
+    //   version     - version string to embed in the help file
+    //   citation    - citation URL or string to embed
     void print_help(
         const std::map<std::string, std::vector<std::string>>& help_map,
         const std::string& file_prefix,
@@ -211,7 +211,7 @@ public:
     ) const;
 
     // -------------------------------------------------------------------------
-    // Getters — file I/O
+    // Getters - file I/O
     // -------------------------------------------------------------------------
 
     std::string get_param_file_path() const { return param_file_path_; }
@@ -249,7 +249,7 @@ public:
     }
 
     // -------------------------------------------------------------------------
-    // Getters — boundary conditions
+    // Getters - boundary conditions
     // -------------------------------------------------------------------------
 
     std::vector<std::string> get_boundary_conditions() const
@@ -258,7 +258,7 @@ public:
     }
 
     // -------------------------------------------------------------------------
-    // Getters — typed parameter maps
+    // Getters - typed parameter maps
     // -------------------------------------------------------------------------
 
     std::map<std::string, float>       get_float_parameters()  const { return float_parameters_; }
@@ -310,24 +310,24 @@ private:
     std::string param_file_path_;
     std::string param_fname_;
 
-    // File I/O — populated by parse_file_io()
+    // File I/O - populated by parse_file_io()
     std::string read_path_;
     std::string write_path_;
     std::string read_fname_;   // stem only, no extension
     std::string read_ext_;     // extension including dot, e.g. ".tif"
     std::string write_fname_;  // stem only, no extension
 
-    // Boundary conditions — populated by parse_file_io()
+    // Boundary conditions - populated by parse_file_io()
     std::vector<std::string> boundary_conditions_;
 
     // Raw string map of all key:value pairs read from file
     std::map<std::string, std::string> parameter_map_;
 
-    // Diagnostic maps — used for print_parameters() and print_help()
+    // Diagnostic maps - used for print_parameters() and print_help()
     std::map<std::string, std::string> defaults_used_map_;
     std::map<std::string, std::string> parameters_read_map_;
 
-    // Typed parameter maps — populated by parse_*_parameters()
+    // Typed parameter maps - populated by parse_*_parameters()
     std::map<std::string, float>       float_parameters_;
     std::map<std::string, int>         int_parameters_;
     std::map<std::string, bool>        bool_parameters_;

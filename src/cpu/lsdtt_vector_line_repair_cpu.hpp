@@ -14,10 +14,10 @@
 // is clipped on both sides of a road, leaving a gap at the crossing).
 //
 // Method (all in projected world coordinates, metres):
-//   1. extract_water_line_tips     — snap line endpoints, keep degree-1 tips
+//   1. extract_water_line_tips     - snap line endpoints, keep degree-1 tips
 //                                     (dangling ends); estimate each tip's
 //                                     outward tangent.
-//   2. find_water_bridge_candidates— pair facing tips. A pair is bridged if it
+//   2. find_water_bridge_candidates- pair facing tips. A pair is bridged if it
 //                                     EITHER crosses a road centreline within
 //                                     max_gap_length_metres, OR is a very short
 //                                     gap (<= max_nonroad_gap_metres) regardless
@@ -25,8 +25,8 @@
 //                                     facing/heading gates apply to both, so
 //                                     genuine headwaters and parallel streams are
 //                                     not joined.
-//   3. select_water_bridges        — mutual-best, one-to-one acceptance by score.
-//   4. build_repaired_water_layer  — emit a new line layer: the originals plus
+//   3. select_water_bridges        - mutual-best, one-to-one acceptance by score.
+//   4. build_repaired_water_layer  - emit a new line layer: the originals plus
 //                                     the accepted bridge segments, with typed
 //                                     provenance attributes.
 //
@@ -105,7 +105,7 @@ struct water_line_repair_options
 };
 
 // ---------------------------------------------------------------------------
-// water_line_tip — one dangling (degree-1) endpoint with an outward tangent
+// water_line_tip - one dangling (degree-1) endpoint with an outward tangent
 // ---------------------------------------------------------------------------
 struct water_line_tip
 {
@@ -116,7 +116,7 @@ struct water_line_tip
 };
 
 // ---------------------------------------------------------------------------
-// water_bridge_candidate — a scored, road-verified reconnection
+// water_bridge_candidate - a scored, road-verified reconnection
 // ---------------------------------------------------------------------------
 struct water_bridge_candidate
 {

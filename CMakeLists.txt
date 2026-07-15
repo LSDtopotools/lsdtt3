@@ -16,7 +16,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # =============================================================================
-# Compiler warnings — all targets inherit these
+# Compiler warnings - all targets inherit these
 # =============================================================================
 if(MSVC)
     add_compile_definitions(_USE_MATH_DEFINES)
@@ -59,9 +59,9 @@ message(STATUS "GDAL libs    : ${GDAL_LIBRARIES}")
 # =============================================================================
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
-    message(STATUS "OpenMP found — parallel CPU operations enabled")
+    message(STATUS "OpenMP found - parallel CPU operations enabled")
 else()
-    message(WARNING "OpenMP not found — CPU operations will be single-threaded")
+    message(WARNING "OpenMP not found - CPU operations will be single-threaded")
 endif()
 
 # =============================================================================
@@ -73,9 +73,9 @@ if(PkgConfig_FOUND)
     pkg_check_modules(FFTW3 fftw3)
     if(FFTW3_FOUND)
         set(LSDTT_HAS_FFTW ON)
-        message(STATUS "FFTW3 found — spectral analysis enabled")
+        message(STATUS "FFTW3 found - spectral analysis enabled")
     else()
-        message(WARNING "FFTW3 not found — spectral analysis will throw at runtime")
+        message(WARNING "FFTW3 not found - spectral analysis will throw at runtime")
     endif()
 endif()
 
@@ -87,13 +87,13 @@ find_path(NETCDF_INCLUDE_DIR NAMES netcdf.h)
 find_library(NETCDF_LIBRARY  NAMES netcdf)
 if(NETCDF_INCLUDE_DIR AND NETCDF_LIBRARY)
     set(LSDTT_HAS_NETCDF ON)
-    message(STATUS "netCDF-C found: ${NETCDF_LIBRARY} — ERA40 / paleomagnetic correction enabled")
+    message(STATUS "netCDF-C found: ${NETCDF_LIBRARY} - ERA40 / paleomagnetic correction enabled")
 else()
-    message(STATUS "netCDF-C not found — ERA40 atmosphere and paleomagnetic correction disabled")
+    message(STATUS "netCDF-C not found - ERA40 atmosphere and paleomagnetic correction disabled")
 endif()
 
 # =============================================================================
-# Optional: OpenCV (core + imgproc — required by lsdtt_raster_opencv_cpu)
+# Optional: OpenCV (core + imgproc - required by lsdtt_raster_opencv_cpu)
 # =============================================================================
 option(LSDTT_OPENCV "Build OpenCV image-analysis routines" ON)
 set(LSDTT_HAS_OPENCV OFF)
@@ -107,9 +107,9 @@ if(LSDTT_OPENCV)
     )
     if(OpenCV_FOUND)
         set(LSDTT_HAS_OPENCV ON)
-        message(STATUS "OpenCV found (${OpenCV_VERSION}) — image analysis enabled")
+        message(STATUS "OpenCV found (${OpenCV_VERSION}) - image analysis enabled")
     else()
-        message(STATUS "OpenCV not found — lsdtt_raster_opencv_cpu will not be built "
+        message(STATUS "OpenCV not found - lsdtt_raster_opencv_cpu will not be built "
                        "(install libopencv-dev or pass -DLSDTT_OPENCV=OFF to silence)")
     endif()
 endif()
@@ -124,9 +124,9 @@ if(LSDTT_EIGEN)
     find_package(Eigen3 QUIET NO_MODULE)
     if(Eigen3_FOUND)
         set(LSDTT_HAS_EIGEN ON)
-        message(STATUS "Eigen3 found — chi ksn inversion enabled")
+        message(STATUS "Eigen3 found - chi ksn inversion enabled")
     else()
-        message(WARNING "Eigen3 not found — lsdtt_chi_ksn_inversion_cpu will not be built "
+        message(WARNING "Eigen3 not found - lsdtt_chi_ksn_inversion_cpu will not be built "
                         "(install libeigen3-dev or pass -DLSDTT_EIGEN=OFF to silence)")
     endif()
 endif()
@@ -389,7 +389,7 @@ if(LSDTT_GPU)
 endif()
 
 # =============================================================================
-# Helper macro — add a CLI executable
+# Helper macro - add a CLI executable
 #
 # Usage: lsdtt_cli(target_name source_file)
 # Links against lsdtt3_cpu and lsdtt3_core automatically.
@@ -459,7 +459,7 @@ lsdtt_cli(lsdtt-chi-analysis cli/lsdtt-chi-analysis.cpp)
 
 
 # =============================================================================
-# Install libraries and headers (optional — useful for packaging)
+# Install libraries and headers (optional - useful for packaging)
 # =============================================================================
 install(TARGETS lsdtt3_core lsdtt3_utils lsdtt3_cpu
     ARCHIVE DESTINATION lib

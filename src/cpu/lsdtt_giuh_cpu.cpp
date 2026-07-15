@@ -35,9 +35,9 @@ lsdtt_giuh_result compute_giuh(
     const std::vector<std::int32_t>& rec_jn = jn.receiver_junction_vector();
 
     // -------------------------------------------------------------------------
-    // Step 1 — compute link-local travel time for each reach
+    // Step 1 - compute link-local travel time for each reach
     //   v_i = v_ref * (max(slope, min_slope) / slope_ref)^beta
-    //   τ_link_i = length_i / v_i
+    //   tau_link_i = length_i / v_i
     // -------------------------------------------------------------------------
     std::vector<double> link_tt(n_junctions, 0.0);
     double total_area = 0.0;
@@ -61,7 +61,7 @@ lsdtt_giuh_result compute_giuh(
     }
 
     // -------------------------------------------------------------------------
-    // Step 2 — accumulate travel time from each junction to the outlet
+    // Step 2 - accumulate travel time from each junction to the outlet
     //   Process in topological order (headwaters first).
     //   travel_time_to_outlet[j] = link_tt[j] + travel_time_to_outlet[receiver[j]]
     //   Outlet junctions (receiver == k_outlet_junction) get just link_tt[j].
@@ -73,7 +73,7 @@ lsdtt_giuh_result compute_giuh(
     // Because topo is headwater-first, the receiver is already set when we
     // reach it in reverse order (outlet-first pass).
 
-    // First pass: headwaters → outlets, set each junction's cumulative tt.
+    // First pass: headwaters -> outlets, set each junction's cumulative tt.
     // We need outlet-to-headwater order to propagate, so reverse the topo.
     // Actually: topo[0] is a headwater. Its receiver has a larger topo index
     // (closer to outlet). So iterate in REVERSE topo order to propagate from
@@ -98,7 +98,7 @@ lsdtt_giuh_result compute_giuh(
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — bin drainage areas by travel time → width function
+    // Step 3 - bin drainage areas by travel time -> width function
     // -------------------------------------------------------------------------
     const int n_bins = opts.n_bins;
     const double dt  = opts.dt_bin_s;
@@ -119,7 +119,7 @@ lsdtt_giuh_result compute_giuh(
     }
 
     // -------------------------------------------------------------------------
-    // Step 4 — normalise to get the IUH [s⁻¹]
+    // Step 4 - normalise to get the IUH [s^-^1]
     //   integral of IUH * dt over all bins = 1
     //   IUH[k] = W[k] / (total_area * dt)
     // -------------------------------------------------------------------------
@@ -174,10 +174,10 @@ std::vector<double> giuh_discharge(
     const double A = giuh.catchment_area_m2;
 
     // Resample IUH to rainfall timestep using trapezoidal quadrature
-    // IUH is in [s⁻¹]; multiply by A [m²] * R [m/s] * C * dt_rain [s] → m³/s
+    // IUH is in [s^-^1]; multiply by A [m^2] * R [m/s] * C * dt_rain [s] -> m^3/s
     // If dt_rainfall_s matches dt_bin_s, no resampling needed.
     // For simplicity: we directly use the IUH bins and assume dt_rain ~ dt_bin.
-    // The user should set dt_bin_s ≈ dt_rainfall_s for accuracy.
+    // The user should set dt_bin_s ~= dt_rainfall_s for accuracy.
 
     std::vector<double> Q(n_out, 0.0);
     const double bin_width_s = giuh.dt_bin_s;
@@ -190,26 +190,26 @@ std::vector<double> giuh_discharge(
         // How many IUH bins does one rainfall step cover?
         // Simple approach: spread rainfall pulse over the IUH.
         // Q contribution at output step t + k:
-        //   A [m²] * r_eff [m/s] * dt_rain [s] * IUH[k] [s⁻¹] * bin_width_s
+        //   A [m^2] * r_eff [m/s] * dt_rain [s] * IUH[k] [s^-^1] * bin_width_s
         // = A * r_eff * dt_rain * IUH[k] * bin_width_s
-        // But IUH[k] [s⁻¹] * bin_width_s is dimensionless fraction.
-        // Output Q has units m³/s, so divide by dt_rainfall_s at output step.
+        // But IUH[k] [s^-^1] * bin_width_s is dimensionless fraction.
+        // Output Q has units m^3/s, so divide by dt_rainfall_s at output step.
         // Equivalently: Q[t+k] += A * r_eff * IUH[k] * bin_width_s
-        //                           (volume in m³ spread over dt_rain, giving m³/s
+        //                           (volume in m^3 spread over dt_rain, giving m^3/s
         //                            when IUH is per-second rate)
         // The convolution:
         //   Q[t_out] = A * sum_k R[t_out - k] * C * iuh[k] * bin_width_s * dt_rain
         // Here dt_rain is absorbed into R (R already in m/s, so rainfall depth
-        // per step = R * dt_rain). The IUH is [s⁻¹], and integrating over
-        // bin_width_s [s] gives a fraction. The result is in m³/s.
+        // per step = R * dt_rain). The IUH is [s^-^1], and integrating over
+        // bin_width_s [s] gives a fraction. The result is in m^3/s.
 
         for (int k = 0; k < n_iuh; ++k)
         {
             int out_idx = t + k;
             if (out_idx >= n_out) break;
-            // Volume of runoff from this rain step: A * r_eff * dt_rain_s [m³]
+            // Volume of runoff from this rain step: A * r_eff * dt_rain_s [m^3]
             // Distributed over output step k: multiply by IUH[k] * bin_width_s (fraction)
-            // Divide by dt_rainfall_s to get m³/s
+            // Divide by dt_rainfall_s to get m^3/s
             Q[out_idx] += A * r_eff * giuh.iuh[k] * bin_width_s;
         }
     }

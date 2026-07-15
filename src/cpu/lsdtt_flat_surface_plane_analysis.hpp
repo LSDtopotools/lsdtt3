@@ -21,13 +21,13 @@
 // pairwise cross-surface comparisons can be completed without any further
 // raster scanning:
 //
-//   Pass 1  — per-label: n, Σx, Σy, Σz  →  means
-//   Pass 2  — per-label: Sxx′, Syy′, Szz′, Sxy′, Sxz′, Syz′  →  2×2 Cramer
-//             plane fit  →  a, b, c, RMSE
-//   Pass 3  — per-label residual histograms for bimodal split detection
-//   Algebra — O(1) pairwise merge check using sufficient stats
-//   Algebra — O(1) cross-surface RMSE for every fitted plane on every label
-//   Graph   — union-find connected components on the co-planarity graph
+//   Pass 1  - per-label: n, Sigmax, Sigmay, Sigmaz  ->  means
+//   Pass 2  - per-label: Sxx', Syy', Szz', Sxy', Sxz', Syz'  ->  2x2 Cramer
+//             plane fit  ->  a, b, c, RMSE
+//   Pass 3  - per-label residual histograms for bimodal split detection
+//   Algebra - O(1) pairwise merge check using sufficient stats
+//   Algebra - O(1) cross-surface RMSE for every fitted plane on every label
+//   Graph   - union-find connected components on the co-planarity graph
 //
 // Coordinate convention
 // ---------------------
@@ -59,7 +59,7 @@
 //
 // Moran's I spatial autocorrelation
 // ---------------------------------
-// Not implemented here — see the optional lsdtt_flat_surface_morans module
+// Not implemented here - see the optional lsdtt_flat_surface_morans module
 // (planned).  Requires a separate function that stores the full per-pixel
 // residual raster.
 // -----------------------------------------------------------------------------
@@ -88,11 +88,11 @@ struct plane_analysis_request
     double merge_tolerance_rmse_factor   = 2.0;
 
     // Histogram bins for bimodal split detection.
-    // Residuals are binned into the range ±split_histogram_sigma * RMSE.
+    // Residuals are binned into the range +/-split_histogram_sigma * RMSE.
     int    split_histogram_n_bins        = 25;
-    double split_histogram_sigma         = 4.0;   // bin range = ±sigma * RMSE
+    double split_histogram_sigma         = 4.0;   // bin range = +/-sigma * RMSE
 
-    // Valley/peak ratio below this threshold → bimodal.
+    // Valley/peak ratio below this threshold -> bimodal.
     // split_confidence = 1 - valley_min / lower_peak_count
     double split_bimodal_threshold       = 0.4;
 };
@@ -115,9 +115,9 @@ struct label_plane_fit
     // Mean surface elevation (z, metres).  More interpretable than c alone.
     double mean_z = 0.0;
 
-    // Overall slope magnitude sqrt(a² + b²) and aspect atan2(b,a) in degrees.
+    // Overall slope magnitude sqrt(a^2 + b^2) and aspect atan2(b,a) in degrees.
     double slope_magnitude = 0.0;
-    double aspect_degrees  = 0.0;   // 0° = east, 90° = north
+    double aspect_degrees  = 0.0;   // 0 deg = east, 90 deg = north
 
     bool   valid            = false;  // false if n < min_pixels or degenerate
     bool   split_candidate  = false;  // bimodal residuals
@@ -196,14 +196,14 @@ struct plane_analysis_result
 // and builds merge groups via connected components.
 //
 // Parameters:
-//   dem            — the original DEM (must share meta with labelled_mask)
-//   labelled_mask  — output of label_binary_components_by_size or
+//   dem            - the original DEM (must share meta with labelled_mask)
+//   labelled_mask  - output of label_binary_components_by_size or
 //                    find_flat_surfaces().labelled_flat_mask
-//   request        — tuning parameters
+//   request        - tuning parameters
 //
 // Throws:
-//   std::runtime_error    — metadata mismatch, invalid metadata
-//   std::invalid_argument — invalid request values
+//   std::runtime_error    - metadata mismatch, invalid metadata
+//   std::invalid_argument - invalid request values
 // =============================================================================
 plane_analysis_result analyse_flat_surface_planes(
     const lsdtt_raster_cpu&       dem,

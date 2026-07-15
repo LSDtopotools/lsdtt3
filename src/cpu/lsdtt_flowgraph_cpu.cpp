@@ -51,12 +51,12 @@ namespace lsdtt
 namespace
 {
 
-// Tarboton (1997) Table 1 — eight triangular facets.
+// Tarboton (1997) Table 1 - eight triangular facets.
 //   e1 = cardinal neighbour at (row+e1_dr, col+e1_dc)
 //   e2 = diagonal neighbour at (row+e2_dr, col+e2_dc)
 //   ac, af: sector index and sign used to convert the within-facet angle r
 //           to a compass-referenced flow direction:
-//             angle = af * r + ac * (π/2)
+//             angle = af * r + ac * (pi/2)
 constexpr int k_e1_dr[8] = {  0, -1, -1,  0,  0,  1,  1,  0 };
 constexpr int k_e1_dc[8] = {  1,  0,  0, -1, -1,  0,  0,  1 };
 constexpr int k_e2_dr[8] = { -1, -1, -1, -1,  1,  1,  1,  1 };
@@ -65,7 +65,7 @@ constexpr int k_ac[8]    = {  0,  1,  1,  2,  2,  3,  3,  4 };
 constexpr int k_af[8]    = {  1, -1,  1, -1,  1, -1,  1, -1 };
 
 // MFD 8-neighbour offsets.  Indices 0-3 are cardinal (distance = d);
-// indices 4-7 are diagonal (distance = d√2).
+// indices 4-7 are diagonal (distance = dsqrt2).
 constexpr int k_nb_dr[8] = { -1,  0,  0,  1, -1, -1,  1,  1 };
 constexpr int k_nb_dc[8] = {  0, -1,  1,  0, -1,  1, -1,  1 };
 
@@ -387,13 +387,13 @@ lsdtt_flowgraph_cpu::resolve_neighbor(
 // Each facet is defined by the centre cell (e0), a cardinal neighbour (e1),
 // and a diagonal neighbour (e2).
 //
-//   s1 = (e0 - e1) / d          — slope along cardinal edge
-//   s2 = (e1 - e2) / d          — cross-slope within facet (Tarboton eq. 2)
-//   r  = atan2(s2, s1)          — within-facet steepest angle [0, π/4]
+//   s1 = (e0 - e1) / d          - slope along cardinal edge
+//   s2 = (e1 - e2) / d          - cross-slope within facet (Tarboton eq. 2)
+//   r  = atan2(s2, s1)          - within-facet steepest angle [0, pi/4]
 //
 // Stability improvements vs. the original LSDDinfFlowInfo:
-//   - atan2(s2, s1) replaces atan(s2/s1) → no division-by-zero when s1 = 0.
-//   - r is clamped to [0, π/4] cleanly; s is then recomputed from the
+//   - atan2(s2, s1) replaces atan(s2/s1) -> no division-by-zero when s1 = 0.
+//   - r is clamped to [0, pi/4] cleanly; s is then recomputed from the
 //     clamped geometry rather than carried from unclamped arithmetic.
 //   - No artificial s1 = 0.00001 perturbation.
 //   - Proportions are derived directly from r (not from a compass-bearing
@@ -420,7 +420,7 @@ void lsdtt_flowgraph_cpu::build_dinf(
     dinf_direction_.assign(n_cells_, ndv);
 
     // Parallelise the expensive per-cell facet loop.
-    // Each iteration writes only to its own flat index — no race conditions.
+    // Each iteration writes only to its own flat index - no race conditions.
     int nthreads = options_.n_threads;
 #ifdef _OPENMP
     if (nthreads == 0) nthreads = omp_get_max_threads();
@@ -487,7 +487,7 @@ void lsdtt_flowgraph_cpu::build_dinf(
                 if (e0 > e1 && e0 > e2)
                 {
                     // Both lower: facet slope as gradient magnitude.
-                    // atan2 handles s1 == 0 gracefully (returns π/2, clamped below).
+                    // atan2 handles s1 == 0 gracefully (returns pi/2, clamped below).
                     r = std::atan2(s2, s1);
 
                     if (r < 0.0f)
@@ -498,7 +498,7 @@ void lsdtt_flowgraph_cpu::build_dinf(
                     }
                     else if (r > k_pi_over_4)
                     {
-                        // r > π/4: steepest descent is outside the facet toward e2
+                        // r > pi/4: steepest descent is outside the facet toward e2
                         r = k_pi_over_4;
                         s = (e0 - e2) / (cell_size * k_sqrt2);
                     }
@@ -538,7 +538,7 @@ void lsdtt_flowgraph_cpu::build_dinf(
             }
 
             // Flow direction angle (compass bearing in degrees).
-            //   Internal angle: af * r + ac * π/2  (result in radians, math convention)
+            //   Internal angle: af * r + ac * pi/2  (result in radians, math convention)
             //   Compass bearing = 360 - (angle_deg) + 90, wrapped to [0, 360)
             const float angle_rad =
                 static_cast<float>(k_af[best_facet]) * best_r
@@ -551,8 +551,8 @@ void lsdtt_flowgraph_cpu::build_dinf(
             dinf_direction_[flat] = bearing;
 
             // Partition flow between e1 (cardinal) and e2 (diagonal).
-            //   p_e1 = (π/4 - r) / (π/4)  =  1 - r * 4/π
-            //   p_e2 = r / (π/4)           =  r * 4/π
+            //   p_e1 = (pi/4 - r) / (pi/4)  =  1 - r * 4/pi
+            //   p_e2 = r / (pi/4)           =  r * 4/pi
             cell_rec& cr = cell_data[flat];
 
             if (best_r == 0.0f)
@@ -748,7 +748,7 @@ void lsdtt_flowgraph_cpu::build_mfd(
             }
             else
             {
-                cr.n = 0;  // all neighbours higher or nodata — cell is a sink
+                cr.n = 0;  // all neighbours higher or nodata - cell is a sink
             }
 
         }

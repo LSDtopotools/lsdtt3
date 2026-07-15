@@ -7,12 +7,12 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Mountain front identification — CPU free functions operating on
+// Mountain front identification - CPU free functions operating on
 // lsdtt_raster_cpu objects.
 //
 // Pipeline (three stages):
 //
-//   Stage 1 — Low-ground candidate mask
+//   Stage 1 - Low-ground candidate mask
 //     Identifies pixels that are plausibly piedmont, alluvial fan, or alluvial
 //     plain based on multi-scale local relief.  Large windows suppress the
 //     high relief of narrow incised channels: a channel carved into a fan
@@ -24,16 +24,16 @@
 //     (require_all_scales_pass = true).  An optional elevation percentile
 //     filter can further restrict candidates.
 //
-//   Stage 2 — Piedmont surface fitting
+//   Stage 2 - Piedmont surface fitting
 //     Fits a smooth surface to the candidate pixels using one of four methods:
 //
-//       plane_ols      — ordinary least-squares plane (lsdtt_raster_surface_fitting_cpu)
-//       plane_ransac   — RANSAC plane; robust to residual channels in the mask
-//       poly2_ols      — degree-2 polynomial OLS (gentle curved piedmont)
-//       spectral_lowpass — FFT lowpass recovery from candidate pixels only
+//       plane_ols      - ordinary least-squares plane (lsdtt_raster_surface_fitting_cpu)
+//       plane_ransac   - RANSAC plane; robust to residual channels in the mask
+//       poly2_ols      - degree-2 polynomial OLS (gentle curved piedmont)
+//       spectral_lowpass - FFT lowpass recovery from candidate pixels only
 //                         (fftw2D_masked_surface_recovery in lsdtt_raster_spectral_cpu)
 //
-//   Stage 3 — Mountain mask
+//   Stage 3 - Mountain mask
 //     residual = DEM - fitted_surface.  Pixels whose residual exceeds the
 //     user-specified percentile of the valid residual distribution are labelled
 //     mountain.
@@ -41,9 +41,9 @@
 // Synthetic test surfaces in lsdtt_raster_synthetic_surfaces_cpu provide
 // ground-truth front_mask rasters for algorithm validation across the three
 // supported geometries:
-//   generate_linear_range_surface     — bilateral piedmont
-//   generate_halfspace_range_surface  — single-sided (Himalaya analogue)
-//   generate_circular_range_surface   — dome or volcano
+//   generate_linear_range_surface     - bilateral piedmont
+//   generate_halfspace_range_surface  - single-sided (Himalaya analogue)
+//   generate_circular_range_surface   - dome or volcano
 //
 // Design note:
 //   All inputs are const-ref; no input is modified.
@@ -66,7 +66,7 @@ namespace lsdtt {
 // maximum acceptable local relief at that radius.  Pixels with relief above
 // max_relief_metres at the specified radius fail this scale's test.
 //
-// Scales should be listed smallest → largest in mountain_front_request.
+// Scales should be listed smallest -> largest in mountain_front_request.
 // -----------------------------------------------------------------------------
 struct relief_scale
 {
@@ -114,7 +114,7 @@ struct mountain_front_request
     // the candidate mask.  Useful for linear or halfspace geometries where the
     // piedmont occupies a well-defined low-elevation zone.
     bool   use_elevation_filter         = false;
-    double elevation_upper_percentile   = 0.5;   // 0.0–1.0
+    double elevation_upper_percentile   = 0.5;   // 0.0-1.0
 
     // -------------------------------------------------------------------------
     // Stage 2: piedmont surface fitting
@@ -126,7 +126,7 @@ struct mountain_front_request
     int    ransac_max_iterations            = 1000;
     int    ransac_seed                      = 1;
 
-    // spectral_lowpass parameter — lowpass cutoff wavelength.
+    // spectral_lowpass parameter - lowpass cutoff wavelength.
     // Set to a value larger than the expected piedmont width so that the fitted
     // surface varies smoothly across the region where mountain pixels have been
     // zeroed out.
@@ -137,9 +137,9 @@ struct mountain_front_request
     //
     // A pixel is labelled mountain if its residual (DEM - fitted surface) exceeds
     // the residual_percentile_threshold-th percentile of all valid residuals.
-    // E.g. 0.80 → top 20 % of residuals → mountain.
+    // E.g. 0.80 -> top 20 % of residuals -> mountain.
     // -------------------------------------------------------------------------
-    double residual_percentile_threshold    = 0.80;   // 0.0–1.0
+    double residual_percentile_threshold    = 0.80;   // 0.0-1.0
 
     // -------------------------------------------------------------------------
     // Stage 4: connected-component size filter (optional)
@@ -180,17 +180,17 @@ struct mountain_front_request
 // -----------------------------------------------------------------------------
 struct mountain_front_result
 {
-    // Stage 1 output — binary mask: 1 = low-ground candidate, 0 = excluded.
+    // Stage 1 output - binary mask: 1 = low-ground candidate, 0 = excluded.
     lsdtt_raster_cpu low_ground_mask;
 
-    // Stage 2 output — fitted piedmont surface evaluated at every valid pixel.
+    // Stage 2 output - fitted piedmont surface evaluated at every valid pixel.
     lsdtt_raster_cpu fitted_surface;
 
     // DEM minus fitted surface.  Positive = above piedmont surface (mountain
     // or elevated terrain); negative = below (incised channels).
     lsdtt_raster_cpu residual;
 
-    // Stage 3 output — binary mask: 1 = mountain, 0 = piedmont candidate.
+    // Stage 3 output - binary mask: 1 = mountain, 0 = piedmont candidate.
     // After optional Stage 4 (component filter) and Stage 5 (valley infill).
     lsdtt_raster_cpu mountain_mask;
 
@@ -207,9 +207,9 @@ struct mountain_front_result
 // mountain_front_result.
 //
 // Throws:
-//   std::invalid_argument  — empty relief_scales, invalid percentile values,
+//   std::invalid_argument  - empty relief_scales, invalid percentile values,
 //                            or invalid radius/threshold values
-//   std::runtime_error     — surface fit failed (too few candidate pixels,
+//   std::runtime_error     - surface fit failed (too few candidate pixels,
 //                            degenerate geometry), or FFTW not available when
 //                            spectral_lowpass is requested
 // -----------------------------------------------------------------------------
@@ -223,7 +223,7 @@ mountain_front_result identify_mountain_front(
 //
 // Identifies pixels at the boundary of the mountain mask that have a
 // contributing area above a minimum threshold.  These are the points where
-// major river valleys cross the mountain front — the natural outlet locations
+// major river valleys cross the mountain front - the natural outlet locations
 // for mountain-draining basins.
 //
 // Algorithm:
@@ -233,14 +233,14 @@ mountain_front_result identify_mountain_front(
 //      n_contributing_pixels >= min_contributing_pixels.
 //
 // Parameters:
-//   mountain_mask           — binary raster from identify_mountain_front
+//   mountain_mask           - binary raster from identify_mountain_front
 //                             (or any binary raster where 1 = mountain)
-//   n_contributing_pixels   — per-pixel upstream contributing area expressed
+//   n_contributing_pixels   - per-pixel upstream contributing area expressed
 //                             as a pixel count.  Produced by
 //                             lsdtt_flowinfo_cpu::get_n_contributing_pixels_raster()
 //                             and saved to disk, or computed externally.
 //                             Must be compatible (same grid) as mountain_mask.
-//   min_contributing_pixels — minimum upstream pixel count for an edge pixel
+//   min_contributing_pixels - minimum upstream pixel count for an edge pixel
 //                             to be classified as an outlet
 //
 // Output:

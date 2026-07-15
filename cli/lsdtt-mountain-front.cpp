@@ -12,35 +12,35 @@
 // Identifies mountain masses in a DEM via adaptive relief thresholding.
 //
 // Pipeline:
-//   Stage 1 — Local relief (square window, relief_window_pixels)
-//   Stage 2 — Flat mask: adaptive (CDF divergence threshold) or fixed value.
+//   Stage 1 - Local relief (square window, relief_window_pixels)
+//   Stage 2 - Flat mask: adaptive (CDF divergence threshold) or fixed value.
 //             Adaptive: 500-bin empirical CDF vs best-fit parametric distribution;
 //             threshold at x of maximum positive divergence.  Writes CDF CSV.
 //             Fixed: relief_threshold_metres applied directly.
-//   Stage 3 — Remove small flat components (< min_flat_component_pixels).
-//   Stage 4 — morphological closing of flat mask (flat_closing_radius_metres):
+//   Stage 3 - Remove small flat components (< min_flat_component_pixels).
+//   Stage 4 - morphological closing of flat mask (flat_closing_radius_metres):
 //             dilate to connect adjacent flat patches, then BFS-reconstruct to
 //             original flat extent.  Seals narrow background gaps between flat areas.
-//   Stage 5 — morphological opening of flat mask (erosion_radius_metres):
+//   Stage 5 - morphological opening of flat mask (erosion_radius_metres):
 //             erode thin flat necks, then BFS-reconstruct thick flat bodies.
 //             Removes small spurious flat peninsulas while preserving broad flats.
-//   Stage 6 — Invert flat mask → initial mountain mask.
-//   Stage 7 — Fill holes in mountain mask: enclosed non-mountain pixels become mountain.
-//   Stage 8 — Remove small mountain components (< min_component_pixels).
-//   Stage 9 — Valley infilling: morphological closing (infill_valley_radius_metres).
+//   Stage 6 - Invert flat mask -> initial mountain mask.
+//   Stage 7 - Fill holes in mountain mask: enclosed non-mountain pixels become mountain.
+//   Stage 8 - Remove small mountain components (< min_component_pixels).
+//   Stage 9 - Valley infilling: morphological closing (infill_valley_radius_metres).
 //             Disabled when infill_valley_radius_metres <= 0.
-//   Stage 10 — Outlets: mountain edge pixels with upstream area >= min_contributing_pixels.
+//   Stage 10 - Outlets: mountain edge pixels with upstream area >= min_contributing_pixels.
 //
 // Nodata semantics:
 //   Pixels that are nodata in the original DEM are nodata in all output rasters.
 //
 // Outputs:
-//   <stem>_relief_cdf.csv            — empirical + fitted CDF (always written)
-//   <stem>_mountain_mask.tif         — binary mountain raster
-//   <stem>_relief.tif                — local relief raster (optional)
-//   <stem>_flat_mask.tif             — binary flat mask after processing (optional)
-//   <stem>_mountain_labels.tif       — labelled mountain components (optional)
-//   <stem>_mountain_front_outlets.*  — outlet points (optional)
+//   <stem>_relief_cdf.csv            - empirical + fitted CDF (always written)
+//   <stem>_mountain_mask.tif         - binary mountain raster
+//   <stem>_relief.tif                - local relief raster (optional)
+//   <stem>_flat_mask.tif             - binary flat mask after processing (optional)
+//   <stem>_mountain_labels.tif       - labelled mountain components (optional)
+//   <stem>_mountain_front_outlets.*  - outlet points (optional)
 //
 // Usage:
 //   lsdtt-mountain-front <path> <parameter_file>
@@ -443,7 +443,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Stage 6: invert flat mask → mountain mask
+    // Stage 6: invert flat mask -> mountain mask
     // -------------------------------------------------------------------------
     std::cout << "Stage 6: inverting flat mask to mountain mask...\n";
     lsdtt::lsdtt_raster_cpu mountain_mask = lsdtt::algebra::invert_binary_mask(flat_mask);
@@ -545,7 +545,7 @@ if (bf["write_mountain_front_outlets"])
     const std::string ca_fname = sf["contributing_pixels_fname"];
     if (ca_fname.empty())
     {
-        std::cout << "  contributing_pixels_fname not set — computing from DEM.\n";
+        std::cout << "  contributing_pixels_fname not set - computing from DEM.\n";
         flow_ok = build_flow_from_dem();
 
         if (flow_ok)
@@ -561,7 +561,7 @@ if (bf["write_mountain_front_outlets"])
             catch (const std::exception& e)
             {
                 std::cerr << "Warning: failed to extract n_contributing_pixels: "
-                          << e.what() << " — skipping outlets.\n";
+                          << e.what() << " - skipping outlets.\n";
             }
         }
     }
@@ -579,7 +579,7 @@ if (bf["write_mountain_front_outlets"])
         catch (const std::exception& e)
         {
             std::cerr << "Warning: failed to load contributing pixels raster: "
-                      << e.what() << " — skipping outlets.\n";
+                      << e.what() << " - skipping outlets.\n";
         }
 
         // Still build flow from DEM so we can prune upstream duplicates.
@@ -691,7 +691,7 @@ if (bf["write_mountain_front_outlets"])
     else
     {
         std::cerr << "Warning: could not compute both contributing area and flow topology "
-                     "required for outlet pruning — skipping outlets.\n";
+                     "required for outlet pruning - skipping outlets.\n";
     }
 
     std::cout << "\n";

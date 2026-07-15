@@ -79,7 +79,7 @@ constexpr uint8_t k_dh_no_flow = 255u;
 // ---------------------------------------------------------------------------
 // depression_node
 //
-// One node in the depression hierarchy — either an elementary (leaf)
+// One node in the depression hierarchy - either an elementary (leaf)
 // depression or a meta-depression created when two sub-depressions merge.
 //
 // Geometry
@@ -96,7 +96,7 @@ constexpr uint8_t k_dh_no_flow = 255u;
 //
 // Volume fields
 // -------------
-// dep_vol = cell_count * out_elev − total_elevation  (total fillable volume)
+// dep_vol = cell_count * out_elev - total_elevation  (total fillable volume)
 // water_vol is mutated by fill_spill_merge.
 // ---------------------------------------------------------------------------
 struct depression_node
@@ -165,11 +165,11 @@ using lsdtt_depression_hierarchy = std::vector<depression_node>;
 // Controls which boundary edges act as open ocean, using the same four-
 // character boundary-condition string as lsdtt_flowinfo_options.
 //
-// boundary_conditions — 4 characters for [north, east, south, west]:
-//   'o' — open:          boundary cells are treated as ocean seeds (default)
-//   'b' — forced outlet: same as 'o' for hierarchy purposes
-//   'n' — no-flux:       this edge does NOT seed the ocean
-//   'p' — periodic:      this edge does NOT seed the ocean
+// boundary_conditions - 4 characters for [north, east, south, west]:
+//   'o' - open:          boundary cells are treated as ocean seeds (default)
+//   'b' - forced outlet: same as 'o' for hierarchy purposes
+//   'n' - no-flux:       this edge does NOT seed the ocean
+//   'p' - periodic:      this edge does NOT seed the ocean
 //
 // Default "oooo" treats all four edges as open ocean, which is correct for
 // the typical case where the DEM is a tile or a study area whose edges
@@ -238,20 +238,20 @@ struct depression_outlet
 //
 // Parameters
 // ----------
-// dem          — input elevation raster in a projected metric CRS. Call
+// dem          - input elevation raster in a projected metric CRS. Call
 //               dem.get_meta().check_projected_metres() before calling this.
-// label_out    — output: flat array giving the leaf depression label for every
+// label_out    - output: flat array giving the leaf depression label for every
 //               valid cell, or k_ocean_label for boundary cells. Allocated and
 //               filled by this function.
-// flowdir_out  — output: flat array of D8 flow direction codes (same
+// flowdir_out  - output: flat array of D8 flow direction codes (same
 //               convention as lsdtt_flowinfo: 0=N,1=NE,...,7=NW). Ocean/pit
 //               cells receive k_dh_no_flow (255). Required by
 //               fill_spill_merge to route surface water to pit cells.
-// opts         — selects which boundary edges are treated as open ocean.
+// opts         - selects which boundary edges are treated as open ocean.
 //
 // Returns
 // -------
-// lsdtt_depression_hierarchy — hierarchy vector. Index 0 = ocean node.
+// lsdtt_depression_hierarchy - hierarchy vector. Index 0 = ocean node.
 //
 // Throws std::runtime_error when no ocean-seed cells are found.
 // ---------------------------------------------------------------------------
@@ -274,10 +274,10 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
 //
 // Parameters
 // ----------
-// label    — label array produced by build_depression_hierarchy().
-// meta     — metadata from the DEM (used for georeferencing and nodata).
-// out_path — full output file path including extension (e.g. "_dep_labels.tif").
-// format   — output format (cog / gtiff / same_as_input).
+// label    - label array produced by build_depression_hierarchy().
+// meta     - metadata from the DEM (used for georeferencing and nodata).
+// out_path - full output file path including extension (e.g. "_dep_labels.tif").
+// format   - output format (cog / gtiff / same_as_input).
 // ---------------------------------------------------------------------------
 void write_label_raster(
     const std::vector<dep_label_t>&  label,
@@ -286,7 +286,7 @@ void write_label_raster(
     raster_output_format             format = raster_output_format::cog);
 
 // ---------------------------------------------------------------------------
-// Internal helpers — implemented in the .cpp, not public API.
+// Internal helpers - implemented in the .cpp, not public API.
 // ---------------------------------------------------------------------------
 namespace detail {
 

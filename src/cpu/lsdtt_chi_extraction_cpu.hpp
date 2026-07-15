@@ -113,7 +113,7 @@ std::size_t reject_chi_basins_with_few_channel_pixels(
 // Drop every incomplete basin (its upslope area touches nodata, as judged by
 // lsdtt_basin_cpu::check_basin_completeness) and then keep only the n_largest
 // remaining complete basins, ranked by total number of basin pixels
-// (get_number_of_basin_pixels — i.e. drainage area, not channel-node count).
+// (get_number_of_basin_pixels - i.e. drainage area, not channel-node count).
 // The original ordering of the kept basins is preserved so that downstream
 // basin_key / basin_index assignments stay stable across all chi outputs.
 // n_largest == 0 keeps all complete basins (no size cap). Returns the number

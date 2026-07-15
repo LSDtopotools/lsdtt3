@@ -134,10 +134,10 @@ struct lsdtt_warp_result
 // Use warp_raster_to_reference_grid() when exact grid matching is required.
 //
 // Parameters
-//   in_path         — source raster path
-//   reference_path  — reference raster path
-//   out_path        — output raster path
-//   opts            — warp / clip options
+//   in_path         - source raster path
+//   reference_path  - reference raster path
+//   out_path        - output raster path
+//   opts            - warp / clip options
 //
 // Throws
 //   std::runtime_error on GDAL open/warp failure, CRS mismatch under strict
@@ -165,10 +165,10 @@ lsdtt_warp_result clip_raster_to_reference_extent(
 // This is the common remote-sensing "align to template raster" operation.
 //
 // Parameters
-//   in_path         — source raster path
-//   reference_path  — reference raster path
-//   out_path        — output raster path
-//   opts            — warp options
+//   in_path         - source raster path
+//   reference_path  - reference raster path
+//   out_path        - output raster path
+//   opts            - warp options
 //
 // Throws
 //   std::runtime_error on GDAL open/warp failure or if the reference raster

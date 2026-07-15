@@ -32,8 +32,8 @@
 // performed when reading polyline vertices.
 //
 // Output:
-//   write_burned_stream_profiles_csv  — CSV table, one row per node
-//   write_burned_stream_profiles_points — vector point file (gpkg / flatgeobuf)
+//   write_burned_stream_profiles_csv  - CSV table, one row per node
+//   write_burned_stream_profiles_points - vector point file (gpkg / flatgeobuf)
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -58,9 +58,9 @@ namespace lsdtt
 //
 // Result of find_vector_network_source_tips.
 //
-// source_tips  — upstream headwater channel endpoints (degree-1 tips that are
+// source_tips  - upstream headwater channel endpoints (degree-1 tips that are
 //                not the lowest-elevation tip of the network).
-// outlet_tip   — the single lowest-elevation degree-1 tip (basin outlet).
+// outlet_tip   - the single lowest-elevation degree-1 tip (basin outlet).
 //                has_outlet is false if no valid DEM elevation could be
 //                sampled at any tip (e.g. all tips fall outside the raster).
 // ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ struct vector_network_endpoints
 // find_vector_network_source_tips
 //
 // Identifies upstream source tips from a polyline vector channel network by
-// finding degree-1 endpoints — polyline vertices that are not shared by more
+// finding degree-1 endpoints - polyline vertices that are not shared by more
 // than one feature at that position (within half a DEM cell of tolerance).
 //
 // Of all degree-1 tips, the one with the lowest DEM elevation is classified
@@ -88,9 +88,9 @@ struct vector_network_endpoints
 // All inward vertices of the connected segment are walked and the minimum
 // valid DEM elevation among them is recorded.  That minimum is compared to
 // the tip elevation:
-//   min_inward > tip_elev  →  all visible inward terrain is higher  →  tip
+//   min_inward > tip_elev  ->  all visible inward terrain is higher  ->  tip
 //                             is at the downstream (outlet) end.
-//   min_inward < tip_elev  →  the segment descends away from the tip  →  tip
+//   min_inward < tip_elev  ->  the segment descends away from the tip  ->  tip
 //                             is at the upstream (source) end.
 // Using the minimum (rather than just the first valid vertex) prevents the
 // spurious positive gradient that can arise when the first vertex after a
@@ -100,12 +100,12 @@ struct vector_network_endpoints
 // Among multiple outlet candidates the one with the greatest upslope_count
 // (s_vector_size from the flow object) is chosen; steepest gradient breaks
 // ties.  If no tip satisfies the downstream-end condition has_outlet is false
-// and all degree-1 tips are returned as sources — the real outlet is either
+// and all degree-1 tips are returned as sources - the real outlet is either
 // at a junction (degree > 1) or outside the DEM.  Fallbacks to minimum
 // elevation or maximum upslope count are intentionally absent: both force an
 // outlet selection even when none exists, silently removing a source tip.
 //
-// flow — optional D8 flow object built on the same DEM.  Provides upslope
+// flow - optional D8 flow object built on the same DEM.  Provides upslope
 //         pixel counts used as a tiebreaker in criterion 1 and as criterion 2.
 // ---------------------------------------------------------------------------
 [[nodiscard]] vector_network_endpoints find_vector_network_source_tips(
@@ -181,7 +181,7 @@ struct burned_stream_profile
 // ---------------------------------------------------------------------------
 enum class GapFixType
 {
-    ok,                    // distance within tolerance — no repair attempted
+    ok,                    // distance within tolerance - no repair attempted
     channel_guided_bridge, // repaired via channel-score-guided least-cost path
     terrain_bridge,        // repaired via terrain-only least-cost path
     vector_burn,           // repaired via fallback burn under the input vector
@@ -223,7 +223,7 @@ struct vector_dem_junction_pair
 // find_first_layer_vector_junctions
 //
 // Reads the supplied polyline vector network and returns the locations of
-// "first-layer" junctions — nodes where exactly the channels coming directly
+// "first-layer" junctions - nodes where exactly the channels coming directly
 // from upstream source tips (degree-1 endpoints) converge.
 //
 // Orientation at each junction is determined by DEM elevation: segments whose
@@ -252,16 +252,16 @@ find_first_layer_junction_pairs(
 // Algorithm (per pair):
 //   1. Run a least-cost Dijkstra from dem_xy to the neighbourhood of
 //      vector_xy within a bounding window expanded by max_search_px pixels.
-//      Cost per step = step_distance + max(0, Δelev) × uphill_mult.
+//      Cost per step = step_distance + max(0, Deltaelev) x uphill_mult.
 //   2. If a path is found and its maximum elevation does not exceed the
 //      dem_xy elevation by more than max_climb_m, carve the path
 //      monotonically downhill from the higher end to the lower end.
-//      fix_type → GapFixType::curvature_bridge.
+//      fix_type -> GapFixType::curvature_bridge.
 //   3. Otherwise (tunnel, deep cut, large barrier): burn the input vector
 //      segments that pass through the search window within that window.
-//      fix_type → GapFixType::vector_burn.
+//      fix_type -> GapFixType::vector_burn.
 //   4. If the fallback also produces no pixels (e.g. vector does not cross
-//      the window), fix_type → GapFixType::unresolved.
+//      the window), fix_type -> GapFixType::unresolved.
 //
 // dem is modified in-place.  pairs[i].fix_type and pairs[i].n_burned are
 // updated.  Pairs with distance_m < min_gap_m are left with fix_type = ok.
@@ -283,11 +283,11 @@ void repair_junction_gaps(
 // Each row represents one point (vector or DEM junction).
 //
 // Attributes per feature:
-//   pair_id         (int64)  — shared by the two points in a pair
-//   is_dem_junction (int64)  — 0 = vector junction, 1 = DEM junction
-//   distance_m      (double) — distance between the paired points
-//   n_sources       (int64)  — source tips converging at this junction
-//   fix_type        (string) — "ok", "curvature_bridge", "vector_burn", or
+//   pair_id         (int64)  - shared by the two points in a pair
+//   is_dem_junction (int64)  - 0 = vector junction, 1 = DEM junction
+//   distance_m      (double) - distance between the paired points
+//   n_sources       (int64)  - source tips converging at this junction
+//   fix_type        (string) - "ok", "curvature_bridge", "vector_burn", or
 //                              "unresolved"
 // ---------------------------------------------------------------------------
 void write_junction_comparison_points(
@@ -384,7 +384,7 @@ struct JunctionRepairRecord
     lsdtt_xy   target_xy;       // path endpoint (higher channel end of repair)
     bool       success                = false;
 
-    // Legacy field — kept for repair_stream_junctions compatibility
+    // Legacy field - kept for repair_stream_junctions compatibility
     int        network_index          = 0;
 
     std::string mismatch_reason;
@@ -398,7 +398,7 @@ struct JunctionRepairRecord
 // ---------------------------------------------------------------------------
 struct junction_repair_params
 {
-    // ── Gap tolerance and terrain-Dijkstra controls ──────────────────────────
+    //  Gap tolerance and terrain-Dijkstra controls 
     double min_gap_m     = 50.0;
     int    max_search_px = 60;
     double uphill_mult   = 20.0;
@@ -425,26 +425,26 @@ struct junction_repair_params
     // (e.g. _spur_endpoints_phase_NN.fgb).  Set by repair_candidate_junctions.
     int diagnostic_phase = -1;
 
-    // ── Channel-score guidance ────────────────────────────────────────────────
+    //  Channel-score guidance 
     // alpha > 0 enables channelness weighting in the Dijkstra cost:
-    //   step_distance × (1 + alpha × (1 − channel_score[px]))
+    //   step_distance x (1 + alpha x (1 - channel_score[px]))
     // lambda values <= 0 are auto-derived from the DEM cell size
-    //   (min = 3 × cell_size, max = 10 × cell_size).
+    //   (min = 3 x cell_size, max = 10 x cell_size).
     double channel_score_alpha    = 2.0;
     double channel_lambda_min_m   = -1.0;
     double channel_lambda_max_m   = -1.0;
     int    channel_n_scales       = 4;
 
-    // ── Divergence-point scoring weights ─────────────────────────────────────
+    //  Divergence-point scoring weights 
     // Score for each upstream channel pixel =
-    //   w_proximity × proximity(pixel, vector_junction)
-    //   + w_channel  × channel_score[pixel]
+    //   w_proximity x proximity(pixel, vector_junction)
+    //   + w_channel  x channel_score[pixel]
     // Proximity dominates so the algorithm favours the crossing point nearest
     // the target even when channel signal is weak.
     double w_proximity            = 0.7;
     double w_channel              = 0.3;
 
-    // ── Landing-zone threshold ────────────────────────────────────────────────
+    //  Landing-zone threshold 
     // Minimum channel score for a pixel near the vector junction to be
     // considered a landing target.  When no pixel meets this threshold the
     // pixel that contains the vector junction xy is used as the sole target.
@@ -643,7 +643,7 @@ struct ReachDivergenceRecord
     // Dimensionless badness score for ranking/symbolising (0 = on the vector).
     double severity = 0.0;
 
-    // Logged for confirmation only — never used to classify.
+    // Logged for confirmation only - never used to classify.
     double mean_plan_curvature = 0.0;
     double mean_channel_score  = 0.0;
 
@@ -651,12 +651,12 @@ struct ReachDivergenceRecord
 
     // True when an endpoint vector junction had no DEM junction within
     // match_radius. The DEM reach is still walked and retained (so it
-    // registers and can drive a topology repair) — this flag preserves the
+    // registers and can drive a topology repair) - this flag preserves the
     // "junction gap" story that status==unmatched_endpoint used to carry.
     bool endpoint_unmatched = false;
 
     // First DEM pixel (walking downstream from dem_jid_up) whose lateral
-    // separation from the vector edge exceeds separation_threshold_m — i.e.
+    // separation from the vector edge exceeds separation_threshold_m - i.e.
     // where the channel leaves the correct valley. Used to anchor the breach
     // for a diverged (rejoining) reach so flow is pulled back BEFORE the
     // detour, rather than at the downstream confluence. has_divergence_point
@@ -738,7 +738,7 @@ repair_candidate_junctions(
 // Reach-driven sibling of repair_candidate_junctions. The reach-divergence
 // diagnostic (compute_reach_divergence) catches errors the junction-LCA
 // matcher misses: a DEM channel that detours a long way (road/ditch capture)
-// before rejoining the correct channel — the confluence topology looks fine
+// before rejoining the correct channel - the confluence topology looks fine
 // but the path is wrong. Each reach with status diverged or topology_break is
 // repaired with the SAME channel-guided narrows machinery
 // (repair_junction_parallel_channels, then the channel-guided fallback),
@@ -783,7 +783,7 @@ build_vector_networks(
 );
 
 // ---------------------------------------------------------------------------
-// repair_stream_junctions  [DEPRECATED — use repair_candidate_junctions]
+// repair_stream_junctions  [DEPRECATED - use repair_candidate_junctions]
 //
 // Legacy topology-walk repair. Kept for backwards compatibility.
 // ---------------------------------------------------------------------------

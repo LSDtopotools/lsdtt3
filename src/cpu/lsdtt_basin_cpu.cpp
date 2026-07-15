@@ -1,4 +1,4 @@
-// lsdtt3 — lsdtt_basin_cpu.cpp
+// lsdtt3 - lsdtt_basin_cpu.cpp
 // CPU implementation of a single drainage basin.
 //
 // Copyright Simon M. Mudd, GPL-3.0

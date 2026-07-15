@@ -12,35 +12,35 @@
 // Solves for the elevation field z[i,j] at hillslope pixels where:
 //
 //   Linear (Laplacian) mode:
-//     D * ∇²z = -U
+//     D * grad^2z = -U
 //
 //   Nonlinear (Roering et al. 1999) mode:
-//     D * ∇·[ ∇z / (1 - (|∇z|/Sc)²) ] = -U
+//     D * grad*[ gradz / (1 - (|gradz|/Sc)^2) ] = -U
 //
 // Channel pixels (drainage area >= threshold, identified before calling) are
 // treated as Dirichlet boundaries with their current elevation.  The "fixed"
 // channel elevation already represents the steady-state (channels erode at
-// rate U = uplift), so the RHS U*h²/D is exactly the correct balance term.
+// rate U = uplift), so the RHS U*h^2/D is exactly the correct balance term.
 //
 // Algorithm: Red-Black Successive Over-Relaxation (SOR) with Picard-lagged
 // nonlinear coefficients.  Red-black ordering makes each colour pass safe to
 // parallelise with OpenMP.
 //
-// SOR relaxation factor ω (sor_omega):
-//   ω ∈ (1, 2) accelerates convergence from O(N²) Jacobi iterations to O(N)
+// SOR relaxation factor omega (sor_omega):
+//   omega in (1, 2) accelerates convergence from O(N^2) Jacobi iterations to O(N)
 //   where N is the effective grid spacing between channel Dirichlet nodes.
 //   sor_omega = 0 (default): auto-estimate from grid size using the Poisson
 //   formula for a rectangular domain; the estimate is capped at 1.95 and is
 //   conservative for cases with dense distributed channel BCs.
 //   Typical manual values: 1.5 (safe/conservative) to 1.9 (aggressive).
-//   The nonlinear (Roering) solver is less tolerant of large ω; if it
+//   The nonlinear (Roering) solver is less tolerant of large omega; if it
 //   diverges, reduce sor_omega toward 1.3.
-// Convergence criterion: max|Δz| < tolerance over all hillslope pixels.
+// Convergence criterion: max|Deltaz| < tolerance over all hillslope pixels.
 //
 // Boundary conditions (boundary_conditions string, NESW order):
-//   'o' (open) → Neumann (zero-flux) for non-channel boundary pixels.
+//   'o' (open) -> Neumann (zero-flux) for non-channel boundary pixels.
 //                Channel pixels at the boundary are Dirichlet regardless.
-//   'p' (periodic) → domain wraps in that direction.
+//   'p' (periodic) -> domain wraps in that direction.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -59,12 +59,12 @@ namespace lsdtt
 // -----------------------------------------------------------------------------
 struct lsdtt_hillslope_steady_state_options
 {
-    float D              = 1e-3f;    // hillslope diffusivity (m²/yr)
+    float D              = 1e-3f;    // hillslope diffusivity (m^2/yr)
     float U              = 1e-4f;    // uplift rate (m/yr)
     float Sc             = 0.8f;     // critical slope (nonlinear mode only)
     bool  nonlinear      = false;    // true = Roering 1999, false = linear Laplacian
     std::string boundary_conditions = "oooo"; // NESW: 'o' open, 'p' periodic
-    float tolerance      = 1e-4f;   // convergence: max|Δz| over hillslope pixels
+    float tolerance      = 1e-4f;   // convergence: max|Deltaz| over hillslope pixels
     int   max_iterations = 10000;
     float sor_omega      = 0.0f;    // SOR relaxation factor; 0 = auto from grid size
     int   n_threads      = 0;        // 0 = OMP default
@@ -77,7 +77,7 @@ struct lsdtt_hillslope_steady_state_result
 {
     lsdtt_raster_cpu elevation;
     int   n_iterations;     // iterations taken
-    float final_residual;   // max|Δz| at last iteration
+    float final_residual;   // max|Deltaz| at last iteration
     bool  converged;
 };
 
@@ -85,12 +85,12 @@ struct lsdtt_hillslope_steady_state_result
 // compute_hillslope_steady_state
 //
 // Inputs:
-//   dem        — raster with channel-pixel elevations already set (Dirichlet
+//   dem        - raster with channel-pixel elevations already set (Dirichlet
 //                values).  Hillslope-pixel elevations serve as the initial
 //                guess and are overwritten.
-//   is_channel — flat-indexed mask (1 = channel/Dirichlet, 0 = hillslope).
+//   is_channel - flat-indexed mask (1 = channel/Dirichlet, 0 = hillslope).
 //                Must have the same size as dem.
-//   opts       — solver options (see struct above).
+//   opts       - solver options (see struct above).
 //
 // Returns the full elevation field (channels unchanged, hillslopes updated).
 // -----------------------------------------------------------------------------
@@ -109,20 +109,20 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
 // Algorithm: iterate
 //   1. Build D-inf flow graph from current elevation (Picard update of
 //      routing directions as z changes).
-//   2. One Cidre transport step with pseudo-time step dt = dx / (4·D).
-//   3. Add U·dt to every non-channel hillslope pixel (balance uplift).
+//   2. One Cidre transport step with pseudo-time step dt = dx / (4*D).
+//   3. Add U*dt to every non-channel hillslope pixel (balance uplift).
 //   4. Restore channel pixels to Dirichlet values.
-//   5. Check max|Δz| < tolerance.
+//   5. Check max|Deltaz| < tolerance.
 //
 // Why a fixed pseudo-timestep is valid: the steady state is the fixed point
 // of (transport + uplift), independent of the step size used to approach it.
-// The step dt = dx/(4·D) keeps the linear Cidre scheme stable; the nonlinear
+// The step dt = dx/(4*D) keeps the linear Cidre scheme stable; the nonlinear
 // slope-restoration branch is unconditionally stable at any dt.
 //
 // Relationship to Roering SOR:
 //   At steady state the Cidre sediment flux equals the Roering flux law
-//   (both proportional to S·L where L = 1/(1-S²/Sc²)), so both solvers
-//   converge to the same elevation field (Carretier et al. 2016, §3.3).
+//   (both proportional to S*L where L = 1/(1-S^2/Sc^2)), so both solvers
+//   converge to the same elevation field (Carretier et al. 2016, Sec3.3).
 //   The transient paths differ: Cidre routes accumulated sediment flux
 //   downstream (not a pure divergence-form law), while Roering is strictly
 //   conservative in divergence form.  The steady-state solver lets you

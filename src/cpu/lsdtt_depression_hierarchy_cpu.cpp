@@ -113,7 +113,7 @@ bool exits_through_open_boundary(
 }
 
 // ---------------------------------------------------------------------------
-// Minimal union–find with path-halving, used to track which meta-depression
+// Minimal union-find with path-halving, used to track which meta-depression
 // each leaf depression currently belongs to.
 // ---------------------------------------------------------------------------
 class disjoint_set
@@ -243,7 +243,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             if (touches_open)
             {
                 label_out[flat] = k_ocean_label;
-                // flowdir stays k_dh_no_flow — drains off grid.
+                // flowdir stays k_dh_no_flow - drains off grid.
                 ocean_seeds.push_back(flat);
             }
             else
@@ -340,7 +340,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
 
         if (clabel == k_ocean_label)
         {
-            // Ocean cell — expand to unlabelled neighbours.
+            // Ocean cell - expand to unlabelled neighbours.
         }
         else if (clabel == k_no_dep)
         {
@@ -353,7 +353,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             label_out[ci]     = clabel;
             // Pit cell has no downstream neighbour: flowdir stays k_dh_no_flow.
         }
-        // else: already labelled — still check neighbours (handles flats).
+        // else: already labelled - still check neighbours (handles flats).
 
         for (int d = 0; d < 8; ++d)
         {
@@ -383,7 +383,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             }
             else if (nlabel == clabel)
             {
-                // Same depression — nothing to do.
+                // Same depression - nothing to do.
             }
             else
             {
@@ -545,7 +545,7 @@ void write_label_raster(
     {
         if (label[i] == k_no_dep)
         {
-            // Nodata cell in the DEM — write nodata.
+            // Nodata cell in the DEM - write nodata.
             out_data[i] = static_cast<float>(meta.no_data_value);
         }
         else

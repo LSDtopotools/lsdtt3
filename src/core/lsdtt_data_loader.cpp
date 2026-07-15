@@ -30,7 +30,7 @@
 namespace lsdtt {
 
 // -----------------------------------------------------------------------------
-// GDAL initialisation helper — called once via static local
+// GDAL initialisation helper - called once via static local
 // -----------------------------------------------------------------------------
 static void ensure_gdal_init()
 {
@@ -257,7 +257,7 @@ vector_output_format resolve_vector_output_format(
         return vector_output_format::flatgeobuf;
     }
     std::cerr << "Warning: unknown vector_output_format "
-              << fmt_str << "' — defaulting to flatgeobuf.\n";
+              << fmt_str << "' - defaulting to flatgeobuf.\n";
 
     return vector_output_format::flatgeobuf;
 }
@@ -278,7 +278,7 @@ point_output_format resolve_point_output_format(
         return point_output_format::flatgeobuf;
     }
     std::cerr << "Warning: unknown vector_output_format '"
-              << fmt_str << "' — defaulting to flatgeobuf.\n";
+              << fmt_str << "' - defaulting to flatgeobuf.\n";
 
     return point_output_format::flatgeobuf;
 }
@@ -297,7 +297,7 @@ vector_output_format convert_point_to_vector_output_format(
     }
     
     std::cerr << "Warning: cannot convert point_output_format "
-                 "to vector_output_format — defaulting to flatgeobuf.\n";
+                 "to vector_output_format - defaulting to flatgeobuf.\n";
     return vector_output_format::flatgeobuf;
 }
 
@@ -310,7 +310,7 @@ raster_output_format resolve_raster_output_format(
     if (fmt_str == "png")          return raster_output_format::png;
 
     std::cerr << "Warning: unknown raster_output_format '" << fmt_str
-              << "' — defaulting to cog.\n";
+              << "' - defaulting to cog.\n";
     return raster_output_format::cog;
 }
 
@@ -621,7 +621,7 @@ lsdtt_raster_tile lsdtt_data_loader::read_tile(const lsdtt_tile_window& window) 
     // (e.g. ENVI .bil exports) encode their no-data border as IEEE NaN while
     // the header still declares a sentinel such as -9999. If these are not
     // caught here they survive threshold masking and poison flow
-    // preprocessing — a NaN rim around the raster reads as a dam with no
+    // preprocessing - a NaN rim around the raster reads as a dam with no
     // outlet, so the priority-flood fill pancakes the whole interior.
     // Normalise detected nodata pixels to the sentinel so the
     // mask==0 => data holds no_data_value convention is preserved downstream.
@@ -674,14 +674,14 @@ void lsdtt_data_loader::create_output_raster(
     GDALDataType             out_type
 )
 {
-    // Resolve effective format — COG falls back to GTiff for small rasters
+    // Resolve effective format - COG falls back to GTiff for small rasters
     raster_output_format effective_format = format;
     if (format == raster_output_format::cog &&
         meta.n_pixels() < k_cog_min_pixels)
     {
         std::cout << "lsdtt_data_loader: raster has " << meta.n_pixels()
                   << " pixels (below COG threshold of " << k_cog_min_pixels
-                  << ") — writing plain GeoTIFF instead of COG.\n";
+                  << ") - writing plain GeoTIFF instead of COG.\n";
         effective_format = raster_output_format::gtiff;
     }
 
@@ -714,7 +714,7 @@ void lsdtt_data_loader::create_output_raster(
         );
     }
 
-    // Creation options — tiled DEFLATE for GTiff/COG, minimal for other formats
+    // Creation options - tiled DEFLATE for GTiff/COG, minimal for other formats
     char** options = nullptr;
     if (effective_format == raster_output_format::cog ||
         effective_format == raster_output_format::gtiff)
@@ -787,7 +787,7 @@ void lsdtt_data_loader::write_tile(
     {
         throw std::runtime_error(
             "lsdtt_data_loader: write_tile() called for unknown output path: " +
-            out_path + " — call create_output_raster() first"
+            out_path + " - call create_output_raster() first"
         );
     }
 
@@ -795,7 +795,7 @@ void lsdtt_data_loader::write_tile(
     if (static_cast<int>(data.size()) != expected)
     {
         throw std::runtime_error(
-            "lsdtt_data_loader: write_tile() data size mismatch — "
+            "lsdtt_data_loader: write_tile() data size mismatch - "
             "expected " + std::to_string(expected) +
             ", got "    + std::to_string(data.size())
         );
@@ -856,7 +856,7 @@ void lsdtt_data_loader::write_png(
     if (!std::isfinite(dmin) || dmax <= dmin)
         dmax = dmin + 1.0f;   // degenerate: all nodata or uniform
 
-    // Maps dmin → 1, dmax → 255;  0 is reserved for nodata.
+    // Maps dmin -> 1, dmax -> 255;  0 is reserved for nodata.
     const float scale = 254.0f / (dmax - dmin);
 
     // -------------------------------------------------------------------------
@@ -924,7 +924,7 @@ void lsdtt_data_loader::write_png(
     {
         GDALClose(mem_ds);
         throw std::runtime_error(
-            "write_png: GDAL PNG driver not available — "
+            "write_png: GDAL PNG driver not available - "
             "rebuild GDAL with PNG/libpng support.");
     }
 
@@ -1017,7 +1017,7 @@ void lsdtt_data_loader::finalise_output(const std::string& out_path)
             GDALDataset* src = static_cast<GDALDataset*>(
                 GDALOpen(out_path.c_str(), GA_ReadOnly)
             );
-            if (!src) return;  // non-fatal — tiled GTiff already written
+            if (!src) return;  // non-fatal - tiled GTiff already written
 
             char** options = nullptr;
             options = CSLSetNameValue(options, "COMPRESS",  "DEFLATE");
@@ -1040,7 +1040,7 @@ void lsdtt_data_loader::finalise_output(const std::string& out_path)
     }
     else
     {
-        // gtiff or same_as_input — just flush and close
+        // gtiff or same_as_input - just flush and close
         ds_it->second.reset();
         output_datasets_.erase(ds_it);
         if (fmt_it != output_formats_.end()) output_formats_.erase(fmt_it);
@@ -1234,7 +1234,7 @@ void lsdtt_data_loader::begin_vector_write(
     if (write_session_)
         throw std::runtime_error(
             "lsdtt_data_loader: begin_vector_write() called while a write "
-            "session is already active — call finish_vector_write() first"
+            "session is already active - call finish_vector_write() first"
         );
  
     if (format == vector_output_format::gpkg)
@@ -1256,7 +1256,7 @@ void lsdtt_data_loader::begin_vector_write(
     if (!spatial_index)
     {
         // Streaming path: open the file and layer immediately.
-        // We don't know the geometry type yet so use wkbUnknown — this costs
+        // We don't know the geometry type yet so use wkbUnknown - this costs
         // a per-feature type tag in FlatGeobuf but avoids a two-pass design.
         write_session_->open_dataset_and_layer(wkbUnknown);
     }
@@ -1567,11 +1567,11 @@ lsdtt_tile_window lsdtt_data_loader::clamp_window_to_raster(
 {
     lsdtt_tile_window clamped = win;
 
-    // Read origin — pull back by halo, clamp to raster edge
+    // Read origin - pull back by halo, clamp to raster edge
     clamped.read_x_off = std::max(0, win.x_off - win.halo);
     clamped.read_y_off = std::max(0, win.y_off - win.halo);
 
-    // Read extent — push forward by halo, clamp to raster edge
+    // Read extent - push forward by halo, clamp to raster edge
     int read_x_end = std::min(meta_.n_cols, win.x_off + win.tile_width  + win.halo);
     int read_y_end = std::min(meta_.n_rows, win.y_off + win.tile_height + win.halo);
 
@@ -1814,7 +1814,7 @@ std::string lsdtt_data_loader::resolve_writable_path(
         return path;   // removed (not locked): caller will recreate in place
     }
 
-    // Could not remove — treat as locked; find the next free fallback name.
+    // Could not remove - treat as locked; find the next free fallback name.
     for (int n = 2; n < 1000; ++n)
     {
         const std::string cand = base + "_" + std::to_string(n) + ext;

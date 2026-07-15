@@ -38,7 +38,7 @@ from shapely.geometry import box
 # ---------------------------------------------------------------------
 # Tag sets
 # ---------------------------------------------------------------------
-# Road/track network. "track" is included deliberately — forest/agricultural
+# Road/track network. "track" is included deliberately - forest/agricultural
 # tracks are often the features of interest. Footways/paths/cycleways are left
 # out; add them here if you want them.
 ROAD_HIGHWAY_VALUES = [

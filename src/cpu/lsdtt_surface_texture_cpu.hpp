@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Surface texture metrics — CPU free functions.
+// Surface texture metrics - CPU free functions.
 //
 // Contents:
 //   - madk2_result / calculate_madk2
@@ -22,7 +22,7 @@
 //
 //   - nvd_result / compute_nvd
 //       Normal Vector Dispersion from polyfit gradient coefficients.
-//       The input d and e rasters (∂z/∂x and ∂z/∂y) are typically obtained
+//       The input d and e rasters (dz/dx and dz/dy) are typically obtained
 //       from lsdtt::wavelet_quadratic_fit or any equivalent polyfit workflow.
 //       Returns three eigenvalue rasters of the orientation tensor built from
 //       unit surface normals within a moving window.
@@ -73,10 +73,10 @@ struct madk2_result
 // circular window.
 //
 // Parameters:
-//   raster                — input DEM (projected, metres)
-//   window_radius_metres  — radius of the support window
-//   lag_pixels            — lag for the second-order differences (default 1)
-//   n_threads             — OpenMP thread count; 0 = all available
+//   raster                - input DEM (projected, metres)
+//   window_radius_metres  - radius of the support window
+//   lag_pixels            - lag for the second-order differences (default 1)
+//   n_threads             - OpenMP thread count; 0 = all available
 //
 // Throws:
 //   std::runtime_error on invalid metadata, non-projected CRS, or invalid
@@ -97,7 +97,7 @@ madk2_result calculate_madk2(
 // -----------------------------------------------------------------------------
 // moving_window_iqr
 //
-// Interquartile range (IQR = Q3 − Q1) of valid pixel values within a moving
+// Interquartile range (IQR = Q3 - Q1) of valid pixel values within a moving
 // window.  Uses linear interpolation between adjacent ranks (equivalent to
 // R quantile type 7).
 //
@@ -113,10 +113,10 @@ madk2_result calculate_madk2(
 // the window (IQR is undefined with fewer than 2 distinct values).
 //
 // Parameters:
-//   raster        — input raster (projected, metres)
-//   radius_metres — window radius
-//   shape         — circular (default) or square
-//   n_threads     — OpenMP thread count; 0 = all available
+//   raster        - input raster (projected, metres)
+//   radius_metres - window radius
+//   shape         - circular (default) or square
+//   n_threads     - OpenMP thread count; 0 = all available
 //
 // Throws:
 //   std::runtime_error on invalid metadata or invalid radius.
@@ -134,18 +134,18 @@ lsdtt_raster_cpu moving_window_iqr(
 //
 // Normal Vector Dispersion (NVD) outputs.
 //
-// Each raster stores one normalised eigenvalue of the 3×3 orientation tensor
+// Each raster stores one normalised eigenvalue of the 3x3 orientation tensor
 // built from unit surface normals within a moving window:
 //
-//   s1 — largest  eigenvalue / N  (clustering around major axis)
-//   s2 — middle   eigenvalue / N
-//   s3 — smallest eigenvalue / N  (planarity measure; low = very planar)
+//   s1 - largest  eigenvalue / N  (clustering around major axis)
+//   s2 - middle   eigenvalue / N
+//   s3 - smallest eigenvalue / N  (planarity measure; low = very planar)
 //
 // Eigenvalues sum to 1.0 per pixel.
 //
 // Reference:
 //   Woodcock, N.H. (1977) Specification of fabric shapes using an eigenvalue
-//   method. Geological Society of America Bulletin, 88(9), 1231–1236.
+//   method. Geological Society of America Bulletin, 88(9), 1231-1236.
 //   Applied to DEM roughness in:
 //   Hobson, R.D. (1972) Surface roughness in topography: quantitative
 //   approach. Spatial Analysis in Geomorphology (ed. Chorley).
@@ -165,24 +165,24 @@ struct nvd_result
 //
 // Algorithm:
 //   1. At each valid pixel compute the unit surface normal from:
-//        pheta = atan( sqrt(d² + e²) )     (polar angle from vertical)
+//        pheta = atan( sqrt(d^2 + e^2) )     (polar angle from vertical)
 //        phi   = atan2(e, d)               (azimuth)
 //      where (l, m, n) = (sin(pheta)*cos(phi), sin(pheta)*sin(phi), cos(pheta))
-//   2. For each pixel, accumulate the 3×3 orientation tensor T over a
+//   2. For each pixel, accumulate the 3x3 orientation tensor T over a
 //      moving window:
 //        T += outer_product([l, m, n], [l, m, n])
 //   3. Compute eigenvalues of T analytically (Kopp 2008, Cardano formula).
 //      A pixel is written as nodata if fewer than 2 valid normals are found
 //      in the window.
-//   4. s1 = λmax/N,  s2 = λmid/N,  s3 = λmin/N  (eigenvalues sum to 1).
+//   4. s1 = lambdamax/N,  s2 = lambdamid/N,  s3 = lambdamin/N  (eigenvalues sum to 1).
 //
 // Inputs:
-//   d_coeffs      — ∂z/∂x raster; typically poly_fit_coeffs.d from
+//   d_coeffs      - dz/dx raster; typically poly_fit_coeffs.d from
 //                   lsdtt::wavelet_quadratic_fit or lsdtt::compute_polyfit_metrics
-//   e_coeffs      — ∂z/∂y raster; typically poly_fit_coeffs.e
-//   radius_metres — window radius for the orientation-tensor accumulation
-//   shape         — circular (default) or square
-//   n_threads     — OpenMP thread count; 0 = all available
+//   e_coeffs      - dz/dy raster; typically poly_fit_coeffs.e
+//   radius_metres - window radius for the orientation-tensor accumulation
+//   shape         - circular (default) or square
+//   n_threads     - OpenMP thread count; 0 = all available
 //
 // The caller controls the polyfit scale (wavelength / window radius) by
 // choosing which d and e rasters to pass in.  This decouples NVD from the

@@ -11,9 +11,9 @@
 //
 // Lives in src/cpu/ (not src/core/) because it instantiates lsdtt_flowinfo_cpu,
 // which is defined in lsdtt3_cpu. If it lived in lsdtt3_core it would create
-// a circular dependency: core → cpu and cpu → core.
+// a circular dependency: core -> cpu and cpu -> core.
 // which is a CPU type. If it lived in lsdtt3_core it would create a circular
-// dependency: core → cpu and cpu → core.
+// dependency: core -> cpu and cpu -> core.
 //
 // When lsdtt_flowinfo_gpu is implemented, include it here and add the
 // gpu_available() check from lsdtt_backend_factory.
@@ -124,7 +124,7 @@ std::int64_t move_outlet_upstream(
         const int col = flow.col_from_flat_unchecked(current);
 
         // Pick the donor (neighbour flowing into current) with the largest
-        // upslope pixel count — i.e. continue up the main stem.
+        // upslope pixel count - i.e. continue up the main stem.
         std::int64_t  best_donor = k_nodata_receiver;
         std::uint64_t best_size  = 0;
 

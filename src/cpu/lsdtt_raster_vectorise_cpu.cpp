@@ -34,18 +34,18 @@ namespace lsdtt {
 //   1. Collect all pixel (row, col) pairs that carry label L (mask valid,
 //      not nodata, not background).
 //
-//   2. Find the tight bounding box [min_r, max_r] × [min_c, max_c].
+//   2. Find the tight bounding box [min_r, max_r] x [min_c, max_c].
 //
 //   3. Build a double-resolution binary image of size
-//        (2·height + 1) × (2·width + 1)
-//      where height = max_r − min_r + 1, width = max_c − min_c + 1.
+//        (2*height + 1) x (2*width + 1)
+//      where height = max_r - min_r + 1, width = max_c - min_c + 1.
 //
 //      Each pixel (r, c) maps to double-res centre (cr, cc):
-//        cr = 2·(r − min_r) + 1
-//        cc = 2·(c − min_c) + 1
+//        cr = 2*(r - min_r) + 1
+//        cc = 2*(c - min_c) + 1
 //
-//      A 3×3 stamp centred at (cr, cc) fills cells:
-//        rows  cr−1 … cr+1,  cols  cc−1 … cc+1
+//      A 3x3 stamp centred at (cr, cc) fills cells:
+//        rows  cr-1 ... cr+1,  cols  cc-1 ... cc+1
 //
 //      Adjacent pixels that share an edge therefore also share the
 //      intermediate double-res cells between them, so the filled binary
@@ -59,13 +59,13 @@ namespace lsdtt {
 //
 //   6. For each kept pixel (p.row, p.col) in the double-res grid:
 //
-//        row_off = (p.row − 1) / 2      (integer, ∈ [0, height])
-//        col_off = (p.col − 1) / 2      (integer, ∈ [0, width])
+//        row_off = (p.row - 1) / 2      (integer, in [0, height])
+//        col_off = (p.col - 1) / 2      (integer, in [0, width])
 //
-//        x = meta.x_min + (min_c + col_off) · cell_size
-//        y = meta.y_min + (meta.n_rows − min_r − row_off) · cell_size
+//        x = meta.x_min + (min_c + col_off) * cell_size
+//        y = meta.y_min + (meta.n_rows - min_r - row_off) * cell_size
 //
-//      These are pixel-edge (corner) coordinates in the projected CRS —
+//      These are pixel-edge (corner) coordinates in the projected CRS -
 //      not cell-centre coordinates.
 //
 //   7. Close the ring (append the first point) and write.
@@ -74,17 +74,17 @@ namespace lsdtt {
 // ---------------------
 //   meta.x_min / meta.y_min are the lower-left raster *edges* (not centres).
 //   Cell centre at (row, col):
-//     x_ctr = x_min + (col + 0.5) · cs
-//     y_ctr = y_min + (n_rows − row − 0.5) · cs
+//     x_ctr = x_min + (col + 0.5) * cs
+//     y_ctr = y_min + (n_rows - row - 0.5) * cs
 //
 //   Pixel corner at integer (row_off, col_off) offset from (min_r, min_c):
-//     x_corner = x_min + (min_c + col_off) · cs
-//     y_corner = y_min + (n_rows − min_r − row_off) · cs
+//     x_corner = x_min + (min_c + col_off) * cs
+//     y_corner = y_min + (n_rows - min_r - row_off) * cs
 //
-//   row_off = 0 → top edge of pixel min_r
-//   row_off = height → bottom edge of pixel max_r
-//   col_off = 0 → left edge of pixel min_c
-//   col_off = width → right edge of pixel max_c
+//   row_off = 0 -> top edge of pixel min_r
+//   row_off = height -> bottom edge of pixel max_r
+//   col_off = 0 -> left edge of pixel min_c
+//   col_off = width -> right edge of pixel max_c
 //
 // =============================================================================
 
@@ -111,7 +111,7 @@ void trace_labelled_polygons(
     const std::vector<uint8_t>& msk = labelled.get_mask();
 
     // -------------------------------------------------------------------------
-    // Pass 1 — collect pixel positions per label.
+    // Pass 1 - collect pixel positions per label.
     //
     // Key: int64 label value.
     // Value: vector of (row, col) pairs encoded as int (row * ncols + col
@@ -166,7 +166,7 @@ void trace_labelled_polygons(
     );
 
     // -------------------------------------------------------------------------
-    // Pass 2 — per-label: build double-res binary, trace, convert, write.
+    // Pass 2 - per-label: build double-res binary, trace, convert, write.
     // -------------------------------------------------------------------------
     for (const auto& [label, pixels] : label_pixels)
     {
@@ -184,7 +184,7 @@ void trace_labelled_polygons(
         const int height = max_r - min_r + 1;
         const int width  = max_c - min_c + 1;
 
-        // Double-res grid: (2·height + 1) rows × (2·width + 1) cols.
+        // Double-res grid: (2*height + 1) rows x (2*width + 1) cols.
         // Row i in double-res spans original pixels at row (i-1)/2 + min_r
         // (for odd i) or the edge between rows i/2-1 and i/2 (for even i).
         const int dr_rows = 2 * height + 1;
@@ -193,7 +193,7 @@ void trace_labelled_polygons(
         lsdtt_array2d_u8 binary(dr_rows, dr_cols, uint8_t{0});
 
         // --- Stamp each pixel ---
-        // 3×3 centred at (cr, cc) = (2*(r-min_r)+1, 2*(c-min_c)+1).
+        // 3x3 centred at (cr, cc) = (2*(r-min_r)+1, 2*(c-min_c)+1).
         static constexpr int stamp[3][3][2] = {
             {{-1,-1},{-1, 0},{-1, 1}},
             {{ 0,-1},{ 0, 0},{ 0, 1}},
@@ -216,7 +216,7 @@ void trace_labelled_polygons(
 
         if (boundary.empty()) continue;
 
-        // --- Keep only odd-row × odd-col pixels (original pixel corners) ---
+        // --- Keep only odd-row x odd-col pixels (original pixel corners) ---
         std::vector<lsdtt_xy> ring;
         ring.reserve(boundary.size() / 2 + 1);
 
@@ -227,8 +227,8 @@ void trace_labelled_polygons(
             // Map double-res corner to projected coordinates.
             // row_off and col_off are integer offsets from (min_r, min_c)
             // in original pixel units.
-            const int row_off = (bp.row - 1) / 2;  // ∈ [0, height]
-            const int col_off = (bp.col - 1) / 2;  // ∈ [0, width]
+            const int row_off = (bp.row - 1) / 2;  // in [0, height]
+            const int col_off = (bp.col - 1) / 2;  // in [0, width]
 
             const double px =
                 meta.x_min + static_cast<double>(min_c + col_off) * cs;
@@ -239,7 +239,7 @@ void trace_labelled_polygons(
             ring.push_back({px, py});
         }
 
-        if (ring.size() < 3) continue;   // degenerate — skip
+        if (ring.size() < 3) continue;   // degenerate - skip
 
         // Close the ring
         ring.push_back(ring.front());

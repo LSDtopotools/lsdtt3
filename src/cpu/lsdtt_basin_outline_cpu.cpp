@@ -831,7 +831,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
 
     if (colchange > 0)
     {
-      // flow â E : corners SE then NE
+      // flow a E : corners SE then NE
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row + 1),
         wrap_div_col_(outlet_col + 1)
@@ -843,7 +843,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
     }
     else
     {
-      // flow â W : corners NW then SW
+      // flow a W : corners NW then SW
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row),
         wrap_div_col_(outlet_col)
@@ -864,7 +864,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
 
     if (rowchange > 0)
     {
-      // flow â S : corners SW then SE
+      // flow a S : corners SW then SE
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row + 1),
         wrap_div_col_(outlet_col)
@@ -876,7 +876,7 @@ void lsdtt_basin_outline_cpu::compute_outlet_cut_corners_()
     }
     else
     {
-      // flow â N : corners NE then NW
+      // flow a N : corners NE then NW
       outlet_start_corner_ = lsdtt_pixel_rc{
         wrap_div_row_(outlet_row),
         wrap_div_col_(outlet_col + 1)
@@ -1031,7 +1031,7 @@ lsdtt_basin_outline_cpu::get_outline_as_polygon_record(std::int32_t basin_id) co
         poly.exterior.push_back(xy);
     }
 
-    // Close the ring â the outline starts at the outlet cut and ends there
+    // Close the ring a the outline starts at the outlet cut and ends there
     // too after rotate_open_outline_to_outlet_cut_, but the closing point
     // is not repeated in outline_divide_rc_ itself.
     poly.exterior.push_back(poly.exterior.front());

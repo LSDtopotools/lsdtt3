@@ -117,7 +117,7 @@ int main(int argc, char* argv[])
     //
     // Parameters are grouped by workflow step.
     // help_map entry format: { type, default, short_desc, long_desc }
-    // None are const — cross-parameter logic below may adjust them.
+    // None are const - cross-parameter logic below may adjust them.
     // -------------------------------------------------------------------------
     std::map<std::string, bool>                        bool_default_map;
     std::map<std::string, float>                       float_default_map;
@@ -475,7 +475,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
-    // Step 1 — Ensure the DEM is ready for routing
+    // Step 1 - Ensure the DEM is ready for routing
     // -------------------------------------------------------------------------
     if (!bf["raster_is_filled"])
     {
@@ -504,7 +504,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2 — Build D8 flow routing
+    // Step 2 - Build D8 flow routing
     // -------------------------------------------------------------------------
     std::cout << "\n--- Flow routing ---\n";
     std::cout << "Boundary conditions: " << sf["boundary_conditions"] << "\n";
@@ -599,7 +599,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 3 — Extract source pixels
+    // Step 3 - Extract source pixels
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source extraction ---\n";
     std::cout << "Method: " << source_algorithm_choice << "\n";
@@ -754,7 +754,7 @@ int main(int argc, char* argv[])
     std::cout << "Number of source pixels: " << source_flats.size() << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 4 — Build junction / channel network
+    // Step 4 - Build junction / channel network
     // -------------------------------------------------------------------------
     std::cout << "\n--- Channel network construction ---\n";
 
@@ -779,7 +779,7 @@ int main(int argc, char* argv[])
     std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 5 — Write channel network
+    // Step 5 - Write channel network
     // -------------------------------------------------------------------------
     if(bf["write_channel_network_points"])
     {
@@ -859,7 +859,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 6 — Burn vector streams into DEM and write elevation profiles
+    // Step 6 - Burn vector streams into DEM and write elevation profiles
     // -------------------------------------------------------------------------
     if (bf["write_burned_stream_profiles"])
     {

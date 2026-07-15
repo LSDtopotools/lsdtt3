@@ -267,7 +267,7 @@ void lsdtt_param_parser::parse_double_parameters(
 
 void lsdtt_param_parser::force_parse()
 {
-    // Reserved IO keys — skip these when force-parsing
+    // Reserved IO keys - skip these when force-parsing
     static const std::vector<std::string> io_keys = {
         "read_fname", "write_fname", "read_path", "write_path",
         "boundary_conditions", "NULL"
@@ -353,7 +353,7 @@ void lsdtt_param_parser::check_boundary_conditions()
     if (boundary_conditions_.size() != 4)
     {
         std::cout << "lsdtt_param_parser: boundary conditions not set or "
-                  << "not exactly 4 — defaulting to no-flux (n) on all sides.\n";
+                  << "not exactly 4 - defaulting to no-flux (n) on all sides.\n";
         boundary_conditions_.assign(4, "n");
     }
 }
@@ -381,7 +381,7 @@ void lsdtt_param_parser::check_paths()
     }
 
     // Split extension from read_fname if present.
-    // read_fname may arrive as "my_dem.tif" — split into stem "my_dem"
+    // read_fname may arrive as "my_dem.tif" - split into stem "my_dem"
     // and extension ".tif". If no extension is present read_ext_ stays empty
     // and GDAL will try to open the filename as-is (may still work for
     // extensionless files or if the full path was specified differently).
@@ -393,12 +393,12 @@ void lsdtt_param_parser::check_paths()
             read_ext_   = ext;
             read_fname_ = stem(read_fname_);
         }
-        // If no extension found, read_ext_ remains empty —
+        // If no extension found, read_ext_ remains empty -
         // get_full_read_path() will return path + fname without extension
     }
     else
     {
-        // read_fname not set — default to parameter file stem
+        // read_fname not set - default to parameter file stem
         read_fname_ = stem(param_fname_);
         read_ext_   = "";
     }
@@ -524,7 +524,7 @@ void lsdtt_param_parser::print_parameters(const std::string& fname_prefix) const
         return;
     }
 
-    out << "# lsdtt3 parameter file — ingested parameters\n";
+    out << "# lsdtt3 parameter file - ingested parameters\n";
     out << "# File I/O\n";
     out << "read_path: "   << read_path_            << "\n";
     out << "read_fname: "  << read_fname_ << read_ext_ << "\n";
@@ -667,7 +667,7 @@ void lsdtt_param_parser::replace_and_print_parameter_file(
     // Write all parameters, applying replacements
     for (const auto& [key, val] : parameter_map_)
     {
-        // Skip IO keys — already written above
+        // Skip IO keys - already written above
         if (key == "read_path"  || key == "write_path" ||
             key == "read_fname" || key == "write_fname") continue;
 
@@ -711,7 +711,7 @@ void lsdtt_param_parser::parse_line(
             return;
         }
 
-        // Comment character — stop reading this line
+        // Comment character - stop reading this line
         if (c == '#')
         {
             if (word == 1) value = "NULL";

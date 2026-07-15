@@ -160,7 +160,7 @@ struct channel_scope_result
     std::vector<std::int32_t> outlet_matched_source;
     std::vector<double>       outlet_snap_distance_metres;
 
-    // Auto role detection only: per *input* source point, the inferred role —
+    // Auto role detection only: per *input* source point, the inferred role -
     // 0 = source, 1 = outlet, -1 = snap failed. Aligned with source_snaps.
     // Empty when auto_detect_roles was not used.
     std::vector<std::int32_t> input_point_role;

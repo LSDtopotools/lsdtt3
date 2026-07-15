@@ -23,7 +23,7 @@
 //   7. Otsu threshold segmentation (requires OpenCV)
 //   8. Hough line extraction (requires OpenCV)
 //   9. Curvature skeletons
-//  10. Cloth drape — upper envelope surface and incision depth
+//  10. Cloth drape - upper envelope surface and incision depth
 //
 // Usage:
 //   lsdtt-surface-metrics <path> <parameter_file>
@@ -101,7 +101,7 @@ static lsdtt::raster_output_format resolve_output_format(
     if (fmt_str != "cog")
     {
         std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' — defaulting to cog.\n";
+                  << fmt_str << "' - defaulting to cog.\n";
     }
     return lsdtt::raster_output_format::cog;
 }
@@ -398,7 +398,7 @@ int main(int argc, char* argv[])
     // Each parameter has its default and its help entry declared on consecutive
     // lines so the full contract for each parameter is visible in one place.
     // Parameters are grouped by the analysis step that uses them.
-    // None are const — cross-parameter logic below may adjust values.
+    // None are const - cross-parameter logic below may adjust values.
     //
     // help_map entry format: { type, default, short_desc, long_desc }
     // -------------------------------------------------------------------------
@@ -429,7 +429,7 @@ int main(int argc, char* argv[])
     help_map["write_hillshade_raster"] = {"bool","false",
         "Write a hillshade raster.",
         "Uses Zevenbergen and Thorne (1987). "
-        "Computed directly from the input DEM — no fill is applied."};
+        "Computed directly from the input DEM - no fill is applied."};
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
@@ -867,7 +867,7 @@ int main(int argc, char* argv[])
 
     float_default_map["cloth_gravity"] = 0.3f;
     help_map["cloth_gravity"] = {"float","0.3",
-        "Downward gravitational force per Verlet step (m/step²).",
+        "Downward gravitational force per Verlet step (m/step^2).",
         "Controls how quickly the cloth descends. Reducing gravity gives the "
         "cloth more time to equilibrate spring forces before contact, which "
         "can improve convergence on complex terrain. Default (0.3) follows "
@@ -876,7 +876,7 @@ int main(int argc, char* argv[])
     float_default_map["cloth_class_threshold"] = 0.5f;
     help_map["cloth_class_threshold"] = {"float","0.5",
         "Contact tolerance in metres: cloth is pinned when within this distance of the DEM.",
-        "Increase (1–5 m) for coarse-resolution DEMs, noisy data, or DEMs "
+        "Increase (1-5 m) for coarse-resolution DEMs, noisy data, or DEMs "
         "with residual artefact pits. Decrease (0.1 m) for smooth high-resolution "
         "lidar where precise ridge contact is desired."};
 
@@ -894,7 +894,7 @@ int main(int argc, char* argv[])
         "precision is not needed."};
 
     // -------------------------------------------------------------------------
-    // Parse — fills maps from the parameter file, falling back to defaults
+    // Parse - fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
     pp.parse_all_parameters(
         float_default_map,
@@ -1072,7 +1072,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu dem(loader);
 
     // -------------------------------------------------------------------------
-    // Step 1 — Hillshade
+    // Step 1 - Hillshade
     // -------------------------------------------------------------------------
     if (bf["write_hillshade_raster"])
     {
@@ -1107,7 +1107,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 2 — Local relief
+    // Step 2 - Local relief
     // -------------------------------------------------------------------------
     if (bf["write_local_relief_raster"])
     {
@@ -1145,12 +1145,12 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 3 — Polynomial surface fit and derived metrics
+    // Step 3 - Polynomial surface fit and derived metrics
     //
     // polyfit_method controls which algorithm(s) run:
-    //   wavelet — FFT-based Gaussian wavelet fit (requires FFTW)
-    //   direct  — separable rolling-moment O(n) fit (no FFTW needed)
-    //   both    — run both and print a timing comparison
+    //   wavelet - FFT-based Gaussian wavelet fit (requires FFTW)
+    //   direct  - separable rolling-moment O(n) fit (no FFTW needed)
+    //   both    - run both and print a timing comparison
     //
     // Outputs are prefixed _wavelet_polyfit_* or _direct_polyfit_* so both
     // sets can coexist in the same directory.
@@ -1257,7 +1257,7 @@ int main(int argc, char* argv[])
                             kmax_r = &ff_pc->maximum_curvature;
                             kmin_r = &ff_pc->minimum_curvature;
 
-                            // Write the fundamental-form principal curvatures —
+                            // Write the fundamental-form principal curvatures -
                             // the alternative k_max / k_min this method produces.
                             const std::string o_kmax = pp.make_output_path(
                                 "_" + method_str + "_ff_maximum_curvature.tif");
@@ -1401,7 +1401,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 3.5 — The slope thresholds layers
+    // Step 3.5 - The slope thresholds layers
     // -------------------------------------------------------------------------
     if (bf["write_slope_threshold_layers"])
     {
@@ -1413,7 +1413,7 @@ int main(int argc, char* argv[])
         }
         else
         {
-            // Determine which method(s) to read slope_degrees from —
+            // Determine which method(s) to read slope_degrees from -
             // mirrors the methods that ran in Step 3.
             const std::string polyfit_method = sf["polyfit_method"];
             std::vector<std::string> methods;
@@ -1480,7 +1480,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 4 — MADk2 roughness
+    // Step 4 - MADk2 roughness
     // -------------------------------------------------------------------------
     if (bf["write_madk2_rasters"])
     {
@@ -1534,7 +1534,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 5 — Frangi filter
+    // Step 5 - Frangi filter
     // -------------------------------------------------------------------------
     if (bf["write_frangi_raster"] || bf["write_frangi_scale_raster"])
     {
@@ -1596,7 +1596,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 6 — Otsu threshold segmentation
+    // Step 6 - Otsu threshold segmentation
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_otsu_raster"])
@@ -1631,7 +1631,7 @@ int main(int argc, char* argv[])
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 7 — Hough line extraction
+    // Step 7 - Hough line extraction
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_hough_lines_raster"])
@@ -1681,7 +1681,7 @@ int main(int argc, char* argv[])
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 8 — Curvature skeleton (VEC threshold + plan curvature relief)
+    // Step 8 - Curvature skeleton (VEC threshold + plan curvature relief)
     // -------------------------------------------------------------------------
     if (bf["write_curvature_skeletons"])
     {
@@ -1767,7 +1767,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 9 — VEC adaptive thresholding (requires OpenCV)
+    // Step 9 - VEC adaptive thresholding (requires OpenCV)
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
     if (bf["write_vec_adaptive_threshold"])
@@ -1776,7 +1776,7 @@ int main(int argc, char* argv[])
         std::cout << "Lambda     : " << ff["curvature_skeleton_lambda_metres"] << " m\n";
         std::cout << "Block size : " << ifs["vec_adaptive_block_size_pixels"] << " px\n";
         std::cout << "C          : " << ff["vec_adaptive_C"] << "\n";
-        std::cout << "Pre-blur σ : " << ff["vec_adaptive_gaussian_sigma"] << "\n";
+        std::cout << "Pre-blur sigma : " << ff["vec_adaptive_gaussian_sigma"] << "\n";
 
         try
         {
@@ -1868,7 +1868,7 @@ int main(int argc, char* argv[])
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 10 — Cloth drape (upper envelope + incision)
+    // Step 10 - Cloth drape (upper envelope + incision)
     // -------------------------------------------------------------------------
     if (bf["write_cloth_envelope_raster"] ||
         bf["write_cloth_incision_raster"]  ||
@@ -1876,7 +1876,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Cloth drape ---\n";
         std::cout << "Rigidity          : " << ff["cloth_rigidity"]         << "\n";
-        std::cout << "Gravity           : " << ff["cloth_gravity"]          << " m/step²\n";
+        std::cout << "Gravity           : " << ff["cloth_gravity"]          << " m/step^2\n";
         std::cout << "Class threshold   : " << ff["cloth_class_threshold"]  << " m\n";
         std::cout << "Max iterations    : " << ifs["cloth_max_iterations"]  << "\n";
         std::cout << "Convergence tol   : " << ff["cloth_convergence_tol"]  << " m\n";
@@ -1934,7 +1934,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Parameter echo — always printed so runs are reproducible from the log
+    // Parameter echo - always printed so runs are reproducible from the log
     // -------------------------------------------------------------------------
     pp.print_parameters();
 

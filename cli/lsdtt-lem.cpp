@@ -427,10 +427,10 @@ int main(int argc, char* argv[])
     string_default_map["hillslope_model"] = "cidre";
     help_map["hillslope_model"] = {"string","cidre",
         "Hillslope transport model: linear, roering, roering_implicit, cidre, or adi.",
-        "linear: explicit FD of D·∇²z on the regular 4-connected grid (stable at any "
+        "linear: explicit FD of D*grad^2z on the regular 4-connected grid (stable at any "
         "typical LEM dt; no flow graph needed beyond channel ID). "
-        "roering: explicit FD of the Roering (1999) nonlinear law D·∇·[∇z/(1-(|∇z|/Sc)²)]; "
-        "auto-subcycles when near Sc (dt ≤ h²/(4·D·α_max)); enable_nonlinear_hillslopes "
+        "roering: explicit FD of the Roering (1999) nonlinear law D*grad*[gradz/(1-(|gradz|/Sc)^2)]; "
+        "auto-subcycles when near Sc (dt <= h^2/(4*D*alpha_max)); enable_nonlinear_hillslopes "
         "must be true or it reduces to linear FD. "
         "roering_implicit: unconditionally-stable backward-Euler solver for the same "
         "Roering law (Eigen sparse Cholesky / CG; adaptive sub-stepping; sub-critical "
@@ -666,14 +666,14 @@ int main(int argc, char* argv[])
     string_default_map["hillslope_ss_model"] = "roering";
     help_map["hillslope_ss_model"] = {"string","roering",
         "Hillslope steady-state solver: linear, roering, or cidre.",
-        "linear: Red-Black SOR solving D·∇²z = -U (standard Laplacian diffusion). "
-        "roering: Red-Black SOR solving D·∇·[∇z/(1-(|∇z|/Sc)²)] = -U (nonlinear). "
-        "Both SOR solvers converge in O(N) iterations with auto-tuned ω. "
+        "linear: Red-Black SOR solving D*grad^2z = -U (standard Laplacian diffusion). "
+        "roering: Red-Black SOR solving D*grad*[gradz/(1-(|gradz|/Sc)^2)] = -U (nonlinear). "
+        "Both SOR solvers converge in O(N) iterations with auto-tuned omega. "
         "cidre: pseudo-transient Cidre (Carretier 2016) iterated until steady state. "
         "Rebuilds the D-inf flow graph each iteration (Picard update of routing "
         "directions). The nonlinear flag for cidre is taken from enable_nonlinear_hillslopes. "
         "At steady state the nonlinear Cidre and Roering solvers produce the same "
-        "elevation field (Carretier et al. 2016 §3.3)."};
+        "elevation field (Carretier et al. 2016 Sec3.3)."};
 
     float_default_map["hillslope_sor_omega"] = 0.0f;
     help_map["hillslope_sor_omega"] = {"float","0",
@@ -732,7 +732,7 @@ int main(int argc, char* argv[])
     help_map["write_output_format"] = {"string","cog",
         "Output raster format: cog, gtiff, same_as_input, png.",
         "png: 8-bit greyscale PNG for quick visualisation. Float32 elevation is "
-        "normalised to 1-255 (nodata→0). A worldfile (.pgw) and GDAL PAM sidecar "
+        "normalised to 1-255 (nodata->0). A worldfile (.pgw) and GDAL PAM sidecar "
         "(.png.aux.xml) are written alongside for georeferencing. PNG cannot store "
         "float32 values or embed a CRS natively, so use cog/gtiff for analysis."};
 
@@ -969,7 +969,7 @@ int main(int argc, char* argv[])
         }
         else
         {
-            // flat (default) – all zeros
+            // flat (default) - all zeros
             const std::size_t n = static_cast<std::size_t>(nr) * nc;
             std::vector<float>   data(n, 0.0f);
             std::vector<uint8_t> mask(n, 1);
@@ -1012,7 +1012,7 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Optional explicit channel mask (overrides the drainage-area Dirichlet set
-    // for the hillslope step; §8).  Loaded from read_path + channel_mask_fname.
+    // for the hillslope step; Sec8).  Loaded from read_path + channel_mask_fname.
     // -------------------------------------------------------------------------
     if (!sf["channel_mask_fname"].empty())
     {
@@ -1212,7 +1212,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Analytical steady-state (optional — exits after writing output)
+    // Analytical steady-state (optional - exits after writing output)
     // -------------------------------------------------------------------------
     if (bf["run_steady_state"])
     {
@@ -1249,7 +1249,7 @@ int main(int argc, char* argv[])
         lsdtt::lsdtt_fluvial_steady_state_result ss_result;
         std::vector<double> area_d;  // updated on each cycle; used by hillslope step
 
-        // Working copy of the DEM — updated between cycles.
+        // Working copy of the DEM - updated between cycles.
         lsdtt::lsdtt_raster_cpu cycle_dem = dem;
 
         for (int cycle = 1; cycle <= n_cycles; ++cycle)
@@ -1430,12 +1430,12 @@ int main(int argc, char* argv[])
                 if (hs_solver == "cidre")
                     hs_result = lsdtt::compute_cidre_hillslope_steady_state(
                         ss_result.elevation, is_channel, hs_opts);
-                else  // "linear" or "roering" — both use the SOR solver
+                else  // "linear" or "roering" - both use the SOR solver
                     hs_result = lsdtt::compute_hillslope_steady_state(
                         ss_result.elevation, is_channel, hs_opts);
 
                 std::cout << "  Iterations: " << hs_result.n_iterations
-                          << "  max|Δz|: " << hs_result.final_residual
+                          << "  max|Deltaz|: " << hs_result.final_residual
                           << "  converged: " << (hs_result.converged ? "yes" : "NO") << "\n";
 
                 if (!hs_result.converged)
@@ -1527,7 +1527,7 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Pixels held at fixed elevation through every step: the open-edge boundary
-    // pixels, plus — when hold_channel_mask_fixed is set — the explicit channel
+    // pixels, plus - when hold_channel_mask_fixed is set - the explicit channel
     // mask.  Holding the channels fixed freezes the network, so uplift cannot
     // lift it away from the hillslopes that are relaxing toward it.  This is
     // built after the enforce_baselevel calls above, which must only ever snap
@@ -1689,7 +1689,7 @@ int main(int argc, char* argv[])
                       << " t=" << total_time << "\n"
                       << "  what(): " << e.what() << "\n";
             std::cerr.flush();
-            std::terminate();  // hard stop — avoids recursive throw
+            std::terminate();  // hard stop - avoids recursive throw
         }
         catch (...)
         {

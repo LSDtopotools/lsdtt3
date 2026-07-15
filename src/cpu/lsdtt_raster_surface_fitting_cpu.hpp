@@ -32,7 +32,7 @@
 //
 // Related fitting routines elsewhere
 // ------------------------------------
-// lsdtt_raster_spectral_cpu  — spectral (Fourier / wavelet) surface fitting.
+// lsdtt_raster_spectral_cpu  - spectral (Fourier / wavelet) surface fitting.
 //   Includes wavelet_quadratic_fit() for local polynomial fitting via the
 //   spectral domain, and is the intended home for any future routines that
 //   recover long-wavelength background surfaces from masked or gapped data
@@ -66,10 +66,10 @@ struct lsdtt_plane_coefficients
 // -----------------------------------------------------------------------------
 // lsdtt_plane_fit_result
 //
-// valid        — false if the fit could not be performed (too few pixels,
+// valid        - false if the fit could not be performed (too few pixels,
 //                degenerate geometry, or RANSAC found no adequate inlier set)
-// rmse         — root mean square residual of included pixels (metres)
-// n_pixels_used — number of pixels used in the final fit
+// rmse         - root mean square residual of included pixels (metres)
+// n_pixels_used - number of pixels used in the final fit
 // -----------------------------------------------------------------------------
 struct lsdtt_plane_fit_result
 {
@@ -100,7 +100,7 @@ lsdtt_plane_fit_result fit_plane_to_mask(
 //
 // inlier_tolerance
 //   A pixel is an inlier if |z - z_plane(x,y)| <= inlier_tolerance (metres).
-//   Typical values: 5–50 m depending on DEM resolution and expected relief of
+//   Typical values: 5-50 m depending on DEM resolution and expected relief of
 //   the surface being fitted.
 //
 // max_iterations
@@ -126,7 +126,7 @@ lsdtt_plane_fit_result fit_plane_to_mask_ransac(
 // evaluate_fitted_plane
 //
 // Evaluate z = a*x + b*y + c at the centre of every pixel.
-// All output pixels are marked valid — the plane is defined everywhere.
+// All output pixels are marked valid - the plane is defined everywhere.
 // The output raster inherits meta (extent, resolution, CRS) unchanged.
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu evaluate_fitted_plane(
@@ -187,7 +187,7 @@ std::map<int, lsdtt_plane_fit_result> fit_planes_to_labels(
 //   z_yy  = 2*b    (north-south curvature)
 //   z_xy  = c      (mixed / twist)
 //
-// This means the curvature of the fitted surface is the same everywhere —
+// This means the curvature of the fitted surface is the same everywhere -
 // there are no local cusps or abrupt curvature changes that can arise from
 // higher-degree fits or spline-based approaches.  It is inherently a
 // "gentle curve" model.  The convenience function poly2_max_principal_curvature
@@ -217,10 +217,10 @@ struct lsdtt_poly2_coefficients
 // -----------------------------------------------------------------------------
 // lsdtt_poly2_fit_result
 //
-// valid         — false if the fit could not be performed (fewer than 6
+// valid         - false if the fit could not be performed (fewer than 6
 //                 pixels, degenerate geometry, or singular normal equations)
-// rmse          — root mean square residual over fitted pixels (metres)
-// n_pixels_used — number of pixels included in the fit
+// rmse          - root mean square residual over fitted pixels (metres)
+// n_pixels_used - number of pixels included in the fit
 // -----------------------------------------------------------------------------
 struct lsdtt_poly2_fit_result
 {
@@ -276,7 +276,7 @@ lsdtt_raster_cpu residual_from_fitted_poly2(
 //
 // whose eigenvalues are
 //
-//   λ = (a + b) ± sqrt( (a - b)^2 + c^2 )
+//   lambda = (a + b) +/- sqrt( (a - b)^2 + c^2 )
 //
 // k_max = (a + b) + sqrt( (a - b)^2 + c^2 )
 //

@@ -15,12 +15,12 @@
 //
 // Relationship to lsdtt_flowinfo_cpu
 // -----------------------------------
-//   lsdtt_flowinfo_cpu  — D8 only. One receiver per cell. Flow graph is a
+//   lsdtt_flowinfo_cpu  - D8 only. One receiver per cell. Flow graph is a
 //                         forest of trees. O(1) upslope-set access via
 //                         s_vector. Use for channel network analysis, chi,
 //                         knickpoint detection.
 //
-//   lsdtt_flowgraph_cpu — D-infinity / MFD. Multiple weighted receivers per
+//   lsdtt_flowgraph_cpu - D-infinity / MFD. Multiple weighted receivers per
 //                         cell. Flow graph is a DAG. No s_vector (upslope
 //                         sets overlap and are fractional). Use for
 //                         distributed-flow analyses: sediment flux,
@@ -29,29 +29,29 @@
 //
 // Routing methods
 // ---------------
-//   d_infinity — Tarboton (1997). Each cell routes to at most two neighbours
+//   d_infinity - Tarboton (1997). Each cell routes to at most two neighbours
 //                (one cardinal, one diagonal) based on the steepest triangular
 //                facet. Flow is partitioned by the angle of the steepest
 //                descent direction within the best facet.
 //                Facet computation uses atan2 for numerical stability (avoids
 //                division-by-zero when the cardinal slope component is zero).
 //
-//   mfd        — Quinn et al. (1991) / Freeman (1991). Flow partitioned among
+//   mfd        - Quinn et al. (1991) / Freeman (1991). Flow partitioned among
 //                all eight downslope neighbours weighted by slope^exponent.
 //                exponent = 1.0 (Quinn) or 1.1 (Freeman); configurable via
 //                lsdtt_flowgraph_options::mfd_exponent.
 //
-// Data model (CSR — compressed sparse row)
+// Data model (CSR - compressed sparse row)
 // -----------------------------------------
 //   Receivers and weights are stored compactly:
-//     receiver_offsets_  — n_cells+1 entry prefix array; cell i's receivers
+//     receiver_offsets_  - n_cells+1 entry prefix array; cell i's receivers
 //                          span [receiver_offsets_[i], receiver_offsets_[i+1])
-//     receiver_indices_  — flat array of receiving cell flat-indices
-//     receiver_weights_  — corresponding fractional weights; sum to 1.0 per
+//     receiver_indices_  - flat array of receiving cell flat-indices
+//     receiver_weights_  - corresponding fractional weights; sum to 1.0 per
 //                          valid cell that has at least one receiver
 //
-//   This generalises cleanly to D8 (one edge per cell), D-infinity (≤ 2),
-//   and MFD (≤ 8).
+//   This generalises cleanly to D8 (one edge per cell), D-infinity (<= 2),
+//   and MFD (<= 8).
 //
 // Topological order
 // -----------------
@@ -73,14 +73,14 @@
 // Boundary conditions
 // -------------------
 //   String of four characters (north / east / south / west):
-//     'o' — open: edge cells route among their in-bounds neighbours only;
+//     'o' - open: edge cells route among their in-bounds neighbours only;
 //           if all in-bounds neighbours are higher they become sinks.
-//     'n' — no-flux placeholder. In the current D-infinity / MFD implementation
+//     'n' - no-flux placeholder. In the current D-infinity / MFD implementation
 //           this has the same practical effect as 'o': out-of-bounds neighbours
 //           are simply unavailable as receivers.
-//     'p' — periodic: neighbours wrap to the opposite edge.
-//     'b' — forced outlet: all cells on this edge are forced to be sinks.
-//   Periodic pairs must be symmetric (north↔south, east↔west).
+//     'p' - periodic: neighbours wrap to the opposite edge.
+//     'b' - forced outlet: all cells on this edge are forced to be sinks.
+//   Periodic pairs must be symmetric (north<->south, east<->west).
 //
 // Donor count
 // -----------
@@ -337,8 +337,8 @@ public:
     // the receiver graph using a forward push over topological_order_.
     //
     // cell_weights: one value per flat cell index (row * n_cols + col).
-    //   Empty  → each valid cell contributes cell_size^2 (its own area).
-    //   Sized  → caller-supplied weights; nodata cells should have weight 0.
+    //   Empty  -> each valid cell contributes cell_size^2 (its own area).
+    //   Sized  -> caller-supplied weights; nodata cells should have weight 0.
     //
     // Returns a vector of length n_rows*n_cols.  Nodata cells hold 0.
     // ------------------------------------------------------------------
@@ -403,7 +403,7 @@ private:
         bool south_periodic = false;
         bool east_periodic  = false;
         bool west_periodic  = false;
-        bool north_forced   = false;  // 'b' — whole edge forced to be outlet
+        bool north_forced   = false;  // 'b' - whole edge forced to be outlet
         bool south_forced   = false;
         bool east_forced    = false;
         bool west_forced    = false;
@@ -453,7 +453,7 @@ private:
     // CSR receiver graph.
     // Cell i's receivers span:
     //   receiver_indices_[ receiver_offsets_[i] .. receiver_offsets_[i+1] )
-    // Corresponding weights sum to 1.0 for each valid cell with ≥ 1 receiver.
+    // Corresponding weights sum to 1.0 for each valid cell with >= 1 receiver.
     std::vector<std::int64_t> receiver_offsets_;   // length n_cells_ + 1
     std::vector<std::int64_t> receiver_indices_;   // length n_edges
     std::vector<float>        receiver_weights_;   // length n_edges
@@ -461,7 +461,7 @@ private:
     // Topological order: sources first, outlets last.
     std::vector<std::int64_t> topological_order_;
 
-    // Donor count per cell.  uint8_t sufficient — max 8 donors on any grid.
+    // Donor count per cell.  uint8_t sufficient - max 8 donors on any grid.
     std::vector<std::uint8_t> donor_count_;
 
     // D-infinity diagnostics.  Length n_cells_; nodata value for non-dinf
@@ -476,14 +476,14 @@ private:
 // build_reverse_levels
 //   Returns levels[0] = outlet nodes, levels.back() = headwater nodes.
 //   Each level contains mutually independent nodes in a reverse topological
-//   sweep (outlet → headwater). Used by stream-power incision and the
+//   sweep (outlet -> headwater). Used by stream-power incision and the
 //   fluvial steady-state solver.
 //   Depth = BFS distance from the nearest outlet along the reversed receiver DAG.
 //
 // build_forward_levels
 //   Returns levels[0] = ridge/headwater nodes, levels.back() = outlet nodes.
 //   Each level contains mutually independent nodes in a forward topological
-//   sweep (headwater → outlet). Used by hillslope transport.
+//   sweep (headwater -> outlet). Used by hillslope transport.
 //   Depth = BFS distance from the nearest headwater along the forward DAG.
 // -----------------------------------------------------------------------------
 std::vector<std::vector<std::int64_t>>

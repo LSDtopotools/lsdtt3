@@ -680,7 +680,7 @@ std::int32_t lsdtt_junction_network_cpu::junction_upstream_of_flat(
     require_built();
  
     // ------------------------------------------------------------------
-    // Step 1 — flat must be on the channel.
+    // Step 1 - flat must be on the channel.
     // ------------------------------------------------------------------
     if (!is_flat_in_range(flat))
     {
@@ -699,7 +699,7 @@ std::int32_t lsdtt_junction_network_cpu::junction_upstream_of_flat(
     }
  
     // ------------------------------------------------------------------
-    // Step 2 — if flat is already a junction, return it immediately.
+    // Step 2 - if flat is already a junction, return it immediately.
     // ------------------------------------------------------------------
     {
         const std::int32_t jid = junction_id_of_flat_.data()[flat];
@@ -710,7 +710,7 @@ std::int32_t lsdtt_junction_network_cpu::junction_upstream_of_flat(
     }
  
     // ------------------------------------------------------------------
-    // Step 3 — walk upstream, one channel donor at a time.
+    // Step 3 - walk upstream, one channel donor at a time.
     //
     // We use flow_->get_donors() for the full donor list, then keep only
     // those that are also channel pixels. On any non-junction channel pixel
@@ -746,7 +746,7 @@ std::int32_t lsdtt_junction_network_cpu::junction_upstream_of_flat(
  
         if (n_channel_donors == 0)
         {
-            // Reached a channel head with no upstream junction — this
+            // Reached a channel head with no upstream junction - this
             // should not happen on a well-formed network (sources are
             // themselves junctions), but guard against corrupt state.
             throw std::runtime_error(
@@ -2015,9 +2015,9 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
     //
     // For junction j we trace pixel-by-pixel from junction_flat_[j] along
     // receiver_of_unchecked() until we either:
-    //   (a) step onto a pixel whose junction_id_of_flat_ >= 0  → downstream junction
+    //   (a) step onto a pixel whose junction_id_of_flat_ >= 0  -> downstream junction
     //   (b) find flow_->is_outlet_unchecked() is true on the current pixel
-    //       → the current pixel is the outlet and has no receiver.
+    //       -> the current pixel is the outlet and has no receiver.
     //
     // The resulting polyline includes both the upstream junction pixel and the
     // downstream junction pixel (or the outlet pixel).

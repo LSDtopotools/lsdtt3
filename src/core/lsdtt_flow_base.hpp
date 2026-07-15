@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// INFRASTRUCTURE FILE — you probably do not need to include this directly.
+// INFRASTRUCTURE FILE - you probably do not need to include this directly.
 //
 // If you are writing analysis code that uses flow relationships, include
 // lsdtt_flowinfo_cpu.hpp instead and work with lsdtt_flowinfo directly.
@@ -26,17 +26,17 @@
 //
 // The three flow infrastructure files and what each does:
 //
-//   lsdtt_types.hpp       — shared types (std::int64_t, sentinel values,
+//   lsdtt_types.hpp       - shared types (std::int64_t, sentinel values,
 //                           lsdtt_flat_index_slice).
 //                           Included by both this file and lsdtt_flowinfo_cpu.hpp
 //                           to avoid a circular include dependency.
 //
-//   lsdtt_flow_base.hpp   — THIS FILE. Abstract interface (pure virtual base
+//   lsdtt_flow_base.hpp   - THIS FILE. Abstract interface (pure virtual base
 //                           class) that lsdtt_flowinfo_cpu implements.
 //                           Exposes the same query API as lsdtt_flowinfo.
 //                           Also has a type for lsdtt_flowinfo_options.
 //
-//   lsdtt_flow_base.cpp   — Lives in src/cpu/ (not src/core/) because it
+//   lsdtt_flow_base.cpp   - Lives in src/cpu/ (not src/core/) because it
 //   (in src/cpu/)           instantiates lsdtt_flowinfo_cpu. Contains only
 //                           make_flow_base(). If you add a GPU backend, add
 //                           the gpu_available() branch there.
@@ -48,7 +48,7 @@
 // for the flow routing layer. lsdtt_flowinfo_cpu is the CPU implementation;
 // a future lsdtt_flowinfo_gpu will be the GPU implementation.
 //
-// std::int64_t and all sentinel values come from lsdtt_types.hpp —
+// std::int64_t and all sentinel values come from lsdtt_types.hpp -
 // the single source of truth for flow routing types.
 //
 // Thread safety:
@@ -144,7 +144,7 @@ public:
     [[nodiscard]] virtual int col_from_flat_unchecked(
         std::int64_t flat) const noexcept = 0;
 
-    // Checked variants — throw on out-of-bounds
+    // Checked variants - throw on out-of-bounds
     [[nodiscard]] virtual std::int64_t flat_index(int row, int col) const = 0;
     [[nodiscard]] virtual int             row_from_flat(std::int64_t)     const = 0;
     [[nodiscard]] virtual int             col_from_flat(std::int64_t)     const = 0;
@@ -163,7 +163,7 @@ public:
     // This checks if cell is next to an invalid cell
     [[nodiscard]] virtual bool is_influenced_by_invalid(std::int64_t flat) const = 0;
 
-    // Checked variants — throw if cell is invalid or object not built
+    // Checked variants - throw if cell is invalid or object not built
     [[nodiscard]] virtual bool             is_outlet(std::int64_t)       const = 0;
     [[nodiscard]] virtual std::int64_t  receiver_of(std::int64_t)     const = 0;
     [[nodiscard]] virtual std::uint8_t     receiver_dir_of(std::int64_t) const = 0;
@@ -174,7 +174,7 @@ public:
     //
     // upslope_nodes() returns a zero-copy slice valid for the lifetime of
     // this engine object. The GPU backend may materialise the slice on demand
-    // (copying from device memory) — callers should not retain slices across
+    // (copying from device memory) - callers should not retain slices across
     // calls or across engine lifetime.
     // -------------------------------------------------------------------------
     [[nodiscard]] virtual std::int64_t    s_vector_start_unchecked(std::int64_t) const noexcept = 0;
@@ -219,12 +219,12 @@ public:
     //
     // Two conventions are used throughout:
     //
-    //   "include self"  — the pixel in question is counted as part of its own
+    //   "include self"  - the pixel in question is counted as part of its own
     //                     upslope basin (s_vector_size includes the cell itself).
     //                     This is the standard hydrological drainage-area
     //                     convention: every cell contributes its own area.
     //
-    //   "exclude outlet" — the pixel in question is NOT counted (s_vector_size - 1).
+    //   "exclude outlet" - the pixel in question is NOT counted (s_vector_size - 1).
     //                     Useful when you want only the area/count strictly
     //                     upstream of a cell, not including the cell itself.
     //                     Headwater pixels return 0 under this convention.
@@ -237,7 +237,7 @@ public:
     // manage a loader object.
     // -------------------------------------------------------------------------
 
-    // D8 flow direction — lsdtt internal direction codes:
+    // D8 flow direction - lsdtt internal direction codes:
     //   7 0 1
     //   6 x 2
     //   5 4 3
@@ -249,7 +249,7 @@ public:
         raster_output_format format = raster_output_format::cog
     ) const = 0;
 
-    // Number of contributing pixels — include self convention.
+    // Number of contributing pixels - include self convention.
     // Value at each valid cell = total pixels draining through it,
     // including the cell itself (s_vector_size).
     [[nodiscard]] virtual lsdtt_raster_result get_n_contributing_pixels_raster() const = 0;
@@ -258,7 +258,7 @@ public:
         raster_output_format format = raster_output_format::cog
     ) const = 0;
 
-    // Number of contributing pixels — exclude self convention.
+    // Number of contributing pixels - exclude self convention.
     // Value = pixels strictly upstream (s_vector_size - 1).
     // Headwater pixels return 0.
     [[nodiscard]] virtual lsdtt_raster_result get_n_contributing_pixels_exclude_outlet_raster() const = 0;
@@ -267,7 +267,7 @@ public:
         raster_output_format format = raster_output_format::cog
     ) const = 0;
 
-    // Drainage area — include self convention.
+    // Drainage area - include self convention.
     // Value = n_contributing_pixels * cell_size^2  (square map units).
     [[nodiscard]] virtual lsdtt_raster_result get_drainage_area_raster() const = 0;
     virtual void write_drainage_area_raster(
@@ -288,7 +288,7 @@ public:
         const std::string& drainage_area_field = "drainage_area"
     ) const;
 
-    // Drainage area — exclude self convention.
+    // Drainage area - exclude self convention.
     // Value = (n_contributing_pixels - 1) * cell_size^2  (square map units).
     // Headwater pixels return 0.0.
     [[nodiscard]] virtual lsdtt_raster_result get_drainage_area_exclude_outlet_raster() const = 0;
@@ -300,7 +300,7 @@ public:
     // -------------------------------------------------------------------------
     // Upslope accumulation of a secondary raster
     //
-    // Both methods perform a single O(N) reverse-s_vector pass (headwaters →
+    // Both methods perform a single O(N) reverse-s_vector pass (headwaters ->
     // outlets).  values and valid_mask must be flat-indexed with the same
     // length as the DEM (n_rows * n_cols).
     //
@@ -308,9 +308,9 @@ public:
     // still propagate accumulated values received from further upstream.
     //
     // include_self (default true):
-    //   true  — the pixel's own value is included (standard drainage-area
+    //   true  - the pixel's own value is included (standard drainage-area
     //           convention: every cell counts itself).
-    //   false — strictly upstream values only; headwaters return 0.
+    //   false - strictly upstream values only; headwaters return 0.
     //
     // get_upslope_sum_raster:
     //   Output pixel = sum of values[] over its entire upslope set.
@@ -392,7 +392,7 @@ public:
     // -------------------------------------------------------------------------
     // Ridge-relative height and distance
     //
-    // For every pixel, find the farthest upslope headwater — the pixel in its
+    // For every pixel, find the farthest upslope headwater - the pixel in its
     // upslope set that has the longest D8 flow path back to the current pixel.
     //
     // get_height_to_farthest_ridge_raster:
@@ -420,7 +420,7 @@ public:
     // (the connectivity index is undefined at channel cells).
     //
     // If valid_mask[i] == 0 the pixel contributes 0 to the running sum but the
-    // path continues through it — callers should pre-clip nodata inputs to a safe
+    // path continues through it - callers should pre-clip nodata inputs to a safe
     // value and set valid_mask only where the result should also be nodata.
     //
     // values, valid_mask and sink_mask must have flat-index size == n_rows*n_cols.
@@ -458,7 +458,7 @@ public:
 
 
     // -------------------------------------------------------------------------
-    // Sentinel values — defined in lsdtt_types.hpp
+    // Sentinel values - defined in lsdtt_types.hpp
     // -------------------------------------------------------------------------
     static constexpr std::int64_t nodata_receiver = lsdtt::k_nodata_receiver;
     static constexpr std::int64_t outlet_receiver  = lsdtt::k_outlet_receiver;

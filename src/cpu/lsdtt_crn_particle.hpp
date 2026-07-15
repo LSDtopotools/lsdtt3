@@ -6,7 +6,7 @@
 namespace lsdtt
 {
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // lsdtt_crn_particle
 //
 // Lightweight particle that tracks cosmogenic nuclide concentrations.
@@ -19,17 +19,17 @@ namespace lsdtt
 // Steady-state depth-integrated formula (all pathways i = 0..3):
 //
 //   Surface (d_top == d_bottom == d):
-//     C = P0 · Σᵢ F[i]·Γ[i] · exp(-d/Γ[i]) / (ε + Γ[i]·λ)
+//     C = P0 * Sigma_i F[i]*Gamma[i] * exp(-d/Gamma[i]) / (epsilon + Gamma[i]*lambda)
 //
 //   Depth-integrated [d_top, d_bottom]:
-//     C = P0/(d_bot-d_top) · Σᵢ F[i]·Γ[i]² / (ε + Γ[i]·λ) ·
-//              [exp(-d_top/Γ[i]) - exp(-d_bot/Γ[i])]
+//     C = P0/(d_bot-d_top) * Sigma_i F[i]*Gamma[i]^2 / (epsilon + Gamma[i]*lambda) *
+//              [exp(-d_top/Gamma[i]) - exp(-d_bot/Gamma[i])]
 //
 // F[i] values carry the shielding (via scale_F_values), so no S_t multiplier
 // is needed here (S_t = 1 after reset_scaling).
 //
-// Units: concentration in atoms g⁻¹, erosion_rate in g cm⁻² yr⁻¹.
-// ─────────────────────────────────────────────────────────────────────────────
+// Units: concentration in atoms g^-^1, erosion_rate in g cm^-^2 yr^-^1.
+// 
 class lsdtt_crn_particle
 {
 public:
@@ -39,10 +39,10 @@ public:
     explicit lsdtt_crn_particle(double d_eff_g_cm2)
         : conc_10Be_(0.0), conc_26Al_(0.0), conc_14C_(0.0), d_eff_(d_eff_g_cm2) {}
 
-    // ── Steady-state concentration updates ───────────────────────────────────
-    // erosion_rate : effective erosion rate (g cm⁻² yr⁻¹, > 0)
+    //  Steady-state concentration updates 
+    // erosion_rate : effective erosion rate (g cm^-^2 yr^-^1, > 0)
     // params       : CRN parameters with F values already scaled by shielding
-    // d_eff_top    : effective depth of sample top (g cm⁻²), 0 for surface
+    // d_eff_top    : effective depth of sample top (g cm^-^2), 0 for surface
     // d_eff_bottom : effective depth of sample bottom; equal to d_eff_top for
     //               a point sample, > d_eff_top for a depth-integrated sample
 
@@ -79,7 +79,7 @@ public:
                                d_eff_top, d_eff_bottom);
     }
 
-    // ── SS initialiser using tracked depth ───────────────────────────────────
+    //  SS initialiser using tracked depth 
     // Computes steady-state for all three nuclides at the particle's current d_eff_.
     void init_ss_all(double erosion_rate, const lsdtt_crn_parameters& params)
     {
@@ -91,13 +91,13 @@ public:
                                 params, &lsdtt_crn_parameters::get_F_14C,  d_eff_, d_eff_);
     }
 
-    // ── Transient update ─────────────────────────────────────────────────────
-    // Advances concentrations by dt (yr) at constant erosion rate eff_erate (g cm⁻² yr⁻¹).
+    //  Transient update 
+    // Advances concentrations by dt (yr) at constant erosion rate eff_erate (g cm^-^2 yr^-^1).
     // Uses the analytic solution:
-    //   C_new = C_old * exp(-λ*dt)
-    //         + P0 * Σᵢ Fᵢ * exp(-d/Γᵢ) * [exp(ε*dt/Γᵢ) - exp(-λ*dt)] / (ε/Γᵢ + λ)
+    //   C_new = C_old * exp(-lambda*dt)
+    //         + P0 * Sigma_i F_i * exp(-d/Gamma_i) * [exp(epsilon*dt/Gamma_i) - exp(-lambda*dt)] / (epsilon/Gamma_i + lambda)
     // where d = d_eff_ (the depth at the START of the time step).
-    // Depth is NOT updated here — call remove_mass() after.
+    // Depth is NOT updated here - call remove_mass() after.
     void update_conc(double dt, double eff_erate, const lsdtt_crn_parameters& params)
     {
         double d0 = d_eff_;   // capture starting depth before any depth change
@@ -112,9 +112,9 @@ public:
                                   params, &lsdtt_crn_parameters::get_F_14C);
     }
 
-    // ── Depth management ─────────────────────────────────────────────────────
+    //  Depth management 
     // Remove depth_m metres of material from the surface (particle moves up).
-    // density_kg_m3: rock density; converts metres to effective depth (g/cm²).
+    // density_kg_m3: rock density; converts metres to effective depth (g/cm^2).
     void remove_mass(double depth_m, double density_kg_m3)
     {
         d_eff_ -= depth_m * density_kg_m3 * 0.1;
@@ -126,7 +126,7 @@ public:
     void set_conc_26Al(double c) { conc_26Al_ = c; }
     void set_conc_14C(double c)  { conc_14C_  = c; }
 
-    // ── Getters ──────────────────────────────────────────────────────────────
+    //  Getters 
     double get_conc_10Be()       const { return conc_10Be_; }
     double get_conc_26Al()       const { return conc_26Al_; }
     double get_conc_14C()        const { return conc_14C_;  }
@@ -134,15 +134,15 @@ public:
 
 private:
     double conc_10Be_, conc_26Al_, conc_14C_;
-    double d_eff_;   // current effective depth (g cm⁻²)
+    double d_eff_;   // current effective depth (g cm^-^2)
 
     using FGetter = double (lsdtt_crn_parameters::*)(int) const;
 
-    // Advance one nuclide concentration by dt yr at erosion rate eff_erate (g/cm²/yr).
-    // d0: effective depth at the START of the time step (g/cm²).
-    // Analytic solution of dC/dt = P0·Σᵢ Fᵢ·exp(-d(t)/Γᵢ) - λ·C  with d(t)=d0-ε·t:
-    //   C(dt) = C_old·exp(-λ·dt)
-    //         + P0·Σᵢ Fᵢ·exp(-d0/Γᵢ)·exp(-λ·dt)·[exp(ε·dt/Γᵢ)-1] / (ε/Γᵢ+λ)
+    // Advance one nuclide concentration by dt yr at erosion rate eff_erate (g/cm^2/yr).
+    // d0: effective depth at the START of the time step (g/cm^2).
+    // Analytic solution of dC/dt = P0*Sigma_i F_i*exp(-d(t)/Gamma_i) - lambda*C  with d(t)=d0-epsilon*t:
+    //   C(dt) = C_old*exp(-lambda*dt)
+    //         + P0*Sigma_i F_i*exp(-d0/Gamma_i)*exp(-lambda*dt)*[exp(epsilon*dt/Gamma_i)-1] / (epsilon/Gamma_i+lambda)
     static double advance_conc(double C_old, double dt, double eff_erate, double d0,
                                double P0, double lambda,
                                const lsdtt_crn_parameters& params, FGetter get_F)
@@ -152,10 +152,10 @@ private:
         for (int i = 0; i < 4; ++i)
         {
             double G     = params.get_Gamma(i);
-            double alpha = eff_erate / G;    // ε/Γᵢ  (yr⁻¹, positive)
+            double alpha = eff_erate / G;    // epsilon/Gamma_i  (yr^-^1, positive)
             double denom = alpha + lambda;
             if (denom <= 0.0) continue;
-            // exp(ε·dt/Γᵢ) - 1
+            // exp(epsilon*dt/Gamma_i) - 1
             double exp_prod_m1 = std::exp(alpha * dt) - 1.0;
             sum += (params.*get_F)(i) * std::exp(-d0 / G) * exp_prod_m1 / denom;
         }

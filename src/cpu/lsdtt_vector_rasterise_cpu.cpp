@@ -84,7 +84,7 @@ GDALDataset* make_mem_byte_raster(int nrows, int ncols, const double gt[6])
 }
 
 // Opens `vector_path` (read-only), returns its first layer.
-// `ds_out` receives ownership of the GDALDataset — caller must GDALClose it.
+// `ds_out` receives ownership of the GDALDataset - caller must GDALClose it.
 // Throws on failure.
 OGRLayer* open_first_layer(const std::string& vector_path, GDALDataset*& ds_out)
 {
@@ -115,7 +115,7 @@ OGRLayer* open_first_layer(const std::string& vector_path, GDALDataset*& ds_out)
 }
 
 // Opens `vector_path` (read-only), returns a named layer.
-// `ds_out` receives ownership of the GDALDataset — caller must GDALClose it.
+// `ds_out` receives ownership of the GDALDataset - caller must GDALClose it.
 // Throws on failure.
 OGRLayer* open_named_layer(
     const std::string& vector_path,
@@ -170,7 +170,7 @@ bool is_line_type(OGRwkbGeometryType t)
 }
 
 // Collects geometry pointers from `layer`, optionally transforming with `ct`.
-// Returns cloned OGRGeometry* objects — caller owns them. Features whose
+// Returns cloned OGRGeometry* objects - caller owns them. Features whose
 // geometry is missing or of the wrong wkb class are skipped.
 // max_features == 0 means collect all; otherwise stop after max_features.
 std::vector<OGRGeometry*> collect_geometries(
@@ -333,7 +333,7 @@ ct_ptr make_ct_if_needed(
     if (!ct)
     {
         throw std::runtime_error(
-            "lsdtt_vector_rasterise: CRS transform failed — "
+            "lsdtt_vector_rasterise: CRS transform failed - "
             "check that vector and raster have compatible projections");
     }
 

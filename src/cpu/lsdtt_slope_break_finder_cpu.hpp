@@ -158,13 +158,13 @@ struct slope_break_result
 // find_slope_breaks
 //
 // Parameters:
-//   dem     — input DEM
-//   mask    — binary flat mask (1 = flat pixel, 0 = background / nodata)
-//   request — parameters controlling polyfit and progressive Canny
+//   dem     - input DEM
+//   mask    - binary flat mask (1 = flat pixel, 0 = background / nodata)
+//   request - parameters controlling polyfit and progressive Canny
 //
 // Throws:
-//   std::invalid_argument  — empty or non-descending canny_thresholds
-//   std::runtime_error     — OpenCV unavailable, polyfit failure
+//   std::invalid_argument  - empty or non-descending canny_thresholds
+//   std::runtime_error     - OpenCV unavailable, polyfit failure
 // =============================================================================
 slope_break_result find_slope_breaks(
     const lsdtt_raster_cpu&      dem,
@@ -186,13 +186,13 @@ slope_break_result find_slope_breaks(
 // Candidates are sorted by longest-segment-first, then by elevation difference.
 // Each accepted bridge is routed using a least-cost A* path through a per-bridge
 // support raster:
-//   support = max(0, 1 − |DEM − z_target| / elevation_tolerance_metres)
+//   support = max(0, 1 - |DEM - z_target| / elevation_tolerance_metres)
 // so the path naturally threads along the contour at z_target.
 // =============================================================================
 struct elevation_connect_request
 {
     double search_radius_metres       = 200.0;  // maximum straight-line gap to bridge (m)
-    double elevation_tolerance_metres =   2.0;  // |elev_a − elev_b| must be ≤ this
+    double elevation_tolerance_metres =   2.0;  // |elev_a - elev_b| must be <= this
     bool   connect_same_component     = false;  // allow bridging within a single component
 
     // Routing parameters (forwarded to route_skeleton_endpoint_bridges_least_cost)
@@ -207,19 +207,19 @@ struct elevation_connect_request
 struct elevation_connect_result
 {
     lsdtt_raster_cpu bridge_mask;        // 1 on newly inserted bridge pixels
-    lsdtt_raster_cpu skeleton_connected; // original skeleton ∪ bridge_mask
+    lsdtt_raster_cpu skeleton_connected; // original skeleton union bridge_mask
 };
 
 // =============================================================================
 // connect_skeleton_by_elevation
 //
 // Parameters:
-//   skeleton — 1-pixel binary skeleton (1 = foreground)
-//   dem      — input DEM (same grid as skeleton)
-//   request  — search and tolerance parameters
+//   skeleton - 1-pixel binary skeleton (1 = foreground)
+//   dem      - input DEM (same grid as skeleton)
+//   request  - search and tolerance parameters
 //
 // Throws:
-//   std::invalid_argument — mismatched grid dimensions
+//   std::invalid_argument - mismatched grid dimensions
 // =============================================================================
 elevation_connect_result connect_skeleton_by_elevation(
     const lsdtt_raster_cpu&          skeleton,
@@ -233,10 +233,10 @@ elevation_connect_result connect_skeleton_by_elevation(
 //
 // Slope break detection using adaptive thresholding of vertical_excess_curvature.
 // Replaces the progressive Canny annealing pipeline with:
-//   1. Direct polyfit → vertical_excess_curvature masked to flat pixels
-//   2. Adaptive threshold (mean or Gaussian) → binary mask
-//   3. Optional morphological closing → seal small gaps before thinning
-//   4. Zhang–Suen thinning → 1-pixel skeleton
+//   1. Direct polyfit -> vertical_excess_curvature masked to flat pixels
+//   2. Adaptive threshold (mean or Gaussian) -> binary mask
+//   3. Optional morphological closing -> seal small gaps before thinning
+//   4. Zhang-Suen thinning -> 1-pixel skeleton
 //   5. Spur pruning and component filtering
 //   6. Elevation-based contour connection of skeleton endpoints (optional)
 //
@@ -276,7 +276,7 @@ struct vec_skeleton_result
 {
     lsdtt_raster_cpu vertical_excess_curvature; // VEC masked to flat pixels
     lsdtt_raster_cpu adaptive_binary;           // thresholded VEC
-    lsdtt_raster_cpu skeleton;                  // Zhang–Suen skeleton
+    lsdtt_raster_cpu skeleton;                  // Zhang-Suen skeleton
 
     // Populated when elevation_connect.search_radius_metres > 0
     lsdtt_raster_cpu break_bridge_mask;
@@ -287,12 +287,12 @@ struct vec_skeleton_result
 // find_vec_skeleton
 //
 // Parameters:
-//   dem     — input DEM
-//   mask    — binary flat mask (1 = flat pixel, 0 = background)
-//   request — parameters
+//   dem     - input DEM
+//   mask    - binary flat mask (1 = flat pixel, 0 = background)
+//   request - parameters
 //
 // Throws:
-//   std::runtime_error — OpenCV unavailable, polyfit failure
+//   std::runtime_error - OpenCV unavailable, polyfit failure
 // =============================================================================
 vec_skeleton_result find_vec_skeleton(
     const lsdtt_raster_cpu&     dem,
@@ -317,7 +317,7 @@ vec_skeleton_result find_vec_skeleton(
 //
 //   (2) profile_curvature relief skeleton
 //       Slope breaks appear where profile curvature changes sign.  A moving-
-//       window local relief (max–min) of the profile_curvature raster captures
+//       window local relief (max-min) of the profile_curvature raster captures
 //       this sign-change signal as a scalar magnitude.  The relief raster is
 //       thresholded and thinned to a 1-pixel skeleton.
 // =============================================================================
@@ -345,25 +345,25 @@ struct curvature_skeleton_result
 {
     // VEC outputs
     lsdtt_raster_cpu vec_binary;    // binary mask: 1 where VEC >= vec_threshold
-    lsdtt_raster_cpu vec_skeleton;  // Zhang–Suen skeleton of vec_binary
+    lsdtt_raster_cpu vec_skeleton;  // Zhang-Suen skeleton of vec_binary
 
     // Profile curvature relief outputs
     lsdtt_raster_cpu profile_relief;   // local relief of profile_curvature raster
     lsdtt_raster_cpu profile_binary;   // binary mask: 1 where profile_relief >= threshold
-    lsdtt_raster_cpu profile_skeleton; // Zhang–Suen skeleton of profile_binary
+    lsdtt_raster_cpu profile_skeleton; // Zhang-Suen skeleton of profile_binary
 };
 
 // =============================================================================
 // extract_curvature_skeletons
 //
 // Parameters:
-//   vertical_excess_curvature — VEC raster (from compute_polyfit_metrics)
-//   profile_curvature         — profile curvature raster
-//   request                   — tuning parameters
-//   loader                    — required only when request.vec_write_cdf = true
+//   vertical_excess_curvature - VEC raster (from compute_polyfit_metrics)
+//   profile_curvature         - profile curvature raster
+//   request                   - tuning parameters
+//   loader                    - required only when request.vec_write_cdf = true
 //
 // Throws:
-//   std::runtime_error  — empty raster inputs
+//   std::runtime_error  - empty raster inputs
 // =============================================================================
 curvature_skeleton_result extract_curvature_skeletons(
     const lsdtt_raster_cpu&           vertical_excess_curvature,

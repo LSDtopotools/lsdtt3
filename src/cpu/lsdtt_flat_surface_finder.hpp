@@ -9,7 +9,7 @@
 // -----------------------------------------------------------------------------
 // General flat surface identification from a DEM.
 //
-// "Flat" here means low surface texture / roughness — NOT necessarily
+// "Flat" here means low surface texture / roughness - NOT necessarily
 // level in terms of slope.  Alluvial fans, fluvial terraces, agricultural
 // terraces, and piedmont surfaces are all "flat" in this sense.
 //
@@ -23,24 +23,24 @@
 //   Residual IQR
 //     Interquartile range of elevation residuals to a locally fitted reference
 //     surface.  Because residuals are detrended, the IQR captures roughness
-//     rather than slope × window size, making it appropriate for sloping flat
+//     rather than slope x window size, making it appropriate for sloping flat
 //     surfaces.  Three fitting methods are available:
 //
-//       fftw_highpass       — residuals = fftw2D_highpass_filter(dem, lambda)
+//       fftw_highpass       - residuals = fftw2D_highpass_filter(dem, lambda)
 //                             Global spectral separation; cleanest frequency
 //                             response; requires FFTW.
-//       wavelet_quadratic   — residuals = dem − wavelet_quadratic_fit(dem, lambda).f
+//       wavelet_quadratic   - residuals = dem - wavelet_quadratic_fit(dem, lambda).f
 //                             Local polynomial detrending at each pixel;
 //                             handles spatially varying background; requires FFTW.
-//       moving_window_mean  — residuals = dem − moving_window_mean(dem, radius)
+//       moving_window_mean  - residuals = dem - moving_window_mean(dem, radius)
 //                             Simple local detrending; no FFTW dependency;
 //                             use as a fallback or when FFTW is unavailable.
 //
-//   NVD — Normal Vector Dispersion (s3 eigenvalue)
+//   NVD - Normal Vector Dispersion (s3 eigenvalue)
 //     The smallest eigenvalue of the orientation tensor built from unit surface
 //     normals within a window (derived from a wavelet quadratic fit).
-//     Low s3 ≈ co-planar normals (flat, possibly sloping surface).
-//     High s3 ≈ normals spread in many directions (rough terrain).
+//     Low s3 ~= co-planar normals (flat, possibly sloping surface).
+//     High s3 ~= normals spread in many directions (rough terrain).
 //     Requires FFTW for the wavelet quadratic fit; disabled by default.
 //
 // Thresholding strategy:
@@ -48,8 +48,8 @@
 //   own distribution.  The percentile is chosen by inspecting the empirical CDF
 //   and fitted parametric CDF output.
 //
-//   Metrics can be combined with AND logic (all must pass → high specificity)
-//   or OR logic (any passing → high sensitivity).
+//   Metrics can be combined with AND logic (all must pass -> high specificity)
+//   or OR logic (any passing -> high sensitivity).
 //
 // Outputs:
 //   - Reference surface and residual rasters (optional write)
@@ -100,9 +100,9 @@ struct flat_surface_request
     // -------------------------------------------------------------------------
     // Residual IQR
     //
-    // Step 1 — fit a reference surface (method selects the algorithm).
-    // Step 2 — subtract it from the DEM to produce residuals.
-    // Step 3 — compute moving-window IQR of the residuals.
+    // Step 1 - fit a reference surface (method selects the algorithm).
+    // Step 2 - subtract it from the DEM to produce residuals.
+    // Step 3 - compute moving-window IQR of the residuals.
     //
     // For fftw_highpass / wavelet_quadratic, set iqr_fit_lambda_metres to
     // a wavelength somewhat longer than the width of the flat surfaces to be
@@ -121,7 +121,7 @@ struct flat_surface_request
     double       iqr_threshold_percentile   = 25.0;   // below this = flat
 
     // -------------------------------------------------------------------------
-    // NVD — Normal Vector Dispersion (requires FFTW)
+    // NVD - Normal Vector Dispersion (requires FFTW)
     // -------------------------------------------------------------------------
     bool         use_nvd                    = false;
     double       nvd_polyfit_lambda         = 10.0;   // wavelet wavelength (m)
@@ -149,7 +149,7 @@ struct flat_surface_request
     // Disabled when directional_close_line_length_pixels < 3.
     // -------------------------------------------------------------------------
     int          directional_close_line_length_pixels = 0;   // 0 = disabled
-    int          directional_close_n_angles           = 18;  // 10° spacing
+    int          directional_close_n_angles           = 18;  // 10 deg spacing
 
     // -------------------------------------------------------------------------
     // Component filtering and labelling
@@ -177,15 +177,15 @@ struct flat_surface_request
     // After the initial combined flat mask is built, planes are fitted to each
     // labelled component.  Per-pixel residuals (dem - plane) are computed, and
     // a relief window is run on those residuals.  Pixels whose residual relief
-    // exceeds riser_residual_relief_fraction × relief_threshold_value are
+    // exceeds riser_residual_relief_fraction x relief_threshold_value are
     // removed from the flat mask.  The surviving mask then goes through
     // directional closing and final labelling.
     // -------------------------------------------------------------------------
     bool         remove_risers                   = false;
     float        riser_residual_relief_fraction  = 0.5f;
     int          riser_plane_min_pixels          = 10;
-    double       riser_window_radius_metres      = 50.0;  // window for η² bimodality test
-    double       riser_eta2_threshold            = 0.6;   // η² above this = bimodal = riser
+    double       riser_window_radius_metres      = 50.0;  // window for eta^2 bimodality test
+    double       riser_eta2_threshold            = 0.6;   // eta^2 above this = bimodal = riser
 
     int          n_threads                  = 0;
 
@@ -247,7 +247,7 @@ struct flat_surface_result
     // Labelled flat components (UInt32)
     //
     // Components of combined_flat_mask that have >= min_component_pixels are
-    // assigned a unique integer label (1, 2, 3, …).  meta.data_type = GDT_UInt32,
+    // assigned a unique integer label (1, 2, 3, ...).  meta.data_type = GDT_UInt32,
     // meta.no_data_value = 0.
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu labelled_flat_mask;
@@ -257,7 +257,7 @@ struct flat_surface_result
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu labelled_flat_mask_pre_riser;  // labels before riser removal
     lsdtt_raster_cpu riser_residual_relief;         // plane-fit residual relief, flat pixels only
-    lsdtt_raster_cpu riser_eta2;                    // η² bimodality on raw DEM elevations
+    lsdtt_raster_cpu riser_eta2;                    // eta^2 bimodality on raw DEM elevations
 
     // -------------------------------------------------------------------------
     // Diagnostic rasters (always computed, written when write_texture_rasters)
@@ -296,9 +296,9 @@ struct flat_surface_result
 // At least one of use_madk2 / use_residual_iqr / use_nvd must be true.
 //
 // Throws:
-//   std::invalid_argument  — no metrics enabled, invalid percentile values,
+//   std::invalid_argument  - no metrics enabled, invalid percentile values,
 //                            or invalid radius/threshold values
-//   std::runtime_error     — DEM metadata invalid, FFTW unavailable when a
+//   std::runtime_error     - DEM metadata invalid, FFTW unavailable when a
 //                            spectral method is requested, or downstream failure
 // =============================================================================
 flat_surface_result find_flat_surfaces(

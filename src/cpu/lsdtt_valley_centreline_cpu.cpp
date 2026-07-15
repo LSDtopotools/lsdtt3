@@ -78,7 +78,7 @@ void dilate_mask(
 // Valley-mask cleanup (see request comment in the header). This is a
 // morphological opening constrained by distance to the channel:
 // 1. erode by n_dilate iterations (the channel and its immediate neighbours
-//    are protected, so the trunk valley cannot be disconnected) — this
+//    are protected, so the trunk valley cannot be disconnected) - this
 //    severs the corridors that creep along tributary floodplains and connect
 //    far-off flats (e.g. a neighbouring channel's floodplain) into the
 //    valley;
@@ -87,7 +87,7 @@ void dilate_mask(
 // 3. dilate 2 * n_dilate times (regrow the eroded rim + fill interior
 //    holes), retaining a dilated pixel only when its distance to the channel
 //    does not exceed the farthest pixel of the patch it grows from, plus a
-//    margin covering the erosion depth — so patches regrow and holes fill,
+//    margin covering the erosion depth - so patches regrow and holes fill,
 //    but nothing extends outward away from the channel.
 void clean_valley_patches(
     std::vector<std::uint8_t>&       valley,
@@ -102,7 +102,7 @@ void clean_valley_patches(
 
     // Growth domain for the final dilation: the ORIGINAL (pre-erosion)
     // footprint plus its enclosed holes. The dilation must never expand the
-    // valley's outer boundary — a distance cap alone does not bind near the
+    // valley's outer boundary - a distance cap alone does not bind near the
     // channel and the regrow rim creeps up the risers. Enclosed holes =
     // background not 4-connected to the tile border across non-valley
     // ground.
@@ -319,7 +319,7 @@ void clean_valley_patches(
     }
 
     // 2c. Line-of-sight pruning: a genuine valley pixel sees its nearest
-    //     channel pixel across low ground — the straight line between them
+    //     channel pixel across low ground - the straight line between them
     //     stays inside the valley mask (small gaps tolerated: roads,
     //     embankments). A neighbouring valley's flat that is merely
     //     CONNECTED to this valley (e.g. around a broad glacial col) has
@@ -448,11 +448,11 @@ void clean_valley_patches(
 // used here: identify the dominant wall/upland peak (the largest-HAND peak
 // whose density reaches wall_peak_fraction of the histogram maximum) and
 // return the LAST local minimum below it whose density dips under
-// valley_fraction of that wall peak — i.e. the valley is everything below
+// valley_fraction of that wall peak - i.e. the valley is everything below
 // the rise into the valley walls. Returns <= 0 when no such structure exists.
 // Diagnostics captured from a break decision so a reviewer figure can show
-// the ACTUAL metric the break is chosen on — the smoothed log10-HAND density
-// (not the raw, bumpy histogram) — plus the surviving mode segmentation and
+// the ACTUAL metric the break is chosen on - the smoothed log10-HAND density
+// (not the raw, bumpy histogram) - plus the surviving mode segmentation and
 // the chosen break bin. Populated by find_valley_break when a non-null
 // pointer is supplied; left in a partial state on the degenerate early
 // returns (smoothed filled if it got that far; break_bin stays -1).
@@ -490,7 +490,7 @@ double find_valley_break(
         }
         sm.swap(tmp);
     }
-    // Record the decision metric now — it is defined even on the degenerate
+    // Record the decision metric now - it is defined even on the degenerate
     // returns below, and it is what the reviewer figure plots.
     if (diag) diag->smoothed.assign(sm.begin(), sm.end());
 
@@ -498,12 +498,12 @@ double find_valley_break(
     if (gmax <= 0.0) return -1.0;
 
     // Segment the histogram into modes at its local minima (excluding the
-    // two lowest bins — the log-floor clamp spike of on-channel pixels),
+    // two lowest bins - the log-floor clamp spike of on-channel pixels),
     // then clean the segmentation:
     //  a. merge across NON-QUALIFYING dips (dip > valley_fraction * smaller
-    //     flanking peak) — this absorbs noise bumps;
+    //     flanking peak) - this absorbs noise bumps;
     //  b. merge modes whose mass is below wall_peak_fraction of the
-    //     population into their most-connected neighbour — EXCEPT a low
+    //     population into their most-connected neighbour - EXCEPT a low
     //     first mode (peak below ~4 m): the near-channel floor mode defines
     //     the valley however small it is next to a mountain wall peak.
     // The break is the boundary dip after the FIRST surviving mode. Taking a
@@ -583,7 +583,7 @@ double find_valley_break(
             if (i == 0)
             {
                 // A low near-channel floor mode defines the valley even when
-                // it is small next to a mountain wall peak — but it must
+                // it is small next to a mountain wall peak - but it must
                 // still be a real mode, not noise.
                 const double peak_hand = std::pow(
                     10.0, lo_log + (segs[i].peak_bin + 0.5) * bw);
@@ -626,7 +626,7 @@ double find_valley_break(
 
 
 // -----------------------------------------------------------------------------
-// fit_pinned_monotonic_baseline (public — see header)
+// fit_pinned_monotonic_baseline (public - see header)
 // -----------------------------------------------------------------------------
 std::vector<float> fit_pinned_monotonic_baseline(
     const std::vector<double>& along_distance,
@@ -698,7 +698,7 @@ valley_centreline_result extract_valley_centrelines(
 
     // (The medial-axis least-cost centreline is confined to the valley mask,
     // which excludes nodata, so reservoir/water-surface voids are rounded
-    // rather than routed into — no nodata plugging is needed.)
+    // rather than routed into - no nodata plugging is needed.)
 
     valley_centreline_result result;
     std::vector<float>   vm_data(n, 0.0f);
@@ -1183,8 +1183,8 @@ valley_centreline_result extract_valley_centrelines(
         // and loop count (verified). Instead walk a Dijkstra LEAST-COST PATH
         // from the channel head to the outlet whose per-step cost penalises
         // proximity to a wall, (Wmax - dist_to_wall): the cheapest route hugs
-        // the locus of MAXIMUM distance-to-wall — the medial axis / geometric
-        // centreline (the point equidistant from the two nearest walls) — at
+        // the locus of MAXIMUM distance-to-wall - the medial axis / geometric
+        // centreline (the point equidistant from the two nearest walls) - at
         // any valley width. It is confined to the valley (hole) mask, so it
         // rounds reservoir voids and never leaves the valley; the head/outlet
         // anchors fix the downstream direction, so no synthetic tilt is
@@ -1341,7 +1341,7 @@ valley_centreline_result extract_valley_centrelines(
             // node and pins the baseline to the channel elevation there. A
             // crossing pins exactly; a laterally offset channel reach (wide
             // valley, channel meandering away from the geometric centre)
-            // still pins the baseline at its along-valley position — this is
+            // still pins the baseline at its along-valley position - this is
             // what strips the meander noise. Where several channel nodes
             // project to one centreline node, the LOWEST elevation wins: the
             // baseline is a thalweg reference and must sit at or below the
@@ -1453,7 +1453,7 @@ valley_centreline_result extract_valley_centrelines(
                 std::move(md), std::vector<uint8_t>(dmask), meta);
 
             // Reach-id raster: every corridor pixel tagged with the reach
-            // (window) of its nearest channel node — the exact population each
+            // (window) of its nearest channel node - the exact population each
             // per-reach HAND histogram is built from.
             std::vector<float>   rd(n, 0.0f);
             std::vector<uint8_t> rmask(n, 0u);

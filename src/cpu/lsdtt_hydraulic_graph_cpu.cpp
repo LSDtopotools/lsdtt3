@@ -966,7 +966,7 @@ void lsdtt_hydraulic_graph_cpu::apply_water_depth_update_from_balance()
     {
         double dh_rate = (qin_[flat] - qout_[flat]) / cell_area;
 
-        // clamp the rate of change before multiplying by dt — prevents
+        // clamp the rate of change before multiplying by dt - prevents
         // overshooting when large discharge imbalances exist early in the run
         if (dh_rate > max_dh_rate_)
             dh_rate = max_dh_rate_;
@@ -1286,7 +1286,7 @@ void lsdtt_hydraulic_graph_cpu::print_startup_message_if_needed()
     if (startup_message_printed_) return;
 
     std::cout
-        << "lsdtt3 hydraulic routing starting — based on Gailleton et al. (2024).\n";
+        << "lsdtt3 hydraulic routing starting - based on Gailleton et al. (2024).\n";
 
     startup_message_printed_ = true;
 }

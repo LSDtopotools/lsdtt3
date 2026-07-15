@@ -14,14 +14,14 @@
 // The workflow builds two parallel channel network representations for
 // comparison and reconciliation:
 //
-//   VECTOR NETWORK — the supplied polyline channel file
+//   VECTOR NETWORK - the supplied polyline channel file
 //     1. Load polyline features
 //     2. Find degree-1 endpoints (tips that belong to exactly one feature)
 //     3. Classify the lowest-elevation tip as the basin outlet; all others
 //        are upstream source tips
 //     4. Optionally write source tips as a point layer for QC
 //
-//   DEM NETWORK — D8 routing seeded from the vector sources
+//   DEM NETWORK - D8 routing seeded from the vector sources
 //     5. Fill (and optionally breach) the DEM
 //     6. Build D8 flow routing
 //     7. Map each vector source tip to the DEM pixel that contains it
@@ -34,7 +34,7 @@
 // needed for it.
 //
 // Required parameter:
-//   stream_vector_path — path to the polyline vector channel file
+//   stream_vector_path - path to the polyline vector channel file
 //
 // Usage:
 //   lsdtt-stream-burning <path> <parameter_file>
@@ -536,21 +536,21 @@ int main(int argc, char* argv[])
     float_default_map["channel_score_alpha"] = 2.0f;
     help_map["channel_score_alpha"] = {"float","2.0",
         "Strength of channel-score weighting in the repair Dijkstra cost function.",
-        "Cost per step = step_distance × (1 + alpha × (1 − channel_score)) "
-        "+ max(0, Δelev) × gap_uphill_penalty.  "
+        "Cost per step = step_distance x (1 + alpha x (1 - channel_score)) "
+        "+ max(0, Deltaelev) x gap_uphill_penalty.  "
         "alpha=0 disables channel guidance (terrain cost only).  "
         "Only used when repair_junction_gaps is true."};
 
     float_default_map["channel_lambda_min_m"] = -1.0f;
     help_map["channel_lambda_min_m"] = {"float","-1",
         "Minimum wavelength (m) for multiscale channel candidate detection.",
-        "Values <= 0 default to 3 × DEM cell size.  "
+        "Values <= 0 default to 3 x DEM cell size.  "
         "Only used when repair_junction_gaps is true."};
 
     float_default_map["channel_lambda_max_m"] = -1.0f;
     help_map["channel_lambda_max_m"] = {"float","-1",
         "Maximum wavelength (m) for multiscale channel candidate detection.",
-        "Values <= 0 default to 10 × DEM cell size.  "
+        "Values <= 0 default to 10 x DEM cell size.  "
         "Only used when repair_junction_gaps is true."};
 
     int_default_map["channel_n_scales"] = 4;
@@ -559,7 +559,7 @@ int main(int argc, char* argv[])
         "More scales improve robustness but increase compute time.  "
         "Only used when repair_junction_gaps is true."};
 
-    // --- Output — QC/diagnostic ---
+    // --- Output - QC/diagnostic ---
     bool_default_map["write_vector_sources"] = true;
     help_map["write_vector_sources"] = {"bool","true",
         "Write the vector network source tips as a point layer.",
@@ -578,7 +578,7 @@ int main(int argc, char* argv[])
         "Output format for the vector source tip points.",
         "Allowed values: flatgeobuf, fgb, gpkg, csv."};
 
-    // --- Output — DEM network (seeded from vector sources) ---
+    // --- Output - DEM network (seeded from vector sources) ---
     bool_default_map["write_dem_network_points"] = false;
     help_map["write_dem_network_points"] = {"bool","false",
         "Write the DEM-extracted channel network as a point layer.",
@@ -706,7 +706,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
-    // Step 1 — DEM preparation: optional breach + fill
+    // Step 1 - DEM preparation: optional breach + fill
     // -------------------------------------------------------------------------
     if (!bf["raster_is_filled"])
     {
@@ -722,7 +722,7 @@ int main(int argc, char* argv[])
                     // Bounded least-cost breaching. max_cost caps the total
                     // elevation carved along a breach path: shallow carves
                     // (lake spillways, small pits) pass, but deep carves through
-                    // road embankments exceed the cap and are left filled — so
+                    // road embankments exceed the cap and are left filled - so
                     // roads stay as gaps for the LCP burn (do_lcp_burn) to bridge
                     // under the vector line. <= 0 means unbounded cost (carve
                     // through everything, the classic behaviour).
@@ -790,7 +790,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2 — D8 flow routing
+    // Step 2 - D8 flow routing
     // -------------------------------------------------------------------------
     std::cout << "\n--- D8 flow routing ---\n";
     std::cout << "Boundary conditions: " << sf["boundary_conditions"] << "\n";
@@ -818,7 +818,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — Build clipped vector junction network
+    // Step 3 - Build clipped vector junction network
     // -------------------------------------------------------------------------
     std::cout << "\n--- Building clipped vector junction network ---\n";
     std::cout << "Vector file: " << stream_vector_path << "\n";
@@ -854,7 +854,7 @@ int main(int argc, char* argv[])
     std::cout << "Vector basins    : " << vector_network.n_basins() << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 4 — Write the clipped vector junction network
+    // Step 4 - Write the clipped vector junction network
     // -------------------------------------------------------------------------
     {
         // Lock-tolerant: this QC layer is deterministic and often left open in a
@@ -901,7 +901,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 4b — D8-guided cleaning of the clipped vector network
+    // Step 4b - D8-guided cleaning of the clipped vector network
     //
     // The repaired OS VectorMap network contains loops (water polygons that
     // split and rejoin) and dead-ending interior tips that break junction
@@ -956,7 +956,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 5 — Extract source junctions from the clipped vector network
+    // Step 5 - Extract source junctions from the clipped vector network
     //
     // Sources are junctions with no donor junctions and which are not outlets.
     // DEM-edge junctions are allowed here: if a clipped upstream channel enters
@@ -1019,7 +1019,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 5b — Map vector source junctions to DEM flat indices
+    // Step 5b - Map vector source junctions to DEM flat indices
     //
     // Each source junction is mapped to the DEM cell that contains its
     // coordinate. Junctions outside the raster extent or on nodata pixels
@@ -1123,7 +1123,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 5c — Optional QC write of vector endpoints
+    // Step 5c - Optional QC write of vector endpoints
     // -------------------------------------------------------------------------
     if (bf["write_vector_sources"])
     {
@@ -1277,7 +1277,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Step 5d — Carve inward-draining edge sources
+    // Step 5d - Carve inward-draining edge sources
     //
     // A vector source on the DEM boundary may sit on a pixel whose D8 flow
     // drains straight back off the raster, leaving the seeded DEM channel with
@@ -1353,7 +1353,7 @@ int main(int argc, char* argv[])
             if (!(recv_elev < J.elevation - 1.0e-6)) continue;
 
             // Build a contiguous carve path: the source pixel followed by
-            // distinct in-DEM cells sampled along the downstream vector PATH —
+            // distinct in-DEM cells sampled along the downstream vector PATH -
             // following the receiver chain across junctions, not just the single
             // immediate downstream edge. A channel that hugs the boundary for one
             // short edge before turning inland (or that runs along the edge to an
@@ -1488,7 +1488,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 6 — Build DEM junction network seeded from vector source junctions
+    // Step 6 - Build DEM junction network seeded from vector source junctions
     // -------------------------------------------------------------------------
 
     std::cout << "\n--- Building DEM channel network (seeded from vector source junctions) ---\n";
@@ -1517,7 +1517,7 @@ int main(int argc, char* argv[])
     std::cout << "Outlet nodes  : " << dem_network->n_outlet_junctions() << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 7 — Write DEM network outputs
+    // Step 7 - Write DEM network outputs
     // -------------------------------------------------------------------------
     if (bf["write_dem_network_points"])
     {
@@ -1957,7 +1957,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // burn_in_place — lower DEM pixels directly under the vector polylines
+    // burn_in_place - lower DEM pixels directly under the vector polylines
     // -------------------------------------------------------------------------
     if (bf["do_stream_burn"] &&
         burn_mode == lsdtt::stream_burn_mode::burn_in_place)
@@ -2033,22 +2033,22 @@ int main(int argc, char* argv[])
     // Strategy: build two independent channel junction networks from the same
     // source seeds and compare their first-layer (headwater) junctions.
     //
-    //   VECTOR NETWORK — the human-checked polyline file, correct topology but
+    //   VECTOR NETWORK - the human-checked polyline file, correct topology but
     //     imprecise channel position (digitised from imagery or GPS track).
     //
-    //   DEM NETWORK    — D8 routing seeded from the vector source tips, precise
+    //   DEM NETWORK    - D8 routing seeded from the vector source tips, precise
     //     positions but potentially diverted by roads, embankments, or
     //     vegetation-obscured low-relief terrain.
     //
-    // Phase 0 — topological candidate detection
-    //   Walk vector junctions upstream → downstream; for each junction compute
+    // Phase 0 - topological candidate detection
+    //   Walk vector junctions upstream -> downstream; for each junction compute
     //   the lowest common ancestor (LCA) of the DEM counterparts of its donor
     //   branches.  A junction is flagged as a mismatch when the LCA is too far
     //   from the vector junction, branch counts differ, or no common ancestor
     //   exists.  Only the MOST UPSTREAM mismatch in each basin is reported per
     //   phase, because repairing it may move downstream DEM junctions.
     //
-    // Gap repair (optional — repair_junction_gaps = true)
+    // Gap repair (optional - repair_junction_gaps = true)
     //   See the detailed comment in the gap repair block below.
     // -------------------------------------------------------------------------
     else if (bf["do_stream_burn"] &&
@@ -2260,11 +2260,11 @@ int main(int argc, char* argv[])
         std::cout << "\nCandidate detection complete.\n";
 
         // -----------------------------------------------------------------------
-        // Gap repair — repairing DEM obstructions at mismatched junctions
+        // Gap repair - repairing DEM obstructions at mismatched junctions
         //
         // Two failure modes motivate this step:
         //
-        //   A. Road / embankment crossings (10–30 m barriers)
+        //   A. Road / embankment crossings (10-30 m barriers)
         //      The DEM shows a clear ridge crossing the channel.  The true
         //      channel is visible as a concave feature on both sides of the
         //      barrier.  A least-cost path from the correct divergence point
@@ -2288,31 +2288,31 @@ int main(int argc, char* argv[])
         //   becomes the repair start.
         //
         // Three-phase channel-guided algorithm (attempt 1)
-        //   Phase 1 — scan upslope channel pixels (within 2× gap distance of
+        //   Phase 1 - scan upslope channel pixels (within 2x gap distance of
         //     the vector junction) and score each candidate:
-        //       score = w_proximity / (1 + dist/gap) + w_channel × channel_score
+        //       score = w_proximity / (1 + dist/gap) + w_channel x channel_score
         //     Proximity dominates (w_proximity = 0.7) so the divergence point is
         //     selected close to the target; channel score provides secondary
         //     preference for concave terrain (channel_lambda_min/max_m control
         //     the curvature detection scale).
         //
-        //   Phase 2 — scan pixels within junction_tolerance_m of the vector
-        //     junction.  Those with channel_score ≥ landing threshold are
+        //   Phase 2 - scan pixels within junction_tolerance_m of the vector
+        //     junction.  Those with channel_score >= landing threshold are
         //     collected as landing-zone targets.  The repair does NOT need to
-        //     hit the exact vector junction pixel — any channelised pixel nearby
+        //     hit the exact vector junction pixel - any channelised pixel nearby
         //     qualifies.  When none qualify (flat terrain, no curvature signal),
         //     the pixel containing the vector junction coordinate is the target.
         //
-        //   Phase 3 — run a multi-target channel-score-guided Dijkstra from the
+        //   Phase 3 - run a multi-target channel-score-guided Dijkstra from the
         //     divergence point to the landing zone, then carve the path
         //     monotonically so D8 will route through it.
-        //     Step cost: step_distance × (1 + channel_score_alpha × (1 − score))
-        //     + max(0, Δelev) × gap_uphill_penalty
+        //     Step cost: step_distance x (1 + channel_score_alpha x (1 - score))
+        //     + max(0, Deltaelev) x gap_uphill_penalty
         //     High-channel-score pixels (concave terrain) are cheaper, steering
         //     the path through existing swale geometry.
         //
         // Two-attempt strategy
-        //   Attempt 1: channel-guided (phases 1–3).  After burning the DEM
+        //   Attempt 1: channel-guided (phases 1-3).  After burning the DEM
         //     network is re-extracted.  If the nearest DEM junction to the
         //     vector junction is now within junction_tolerance_m, success.
         //
@@ -2468,7 +2468,7 @@ int main(int argc, char* argv[])
                     const std::string crs = routed_dem.get_meta().crs_wkt;
                     const lsdtt::lsdtt_raster_meta& dmeta = routed_dem.get_meta();
 
-                    // ── Two-endpoint point file ───────────────────────────────
+                    //  Two-endpoint point file 
                     const std::string pts_file =
                         pp.make_output_path("_repair_endpoints_phase_" + ph_str, ".fgb");
                     std::cout << "Writing repair endpoints: " << pts_file << "\n";
@@ -2518,7 +2518,7 @@ int main(int argc, char* argv[])
                                   << e.what() << "\n";
                     }
 
-                    // ── Repair segment line file ──────────────────────────────
+                    //  Repair segment line file 
                     const std::string seg_file =
                         pp.make_output_path("_repair_segments_phase_" + ph_str, ".fgb");
                     std::cout << "Writing repair segments: " << seg_file << "\n";
@@ -2799,11 +2799,11 @@ int main(int argc, char* argv[])
         }
         else if (bf["repair_junction_gaps"] && phase_result.incomplete_basins.empty())
         {
-            std::cout << "All basins complete — no repair needed.\n";
+            std::cout << "All basins complete - no repair needed.\n";
         }
 
         // ---------------------------------------------------------------------
-        // Final deliverables — the burned DEM and the stream network it routes.
+        // Final deliverables - the burned DEM and the stream network it routes.
         //
         // After conditioning and gap repair, routed_dem is the carved elevation
         // surface (roads and obstructions cut so D8 routes through them) and

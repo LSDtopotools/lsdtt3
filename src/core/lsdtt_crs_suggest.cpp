@@ -34,8 +34,8 @@ namespace {
 // -----------------------------------------------------------------------------
 // lon_to_utm_zone
 //
-// Returns the standard UTM zone number (1–60) for a given longitude.
-// Does not handle the Norway/Svalbard UTM exceptions — those areas will use
+// Returns the standard UTM zone number (1-60) for a given longitude.
+// Does not handle the Norway/Svalbard UTM exceptions - those areas will use
 // the polar stereographic path anyway.
 // -----------------------------------------------------------------------------
 static int lon_to_utm_zone(double lon)
@@ -50,8 +50,8 @@ static int lon_to_utm_zone(double lon)
 // utm_epsg
 //
 // Returns the EPSG code for a UTM zone + hemisphere.
-//   North: 32601–32660
-//   South: 32701–32760
+//   North: 32601-32660
+//   South: 32701-32760
 // -----------------------------------------------------------------------------
 static int utm_epsg(int zone, bool north)
 {
@@ -85,8 +85,8 @@ static std::string make_utm_wkt(int zone, bool north)
 // make_polar_wkt
 //
 // Return WKT for NSIDC polar stereographic CRS by importing from EPSG.
-// EPSG:3413 — North  (true scale at 70°N, lon of origin 45°W)
-// EPSG:3976 — South  (true scale at 71°S, lon of origin 0°)
+// EPSG:3413 - North  (true scale at 70 degN, lon of origin 45 degW)
+// EPSG:3976 - South  (true scale at 71 degS, lon of origin 0 deg)
 // -----------------------------------------------------------------------------
 static std::string make_polar_wkt(bool north)
 {
@@ -146,9 +146,9 @@ static std::string make_laea_wkt(double centre_lon, double centre_lat)
 // fills in the six geographic extent fields on the suggestion struct.
 //
 // Strategy:
-//   • If already geographic, corners are trivially computed from x_min/y_min
+//   - If already geographic, corners are trivially computed from x_min/y_min
 //     and x_max()/y_max().
-//   • If projected (including Web Mercator), each corner is transformed to
+//   - If projected (including Web Mercator), each corner is transformed to
 //     WGS84 lon/lat using OGR coordinate transformation.
 //
 // Populated fields: min_lon, max_lon, min_lat, max_lat, centre_lon, centre_lat
@@ -157,7 +157,7 @@ static void unproject_corners_to_geographic(
     const lsdtt_raster_meta& meta,
     lsdtt_crs_suggestion&    sug)
 {
-    // Four corners in raster pixel space → projected coordinates
+    // Four corners in raster pixel space -> projected coordinates
     const double x0 = meta.x_min;
     const double y0 = meta.y_min;
     const double x1 = meta.x_max();
@@ -230,13 +230,13 @@ static void unproject_corners_to_geographic(
 // Populates utm_zone_min, utm_zone_max, utm_zone_count on the suggestion.
 // Handles anti-meridian crossing by checking both a coarse sweep and the
 // corner zones, but does not attempt to handle split-zone edge cases
-// perfectly — the warning is conservative.
+// perfectly - the warning is conservative.
 // -----------------------------------------------------------------------------
 static void count_utm_zones(lsdtt_crs_suggestion& sug)
 {
     std::set<int> zones;
 
-    // Sample lon at 6° intervals across the raster extent
+    // Sample lon at 6 deg intervals across the raster extent
     double lon = sug.min_lon;
     while (lon <= sug.max_lon + 1e-9)
     {
@@ -312,14 +312,14 @@ lsdtt_crs_suggestion lsdtt_suggest_crs(
 
     if (input_is_projected_non_web_mercator && !force_recommend_projected)
     {
-        // Already a sensible projected CRS — nothing to recommend
+        // Already a sensible projected CRS - nothing to recommend
         sug.already_projected = true;
         sug.type              = CrsRecommendationType::already_projected;
 
         // Still compute geographic extents for diagnostics
         unproject_corners_to_geographic(meta, sug);
 
-        sug.recommended_name = "Already projected — no reprojection needed";
+        sug.recommended_name = "Already projected - no reprojection needed";
         return sug;
     }
 
@@ -330,7 +330,7 @@ lsdtt_crs_suggestion lsdtt_suggest_crs(
     unproject_corners_to_geographic(meta, sug);
 
     // ------------------------------------------------------------------
-    // 4. Polar test:  |centre_lat| > 75°
+    // 4. Polar test:  |centre_lat| > 75 deg
     // ------------------------------------------------------------------
     constexpr double k_polar_threshold = 75.0;
 
@@ -379,7 +379,7 @@ lsdtt_crs_suggestion lsdtt_suggest_crs(
         std::ostringstream warn;
         warn << "WARNING: This raster spans " << sug.utm_zone_count
              << " UTM zones (zones " << sug.utm_zone_min
-             << "–" << sug.utm_zone_max << "). "
+             << "-" << sug.utm_zone_max << "). "
              << "Projecting into UTM Zone " << zone
              << " will introduce increasing distortion toward the raster edges. "
              << "Consider using a Lambert Azimuthal Equal Area projection "
@@ -393,8 +393,8 @@ lsdtt_crs_suggestion lsdtt_suggest_crs(
             std::ostringstream laea_name;
             laea_name << std::fixed << std::setprecision(2)
                       << "Custom LAEA centred at ("
-                      << sug.centre_lon << "°, "
-                      << sug.centre_lat << "°)";
+                      << sug.centre_lon << " deg, "
+                      << sug.centre_lat << " deg)";
             sug.laea_name = laea_name.str();
         }
     }
@@ -410,14 +410,14 @@ void lsdtt_print_crs_suggestion(const lsdtt_crs_suggestion& sug)
     std::cout << "\n=== lsdtt_suggest_crs ===\n";
 
     std::cout << std::fixed << std::setprecision(4);
-    std::cout << "  Centre       : " << sug.centre_lat << "°N  "
-              << sug.centre_lon << "°E\n";
-    std::cout << "  Extent lat   : " << sug.min_lat << " → " << sug.max_lat << "\n";
-    std::cout << "  Extent lon   : " << sug.min_lon << " → " << sug.max_lon << "\n";
+    std::cout << "  Centre       : " << sug.centre_lat << " degN  "
+              << sug.centre_lon << " degE\n";
+    std::cout << "  Extent lat   : " << sug.min_lat << " -> " << sug.max_lat << "\n";
+    std::cout << "  Extent lon   : " << sug.min_lon << " -> " << sug.max_lon << "\n";
 
     if (sug.already_projected)
     {
-        std::cout << "  Status       : already in a projected CRS — "
+        std::cout << "  Status       : already in a projected CRS - "
                      "no reprojection needed\n";
         std::cout << "=========================\n\n";
         return;
@@ -428,7 +428,7 @@ void lsdtt_print_crs_suggestion(const lsdtt_crs_suggestion& sug)
     if (sug.type == CrsRecommendationType::utm)
     {
         std::cout << "  UTM zones    : " << sug.utm_zone_min
-                  << " → " << sug.utm_zone_max
+                  << " -> " << sug.utm_zone_max
                   << " (" << sug.utm_zone_count << " zones spanned)\n";
     }
 

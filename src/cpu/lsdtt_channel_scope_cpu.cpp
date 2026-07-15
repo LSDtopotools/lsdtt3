@@ -92,7 +92,7 @@ void trace_downstream(
 
 // Classify snapped points into sources and outlets by downstream membership.
 // A point is an outlet (returns 1) when its snapped flat lies STRICTLY
-// downstream of some other supplied point — i.e. another point's D8 receiver
+// downstream of some other supplied point - i.e. another point's D8 receiver
 // chain passes through it. Points downstream of no other supplied point are
 // sources (returns 0). Entries with a failed snap (flat < 0) return 0 and are
 // handled by the caller. Coincident points (same snapped cell) do not mark each

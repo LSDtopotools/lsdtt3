@@ -59,8 +59,8 @@ enum class backend_type
 // Creates and returns a raster compute engine loaded with data from loader.
 //
 // Parameters:
-//   loader  — an lsdtt_data_loader with an open raster
-//   backend — which backend to use (default: auto_detect)
+//   loader  - an lsdtt_data_loader with an open raster
+//   backend - which backend to use (default: auto_detect)
 //
 // Returns:
 //   std::unique_ptr<lsdtt_raster_base> owning the engine

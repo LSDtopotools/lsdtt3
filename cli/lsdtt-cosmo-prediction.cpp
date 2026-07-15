@@ -27,9 +27,9 @@
 //     raster.
 //
 // Units
-//   Concentration           atoms g⁻¹
-//   Effective erosion rate  g cm⁻² yr⁻¹
-//   Conversion: ε [g cm⁻² yr⁻¹] = ε [m yr⁻¹] × ρ [kg m⁻³] × 0.1
+//   Concentration           atoms g^-^1
+//   Effective erosion rate  g cm^-^2 yr^-^1
+//   Conversion: epsilon [g cm^-^2 yr^-^1] = epsilon [m yr^-^1] x rho [kg m^-^3] x 0.1
 //
 // Usage:
 //   lsdtt-cosmo-prediction <path> <parameter_file>
@@ -230,7 +230,7 @@ int main(int argc, char* argv[])
     float_default_map["effective_erosion_rate"] = 0.001f;
     help_map["effective_erosion_rate"] = {"float","0.001",
         "Uniform effective erosion rate (g/cm2/yr) across the raster.",
-        "Used when background_erosion_rate_raster_prefix is NULL. ~0.001 ≈ 3.8 mm/kyr for ρ=2650."};
+        "Used when background_erosion_rate_raster_prefix is NULL. ~0.001 ~= 3.8 mm/kyr for rho=2650."};
 
     // --- Step change parameters ---
     float_default_map["step_change_eff_erate_old_g_cm2_yr"] = 0.001f;
@@ -365,7 +365,7 @@ int main(int argc, char* argv[])
     loader.open_raster(dem_path);
     lsdtt::lsdtt_raster_cpu dem(loader);
     dem.get_meta().check_projected_metres();
-    std::cout << "DEM loaded: " << dem.get_meta().n_rows << " rows × "
+    std::cout << "DEM loaded: " << dem.get_meta().n_rows << " rows x "
               << dem.get_meta().n_cols << " cols.\n";
 
     // -------------------------------------------------------------------------

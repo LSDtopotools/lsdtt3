@@ -780,8 +780,8 @@ private:
 
         // Enforce positive slope (non-decreasing elevation upstream) only for a
         // free upstream endpoint. If the endpoint already carries a fitted value
-        // — a split point pinned to its observed elevation, or a junction shared
-        // with another branch — that value is a hard constraint shared across
+        // - a split point pinned to its observed elevation, or a junction shared
+        // with another branch - that value is a hard constraint shared across
         // segments. Clamping it here would overwrite the constraint with a
         // different value in accept_segment and trip the consistency check. A
         // segment that must descend to honour such a constraint (because the

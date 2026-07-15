@@ -27,10 +27,10 @@ namespace lsdtt
 namespace
 {
 
-constexpr double k_g            = 9.81;   // gravitational acceleration [m/s²]
+constexpr double k_g            = 9.81;   // gravitational acceleration [m/s^2]
 constexpr double k_min_slope    = 1.0e-6;
-constexpr double k_min_q        = 1.0e-9; // minimum discharge [m³/s]
-constexpr double k_min_volume   = 1.0e-9; // minimum sediment volume [m³]
+constexpr double k_min_q        = 1.0e-9; // minimum discharge [m^3/s]
+constexpr double k_min_volume   = 1.0e-9; // minimum sediment volume [m^3]
 
 // ---------------------------------------------------------------------------
 // Manning flow depth for a wide rectangular channel.
@@ -46,7 +46,7 @@ double manning_flow_depth(double Q, double W, double n, double S)
 
 // ---------------------------------------------------------------------------
 // Bed shear stress [Pa] for a wide rectangular channel.
-// τ = ρ_w * g * h * S
+// tau = rho_w * g * h * S
 // ---------------------------------------------------------------------------
 double bed_shear_stress(double h, double S, double rho_w)
 {
@@ -86,8 +86,8 @@ double active_layer_d50(
 
 // ---------------------------------------------------------------------------
 // Update active layer grain-size fractions after deposition or erosion.
-// volume_change[i] > 0 → add sediment to class i
-// volume_change[i] < 0 → remove sediment from class i (clamped to zero)
+// volume_change[i] > 0 -> add sediment to class i
+// volume_change[i] < 0 -> remove sediment from class i (clamped to zero)
 // ---------------------------------------------------------------------------
 void update_active_layer(
     lsdtt_active_layer&        al,
@@ -172,13 +172,13 @@ std::vector<double> active_layer_fractions(
 // Wong & Parker (2006) with Parker (1982) hiding function.
 //
 // For each grain class i:
-//   τ*_i  = τ / ((ρ_s - ρ_w) * g * D_i)          Shields number
-//   τ*_ri = 0.0495 * (D_i / D50)^0.33             hiding-corrected critical Shields
-//   if τ*_i > τ*_ri:
-//     φ*_i = 3.97 * (τ*_i - τ*_ri)^1.5
-//     q_bi = f_i * φ*_i * sqrt((s-1) * g * D_i^3) [m²/s]
+//   tau*_i  = tau / ((rho_s - rho_w) * g * D_i)          Shields number
+//   tau*_ri = 0.0495 * (D_i / D50)^0.33             hiding-corrected critical Shields
+//   if tau*_i > tau*_ri:
+//     phi*_i = 3.97 * (tau*_i - tau*_ri)^1.5
+//     q_bi = f_i * phi*_i * sqrt((s-1) * g * D_i^3) [m^2/s]
 //
-// Q_bi [m³/s] = q_bi * W
+// Q_bi [m^3/s] = q_bi * W
 // ---------------------------------------------------------------------------
 std::vector<double> tr_cap_wong_parker(
     const lsdtt_sediment_reach& reach,
@@ -194,7 +194,7 @@ std::vector<double> tr_cap_wong_parker(
     double tau = bed_shear_stress(h, reach.slope, rho_w);
     if (tau <= 0.0) return Q_per_class;
 
-    double delta      = (rho_s - rho_w) / rho_w;      // submerged specific gravity − 1
+    double delta      = (rho_s - rho_w) / rho_w;      // submerged specific gravity - 1
     double D50        = reach.D50_m;
 
     for (int i = 0; i < nc; ++i)
@@ -208,7 +208,7 @@ std::vector<double> tr_cap_wong_parker(
         {
             double diff   = tau_si - tau_ri;
             double phi    = 3.97 * std::pow(diff, 1.5);
-            double q_bi   = phi * std::sqrt(delta * k_g * Di * Di * Di);  // m²/s
+            double q_bi   = phi * std::sqrt(delta * k_g * Di * Di * Di);  // m^2/s
             Q_per_class[i] = fractions[i] * q_bi * reach.width_m;
         }
     }
@@ -218,18 +218,18 @@ std::vector<double> tr_cap_wong_parker(
 // ---------------------------------------------------------------------------
 // Wilcock & Crowe (2003).
 //
-// τ_r50 = (ρ_s − ρ_w) * g * D50 * (0.021 + 0.015 * exp(−20 * F_s))
+// tau_r50 = (rho_s - rho_w) * g * D50 * (0.021 + 0.015 * exp(-20 * F_s))
 //   F_s = total sand fraction (D < 2 mm)
 //
 // For each class i:
-//   b_i   = 0.67 / (1 + exp(1.5 − D_i / D50))    grain-size-dependent hiding
-//   τ_ri  = τ_r50 * (D_i / D50)^b_i
-//   u_i   = τ / τ_ri
+//   b_i   = 0.67 / (1 + exp(1.5 - D_i / D50))    grain-size-dependent hiding
+//   tau_ri  = tau_r50 * (D_i / D50)^b_i
+//   u_i   = tau / tau_ri
 //   if u_i < 1.35: W*_i = 0.002 * u_i^7.5
-//   else:          W*_i = 14 * (1 − 0.894 / sqrt(u_i))^4.5
-//   q_bi  = f_i * W*_i * u_star^3 / ((s−1) * g)  [m²/s]
+//   else:          W*_i = 14 * (1 - 0.894 / sqrt(u_i))^4.5
+//   q_bi  = f_i * W*_i * u_star^3 / ((s-1) * g)  [m^2/s]
 //
-// Q_bi [m³/s] = q_bi * W
+// Q_bi [m^3/s] = q_bi * W
 // ---------------------------------------------------------------------------
 std::vector<double> tr_cap_wilcock_crowe(
     const lsdtt_sediment_reach& reach,
@@ -246,7 +246,7 @@ std::vector<double> tr_cap_wilcock_crowe(
     if (tau <= 0.0) return Q_per_class;
 
     double u_star = std::sqrt(tau / rho_w);      // friction velocity [m/s]
-    double delta  = (rho_s - rho_w) / rho_w;     // submerged specific gravity − 1
+    double delta  = (rho_s - rho_w) / rho_w;     // submerged specific gravity - 1
     double D50    = reach.D50_m;
 
     // Sand fraction F_s (D < 2 mm = 0.002 m)
@@ -278,7 +278,7 @@ std::vector<double> tr_cap_wilcock_crowe(
         }
 
         double q_bi = fractions[i] * Wsi * u_star * u_star * u_star /
-                      (delta * k_g);   // m²/s
+                      (delta * k_g);   // m^2/s
         Q_per_class[i] = q_bi * reach.width_m;
     }
     return Q_per_class;
@@ -289,8 +289,8 @@ std::vector<double> tr_cap_wilcock_crowe(
 //
 // Total-load formula for D50; distributes by GSD fraction.
 //
-//   τ*     = τ / ((ρ_s − ρ_w) * g * D50)
-//   q_b    = 0.05 * τ*^(5/2) * sqrt((s−1) * g * D50^3)  [m²/s, total]
+//   tau*     = tau / ((rho_s - rho_w) * g * D50)
+//   q_b    = 0.05 * tau*^(5/2) * sqrt((s-1) * g * D50^3)  [m^2/s, total]
 //   Q_bi   = f_i * q_b * W
 // ---------------------------------------------------------------------------
 std::vector<double> tr_cap_engelund_hansen(
@@ -312,9 +312,9 @@ std::vector<double> tr_cap_engelund_hansen(
     double tau_s  = tau / ((rho_s - rho_w) * k_g * D50);  // Shields number
 
     double q_b_total = 0.05 * std::pow(tau_s, 2.5) *
-                       std::sqrt(delta * k_g * D50 * D50 * D50);  // m²/s
+                       std::sqrt(delta * k_g * D50 * D50 * D50);  // m^2/s
 
-    double Q_b_total = q_b_total * reach.width_m;  // m³/s
+    double Q_b_total = q_b_total * reach.width_m;  // m^3/s
 
     for (int i = 0; i < nc; ++i)
         Q_per_class[i] = fractions[i] * Q_b_total;
@@ -442,7 +442,7 @@ std::vector<lsdtt_active_layer> initialise_active_layers(
 
         // Initial volume per class:
         //   V_i = f_i * depth * W * length * (1 - porosity)
-        // We store bulk volume (solids + pores) so omit (1-φ) here; the
+        // We store bulk volume (solids + pores) so omit (1-phi) here; the
         // transport capacity is also computed as bulk volume flux.
         double reach_bed_area = r.width_m * r.length_m;
         al.volume_m3.resize(nc);
@@ -487,7 +487,7 @@ lsdtt_sediment_routing_result run_sediment_routing(
     // Topological order (headwaters first)
     const auto& topo = jn.topological_order_vector();
 
-    // Per-junction outflux per grain class for the current timestep [m³]
+    // Per-junction outflux per grain class for the current timestep [m^3]
     // outflux_per_class[j][i] = volume leaving junction j's reach this timestep
     std::vector<std::vector<double>> outflux(nj, std::vector<double>(nc, 0.0));
 
@@ -550,7 +550,7 @@ lsdtt_sediment_routing_result run_sediment_routing(
             std::vector<double> fracs = active_layer_fractions(
                 al, reach.gsd_fractions);
 
-            std::vector<double> Qs_per_class;  // m³/s per class
+            std::vector<double> Qs_per_class;  // m^3/s per class
             switch (opts.formula)
             {
             case lsdtt_tr_cap_formula::wong_parker:
@@ -567,7 +567,7 @@ lsdtt_sediment_routing_result run_sediment_routing(
                 break;
             }
 
-            // Capacity in m³ over this timestep
+            // Capacity in m^3 over this timestep
             double Qs_total = 0.0;
             for (int i = 0; i < nc; ++i) Qs_total += Qs_per_class[i];
             double capacity_m3 = Qs_total * dt;

@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// GPU surface-fitting / roughness kernels — host-callable dispatch interface.
+// GPU surface-fitting / roughness kernels - host-callable dispatch interface.
 //
 // This header is deliberately plain C++ (no CUDA types, no lsdtt classes). It
 // is included from CPU translation units in lsdtt3_cpu so they can dispatch to

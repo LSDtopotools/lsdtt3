@@ -169,7 +169,7 @@ int main(int argc, char* argv[])
     //
     // Parameters are grouped by workflow step.
     // help_map entry format: { type, default, short_desc, long_desc }
-    // None are const — cross-parameter logic below may adjust them.
+    // None are const - cross-parameter logic below may adjust them.
     // -------------------------------------------------------------------------
     std::map<std::string, bool>                        bool_default_map;
     std::map<std::string, float>                       float_default_map;
@@ -833,7 +833,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
-    // Step 1 — Ensure the DEM is ready for routing
+    // Step 1 - Ensure the DEM is ready for routing
     // -------------------------------------------------------------------------
     if (!bf["raster_is_filled"])
     {
@@ -862,7 +862,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2 — Build D8 flow routing
+    // Step 2 - Build D8 flow routing
     // -------------------------------------------------------------------------
     std::cout << "\n--- Flow routing ---\n";
     std::cout << "Boundary conditions: " << sf["boundary_conditions"] << "\n";
@@ -893,7 +893,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2b — Optional side-tributary basin extraction from supplied points
+    // Step 2b - Optional side-tributary basin extraction from supplied points
     // -------------------------------------------------------------------------
     if (bf["extract_side_tributary_basins_from_points"] ||
         bf["extract_basins_from_single_channel"])
@@ -1081,7 +1081,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — Extract source pixels
+    // Step 3 - Extract source pixels
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source extraction ---\n";
     std::cout << "Contributing-pixel threshold: "
@@ -1111,7 +1111,7 @@ int main(int argc, char* argv[])
     std::cout << "Number of source pixels: " << source_flats.size() << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 4 — Build junction / channel network
+    // Step 4 - Build junction / channel network
     // -------------------------------------------------------------------------
     std::cout << "\n--- Channel network construction ---\n";
 
@@ -1137,7 +1137,7 @@ int main(int argc, char* argv[])
     std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 5 — Optional channel-network writing
+    // Step 5 - Optional channel-network writing
     // -------------------------------------------------------------------------
     if (bf["write_channel_network_points"])
     {
@@ -1221,7 +1221,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 6 — Optional basin selection
+    // Step 6 - Optional basin selection
     // -------------------------------------------------------------------------
     if (do_basin_selection)
     {
@@ -1232,7 +1232,7 @@ int main(int argc, char* argv[])
             *channel_network
         );
 
-        // Fault/line segments in the raster CRS — populated by the line-crossing
+        // Fault/line segments in the raster CRS - populated by the line-crossing
         // mode and reused for the per-basin fault-relative analysis below.
         std::vector<std::array<double, 4>> fault_segments;
 
@@ -1474,7 +1474,7 @@ int main(int argc, char* argv[])
                 }
                 if (n_unsupported_geom > 0)
                     std::cerr << "Warning: " << n_unsupported_geom
-                              << " feature(s) skipped — not point geometry.\n";
+                              << " feature(s) skipped - not point geometry.\n";
                 if (n_missing_crs > 0)
                     std::cerr << "Warning: " << n_missing_crs
                               << " feature(s) had no source CRS and could not "
@@ -1601,8 +1601,8 @@ int main(int argc, char* argv[])
                         std::cout << "  [inside raster]\n";
                     else
                         std::cout << "  [OUTSIDE raster"
-                                  << (!in_x ? " — x out of range" : "")
-                                  << (!in_y ? " — y out of range" : "")
+                                  << (!in_x ? " - x out of range" : "")
+                                  << (!in_y ? " - y out of range" : "")
                                   << "]\n";
                 }
                 std::cout << "\n";
@@ -1782,7 +1782,7 @@ int main(int argc, char* argv[])
         std::cout << "Selected basins: " << basin_manager.size() << "\n";
 
         // ---------------------------------------------------------------------
-        // Step 7 — Basin filtering
+        // Step 7 - Basin filtering
         // ---------------------------------------------------------------------
         if (bf["filter_basins_by_stream_order"])
         {
@@ -1931,7 +1931,7 @@ int main(int argc, char* argv[])
         }
 
         // ---------------------------------------------------------------------
-        // Step 8 — Basin writing
+        // Step 8 - Basin writing
         // ---------------------------------------------------------------------
         if (bf["write_basin_outlines"])
         {

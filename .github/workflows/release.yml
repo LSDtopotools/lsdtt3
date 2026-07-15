@@ -2,7 +2,7 @@ name: Build and release
 
 # Triggers:
 #   - push of a version tag (e.g. git tag v0.2.1 && git push origin v0.2.1)
-#   - manual run from the GitHub Actions tab (Actions → Build and release → Run workflow)
+#   - manual run from the GitHub Actions tab (Actions -> Build and release -> Run workflow)
 on:
   push:
     tags:

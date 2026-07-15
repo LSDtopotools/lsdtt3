@@ -35,7 +35,7 @@
 //        a. Check whether any upslope pixel borders a nodata cell
 //        b. Extract DEM elevations, slope magnitudes, flow distances
 //        c. Compute descriptive stats and percentiles for each quantity
-//        d. Accumulate channel length by Strahler order (1–6)
+//        d. Accumulate channel length by Strahler order (1-6)
 //  14.  Write basin statistics to CSV
 //
 // IMPORTANT:
@@ -134,7 +134,7 @@ struct basin_stats_record
     double flow_distance_50th = 0.0;
     double flow_distance_75th = 0.0;
 
-    // Channel length (m) by Strahler stream order (keys 1–6)
+    // Channel length (m) by Strahler stream order (keys 1-6)
     // -1.0 indicates channel stats were not calculated
     std::map<int, double> channel_length_by_order;
 
@@ -402,7 +402,7 @@ static void write_basin_stats_csv(
 //
 // Writes one basin-outline polygon per basin to a vector layer (FlatGeobuf /
 // GeoPackage), with the per-basin hydromorphic and (optionally) shape and
-// centre-of-mass metrics attached as typed attributes — i.e. the basin metrics
+// centre-of-mass metrics attached as typed attributes - i.e. the basin metrics
 // joined to their associated basin polygons.
 // -----------------------------------------------------------------------------
 static void write_basin_polygons(
@@ -878,7 +878,7 @@ int main(int argc, char* argv[])
         else if (fmt_str != "cog")
         {
             std::cerr << "Warning: unknown write_output_format '"
-                      << fmt_str << "' — defaulting to cog.\n";
+                      << fmt_str << "' - defaulting to cog.\n";
         }
 
         std::cout << "Output format: " << fmt_str << "\n";
@@ -1503,7 +1503,7 @@ int main(int argc, char* argv[])
             double sum_x = 0.0;
             double sum_y = 0.0;
 
-            // Channel length by stream order (1–6); positive = accumulated
+            // Channel length by stream order (1-6); positive = accumulated
             std::map<int, double> chan_len;
             for (int o = 1; o <= 6; ++o) { chan_len[o] = 0.0; }
 

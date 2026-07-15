@@ -142,7 +142,7 @@ def main():
 
     out_px = round(args.width * args.dpi)
     print(f"Converting {len(tif_files)} file(s)  "
-          f"({args.width} in × {args.dpi} DPI = {out_px} px wide)\n")
+          f"({args.width} in x {args.dpi} DPI = {out_px} px wide)\n")
 
     n_ok  = 0
     n_err = 0

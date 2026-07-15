@@ -16,10 +16,10 @@
 //
 // Supported families
 // ------------------
-//   normal      — mean μ, standard deviation σ.  Valid for any real data.
-//   exponential — rate λ = 1/μ.  Valid for non-negative data only.
-//   weibull     — shape k, scale λ.  Valid for strictly positive data only.
-//   pareto      — shape α, scale x_min = min(data).  Valid for positive data.
+//   normal      - mean mu, standard deviation sigma.  Valid for any real data.
+//   exponential - rate lambda = 1/mu.  Valid for non-negative data only.
+//   weibull     - shape k, scale lambda.  Valid for strictly positive data only.
+//   pareto      - shape alpha, scale x_min = min(data).  Valid for positive data.
 //
 // Parameter fitting
 // -----------------
@@ -33,7 +33,7 @@
 //
 //     D = max_i  max( | i/n - F(x_i) |,  | (i-1)/n - F(x_i) | )
 //
-//   where x_1 ≤ … ≤ x_n is the sorted sample and F is the theoretical CDF.
+//   where x_1 <= ... <= x_n is the sorted sample and F is the theoretical CDF.
 //   Lower D = better fit.
 //
 // Divergence point
@@ -41,7 +41,7 @@
 //   max_divergence_x is the data value at which the empirical CDF departs
 //   most from the fitted theoretical CDF.  For roughness distributions with a
 //   flat-surface lower tail, this marks the value where the distribution
-//   starts to deviate from the fitted model — a natural threshold candidate.
+//   starts to deviate from the fitted model - a natural threshold candidate.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -71,10 +71,10 @@ struct lsdtt_distribution_fit
     lsdtt_distribution_family family = lsdtt_distribution_family::normal;
 
     // Fitted parameters (interpretation depends on family):
-    //   normal:      param1 = mean μ,       param2 = stddev σ
-    //   exponential: param1 = rate λ,       param2 = 0.0
-    //   weibull:     param1 = shape k,      param2 = scale λ
-    //   pareto:      param1 = shape α,      param2 = x_min
+    //   normal:      param1 = mean mu,       param2 = stddev sigma
+    //   exponential: param1 = rate lambda,       param2 = 0.0
+    //   weibull:     param1 = shape k,      param2 = scale lambda
+    //   pareto:      param1 = shape alpha,      param2 = x_min
     double param1 = std::numeric_limits<double>::quiet_NaN();
     double param2 = std::numeric_limits<double>::quiet_NaN();
 
@@ -87,7 +87,7 @@ struct lsdtt_distribution_fit
     double max_divergence_x = std::numeric_limits<double>::quiet_NaN();
 
     // Number of values used to fit this distribution.  Useful for computing
-    // the KS critical value: at 5 % significance, D_crit ≈ 1.36 / sqrt(n).
+    // the KS critical value: at 5 % significance, D_crit ~= 1.36 / sqrt(n).
     // Note: parameters are estimated from the same sample (MLE), so the raw
     // KS statistic is biased downward relative to the known-parameter case.
     std::size_t n_values = 0;

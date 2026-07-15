@@ -74,7 +74,7 @@ static lsdtt::raster_output_format resolve_output_format(
     if (fmt_str != "cog")
     {
         std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' — defaulting to cog.\n";
+                  << fmt_str << "' - defaulting to cog.\n";
     }
     return lsdtt::raster_output_format::cog;
 }
@@ -146,7 +146,7 @@ int main(int argc, char* argv[])
         "Iteration i uses seed = background_seed + i. "
         "Default (-1) uses the built-in sequence (base 1000), which is always "
         "reproducible. Set an explicit non-negative integer to pin a specific "
-        "realisation — record the value alongside results to reproduce them exactly."};
+        "realisation - record the value alongside results to reproduce them exactly."};
 
     // --- Output toggles ---
     bool_default_map["write_2d_spectrum"] = true;
@@ -256,7 +256,7 @@ int main(int argc, char* argv[])
     std::cout << "Sub-rollover beta  : " << result.sub_rollover_beta << "\n";
 
     // -------------------------------------------------------------------------
-    // Step 1 — 2D PSD rasters
+    // Step 1 - 2D PSD rasters
     //
     // The 2D PSD is stored fftshift-ed: zero frequency (DC) is at
     // row = padded_rows/2, col = padded_cols/2 (integer division).
@@ -283,13 +283,13 @@ int main(int argc, char* argv[])
 
         // Cell size in x (cycles/m). For square DEMs dfx == dfy; for
         // rectangular DEMs dfy differs but lsdtt_raster_meta only supports
-        // square pixels — x is exact, y may have a small scale error.
+        // square pixels - x is exact, y may have a small scale error.
         const double cell_size = result.dfx;
 
         // Origin so that the DC pixel centre (row padded_rows/2, col
         // padded_cols/2) maps to geographic coordinate (0, 0).
         // Derivation: pixel centre at row r = y_min + (n_rows - r - 0.5)*cs
-        // Setting r = padded_rows/2 → y_min = (padded_rows/2 + 0.5 - padded_rows)*cs
+        // Setting r = padded_rows/2 -> y_min = (padded_rows/2 + 0.5 - padded_rows)*cs
         lsdtt::lsdtt_raster_meta freq_meta;
         freq_meta.n_rows        = result.padded_rows;
         freq_meta.n_cols        = result.padded_cols;
@@ -334,7 +334,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2 — Radial spectrum CSV
+    // Step 2 - Radial spectrum CSV
     // -------------------------------------------------------------------------
     if (bf["write_radial_spectrum"])
     {
@@ -378,7 +378,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — Significant frequencies CSV
+    // Step 3 - Significant frequencies CSV
     // -------------------------------------------------------------------------
     if (bf["write_significant_frequencies"])
     {

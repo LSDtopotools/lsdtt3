@@ -32,9 +32,9 @@ namespace lsdtt {
 // =============================================================================
 // Internal: 1-D Felzenszwalb-Huttenlocher lower-envelope EDT
 //
-// Input  : f[0..n-1]  — squared distances to the nearest source along each
+// Input  : f[0..n-1]  - squared distances to the nearest source along each
 //                       1D "column" already computed (INF = non-source).
-// Output : d[0..n-1]  — 1D squared EDT (in pixel units).
+// Output : d[0..n-1]  - 1D squared EDT (in pixel units).
 //
 // Algorithm: Pedro F. Felzenszwalb & Daniel P. Huttenlocher,
 //   "Distance Transforms of Sampled Functions", Theory of Computing 8 (2012).
@@ -44,9 +44,9 @@ static void dt1d(
     std::vector<double>&       d,
     std::size_t                n)
 {
-    // k  — index of the rightmost parabola in the lower envelope
-    // v  — locations of parabolas in the lower envelope
-    // z  — boundaries between parabolas
+    // k  - index of the rightmost parabola in the lower envelope
+    // v  - locations of parabolas in the lower envelope
+    // z  - boundaries between parabolas
     std::vector<int>    v(n);
     std::vector<double> z(n + 1);
 
@@ -94,7 +94,7 @@ static void dt1d(
 // sq_dist is initialised to:
 //   0.0         for source pixels
 //   INF         for non-source valid pixels
-//   (unchanged) for nodata — caller keeps those as INF and masks afterwards
+//   (unchanged) for nodata - caller keeps those as INF and masks afterwards
 //
 // On return sq_dist[r*ncols+c] = squared Euclidean distance in pixel units.
 // =============================================================================
@@ -168,8 +168,8 @@ static void dt2d(
 // Internal: 1-D Felzenszwalb-Huttenlocher lower-envelope EDT with argmin
 //
 // Input  : f[0..n-1]
-// Output : d[0..n-1]    — squared EDT
-//          arg[0..n-1]  — index of the parabola/source chosen for each output
+// Output : d[0..n-1]    - squared EDT
+//          arg[0..n-1]  - index of the parabola/source chosen for each output
 // =============================================================================
 static void dt1d_with_argmin(
     const std::vector<double>& f,
@@ -349,7 +349,7 @@ lsdtt_raster_cpu euclidean_distance_transform(
     std::vector<double> sq_dist(npix, INF);
     for (std::size_t i = 0; i < npix; ++i)
     {
-        if (src_mask[i] == 0) continue;             // nodata → leave as INF
+        if (src_mask[i] == 0) continue;             // nodata -> leave as INF
         if (src_data[i] > 0.5f) sq_dist[i] = 0.0;  // source pixel
     }
 
@@ -741,14 +741,14 @@ swath_distances compute_swath_distances(
             // Perpendicular distance (unsigned)
             const double perp = std::sqrt(best_dist2);
 
-            // Sign: cross product of travel direction at foot × (foot → pixel)
+            // Sign: cross product of travel direction at foot x (foot -> pixel)
             // travel direction = axis_points[s+1] - axis_points[s]
             const double tdx = axis_points[best_seg + 1].x - axis_points[best_seg].x;
             const double tdy = axis_points[best_seg + 1].y - axis_points[best_seg].y;
             const double ex  = px - best_tx;
             const double ey  = py - best_ty;
             // cross product z-component: tdx*ey - tdy*ex
-            // positive → pixel is to the LEFT
+            // positive -> pixel is to the LEFT
             const double cross = tdx * ey - tdy * ex;
             const double signed_perp = (cross >= 0.0) ? perp : -perp;
 
@@ -771,7 +771,7 @@ swath_distances compute_swath_distances(
 
 
 // =============================================================================
-// connect_flat_surfaces_to_channels — internal helpers
+// connect_flat_surfaces_to_channels - internal helpers
 // =============================================================================
 
 // D8 direction offsets matching lsdtt_flowinfo_cpu.cpp
@@ -815,7 +815,7 @@ flat_channel_connection_result connect_flat_surfaces_to_channels(
 
     // ------------------------------------------------------------------
     // Step 1: rank sources by flow-path distance from outlet (descending)
-    //         → source 0 = main stem head (farthest from outlet)
+    //         -> source 0 = main stem head (farthest from outlet)
     // ------------------------------------------------------------------
     const lsdtt_raster_result dist_r = flow.get_distance_from_outlet_raster();
 
@@ -830,7 +830,7 @@ flat_channel_connection_result connect_flat_surfaces_to_channels(
             : 0.0f;
         src_dist.emplace_back(d, f);
     }
-    // Longest flow path first → assigned source index 0
+    // Longest flow path first -> assigned source index 0
     std::sort(src_dist.begin(), src_dist.end(),
               [](const auto& a, const auto& b){ return a.first > b.first; });
 

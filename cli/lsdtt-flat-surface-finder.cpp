@@ -13,7 +13,7 @@
 // agricultural terraces) in a DEM using local relief.
 //
 // Pipeline:
-//   1. Local relief threshold → raw relief mask
+//   1. Local relief threshold -> raw relief mask
 //      Threshold is either relief_threshold_metres or, with
 //      adaptive_relief_threshold, chosen by CDF divergence and scaled by
 //      relief_threshold_multiplier.
@@ -22,18 +22,18 @@
 //   3. Optional morphological opening  (flat_opening_radius_metres; 0 = skip)
 //      Removes thin connections between blobs that should be separate.
 //      Order of steps 2 and 3 is controlled by open_then_close.
-//   4. Remove components < min_component_pixels → working flat mask
+//   4. Remove components < min_component_pixels -> working flat mask
 //   5. Slope break detection (requires OpenCV): adaptive thresholding of
-//      vertical_excess_curvature → closing → Zhang-Suen skeleton → spur and
-//      terminal-loop pruning → optional elevation-based endpoint bridging.
+//      vertical_excess_curvature -> closing -> Zhang-Suen skeleton -> spur and
+//      terminal-loop pruning -> optional elevation-based endpoint bridging.
 //   6. Optional channel breaks (break_flats_with_channels): D8 drainage-area
 //      threshold, with optional drainage-area injection.
 //   7. Combined labelling: flat mask minus slope-break and channel-break
-//      pixels → labelled flat mask.
+//      pixels -> labelled flat mask.
 //   8. Optional plane analysis (run_plane_analysis): per-label plane fits with
 //      split/merge detection, then a residual-relief second pass that
 //      re-breaks, re-labels, and merges the flat surfaces.
-//   9. Optional channel network and flat-surface → channel connections
+//   9. Optional channel network and flat-surface -> channel connections
 //      (write_channel_network, connect_flat_surfaces_to_channels), seeded
 //      from user-supplied source points.
 //
@@ -312,8 +312,8 @@ int main(int argc, char* argv[])
 
     int_default_map["directional_close_n_angles"] = 18;
     help_map["directional_close_n_angles"] = {"int","18",
-        "Number of line orientations sampled from [0°, 180°) for directional closing.",
-        "18 → 10° spacing."};
+        "Number of line orientations sampled from [0 deg, 180 deg) for directional closing.",
+        "18 -> 10 deg spacing."};
 
     bool_default_map["write_healed_flat_mask"] = true;
     help_map["write_healed_flat_mask"] = {"bool","true",
@@ -536,7 +536,7 @@ int main(int argc, char* argv[])
     string_default_map["drainage_injection_vector_file"] = "";
     help_map["drainage_injection_vector_file"] = {"string","",
         "Path to a point vector file for upstream drainage area injection.",
-        "Features must carry a numeric 'drainage_area' attribute (m²). "
+        "Features must carry a numeric 'drainage_area' attribute (m^2). "
         "Useful when rivers enter the tile from outside its extent. "
         "If empty, no injection is applied."};
 
@@ -774,7 +774,7 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "Warning: adaptive threshold failed (" << e.what()
-                      << ") — using relief_threshold_metres = "
+                      << ") - using relief_threshold_metres = "
                       << ff["relief_threshold_metres"] << "\n";
         }
     }
@@ -852,7 +852,7 @@ int main(int argc, char* argv[])
     const std::size_t n_flat_pixels = flat_mask.get_data().size();
     std::vector<uint8_t> channel_break_pixels(n_flat_pixels, 0);
 
-    // Shared flow objects — built once, reused by break_flats_with_channels,
+    // Shared flow objects - built once, reused by break_flats_with_channels,
     // write_channel_network, and connect_flat_surfaces_to_channels.
     lsdtt::lsdtt_raster_cpu routing_dem = dem;
     std::unique_ptr<lsdtt::lsdtt_flow_base> ch_flow;
@@ -1188,13 +1188,13 @@ int main(int argc, char* argv[])
     {
         if (!ch_flow)
         {
-            std::cerr << "Warning: flow routing unavailable — "
+            std::cerr << "Warning: flow routing unavailable - "
                          "skipping break_flats_with_channels.\n";
         }
         else if (!sf["drainage_injection_vector_file"].empty())
         {
             // Injection changes drainage area, which the scope engine does not
-            // yet honour — keep the DA-threshold path for injected runs.
+            // yet honour - keep the DA-threshold path for injected runs.
             std::cout << "\n--- Breaking flats with channel pixels "
                          "(drainage-area injection) ---\n";
             try
@@ -1213,7 +1213,7 @@ int main(int argc, char* argv[])
 
                 std::cout << "Identifying channel pixels "
                           << "(threshold=" << ip["channel_threshold_contributing_pixels"]
-                          << " pixels = " << da_threshold << " m²)...\n";
+                          << " pixels = " << da_threshold << " m^2)...\n";
 
                 for (std::size_t i = 0; i < n_flat_pixels; ++i)
                 {
@@ -1244,7 +1244,7 @@ int main(int argc, char* argv[])
         }
         else
         {
-            std::cerr << "Warning: channel scope unavailable — "
+            std::cerr << "Warning: channel scope unavailable - "
                          "skipping break_flats_with_channels.\n";
         }
     }
@@ -1371,7 +1371,7 @@ int main(int argc, char* argv[])
                 const std::vector<float>& dem_d  = dem.get_data();
                 const float dem_nd = static_cast<float>(dem.get_meta().no_data_value);
 
-                // Use crossing-number classifier (CN=1) — finds corner endpoints
+                // Use crossing-number classifier (CN=1) - finds corner endpoints
                 // that the raw degree==1 test misses.
                 lsdtt::skeleton_node_result snr =
                     lsdtt::classify_skeleton_nodes(vsres.skeleton);
@@ -1522,7 +1522,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Floodplain / terrace classification ---\n";
         if (!ch_flow || !ch_scope_resolved)
         {
-            std::cerr << "Warning: channel scope unavailable — "
+            std::cerr << "Warning: channel scope unavailable - "
                          "skipping find_floodplain.\n";
         }
         else
@@ -1854,7 +1854,7 @@ int main(int argc, char* argv[])
         // 1. Compute local relief on the plane-residual raster (same window
         //    as the original flat mask).
         // 2. Binary mask: residual_relief > threshold.
-        // 3. Skeletonise (Zhang-Suen) → 1-pixel break lines.
+        // 3. Skeletonise (Zhang-Suen) -> 1-pixel break lines.
         // 4. Optional spur pruning.
         // 5. Second-pass labelling: flat_mask minus channel breaks minus
         //    slope-break pixels minus residual skeleton.
@@ -2090,7 +2090,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Channel / river network  +  flat-surface → channel connections
+    // Channel / river network  +  flat-surface -> channel connections
     //
     // Flow (ch_flow) was already built in the shared block above.
     // Channel sources are loaded from a file supplied by the user.
@@ -2105,7 +2105,7 @@ int main(int argc, char* argv[])
     {
         if (!ch_flow)
         {
-            std::cerr << "Warning: flow routing unavailable — "
+            std::cerr << "Warning: flow routing unavailable - "
                          "skipping channel network and flat-surface connections.\n";
         }
         else
@@ -2115,7 +2115,7 @@ int main(int argc, char* argv[])
             {
                 std::cerr << "Warning: source_points_path is required for "
                              "write_channel_network / connect_flat_surfaces_to_channels "
-                             "but was not supplied — skipping.\n";
+                             "but was not supplied - skipping.\n";
             }
             else
             {
@@ -2161,7 +2161,7 @@ int main(int argc, char* argv[])
                     if (ch_sources.empty())
                     {
                         std::cerr << "Warning: no source points mapped to valid "
-                                     "raster cells — check source_points_path CRS "
+                                     "raster cells - check source_points_path CRS "
                                      "and coordinates.\n";
                     }
                     else
@@ -2192,7 +2192,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Flat-surface to channel connections ---\n";
         if (!ch_flow || !ch_jnet || ch_sources.empty())
         {
-            std::cerr << "Warning: channel network not available — "
+            std::cerr << "Warning: channel network not available - "
                          "skipping flat-surface connection.\n";
         }
         else

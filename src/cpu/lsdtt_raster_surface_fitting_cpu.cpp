@@ -40,7 +40,7 @@ static int resolve_threads(int n_threads)
 #endif
 }
 
-// Physical projected coordinates of pixel centre — y increases northward.
+// Physical projected coordinates of pixel centre - y increases northward.
 static inline double pixel_x(int col, const lsdtt_raster_meta& meta)
 {
     return meta.x_min + (static_cast<double>(col) + 0.5) * meta.cell_size;
@@ -177,7 +177,7 @@ static lsdtt_plane_fit_result fit_plane_from_xyz(
         Syz += dy * dz;
     }
 
-    // Determinant — check for degenerate geometry
+    // Determinant - check for degenerate geometry
     // (all points collinear in x, all points at same x, etc.)
     const double det = Sxx * Syy - Sxy * Sxy;
 
@@ -226,7 +226,7 @@ static bool fit_plane_3points(
     const double ex1 = x2 - x1, ey1 = y2 - y1, ez1 = z2 - z1;
     const double ex2 = x3 - x1, ey2 = y3 - y1, ez2 = z3 - z1;
 
-    // Normal vector n = e1 × e2
+    // Normal vector n = e1 x e2
     const double nx =  ey1 * ez2 - ez1 * ey2;
     const double ny =  ez1 * ex2 - ex1 * ez2;
     const double nz =  ex1 * ey2 - ey1 * ex2;
@@ -268,7 +268,7 @@ lsdtt_plane_fit_result fit_plane_to_mask(
 // fit_plane_to_mask_ransac
 //
 // RANSAC (Random Sample Consensus) is a robust estimation algorithm that
-// tolerates a high fraction of outliers — points that do not lie on the
+// tolerates a high fraction of outliers - points that do not lie on the
 // target surface.  It was introduced by:
 //
 //   Fischler, M. A., & Bolles, R. C. (1981). Random sample consensus:
@@ -282,24 +282,24 @@ lsdtt_plane_fit_result fit_plane_to_mask(
 // the surface is approximately planar, but the masked region almost always
 // contains a population of anomalous pixels:
 //
-//   - River channels incised 5–30 m below the fan tread
+//   - River channels incised 5-30 m below the fan tread
 //   - Isolated hills or remnant ridges standing above the surface
 //   - Data artefacts (road embankments, vegetation returns in raw lidar)
 //
-// Even if these outliers represent only 10–20 % of the pixels, they pull the
+// Even if these outliers represent only 10-20 % of the pixels, they pull the
 // OLS coefficients towards their elevations, tilting or warping the recovered
 // plane away from the true fan surface.  RANSAC ignores this by design:
 //
 //   1. Randomly select the minimum number of points needed to define the
 //      model (3 for a plane).
 //   2. Fit an exact model through those 3 points.
-//   3. Count all pixels within inlier_tolerance of that plane — the
+//   3. Count all pixels within inlier_tolerance of that plane - the
 //      "consensus set".
 //   4. Repeat for max_iterations hypotheses; keep the largest consensus set.
 //   5. Fit a final OLS plane through the winning consensus set.
 //
 // The tolerance should be set to the maximum height of the noise / roughness
-// on the true fan surface — typically 5–20 m for a DEM at 10–30 m resolution.
+// on the true fan surface - typically 5-20 m for a DEM at 10-30 m resolution.
 // Channels incised 10s of metres will be rejected as outliers automatically.
 // Increasing max_iterations improves the probability of sampling three
 // uncontaminated points from the consensus surface (1000 iterations is
@@ -357,7 +357,7 @@ lsdtt_plane_fit_result fit_plane_to_mask_ransac(
                 xs[i2], ys[i2], zs[i2],
                 a, b, c))
         {
-            continue;   // degenerate sample — try again
+            continue;   // degenerate sample - try again
         }
 
         // Count inliers
@@ -579,7 +579,7 @@ std::map<int, lsdtt_plane_fit_result> fit_planes_to_labels(
 }
 
 // =============================================================================
-// Degree-2 polynomial fitting — internal helpers
+// Degree-2 polynomial fitting - internal helpers
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -623,7 +623,7 @@ static bool solve_6x6(double A[36], double b[6])
         const double diag = A[col * N + col];
 
         // Check for singular or nearly-singular system
-        // Scale tolerance by the largest diagonal seen so far — crude but
+        // Scale tolerance by the largest diagonal seen so far - crude but
         // sufficient for the nearly-equal magnitude normal equation terms
         // produced when coordinates are centred.
         if (std::abs(diag) < 1e-12 * std::max(pivot_val, 1.0))
@@ -663,9 +663,9 @@ static bool solve_6x6(double A[36], double b[6])
 // OLS fit of z = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f.
 //
 // Basis functions (evaluated at centred coordinates u = x - xbar, v = y - ybar):
-//   φ0 = u^2,  φ1 = v^2,  φ2 = u*v,  φ3 = u,  φ4 = v,  φ5 = 1
+//   phi0 = u^2,  phi1 = v^2,  phi2 = u*v,  phi3 = u,  phi4 = v,  phi5 = 1
 //
-// Normal equation: (Φ^T Φ) coeffs_centred = Φ^T z
+// Normal equation: (Phi^T Phi) coeffs_centred = Phi^T z
 //
 // After solving in centred coordinates the constant term f is converted back
 // so that the polynomial evaluates correctly in original projected coordinates.
@@ -788,7 +788,7 @@ static lsdtt_poly2_fit_result fit_poly2_from_xyz(
 }
 
 // =============================================================================
-// Degree-2 polynomial — public API
+// Degree-2 polynomial - public API
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -935,7 +935,7 @@ lsdtt_raster_cpu residual_from_fitted_poly2(
 //       [  c   2b  ]
 //
 // Eigenvalues:
-//   λ = (a + b) ± sqrt( (a - b)^2 + c^2 )
+//   lambda = (a + b) +/- sqrt( (a - b)^2 + c^2 )
 //
 // Returns the larger eigenvalue (maximum principal curvature).
 // -----------------------------------------------------------------------------

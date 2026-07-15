@@ -25,7 +25,7 @@
 // Usage patterns for callers (CLIs, high-level workflows)
 // -------------------------------------------------------
 //
-//   1. Write directly to disk — no lsdtt_raster_cpu needed:
+//   1. Write directly to disk - no lsdtt_raster_cpu needed:
 //
 //        lsdtt_raster_result r = engine->get_some_raster();
 //        loader.write_full(r, out_path, format);

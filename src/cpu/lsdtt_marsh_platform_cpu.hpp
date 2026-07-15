@@ -18,7 +18,7 @@
 // lsdtt_slope_break_finder_cpu or lsdtt_terrace_edge_tracer_cpu.  It follows
 // the legacy workflow structure:
 //
-//   1. Build a marsh search space from DEM relative relief × slope relative relief
+//   1. Build a marsh search space from DEM relative relief x slope relative relief
 //   2. Detect local slope maxima within that search space
 //   3. Grow scarp lines iteratively from those maxima
 //   4. Clean scarps using DEM context

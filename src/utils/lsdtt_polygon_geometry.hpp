@@ -80,7 +80,7 @@ inline double polygon_area(const std::vector<lsdtt_xy>& ring)
 // Sum of edge lengths around the ring (closing edge included). O(n).
 //
 // CAVEAT: a polygon traced on a raster pixel grid has a staircased boundary
-// whose perimeter systematically overestimates the true perimeter (a 45° edge
+// whose perimeter systematically overestimates the true perimeter (a 45 deg edge
 // of length L traces as sqrt(2)*L). Perimeter-based shape metrics (circularity,
 // Gravelius compactness) should therefore be computed on a simplified ring
 // (see simplify_douglas_peucker) for cross-basin comparability.
@@ -105,7 +105,7 @@ inline double polygon_perimeter(const std::vector<lsdtt_xy>& ring)
 // -----------------------------------------------------------------------------
 // polyline_length
 //
-// Arc length of an OPEN polyline (no implied closing edge — unlike
+// Arc length of an OPEN polyline (no implied closing edge - unlike
 // polygon_perimeter). O(n). Returns 0 for fewer than 2 vertices.
 // -----------------------------------------------------------------------------
 inline double polyline_length(const std::vector<lsdtt_xy>& points)

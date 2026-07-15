@@ -26,9 +26,9 @@
 //
 // All steps after (1) operate on the reprojected raster when reprojection
 // occurs.  Output rasters receive a projection suffix when reprojected:
-//   _utm     — UTM zone of raster centre
-//   _polar   — NSIDC polar stereographic (|lat| > 75°)
-//   _lambert — custom Lambert Azimuthal Equal Area (wide-extent rasters)
+//   _utm     - UTM zone of raster centre
+//   _polar   - NSIDC polar stereographic (|lat| > 75 deg)
+//   _lambert - custom Lambert Azimuthal Equal Area (wide-extent rasters)
 //
 // Usage:
 //   lsdtt-raster-preprocessing <path> <parameter_file>
@@ -268,7 +268,7 @@ int main(int argc, char* argv[])
     // Each parameter has its default value and help entry declared together
     // so that a developer can read the full contract for each parameter in
     // one place.  Parameters are grouped by the pipeline step that uses them.
-    // None are const — some booleans conditionally modify others below.
+    // None are const - some booleans conditionally modify others below.
     //
     // help_map entry format: { type, default, short_desc, long_desc }
     // -------------------------------------------------------------------------
@@ -581,7 +581,7 @@ int main(int argc, char* argv[])
     bool_default_map["clip_vector_data_to_raster"] = false;
     help_map["clip_vector_data_to_raster"] = {"bool","false",
         "Clip a vector file to the bounding box of the output raster.",
-        "The vector CRS need not match the raster CRS — the raster bbox is "
+        "The vector CRS need not match the raster CRS - the raster bbox is "
         "reprojected into the vector's native CRS before clipping. "
         "Set vector_data_fname to the path of the input vector file."};
 
@@ -624,7 +624,7 @@ int main(int argc, char* argv[])
         "If false (default), pixels that fall inside the bounding box but "
         "outside the polygon shape are set to nodata. "
         "If true, all pixels within the bounding box are kept regardless of "
-        "whether they fall inside the polygon — the output is a plain "
+        "whether they fall inside the polygon - the output is a plain "
         "rectangular crop. Only used when clip_raster_to_polygon is true."};
 
     string_default_map["polygon_clip_rule"] = "majority_coverage";
@@ -675,7 +675,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Parse — fills maps from the parameter file, falling back to defaults
+    // Parse - fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -716,7 +716,7 @@ int main(int argc, char* argv[])
     if (bf["breach_before_fill"])
     {
         // Ensure the breaching step runs even if no breached-raster output
-        // was requested — breach_before_fill implies we want a breached dem
+        // was requested - breach_before_fill implies we want a breached dem
         // to feed into the fill step.
         bf["write_breached_raster"] = bf["write_breached_raster"] || false;
     }
@@ -750,19 +750,19 @@ int main(int argc, char* argv[])
         else if (fmt_str != "cog")
         {
             std::cerr << "Warning: unknown write_output_format '"
-                      << fmt_str << "' — defaulting to cog.\n";
+                      << fmt_str << "' - defaulting to cog.\n";
         }
         std::cout << "Output format: " << fmt_str << "\n";
     }
 
     // -------------------------------------------------------------------------
-    // Step 0 — Mosaic (optional)
+    // Step 0 - Mosaic (optional)
     //
     // If mosaic_file_list is set, read the listed rasters, mosaic them into
     // a single raster, write it, and use it as the DEM for all subsequent
     // pipeline steps.  When not set, the normal read_fname is used.
     //
-    // read_fname is ignored when mosaic_file_list is set — warn the user if
+    // read_fname is ignored when mosaic_file_list is set - warn the user if
     // both are present so there is no silent data-loss confusion.
     // write_fname must be non-empty (either explicitly set or derived from
     // read_fname) so the mosaic output path is well-defined.
@@ -773,7 +773,7 @@ int main(int argc, char* argv[])
         const std::string& list_path = sf["mosaic_file_list"];
         if (!list_path.empty())
         {
-            // Warn if read_fname was also set — it will be ignored.
+            // Warn if read_fname was also set - it will be ignored.
             if (!pp.get_read_fname().empty())
             {
                 std::cerr << "Warning: both mosaic_file_list and read_fname are "
@@ -881,7 +881,7 @@ int main(int argc, char* argv[])
     loader.print_raster_info();
 
     // -------------------------------------------------------------------------
-    // Step 1 — Projection check and reprojection
+    // Step 1 - Projection check and reprojection
     //
     // If the raster is geographic or Web Mercator, reproject it to the
     // appropriate projected CRS.  All subsequent steps use the reprojected
@@ -941,7 +941,7 @@ int main(int argc, char* argv[])
             loader.print_raster_info();
         }
 
-        // Final CRS check — must be projected in metres at this point
+        // Final CRS check - must be projected in metres at this point
         try
         {
             loader.get_meta().check_projected_metres();
@@ -961,7 +961,7 @@ int main(int argc, char* argv[])
     const std::string write_stem = pp.get_write_fname();
 
     // -------------------------------------------------------------------------
-    // Step 2 — Threshold masking
+    // Step 2 - Threshold masking
     // -------------------------------------------------------------------------
     float min_elev = ff["minimum_elevation"];
     float max_elev = ff["maximum_elevation"];
@@ -990,12 +990,12 @@ int main(int argc, char* argv[])
         const std::string o = pp.make_output_path( "_remove_seas.tif");
         std::cout << "Threshold masking changed "
                   << (valid_before_masking - count_valid(dem))
-                  << " pixel(s) — writing: " << o << "\n";
+                  << " pixel(s) - writing: " << o << "\n";
         loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
     }
 
     // -------------------------------------------------------------------------
-    // Step 2b — Binary mask application
+    // Step 2b - Binary mask application
     // -------------------------------------------------------------------------
     if (bf["apply_binary_mask"])
     {
@@ -1005,7 +1005,7 @@ int main(int argc, char* argv[])
         if (mask_path.empty())
         {
             std::cerr << "Warning: apply_binary_mask is true but "
-                         "binary_mask_fname is empty — skipping.\n";
+                         "binary_mask_fname is empty - skipping.\n";
         }
         else
         {
@@ -1034,7 +1034,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2c — Crop to polygon bounding box (and optionally mask by shape)
+    // Step 2c - Crop to polygon bounding box (and optionally mask by shape)
     // -------------------------------------------------------------------------
     if (bf["clip_raster_to_polygon"])
     {
@@ -1044,7 +1044,7 @@ int main(int argc, char* argv[])
         if (poly_path.empty())
         {
             std::cerr << "Warning: clip_raster_to_polygon is true but "
-                         "polygon_clip_fname is empty — skipping.\n";
+                         "polygon_clip_fname is empty - skipping.\n";
         }
         else
         {
@@ -1059,7 +1059,7 @@ int main(int argc, char* argv[])
                 {
                     std::cerr << "Warning: polygon file contains "
                               << n_features
-                              << " polygon(s) — only the first will be used.\n";
+                              << " polygon(s) - only the first will be used.\n";
                 }
                 else
                 {
@@ -1096,7 +1096,7 @@ int main(int argc, char* argv[])
                         else if (rs != "majority_coverage")
                             std::cerr << "Warning: unknown polygon_clip_rule '"
                                       << rs
-                                      << "' — using majority_coverage.\n";
+                                      << "' - using majority_coverage.\n";
                     }
 
                     const lsdtt::lsdtt_raster_cpu poly_mask =
@@ -1120,7 +1120,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3 — Interior nodata filling
+    // Step 3 - Interior nodata filling
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu nodata_filled_dem = dem;
     bool did_nodata_fill = false;
@@ -1154,7 +1154,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 4 — Clip to maximum valid rectangle
+    // Step 4 - Clip to maximum valid rectangle
     // -------------------------------------------------------------------------
     if (bf["write_clipped_rectangle_raster"])
     {
@@ -1179,7 +1179,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 5 — Depression breaching
+    // Step 5 - Depression breaching
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu working_dem = dem;
 
@@ -1255,7 +1255,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 6 — Pit filling
+    // Step 6 - Pit filling
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu filled_dem = working_dem;
     bool did_fill = false;
@@ -1362,7 +1362,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 7 — Depression polygons
+    // Step 7 - Depression polygons
     // -------------------------------------------------------------------------
     if (bf["write_depression_polygons"])
     {
@@ -1370,7 +1370,7 @@ int main(int argc, char* argv[])
 
         if (!have_fill_diff)
         {
-            std::cerr << "Warning: fill diff not available — "
+            std::cerr << "Warning: fill diff not available - "
                          "skipping depression polygons.\n";
         }
         else
@@ -1424,7 +1424,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 8 — Hillshade
+    // Step 8 - Hillshade
     // -------------------------------------------------------------------------
     if (bf["write_hillshade_raster"])
     {
@@ -1458,7 +1458,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 8b — Multidirectional hillshade
+    // Step 8b - Multidirectional hillshade
     // -------------------------------------------------------------------------
     if (bf["write_multidirectional_hillshade_raster"])
     {
@@ -1502,7 +1502,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 9 — Vector clipping
+    // Step 9 - Vector clipping
     // -------------------------------------------------------------------------
     if (bf["clip_vector_data_to_raster"])
     {
@@ -1512,7 +1512,7 @@ int main(int argc, char* argv[])
         if (vec_in.empty())
         {
             std::cerr << "Warning: clip_vector_data_to_raster is true but "
-                         "vector_data_fname is empty — skipping.\n";
+                         "vector_data_fname is empty - skipping.\n";
         }
         else
         {
@@ -1548,7 +1548,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 10 — Sample rasters to points
+    // Step 10 - Sample rasters to points
     // -------------------------------------------------------------------------
     if (bf["sample_rasters_to_points"])
     {
@@ -1563,12 +1563,12 @@ int main(int argc, char* argv[])
         if (sf["point_data_fname"].empty())
         {
             std::cerr << "Warning: sample_rasters_to_points is true but "
-                        "point_data_fname is empty — skipping.\n";
+                        "point_data_fname is empty - skipping.\n";
         }
         else if (sf["raster_attribute_csv"].empty())
         {
             std::cerr << "Warning: sample_rasters_to_points is true but "
-                        "raster_attribute_csv is empty — skipping.\n";
+                        "raster_attribute_csv is empty - skipping.\n";
         }
         else
         {
@@ -1698,7 +1698,7 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Parameter echo — always printed so runs are reproducible from the log
+    // Parameter echo - always printed so runs are reproducible from the log
     // -------------------------------------------------------------------------
     pp.print_parameters();
 

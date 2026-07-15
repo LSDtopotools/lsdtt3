@@ -11,11 +11,11 @@
 // Willett 2013 generalised to D-infinity).
 //
 // Algorithm:
-//   Iterates topological_order in REVERSE (outlets first → headwaters last)
+//   Iterates topological_order in REVERSE (outlets first -> headwaters last)
 //   so that each receiver elevation is already updated when its donor is solved.
 //
 //   For n = 1: closed-form implicit two-receiver update.
-//   For n ≠ 1: Newton-Raphson; if NR fails or overexcavates, the new elevation
+//   For n != 1: Newton-Raphson; if NR fails or overexcavates, the new elevation
 //              is clamped to receiver_elevation + slope_clamp * dx.
 //
 //   Pixels with drainage area < incision_threshold_area are not eroded.

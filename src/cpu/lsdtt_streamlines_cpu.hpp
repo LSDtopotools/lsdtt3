@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Kinematic streamline tracing — steepest-descent flow paths on raw topography.
+// Kinematic streamline tracing - steepest-descent flow paths on raw topography.
 //
 // Traces sub-pixel flow paths from a set of source pixels to a set of sink
 // pixels using the Lea (1992) algorithm with the Tarboton (1997) improvements.
@@ -97,7 +97,7 @@ namespace lsdtt {
 // =============================================================================
 enum class streamline_outcome
 {
-    reached_sink,    // trace terminated at a sink pixel — success
+    reached_sink,    // trace terminated at a sink pixel - success
     hit_edge,        // trace left the valid raster domain without finding a sink
     loop_detected,   // trace revisited a pixel three or more times
     no_aspect        // source pixel has no valid aspect (raster edge or nodata
@@ -192,10 +192,10 @@ struct lsdtt_streamline_result
 //
 // Traces kinematic streamlines from every source pixel that satisfies
 // source_mask.data > 0.5 and source_mask.mask == 1, until each path either:
-//   - reaches a sink pixel (sink_mask.data > 0.5)   → reached_sink
-//   - exits the valid raster domain                  → hit_edge
-//   - revisits a cell three or more times            → loop_detected
-//   - exceeds opts.max_steps                         → hit_edge
+//   - reaches a sink pixel (sink_mask.data > 0.5)   -> reached_sink
+//   - exits the valid raster domain                  -> hit_edge
+//   - revisits a cell three or more times            -> loop_detected
+//   - exceeds opts.max_steps                         -> hit_edge
 //
 // All three rasters must share the same grid geometry (n_rows, n_cols, x_min,
 // y_min, cell_size).  Throws std::invalid_argument on mismatch.
@@ -216,13 +216,13 @@ lsdtt_streamline_result trace_streamlines(
 // Writes streamlines to a FlatGeobuf or GeoPackage file as line features.
 // Each streamline is one LineString feature with the following attributes:
 //
-//   source_row  (int64) — row of the source pixel
-//   source_col  (int64) — column of the source pixel
-//   sink_row    (int64) — row of the sink pixel; -1 if outcome != reached_sink
-//   sink_col    (int64) — column of the sink pixel; -1 if outcome != reached_sink
-//   length_m    (double) — path length in metres
-//   relief_m    (double) — source elevation minus sink elevation (metres)
-//   outcome     (int64)  — 0=reached_sink, 1=hit_edge, 2=loop_detected,
+//   source_row  (int64) - row of the source pixel
+//   source_col  (int64) - column of the source pixel
+//   sink_row    (int64) - row of the sink pixel; -1 if outcome != reached_sink
+//   sink_col    (int64) - column of the sink pixel; -1 if outcome != reached_sink
+//   length_m    (double) - path length in metres
+//   relief_m    (double) - source elevation minus sink elevation (metres)
+//   outcome     (int64)  - 0=reached_sink, 1=hit_edge, 2=loop_detected,
 //                          3=no_aspect
 //
 // Line geometry:
@@ -233,18 +233,18 @@ lsdtt_streamline_result trace_streamlines(
 //
 // Format:
 //   Default is FlatGeobuf (.fgb).  GeoPackage (.gpkg) is available but
-//   is unreliable on mounted or network filesystems — notably WSL2's /mnt/c
+//   is unreliable on mounted or network filesystems - notably WSL2's /mnt/c
 //   path.  A warning is printed to stderr when gpkg is selected.
 //   FlatGeobuf has no such restriction and is the recommended format.
 //
 // Parameters:
-//   result      — output of trace_streamlines()
-//   meta        — DEM metadata (used for cell-centre coordinates and CRS)
-//   loader      — data loader used to open the write session
-//   out_path    — output file path (should end in .fgb or .gpkg)
-//   layer_name  — OGR layer name inside the file
-//   format      — flatgeobuf (default) or gpkg
-//   all_outcomes — false (default): write only reached_sink streamlines.
+//   result      - output of trace_streamlines()
+//   meta        - DEM metadata (used for cell-centre coordinates and CRS)
+//   loader      - data loader used to open the write session
+//   out_path    - output file path (should end in .fgb or .gpkg)
+//   layer_name  - OGR layer name inside the file
+//   format      - flatgeobuf (default) or gpkg
+//   all_outcomes - false (default): write only reached_sink streamlines.
 //                  true: also write hit_edge and loop_detected streamlines
 //                  that have save_nodes geometry; no_aspect is always skipped.
 // =============================================================================

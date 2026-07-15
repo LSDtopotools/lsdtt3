@@ -890,10 +890,10 @@ static lsdtt_raster_cpu apply_valid_domain(
 //   H = [[2a, c], [c, 2b]]    (using r=2a, s=c, t=2b)
 //
 // Eigenvalues:
-//   λ1 = ((r+t) + sqrt((r-t)^2 + 4*s^2)) / 2
-//   λ2 = ((r+t) - sqrt((r-t)^2 + 4*s^2)) / 2
+//   lambda1 = ((r+t) + sqrt((r-t)^2 + 4*s^2)) / 2
+//   lambda2 = ((r+t) - sqrt((r-t)^2 + 4*s^2)) / 2
 //
-// Elongation = |λ_major| / (|λ_major| + |λ_minor| + ε)
+// Elongation = |lambda_major| / (|lambda_major| + |lambda_minor| + epsilon)
 //   1.0 = perfect line-like (one dominant curvature)
 //   0.5 = perfectly isotropic (pit, peak)
 // -----------------------------------------------------------------------------
@@ -1127,7 +1127,7 @@ channel_candidate_result find_channel_candidates(
         );
 
     // -------------------------------------------------------------------------
-    // Hessian elongation — apply domain, optionally filter the mask
+    // Hessian elongation - apply domain, optionally filter the mask
     // -------------------------------------------------------------------------
     // Zero out hess_data where valid_domain is 0
     for (std::size_t k = 0; k < npix; ++k)
@@ -1762,7 +1762,7 @@ road_result find_roads(
     const double eps = 1e-12;
 
     // -------------------------------------------------------------------------
-    // Pass 1 — per-pixel curvature geometry, slope, contour alignment,
+    // Pass 1 - per-pixel curvature geometry, slope, contour alignment,
     // line-likeness, and the cross-feature direction. No scoring yet: the bench
     // test in pass 2 needs the completed slope field.
     // -------------------------------------------------------------------------
@@ -1854,7 +1854,7 @@ road_result find_roads(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 2 — edge strength, bench test, score and mask.
+    // Pass 2 - edge strength, bench test, score and mask.
     // -------------------------------------------------------------------------
     const double half_sat = std::max(0.0, request.curvature_half_saturation);
     const bool   do_bench = request.use_bench_test &&

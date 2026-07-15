@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Raster mosaic — CPU free function.
+// Raster mosaic - CPU free function.
 //
 // Combines a list of rasters into a single raster whose extent is the union
 // of all input extents.  Equivalent to the core functionality of gdal_merge.py
@@ -16,9 +16,9 @@
 // Compatibility requirements
 // --------------------------
 //   All input rasters must share:
-//     • the same CRS (compared with OGRSpatialReference::IsSame)
-//     • the same cell size (within a 0.001 % relative tolerance)
-//     • pixel-aligned origins (x_min / y_min differ by an integer multiple of
+//     - the same CRS (compared with OGRSpatialReference::IsSame)
+//     - the same cell size (within a 0.001 % relative tolerance)
+//     - pixel-aligned origins (x_min / y_min differ by an integer multiple of
 //       cell_size, within a 0.01 % of cell_size absolute tolerance)
 //
 //   Rasters that fail any check are skipped with a warning printed to stderr.
@@ -58,7 +58,7 @@ namespace lsdtt {
 // into a single raster.
 //
 // Parameters:
-//   paths  — ordered list of file paths.  Paths that cannot be opened are
+//   paths  - ordered list of file paths.  Paths that cannot be opened are
 //             skipped with a warning.  Order determines blend priority (last
 //             valid pixel wins).
 //

@@ -12,9 +12,9 @@
 // Experimental terrain-feature detection CLI for LiDAR-derived DEM analysis.
 //
 // Feature modes:
-//   channel_candidates — multiscale curvature persistence + Hessian elongation
-//   find_drains        — Frangi ridge/valley filter for narrow drainage ditches
-//   relief_ratio       — local relief ratio at two moving-window radii
+//   channel_candidates - multiscale curvature persistence + Hessian elongation
+//   find_drains        - Frangi ridge/valley filter for narrow drainage ditches
+//   relief_ratio       - local relief ratio at two moving-window radii
 //
 // Usage:
 //   lsdtt-feature-finder <path> <parameter_file>
@@ -83,7 +83,7 @@ static lsdtt::raster_output_format resolve_output_format(
     if (fmt_str != "cog")
     {
         std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' — defaulting to cog.\n";
+                  << fmt_str << "' - defaulting to cog.\n";
     }
     return lsdtt::raster_output_format::cog;
 }
@@ -323,7 +323,7 @@ int main(int argc, char* argv[])
     float_default_map["hessian_elongation_threshold"] = 0.6f;
     help_map["hessian_elongation_threshold"] = {"float","0.6",
         "Minimum Hessian elongation to retain in the channel mask.",
-        "elongation = |λ_major| / (|λ_major| + |λ_minor|). "
+        "elongation = |lambda_major| / (|lambda_major| + |lambda_minor|). "
         "0.5 is vacuous (always true); 0.6 removes near-isotropic pits/peaks; "
         "higher values are more selective."};
 
@@ -758,9 +758,9 @@ int main(int argc, char* argv[])
     help_map["flow_valley_curvature_metric"] = {"string","tangential_curvature",
         "Regional curvature used to define the valley zone.",
         "tangential_curvature (default): cross-slope/contour curvature (flow "
-        "convergence) — picks valleys but NOT footslope slope breaks (those are "
+        "convergence) - picks valleys but NOT footslope slope breaks (those are "
         "concave down-slope only). plan_curvature: similar but normalised differently. "
-        "laplacian or mean_curvature: total concavity — also flags slope breaks. "
+        "laplacian or mean_curvature: total concavity - also flags slope breaks. "
         "Positive = concave; ridges (convex) are always excluded by sign."};
 
     float_default_map["flow_valley_curvature_threshold"] = 0.0f;

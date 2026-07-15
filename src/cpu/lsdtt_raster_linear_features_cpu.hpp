@@ -7,13 +7,13 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Linear-feature primitives — CPU free functions.
+// Linear-feature primitives - CPU free functions.
 //
 // Purpose
 // -------
 // Generic image-processing operators for detecting and enhancing narrow,
 // elongated ("curvilinear") structures in an arbitrary continuous scalar
-// raster — for example a flow-divergence response, a Frangi vesselness map, a
+// raster - for example a flow-divergence response, a Frangi vesselness map, a
 // curvature magnitude, or any other per-pixel score where the real features of
 // interest are continuous threads while the background is isolated speckle.
 //
@@ -58,7 +58,7 @@ namespace lsdtt {
 //
 // Complete grayscale path opening (Appleton & Talbot 2007). Keeps, at each
 // pixel, the strongest length-constrained path of high values that passes
-// through it; isolated speckle — which lies on no long path — is suppressed to
+// through it; isolated speckle - which lies on no long path - is suppressed to
 // the local background level. The result is anti-extensive: output <= input
 // everywhere on valid pixels.
 //
@@ -97,15 +97,15 @@ namespace lsdtt {
 //
 // Parameters
 // ----------
-//   response                 — input scalar raster (any continuous field)
-//   min_path_length_pixels   — L, minimum path length in pixels. Set near the
+//   response                 - input scalar raster (any continuous field)
+//   min_path_length_pixels   - L, minimum path length in pixels. Set near the
 //                              shortest real feature you want to keep; larger L
 //                              removes more speckle but also drops short
 //                              fragments. Must be >= 2.
-//   n_quantization_levels    — number of grayscale threshold levels (default
+//   n_quantization_levels    - number of grayscale threshold levels (default
 //                              256). Higher = finer value preservation at
 //                              higher cost. Must be >= 2.
-//   n_threads                — OpenMP thread count; 0 = all available.
+//   n_threads                - OpenMP thread count; 0 = all available.
 //
 // Returns
 // -------
@@ -148,7 +148,7 @@ namespace lsdtt {
 //
 // Per-pixel outputs of the 2D structure-tensor analysis of a scalar field.
 //
-//   coherence       — anisotropy / line-likeness in [0, 1]:
+//   coherence       - anisotropy / line-likeness in [0, 1]:
 //                       (lam1 - lam2) / (lam1 + lam2).
 //                       0 = isotropic (speckle, flat, or a corner);
 //                       1 = a perfectly oriented edge/line. This is the robust,
@@ -157,13 +157,13 @@ namespace lsdtt {
 //                       gradients point every way and cancel under averaging,
 //                       while a continuous thread scores high.
 //
-//   orientation_deg — azimuth ALONG which the linear feature runs (its tangent),
+//   orientation_deg - azimuth ALONG which the linear feature runs (its tangent),
 //                       in degrees clockwise from north, folded into [0, 180).
 //                       Meaningful only where coherence is high. This is the
 //                       orientation field consumed by oriented non-maximum
 //                       suppression and the regular-spacing detector.
 //
-//   energy          — lam1 + lam2, the local gradient energy (tensor trace).
+//   energy          - lam1 + lam2, the local gradient energy (tensor trace).
 //                       Use to distinguish a strong oriented edge from a weak
 //                       one: high coherence + low energy is a faint structure.
 // -----------------------------------------------------------------------------
@@ -179,7 +179,7 @@ struct structure_tensor_result
 //
 // Builds the 2D structure (second-moment) tensor of a scalar field and returns
 // its coherence, orientation, and energy. This scores a pixel by how
-// consistently its NEIGHBOURHOOD is oriented, not by its own pointwise shape —
+// consistently its NEIGHBOURHOOD is oriented, not by its own pointwise shape -
 // which is what separates a continuous road/channel from same-brightness
 // hillslope speckle.
 //
@@ -191,7 +191,7 @@ struct structure_tensor_result
 //      pixel used in its difference is nodata.
 //   3. Form the per-pixel outer product J = [[gx*gx, gx*gy], [gx*gy, gy*gy]].
 //   4. Average each component over a circular window of
-//      integration_radius_metres (THE key scale — this pooling is what makes the
+//      integration_radius_metres (THE key scale - this pooling is what makes the
 //      tensor robust). Use ~ the feature half-width plus a few pixels.
 //   5. Eigen-decompose the smoothed 2x2 tensor analytically:
 //        lam1,2 = tr/2 +/- sqrt( ((Jxx-Jyy)/2)^2 + Jxy^2 ),  lam1 >= lam2 >= 0.
@@ -200,10 +200,10 @@ struct structure_tensor_result
 //
 // Parameters
 // ----------
-//   field                     — input scalar raster (any continuous response).
-//   derivative_radius_metres  — pre-smoothing radius for the gradient; 0 = none.
-//   integration_radius_metres — tensor-averaging radius; must be > 0.
-//   n_threads                 — OpenMP thread count; 0 = all available.
+//   field                     - input scalar raster (any continuous response).
+//   derivative_radius_metres  - pre-smoothing radius for the gradient; 0 = none.
+//   integration_radius_metres - tensor-averaging radius; must be > 0.
+//   n_threads                 - OpenMP thread count; 0 = all available.
 //
 // Throws
 // ------
@@ -225,7 +225,7 @@ struct structure_tensor_result
 // a scalar field ALONG its dominant local orientation and barely at all ACROSS
 // it. The effect is to bridge broken / patchy linear structures (e.g. a road or
 // channel that is high but interrupted in the divergence field) and to erase
-// speckle perpendicular to them — a denoising pre-filter that makes the
+// speckle perpendicular to them - a denoising pre-filter that makes the
 // downstream path opening / thresholding far cleaner.
 //
 // Method
@@ -245,25 +245,25 @@ struct structure_tensor_result
 //      (Neumann) conditions at the grid edge and at any nodata boundary.
 //
 // Note: kappa here is the NORMALISED coherence in [0,1] (= the coherence raster
-// from compute_structure_tensor_coherence), so `contrast` is scale-invariant —
+// from compute_structure_tensor_coherence), so `contrast` is scale-invariant -
 // raise it to be more selective (smooth only the most coherent threads), lower
 // it to smooth more of the field.
 //
 // Parameters
 // ----------
-//   field                     — input scalar raster.
-//   n_iterations              — number of diffusion steps (>= 1). More =
+//   field                     - input scalar raster.
+//   n_iterations              - number of diffusion steps (>= 1). More =
 //                               longer-range bridging and smoothing.
-//   time_step                 — explicit step tau; must be in (0, 0.25] for
+//   time_step                 - explicit step tau; must be in (0, 0.25] for
 //                               stability (0.15 is a safe default).
-//   derivative_radius_metres  — gradient pre-smoothing for the structure tensor;
+//   derivative_radius_metres  - gradient pre-smoothing for the structure tensor;
 //                               0 = none.
-//   integration_radius_metres — structure-tensor integration radius; must be > 0.
-//   contrast                  — coherence contrast C (> 0). Selectivity of the
+//   integration_radius_metres - structure-tensor integration radius; must be > 0.
+//   contrast                  - coherence contrast C (> 0). Selectivity of the
 //                               along-feature smoothing.
-//   min_diffusivity           — floor eigenvalue (across-feature diffusivity) in
+//   min_diffusivity           - floor eigenvalue (across-feature diffusivity) in
 //                               (0, 1); small, e.g. 0.001.
-//   n_threads                 — OpenMP thread count; 0 = all available.
+//   n_threads                 - OpenMP thread count; 0 = all available.
 //
 // Throws
 // ------
@@ -284,9 +284,9 @@ struct structure_tensor_result
 // -----------------------------------------------------------------------------
 // oriented_ridge_result
 //
-//   thinned — the response after oriented non-maximum suppression: unchanged at
+//   thinned - the response after oriented non-maximum suppression: unchanged at
 //             ridge crests, 0 where suppressed. A ~1-pixel-wide centreline map.
-//   mask    — binary result of hysteresis linking the thinned response: 1 on
+//   mask    - binary result of hysteresis linking the thinned response: 1 on
 //             retained centreline pixels, 0 elsewhere.
 // -----------------------------------------------------------------------------
 struct oriented_ridge_result
@@ -298,7 +298,7 @@ struct oriented_ridge_result
 // -----------------------------------------------------------------------------
 // oriented_nms_hysteresis
 //
-// Oriented non-maximum suppression followed by hysteresis linking — the
+// Oriented non-maximum suppression followed by hysteresis linking - the
 // Canny-style edge logic, but applied to a LINE response using an externally
 // supplied orientation field (e.g. the structure-tensor feature orientation).
 // Turns a thick, fragmented ridge response into thin, connected centrelines.
@@ -316,19 +316,19 @@ struct oriented_ridge_result
 // ----------
 // Seed pixels with thinned response >= high_threshold; then flood-fill (8-
 // connected) through pixels with thinned response >= low_threshold. Only ridge
-// chains that contain at least one strong seed are kept — isolated weak maxima
+// chains that contain at least one strong seed are kept - isolated weak maxima
 // are dropped, while genuine threads survive their faint stretches.
 //
 // Parameters
 // ----------
-//   response        — the ridge response to thin (e.g. a diffused divergence,
+//   response        - the ridge response to thin (e.g. a diffused divergence,
 //                     a vesselness, or a brightness map). Higher = more ridge.
-//   orientation_deg — feature-tangent azimuth in [0,180) deg clockwise from
+//   orientation_deg - feature-tangent azimuth in [0,180) deg clockwise from
 //                     north, as produced by compute_structure_tensor_coherence.
 //                     Must match `response` in size and CRS.
-//   high_threshold  — strong-seed threshold on the thinned response.
-//   low_threshold   — weak-link threshold; must be <= high_threshold.
-//   n_threads       — OpenMP thread count; 0 = all available (NMS only; the
+//   high_threshold  - strong-seed threshold on the thinned response.
+//   low_threshold   - weak-link threshold; must be <= high_threshold.
+//   n_threads       - OpenMP thread count; 0 = all available (NMS only; the
 //                     hysteresis flood-fill is serial).
 //
 // Throws
@@ -349,7 +349,7 @@ struct oriented_ridge_result
 // trim_valid_border
 //
 // Sets to nodata every pixel within border_pixels of the boundary of the valid
-// domain — i.e. it erodes the validity mask by a square structuring element of
+// domain - i.e. it erodes the validity mask by a square structuring element of
 // radius border_pixels. The "boundary" includes BOTH the grid edge AND the
 // edge of any irregular nodata footprint (out-of-grid neighbours are treated as
 // invalid), so a raster with a rounded / clipped data area is trimmed inward
@@ -371,8 +371,8 @@ struct oriented_ridge_result
 //
 // Parameters
 // ----------
-//   raster        — input raster (any field)
-//   border_pixels — N, margin width in pixels to remove. Must be >= 1.
+//   raster        - input raster (any field)
+//   border_pixels - N, margin width in pixels to remove. Must be >= 1.
 //
 // Returns
 // -------

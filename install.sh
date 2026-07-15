@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — LSDTopoTools3 beta installer for Ubuntu / WSL2
+# install.sh - LSDTopoTools3 beta installer for Ubuntu / WSL2
 #
 # Usage
 # -----

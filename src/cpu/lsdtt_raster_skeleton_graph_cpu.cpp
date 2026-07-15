@@ -29,11 +29,11 @@ namespace
 
 // Crossing number for pixel (row, col) in a binary skeleton.
 //
-// Counts the number of 0→1 transitions in the clockwise-ordered 8-neighbourhood.
+// Counts the number of 0->1 transitions in the clockwise-ordered 8-neighbourhood.
 // This is the standard digital-topology endpoint test:
-//   CN = 1  →  endpoint  (one branch leaving the pixel)
-//   CN = 2  →  chain pixel
-//   CN >= 3 →  junction
+//   CN = 1  ->  endpoint  (one branch leaving the pixel)
+//   CN = 2  ->  chain pixel
+//   CN >= 3 ->  junction
 //
 // Unlike the raw 8-neighbour degree count, CN correctly handles corner pixels
 // where two adjacent diagonal neighbours are present (e.g. south + southeast):
@@ -2722,7 +2722,7 @@ compute_skeleton_topology(
     // (row, col) coordinate.  Each singleton becomes its own component because
     // it shares its unique position with no other segment.
     //
-    // Component IDs are assigned as 0, 1, 2, … so the total count is
+    // Component IDs are assigned as 0, 1, 2, ... so the total count is
     // max_id + 1 when the list is non-empty.
     // -------------------------------------------------------------------------
     const std::vector<int> comp_ids =
@@ -2742,7 +2742,7 @@ compute_skeleton_topology(
     // For a finite graph with V vertices, E edges, and C connected components:
     //   beta_1 = E - V + C
     //
-    // This equals the dimension of the cycle space — the minimum number of edges
+    // This equals the dimension of the cycle space - the minimum number of edges
     // that must be removed to make the graph a spanning forest.  Each independent
     // loop in the skeleton contributes exactly 1 to beta_1.
     //

@@ -132,7 +132,7 @@ static lsdtt_raster_cpu keep_adjacent_to(
         }
     }
 
-    // --- Step 3: build output — keep pixels whose component passes either criterion ---
+    // --- Step 3: build output - keep pixels whose component passes either criterion ---
     std::vector<float>   out_data(npix, ndv);
     std::vector<uint8_t> out_mask(npix, 0);
 
@@ -606,7 +606,7 @@ vec_skeleton_result find_vec_skeleton(
     vec_skeleton_result result;
 
     // ------------------------------------------------------------------
-    // 1. Direct polyfit → VEC masked to flat pixels
+    // 1. Direct polyfit -> VEC masked to flat pixels
     // ------------------------------------------------------------------
     std::cout << "\n--- VEC skeleton: polyfit (lambda="
               << request.polyfit_lambda_metres << " m) ---\n";
@@ -627,13 +627,13 @@ vec_skeleton_result find_vec_skeleton(
               << count_foreground(result.vertical_excess_curvature) << "\n";
 
     // ------------------------------------------------------------------
-    // 2. Adaptive threshold → binary mask
+    // 2. Adaptive threshold -> binary mask
     // ------------------------------------------------------------------
     std::cout << "\n--- Adaptive thresholding ---\n";
     std::cout << "  method     : " << request.adaptive_method << "\n";
     std::cout << "  block size : " << request.adaptive_block_size << " px\n";
     std::cout << "  C          : " << request.adaptive_C << "\n";
-    std::cout << "  pre-blur σ : " << request.adaptive_gaussian_sigma << "\n";
+    std::cout << "  pre-blur sigma : " << request.adaptive_gaussian_sigma << "\n";
 
     if (request.adaptive_method == "mean")
     {
@@ -684,7 +684,7 @@ vec_skeleton_result find_vec_skeleton(
     }
 
     // ------------------------------------------------------------------
-    // 4. Zhang–Suen thinning → spur pruning → component filtering
+    // 4. Zhang-Suen thinning -> spur pruning -> component filtering
     // ------------------------------------------------------------------
     std::cout << "\n--- Skeletonisation ---\n";
 
@@ -802,7 +802,7 @@ curvature_skeleton_result extract_curvature_skeletons(
     catch (const std::exception& e)
     {
         std::cerr << "  Warning: CDF threshold computation failed: "
-                  << e.what() << " — using vec_threshold=" << vec_thr << "\n";
+                  << e.what() << " - using vec_threshold=" << vec_thr << "\n";
     }
 
     // Threshold: 1 where VEC >= vec_thr
@@ -1009,7 +1009,7 @@ elevation_connect_result connect_skeleton_by_elevation(
     // ------------------------------------------------------------------
     // 2. Extract endpoints using crossing-number classification.
     //    classify_skeleton_nodes uses CN=1 (not raw degree=1) so corner
-    //    endpoints — e.g. south + southeast neighbours — are not missed.
+    //    endpoints - e.g. south + southeast neighbours - are not missed.
     // ------------------------------------------------------------------
     struct Endpoint { int r, c; double elev; int label; int seg_size; };
     std::vector<Endpoint> eps;
@@ -1037,8 +1037,8 @@ elevation_connect_result connect_skeleton_by_elevation(
     // ------------------------------------------------------------------
     // 3. Build candidate pairs
     //    Sort: largest segment in the pair first (descending), then by
-    //    elevation difference (ascending).  This ensures the longest —
-    //    i.e., clearest — terrace-edge traces get first pick of matches.
+    //    elevation difference (ascending).  This ensures the longest -
+    //    i.e., clearest - terrace-edge traces get first pick of matches.
     // ------------------------------------------------------------------
     struct Candidate { int i, j; double elev_diff; int max_seg_size; };
     std::vector<Candidate> candidates;
@@ -1090,7 +1090,7 @@ elevation_connect_result connect_skeleton_by_elevation(
     //
     //    Per-bridge support raster:
     //      support(r,c) = max(0, 1 - |DEM(r,c) - z_target| / tolerance)
-    //    → 1.0 exactly on the target contour, 0.0 at ±tolerance from it.
+    //    -> 1.0 exactly on the target contour, 0.0 at +/-tolerance from it.
     //    The A* router minimises  base_cost + support_penalty * (1 - support),
     //    so it naturally threads along the target elevation.
     // ------------------------------------------------------------------
@@ -1118,7 +1118,7 @@ elevation_connect_result connect_skeleton_by_elevation(
 
     // Pre-allocate ONE support raster (zeros everywhere).  Per bridge we fill
     // only the corridor bounding box, route, then reset those pixels.  This
-    // avoids allocating + zeroing a full nrows×ncols array 646 times.
+    // avoids allocating + zeroing a full nrowsxncols array 646 times.
     lsdtt_raster_cpu support_raster(
         std::vector<float>(nrows * ncols, 0.0f),
         std::vector<uint8_t>(skeleton.get_mask()),

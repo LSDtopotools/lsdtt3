@@ -10,7 +10,7 @@
 //
 // Simulates cosmogenic nuclide concentrations in a bedrock/sediment column
 // undergoing known or hypothesised erosion history.  No DEM or raster is
-// required — this is a purely 1-D particle calculation.
+// required - this is a purely 1-D particle calculation.
 //
 // Modes (column_mode parameter):
 //
@@ -94,7 +94,7 @@ int main(int argc, char* argv[])
     auto [path, fname] = lsdtt::lsdtt_param_parser::parse_args(
         argc, argv, k_tool_name, k_version, k_citation);
 
-    // ── Parameter file ──────────────────────────────────────────────────────
+    //  Parameter file 
     lsdtt::lsdtt_param_parser pp;
     try { pp = lsdtt::lsdtt_param_parser(path, fname); }
     catch (const std::exception& e)
@@ -109,7 +109,7 @@ int main(int argc, char* argv[])
     std::map<std::string,std::string> string_default_map;
     std::map<std::string,std::vector<std::string>> help_map;
 
-    // ── Mode and physics ────────────────────────────────────────────────────
+    //  Mode and physics 
     string_default_map["column_mode"] = "steady_state";
     help_map["column_mode"] = {"string","steady_state",
         "Simulation mode.",
@@ -129,7 +129,7 @@ int main(int argc, char* argv[])
     help_map["rock_density_kg_m3"] = {"float","2650",
         "Rock density (kg/m3). Used to convert depth to effective depth.",""};
 
-    // ── Production scaling ──────────────────────────────────────────────────
+    //  Production scaling 
     float_default_map["production_scaling"] = 1.0f;
     help_map["production_scaling"] = {"float","1.0",
         "Stone 2000 production scaling factor (dimensionless).",
@@ -144,10 +144,10 @@ int main(int argc, char* argv[])
 
     float_default_map["total_shielding"] = 1.0f;
     help_map["total_shielding"] = {"float","1.0",
-        "Total shielding factor (topographic × snow × self, dimensionless 0-1).",
+        "Total shielding factor (topographic x snow x self, dimensionless 0-1).",
         "Applied on top of production_scaling. 1 = fully exposed."};
 
-    // ── Simple mode parameters ───────────────────────────────────────────────
+    //  Simple mode parameters 
     float_default_map["effective_depth_g_cm2"] = 0.0f;
     help_map["effective_depth_g_cm2"] = {"float","0",
         "Effective depth of sample (g/cm2). 0 = surface.",
@@ -168,7 +168,7 @@ int main(int argc, char* argv[])
         "Time since the erosion-rate step change (yr).",
         "Used only in step_change mode."};
 
-    // ── Full-transient parameters ────────────────────────────────────────────
+    //  Full-transient parameters 
     string_default_map["transient_history_file"] = "erosion_history.csv";
     help_map["transient_history_file"] = {"string","erosion_history.csv",
         "CSV file with erosion history (columns: time,rate,removal).",
@@ -201,12 +201,12 @@ int main(int argc, char* argv[])
     help_map["initial_14C_conc_atoms_g"] = {"float","0",
         "Initial 14C concentration throughout the column (atoms/g).",""};
 
-    // ── Output ───────────────────────────────────────────────────────────────
+    //  Output 
     string_default_map["output_file"] = "crn_column.csv";
     help_map["output_file"] = {"string","crn_column.csv",
         "Output CSV filename for column profile (full_transient mode).",""};
 
-    // ── Parse ────────────────────────────────────────────────────────────────
+    //  Parse 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
     auto bf  = pp.get_bool_parameters();
@@ -219,7 +219,7 @@ int main(int argc, char* argv[])
     const std::string muon_scheme = sf["muon_scheme"];
     const double density         = static_cast<double>(ff["rock_density_kg_m3"]);
 
-    // ── Production scaling ───────────────────────────────────────────────────
+    //  Production scaling 
     double production_scaling = static_cast<double>(ff["production_scaling"]);
     double lat  = static_cast<double>(ff["latitude"]);
     double elev = static_cast<double>(ff["elevation"]);

@@ -9,7 +9,7 @@
 // -----------------------------------------------------------------------------
 // Cidre finite-volume hillslope transport (Carretier et al. 2016).
 //
-// Algorithm (forward topological sweep, headwater → outlet):
+// Algorithm (forward topological sweep, headwater -> outlet):
 //
 //   All quantities in elevation units (m).  flux_in at each node is the sum of
 //   outgoing fluxes from all donors, accumulated via atomic adds.
@@ -17,20 +17,20 @@
 //   Linear mode (nonlinear == false):
 //     L        = 1              (Longueur_Lineaire)
 //     deposit  = flux_in        (all incoming flux deposits locally)
-//     erosion  = (κ · dt / dx) · S
-//     outgoing = erosion · weight_k  (per receiver)
+//     erosion  = (kappa * dt / dx) * S
+//     outgoing = erosion * weight_k  (per receiver)
 //
 //   Nonlinear mode (S < Sc):
-//     L        = 1 / (1 - S²/Sc²)
-//     deposit  = flux_in / L   = flux_in · (1 - S²/Sc²)
-//     erosion  = (κ · dt / dx) · S
-//     outgoing = (erosion + flux_in - deposit) · weight_k
-//              = (erosion + flux_in · S²/Sc²) · weight_k
+//     L        = 1 / (1 - S^2/Sc^2)
+//     deposit  = flux_in / L   = flux_in * (1 - S^2/Sc^2)
+//     erosion  = (kappa * dt / dx) * S
+//     outgoing = (erosion + flux_in - deposit) * weight_k
+//              = (erosion + flux_in * S^2/Sc^2) * weight_k
 //
-//   Nonlinear mode (S ≥ Sc):
-//     deposit  = 0              (L → ∞)
-//     erosion  = dx · (S - Sc)  (slope-restoration: Diffusion_RetourPenteCritique)
-//     outgoing = (erosion + flux_in) · weight_k
+//   Nonlinear mode (S >= Sc):
+//     deposit  = 0              (L -> inf)
+//     erosion  = dx * (S - Sc)  (slope-restoration: Diffusion_RetourPenteCritique)
+//     outgoing = (erosion + flux_in) * weight_k
 //
 // Baselevel/boundary handling:
 //   - Flow-graph outlet nodes (no receivers) are sinks: all flux deposits.
@@ -88,9 +88,9 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
 // Explicit finite-difference (forward Euler) integration of the Roering 1999
 // nonlinear hillslope diffusion equation on a regular 4-connected grid:
 //
-//   ∂z/∂t = D * ∇·[ ∇z / (1 - (|∇z|/Sc)² ]
+//   dz/dt = D * grad*[ gradz / (1 - (|gradz|/Sc)^2 ]
 //
-// Linear mode (nonlinear == false) uses the standard Laplacian (D * ∇²z).
+// Linear mode (nonlinear == false) uses the standard Laplacian (D * grad^2z).
 //
 // Boundary conditions:
 //   - Channel pixels (is_channel[i]==1) are fixed Dirichlet nodes.
@@ -98,18 +98,18 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
 //   - Masked (nodata) cells: unchanged.
 //
 // Stability:
-//   The explicit scheme requires dt ≤ h²/(4·D·α_max).  For the linear case
-//   α = 1 and stability is generous (h²/4D).  For the nonlinear case α grows
+//   The explicit scheme requires dt <= h^2/(4*D*alpha_max).  For the linear case
+//   alpha = 1 and stability is generous (h^2/4D).  For the nonlinear case alpha grows
 //   near Sc, so the function automatically sub-cycles dt_total into stable
-//   sub-steps: it evaluates α_max from the current field at the start of each
+//   sub-steps: it evaluates alpha_max from the current field at the start of each
 //   sub-step and takes the largest dt that satisfies the CFL bound (capped at
-//   dt_total so it always terminates in ≤ ceil(dt_total / dt_stable) sub-steps).
+//   dt_total so it always terminates in <= ceil(dt_total / dt_stable) sub-steps).
 //
 // Compared with compute_cidre_hillslope_transport:
 //   - No D-inf flow graph is needed for transport (only the is_channel mask,
 //     which the caller builds once from the fluvial flow graph).
 //   - The cell updates are embarrassingly parallel (all cells independent per
-//     sub-step) — no level-ordering overhead.
+//     sub-step) - no level-ordering overhead.
 //   - The nonlinear Roering law is conservative (divergence form), whereas
 //     Cidre's slope-restoration term is not strictly conservative.
 //   - Near Sc the explicit scheme sub-cycles; Cidre's slope-restoration avoids

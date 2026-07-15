@@ -241,10 +241,10 @@ static raster_error_stats compute_error_stats(
 // summary row per coefficient to wavelet_summary_rows.
 //
 // is_exact_oracle:
-//   true  — the analytic surface is exact for wavelet_quadratic_fit away from
+//   true  - the analytic surface is exact for wavelet_quadratic_fit away from
 //            invalid-support edges (global quadratic surface). Prints a warning
 //            if any coefficient RMSE exceeds a tight threshold.
-//   false — approximate comparison only (periodic surface). No threshold check.
+//   false - approximate comparison only (periodic surface). No threshold check.
 // -----------------------------------------------------------------------------
 static void run_wavelet_test(
     lsdtt::lsdtt_data_loader&                 loader,
@@ -620,7 +620,7 @@ int main(int argc, char* argv[])
         else if (fmt_str != "cog")
         {
             std::cerr << "Warning: unknown write_output_format '"
-                      << fmt_str << "' — defaulting to cog.\n";
+                      << fmt_str << "' - defaulting to cog.\n";
         }
 
         std::cout << "Output format: " << fmt_str << "\n";
@@ -846,7 +846,7 @@ int main(int argc, char* argv[])
                     cfg = lsdtt::lsdtt_strip_channel_config::single_end_high;
                 else if (s != "both_ends")
                     std::cerr << "Warning: unknown strip_channel_config '" << s
-                              << "' — defaulting to both_ends.\n";
+                              << "' - defaulting to both_ends.\n";
             }
 
             // Resolve init profile
@@ -864,7 +864,7 @@ int main(int argc, char* argv[])
                     prof = lsdtt::lsdtt_strip_init_profile::linear_ramp;
                 else if (s != "flat")
                     std::cerr << "Warning: unknown strip_init_profile '" << s
-                              << "' — defaulting to flat.\n";
+                              << "' - defaulting to flat.\n";
             }
 
             lsdtt::lsdtt_hillslope_strip_surface strip =

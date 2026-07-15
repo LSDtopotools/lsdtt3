@@ -38,7 +38,7 @@ lsdtt_cloth_drape_result compute_cloth_drape(
     const std::vector<uint8_t>& dem_mask = dem.get_mask();
 
     // ------------------------------------------------------------------
-    // Find the maximum valid DEM elevation — cloth initialisation height
+    // Find the maximum valid DEM elevation - cloth initialisation height
     // ------------------------------------------------------------------
     float max_elev = -std::numeric_limits<float>::max();
     for (int i = 0; i < n; ++i)

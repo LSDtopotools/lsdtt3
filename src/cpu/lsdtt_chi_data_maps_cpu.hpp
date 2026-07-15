@@ -14,13 +14,13 @@
 // write_chi_data_maps() accepts an already-extracted lsdtt_chi_collection_result
 // and writes four output files:
 //
-//   <prefix>_chi_data_maps.<ext>    — per-node: x/y, chi, drainage_area,
+//   <prefix>_chi_data_maps.<ext>    - per-node: x/y, chi, drainage_area,
 //                                     flow_distance, elevation, source_key,
 //                                     basin_key
-//   <prefix>_chi_basin_outlets.<ext> — valid basin outlet points with basin_key
-//   <prefix>_chi_sources.<ext>       — channel-head points with source_key and
+//   <prefix>_chi_basin_outlets.<ext> - valid basin outlet points with basin_key
+//   <prefix>_chi_sources.<ext>       - channel-head points with source_key and
 //                                     basin_key
-//   <prefix>_chi_basin_polygons.<ext> — basin outlines with basin_key
+//   <prefix>_chi_basin_polygons.<ext> - basin outlines with basin_key
 //
 // Incomplete basins (those whose upslope area touches a nodata cell) are
 // automatically excluded; only the valid subset is written and numbered.
@@ -34,9 +34,9 @@
 // primary stem.
 //
 // Output format:
-//   csv        — writes latitude/longitude (EPSG:4326); requires CRS on DEM.
-//   gpkg       — writes GeoPackage in the raster CRS.
-//   flatgeobuf — writes FlatGeobuf in the raster CRS.
+//   csv        - writes latitude/longitude (EPSG:4326); requires CRS on DEM.
+//   gpkg       - writes GeoPackage in the raster CRS.
+//   flatgeobuf - writes FlatGeobuf in the raster CRS.
 //   Basin polygons are always vector (flatgeobuf fallback when csv requested).
 // -----------------------------------------------------------------------------
 
@@ -58,7 +58,7 @@ namespace lsdtt
 // fmt:           desired point output format (csv / gpkg / flatgeobuf)
 //
 // Progress messages are printed to stdout; warnings go to stderr.
-// Does not throw if individual file writes fail — errors are printed as warnings.
+// Does not throw if individual file writes fail - errors are printed as warnings.
 void write_chi_data_maps(
     const lsdtt_chi_collection_result& chi_networks,
     const lsdtt_flow_base&             flow,

@@ -11,7 +11,7 @@
 //
 // Cosmogenic nuclide analysis. Currently implements the "new erate" workflow:
 // inversion of measured nuclide concentrations to basin-averaged effective
-// erosion rates using the production–accumulation–inversion approach of
+// erosion rates using the production-accumulation-inversion approach of
 // Mudd et al. (from the LSDTopoTools2 lsdtt-cosmo-tool).
 //
 // Sample points CSV requirements:
@@ -281,7 +281,7 @@ int main(int argc, char* argv[])
               << "Points file   : " << points_path << "\n"
               << "Conc column   : " << concentration_col_name << "\n\n";
 
-    // ── 1. Load DEM ──────────────────────────────────────────────────────────
+    //  1. Load DEM 
     std::cout << "Opening DEM: " << pp.get_full_read_path() << "\n";
 
     lsdtt::lsdtt_data_loader loader;
@@ -310,7 +310,7 @@ int main(int argc, char* argv[])
     std::cout << "DEM: " << meta.n_rows << " rows x " << meta.n_cols << " cols, "
               << "cell size = " << meta.cell_size << " m\n\n";
 
-    // ── 2. Fill and route ─────────────────────────────────────────────────────
+    //  2. Fill and route 
     lsdtt::lsdtt_raster_cpu filled_dem = dem;
     if (bf["fill_before_routing"])
     {
@@ -338,7 +338,7 @@ int main(int argc, char* argv[])
     }
     const auto& flow = dynamic_cast<const lsdtt::lsdtt_flowinfo&>(*flow_ptr);
 
-    // ── 3. Production raster ──────────────────────────────────────────────────
+    //  3. Production raster 
     std::cout << "Calculating Stone 2000 production raster"
               << (use_era40    ? " (ERA40 atmosphere)"          : "")
               << (use_paleomag ? " + palaeomagnetic correction" : "")
@@ -354,7 +354,7 @@ int main(int argc, char* argv[])
         writer.write_full(prod_raster.get_data(), meta, prod_path);
     }
 
-    // ── 4. Shielding rasters (uniform) ────────────────────────────────────────
+    //  4. Shielding rasters (uniform) 
     auto make_uniform = [&](float val) -> lsdtt::lsdtt_raster_cpu
     {
         int nr = meta.n_rows, nc = meta.n_cols;
@@ -375,7 +375,7 @@ int main(int argc, char* argv[])
               << " snow=" << snow_shield << " g/cm2"
               << " self=" << self_shield << " g/cm2\n\n";
 
-    // ── 5. Load sample points ─────────────────────────────────────────────────
+    //  5. Load sample points 
     std::cout << "Reading sample points from: " << points_path << "\n";
 
     std::vector<lsdtt::lsdtt_input_point> pts;
@@ -481,7 +481,7 @@ int main(int argc, char* argv[])
               << "Standardisation column: "
               << (has_standardisation ? standardisation_col_name : "(not found - no correction)") << "\n\n";
 
-    // ── 6. Open output CSV ────────────────────────────────────────────────────
+    //  6. Open output CSV 
     std::string out_fname = write_base + "_CN_ERATE.csv";
     std::ofstream csv_out(out_fname);
     if (!csv_out.is_open())
@@ -522,7 +522,7 @@ int main(int argc, char* argv[])
     int n_processed = 0;
     int n_skipped   = 0;
 
-    // ── 7. Process each sample ────────────────────────────────────────────────
+    //  7. Process each sample 
     for (const auto& pt : pts)
     {
         const int csv_row = pt.point_id - 1;   // point_id is 1-based

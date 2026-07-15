@@ -211,7 +211,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
 
     const std::vector<uint8_t>& mask = dem.get_mask();
 
-    // Working elevation array — updated in-place across sub-steps.
+    // Working elevation array - updated in-place across sub-steps.
     std::vector<float> z(dem.get_data());
 
     // Read neighbour elevation with Neumann zero-flux at domain edges and
@@ -240,13 +240,13 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
         //
         // The stability limit of an explicit step is set by the TANGENT
         // modulus dq_s/dS, not by the secant (effective) diffusivity
-        // D_eff = D/(1-r²) that appears in the flux law.  Linearising
-        // q_s(S) = D·S/(1-r²), r = S/Sc, about the current slope gives
+        // D_eff = D/(1-r^2) that appears in the flux law.  Linearising
+        // q_s(S) = D*S/(1-r^2), r = S/Sc, about the current slope gives
         //
-        //     dq_s/dS = D · (1 + r²) / (1 - r²)²
+        //     dq_s/dS = D * (1 + r^2) / (1 - r^2)^2
         //
         // which diverges much faster than D_eff as r -> 1 (a factor
-        // (1+r²)/(1-r²) larger; ~13x at r = 0.93).  Using D_eff here takes
+        // (1+r^2)/(1-r^2) larger; ~13x at r = 0.93).  Using D_eff here takes
         // steps far above the true limit on near-critical slopes, which
         // overshoots, drives faces supercritical, and then runs away through
         // the singularity.  Perron (2011) makes the same point.
@@ -254,7 +254,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
         float dt_sub;
         if (!nonlinear)
         {
-            // h²/(4D) — always larger than any realistic LEM dt
+            // h^2/(4D) - always larger than any realistic LEM dt
             dt_sub = std::min(dt_remaining, h2 / (4.0f * kappa));
         }
         else
@@ -276,7 +276,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
                 const float zE = nbr_z(row, col,  0, +1);
                 const float zW = nbr_z(row, col,  0, -1);
 
-                // Full gradient magnitude squared / Sc² at this cell centre
+                // Full gradient magnitude squared / Sc^2 at this cell centre
                 const float gx = (zE - zW) / (2.0f * h);
                 const float gy = (zN - zS) / (2.0f * h);
                 const float r2 = std::min((gx*gx + gy*gy) / Sc2, 0.9999f);
@@ -285,7 +285,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
                 const float tangent = (1.0f + r2) / (one_minus * one_minus);
                 if (tangent > tangent_max) tangent_max = tangent;
             }
-            // dt_stable = h² / (4 · D · max(dq_s/dS)/D)
+            // dt_stable = h^2 / (4 * D * max(dq_s/dS)/D)
             const float dt_stable = h2 / (4.0f * kappa * tangent_max);
             dt_sub = std::min(dt_remaining, dt_stable);
         }
@@ -345,7 +345,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
                 aW = alpha_face(zW, cross_ew);
             }
 
-            // dz/dt = D/h² * [αN*(zN-zc) + αS*(zS-zc) + αE*(zE-zc) + αW*(zW-zc)]
+            // dz/dt = D/h^2 * [alphaN*(zN-zc) + alphaS*(zS-zc) + alphaE*(zE-zc) + alphaW*(zW-zc)]
             const float laplacian = aN * (zN - zc) + aS * (zS - zc)
                                   + aE * (zE - zc) + aW * (zW - zc);
             z_new[sidx] = zc + kdt_over_h2 * laplacian;

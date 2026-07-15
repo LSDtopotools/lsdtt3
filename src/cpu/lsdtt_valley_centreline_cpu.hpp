@@ -11,7 +11,7 @@
 //
 // Broad per-channel valley identification and trough-routed valley centreline.
 //
-// This is deliberately SEPARATE from — and less restrictive than — the
+// This is deliberately SEPARATE from - and less restrictive than - the
 // floodplain/terrace classifier (lsdtt_flat_surface_channel_classify_cpu),
 // which is granular and selective about individual surfaces. Here the goal is
 // only to identify "the valley" of each individual channel, then trace a
@@ -21,7 +21,7 @@
 //
 // 1. Wide corridor: Euclidean distance to that single channel's pixels, kept
 //    within corridor_width_metres.
-// 2. Height above THAT channel (HAND) for every corridor pixel — the
+// 2. Height above THAT channel (HAND) for every corridor pixel - the
 //    EUCLIDEAN nearest-channel-pixel elevation difference, not flow-path HAND.
 //    It is defined everywhere in the corridor, and because the reference is a
 //    single channel it is immune to the step artifacts that appear when the
@@ -70,7 +70,7 @@ struct valley_centreline_request
     double break_valley_fraction        = 0.6;
     // Break-detection method: 0 = fixed (break_valley_fraction is used for
     // every reach); 1 = relief-adaptive (the acceptance fraction is derived
-    // per reach from local topographic relief — confined, high-relief reaches
+    // per reach from local topographic relief - confined, high-relief reaches
     // get a more permissive fraction because a real valley wall produces a
     // deep trough, while low-relief plateau reaches get a stricter fraction so
     // a broad shallow saddle is not mistaken for a valley wall). The
@@ -90,7 +90,7 @@ struct valley_centreline_request
     // Peak-detection floor as a fraction of the histogram maximum. LOW by
     // design: a valley-floor or terrace mode is tiny next to a mountain wall
     // peak, but it is the mode that defines the valley. The break is the
-    // FIRST qualifying dip after the first mode above this floor — taking a
+    // FIRST qualifying dip after the first mode above this floor - taking a
     // later dip admits intermediate benches and the valley climbs the risers.
     double wall_peak_fraction           = 0.02;
     // Valley HAND threshold used when the population shows no break.
@@ -115,12 +115,12 @@ struct valley_centreline_request
     int    break_min_window_pixels      = 1000;
     // Valley-mask cleanup (replaces naive connectivity + hole filling, which
     // let thin threads of same-elevation pixels creep up tributaries and
-    // then back-filled large enclosed regions — e.g. a NEIGHBOURING
+    // then back-filled large enclosed regions - e.g. a NEIGHBOURING
     // channel's floodplain at the right relative elevation):
     // 1. label the valley into 8-connected patches;
     // 2. dilate by valley_dilation_pixels, but a dilated pixel is only
     //    retained when it is closer to the channel than the farthest pixel
-    //    of the patch it grows from — interior holes fill, patches cannot
+    //    of the patch it grows from - interior holes fill, patches cannot
     //    extend outward away from the channel;
     // 3. when restrict_to_channel_connected is set, remove patches that are
     //    not adjacent to the channel.
@@ -139,7 +139,7 @@ struct valley_centreline_request
     // Refine the valley mask against the centreline baseline after routing:
     // valley = (elevation - baseline of nearest centreline node) <= the
     // reach's break. The first-pass mask references the nearest CHANNEL
-    // pixel, which goes stale wherever the channel veers away — a
+    // pixel, which goes stale wherever the channel veers away - a
     // downstream-sloping terrace then ramps below the break against its
     // stale upstream reference and a linear wedge of false valley grows
     // onto the terrace. The baseline of the nearest centreline node is at
@@ -153,7 +153,7 @@ struct valley_centreline_request
     // Synthetic downstream tilt: the trough is lowered by this slope times
     // the pixel's along-channel distance. On near-flat valley floors (and
     // through-valleys exiting the tile at both ends) the distance-to-wall
-    // term alone lets the breached trough drain the wrong way — out the
+    // term alone lets the breached trough drain the wrong way - out the
     // nearest tile edge, i.e. UPSTREAM. The tilt guarantees the routed
     // centreline descends in the channel's own downstream direction.
     double trough_along_channel_slope   = 0.02;
@@ -174,7 +174,7 @@ struct valley_centreline_request
 };
 
 // -----------------------------------------------------------------------------
-// valley_channel_centreline — one record per channel (source) in scope.
+// valley_channel_centreline - one record per channel (source) in scope.
 // -----------------------------------------------------------------------------
 struct valley_channel_centreline
 {
@@ -203,7 +203,7 @@ struct valley_channel_centreline
     // Routed trough-surface elevation at each centreline node. Monotone
     // non-increasing by construction (the path descends the breached/filled
     // trough), unlike the raw DEM elevation, which rises wherever the
-    // geometric centreline crosses fans or terraces. An internal surface —
+    // geometric centreline crosses fans or terraces. An internal surface -
     // its absolute values are synthetic.
     std::vector<float> centreline_trough_elevation;
 

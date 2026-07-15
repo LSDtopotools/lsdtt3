@@ -1,4 +1,4 @@
-// lsdtt3 — lsdtt_junction_basin_manager_cpu.cpp
+// lsdtt3 - lsdtt_junction_basin_manager_cpu.cpp
 // CPU implementation of the junction basin manager.
 //
 // Copyright Simon M. Mudd, GPL-3.0
@@ -1096,7 +1096,7 @@ void lsdtt_junction_basin_manager_cpu::write_basins_to_vector_lines_by_order(
             loader.finish_vector_write();
         }
     }
-    else // FlatGeobuf — one file per order
+    else // FlatGeobuf - one file per order
     {
         for (const auto& [order, basin_ptrs] : by_order)
         {

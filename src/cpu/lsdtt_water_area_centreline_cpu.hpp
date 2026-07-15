@@ -109,7 +109,7 @@ enum class water_centreline_role
 };
 
 // ---------------------------------------------------------------------------
-// water_centreline_segment — one output line with provenance
+// water_centreline_segment - one output line with provenance
 // ---------------------------------------------------------------------------
 struct water_centreline_segment
 {
@@ -122,7 +122,7 @@ struct water_centreline_segment
 };
 
 // ---------------------------------------------------------------------------
-// water_centreline_polygon_result — per-polygon diagnostics
+// water_centreline_polygon_result - per-polygon diagnostics
 // ---------------------------------------------------------------------------
 struct water_centreline_polygon_result
 {

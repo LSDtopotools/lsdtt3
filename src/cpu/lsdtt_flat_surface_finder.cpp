@@ -51,7 +51,7 @@ static std::vector<double> collect_valid_values_d(const lsdtt_raster_cpu& raster
     return vals;
 }
 
-// Convert "window size in pixels" (e.g. 3 for 3×3, 5 for 5×5) to a radius
+// Convert "window size in pixels" (e.g. 3 for 3x3, 5 for 5x5) to a radius
 // in metres.  Window size must be odd and >= 3.
 static double window_pixels_to_radius_metres(int window_pixels, double cell_size)
 {
@@ -84,7 +84,7 @@ static float max_within_mask(
     return found ? best : -std::numeric_limits<float>::max();
 }
 
-// Compute η² bimodality (Otsu 1D split) on raw DEM elevations within a
+// Compute eta^2 bimodality (Otsu 1D split) on raw DEM elevations within a
 // circular window of radius_metres.  Returns values in [0,1]: high = two
 // tight elevation clusters (riser); low = continuous/unimodal (channel, tree).
 // Pixels with fewer than 4 valid neighbours are left as nodata.
@@ -220,7 +220,7 @@ flat_surface_result find_flat_surfaces(
     // Validate
     // -------------------------------------------------------------------------
     // Relief is always enabled; at least one of the optional metrics is not
-    // required — relief alone is sufficient.  Validate optional-metric params
+    // required - relief alone is sufficient.  Validate optional-metric params
     // only when they are actually requested.
 
     const lsdtt_raster_meta& meta = dem.get_meta();
@@ -530,7 +530,7 @@ flat_surface_result find_flat_surfaces(
     // 3. Build a per-pixel residual raster (dem - plane).
     // 4. Run the relief window on the residuals.
     // 5. Remove pixels whose residual relief exceeds
-    //    riser_residual_relief_fraction × relief_threshold_value.
+    //    riser_residual_relief_fraction x relief_threshold_value.
     // -------------------------------------------------------------------------
     if (request.remove_risers)
     {
@@ -549,8 +549,8 @@ flat_surface_result find_flat_surfaces(
             pixel_connectivity::d4
         );
 
-        // η² bimodality on raw DEM elevations (larger window, riser-scale)
-        std::cout << "  Computing η² bimodality (radius="
+        // eta^2 bimodality on raw DEM elevations (larger window, riser-scale)
+        std::cout << "  Computing eta^2 bimodality (radius="
                   << request.riser_window_radius_metres << " m)...\n";
         result.riser_eta2 = compute_eta2_bimodality(
             dem, request.riser_window_radius_metres);
@@ -622,14 +622,14 @@ flat_surface_result find_flat_surfaces(
                 std::move(mrd), std::move(mrm), meta);
         }
 
-        // Remove riser pixels (high residual relief AND high η²)
+        // Remove riser pixels (high residual relief AND high eta^2)
         const float riser_threshold =
             request.riser_residual_relief_fraction * relief_threshold_value;
         const float eta2_thresh = static_cast<float>(request.riser_eta2_threshold);
 
         std::cout << "Riser removal threshold (residual relief): "
                   << riser_threshold << " m\n";
-        std::cout << "Riser removal threshold (η²): "
+        std::cout << "Riser removal threshold (eta^2): "
                   << eta2_thresh << "\n";
 
         const std::vector<float>&   rr_d  = resid_relief.get_data();
@@ -644,7 +644,7 @@ flat_surface_result find_flat_surfaces(
         for (std::size_t i = 0; i < npix; ++i)
         {
             if (!cm_m[i] || cm_d[i] < 0.5f) continue;
-            if (!rr_m[i]) continue;  // no valid residual — keep pixel
+            if (!rr_m[i]) continue;  // no valid residual - keep pixel
             // Must exceed BOTH thresholds to be flagged as a riser
             const bool high_relief = rr_d[i] > riser_threshold;
             const bool bimodal     = et_m[i] && et_d[i] > eta2_thresh;
@@ -678,7 +678,7 @@ flat_surface_result find_flat_surfaces(
     }
 
     // -------------------------------------------------------------------------
-    // Final labelling — D4 so flat polygons touching only diagonally are
+    // Final labelling - D4 so flat polygons touching only diagonally are
     // kept as distinct labelled components.
     // -------------------------------------------------------------------------
     result.labelled_flat_mask = label_binary_components_by_size(

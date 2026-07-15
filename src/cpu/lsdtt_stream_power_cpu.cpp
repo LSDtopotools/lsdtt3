@@ -49,7 +49,7 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
     // Drainage area via D8 accumulation
     std::vector<double> area_d = flow.accumulate();
 
-    // Topological order is headwater→outlet; we need outlet→headwater,
+    // Topological order is headwater->outlet; we need outlet->headwater,
     // so iterate in reverse.
     const std::vector<std::int64_t>& topo = flow.topological_order();
 
@@ -67,13 +67,13 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
         return (dir & 1u) == 1u;
     };
 
-    // Iterate outlet → headwater (reverse of topological order)
+    // Iterate outlet -> headwater (reverse of topological order)
     for (std::int64_t ti = static_cast<std::int64_t>(topo.size()) - 1;
          ti >= 0; --ti)
     {
         const std::int64_t flat = topo[static_cast<std::size_t>(ti)];
 
-        // Skip outlets — they are baselevel, not eroded
+        // Skip outlets - they are baselevel, not eroded
         if (flow.is_outlet_unchecked(flat))
             continue;
 
@@ -103,7 +103,7 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
         const float  z_r     = z[static_cast<std::size_t>(recv)];   // already updated
         float        z_new   = z_i_old;
 
-        // Node already at or below its receiver — no incision possible
+        // Node already at or below its receiver - no incision possible
         if (z_r >= z_i_old)
             continue;
 
@@ -127,7 +127,7 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
         }
         else
         {
-            // Newton-Raphson for n ≠ 1:
+            // Newton-Raphson for n != 1:
             //   f(z)  = z - z_old + K*A^m * dt * ((z - z_r)/dx)^n = 0
             //   f'(z) = 1 + K*A^m * dt * (n/dx) * ((z - z_r)/dx)^(n-1)
             double epsilon = elev_tolerance + 1.0;
@@ -209,7 +209,7 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     // Drainage area from the flow graph (forward accumulation)
     std::vector<double> area_d = flow.accumulate();
 
-    // Build levels for the reverse sweep (outlet → headwater)
+    // Build levels for the reverse sweep (outlet -> headwater)
     auto levels = build_reverse_levels(flow);
 
     // NR parameters
@@ -322,7 +322,7 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
 
                 } while (std::abs(epsilon) > elev_tolerance);
 
-                // Instability: elevation increased — revert
+                // Instability: elevation increased - revert
                 if ((z_new - z_i_old) > static_cast<float>(elev_tolerance) ||
                     std::isnan(z_new))
                 {
@@ -370,7 +370,7 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
                 }
                 else
                 {
-                    // Newton-Raphson for n ≠ 1
+                    // Newton-Raphson for n != 1
                     double epsilon = elev_tolerance + 1.0;
                     int    iter_count = 0;
 
@@ -396,7 +396,7 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
 
                     } while (std::abs(epsilon) > elev_tolerance);
 
-                    // Instability: elevation increased — revert
+                    // Instability: elevation increased - revert
                     if ((z_new - z_i_old) > static_cast<float>(elev_tolerance) ||
                         std::isnan(z_new))
                     {

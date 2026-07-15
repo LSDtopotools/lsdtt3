@@ -122,7 +122,7 @@ lsdtt_raster_result compute_D_down_raster(
             continue;
 
         // Direction code: even (0,2,4,6) = cardinal; odd (1,3,5,7) = diagonal.
-        // no_direction (255) = outlet pixel — use cardinal step as default.
+        // no_direction (255) = outlet pixel - use cardinal step as default.
         const auto  d_code = static_cast<uint8_t>(dir.data[i]);
         const double step  = (d_code == k_no_dir || d_code % 2u == 0u) ? dx : dxy;
 

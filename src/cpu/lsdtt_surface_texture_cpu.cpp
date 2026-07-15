@@ -203,7 +203,7 @@ madk2_result calculate_madk2(
     #pragma omp parallel num_threads(threads)
     {
 #endif
-    // Per-thread reusable buffer — allocated once, cleared each inner iteration.
+    // Per-thread reusable buffer - allocated once, cleared each inner iteration.
     std::vector<float> k2_diffs;
     k2_diffs.reserve(win.offsets.size());
 
@@ -240,7 +240,7 @@ madk2_result calculate_madk2(
                     const int ci = row + dr_win;
                     const int cj = col + dc_win;
 
-                    // Bounds are guaranteed by combined_radius — no inner check needed.
+                    // Bounds are guaranteed by combined_radius - no inner check needed.
                     const int ri_pos = ci + dirs[d].dr;
                     const int rj_pos = cj + dirs[d].dc;
                     const int ri_neg = ci - dirs[d].dr;
@@ -280,7 +280,7 @@ madk2_result calculate_madk2(
                     break;
                 }
 
-                // O(N) median via nth_element — avoids full O(N log N) sort.
+                // O(N) median via nth_element - avoids full O(N log N) sort.
                 const std::size_t mid = k2_diffs.size() / 2;
                 std::nth_element(k2_diffs.begin(), k2_diffs.begin() + mid, k2_diffs.end());
                 double med = static_cast<double>(k2_diffs[mid]);
@@ -510,9 +510,9 @@ nvd_result compute_nvd(
         static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
 
     // -------------------------------------------------------------------------
-    // Pass 1 — compute pheta and phi at each valid pixel
+    // Pass 1 - compute pheta and phi at each valid pixel
     //
-    //   pheta = atan( sqrt(d² + e²) )     polar angle from vertical
+    //   pheta = atan( sqrt(d^2 + e^2) )     polar angle from vertical
     //   phi   = atan2(e, d)               azimuth (full 4-quadrant)
     //
     // A pixel is invalid for NVD if either d or e is nodata.
@@ -542,7 +542,7 @@ nvd_result compute_nvd(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 2 — build orientation tensor T over window, compute eigenvalues
+    // Pass 2 - build orientation tensor T over window, compute eigenvalues
     // -------------------------------------------------------------------------
     std::vector<float>   s1_data(npix, nodata);
     std::vector<uint8_t> s1_mask(npix, uint8_t{0});

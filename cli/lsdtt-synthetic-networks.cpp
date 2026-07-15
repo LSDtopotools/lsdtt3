@@ -394,7 +394,7 @@ int main(int argc, char* argv[])
         else if (domain_type != "rectangle")
         {
             std::cerr << "Warning: unknown domain_type '" << domain_type
-                      << "' — using rectangle.\n";
+                      << "' - using rectangle.\n";
         }
     }
     catch (const std::exception& e)
@@ -418,7 +418,7 @@ int main(int argc, char* argv[])
     {
         std::size_t n_land = 0;
         for (std::uint8_t v : mask) if (v) ++n_land;
-        std::cout << "Domain: " << domain_type << " — " << n_land
+        std::cout << "Domain: " << domain_type << " - " << n_land
                   << " land pixels of " << mask.size() << "\n";
     }
     opts.domain_mask = std::move(mask);

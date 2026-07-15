@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Surface metrics — CPU free functions operating on lsdtt_raster_cpu objects.
+// Surface metrics - CPU free functions operating on lsdtt_raster_cpu objects.
 //
 // All functions return new lsdtt_raster_cpu objects or structs containing new
 // rasters. The input raster is never modified. Output rasters inherit the same
@@ -53,8 +53,8 @@
 //     z(x,y) = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f
 //
 //   Coordinate convention:
-//     x  — easting offset from the pixel centre, positive east
-//     y  — northing offset from the pixel centre, positive north
+//     x  - easting offset from the pixel centre, positive east
+//     y  - northing offset from the pixel centre, positive north
 //
 //   Internal derivative notation used throughout the polyfit metric code:
 //
@@ -168,25 +168,25 @@ lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(
 // compute_plan_curvature_3x3_square
 //
 // Plan curvature (horizontal curvature) from the standard 8-point
-// Zevenbergen-Thorne (1987) stencil on the full 3×3 neighbourhood.
+// Zevenbergen-Thorne (1987) stencil on the full 3x3 neighbourhood.
 //
 // Uses the same derivative notation as compute_polyfit_metrics:
 //   p = dz/dx = (z_E - z_W) / (2L)
 //   q = dz/dy = (z_N - z_S) / (2L)   [y increases northward]
-//   r = d²z/dx²  = (z_E + z_W - 2 z_C) / L²
-//   t = d²z/dy²  = (z_N + z_S - 2 z_C) / L²
-//   s = d²z/dxdy = (z_NE - z_NW - z_SE + z_SW) / (4 L²)
+//   r = d^2z/dx^2  = (z_E + z_W - 2 z_C) / L^2
+//   t = d^2z/dy^2  = (z_N + z_S - 2 z_C) / L^2
+//   s = d^2z/dxdy = (z_NE - z_NW - z_SE + z_SW) / (4 L^2)
 //
-//   plan_curvature = (q² r  −  2 p q s  +  p² t) / sqrt((p² + q²)³)
+//   plan_curvature = (q^2 r  -  2 p q s  +  p^2 t) / sqrt((p^2 + q^2)^3)
 //
 // Sign convention (lsdtt3):
-//   Positive → concave across the contour (flow convergence, channel bottom).
-//   Negative → convex across the contour  (flow divergence, ridge nose).
-//   Zero     → flat or near-flat slope; plan curvature is undefined there
+//   Positive -> concave across the contour (flow convergence, channel bottom).
+//   Negative -> convex across the contour  (flow divergence, ridge nose).
+//   Zero     -> flat or near-flat slope; plan curvature is undefined there
 //               and the pixel is set to 0 with valid mask.
 //
-// Edge pixels and any pixel whose full 3×3 neighbourhood contains nodata are
-// set to nodata in the output.  Units: m⁻¹.
+// Edge pixels and any pixel whose full 3x3 neighbourhood contains nodata are
+// set to nodata in the output.  Units: m^-^1.
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu compute_plan_curvature_3x3_square(
     const lsdtt_raster_cpu& raster
@@ -391,8 +391,8 @@ struct polyfit_metric_request
 // present in the map.
 //
 // Convenience helpers:
-//   has(metric)  — true if this metric is present
-//   at(metric)   — returns the raster for that metric
+//   has(metric)  - true if this metric is present
+//   at(metric)   - returns the raster for that metric
 // -----------------------------------------------------------------------------
 struct polyfit_metric_result
 {
@@ -422,29 +422,29 @@ struct polyfit_metric_result
 // algorithm instead of FFT convolution.
 //
 // Algorithm:
-//   Pass 1 — horizontal rolling sums (OpenMP over rows, O(ncols) per row):
-//     H0[r][c] = Σ_{dc=-W}^{W} z_valid(r, c+dc)   (z or 0 for nodata)
-//     H1[r][c] = Σ dc · z_valid                    (offset-weighted sum)
-//     H2[r][c] = Σ dc² · z_valid                   (squared-offset sum)
+//   Pass 1 - horizontal rolling sums (OpenMP over rows, O(ncols) per row):
+//     H0[r][c] = Sigma_{dc=-W}^{W} z_valid(r, c+dc)   (z or 0 for nodata)
+//     H1[r][c] = Sigma dc * z_valid                    (offset-weighted sum)
+//     H2[r][c] = Sigma dc^2 * z_valid                   (squared-offset sum)
 //     Hn[r][c] = count of nodata/OOB in the horizontal window
 //
-//   Pass 2 — vertical column-prefix sums (OpenMP over columns):
+//   Pass 2 - vertical column-prefix sums (OpenMP over columns):
 //     For each center (r0, c0) with a fully-valid window (Hn_total == 0),
 //     six OLS moments are read in O(1) from prefix arrays. The factored
 //     normal equations (symmetry kills all odd cross-terms) reduce to
-//     three scalar divisions and one 3×3 solve with a precomputed inverse.
+//     three scalar divisions and one 3x3 solve with a precomputed inverse.
 //
 // Window width:
-//   W = max(1, round(lambda_metres / (2 · cell_size)))
-//   Window is (2W+1) × (2W+1) pixels; diameter ≈ lambda_metres / cell_size.
+//   W = max(1, round(lambda_metres / (2 * cell_size)))
+//   Window is (2W+1) x (2W+1) pixels; diameter ~= lambda_metres / cell_size.
 //
 // Output pixels:
-//   Valid only when the full (2W+1)² window lies inside the raster and
-//   contains no nodata — same conservatism as wavelet_quadratic_fit().
+//   Valid only when the full (2W+1)^2 window lies inside the raster and
+//   contains no nodata - same conservatism as wavelet_quadratic_fit().
 //
 // Memory:
-//   Three double arrays of size nrows × ncols (H0, H1, H2) plus an int
-//   array of the same size (Hn). For a 5000×5000 raster with double
+//   Three double arrays of size nrows x ncols (H0, H1, H2) plus an int
+//   array of the same size (Hn). For a 5000x5000 raster with double
 //   precision this is roughly 600 MB. Very large rasters may need tiling.
 //
 // Throws:
@@ -488,8 +488,8 @@ poly_fit_coeffs direct_polyfit(
 // Sign convention
 // ---------------
 // lsdtt3 uses the strict mathematical sign convention:
-//   concave-up terrain (channels, hollows) → positive curvature
-//   convex-up terrain  (ridges, noses)     → negative curvature
+//   concave-up terrain (channels, hollows) -> positive curvature
+//   convex-up terrain  (ridges, noses)     -> negative curvature
 //
 // This is NOT the Zevenbergen & Thorne (1987) convention, which applies an
 // extra leading negative sign to plan, profile, and tangential curvature,
@@ -608,8 +608,8 @@ surface_shape_result classify_surface_shape(
 // principal_curvatures
 //
 // The two principal curvatures of a surface, as a pair of rasters:
-//   maximum_curvature — k_max (the larger principal curvature)
-//   minimum_curvature — k_min (the smaller principal curvature)
+//   maximum_curvature - k_max (the larger principal curvature)
+//   minimum_curvature - k_min (the smaller principal curvature)
 // Suitable as the k_max / k_min inputs to classify_surface_shape.
 // -----------------------------------------------------------------------------
 struct principal_curvatures
@@ -622,7 +622,7 @@ struct principal_curvatures
 // fundamental_form_principal_curvatures
 //
 // Principal curvatures computed by the differential-geometry method of the
-// TopoCurve CurveCalc routine — an alternative source of k_max / k_min to the
+// TopoCurve CurveCalc routine - an alternative source of k_max / k_min to the
 // polynomial-fit principal curvatures from compute_polyfit_metrics.
 //
 // The elevation surface is treated as a parametric (Monge) surface
@@ -638,7 +638,7 @@ struct principal_curvatures
 //
 // Sign convention: this uses the upward normal and the standard quadratic root
 // k = (-b +/- sqrt(b^2 - 4ac)) / (2a), so convex-up terrain (ridge / peak)
-// yields negative mean curvature — consistent with lsdtt3 and with
+// yields negative mean curvature - consistent with lsdtt3 and with
 // compute_polyfit_metrics. (That is the negation of the literal MATLAB K1/K2;
 // Gaussian curvature k_max*k_min is sign-identical either way.)
 //

@@ -21,10 +21,10 @@
 //     compile-time dependencies. That situation should be rare.
 //
 // CONTENTS:
-//   Spatial primitives      — lsdtt_pixel_rc, lsdtt_xy
-//   Raster geometry         — lsdtt_extent, lsdtt_rowcol_window
-//   Flow-routing types      — sentinels, lsdtt_flat_index_slice
-//   Junction-network types  — sentinels, lsdtt_junction_index_slice
+//   Spatial primitives      - lsdtt_pixel_rc, lsdtt_xy
+//   Raster geometry         - lsdtt_extent, lsdtt_rowcol_window
+//   Flow-routing types      - sentinels, lsdtt_flat_index_slice
+//   Junction-network types  - sentinels, lsdtt_junction_index_slice
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -135,7 +135,7 @@ struct lsdtt_rowcol_window
 // Flow-routing types
 // =============================================================================
 //
-// Cell indices use int64_t throughout — safe for grids of any practical size.
+// Cell indices use int64_t throughout - safe for grids of any practical size.
 // Direction uses uint8_t: D8 has at most 8 neighbours, so a byte is sufficient.
 
 static constexpr std::int64_t k_nodata_receiver = -1;
@@ -146,7 +146,7 @@ static constexpr std::uint8_t k_no_direction    = 255;
 // lsdtt_flat_index_slice
 //
 // Zero-allocation view into a contiguous block of int64_t cell indices.
-// Returned by upslope_nodes() — valid for the lifetime of the engine object.
+// Returned by upslope_nodes() - valid for the lifetime of the engine object.
 // -----------------------------------------------------------------------------
 class lsdtt_flat_index_slice
 {
@@ -188,7 +188,7 @@ private:
 // Junction-network types
 // =============================================================================
 //
-// Junction indices use int32_t — junction counts are far smaller than raster
+// Junction indices use int32_t - junction counts are far smaller than raster
 // cell counts and fit comfortably in 32 bits. Raster flat indices remain int64_t.
 
 static constexpr std::int32_t k_nodata_junction = -1;

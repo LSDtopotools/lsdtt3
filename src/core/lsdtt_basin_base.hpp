@@ -1,6 +1,6 @@
 #pragma once
 
-// lsdtt3 — lsdtt_basin_base.hpp
+// lsdtt3 - lsdtt_basin_base.hpp
 // Abstract interface for basin objects. Lives in src/core/ so that a future
 // GPU basin implementation can inherit from it without depending on CPU types.
 // Shared types (lsdtt_basin_boundary_result) also live here.

@@ -196,7 +196,7 @@ mountain_front_result identify_mountain_front(
     const std::size_t npix =
         static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
 
-    // Sort scales smallest → largest.
+    // Sort scales smallest -> largest.
     const std::vector<relief_scale> scales = sorted_scales(request.relief_scales);
 
     mountain_front_result result;
@@ -208,7 +208,7 @@ mountain_front_result identify_mountain_front(
     result.low_ground_mask = build_low_ground_mask(
         dem, request, scales, result.relief_rasters);
 
-    // Count candidate pixels — need enough for the chosen fit method.
+    // Count candidate pixels - need enough for the chosen fit method.
     const std::vector<float>& mask_data = result.low_ground_mask.get_data();
     const std::vector<uint8_t>& mask_valid = result.low_ground_mask.get_mask();
     int n_candidates = 0;

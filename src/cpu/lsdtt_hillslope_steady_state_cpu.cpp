@@ -48,17 +48,17 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const float Sc2 = opts.Sc * opts.Sc;
 
     // -------------------------------------------------------------------------
-    // Determine SOR relaxation factor ω.
+    // Determine SOR relaxation factor omega.
     //
-    // For the 2D Poisson equation on an N×M grid with Dirichlet BCs at all
-    // four boundaries the optimal ω is derived from the Jacobi spectral radius:
+    // For the 2D Poisson equation on an NxM grid with Dirichlet BCs at all
+    // four boundaries the optimal omega is derived from the Jacobi spectral radius:
     //
-    //   ρ_J  = [cos(π/(N+1)) + cos(π/(M+1))] / 2
-    //   ω_opt = 2 / (1 + sqrt(1 - ρ_J²))
+    //   rho_J  = [cos(pi/(N+1)) + cos(pi/(M+1))] / 2
+    //   omega_opt = 2 / (1 + sqrt(1 - rho_J^2))
     //
     // When channels are densely distributed through the domain (typical LEM
     // setup) the effective grid spacing is smaller than the full domain, so
-    // the above formula overestimates ω.  We therefore cap it at 1.95.
+    // the above formula overestimates omega.  We therefore cap it at 1.95.
     // The user may override via sor_omega > 0.
     // -------------------------------------------------------------------------
     float omega;
@@ -77,7 +77,7 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
 
     const std::vector<uint8_t>& mask = dem.get_mask();
 
-    // Single elevation array — SOR updates in-place.
+    // Single elevation array - SOR updates in-place.
     std::vector<float> z(dem.get_data());
 
     // -------------------------------------------------------------------------
@@ -132,16 +132,16 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     // Linear: always 1.
     //
     // Nonlinear (Roering 1999): the flux law uses the FULL gradient magnitude:
-    //   qs = -D * ∇z / (1 - |∇z|²/Sc²),   |∇z|² = (∂z/∂x)² + (∂z/∂y)²
+    //   qs = -D * gradz / (1 - |gradz|^2/Sc^2),   |gradz|^2 = (dz/dx)^2 + (dz/dy)^2
     //
     // Each face contributes a face-normal slope and a face-tangent slope.
     // Using only the face-normal component (the error in the old code)
-    // underestimates α on any cell with a non-zero cross-slope, allowing
+    // underestimates alpha on any cell with a non-zero cross-slope, allowing
     // slopes to grow steeper than Sc in the cross direction.
     //
-    // cross2_over_Sc2 = (tangent_slope)² / Sc²  — pre-computed per face pair:
-    //   N/S faces share the E–W tangent  → cross2 = (zE - zW)² / (4h² Sc²)
-    //   E/W faces share the N–S tangent  → cross2 = (zN - zS)² / (4h² Sc²)
+    // cross2_over_Sc2 = (tangent_slope)^2 / Sc^2  - pre-computed per face pair:
+    //   N/S faces share the E-W tangent  -> cross2 = (zE - zW)^2 / (4h^2 Sc^2)
+    //   E/W faces share the N-S tangent  -> cross2 = (zN - zS)^2 / (4h^2 Sc^2)
     // -------------------------------------------------------------------------
     auto face_alpha = [&](float z_c, float z_nbr, float cross2_over_Sc2) -> float
     {
@@ -157,15 +157,15 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     // Two colour passes per iteration.  In colour pass `color`, only cells
     // where (row + col) % 2 == color are updated.  Because the 4-connected
     // neighbours of a red cell are always black (and vice versa), updates
-    // within a single pass are independent → safe to parallelise with OMP.
+    // within a single pass are independent -> safe to parallelise with OMP.
     //
     // Update rule:
-    //   z_Jacobi = (αN*zN + αS*zS + αE*zE + αW*zW + U*h²/D) / (αN+αS+αE+αW)
-    //   z_new    = (1 - ω) * z_old  +  ω * z_Jacobi
+    //   z_Jacobi = (alphaN*zN + alphaS*zS + alphaE*zE + alphaW*zW + U*h^2/D) / (alphaN+alphaS+alphaE+alphaW)
+    //   z_new    = (1 - omega) * z_old  +  omega * z_Jacobi
     //
     // The face alphas are evaluated from the current z (Picard linearisation
     // for the nonlinear mode), using the freshly-updated values of already-
-    // processed neighbours — i.e. Gauss-Seidel style within each pass.
+    // processed neighbours - i.e. Gauss-Seidel style within each pass.
     // -------------------------------------------------------------------------
     float final_residual = opts.tolerance + 1.0f;
     int   n_iter         = 0;
@@ -260,16 +260,16 @@ lsdtt_hillslope_steady_state_result compute_cidre_hillslope_steady_state(
 
     const std::vector<uint8_t>& mask = dem.get_mask();
 
-    // Pseudo-time step: CFL bound for linear Cidre diffusion (kappa·dt/dx ≤ 0.25·dx).
+    // Pseudo-time step: CFL bound for linear Cidre diffusion (kappa*dt/dx <= 0.25*dx).
     // The slope-restoration branch of nonlinear Cidre is unconditionally stable, so
     // this conservative choice works for both modes.
-    const float dt_ss      = 0.25f * dx / opts.D;   // → kappa·dt/dx = 0.25·dx
-    const float kdt_dx     = opts.D * dt_ss / dx;   // = 0.25·dx
+    const float dt_ss      = 0.25f * dx / opts.D;   // -> kappa*dt/dx = 0.25*dx
+    const float kdt_dx     = opts.D * dt_ss / dx;   // = 0.25*dx
     const float uplift_dz  = opts.U * dt_ss;
 
     std::vector<float> z(dem.get_data());
 
-    // Save channel elevations — restored after every iteration.
+    // Save channel elevations - restored after every iteration.
     std::vector<float> channel_z(static_cast<std::size_t>(n_cells), 0.0f);
     for (int64_t i = 0; i < n_cells; ++i)
         if (is_channel[static_cast<std::size_t>(i)])
@@ -305,7 +305,7 @@ lsdtt_hillslope_steady_state_result compute_cidre_hillslope_steady_state(
         std::vector<float> flux(static_cast<std::size_t>(n_cells), 0.0f);
 
         // -----------------------------------------------------------------
-        // Forward level sweep — mirrors compute_cidre_hillslope_transport
+        // Forward level sweep - mirrors compute_cidre_hillslope_transport
         // but uses the precomputed is_channel mask for Dirichlet BCs.
         // -----------------------------------------------------------------
         for (auto& level : levels)

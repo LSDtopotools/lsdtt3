@@ -2,7 +2,7 @@
 #
 # Conda-forge build recipe for lsdtt3.
 #
-# Status: PLACEHOLDER — not yet submitted to conda-forge.
+# Status: PLACEHOLDER - not yet submitted to conda-forge.
 #         The repository must be public before a conda-forge submission.
 #
 # When the repo goes public:
@@ -48,7 +48,7 @@ requirements:
     - eigen
     - libnetcdf
   run:
-    # Eigen3 is header-only — no runtime dependency.
+    # Eigen3 is header-only - no runtime dependency.
     - gdal
     - fftw
     - libopencv
@@ -64,7 +64,7 @@ about:
   home: https://github.com/LSDtopotools/lsdtt3
   license: GPL-3.0-only
   license_file: LICENSE
-  summary: LSDTopoTools3 — topographic analysis for geomorphology
+  summary: LSDTopoTools3 - topographic analysis for geomorphology
   description: |
     LSDTopoTools3 (lsdtt3) is a C++17 library and collection of command-line
     tools for topographic analysis in geomorphology. It provides routines for

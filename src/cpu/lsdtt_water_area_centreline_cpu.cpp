@@ -727,9 +727,9 @@ water_centreline_result extract_water_area_centrelines(
     }
 
     // -----------------------------------------------------------------------
-    // 6. Tributary connectors (spurs). Every tributary mouth — an end that was
+    // 6. Tributary connectors (spurs). Every tributary mouth - an end that was
     //    cut by a water area, or an end lying within tributary_snap_tolerance of
-    //    a water-area boundary — is joined to the nearest centreline point.
+    //    a water-area boundary - is joined to the nearest centreline point.
     // -----------------------------------------------------------------------
     {
         const double half_cell = 0.5 * opt.cell_size_m;

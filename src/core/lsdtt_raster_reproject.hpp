@@ -14,24 +14,24 @@
 //
 // CRS selection logic (see also lsdtt_crs_suggest.hpp):
 //
-//   |centre_lat| > 75°  →  NSIDC polar stereographic
+//   |centre_lat| > 75 deg  ->  NSIDC polar stereographic
 //                          North: EPSG:3413   suffix: _polar
 //                          South: EPSG:3976   suffix: _polar
 //
-//   otherwise           →  UTM zone of raster centre
+//   otherwise           ->  UTM zone of raster centre
 //                          suffix: _utm
 //
-//   allow_lambert_projection == true AND raster spans ≥ 3 UTM zones
-//                       →  custom Lambert Azimuthal Equal Area
+//   allow_lambert_projection == true AND raster spans >= 3 UTM zones
+//                       ->  custom Lambert Azimuthal Equal Area
 //                          suffix: _lambert
 //
 // Grid spacing selection (grid_spacing parameter):
 //
-//   grid_spacing > 0    →  use the supplied value (metres)
-//   grid_spacing ≤ 0    →  infer from the reprojected pixel size:
-//                          pixel_m ≥ 20  → round to nearest 5 m
-//                          5 ≤ pixel_m < 20  → round to nearest 2 m
-//                          pixel_m < 5   → round to nearest 1 m
+//   grid_spacing > 0    ->  use the supplied value (metres)
+//   grid_spacing <= 0    ->  infer from the reprojected pixel size:
+//                          pixel_m >= 20  -> round to nearest 5 m
+//                          5 <= pixel_m < 20  -> round to nearest 2 m
+//                          pixel_m < 5   -> round to nearest 1 m
 //
 // Output file is written as a Cloud Optimised GeoTIFF using gdalwarp
 // via the GDAL C API.  The output path is returned so the caller can
@@ -61,13 +61,13 @@ struct lsdtt_reproject_options
     // input raster is already projected.
     bool force_reproject = false;
 
-    // Resampling algorithm string — any value accepted by GDALWarp:
+    // Resampling algorithm string - any value accepted by GDALWarp:
     // "near", "bilinear", "cubic", "cubicspline", "lanczos",
     // "average", "mode", "max", "min", "med", "q1", "q3", "sum"
     std::string resampling_method = "cubic";
 
     // Target grid spacing in metres.
-    // ≤ 0 means infer from input pixel size (see snap_grid_spacing()).
+    // <= 0 means infer from input pixel size (see snap_grid_spacing()).
     double grid_spacing = -1.0;
 
     // If true, override the normal grid spacing logic and use
@@ -77,7 +77,7 @@ struct lsdtt_reproject_options
     // Target grid spacing in metres when force_resampling is true.
     double forced_grid_spacing = -1.0;
 
-    // If true and the raster spans ≥ 3 UTM zones, use a custom Lambert
+    // If true and the raster spans >= 3 UTM zones, use a custom Lambert
     // Azimuthal Equal Area projection instead of UTM.
     bool allow_lambert_projection = false;
 
@@ -85,7 +85,7 @@ struct lsdtt_reproject_options
     // 0 = ALL_CPUS (let GDAL query the CPU count at runtime).
     // Set to a positive integer to cap thread use on shared systems.
     // Note: -multi (the I/O pipeline thread) is always enabled regardless
-    // of this value — n_threads only controls the resampling kernel pool.
+    // of this value - n_threads only controls the resampling kernel pool.
     int n_threads = 0;
 
     // Warp working memory in MB.
@@ -134,14 +134,14 @@ double snap_grid_spacing(double pixel_m);
 // Inspect `meta` and reproject the file at `in_path` if necessary.
 //
 // Parameters
-//   in_path      — full path to the input raster file
-//   write_path   — directory in which the output file is written
-//   write_stem   — output filename stem (without extension or projection suffix)
-//   meta         — metadata of the already-open input raster
-//   opts         — reprojection options
+//   in_path      - full path to the input raster file
+//   write_path   - directory in which the output file is written
+//   write_stem   - output filename stem (without extension or projection suffix)
+//   meta         - metadata of the already-open input raster
+//   opts         - reprojection options
 //
 // Returns a lsdtt_reproject_result.  If the raster is already projected and
-// suitable, result.reprojected == false and result.out_path is empty — the
+// suitable, result.reprojected == false and result.out_path is empty - the
 // caller should continue using the original file.
 //
 // Throws std::runtime_error on:

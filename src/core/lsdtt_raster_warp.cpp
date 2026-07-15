@@ -79,7 +79,7 @@ std::string normalise_resampling_method(const std::string& s)
     if (s == "sum")                                return "sum";
 
     std::cerr << "lsdtt_raster_warp: unknown resampling_method '" << s
-              << "' — falling back to cubic.\n";
+              << "' - falling back to cubic.\n";
     return "cubic";
 }
 

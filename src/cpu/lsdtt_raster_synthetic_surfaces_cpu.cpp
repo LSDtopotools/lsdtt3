@@ -964,7 +964,7 @@ lsdtt_raster_cpu generate_power_law_fractal_surface_fft(
         fftw_execute(forward);
 
         // ---------------------------------------------------------------------
-        // 3. Apply spectral amplitude scaling ∝ f^(-beta/2)
+        // 3. Apply spectral amplitude scaling proportional_to f^(-beta/2)
         //
         // Frequency convention is unshifted FFT order:
         //   fx = col * dfx                    for col <= padded_cols/2
@@ -1688,7 +1688,7 @@ static lsdtt_mountain_range_surface build_range_surface_from_alpha(
 }
 
 // -----------------------------------------------------------------------------
-// validate_range_noise_params  — shared parameter checks
+// validate_range_noise_params  - shared parameter checks
 // -----------------------------------------------------------------------------
 static void validate_range_noise_params(
     const char*  fn_name,
@@ -2041,7 +2041,7 @@ lsdtt_mountain_range_surface generate_circular_range_surface(
 //
 // The mask threshold contour is then the parabola
 //   d_front(u) = decay_length * lw(u)
-// which gives depth = decay_length at the centre, tapering to 0 at u = ±1.
+// which gives depth = decay_length at the centre, tapering to 0 at u = +/-1.
 // The mountain zone is deepest at the arc centre and shallows toward the ends,
 // producing a convex front as seen from the piedmont.
 // -----------------------------------------------------------------------------

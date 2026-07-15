@@ -1306,8 +1306,8 @@ valley_cross_section_result extract_valley_cross_sections(
         // Pass 1: valley width at every station (march both sides), capped at
         // max_half_length so an unbounded valley (mask connected to a
         // reservoir / coastal flat / the sea) cannot run away. Only stations
-        // where BOTH sides are found within the cap — a genuinely bounded
-        // valley — contribute to the per-channel width used to fix the
+        // where BOTH sides are found within the cap - a genuinely bounded
+        // valley - contribute to the per-channel width used to fix the
         // transect length; a reservoir-crossing station reaches the cap
         // without finding its far side and is excluded.
         const double march_limit =

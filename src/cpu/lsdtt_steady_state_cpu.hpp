@@ -16,7 +16,7 @@
 //
 // Algorithm (chi-based, Mudd et al. 2014 JGR-ES eq. 4):
 //
-//   Step 1 — compute chi for every valid cell (outlet → headwater sweep):
+//   Step 1 - compute chi for every valid cell (outlet -> headwater sweep):
 //
 //     chi[outlet]  = 0
 //     chi[cell]    = chi[receiver] + dx_eff * A^(-m/n)        [D8 / single-receiver]
@@ -29,13 +29,13 @@
 //     chi[i] = chi[e1] + dx * sqrt(disc)      if disc >= 0
 //     chi[i] = chi[e1] + dx * A^(-m/n)        fallback to cardinal-only if disc < 0
 //
-//   Step 2 — find MaxChi = max(chi) over all valid cells.
+//   Step 2 - find MaxChi = max(chi) over all valid cells.
 //
-//   Step 3 — determine f = (U/K)^(1/n):
+//   Step 3 - determine f = (U/K)^(1/n):
 //     K-mode:      f = (U/K)^(1/n);   K_used = K
 //     Relief-mode: f = target_relief / MaxChi;   K_used = U * (MaxChi/target_relief)^n
 //
-//   Step 4 — assign elevations:
+//   Step 4 - assign elevations:
 //     z[i] = baselevel + f * chi[i]
 // -----------------------------------------------------------------------------
 
@@ -60,7 +60,7 @@ struct lsdtt_fluvial_steady_state_options
     float K                   = 1e-4f;   // erodibility; used when !relief_mode
     float m                   = 0.45f;   // drainage area exponent
     float n                   = 1.0f;    // slope exponent
-    bool  relief_mode         = false;   // true → back-calculate K from target_relief
+    bool  relief_mode         = false;   // true -> back-calculate K from target_relief
     float target_relief       = 1000.0f; // desired max(z) - baselevel (m)
     float baselevel_elevation = 0.0f;    // elevation assigned to outlet nodes
     bool  divide_area_by_dx   = true;    // if true, use specific area A/dx
@@ -106,7 +106,7 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
 //   two_receivers: nr > 1 && w0 < 1-eps && w1 < 1-eps
 //   single receiver otherwise (cardinal or diagonal determined by geometry)
 //
-// Chi computation (f-independent — see file header):
+// Chi computation (f-independent - see file header):
 //   two-receiver:    dchi = (chi[e2]-chi[e1])/dx
 //                    chi[i] = chi[e1] + dx*sqrt(A^(-2m/n) - dchi^2)  [disc>=0]
 //                    chi[i] = chi[e1] + dx*A^(-m/n)                   [fallback]

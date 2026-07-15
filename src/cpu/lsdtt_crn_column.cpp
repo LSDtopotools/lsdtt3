@@ -9,7 +9,7 @@
 namespace lsdtt
 {
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_column::read_erosion_time_series(const std::string& csv_path)
 {
     std::ifstream ifs(csv_path);
@@ -42,7 +42,7 @@ void lsdtt_crn_column::read_erosion_time_series(const std::string& csv_path)
     set_erosion_time_series(t_v, r_v, rem_v);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_column::set_erosion_time_series(const std::vector<double>& time_yr,
                                                 const std::vector<double>& rate_m_yr,
                                                 const std::vector<double>& removal_m)
@@ -53,7 +53,7 @@ void lsdtt_crn_column::set_erosion_time_series(const std::vector<double>& time_y
     check_erosion_time_series();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 void lsdtt_crn_column::check_erosion_time_series() const
 {
     int n = static_cast<int>(time_vec_.size());
@@ -79,7 +79,7 @@ void lsdtt_crn_column::check_erosion_time_series() const
         throw std::runtime_error("lsdtt_crn_column: first removal event must be at time=0.");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 double lsdtt_crn_column::calculate_depth_change() const
 {
     int n = static_cast<int>(time_vec_.size());
@@ -102,7 +102,7 @@ double lsdtt_crn_column::calculate_depth_change() const
     return d;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 lsdtt_crn_parameters lsdtt_crn_column::make_params(double production_scaling,
                                                     const std::string& muon_scheme) const
 {
@@ -116,7 +116,7 @@ lsdtt_crn_parameters lsdtt_crn_column::make_params(double production_scaling,
     return p;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 std::vector<CrnColumnSample>
 lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
                                  double production_scaling,
@@ -136,7 +136,7 @@ lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
 
     // Background (long-term) erosion rate
     double ss_rate_m_yr  = rate_vec_[n_steps-1];
-    double eff_ss_rate   = to_eff(ss_rate_m_yr);   // g/cm²/yr
+    double eff_ss_rate   = to_eff(ss_rate_m_yr);   // g/cm^2/yr
 
     // Depth change: how much deeper each particle was at the start of the record
     double d_change = calculate_depth_change();
@@ -151,11 +151,11 @@ lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
     for (int s = 0; s < n_samples; ++s)
     {
         double start_depth_m  = sampling_depths_m[s] + d_change;
-        double start_d_eff    = to_eff(start_depth_m);   // g/cm²
+        double start_d_eff    = to_eff(start_depth_m);   // g/cm^2
 
         lsdtt_crn_particle part(start_d_eff);
 
-        // ── Initial concentration ──────────────────────────────────────────
+        //  Initial concentration 
         if (use_initial_10Be || use_initial_26Al || use_initial_14C)
         {
             // User-specified initial concentration (e.g. pre-existing inventory)
@@ -169,7 +169,7 @@ lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
             part.init_ss_all(eff_ss_rate, params);
         }
 
-        // ── Evolve through erosion history (oldest → youngest) ─────────────
+        //  Evolve through erosion history (oldest -> youngest) 
         // Loop from second-to-last row down to row 1, then handle row 0 last.
         for (int ts = n_steps-2; ts >= 1; --ts)
         {
@@ -207,7 +207,7 @@ lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
     return results;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 CrnColumnSample lsdtt_crn_column::steady_state(double d_eff,
                                                 double eff_erate,
                                                 double production_scaling,
@@ -226,7 +226,7 @@ CrnColumnSample lsdtt_crn_column::steady_state(double d_eff,
     return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 CrnColumnSample lsdtt_crn_column::step_change(double d_eff,
                                                double eff_erate_old,
                                                double eff_erate_new,

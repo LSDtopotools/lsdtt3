@@ -246,7 +246,7 @@ lsdtt_binned_data bin_values_natural_breaks(
 // Result of compute_smoothed_pdf().
 //
 // The smoothed PDF is a box-kernel convolution of the histogram PDF over a
-// symmetric window of ±smooth_half_window bins.
+// symmetric window of +/-smooth_half_window bins.
 // =============================================================================
 struct lsdtt_smoothed_pdf
 {
@@ -258,8 +258,8 @@ struct lsdtt_smoothed_pdf
 
 // Compute a box-smoothed PDF of valid_values.
 //
-// n_bins             — histogram resolution (default 100)
-// smooth_half_window — half-width of the box-smoothing kernel in bins.
+// n_bins             - histogram resolution (default 100)
+// smooth_half_window - half-width of the box-smoothing kernel in bins.
 //                      Increase to suppress noise.  0 = no smoothing.
 //
 // Returns an empty struct if valid_values is empty.
@@ -276,7 +276,7 @@ lsdtt_smoothed_pdf compute_smoothed_pdf(
 //
 // The empirical CDF is derived directly from the histogram: cdf[i] is the
 // cumulative probability up to the upper edge of bin i.  No additional
-// smoothing is applied — CDFs are monotone by construction and do not benefit
+// smoothing is applied - CDFs are monotone by construction and do not benefit
 // from box-kernel convolution.
 // =============================================================================
 struct lsdtt_smoothed_cdf
@@ -289,7 +289,7 @@ struct lsdtt_smoothed_cdf
 
 // Compute the empirical CDF of valid_values using n_bins histogram bins.
 //
-// n_bins — histogram resolution (default 100).
+// n_bins - histogram resolution (default 100).
 //          Increase for finer resolution.  Percentile thresholds can be read
 //          directly from the y-axis: find the x value where cdf[i] crosses
 //          threshold/100.
@@ -306,15 +306,15 @@ lsdtt_smoothed_cdf compute_smoothed_cdf(
 // Result of a quantile-quantile analysis against the standard normal.
 //
 // Columns:
-//   standard_normal_variate  — z = Φ⁻¹(p_k); the x-axis of a standard QQ plot
-//   data_quantile            — empirical quantile of the input data at p_k
-//   normal_reference         — fitted normal reference line at p_k, derived by
+//   standard_normal_variate  - z = Phi^-^1(p_k); the x-axis of a standard QQ plot
+//   data_quantile            - empirical quantile of the input data at p_k
+//   normal_reference         - fitted normal reference line at p_k, derived by
 //                              regressing through the IQR of the QQ cloud
 //                              (Q25 and Q75 of the empirical distribution).
 //                              A perfectly normal dataset would lie exactly on
 //                              this line; deviations reveal non-normality.
 //
-// Plotting position: p_k = (k − 0.5) / n_points,  k = 1 … n_points
+// Plotting position: p_k = (k - 0.5) / n_points,  k = 1 ... n_points
 // Data quantile:     R type-7 linear interpolation on the sorted sample
 // =============================================================================
 struct lsdtt_qq_data

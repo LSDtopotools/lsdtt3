@@ -25,7 +25,7 @@
 // steady state, via the SAME shared core (compute_fluvial_steady_state_on_tree)
 // that lsdtt-lem's steady-state solver uses: chi[i] = chi[receiver] + dx_eff *
 // A^(-m/n) and Z_i = baselevel + f*chi_i. Relief is controlled exactly as in the
-// LEM (K-mode or relief-mode). Fluvial relief only — so an OCN and a LEM steady
+// LEM (K-mode or relief-mode). Fluvial relief only - so an OCN and a LEM steady
 // state on the same graph and parameters produce the same surface.
 //
 // IMPORTANT round-trip caveat: the chi DEM reproduces the OCN graph under
@@ -51,9 +51,9 @@ namespace lsdtt {
 
 // Where drainage leaves the domain.
 //   single_south : one outlet (rectangle: south-edge centre; island: southmost
-//                  land pixel) — the whole domain drains through one network.
+//                  land pixel) - the whole domain drains through one network.
 //   all_coast    : every coastal land pixel (land touching sea or the grid edge)
-//                  is a base level — an island draining to its whole coastline.
+//                  is a base level - an island draining to its whole coastline.
 enum class ocn_outlet_mode { single_south, all_coast };
 
 struct lsdtt_ocn_options
@@ -70,7 +70,7 @@ struct lsdtt_ocn_options
 
     // Optional georeference override. When use_supplied_meta is true the output
     // rasters use supplied_meta verbatim (its n_rows/n_cols/cell_size must match
-    // n_rows/n_cols/cell_size above) instead of the default Watopia anchor —
+    // n_rows/n_cols/cell_size above) instead of the default Watopia anchor -
     // used by true-area polygon import to preserve the polygon's real extent/CRS.
     bool              use_supplied_meta = false;
     lsdtt_raster_meta supplied_meta;
@@ -88,7 +88,7 @@ struct lsdtt_ocn_options
     double    initial_temperature = 0.0;
     double    temperature_scale   = 1.0;
 
-    // Landscape (elevation) synthesis — chi-based fluvial steady state, identical
+    // Landscape (elevation) synthesis - chi-based fluvial steady state, identical
     // to lsdtt-lem's steady-state solver (compute_fluvial_steady_state_on_tree):
     //   chi[i] = chi[receiver] + dx_eff * A^(-m/n);  z = baselevel + f*chi.
     // OCN elevations use FLUVIAL relief only (no hillslope), so the OCN and a LEM

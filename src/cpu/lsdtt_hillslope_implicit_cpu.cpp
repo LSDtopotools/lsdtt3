@@ -13,7 +13,7 @@
 // lsdtt_roering_implicit_result regardless of whether Eigen is present.  The
 // Eigen branch currently logs its intent, builds the hillslope DOF map, and then
 // delegates to the explicit subcycling solver; the backward-Euler + Picard core
-// is staged behind TODO tags matching the phased checklist (§12 of
+// is staged behind TODO tags matching the phased checklist (Sec12 of
 // docs/roering_implicit_transient_plan.md).  When Eigen is unavailable the
 // function falls back to the explicit solver and prints a one-line notice, so
 // callers need no #ifdef.
@@ -44,7 +44,7 @@ namespace lsdtt
 namespace
 {
 
-// Compute the maximum |∇z|/Sc over the hillslope (non-channel, valid) cells of a
+// Compute the maximum |gradz|/Sc over the hillslope (non-channel, valid) cells of a
 // field, using the same centred-difference full-gradient estimate as the explicit
 // solver.  Returned ratio is *not* capped, so a value > 1 flags a super-critical
 // face that the limiter would act on.  Used to populate the result diagnostic
@@ -115,19 +115,19 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
 
 #ifdef LSDTT_HAS_EIGEN
     // -------------------------------------------------------------------------
-    // Eigen path — backward-Euler + damped Picard core (§4).
+    // Eigen path - backward-Euler + damped Picard core (Sec4).
     //
     // Phases 1 & 2: conservative cell-centred finite-volume backward Euler over
     // fixed sub-steps, with a damped Picard (lagged-coefficient) iteration for
-    // the nonlinear face diffusivity (§3).  Linear mode (nonlinear == false) uses
+    // the nonlinear face diffusivity (Sec3).  Linear mode (nonlinear == false) uses
     // D_eff = D and converges in one Picard pass.  Dirichlet sinks come from
     // is_channel AND the 'o' (fixed-elevation) boundary code; 'n' = no-flux,
-    // 'p' = periodic (§3).  Uplift U is folded into the RHS for hillslope DOFs.
+    // 'p' = periodic (Sec3).  Uplift U is folded into the RHS for hillslope DOFs.
     // The system is SPD (symmetric face-centred D_eff) and solved with
     // Eigen::SimplicialLDLT.
     //
-    // Phase 3 (done): adaptive iteration-count-based sub-stepping controller (§7)
-    // with post-step face-slope projection / step rejection (§5 layer 3) and
+    // Phase 3 (done): adaptive iteration-count-based sub-stepping controller (Sec7)
+    // with post-step face-slope projection / step rejection (Sec5 layer 3) and
     // omega auto-tuning on Picard divergence.
     // Phase 4 (done): the sparsity pattern is fixed for the whole call (it depends
     // only on the mask / boundary codes / DOF map, not on z), so the pattern is
@@ -139,8 +139,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     // single lagged-coefficient solve when the field is far below Sc; the linear
     // fixed-dt path reuses one factorisation across all sub-steps.
     // Phase 6 (done, TR-BDF2 only): time_integrator == 1 selects a 2nd-order,
-    // L-stable TR-BDF2 composite (trapezoidal stage over γ·dt + BDF2 stage over
-    // (1−γ)·dt, γ = 2−√2), reusing the SPD Picard stage solver, with an embedded
+    // L-stable TR-BDF2 composite (trapezoidal stage over gamma*dt + BDF2 stage over
+    // (1-gamma)*dt, gamma = 2-sqrt2), reusing the SPD Picard stage solver, with an embedded
     // local-error estimate driving a PI step-size controller for time-accuracy.
     // The Newton core remains deferred (Picard converges in a few iterations, so
     // its 9-point nonsymmetric Jacobian buys little over the TR-BDF2 accuracy path).
@@ -179,7 +179,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         return static_cast<std::int64_t>(r) * n_cols + c;
     };
 
-    // Working field (double) — Dirichlet cells keep their (fixed) value throughout.
+    // Working field (double) - Dirichlet cells keep their (fixed) value throughout.
     std::vector<double> z(static_cast<std::size_t>(n_cells), 0.0);
     {
         const std::vector<float>& zin = dem.get_data();
@@ -213,7 +213,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
 
     if (n_dof == 0 || dt_total <= 0.0f)
     {
-        // Nothing to solve — return the input field unchanged.
+        // Nothing to solve - return the input field unchanged.
         result.elevation           = dem;
         result.n_substeps          = 0;
         result.n_rejected_substeps = 0;
@@ -258,8 +258,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
 
     // -------------------------------------------------------------------------
     // Per-call invariant structure.  The DOF list, face topology and sparsity
-    // pattern depend only on the mask, boundary codes and Dirichlet set — never
-    // on z — so they are built exactly once per call.  Each Picard iteration
+    // pattern depend only on the mask, boundary codes and Dirichlet set - never
+    // on z - so they are built exactly once per call.  Each Picard iteration
     // then only refreshes the face coefficients and writes them straight into
     // the matrix's value array: no triplet lists, no setFromTriplets re-sort,
     // no per-iteration allocation.
@@ -313,7 +313,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         }
     }
 
-    // Linear algebra backends (§6) and the fixed sparsity pattern.  The pattern
+    // Linear algebra backends (Sec6) and the fixed sparsity pattern.  The pattern
     // is assembled from triplets exactly once (and the direct solver's symbolic
     // analysis done on it once); per-iteration assembly rewrites A.valuePtr() in
     // place.  slot_face holds each DOF face's (nbr_dof, dof) slot in the value
@@ -399,11 +399,11 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         }
     };
 
-    // Face-centred effective diffusivity (§3), each face computed exactly once
+    // Face-centred effective diffusivity (Sec3), each face computed exactly once
     // (cross-slope = mean of the two adjacent cells' transverse gradient, as in
     // Perron 2011; requires compute_gradients() first when nonlinear).  The
     // r_max cap (limiter layer 1) keeps D_eff finite; the cap firing here is
-    // benign (§5/§9) so it does NOT set limiter_fired, which is reserved for
+    // benign (Sec5/Sec9) so it does NOT set limiter_fired, which is reserved for
     // the post-step projection (layer 3).
     auto compute_face_coeffs = [&]()
     {
@@ -446,8 +446,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         }
     };
 
-    // Maximum (uncapped) SQUARED face slope ratio max(|∇z|/Sc)² over all faces
-    // of valid cells (face-centred convention, §3) — the quantity the limiter
+    // Maximum (uncapped) SQUARED face slope ratio max(|gradz|/Sc)^2 over all faces
+    // of valid cells (face-centred convention, Sec3) - the quantity the limiter
     // accept test and the max_slope_ratio diagnostic are defined against.
     // Callers compare against thresholds squared and only sqrt for reporting.
     auto max_face_ratio2 = [&]() -> double
@@ -481,7 +481,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         return mx;
     };
 
-    // Write the stage matrix [I − beta·L(D_eff)] straight into A's value array
+    // Write the stage matrix [I - beta*L(D_eff)] straight into A's value array
     // (fixed pattern; every slot of column d is written only by DOF d, so the
     // loop is thread-safe) and record the Dirichlet contribution to the RHS in
     // b_dir.  Requires compute_face_coeffs() first.
@@ -513,9 +513,9 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     };
 
     // Generic implicit stage solver, shared by backward Euler (beta = dt: the
-    // [I/dt − L] system scaled through by dt) and both TR-BDF2 stages: a damped
+    // [I/dt - L] system scaled through by dt) and both TR-BDF2 stages: a damped
     // Picard iteration on
-    //   [ I − beta·L(D_eff) ] y = g   (+ Dirichlet terms)
+    //   [ I - beta*L(D_eff) ] y = g   (+ Dirichlet terms)
     // with the nonlinear face diffusivity lagged at the current iterate z, which
     // is advanced in place (warm-started by the caller).  g is a per-cell RHS
     // field (used only at DOF rows).  When reuse_matrix is set (linear fixed-dt
@@ -561,7 +561,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
             }
             ++iters_out;
 
-            // Damped update of the DOF cells; converge on max|Δz| between iterates.
+            // Damped update of the DOF cells; converge on max|Deltaz| between iterates.
             double max_dz = 0.0;
             #pragma omp parallel for schedule(static) reduction(max:max_dz)
             for (std::int64_t d = 0; d < n_dof; ++d)
@@ -581,8 +581,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
 
     // One backward-Euler sub-step over dt from the start-of-step field z_old,
     // via the shared stage solver with beta = dt.  Reports the Picard iteration
-    // count and the max |z − z_old| change over the step.  A semi-implicit step
-    // (§6 fast path) is a single lagged-coefficient IMEX solve treated as
+    // count and the max |z - z_old| change over the step.  A semi-implicit step
+    // (Sec6 fast path) is a single lagged-coefficient IMEX solve treated as
     // converged; the caller passes omega = 1 and iter_cap = 1 for it.
     auto attempt_step = [&](double dt, const std::vector<double>& z_old,
                             double cur_omega, int& iters_out,
@@ -616,7 +616,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     // Phase 6: TR-BDF2 building blocks (used only when time_integrator == 1).
     // -------------------------------------------------------------------------
 
-    // Apply the spatial operator L(z)_P = (1/h²) Σ_f D_eff,f (z_nb − z_P) at the
+    // Apply the spatial operator L(z)_P = (1/h^2) Sigma_f D_eff,f (z_nb - z_P) at the
     // current field z, over DOF cells (Dirichlet / masked rows left 0).  Used to
     // form the explicit f_n = U + L(z^n) term in the TR-BDF2 stages and error
     // estimate; D_eff is evaluated at the field as it currently stands in z.
@@ -644,8 +644,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         }
     };
 
-    // TR-BDF2 coefficients (γ = 2 − √2): a trapezoidal stage over γ·dt to z_γ, then
-    // a BDF2 stage over (1−γ)·dt to z^{n+1}.  Both stages are SPD [I − beta·L]
+    // TR-BDF2 coefficients (gamma = 2 - sqrt2): a trapezoidal stage over gamma*dt to z_gamma, then
+    // a BDF2 stage over (1-gamma)*dt to z^{n+1}.  Both stages are SPD [I - beta*L]
     // solves dispatched through solve_stage.  err_c scales the embedded local-error
     // estimate (Hosea & Shampine 1996, "Analysis and implementation of TR-BDF2").
     const double tr_gamma = 2.0 - std::sqrt(2.0);
@@ -658,10 +658,10 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
 
     // One TR-BDF2 step from z^n (which z must hold on entry; z holds z^{n+1} on
     // return).  Produces a 2nd-order, L-stable update plus an embedded local-error
-    // estimate err_out (elevation units) from the three stage derivatives f_n, f_γ,
-    // f_{n+1}.  The combination a0·f_n + a1·f_γ + a2·f_{n+1} is a second divided
+    // estimate err_out (elevation units) from the three stage derivatives f_n, f_gamma,
+    // f_{n+1}.  The combination a0*f_n + a1*f_gamma + a2*f_{n+1} is a second divided
     // difference of f (a0+a1+a2 = 0), so it vanishes for constant f and scales as
-    // O(dt²) → err = O(dt³), the correct order for a 2nd-order method.  f_γ and
+    // O(dt^2) -> err = O(dt^3), the correct order for a 2nd-order method.  f_gamma and
     // f_{n+1} are recovered from the converged stage relations, so the estimate
     // costs no extra solves or operator applies beyond L(z^n).  Returns whether both
     // stages' Picard iterations converged.
@@ -673,7 +673,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         std::vector<double> Lzn;            // L(z^n); z currently holds z^n
         compute_L(Lzn);
 
-        // TR stage: [I − (γ·dt/2) L] z_γ = z^n + (γ·dt/2) L(z^n) + γ·dt·U
+        // TR stage: [I - (gamma*dt/2) L] z_gamma = z^n + (gamma*dt/2) L(z^n) + gamma*dt*U
         const double beta_tr = 0.5 * tr_gamma * dt;
         std::vector<double> g(static_cast<std::size_t>(n_cells), 0.0);
         for (std::int64_t f = 0; f < n_cells; ++f)
@@ -686,7 +686,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         const bool c_tr = solve_stage(beta_tr, g, cur_omega, iter_cap, it1, false);
         std::vector<double> z_gamma = z;    // stage-1 solution
 
-        // BDF2 stage: [I − c3·dt·L] z^{n+1} = c1·z_γ − c2·z^n + c3·dt·U
+        // BDF2 stage: [I - c3*dt*L] z^{n+1} = c1*z_gamma - c2*z^n + c3*dt*U
         const double beta_bdf = bdf_c3 * dt;
         for (std::int64_t f = 0; f < n_cells; ++f)
         {
@@ -719,9 +719,9 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         return c_tr && c_bdf;
     };
 
-    // Last-resort slope-restoration projection (limiter layer 3, §5): clamp DOF
+    // Last-resort slope-restoration projection (limiter layer 3, Sec5): clamp DOF
     // cells by Gauss-Seidel sweeps so no cardinal face-normal slope exceeds
-    // r_max·Sc.  Only lowers cells (over-steepening from uplift makes ridge cells
+    // r_max*Sc.  Only lowers cells (over-steepening from uplift makes ridge cells
     // too high relative to downslope/channel neighbours).
     auto apply_projection = [&]()
     {
@@ -766,7 +766,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     if (opts.time_integrator == 1)
     {
         // ---------------------------------------------------------------------
-        // Phase 6: TR-BDF2 with embedded-error PI step control (§7).  Each step
+        // Phase 6: TR-BDF2 with embedded-error PI step control (Sec7).  Each step
         // is a 2nd-order, L-stable composite solve; the embedded local-error
         // estimate drives a PI controller for genuine time-accuracy.  The same
         // slope-limiter accept/reject and floor projection as the backward-Euler
@@ -810,7 +810,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         dt = std::min(dt, std::min(dt_max_eff, static_cast<double>(dt_total)));
         double t_remaining = static_cast<double>(dt_total);
         const double t_eps = static_cast<double>(dt_total) * 1e-12;
-        double err_prev = -1.0;                 // <0 → no PI memory yet
+        double err_prev = -1.0;                 // <0 -> no PI memory yet
         const int max_attempts = 2000000;
         int       attempts = 0;
 
@@ -894,8 +894,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     }
     else
     {
-        // Adaptive, iteration-count-based controller (§7) + post-step projection /
-        // rejection (§5 layer 3).
+        // Adaptive, iteration-count-based controller (Sec7) + post-step projection /
+        // rejection (Sec5 layer 3).
         const double dt_max_eff = (opts.dt_max > 0.0f) ? static_cast<double>(opts.dt_max)
                                                        : static_cast<double>(dt_total);
         double dt_min_eff = (opts.dt_min > 0.0f) ? static_cast<double>(opts.dt_min)
@@ -908,7 +908,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         const double reject_ratio = r_max;          // accept needs max face ratio < r_max
         const int    k_lo = 5;                       // "easy" Picard convergence
         const double omega_floor = 0.1;
-        // Semi-implicit fast path (§6): when the field is well below Sc the
+        // Semi-implicit fast path (Sec6): when the field is well below Sc the
         // coefficient lag is harmless, so a single lagged solve suffices.  As
         // slopes steepen toward Sc the controller drops back to full Picard.
         const double semi_implicit_ratio = 0.5;
@@ -922,7 +922,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         const int    max_attempts = 2000000;
         int          attempts = 0;
 
-        // Cached max face ratio² for the CURRENT z: between an accepted step's
+        // Cached max face ratio^2 for the CURRENT z: between an accepted step's
         // post-check and the next attempt's semi decision z does not change (and
         // a rejected attempt restores z), so the pre-step scan is never repeated.
         double mratio2_cache = max_face_ratio2();
@@ -943,7 +943,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
             const int  iter_cap = semi ? 1 : picard_max_iter;
             // A semi-implicit step is a single lagged-coefficient (IMEX) solve, not a
             // fixed-point iteration, so it must be applied IN FULL (omega = 1).  Using
-            // the damped omega here would leave the field at only omega of the solve —
+            // the damped omega here would leave the field at only omega of the solve -
             // an under-relaxed, under-diffused step (which biased coupled LEM steady
             // states high).  Damping only makes sense across multiple Picard iterates.
             const double step_omega = semi ? 1.0 : cur_omega;
@@ -1006,8 +1006,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
 
 #else
     // -------------------------------------------------------------------------
-    // No Eigen — fall back to the explicit subcycling solver so callers need no
-    // #ifdef (§8 recommendation).
+    // No Eigen - fall back to the explicit subcycling solver so callers need no
+    // #ifdef (Sec8 recommendation).
     // -------------------------------------------------------------------------
     std::cout << "[roering_implicit] Eigen unavailable; using the explicit "
                  "subcycling fallback (compute_roering_hillslope_transport)."

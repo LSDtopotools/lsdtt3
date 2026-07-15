@@ -643,14 +643,14 @@ double compute_stddev_sample(
 // =============================================================================
 // normal_quantile
 //
-// Inverse normal CDF (probit function): returns z such that Φ(z) = p.
+// Inverse normal CDF (probit function): returns z such that Phi(z) = p.
 //
 // Uses Peter Acklam's rational approximation (2010).  Maximum absolute error
-// is approximately 1.15 × 10⁻⁹ over the full range (0, 1).
+// is approximately 1.15 x 10^-^9 over the full range (0, 1).
 //
 // Special cases:
-//   p <= 0  → -∞  (returns -std::numeric_limits<double>::infinity())
-//   p >= 1  → +∞  (returns  std::numeric_limits<double>::infinity())
+//   p <= 0  -> -inf  (returns -std::numeric_limits<double>::infinity())
+//   p >= 1  -> +inf  (returns  std::numeric_limits<double>::infinity())
 // =============================================================================
 inline double normal_quantile(double p)
 {

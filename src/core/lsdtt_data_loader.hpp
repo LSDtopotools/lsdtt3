@@ -10,7 +10,7 @@
 // lsdtt_data_loader
 //
 // The sole GDAL/OGR interface in lsdtt3. Responsible for all geospatial
-// file I/O — reading and writing rasters, vector layers, and tabular data.
+// file I/O - reading and writing rasters, vector layers, and tabular data.
 //
 // Compute objects (lsdtt_raster_cpu, lsdtt_raster_gpu) never touch GDAL directly.
 // They receive raw data arrays and lsdtt_raster_meta from this class, and return
@@ -20,9 +20,9 @@
 // Tested formats: GeoTIFF, Cloud Optimised GeoTIFF (COG), VRT, HDF5, NetCDF, ENVI bil.
 //
 // Supported output formats:
-//   Raster  — Cloud Optimised GeoTIFF (.tif)
-//   Vector  — GeoPackage (.gpkg)
-//   Tabular — CSV (.csv, geopandas compatible)
+//   Raster  - Cloud Optimised GeoTIFF (.tif)
+//   Vector  - GeoPackage (.gpkg)
+//   Tabular - CSV (.csv, geopandas compatible)
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -49,14 +49,14 @@ namespace lsdtt {
 // lsdtt_tile_window
 //
 // Describes a single tile within a raster, including its halo (overlap region).
-// The halo is read from the file but should not be written to the output — it
+// The halo is read from the file but should not be written to the output - it
 // exists solely to eliminate edge artefacts in compute operations.
 //
-//   x_off, y_off   — pixel offset of the tile origin (without halo) in the
+//   x_off, y_off   - pixel offset of the tile origin (without halo) in the
 //                    full raster
 //   tile_width,
-//   tile_height    — dimensions of the valid (non-halo) tile region in pixels
-//   halo           — number of pixels of overlap on each edge
+//   tile_height    - dimensions of the valid (non-halo) tile region in pixels
+//   halo           - number of pixels of overlap on each edge
 //
 // The actual array read from disk is:
 //   width  = tile_width  + 2 * halo  (clamped at raster edges)
@@ -82,11 +82,11 @@ struct lsdtt_tile_window {
 // A single tile of raster data returned by lsdtt_data_loader::read_tile().
 // Owns its data and mask arrays.
 //
-//   data   — float32 elevation (or other) values, row-major, size = read_width
+//   data   - float32 elevation (or other) values, row-major, size = read_width
 //            * read_height. NoData pixels are set to meta.no_data_value.
-//   mask   — uint8 validity mask, same dimensions. 1 = valid, 0 = nodata.
-//   window — the tile geometry used to read this tile
-//   meta   — full raster metadata (shared for all tiles from the same file)
+//   mask   - uint8 validity mask, same dimensions. 1 = valid, 0 = nodata.
+//   window - the tile geometry used to read this tile
+//   meta   - full raster metadata (shared for all tiles from the same file)
 // -----------------------------------------------------------------------------
 struct lsdtt_raster_tile {
     std::vector<float>    data;
@@ -197,7 +197,7 @@ using lsdtt_vector_field_value = std::variant<
 // =============================================================================
 // lsdtt_vector_schema
 //
-// Field names and types for a layer, stored once — not per feature.
+// Field names and types for a layer, stored once - not per feature.
 // =============================================================================
 struct lsdtt_vector_schema
 {
@@ -242,7 +242,7 @@ struct lsdtt_vector_layer
     std::size_t size()  const noexcept { return records.size(); }
     bool        empty() const noexcept { return records.empty(); }
  
-    // Typed geometry accessors — throw std::bad_variant_access if wrong type.
+    // Typed geometry accessors - throw std::bad_variant_access if wrong type.
     static lsdtt_point_geom   as_point(const lsdtt_vector_record& r)
     {
         return std::get<lsdtt_point_geom>(r.geometry);
@@ -262,34 +262,34 @@ struct lsdtt_vector_layer
 //
 // Controls how output rasters are written.
 //
-//   cog            — Cloud Optimised GeoTIFF with DEFLATE compression and
+//   cog            - Cloud Optimised GeoTIFF with DEFLATE compression and
 //                    overview pyramid. Best for large rasters and cloud
 //                    storage. Automatically falls back to gtiff for small
 //                    rasters (below k_cog_min_pixels threshold).
 //
-//   gtiff          — Plain compressed GeoTIFF (DEFLATE, tiled). No overview
+//   gtiff          - Plain compressed GeoTIFF (DEFLATE, tiled). No overview
 //                    pyramid. Faster to write, slightly larger than COG for
 //                    large rasters. Suitable for intermediate results or
 //                    small datasets.
 //
-//   same_as_input  — Uses the same GDAL driver as the input raster. Lets
+//   same_as_input  - Uses the same GDAL driver as the input raster. Lets
 //                    the output format match whatever format the user provided
 //                    (e.g. ENVI bil, NetCDF, plain GeoTIFF). The file
 //                    extension in out_path must match the driver.
 //
-// Threshold for automatic COG → GeoTIFF fallback:
+// Threshold for automatic COG -> GeoTIFF fallback:
 //   COG overview pyramid construction has a fixed overhead that outweighs
 //   the benefit for small rasters. Below k_cog_min_pixels pixels the loader
 //   automatically writes a plain GeoTIFF even when cog is requested.
-//   Benchmark crossover is approximately 512×512 = 262,144 pixels.
+//   Benchmark crossover is approximately 512x512 = 262,144 pixels.
 // -----------------------------------------------------------------------------
 enum class raster_output_format
 {
     cog,            // Cloud Optimised GeoTIFF (default; falls back to gtiff below threshold)
     gtiff,          // Plain compressed GeoTIFF
     same_as_input,  // Match the input raster driver
-    png             // 8-bit greyscale PNG (float32 → uint8 via min-max stretch)
-                    //   nodata pixels map to 0; valid data maps to 1–255.
+    png             // 8-bit greyscale PNG (float32 -> uint8 via min-max stretch)
+                    //   nodata pixels map to 0; valid data maps to 1-255.
                     //   Writes a worldfile (.pgw) for the geotransform and a
                     //   GDAL PAM sidecar (.png.aux.xml) for the CRS.
                     //   PNG has no native float32 or CRS support so this format
@@ -335,7 +335,7 @@ public:
     lsdtt_data_loader();
     ~lsdtt_data_loader();
 
-    // Non-copyable — owns GDAL handles
+    // Non-copyable - owns GDAL handles
     lsdtt_data_loader(const lsdtt_data_loader&)            = delete;
     lsdtt_data_loader& operator=(const lsdtt_data_loader&) = delete;
 
@@ -366,8 +366,8 @@ public:
 
     // Partition the full raster into a grid of tiles.
     //
-    //   tile_size  — target tile width and height in pixels (default 512)
-    //   halo       — overlap in pixels added to each edge (default 16)
+    //   tile_size  - target tile width and height in pixels (default 512)
+    //   halo       - overlap in pixels added to each edge (default 16)
     //
     // Returns a vector of lsdtt_tile_window, one per tile, in row-major order.
     // Tiles at the raster edges are automatically clamped to the raster extent.
@@ -392,11 +392,11 @@ public:
 
     // Initialise an output raster for tiled writing.
     //
-    //   out_path   — output file path
-    //   meta       — metadata to embed (typically from get_meta())
-    //   format     — output format (default cog; see raster_output_format)
-    //   n_bands    — number of bands to create (default 1)
-    //   out_type   — GDAL data type for the output band (default GDT_Float32).
+    //   out_path   - output file path
+    //   meta       - metadata to embed (typically from get_meta())
+    //   format     - output format (default cog; see raster_output_format)
+    //   n_bands    - number of bands to create (default 1)
+    //   out_type   - GDAL data type for the output band (default GDT_Float32).
     //                Pass meta.data_type only when you explicitly want to match
     //                the source type. Analysis results are float32 regardless
     //                of the source type; only use a different type when the
@@ -415,13 +415,13 @@ public:
 
     // Write a result tile to a previously created output raster.
     // data must be float32, row-major, size = window.tile_width *
-    // window.tile_height (the valid region only — do not include the halo).
+    // window.tile_height (the valid region only - do not include the halo).
     // GDAL converts the float32 values to the band's data type at write time.
     //
-    //   data       — result values for the valid tile region
-    //   window     — the tile window (used for pixel offsets)
-    //   out_path   — must match a path previously passed to create_output_raster
-    //   band       — 1-based band index (default 1)
+    //   data       - result values for the valid tile region
+    //   window     - the tile window (used for pixel offsets)
+    //   out_path   - must match a path previously passed to create_output_raster
+    //   band       - 1-based band index (default 1)
     void write_tile(
         const std::vector<float>& data,
         const lsdtt_tile_window&  window,
@@ -435,7 +435,7 @@ public:
     // For cog format: automatically falls back to gtiff for rasters smaller
     // than k_cog_min_pixels pixels (COG overhead not worthwhile below this).
     //
-    //   out_type   — GDAL data type for the output band (default GDT_Float32).
+    //   out_type   - GDAL data type for the output band (default GDT_Float32).
     //                Use meta.data_type when the raster carries an explicit
     //                output type (e.g. the UInt32 label raster from
     //                label_binary_components_by_size). For all standard analysis
@@ -491,14 +491,14 @@ public:
     void close_vector();
 
     // -----------------------------------------------------------------------
-    // Vector output — session interface
+    // Vector output - session interface
     //
     // 1. Call begin_vector_write() to open the file and declare the schema.
     // 2. Call write_point / write_line / write_polygon for each feature.
     // 3. Call finish_vector_write() to flush and close.
     //
-    // spatial_index = false  →  streaming, no index (low memory)
-    // spatial_index = true   →  buffer all features, then write with GDAL
+    // spatial_index = false  ->  streaming, no index (low memory)
+    // spatial_index = true   ->  buffer all features, then write with GDAL
     //                           spatial index (higher memory, but will the 
     //                           index speeds up spatial queries when post-
     //                           processing in a GIS system.
@@ -567,11 +567,11 @@ public:
     // spatial filter is applied, so the two datasets need not share a CRS.
     // All layers in the source file are processed and written to the output.
     //
-    //   input_path   — path to any OGR-readable vector file
-    //   output_path  — path for the output file (extension must match out_fmt)
-    //   raster_meta  — metadata for the raster whose bbox is used as the clip
+    //   input_path   - path to any OGR-readable vector file
+    //   output_path  - path for the output file (extension must match out_fmt)
+    //   raster_meta  - metadata for the raster whose bbox is used as the clip
     //                  rectangle; supplies both the extent and the CRS WKT
-    //   out_fmt      — output format (flatgeobuf or gpkg)
+    //   out_fmt      - output format (flatgeobuf or gpkg)
     static void clip_vector_to_raster_bbox(
         const std::string&       input_path,
         const std::string&       output_path,
@@ -603,9 +603,9 @@ public:
 
     // Write a table to a CSV file. The first row is a header.
     //
-    //   out_path   — output .csv file path
-    //   headers    — column names
-    //   rows       — data rows; each inner vector must match headers.size()
+    //   out_path   - output .csv file path
+    //   headers    - column names
+    //   rows       - data rows; each inner vector must match headers.size()
     void write_csv(
         const std::string&                        out_path,
         const std::vector<std::string>&           headers,
@@ -644,10 +644,10 @@ private:
     // (multiple outputs can be open simultaneously during tiled writing)
     std::unordered_map<std::string, gdal_dataset_ptr>       output_datasets_;
 
-    // Output format per dataset — needed by finalise_output()
+    // Output format per dataset - needed by finalise_output()
     std::unordered_map<std::string, raster_output_format>   output_formats_;
 
-    // Driver name of the open input raster — used for same_as_input output
+    // Driver name of the open input raster - used for same_as_input output
     std::string input_driver_name_;
 
     // Metadata for the currently open raster
@@ -668,7 +668,7 @@ private:
     lsdtt_tile_window   clamp_window_to_raster(const lsdtt_tile_window& win) const;
     void              add_cog_overviews(GDALDataset* ds);
 
-    // Normalise float32 data to uint8 (nodata→0, valid→1–255) and write a
+    // Normalise float32 data to uint8 (nodata->0, valid->1-255) and write a
     // GDAL PNG via MEM dataset + CreateCopy.  Writes a worldfile (.pgw) and
     // lets GDAL emit a PAM sidecar (.png.aux.xml) for the CRS.
     void              write_png(
@@ -682,7 +682,7 @@ private:
     // path (bulk write in finish_vector_write).
     void write_record_to_layer(
         const lsdtt_vector_record& record,
-        void*                      ogr_layer  // OGRLayer* — opaque to avoid
+        void*                      ogr_layer  // OGRLayer* - opaque to avoid
     ) const;                                  // GDAL headers leaking into .hpp
 };
 

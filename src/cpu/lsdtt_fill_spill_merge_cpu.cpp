@@ -14,15 +14,15 @@
 // Original code: https://github.com/r-barnes/Barnes2020-FillSpillMerge
 //
 // Internal structure mirrors the original exactly:
-//   Phase 1 — reset_dh()              : zero all water_vol fields
-//   Phase 2 — move_water_into_pits()  : BFS downstream, accumulate into deps
-//   Phase 3 — move_water_in_dep_hier(): DFS post-order with jump table
-//   Phase 4 — find_depressions_to_fill() / fill_depressions(): spatial flood
+//   Phase 1 - reset_dh()              : zero all water_vol fields
+//   Phase 2 - move_water_into_pits()  : BFS downstream, accumulate into deps
+//   Phase 3 - move_water_in_dep_hier(): DFS post-order with jump table
+//   Phase 4 - find_depressions_to_fill() / fill_depressions(): spatial flood
 //
 // Key fixes vs previous version
 // ------------------------------
 // fill_depressions: the outlet cell (out_cell) must be pushed back onto the
-//   priority queue every time the queue goes empty — even if it has already
+//   priority queue every time the queue goes empty - even if it has already
 //   been visited. The original does exactly this: it calls flood_q.emplace()
 //   unconditionally when the queue is empty, relying on the volume check to
 //   terminate. Our previous version used visited.insert().second which

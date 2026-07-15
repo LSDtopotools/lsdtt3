@@ -262,7 +262,7 @@ int main(int argc, char* argv[])
     help_map["connectivity_roughness_method"] = {"string","madk2",
         "Roughness metric used to compute the W weighting factor.",
         "Allowed values: madk2 (Median Absolute Deviation of k2 differences, "
-        "Trevisani & Guth 2025 — default), iqr_residual (IQR of polyfit "
+        "Trevisani & Guth 2025 - default), iqr_residual (IQR of polyfit "
         "residuals, square window). W = max(1 - R/R_max, 0.001)."};
 
     bool_default_map["write_height_above_channel_raster"] = false;
@@ -543,7 +543,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
-    // Step 1 — Ensure the DEM is ready for routing
+    // Step 1 - Ensure the DEM is ready for routing
     // -------------------------------------------------------------------------
     if (!bf["raster_is_filled"])
     {
@@ -577,7 +577,7 @@ int main(int argc, char* argv[])
     const lsdtt::lsdtt_raster_meta dem_meta = routed_dem.get_meta();
 
     // -------------------------------------------------------------------------
-    // Step 2a — D8 flow routing (if needed)
+    // Step 2a - D8 flow routing (if needed)
     // -------------------------------------------------------------------------
     std::unique_ptr<lsdtt::lsdtt_flow_base> d8_flow;
 
@@ -612,7 +612,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2b — D-infinity flow routing (if needed)
+    // Step 2b - D-infinity flow routing (if needed)
     // -------------------------------------------------------------------------
     std::unique_ptr<lsdtt::lsdtt_flowgraph_cpu> dinf_graph;
 
@@ -643,7 +643,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 2c — MFD flow routing (if needed)
+    // Step 2c - MFD flow routing (if needed)
     // -------------------------------------------------------------------------
     std::unique_ptr<lsdtt::lsdtt_flowgraph_cpu> mfd_graph;
 
@@ -783,7 +783,7 @@ int main(int argc, char* argv[])
     };
 
     // -------------------------------------------------------------------------
-    // Step 3a — Write D8 drainage area
+    // Step 3a - Write D8 drainage area
     // -------------------------------------------------------------------------
     if (bf["write_d8_drainage_area_raster"])
     {
@@ -805,7 +805,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3b — Write D-infinity drainage area
+    // Step 3b - Write D-infinity drainage area
     // -------------------------------------------------------------------------
     if (bf["write_dinf_drainage_area_raster"])
     {
@@ -827,7 +827,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 3c — Write MFD drainage area
+    // Step 3c - Write MFD drainage area
     // -------------------------------------------------------------------------
     if (bf["write_mfd_drainage_area_raster"])
     {
@@ -849,13 +849,13 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 4 — Topographic Wetness Index
+    // Step 4 - Topographic Wetness Index
     //
     // TWI = ln( (A / pixel_area) / slope )
     //
-    //   A          — upstream drainage area in m^2 from D-infinity or MFD
-    //   pixel_area — cell_size^2 (m^2)
-    //   slope      — gradient magnitude (m/m) from a local quadratic fit
+    //   A          - upstream drainage area in m^2 from D-infinity or MFD
+    //   pixel_area - cell_size^2 (m^2)
+    //   slope      - gradient magnitude (m/m) from a local quadratic fit
     //
     // Note: (A / pixel_area) gives the number of contributing pixels rather
     // than the standard specific contributing area (A / cell_size). This

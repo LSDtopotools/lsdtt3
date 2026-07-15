@@ -49,10 +49,10 @@ static constexpr double k_wall_eps  = 1.0e-5;
 
 // Convert compass bearing (degrees; north=0, east=90, clockwise) to the
 // east=0 radian convention used in the kinematic routing formulas.
-//   north (0°)  → π/2
-//   east  (90°) → 0
-//   south (180°) → -π/2
-//   west  (270°) → ±π
+//   north (0 deg)  -> pi/2
+//   east  (90 deg) -> 0
+//   south (180 deg) -> -pi/2
+//   west  (270 deg) -> +/-pi
 static inline double bearing_to_theta(double degs)
 {
     return (90.0 - degs) * (k_pi / 180.0);
@@ -62,9 +62,9 @@ static inline double bearing_to_theta(double degs)
 // precompute_aspect
 //
 // For every interior pixel with a fully-valid 3x3 neighbourhood, compute:
-//   bearing_out  — steepest-descent bearing in [0, 360) degrees
-//   tan_out      — tan(theta) where theta is the east=0 radian form
-//   inv_tan_out  — 1 / tan(theta) (clamped for near-zero tan)
+//   bearing_out  - steepest-descent bearing in [0, 360) degrees
+//   tan_out      - tan(theta) where theta is the east=0 radian form
+//   inv_tan_out  - 1 / tan(theta) (clamped for near-zero tan)
 //
 // Edge pixels and pixels with any nodata neighbour receive NaN in all three
 // arrays.  Flat pixels (zero gradient in both directions) also receive NaN.
@@ -144,10 +144,10 @@ static void precompute_aspect(
 //   (0.5, 0.5) is the cell centre
 //
 // Direction codes (consistent with old lsdtt convention):
-//   dir = 1 — eastward travel  (entered cell from west  face)
-//   dir = 2 — southward travel (entered cell from north face)
-//   dir = 3 — westward travel  (entered cell from east  face)
-//   dir = 4 — northward travel (entered cell from south face)
+//   dir = 1 - eastward travel  (entered cell from west  face)
+//   dir = 2 - southward travel (entered cell from north face)
+//   dir = 3 - westward travel  (entered cell from east  face)
+//   dir = 4 - northward travel (entered cell from south face)
 //
 // Projected coordinates of sub-pixel position (r, c, xi, yi):
 //   x = meta.x_min + (c + xi) * cell_size
@@ -292,7 +292,7 @@ static lsdtt_streamline trace_one_streamline(
     }
 
     // -------------------------------------------------------------------------
-    // Loop-detection state: flat-index → visit count (thread-private)
+    // Loop-detection state: flat-index -> visit count (thread-private)
     // -------------------------------------------------------------------------
     std::unordered_map<int, int> visit_count;
 
@@ -380,10 +380,10 @@ static lsdtt_streamline trace_one_streamline(
             double temp_xo2 = xi - yi * it_new;
 
             // Exclude inlet face
-            if      (dir == 1) temp_yo2 = -1.0;  // entered from west → cannot exit west
-            else if (dir == 2) temp_xo1 = -1.0;  // entered from north → cannot exit north
-            else if (dir == 3) temp_yo1 = -1.0;  // entered from east → cannot exit east
-            else if (dir == 4) temp_xo2 = -1.0;  // entered from south → cannot exit south
+            if      (dir == 1) temp_yo2 = -1.0;  // entered from west -> cannot exit west
+            else if (dir == 2) temp_xo1 = -1.0;  // entered from north -> cannot exit north
+            else if (dir == 3) temp_yo1 = -1.0;  // entered from east -> cannot exit east
+            else if (dir == 4) temp_xo2 = -1.0;  // entered from south -> cannot exit south
 
             if (temp_yo1 > 0.0 && temp_yo1 <= 1.0)
             {
@@ -423,7 +423,7 @@ static lsdtt_streamline trace_one_streamline(
             }
             else
             {
-                // No valid outlet face found — numerical edge case with valid
+                // No valid outlet face found - numerical edge case with valid
                 // aspect data.  Skip rather than loop indefinitely.
                 skip_trace = true;
                 flag = false;
@@ -568,7 +568,7 @@ static lsdtt_streamline trace_one_streamline(
 }
 
 // =============================================================================
-// trace_streamlines — public API
+// trace_streamlines - public API
 // =============================================================================
 lsdtt_streamline_result trace_streamlines(
     const lsdtt_raster_cpu&         dem,
@@ -691,7 +691,7 @@ lsdtt_streamline_result trace_streamlines(
         int completed = ++done_count;
 
         // Each value of completed is unique (atomic), so the modulo check
-        // triggers at most once per interval — no double-printing.
+        // triggers at most once per interval - no double-printing.
         if (completed % report_interval == 0)
         {
             #pragma omp critical (streamline_progress)
@@ -818,7 +818,7 @@ void write_streamlines(
 
     for (const auto& sl : result.streamlines)
     {
-        // no_aspect traces always skipped — no usable geometry
+        // no_aspect traces always skipped - no usable geometry
         if (sl.outcome == streamline_outcome::no_aspect) continue;
 
         // Filter to reached_sink only unless all_outcomes requested
@@ -828,7 +828,7 @@ void write_streamlines(
         // Build line geometry
         //
         // Prefer the saved sub-pixel node list when available (save_nodes=true).
-        // Fall back to a two-vertex source→sink centre line for reached_sink
+        // Fall back to a two-vertex source->sink centre line for reached_sink
         // traces when save_nodes=false.  Other outcomes with no nodes are
         // skipped because a single-vertex line is invalid.
         // -----------------------------------------------------------------------
@@ -847,7 +847,7 @@ void write_streamlines(
         }
         else
         {
-            // Non-sink outcome with no node list — cannot form a valid line
+            // Non-sink outcome with no node list - cannot form a valid line
             continue;
         }
 
@@ -870,7 +870,7 @@ void write_streamlines(
     loader.finish_vector_write();
 
     std::cout << "Streamlines written: " << n_written
-              << " features → " << out_path << "\n"
+              << " features -> " << out_path << "\n"
               << std::flush;
 }
 

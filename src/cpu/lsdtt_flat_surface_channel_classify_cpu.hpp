@@ -35,7 +35,7 @@
 //
 // Leak backstop (Phase 2a). A single label can straddle a floodplain and a
 // terrace when the riser that should separate them is broken (a road cut) or too
-// subtle to skeletonise — so the connected component leaks across it. Such a
+// subtle to skeletonise - so the connected component leaks across it. Such a
 // label has a bimodal HAND distribution (a low floodplain mode + a high terrace
 // mode with a sparse valley between). When enable_leak_split is set, the engine
 // detects this (substantial HAND mass on both sides of the class bands + a real
@@ -46,11 +46,11 @@
 //
 // Reach-relative HAND banding (Phase 2a follow-on, 2026-07-07). Where the riser
 // network under-segments wholesale (subtle risers on a low-relief valley floor),
-// a single flat label can smear monotonically across the full HAND range — no
+// a single flat label can smear monotonically across the full HAND range - no
 // antimode, so the leak backstop cannot fire, and per-label medians are
 // meaningless. Banding attacks this from the population side: the HAND values of
 // all flat pixels are grouped into windows along the channel (by each pixel's
-// HAND donor node — the channel pixel its flow path drains to — keyed by the
+// HAND donor node - the channel pixel its flow path drains to - keyed by the
 // donor's source id and along-channel flow distance), and the antimodes of each
 // window's smoothed log-HAND density become band breaks. Every flat pixel gets a
 // band index, and a label whose HAND spread exceeds
