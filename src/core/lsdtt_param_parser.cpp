@@ -553,6 +553,53 @@ std::string parent_of(const std::vector<std::string>& entry)
     return lsdtt_help_registry::field(entry, k_help_parent);
 }
 
+// Return a copy of the registry with the parser-native file I/O keys
+// (read_path, read_fname, write_path, write_fname) inserted first. These
+// are handled by lsdtt_param_parser itself, so CLIs do not declare them;
+// a CLI's own entry wins if it does.
+lsdtt_help_registry with_builtin_io_entries(const lsdtt_help_registry& help)
+{
+    static const std::vector<
+        std::pair<std::string, std::vector<std::string>>> builtin = {
+        {"read_path", {"string", "./",
+            "Directory from which input files are read.",
+            "Defaults to the directory holding the parameter file.",
+            "File I/O", "io", ""}},
+        {"read_fname", {"string", "",
+            "Input filename, with or without extension (e.g. my_dem.tif).",
+            "Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable "
+            "raster format works. If empty, defaults to the parameter "
+            "filename stem.",
+            "File I/O", "io", ""}},
+        {"write_path", {"string", "",
+            "Directory to which output files are written.",
+            "Defaults to read_path when not set.",
+            "File I/O", "io", ""}},
+        {"write_fname", {"string", "",
+            "Output filename prefix (no path, no extension).",
+            "All outputs are named <write_fname>_<descriptor>.<ext>. "
+            "Defaults to the stem of read_fname when not set.",
+            "File I/O", "io", ""}},
+    };
+
+    lsdtt_help_registry out;
+    const auto& entries = help.entries();
+    for (const auto& [key, entry] : builtin)
+    {
+        auto it = entries.find(key);
+        out[key] = (it != entries.end()) ? it->second : entry;
+    }
+    for (const auto& key : help.key_order())
+    {
+        auto out_it = out.entries().find(key);
+        if (out_it == out.entries().end())
+        {
+            out[key] = entries.at(key);
+        }
+    }
+    return out;
+}
+
 // Detailed view for "-h <parameter_name>".
 void write_topic_help(std::ostream& os,
                       const std::string& tool_name,
@@ -804,9 +851,11 @@ void lsdtt_param_parser::print_terminal_help(
     const lsdtt_cli_args& args,
     std::ostream& os)
 {
+    const lsdtt_help_registry full = with_builtin_io_entries(help);
+
     if (args.help_html)
     {
-        write_reference_files(tool_name, version, citation, help,
+        write_reference_files(tool_name, version, citation, full,
                               "./" + tool_name + "_help");
         os << "Reference files written to:\n"
            << "  ./" << tool_name << "_help.html\n"
@@ -816,11 +865,11 @@ void lsdtt_param_parser::print_terminal_help(
 
     if (!args.help_topic.empty())
     {
-        write_topic_help(os, tool_name, help, args.help_topic);
+        write_topic_help(os, tool_name, full, args.help_topic);
         return;
     }
 
-    write_overview_help(os, tool_name, version, citation, help);
+    write_overview_help(os, tool_name, version, citation, full);
 }
 
 void lsdtt_param_parser::print_terminal_help(
@@ -840,8 +889,9 @@ void lsdtt_param_parser::write_reference_files(
     const lsdtt_help_registry& help,
     const std::string& out_prefix)
 {
-    const auto& entries = help.entries();
-    const auto& order   = help.key_order();
+    const lsdtt_help_registry full = with_builtin_io_entries(help);
+    const auto& entries = full.entries();
+    const auto& order   = full.key_order();
 
     // ---- CSV (flat, grouped columns appended) ----
     {
