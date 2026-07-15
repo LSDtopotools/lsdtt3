@@ -448,6 +448,7 @@ lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)
 lsdtt_cli(lsdtt-ridgeline-analysis     cli/lsdtt-ridgeline-analysis.cpp)
 lsdtt_cli(lsdtt-basin-surface-metrics  cli/lsdtt-basin-surface-metrics.cpp)
 lsdtt_cli(lsdtt-test-hillslope-implicit cli/lsdtt-test-hillslope-implicit.cpp)
+lsdtt_cli(lsdtt-raster-calculator      cli/lsdtt-raster-calculator.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
