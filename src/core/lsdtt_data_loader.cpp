@@ -616,13 +616,23 @@ lsdtt_raster_tile lsdtt_data_loader::read_tile(const lsdtt_tile_window& window) 
         );
     }
 
-    // Build nodata mask
+    // Build nodata mask.
+    // Treat non-finite values (NaN / Inf) as nodata as well: some DEMs
+    // (e.g. ENVI .bil exports) encode their no-data border as IEEE NaN while
+    // the header still declares a sentinel such as -9999. If these are not
+    // caught here they survive threshold masking and poison flow
+    // preprocessing — a NaN rim around the raster reads as a dam with no
+    // outlet, so the priority-flood fill pancakes the whole interior.
+    // Normalise detected nodata pixels to the sentinel so the
+    // mask==0 => data holds no_data_value convention is preserved downstream.
     float nodata = static_cast<float>(meta_.no_data_value);
     for (int i = 0; i < buf_size; ++i)
     {
-        if (tile.data[i] == nodata)
+        float v = tile.data[i];
+        if (v == nodata || !std::isfinite(v))
         {
             tile.mask[i] = 0;
+            tile.data[i] = nodata;
         }
     }
 
