@@ -68,17 +68,31 @@ endif()
 
 # =============================================================================
 # Optional: FFTW3 (double, non-threaded)
+#
+# Two discovery paths:
+# 1) CMake config package (vcpkg, some Linux distros): provides the imported
+#    target FFTW3::fftw3. This is the path used by the Windows/vcpkg build.
+# 2) pkg-config (typical Linux apt install of libfftw3-dev).
 # =============================================================================
-find_package(PkgConfig)
 set(LSDTT_HAS_FFTW OFF)
-if(PkgConfig_FOUND)
-    pkg_check_modules(FFTW3 fftw3)
-    if(FFTW3_FOUND)
-        set(LSDTT_HAS_FFTW ON)
-        message(STATUS "FFTW3 found - spectral analysis enabled")
-    else()
-        message(WARNING "FFTW3 not found - spectral analysis will throw at runtime")
+set(LSDTT_FFTW_TARGET "")
+find_package(FFTW3 CONFIG QUIET)
+if(FFTW3_FOUND AND TARGET FFTW3::fftw3)
+    set(LSDTT_HAS_FFTW ON)
+    set(LSDTT_FFTW_TARGET FFTW3::fftw3)
+    message(STATUS "FFTW3 found (CMake config) - spectral analysis enabled")
+else()
+    find_package(PkgConfig)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FFTW3 fftw3)
+        if(FFTW3_FOUND)
+            set(LSDTT_HAS_FFTW ON)
+            message(STATUS "FFTW3 found (pkg-config) - spectral analysis enabled")
+        endif()
     endif()
+endif()
+if(NOT LSDTT_HAS_FFTW)
+    message(WARNING "FFTW3 not found - spectral analysis will throw at runtime")
 endif()
 
 # =============================================================================
@@ -328,15 +342,20 @@ if(OpenMP_CXX_FOUND)
 endif()
 
 if(LSDTT_HAS_FFTW)
-    # Give FFTW to the CPU library
+    # Give FFTW to the CPU library and the Utils library (signal1d code)
     target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_FFTW=1)
-    target_include_directories(lsdtt3_cpu PUBLIC ${FFTW3_INCLUDE_DIRS})
-    target_link_libraries(lsdtt3_cpu PUBLIC ${FFTW3_LIBRARIES})
-
-    # Give FFTW to the Utils library (where signal1d code lives)
     target_compile_definitions(lsdtt3_utils PUBLIC LSDTT_HAS_FFTW=1)
-    target_include_directories(lsdtt3_utils PUBLIC ${FFTW3_INCLUDE_DIRS})
-    target_link_libraries(lsdtt3_utils PUBLIC ${FFTW3_LIBRARIES})
+    if(LSDTT_FFTW_TARGET)
+        # CMake config path: imported target carries includes and libs
+        target_link_libraries(lsdtt3_cpu PUBLIC ${LSDTT_FFTW_TARGET})
+        target_link_libraries(lsdtt3_utils PUBLIC ${LSDTT_FFTW_TARGET})
+    else()
+        # pkg-config path
+        target_include_directories(lsdtt3_cpu PUBLIC ${FFTW3_INCLUDE_DIRS})
+        target_link_libraries(lsdtt3_cpu PUBLIC ${FFTW3_LIBRARIES})
+        target_include_directories(lsdtt3_utils PUBLIC ${FFTW3_INCLUDE_DIRS})
+        target_link_libraries(lsdtt3_utils PUBLIC ${FFTW3_LIBRARIES})
+    endif()
 endif()
 
 if(LSDTT_HAS_NETCDF)

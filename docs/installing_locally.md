@@ -71,7 +71,9 @@ Important limitations:
 
 - Full `lsdtt3` functionality is available on Linux (including WSL2).
 - Native Windows builds are currently treated as a reduced-feature profile.
-- Optional components such as Eigen/OpenCV/FFTW may be disabled in this mode.
+- Optional components such as Eigen/OpenCV may be disabled in this mode;
+  FFTW3 is included (via vcpkg) so spectral analysis and Wiener channel
+  extraction work on Windows.
 - Testing suggests that the Linux version run within a windows computer actually runs faster than versions compiled for Windows and run on Windows. So these builds are really only for use as the backend for the QGIS pluging. 
 
 ### What you need
@@ -136,13 +138,16 @@ To install `vcpkg` in your user profile and use it to install GDAL:
 ```powershell
 git clone https://github.com/microsoft/vcpkg "$env:USERPROFILE\tools\vcpkg"
 & "$env:USERPROFILE\tools\vcpkg\bootstrap-vcpkg.bat"
-& "$env:USERPROFILE\tools\vcpkg\vcpkg.exe" install gdal:x64-windows
+& "$env:USERPROFILE\tools\vcpkg\vcpkg.exe" install gdal:x64-windows fftw3:x64-windows
 ```
 
 Notes:
 
 - GDAL is required.
-- FFTW is optional and not needed for the minimal QGIS-plugin-oriented build.
+- FFTW3 is included in the Windows profile: it enables `lsdtt-spectral-analysis`
+  and the Wiener source-extraction option in `lsdtt-channel-extraction`.
+  CMake finds the vcpkg fftw3 port via its CMake config package
+  (`FFTW3::fftw3`), so pkg-config is not needed on Windows.
 - If Visual Studio sets a conflicting `VCPKG_ROOT`, clear it in-session with
   `Remove-Item Env:VCPKG_ROOT`.
 
@@ -163,6 +168,10 @@ cmake -S . -B build\minimal-windows -G "Ninja" `
 
 cmake --build build\minimal-windows
 ```
+
+Note: disabling PkgConfig does not disable FFTW3 - on Windows FFTW3 is found
+through the vcpkg CMake config package. The configure summary should report
+`FFTW3       : ON`.
 
 ### Troubleshooting (Windows native)
 
@@ -200,8 +209,10 @@ What the bundle includes:
 
 - `bin/` with the MVP CLIs (`lsdtt-raster-preprocessing`,
   `lsdtt-channel-extraction`, `lsdtt-chi-analysis`,
-  `lsdtt-basin-extraction`)
-- required runtime DLLs discovered from those executables
+  `lsdtt-basin-extraction`) plus `lsdtt-spectral-analysis` when the build
+  has FFTW support
+- required runtime DLLs discovered from those executables (including
+  `fftw3.dll`)
 - `share/gdal` and `share/proj` data folders (including `proj.db`)
 - `manifest.json`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and `setenv.ps1`
 

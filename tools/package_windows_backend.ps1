@@ -18,6 +18,12 @@ param(
         "lsdtt-channel-extraction",
         "lsdtt-chi-analysis",
         "lsdtt-basin-extraction"
+    ),
+
+    # Staged when present in the build, skipped with a warning otherwise
+    # (lsdtt-spectral-analysis is only built when FFTW3 is available).
+    [string[]]$OptionalCliNames = @(
+        "lsdtt-spectral-analysis"
     )
 )
 
@@ -152,10 +158,23 @@ New-Item -ItemType Directory -Path $stageShare -Force | Out-Null
 
 # Copy selected CLI executables into stage/bin.
 $exePaths = @()
+$stagedCliNames = @()
 foreach ($cli in $CliNames) {
     $exe = Resolve-ExePath -BaseDir $buildAbs -CliName $cli
     Copy-Item -Path $exe -Destination $stageBin -Force
     $exePaths += $exe
+    $stagedCliNames += $cli
+}
+foreach ($cli in $OptionalCliNames) {
+    try {
+        $exe = Resolve-ExePath -BaseDir $buildAbs -CliName $cli
+    } catch {
+        Write-Warning "Optional CLI $cli.exe not found in build - skipping (build with FFTW3 to include it)."
+        continue
+    }
+    Copy-Item -Path $exe -Destination $stageBin -Force
+    $exePaths += $exe
+    $stagedCliNames += $cli
 }
 
 # Populate runtime closure and required data directories.
@@ -176,7 +195,7 @@ $thirdParty = @(
     "",
     "Included executables:"
 )
-$thirdParty += ($CliNames | ForEach-Object { "- $_.exe" })
+$thirdParty += ($stagedCliNames | ForEach-Object { "- $_.exe" })
 $thirdParty += ""
 $thirdParty += "Included runtime DLLs:"
 $thirdParty += (Get-ChildItem $stageBin -Filter *.dll | Sort-Object Name | ForEach-Object { "- $($_.Name)" })
@@ -214,7 +233,7 @@ foreach ($f in $filesForHash) {
     $manifest.checksums_sha256[$rel] = $hash
 }
 
-foreach ($cli in $CliNames) {
+foreach ($cli in $stagedCliNames) {
     $manifest.tools += "$cli.exe"
 }
 
