@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -741,6 +742,8 @@ void write_overview_help(std::ostream& os,
        << " -h <parameter_name>\" for full guidance on one parameter.\n";
     os << "Run \"" << tool_name
        << " -h html\" to write an HTML/CSV reference to the current directory.\n";
+    os << "Run \"" << tool_name
+       << " --help-json\" for machine-readable output.\n";
 }
 
 // Escape minimal HTML special characters.
@@ -760,6 +763,87 @@ std::string html_escape(const std::string& s)
         }
     }
     return out;
+}
+
+// Escape a string for a JSON string literal.
+std::string json_escape(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s)
+    {
+        switch (c)
+        {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20)
+                {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                }
+                else
+                {
+                    out += c;
+                }
+                break;
+        }
+    }
+    return out;
+}
+
+// Machine-readable help for "--help-json" (see docs/cli_help_plan.md
+// phase 4). Consumed by the QGIS plugin for capability gating.
+void write_json_help(std::ostream& os,
+                     const std::string& tool_name,
+                     const std::string& version,
+                     const std::string& citation,
+                     const lsdtt_help_registry& help,
+                     const std::vector<std::string>& features)
+{
+    os << "{\n";
+    os << "  \"tool\": \"" << json_escape(tool_name) << "\",\n";
+    os << "  \"version\": \"" << json_escape(version) << "\",\n";
+    os << "  \"citation\": \"" << json_escape(citation) << "\",\n";
+
+    os << "  \"features\": [";
+    for (std::size_t i = 0; i < features.size(); ++i)
+    {
+        if (i > 0) os << ", ";
+        os << "\"" << json_escape(features[i]) << "\"";
+    }
+    os << "],\n";
+
+    os << "  \"parameters\": [\n";
+    const auto& entries = help.entries();
+    const auto& order   = help.key_order();
+    for (std::size_t i = 0; i < order.size(); ++i)
+    {
+        const auto& key = order[i];
+        const auto& e   = entries.at(key);
+        os << "    {\"name\": \"" << json_escape(key) << "\", "
+           << "\"type\": \""
+           << json_escape(lsdtt_help_registry::field(e, k_help_type)) << "\", "
+           << "\"default\": \""
+           << json_escape(lsdtt_help_registry::field(e, k_help_default)) << "\", "
+           << "\"description\": \""
+           << json_escape(lsdtt_help_registry::field(e, k_help_short)) << "\", "
+           << "\"guidance\": \""
+           << json_escape(lsdtt_help_registry::field(e, k_help_long)) << "\", "
+           << "\"group\": \""
+           << json_escape(lsdtt_help_registry::field(e, k_help_group)) << "\", "
+           << "\"role\": \""
+           << json_escape(lsdtt_help_registry::field(e, k_help_role)) << "\", "
+           << "\"parent\": \""
+           << json_escape(lsdtt_help_registry::field(e, k_help_parent)) << "\"}";
+        os << (i + 1 < order.size() ? ",\n" : "\n");
+    }
+    os << "  ]\n";
+    os << "}\n";
 }
 
 // CSV-quote a field (always quoted so commas in prose are safe).
@@ -796,6 +880,12 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
     {
         std::string a = argv[i];
 
+        if (is_flag(a, {"--help-json", "-help-json"}))
+        {
+            args.help_requested = true;
+            args.help_json = true;
+            return args;
+        }
         if (is_flag(a, {"-h", "--help", "help", "-H", "--H"}))
         {
             args.help_requested = true;
@@ -805,6 +895,10 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
                 if (next == "html")
                 {
                     args.help_html = true;
+                }
+                else if (next == "json")
+                {
+                    args.help_json = true;
                 }
                 else if (!next.empty() && next[0] != '-')
                 {
@@ -849,9 +943,16 @@ void lsdtt_param_parser::print_terminal_help(
     const std::string& citation,
     const lsdtt_help_registry& help,
     const lsdtt_cli_args& args,
-    std::ostream& os)
+    std::ostream& os,
+    const std::vector<std::string>& features)
 {
     const lsdtt_help_registry full = with_builtin_io_entries(help);
+
+    if (args.help_json)
+    {
+        write_json_help(os, tool_name, version, citation, full, features);
+        return;
+    }
 
     if (args.help_html)
     {
@@ -877,9 +978,11 @@ void lsdtt_param_parser::print_terminal_help(
     const std::string& version,
     const std::string& citation,
     const lsdtt_help_registry& help,
-    const lsdtt_cli_args& args)
+    const lsdtt_cli_args& args,
+    const std::vector<std::string>& features)
 {
-    print_terminal_help(tool_name, version, citation, help, args, std::cout);
+    print_terminal_help(tool_name, version, citation, help, args,
+                        std::cout, features);
 }
 
 void lsdtt_param_parser::write_reference_files(

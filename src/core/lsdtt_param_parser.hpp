@@ -78,8 +78,40 @@ struct lsdtt_cli_args
     std::string fname;
     bool        help_requested = false;  // -h / --help
     bool        help_html      = false;  // -h html (write reference files)
+    bool        help_json      = false;  // --help-json / -h json
     std::string help_topic;              // -h <parameter_name>
 };
+
+// -----------------------------------------------------------------------------
+// lsdtt_compiled_features
+//
+// Returns the optional-dependency features compiled into the CALLING
+// translation unit. Deliberately inline: the LSDTT_HAS_* macros are PUBLIC
+// compile definitions on lsdtt3_cpu, so a CLI that links lsdtt3_cpu sees
+// them here, while lsdtt3_core itself is compiled without them. Used as the
+// default `features` argument of print_terminal_help(), which is evaluated
+// at the call site.
+// -----------------------------------------------------------------------------
+inline std::vector<std::string> lsdtt_compiled_features()
+{
+    std::vector<std::string> features;
+#ifdef LSDTT_HAS_FFTW
+    features.push_back("fftw");
+#endif
+#ifdef LSDTT_HAS_EIGEN
+    features.push_back("eigen");
+#endif
+#ifdef LSDTT_HAS_OPENCV
+    features.push_back("opencv");
+#endif
+#ifdef LSDTT_HAS_NETCDF
+    features.push_back("netcdf");
+#endif
+#ifdef LSDTT_GPU_KERNELS
+    features.push_back("gpu_kernels");
+#endif
+    return features;
+}
 
 // -----------------------------------------------------------------------------
 // lsdtt_help_registry
@@ -239,8 +271,11 @@ public:
     //   -h / --help            grouped parameter overview to stdout
     //   -h <parameter_name>    full guidance for one parameter
     //   -h html                write <tool>_help.html/.csv to the current dir
-    // When no help is requested, path/fname resolution matches parse_args()
-    // exactly (including the exit(1) when no parameter file is given).
+    //   --help-json / -h json  machine-readable JSON to stdout (tool,
+    //                          version, citation, compiled features, and
+    //                          all parameters with their grouped metadata)
+    // When no help is requested, path/fname resolution requires a parameter
+    // file (exit(1) when none is given).
     static lsdtt_cli_args parse_args_deferred(
         int argc, char* argv[],
         const std::string& tool_name,
@@ -257,14 +292,19 @@ public:
     //   otherwise       - grouped overview: io keys first, then one block per
     //                     group in declaration order, switches first with
     //                     their dependent parameters indented beneath
+    //   help_json set   - machine-readable JSON to os
     // Output goes to os (default std::cout) except the html/csv files.
+    // `features` defaults to lsdtt_compiled_features(), which is evaluated
+    // at the call site so it reflects the CLI's compiled optional
+    // dependencies; it is reported in the JSON output.
     static void print_terminal_help(
         const std::string& tool_name,
         const std::string& version,
         const std::string& citation,
         const lsdtt_help_registry& help,
         const lsdtt_cli_args& args,
-        std::ostream& os
+        std::ostream& os,
+        const std::vector<std::string>& features = lsdtt_compiled_features()
     );
 
     // Convenience overload writing to std::cout.
@@ -273,7 +313,8 @@ public:
         const std::string& version,
         const std::string& citation,
         const lsdtt_help_registry& help,
-        const lsdtt_cli_args& args
+        const lsdtt_cli_args& args,
+        const std::vector<std::string>& features = lsdtt_compiled_features()
     );
 
     // Write the grouped HTML + CSV reference files for a tool to

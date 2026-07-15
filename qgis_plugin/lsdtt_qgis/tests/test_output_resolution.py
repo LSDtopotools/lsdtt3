@@ -119,6 +119,37 @@ def test_channel_extraction_flow_outputs():
     ).endswith("demo_burned_stream_profiles.csv")
 
 
+# Suffixes written by lsdtt-chi-analysis, keyed by enabling flag.
+# Kept in sync with cli/lsdtt-chi-analysis.cpp and
+# src/cpu/lsdtt_chi_data_maps_cpu.cpp.
+CHI_ANALYSIS_SUFFIXES = {
+    "fit_chi_networks": "_chi_disorder_sweep.csv",
+    "print_chi_data_maps": "_chi_data_maps",
+    "write_chi_data_map_lines": "_chi_data_map_lines",
+    "run_inversion(best)": "_chi_ksn_inversion_best.csv",
+    "run_inversion(trials)": "_chi_ksn_inversion_trials.csv",
+}
+
+
+def test_chi_analysis_suffixes():
+    assert expected_output_path(
+        "/out", "demo", CHI_ANALYSIS_SUFFIXES["fit_chi_networks"]
+    ).endswith("demo_chi_disorder_sweep.csv")
+    assert expected_output_path(
+        "/out", "demo",
+        CHI_ANALYSIS_SUFFIXES["print_chi_data_maps"]
+        + "." + extension_for_format("csv"),
+    ).endswith("demo_chi_data_maps.csv")
+    assert expected_output_path(
+        "/out", "demo",
+        CHI_ANALYSIS_SUFFIXES["write_chi_data_map_lines"]
+        + "." + extension_for_format("flatgeobuf"),
+    ).endswith("demo_chi_data_map_lines.fgb")
+    assert expected_output_path(
+        "/out", "demo", CHI_ANALYSIS_SUFFIXES["run_inversion(best)"]
+    ).endswith("demo_chi_ksn_inversion_best.csv")
+
+
 def test_vector_output_suffixes():
     for fmt, ext in [("flatgeobuf", "fgb"), ("gpkg", "gpkg")]:
         assert expected_output_path(

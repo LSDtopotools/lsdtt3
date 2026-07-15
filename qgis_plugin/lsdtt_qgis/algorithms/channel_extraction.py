@@ -291,11 +291,13 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
             self.parameterAsEnum(parameters, self.SOURCE_ALGORITHM, context)
         ]
         if source_algorithm == "wiener":
-            feedback.pushInfo(
-                "Wiener source extraction selected: the backend must be built "
-                "with FFTW support (included in Windows backend bundles from "
-                "2026-07-15 onwards)."
+            from ..backend.capabilities import require_feature
+            error = require_feature(
+                "lsdtt-channel-extraction", "fftw",
+                "Wiener source extraction", feedback,
             )
+            if error:
+                raise QgsProcessingException(error)
 
         boundary_conditions = self.parameterAsString(parameters, self.BOUNDARY_CONDITIONS, context)
         if len(boundary_conditions) != 4 or any(c not in "onpb" for c in boundary_conditions.lower()):

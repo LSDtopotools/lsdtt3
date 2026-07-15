@@ -33,3 +33,20 @@ def extension_for_format(format_name):
 def expected_output_path(output_folder, output_prefix, suffix):
     """Build the path of an lsdtt output file: <folder>/<prefix><suffix>."""
     return os.path.join(output_folder, "{}{}".format(output_prefix, suffix))
+
+
+def extract_json_payload(text):
+    """Return the JSON object embedded in CLI output, or None.
+
+    lsdtt CLIs print a banner before the --help-json payload, so parse from
+    the first opening brace (the banner contains none).
+    """
+    import json
+
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        return json.loads(text[start:])
+    except ValueError:
+        return None

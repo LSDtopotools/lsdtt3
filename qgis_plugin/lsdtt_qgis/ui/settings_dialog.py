@@ -46,4 +46,7 @@ class SettingsDialog(QDialog):
 
     def _save(self):
         self.settings.setValue(SETTINGS_BACKEND_PATH, self.backend_path.text().strip())
+        # Capability probes are keyed to the backend; a new path invalidates them.
+        from ..backend.capabilities import clear_cache
+        clear_cache()
         self.accept()
