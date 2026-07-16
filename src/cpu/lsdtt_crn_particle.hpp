@@ -142,7 +142,14 @@ private:
     // d0: effective depth at the START of the time step (g/cm^2).
     // Analytic solution of dC/dt = P0*Sigma_i F_i*exp(-d(t)/Gamma_i) - lambda*C  with d(t)=d0-epsilon*t:
     //   C(dt) = C_old*exp(-lambda*dt)
-    //         + P0*Sigma_i F_i*exp(-d0/Gamma_i)*exp(-lambda*dt)*[exp(epsilon*dt/Gamma_i)-1] / (epsilon/Gamma_i+lambda)
+    //         + P0*Sigma_i F_i*exp(-d0/Gamma_i)*[exp(epsilon*dt/Gamma_i) - exp(-lambda*dt)] / (epsilon/Gamma_i+lambda)
+    // (Mudd et al. 2016 ESurf Eq. 4; knickpoint-paper Eq. 7.)
+    // The growth term is grouped as exp(-(d0-epsilon*dt)/Gamma_i), the
+    // end-of-step depth (>= 0 for all callers), so it cannot overflow for
+    // large epsilon*dt/Gamma_i the way exp(-d0/G)*exp(epsilon*dt/G) does.
+    // Fix approved by Simon Mudd 2026-07-16: the previous implementation
+    // multiplied the growth term by an extra exp(-lambda*dt) (missing
+    // +lambda*dt in the exponent), biasing all transients low by ~lambda*t.
     static double advance_conc(double C_old, double dt, double eff_erate, double d0,
                                double P0, double lambda,
                                const lsdtt_crn_parameters& params, FGetter get_F)
@@ -155,11 +162,12 @@ private:
             double alpha = eff_erate / G;    // epsilon/Gamma_i  (yr^-^1, positive)
             double denom = alpha + lambda;
             if (denom <= 0.0) continue;
-            // exp(epsilon*dt/Gamma_i) - 1
-            double exp_prod_m1 = std::exp(alpha * dt) - 1.0;
-            sum += (params.*get_F)(i) * std::exp(-d0 / G) * exp_prod_m1 / denom;
+            // exp(-d0/G) * [exp(alpha*dt) - exp(-lambda*dt)], stable grouping
+            double term = std::exp(-(d0 - eff_erate * dt) / G)
+                          - std::exp(-d0 / G) * exp_decay;
+            sum += (params.*get_F)(i) * term / denom;
         }
-        return C_old * exp_decay + P0 * exp_decay * sum;
+        return C_old * exp_decay + P0 * sum;
     }
 
     static double compute_ss(double erosion_rate,
