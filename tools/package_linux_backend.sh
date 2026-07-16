@@ -112,7 +112,7 @@ if [[ ! -d "$BUILD_ABS" ]]; then
     exit 1
 fi
 
-for cmd in ldd gdal-config tar python3; do
+for cmd in ldd gdal-config tar python3 objdump; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: required command not found: $cmd" >&2
         exit 1
@@ -148,47 +148,26 @@ is_core_glibc_lib() {
     esac
 }
 
-copy_lib_with_symlink_chain() {
-    local src="$1"
-    local dst_dir="$2"
-
-    if [[ ! -e "$src" ]]; then
-        return
-    fi
-
-    local base
-    base="$(basename "$src")"
-    if [[ ! -e "$dst_dir/$base" ]]; then
-        cp -a "$src" "$dst_dir/"
-    fi
-
-    if [[ -L "$src" ]]; then
-        local target
-        target="$(readlink "$src")"
-        if [[ "$target" != /* ]]; then
-            target="$(dirname "$src")/$target"
-        fi
-        target="$(realpath "$target")"
-        if [[ -e "$target" ]]; then
-            copy_lib_with_symlink_chain "$target" "$dst_dir"
-        fi
-    fi
-}
-
-extract_ldd_paths() {
+# Emits "requested_name<TAB>absolute_path" per resolved dependency. The
+# requested name (left of '=>') is the SONAME the dynamic loader searches
+# for; the staged file must carry exactly that name. Staging real files
+# under their SONAME instead of copying symlink chains keeps the bundle
+# working on filesystems and archivers that cannot represent symlinks.
+extract_ldd_deps() {
     local item="$1"
     ldd "$item" 2>/dev/null | while IFS= read -r line; do
         if [[ "$line" == *"=>"* ]]; then
-            local p
+            local name p
+            name="$(awk '{print $1}' <<<"$line")"
             p="$(awk -F'=> ' '{print $2}' <<<"$line" | awk '{print $1}')"
             if [[ "$p" == /* ]]; then
-                echo "$p"
+                printf '%s\t%s\n' "$name" "$p"
             fi
         else
             local p
             p="$(awk '{print $1}' <<<"$line")"
             if [[ "$p" == /* ]]; then
-                echo "$p"
+                printf '%s\t%s\n' "$(basename "$p")" "$p"
             fi
         fi
     done
@@ -245,35 +224,39 @@ declare -A SEEN_LIBS=()
 QUEUE=()
 
 for exe in "${EXE_PATHS[@]}"; do
-    while IFS= read -r dep; do
-        [[ -z "$dep" ]] && continue
-        QUEUE+=("$dep")
-    done < <(extract_ldd_paths "$exe")
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        QUEUE+=("$entry")
+    done < <(extract_ldd_deps "$exe")
 done
 
 while [[ ${#QUEUE[@]} -gt 0 ]]; do
-    dep="${QUEUE[0]}"
+    entry="${QUEUE[0]}"
     QUEUE=("${QUEUE[@]:1}")
+
+    name="${entry%%$'\t'*}"
+    dep="${entry#*$'\t'}"
+
+    if [[ -n "${SEEN_LIBS[$name]:-}" ]]; then
+        continue
+    fi
+    SEEN_LIBS[$name]=1
+
+    if is_core_glibc_lib "$name"; then
+        continue
+    fi
 
     dep="$(realpath "$dep")"
     [[ -e "$dep" ]] || continue
 
-    if [[ -n "${SEEN_LIBS[$dep]:-}" ]]; then
-        continue
-    fi
-    SEEN_LIBS[$dep]=1
-
-    dep_base="$(basename "$dep")"
-    if is_core_glibc_lib "$dep_base"; then
-        continue
+    if [[ ! -e "$STAGE_LIB/$name" ]]; then
+        cp "$dep" "$STAGE_LIB/$name"
     fi
 
-    copy_lib_with_symlink_chain "$dep" "$STAGE_LIB"
-
-    while IFS= read -r next_dep; do
-        [[ -z "$next_dep" ]] && continue
-        QUEUE+=("$next_dep")
-    done < <(extract_ldd_paths "$dep")
+    while IFS= read -r next_entry; do
+        [[ -z "$next_entry" ]] && continue
+        QUEUE+=("$next_entry")
+    done < <(extract_ldd_deps "$dep")
 done
 
 if command -v patchelf >/dev/null 2>&1; then
@@ -282,6 +265,28 @@ if command -v patchelf >/dev/null 2>&1; then
             patchelf --set-rpath '$ORIGIN/../lib' "$exe"
         fi
     done
+fi
+
+# Verify the bundle is self-contained: every DT_NEEDED of every staged
+# binary and library must resolve inside the stage (or be core glibc).
+# Fail the packaging rather than ship a bundle that breaks for users.
+MISSING=0
+for f in "$STAGE_BIN"/lsdtt-* "$STAGE_LIB"/*.so*; do
+    [[ -f "$f" ]] || continue
+    while IFS= read -r needed; do
+        [[ -z "$needed" ]] && continue
+        if is_core_glibc_lib "$needed"; then
+            continue
+        fi
+        if [[ ! -e "$STAGE_LIB/$needed" ]]; then
+            echo "ERROR: $(basename "$f") needs '$needed' but it is not staged in lib/" >&2
+            MISSING=1
+        fi
+    done < <(objdump -p "$f" 2>/dev/null | awk '/NEEDED/{print $2}')
+done
+if [[ $MISSING -ne 0 ]]; then
+    echo "ERROR: bundle is not self-contained; aborting" >&2
+    exit 1
 fi
 
 GDAL_DATA_DIR="$(gdal-config --datadir)"
