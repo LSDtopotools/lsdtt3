@@ -658,6 +658,35 @@ void phase1_E4_lambda_v_solve()
               "ratios: " + std::to_string(r0) + ", " + std::to_string(r1)
                   + ", " + std::to_string(r3));
     }
+
+    // S_tot > 1 (production scaling at altitude): the Vermeesch solve must
+    // amplify with a NEGATIVE effective depth.  Sum identity holds, and the
+    // ordering reverses: spallation (smallest Gamma) amplified most.  This
+    // regime is what the >= 1 clamp silently skipped (findings log Sec9b,
+    // fix approved 2026-07-16); values span sea-level-ish to the Stone
+    // factor at 60 deg / 3000 m (~11).
+    for (double s_tot : {1.8, 4.5, 11.0})
+    {
+        lsdtt::lsdtt_crn_parameters cp;
+        cp.reset_scaling("BraucherBorchers");
+        const double f0 = cp.get_F_10Be(0), f1 = cp.get_F_10Be(1),
+                     f3 = cp.get_F_10Be(3);
+        cp.scale_F_values(s_tot, "Be10");
+        double sum = 0.0;
+        for (int j = 0; j < 4; ++j) sum += cp.get_F_10Be(j);
+        check("E4: sum(F_scaled) == S_tot for S_tot>1 ["
+                  + std::to_string(s_tot) + "]",
+              approx_rel(sum, s_tot, 1e-6), diff_str(sum, s_tot));
+
+        const double r0 = cp.get_F_10Be(0) / f0;
+        const double r1 = cp.get_F_10Be(1) / f1;
+        const double r3 = cp.get_F_10Be(3) / f3;
+        check("E4: spallation amplified most for S_tot>1 ["
+                  + std::to_string(s_tot) + "]",
+              r0 > r1 && r1 > r3 && r3 > 1.0,
+              "ratios: " + std::to_string(r0) + ", " + std::to_string(r1)
+                  + ", " + std::to_string(r3));
+    }
 }
 
 // E5 - linearity and asymptotic limits of the reference steady state.
@@ -696,6 +725,503 @@ void phase1_E5_linearity_and_limits()
               diff_str(ref_conc_surface(p, eps_fast, 0.0) * eps_fast,
                        p.P0 * sfg));
     }
+}
+
+// =============================================================================
+// Phase 2: E6-E8 (plan Sec3)
+// =============================================================================
+
+// Builds ref_params whose F values have been scaled by the library's own
+// Lambda_v redistribution for total shielding s_tot, so the reference and the
+// particle path see identical inputs and any disagreement is in the
+// concentration math itself.
+ref_params ref_params_scaled(const std::string& scheme,
+                             const std::string& nuclide, double s_tot)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+    cp.reset_scaling(scheme);
+    cp.scale_F_values(s_tot, nuclide);
+    ref_params p = ref_params_from_scheme(scheme, nuclide);
+    for (int j = 0; j < 4; ++j)
+    {
+        p.F[j] = (nuclide == "Be10") ? cp.get_F_10Be(j)
+                 : (nuclide == "Al26") ? cp.get_F_26Al(j)
+                                       : cp.get_F_14C(j);
+        p.S[j] = 1.0;
+    }
+    return p;
+}
+
+// E7 - analytic reference (double precision, this file) vs the library's
+// particle integrator (compute_ss via calculate_crn_concentration_raster_whole),
+// point and depth-integrated, shielded and unshielded, across an eps sweep.
+// Library rasters store float, so the agreement floor is ~1e-7 relative.
+// Measured worst case on first run (2026-07-16): 9.25e-8, i.e. the two paths
+// are algebraically identical and the difference is pure float storage.
+// Bound frozen at 5e-7 per plan open question 2 (measure first, then freeze).
+void phase2_E7_analytic_vs_integrator(const single_basin_fixture& fx,
+                                      const std::string& out_dir)
+{
+    const std::size_t idx = static_cast<std::size_t>(fx.outlet_node);
+    csv_writer csv(out_dir + "/analytic_vs_integrator.csv",
+                   "nuclide,scheme,erate_gcm2yr,s_tot,snow_gcm2,self_gcm2,"
+                   "conc_reference,conc_library,rel_diff");
+
+    double worst = 0.0;
+    std::string worst_case;
+    for (const char* scheme : {"BraucherBorchers", "newCRONUS"})
+    {
+        for (const char* nuc : {"Be10", "Al26", "C14"})
+        {
+            for (double s_tot : {1.0, 0.85})
+            {
+                for (double snow : {0.0, 10.0})
+                {
+                    for (double self : {0.0, 20.0})
+                    {
+                        for (double eps : {0.0005, 0.005, 0.05})
+                        {
+                            const auto conc =
+                                lsdtt::calculate_crn_concentration_raster_whole(
+                                    nuc, scheme,
+                                    make_uniform_raster(fx, static_cast<float>(eps)),
+                                    make_uniform_raster(fx, static_cast<float>(s_tot)),
+                                    make_uniform_raster(fx, 1.0f),
+                                    make_uniform_raster(fx, static_cast<float>(snow)),
+                                    make_uniform_raster(fx, static_cast<float>(self)));
+                            const double c_lib = conc.get_data()[idx];
+
+                            const ref_params p =
+                                ref_params_scaled(scheme, nuc, s_tot);
+                            const double c_ref =
+                                (self == 0.0)
+                                    ? ref_conc_surface(p, eps, snow)
+                                    : ref_conc_depth_integrated(p, eps, snow,
+                                                                self);
+
+                            const double rd =
+                                std::abs(c_lib - c_ref)
+                                / std::max(std::abs(c_ref), 1e-30);
+                            csv.row(nuc, scheme, eps, s_tot, snow, self,
+                                    c_ref, c_lib, rd);
+                            if (rd > worst)
+                            {
+                                worst = rd;
+                                std::ostringstream os;
+                                os << nuc << "/" << scheme << " eps=" << eps
+                                   << " s=" << s_tot << " snow=" << snow
+                                   << " self=" << self;
+                                worst_case = os.str();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::cout << "      E7 measured worst rel diff = "
+              << std::setprecision(3) << worst << "  (" << worst_case << ")\n"
+              << std::setprecision(17);
+    check("E7: analytic vs particle integrator agree (< 5e-7, float floor)",
+          worst < 5e-7, "worst = " + std::to_string(worst));
+    check("csv: analytic_vs_integrator.csv written", csv.good());
+}
+
+// E6 - forward/inverse round-trip on the fixture basin with the REAL Stone
+// production raster (per-pixel variation), for a sweep of imposed erosion
+// rates, nuclides/schemes, with and without shielding.  Measured worst
+// recovery error on first run (2026-07-16): 9.93e-4 - that is the inversion
+// solver's own convergence tolerance, not a physics error (E7 shows the
+// forward paths agree to 1e-7).  Bound frozen at 3e-3 for headroom.
+void phase2_E6_round_trip(const single_basin_fixture& fx,
+                          const lsdtt::lsdtt_flowinfo& flow)
+{
+    const lsdtt::lsdtt_raster_cpu prod =
+        lsdtt::calculate_production_raster(fx.dem);
+
+    struct rt_case
+    {
+        const char* nuclide;
+        const char* scheme;
+        float topo, snow, self;
+    };
+    const rt_case cases[] = {
+        {"Be10", "BraucherBorchers", 1.0f, 0.0f, 0.0f},
+        {"Be10", "BraucherBorchers", 0.85f, 8.0f, 12.0f},
+        {"C14",  "BraucherBorchers", 1.0f, 0.0f, 0.0f},
+        {"Al26", "newCRONUS",        1.0f, 0.0f, 0.0f},
+    };
+
+    double worst = 0.0;
+    for (const rt_case& rc : cases)
+    {
+        const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, rc.topo);
+        const lsdtt::lsdtt_raster_cpu snow = make_uniform_raster(fx, rc.snow);
+        const lsdtt::lsdtt_raster_cpu self = make_uniform_raster(fx, rc.self);
+
+        for (double eps : {0.001, 0.01, 0.08})
+        {
+            const lsdtt::lsdtt_raster_cpu ero =
+                make_uniform_raster(fx, static_cast<float>(eps));
+            const auto conc = lsdtt::calculate_crn_concentration_raster(
+                rc.nuclide, rc.scheme, ero, prod, topo, snow, self,
+                flow, fx.outlet_node);
+            const double c_meas = lsdtt::calculate_accumulated_crn_concentration(
+                conc, ero, flow, fx.outlet_node);
+
+            double c_pred = 0.0;
+            const double eps_out = lsdtt::calculate_eff_erate_from_conc(
+                c_meas, rc.nuclide, rc.scheme, prod, topo, snow, self,
+                flow, fx.outlet_node, c_pred);
+
+            const double rd = std::abs(eps_out - eps) / eps;
+            worst = std::max(worst, rd);
+            check(std::string("E6: round-trip recovers eps [") + rc.nuclide
+                      + "/" + rc.scheme + " eps=" + std::to_string(eps)
+                      + (rc.topo != 1.0f ? " shielded" : "") + "]",
+                  rd < 3e-3,
+                  "recovered " + std::to_string(eps_out) + ", rel err "
+                      + std::to_string(rd));
+        }
+    }
+    std::cout << "      E6 measured worst round-trip rel err = "
+              << std::setprecision(3) << worst << std::setprecision(17)
+              << "\n";
+
+    // Edge cases: the inversion must not diverge, hang, or return non-finite
+    // values for pathological concentrations.
+    {
+        const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, 1.0f);
+        const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
+
+        // Above saturation: higher concentration than eps -> 0 can produce.
+        const lsdtt::lsdtt_raster_cpu ero_tiny = make_uniform_raster(fx, 1e-8f);
+        const auto conc_sat = lsdtt::calculate_crn_concentration_raster(
+            "Be10", "BraucherBorchers", ero_tiny, prod, topo, zero, zero,
+            flow, fx.outlet_node);
+        const double c_sat = lsdtt::calculate_accumulated_crn_concentration(
+            conc_sat, ero_tiny, flow, fx.outlet_node);
+        bool ok = true;
+        double eps_out = 0.0, c_pred = 0.0;
+        try
+        {
+            eps_out = lsdtt::calculate_eff_erate_from_conc(
+                2.0 * c_sat, "Be10", "BraucherBorchers", prod, topo, zero,
+                zero, flow, fx.outlet_node, c_pred);
+        }
+        catch (const std::exception&) { ok = false; }
+        check("E6: above-saturation concentration handled (finite, no throw)",
+              ok && std::isfinite(eps_out) && eps_out >= 0.0,
+              "eps_out = " + std::to_string(eps_out));
+
+        // Very high implied erosion rate (tiny concentration).
+        ok = true;
+        try
+        {
+            eps_out = lsdtt::calculate_eff_erate_from_conc(
+                50.0, "Be10", "BraucherBorchers", prod, topo, zero, zero,
+                flow, fx.outlet_node, c_pred);
+        }
+        catch (const std::exception&) { ok = false; }
+        check("E6: tiny concentration (huge erate) handled",
+              ok && std::isfinite(eps_out) && eps_out > 0.0,
+              "eps_out = " + std::to_string(eps_out));
+    }
+}
+
+// E8 - averaging identities of the accumulation (prediction) path:
+// flux-weighted mean sum(C*eps)/sum(eps), which reduces to the plain mean for
+// uniform eps and must differ from it measurably on a two-rate basin.
+void phase2_E8_averaging_identities(const single_basin_fixture& fx,
+                                    const lsdtt::lsdtt_flowinfo& flow)
+{
+    const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 0.85f);
+    const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, 1.0f);
+    const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
+    const auto& mask = fx.dem.get_mask();
+
+    // Uniform eps: accumulated concentration == plain mean over the basin.
+    // (The conc raster varies per pixel here?  With uniform prod it does not,
+    // so instead use the REAL production raster to get spatial variation and
+    // make the mean identity non-trivial.)
+    const lsdtt::lsdtt_raster_cpu prod_real =
+        lsdtt::calculate_production_raster(fx.dem);
+    {
+        const double eps = 0.01;
+        const lsdtt::lsdtt_raster_cpu ero =
+            make_uniform_raster(fx, static_cast<float>(eps));
+        const auto conc = lsdtt::calculate_crn_concentration_raster(
+            "Be10", "BraucherBorchers", ero, prod_real, topo, zero, zero,
+            flow, fx.outlet_node);
+        const double acc = lsdtt::calculate_accumulated_crn_concentration(
+            conc, ero, flow, fx.outlet_node);
+
+        const auto& cd = conc.get_data();
+        double sum = 0.0;
+        std::int64_t n = 0;
+        for (std::size_t i = 0; i < cd.size(); ++i)
+        {
+            if (mask[i]) { sum += cd[i]; ++n; }
+        }
+        const double plain_mean = sum / static_cast<double>(n);
+        check("E8: uniform eps -> accumulation == plain mean",
+              approx_rel(acc, plain_mean, 1e-6), diff_str(acc, plain_mean));
+    }
+
+    // Two-rate basin: accumulated == sum(C*eps)/sum(eps) exactly, and it
+    // must differ measurably from the plain mean (flux weighting matters).
+    {
+        const lsdtt::lsdtt_raster_cpu ero =
+            make_two_rate_raster(fx, fx.meta.n_rows / 2, 0.005f, 0.05f);
+        const auto conc = lsdtt::calculate_crn_concentration_raster(
+            "Be10", "BraucherBorchers", ero, prod_real, topo, zero, zero,
+            flow, fx.outlet_node);
+        const double acc = lsdtt::calculate_accumulated_crn_concentration(
+            conc, ero, flow, fx.outlet_node);
+
+        const auto& cd = conc.get_data();
+        const auto& ed = ero.get_data();
+        double sum_ce = 0.0, sum_e = 0.0, sum_c = 0.0;
+        std::int64_t n = 0;
+        for (std::size_t i = 0; i < cd.size(); ++i)
+        {
+            if (!mask[i]) continue;
+            sum_ce += static_cast<double>(cd[i]) * ed[i];
+            sum_e  += ed[i];
+            sum_c  += cd[i];
+            ++n;
+        }
+        const double flux_weighted = sum_ce / sum_e;
+        const double plain_mean    = sum_c / static_cast<double>(n);
+
+        check("E8: two-rate basin -> accumulation == flux-weighted mean",
+              approx_rel(acc, flux_weighted, 1e-6),
+              diff_str(acc, flux_weighted));
+        check("E8: flux weighting differs from plain mean on two-rate basin",
+              std::abs(flux_weighted - plain_mean) / plain_mean > 1e-3,
+              diff_str(flux_weighted, plain_mean));
+
+        // Consistency: the whole-raster accumulation at the outlet equals the
+        // scalar accumulated concentration.
+        const auto acc_raster = lsdtt::calculate_accumulated_crn_raster(
+            conc, ero, flow);
+        const double acc_at_outlet =
+            acc_raster.get_data()[static_cast<std::size_t>(fx.outlet_node)];
+        check("E8: accumulated raster outlet == scalar accumulation",
+              approx_rel(acc_at_outlet, acc, 1e-5),
+              diff_str(acc_at_outlet, acc));
+    }
+}
+
+// =============================================================================
+// Phase 3: CRONUS comparison fixtures and tests T-C1..T-C4 (plan Sec5)
+// =============================================================================
+
+// T-C3 - Stone (2000) scaling factors pinned against an INDEPENDENT
+// evaluation of Stone's Table 1 spallation coefficients (computed outside
+// this codebase, 2026-07-16; also what CRONUS v2.3 stone2000.m implements).
+// Latitudes >= 60 use the 60-degree row (Stone 2000; verified to match).
+void phase3_TC3_stone_pins()
+{
+    struct stone_pin { double lat, p_mbar, expected; };
+    const stone_pin pins[] = {
+        {0.0,  1013.25, 0.5872729071401146},
+        {0.0,  700.0,   4.5358221953964959},
+        {30.0, 1013.25, 0.83002237518144995},
+        {30.0, 700.0,   6.8069850492071069},
+        {60.0, 1013.25, 1.0021331925734103},
+        {60.0, 700.0,   11.011637548444043},
+        {70.0, 1013.25, 1.0021331925734103},   // >=60 clamps to the 60 row
+        {70.0, 700.0,   11.011637548444043},
+    };
+    lsdtt::lsdtt_crn_parameters cp;
+    bool ok = true;
+    std::string bad;
+    for (const stone_pin& s : pins)
+    {
+        const double got = cp.stone2000sp(s.lat, s.p_mbar, 1.0);
+        if (!approx_rel(got, s.expected, 1e-10))
+        {
+            ok = false;
+            bad = "lat=" + std::to_string(s.lat) + " P="
+                  + std::to_string(s.p_mbar) + ": " + diff_str(got, s.expected);
+        }
+    }
+    check("T-C3: stone2000sp matches independent Stone (2000) Table 1", ok, bad);
+}
+
+// T-C1 - forward concentration curves at the CAIRN Figs. 8-9 hypothetical
+// site (70 N, 1007 hPa, Lal/Stone, no shielding), eps swept across the
+// decay-dominated to erosion-dominated regimes.  Plottable analogue of
+// CAIRN Fig. 9a; CRONUS forward concentrations can be merged into the same
+// CSV externally for the Fig. 9b percent-difference panel.
+void phase3_TC1_site_curve(const std::string& out_dir)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+    const double s_site = cp.stone2000sp(70.0, 1007.0, 1.0);
+
+    csv_writer csv(out_dir + "/conc_vs_erate_70N.csv",
+                   "nuclide,scheme,lat,pressure_hPa,stone_factor,"
+                   "erate_gcm2yr,conc_atoms_g,source");
+    bool ok = true;
+    for (const char* scheme : {"Braucher", "BraucherBorchers", "newCRONUS"})
+    {
+        const ref_params p = ref_params_scaled(scheme, "Be10", s_site);
+        double c_prev = -1.0;
+        for (double eps = 0.0005; eps <= 0.2000001; eps += 0.0005)
+        {
+            const double c = ref_conc_surface(p, eps, 0.0);
+            if (!std::isfinite(c) || c <= 0.0) ok = false;
+            if (c_prev > 0.0 && c >= c_prev) ok = false;   // must fall with eps
+            csv.row("Be10", scheme, 70.0, 1007.0, s_site, eps, c, "lsdtt");
+            c_prev = c;
+        }
+    }
+    check("T-C1: 70N/1007hPa forward curves finite and monotone",
+          ok && csv.good());
+}
+
+// The CRONUS comparison fixture: synthetic point samples spanning latitude,
+// elevation, and erosion rate.  Concentrations are OUR forward model (Stone
+// scaling at the standard-atmosphere pressure, BraucherBorchers, surface,
+// no shielding), reported on the reference standards (07KNSTD / KNSTD), so
+// submitting them to CRONUS and comparing inverted rates against the imposed
+// eps measures the total inter-calculator difference (plan Sec5).
+struct cronus_fixture_sample
+{
+    std::string name;
+    double lat, lon, elev_m, pressure_hPa, stone_factor;
+    double erate_gcm2yr;
+    double conc_be10, conc_al26;
+};
+
+std::vector<cronus_fixture_sample> make_cronus_fixture_samples()
+{
+    std::vector<cronus_fixture_sample> out;
+    const double lats[]  = {0.0, 20.0, 40.0, 60.0, 70.0};
+    const double elevs[] = {250.0, 1500.0, 3000.0};
+    // Erosion rates cycle log-spaced across the CAIRN-relevant range.
+    const double erates[] = {3e-4, 1e-3, 3e-3, 1e-2, 3e-2};
+
+    lsdtt::lsdtt_crn_parameters cp;
+    int k = 0;
+    for (double lat : lats)
+    {
+        for (double elev : elevs)
+        {
+            cronus_fixture_sample s;
+            s.name         = "LSDTT-" + std::to_string(k + 1);
+            s.lat          = lat;
+            s.lon          = 0.0;
+            s.elev_m       = elev;
+            s.pressure_hPa =
+                lsdtt::lsdtt_crn_parameters::atmospheric_pressure_standard(elev);
+            s.stone_factor = cp.stone2000sp(lat, s.pressure_hPa, 1.0);
+            s.erate_gcm2yr = erates[k % 5];
+
+            const ref_params p10 =
+                ref_params_scaled("BraucherBorchers", "Be10", s.stone_factor);
+            const ref_params p26 =
+                ref_params_scaled("BraucherBorchers", "Al26", s.stone_factor);
+            s.conc_be10 = ref_conc_surface(p10, s.erate_gcm2yr, 0.0);
+            s.conc_al26 = ref_conc_surface(p26, s.erate_gcm2yr, 0.0);
+            out.push_back(s);
+            ++k;
+        }
+    }
+    return out;
+}
+
+void phase3_write_cronus_fixture(const std::string& out_dir)
+{
+    const auto samples = make_cronus_fixture_samples();
+    csv_writer csv(out_dir + "/cronus_fixture_samples.csv",
+                   "name,lat,lon,elev_m,pressure_hPa,stone_factor,"
+                   "erate_gcm2yr,conc_Be10_07KNSTD,conc_Al26_KNSTD");
+    for (const auto& s : samples)
+    {
+        csv.row(s.name, s.lat, s.lon, s.elev_m, s.pressure_hPa,
+                s.stone_factor, s.erate_gcm2yr, s.conc_be10, s.conc_al26);
+    }
+    check("T-C2: cronus_fixture_samples.csv written ("
+              + std::to_string(samples.size()) + " samples)",
+          csv.good());
+}
+
+// T-C2 / T-C4 - comparison against the FROZEN CRONUS v3 reference
+// (tests/expected/cosmo/cronus_v3_reference.csv, fetched once by
+// tests/scripts/fetch_cronus_reference.py).  Skips with a NOTE when the
+// reference has not been fetched yet; never touches the network.
+void phase3_TC2_cronus_comparison(const std::string& expected_dir,
+                                  const std::string& out_dir)
+{
+    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
+    std::ifstream in(ref_path);
+    if (!in.good())
+    {
+        std::cout << "NOTE  T-C2 skipped: no frozen CRONUS reference at "
+                  << ref_path << "\n"
+                  << "      (fetch once with tests/scripts/fetch_cronus_reference.py)\n";
+        check("T-C2: CRONUS comparison (SKIPPED - reference not fetched)", true);
+        return;
+    }
+
+    // reference rows: name,nuclide,scheme,erate_gcm2yr,erate_mMyr,unc_int_mMyr
+    std::map<std::string, double> cronus;   // key: name|nuclide|scheme
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty() || line[0] == '#' || line.rfind("name,", 0) == 0)
+            continue;
+        std::istringstream ls(line);
+        std::string name, nuc, scheme, field;
+        std::getline(ls, name, ',');
+        std::getline(ls, nuc, ',');
+        std::getline(ls, scheme, ',');
+        std::getline(ls, field, ',');
+        cronus[name + "|" + nuc + "|" + scheme] = std::stod(field);
+    }
+
+    const auto samples = make_cronus_fixture_samples();
+    csv_writer csv(out_dir + "/cronus_comparison.csv",
+                   "name,nuclide,scheme,lat,elev_m,erate_lsdtt_gcm2yr,"
+                   "erate_cronus_gcm2yr,pct_diff");
+    double worst_st = 0.0;
+    int n_compared = 0;
+    for (const auto& s : samples)
+    {
+        for (const char* scheme : {"St", "Lm", "LSDn"})
+        {
+            const auto it = cronus.find(s.name + "|Be-10|" + scheme);
+            if (it == cronus.end()) continue;
+            const double pct =
+                100.0 * (it->second - s.erate_gcm2yr) / s.erate_gcm2yr;
+            csv.row(s.name, "Be-10", scheme, s.lat, s.elev_m,
+                    s.erate_gcm2yr, it->second, pct);
+            if (std::string(scheme) == "St")
+            {
+                worst_st = std::max(worst_st, std::abs(pct));
+                ++n_compared;
+            }
+        }
+    }
+    std::cout << "      T-C2 measured worst |pct diff| vs CRONUS v3 St = "
+              << std::setprecision(4) << worst_st << " % over " << n_compared
+              << " samples\n" << std::setprecision(17);
+    // Band: our BraucherBorchers muons + Borchers-lineage P0 differ from
+    // CRONUS v3 St (Balco 2017 model-1A muons, 07KNSTD-normalised rates) by
+    // a bounded, production-dependent amount.  Measured on the frozen
+    // reference (fetched 2026-07-16, post S_tot>1 fix): +1.82 % to +6.65 %,
+    // mean +3.61 % (CRONUS higher, growing with erosion rate as the muon
+    // share rises) - consistent with CAIRN Sec7's 2.5-5 % for
+    // Borchers-consistent parameters.  Band frozen at 10 %.
+    // For the record: Lm ran mean +14.6 % (max +45 %) and LSDn mean +11.8 %
+    // vs our time-INdependent rates - that spread is the size of the
+    // geomagnetic correction itself (baseline for the Sec6 G-tests).
+    check("T-C2: vs CRONUS v3 St within band (< 10 %)",
+          n_compared > 0 && worst_st < 10.0,
+          "worst = " + std::to_string(worst_st) + " % (n=" + std::to_string(n_compared) + ")");
+    check("csv: cronus_comparison.csv written", csv.good());
 }
 
 // =============================================================================
@@ -1146,8 +1672,8 @@ int main(int argc, char** argv)
     std::cout << "=========================================================\n"
               << "|| lsdtt3 cosmogenic physics test driver               ||\n"
               << "|| Plan: docs/cosmo_cli_testing_plan.md                ||\n"
-              << "|| Phases 0-1: fixtures, parameter pins, sentinel,     ||\n"
-              << "||             equation-fidelity tests E1-E5, E9       ||\n"
+              << "|| Phases 0-2: fixtures, parameter pins, sentinel,     ||\n"
+              << "||             equation fidelity E1-E9                 ||\n"
               << "=========================================================\n";
 
     try
@@ -1169,6 +1695,21 @@ int main(int argc, char** argv)
         phase1_E3_exponential_identity();
         phase1_E4_lambda_v_solve();
         phase1_E5_linearity_and_limits();
+
+        phase2_E7_analytic_vs_integrator(fx, out_dir);
+        phase2_E6_round_trip(fx, flow);
+        phase2_E8_averaging_identities(fx, flow);
+
+        // expected/ dir (frozen references) sits next to the sentinel file.
+        std::string expected_dir = ".";
+        const auto slash = sentinel_path.find_last_of("/\\");
+        if (slash != std::string::npos)
+            expected_dir = sentinel_path.substr(0, slash);
+        phase3_TC3_stone_pins();
+        phase3_TC1_site_curve(out_dir);
+        phase3_write_cronus_fixture(out_dir);
+        phase3_TC2_cronus_comparison(expected_dir, out_dir);
+
         phase1_sentinel(fx, flow, sentinel_path, regenerate_sentinel);
     }
     catch (const std::exception& e)

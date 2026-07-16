@@ -208,18 +208,25 @@ void lsdtt_crn_parameters::reset_scaling(const std::string& muon_scheme)
     }
 }
 
-// 
+//
 // scale_one_nuclide: Newton-Raphson to find effective depth x such that
 //   Sigma_i F[i]*exp(-x/Gamma[i]) == total_shielding
 // then rescale: F[i] *= exp(-x/Gamma[i]).
 // This preserves the relative attenuation shape of each production pathway
 // rather than applying a flat multiplier.
+//
+// total_shielding here is production scaling x topographic shielding, so it
+// is routinely > 1 (Stone scaling exceeds 1 above a few hundred metres);
+// the Vermeesch (2007) scheme handles that with a NEGATIVE effective depth
+// (amplification, spallation amplified most).  Fix approved by Simon Mudd
+// 2026-07-16: the previous ">= 1.0 -> return" guard silently dropped the
+// production scaling at altitude, found by the CRONUS v3 comparison tests.
 void lsdtt_crn_parameters::scale_one_nuclide(double total_shielding,
                                               const double Gamma[4],
                                               double F[4])
 {
-    if (total_shielding >= 1.0)
-        return;   // no shielding - nothing to do
+    if (total_shielding == 1.0)
+        return;   // exactly neutral - nothing to do
 
     const double tolerance    = 1e-7;
     const double displace_x   = 1e-6;

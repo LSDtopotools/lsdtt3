@@ -59,11 +59,20 @@ public:
     // "Granger", "Schaller", "newCRONUS").  Falls back to BraucherBorchers.
     void reset_scaling(const std::string& muon_scheme);
 
-    //  Shielding 
-    // Rescales F values for the named nuclide using a Newton-Raphson search that
-    // converts total_shielding (= production_scale x topo_shield, dimensionless
-    // [0,1]) into an equivalent effective depth so that each production pathway
-    // is attenuated correctly.  Call reset_scaling first, then scale_F_values.
+    //  Shielding / production scaling (Vermeesch 2007 virtual attenuation)
+    // Rescales F values for the named nuclide using a Newton-Raphson search
+    // that converts total_shielding (= production_scale x topo_shield,
+    // dimensionless) into an equivalent effective depth so that each
+    // production pathway is attenuated (or amplified) correctly.
+    //
+    // NOTE: total_shielding is routinely > 1 - the Stone (2000) production
+    // scaling exceeds 1 above a few hundred metres elevation, and the
+    // Vermeesch approximation handles this with a negative effective depth
+    // (spallation amplified most, muon pathways least, mirroring how the
+    // pathways scale with altitude).  Handling S_tot > 1 here is required to
+    // reproduce CRONUS calculator results at altitude (verified against the
+    // CRONUS v3 online calculator, 2026-07-16).
+    // Call reset_scaling first, then scale_F_values.
     // nuclide: "Be10", "Al26", or "C14".
     void scale_F_values(double total_shielding, const std::string& nuclide);
 
