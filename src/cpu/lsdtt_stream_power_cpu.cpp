@@ -55,7 +55,6 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 
     // NR parameters
     const int    NR_MAX_ITER = 100;
-    const double NR_TOL      = 1e-6;
     const bool   n_is_one    = (std::abs(n - 1.0f) < 1e-6f);
 
     // Diagonal direction codes per the header convention:
@@ -214,7 +213,6 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
 
     // NR parameters
     const int   NR_MAX_ITER = 100;
-    const float NR_TOL      = 1e-6f;
     const bool  n_is_one    = (std::abs(n - 1.0f) < 1e-6f);
 
     // ==============================================================

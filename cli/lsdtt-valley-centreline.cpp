@@ -109,7 +109,7 @@ int main(int argc, char* argv[])
         "channel network.","",
         "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
-    for (const std::string role : {std::string("source"), std::string("outlet")})
+    for (const std::string& role : {std::string("source"), std::string("outlet")})
     {
         string_default_map[role + "_points_path"] = "";
         help_map[role + "_points_path"] = {"string","",

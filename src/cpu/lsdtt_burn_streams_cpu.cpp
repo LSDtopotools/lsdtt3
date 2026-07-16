@@ -2743,18 +2743,10 @@ static repair_attempt_result repair_junction_parallel_channels(
     auto to_col  = [&](std::int64_t f) { return static_cast<int>(f % ncols64); };
     auto to_flat = [&](int r, int c)   { return static_cast<std::int64_t>(r) * ncols64 + c; };
 
-    static constexpr int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    static constexpr int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
-
     const auto& elev_data = dem.get_data();
     const auto& mask_data = dem.get_mask();
 
-    //  Step 1: classify donors into Branch A (far) and Branch B (close) 
-    const std::int32_t dem_junc32 =
-        static_cast<std::int32_t>(dem_junction_flat / ncols64 * ncols64 == dem_junction_flat
-            ? dem_junction_flat / ncols64
-            : dem_junction_flat / ncols64); // unused; get via junction API
-
+    //  Step 1: classify donors into Branch A (far) and Branch B (close)
     // Find which junction ID corresponds to dem_junction_flat
     std::int32_t dem_jid = -1;
     {
@@ -4023,8 +4015,6 @@ static repair_attempt_result repair_diverged_reach_capture(
         std::cout << "    capture: skeleton score threshold=" << thr << "\n";
     }
 
-    const std::vector<float>& elevd = dem.get_data();
-
     // Distance from (x,y) to the vector edge polyline.
     auto sep_to_poly=[&](double x,double y)->double{
         const auto& P=reach.vector_reach_xy;
@@ -4316,11 +4306,9 @@ repair_diverged_reaches(
     // caller's precomputed scores (same as repair_candidate_junctions); without
     // them the parallel-channel / channel-guided repairs cannot run.
     std::vector<float> channel_score_data;
-    bool have_channel_scores = false;
     if (precomputed_channel_scores && !precomputed_channel_scores->empty())
     {
-        channel_score_data  = *precomputed_channel_scores;
-        have_channel_scores = true;
+        channel_score_data = *precomputed_channel_scores;
         std::cout << "repair_diverged_reaches: using precomputed channel scores\n";
     }
     else

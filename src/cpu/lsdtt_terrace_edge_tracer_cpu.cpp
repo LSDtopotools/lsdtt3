@@ -575,7 +575,6 @@ terrace_edge_trace_result trace_terrace_edges_along_contours(
 
     const std::vector<float>&   dd = dem.get_data();
     const std::vector<uint8_t>& dm = dem.get_mask();
-    const float nodata = static_cast<float>(dmeta.no_data_value);
 
     // -------------------------------------------------------------------------
     // Label centreline components.

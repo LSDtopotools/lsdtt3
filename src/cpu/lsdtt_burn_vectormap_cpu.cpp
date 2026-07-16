@@ -458,10 +458,14 @@ std::vector<burn_segment_def> identify_burn_segments(
       return static_cast<std::int64_t>(r)*n_cols + c; };
     auto zat = [&](const lsdtt_xy& p, double& z) -> bool
     { int r,c; if(!xy_to_rc(meta,p.x,p.y,r,c)) return false;
-      if(mdata(r,c)==0) return false; z=static_cast<double>(zdata(r,c)); return true; };
+      if(mdata(r,c)==0) return false;
+      z=static_cast<double>(zdata(r,c));
+      return true; };
     auto plen = [&](const std::vector<lsdtt_xy>& a) -> double
-    { double L=0; for(std::size_t k=1;k<a.size();++k)
-        L+=std::hypot(a[k].x-a[k-1].x,a[k].y-a[k-1].y); return L; };
+    { double L=0;
+      for(std::size_t k=1;k<a.size();++k)
+        L+=std::hypot(a[k].x-a[k-1].x,a[k].y-a[k-1].y);
+      return L; };
     auto bearing = [&](const std::vector<lsdtt_xy>& a) -> double
     { return std::atan2(a.back().y-a.front().y, a.back().x-a.front().x); };
 
