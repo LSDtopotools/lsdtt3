@@ -336,6 +336,93 @@ export PROJ_LIB="$PROJ_DATA"
 EOF
 chmod +x "$STAGE_DIR/setenv.sh"
 
+# End-user README: the audience is often non-technical, so it must cover the
+# full path from download to a working command, including Google Colab where
+# `!source` does not work (each ! line is a separate shell).
+cat > "$STAGE_DIR/README.md" <<'EOF'
+# lsdtt3 backend for Linux (v@VERSION@)
+
+Self-contained LSDTopoTools command-line tools for Linux (x86_64). All
+required libraries and the GDAL/PROJ support data are included -- there is
+nothing to install and no admin rights are needed. Just unpack and run.
+
+## Install and run (Linux terminal)
+
+1. Download `@BUNDLE_NAME@.tar.gz` and open a terminal in the folder
+   containing it.
+2. Unpack it:
+
+   ```bash
+   tar -xzf @BUNDLE_NAME@.tar.gz
+   ```
+
+3. Activate the tools for the current terminal session (note the `source` --
+   running the script with `bash` will NOT work):
+
+   ```bash
+   source @BUNDLE_NAME@/setenv.sh
+   ```
+
+4. Check that it works:
+
+   ```bash
+   lsdtt-raster-preprocessing --help
+   ```
+
+You need to repeat step 3 in every new terminal. To make it permanent, add
+that `source` line (with the full path to `setenv.sh`) to your `~/.bashrc`.
+
+## Google Colab
+
+In Colab, download and unpack in a code cell (the leading `!` runs a shell
+command):
+
+```python
+!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/@BUNDLE_NAME@.tar.gz
+!tar -xzf @BUNDLE_NAME@.tar.gz
+```
+
+Do NOT use `!source setenv.sh` -- every `!` line runs in its own throwaway
+shell, so nothing it sets survives to the next line. Instead, set the
+environment from Python once per session:
+
+```python
+import os
+
+root = "/content/@BUNDLE_NAME@"
+os.environ["PATH"] = f"{root}/bin:" + os.environ["PATH"]
+os.environ["LD_LIBRARY_PATH"] = f"{root}/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
+os.environ["GDAL_DATA"] = f"{root}/share/gdal"
+os.environ["PROJ_DATA"] = f"{root}/share/proj"
+os.environ["PROJ_LIB"]  = os.environ["PROJ_DATA"]
+```
+
+After that cell, the tools work in any later cell:
+
+```python
+!lsdtt-raster-preprocessing --help
+```
+
+## What is in this bundle
+
+- `bin/` -- the lsdtt command-line tools:
+@TOOL_LIST@
+- `lib/` -- bundled shared libraries (GDAL, PROJ, ...)
+- `share/gdal`, `share/proj` -- support data the libraries need at runtime
+- `setenv.sh` -- sets up PATH and library/data paths (must be `source`d)
+- `manifest.json` -- version info and SHA256 checksums of every file
+EOF
+
+TOOL_LIST_MD=""
+for cli in "${CLI_NAMES[@]}"; do
+    TOOL_LIST_MD+="  - \`$cli\`\n"
+done
+sed -i \
+    -e "s/@VERSION@/$VERSION/g" \
+    -e "s/@BUNDLE_NAME@/$BUNDLE_NAME/g" \
+    -e "s|@TOOL_LIST@|${TOOL_LIST_MD%\\n}|" \
+    "$STAGE_DIR/README.md"
+
 python3 - <<PY
 import hashlib
 import json

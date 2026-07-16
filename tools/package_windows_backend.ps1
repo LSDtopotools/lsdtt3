@@ -73,6 +73,31 @@ function Get-PeDependents {
     return ($deps | Sort-Object -Unique)
 }
 
+# True for DLLs the OS itself provides on every supported Windows (10+):
+# core system DLLs, API sets, and the universal CRT. These must NOT be
+# bundled; everything else a staged binary imports must ship in bin/.
+function Test-IsSystemDll {
+    param([string]$DllName)
+
+    if ($DllName -like "api-ms-win-*") { return $true }
+    if ($DllName -like "ext-ms-*") { return $true }
+
+    $systemDlls = @(
+        "ucrtbase.dll",
+        "kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll",
+        "advapi32.dll", "shell32.dll", "shlwapi.dll", "ole32.dll",
+        "oleaut32.dll", "comdlg32.dll", "comctl32.dll", "uxtheme.dll",
+        "ws2_32.dll", "wsock32.dll", "iphlpapi.dll", "winhttp.dll",
+        "wininet.dll", "urlmon.dll", "normaliz.dll", "dnsapi.dll",
+        "crypt32.dll", "bcrypt.dll", "ncrypt.dll", "secur32.dll",
+        "sspicli.dll", "wldap32.dll", "version.dll", "winmm.dll",
+        "setupapi.dll", "cfgmgr32.dll", "userenv.dll", "psapi.dll",
+        "dbghelp.dll", "imm32.dll", "msimg32.dll", "netapi32.dll",
+        "ntdll.dll", "rpcrt4.dll", "msvcrt.dll"
+    )
+    return ($systemDlls -contains $DllName)
+}
+
 # Copies transitive runtime DLL dependencies for the selected executables.
 #
 # Strategy:
@@ -80,7 +105,8 @@ function Get-PeDependents {
 # 2) For each DLL found in vcpkg bin, copy it into stage/bin.
 # 3) Parse that DLL's dependencies and continue until closure.
 #
-# Only DLLs that exist in vcpkg's triplet bin directory are copied.
+# Only DLLs that exist in vcpkg's triplet bin directory are copied here;
+# the MSVC CRT is staged separately and self-containment is verified after.
 function Copy-RuntimeDllClosure {
     param(
         [string[]]$ExePaths,
@@ -114,6 +140,52 @@ function Copy-RuntimeDllClosure {
                 $queue.Enqueue($dep)
             }
         }
+    }
+}
+
+# Stages the MSVC C/C++ runtime (vcruntime140, msvcp140, ...) next to the
+# executables. Users must not need the VC++ Redistributable preinstalled:
+# without these DLLs the tools fail on a clean machine with
+# "VCRUNTIME140.dll was not found". The redist folder is located via the
+# VS developer-shell environment the script already requires for dumpbin.
+function Copy-MsvcRuntime {
+    param([string]$TargetBin)
+
+    $redistRoot = $env:VCToolsRedistDir
+    if (-not $redistRoot) {
+        throw "VCToolsRedistDir is not set. Run this script from a Visual Studio developer shell so the MSVC runtime can be bundled."
+    }
+
+    $crtDir = Get-ChildItem -Path (Join-Path $redistRoot "x64") -Directory -Filter "Microsoft.VC*.CRT" |
+        Select-Object -First 1
+    if (-not $crtDir) {
+        throw "MSVC CRT redist folder not found under $redistRoot\x64"
+    }
+
+    foreach ($dll in (Get-ChildItem $crtDir.FullName -Filter *.dll)) {
+        Copy-Item -Path $dll.FullName -Destination $TargetBin -Force
+    }
+}
+
+# Verifies the staged bundle is self-contained: every import of every staged
+# binary must resolve inside stage/bin or be an OS-provided DLL. Fails the
+# packaging rather than ship a bundle that breaks on user machines.
+function Assert-SelfContained {
+    param([string]$TargetBin)
+
+    $missing = @()
+    foreach ($binary in (Get-ChildItem $TargetBin -File | Where-Object { $_.Extension -in ".exe", ".dll" })) {
+        foreach ($dep in (Get-PeDependents -BinaryPath $binary.FullName)) {
+            if (Test-IsSystemDll -DllName $dep) { continue }
+            if (-not (Test-Path (Join-Path $TargetBin $dep))) {
+                $missing += "$($binary.Name) needs '$dep' but it is not staged in bin/"
+            }
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        $missing | Sort-Object -Unique | ForEach-Object { Write-Error -ErrorAction Continue $_ }
+        throw "Bundle is not self-contained; aborting."
     }
 }
 
@@ -179,6 +251,8 @@ foreach ($cli in $OptionalCliNames) {
 
 # Populate runtime closure and required data directories.
 Copy-RuntimeDllClosure -ExePaths $exePaths -VcpkgBin $vcpkgBin -TargetBin $stageBin
+Copy-MsvcRuntime -TargetBin $stageBin
+Assert-SelfContained -TargetBin $stageBin
 Copy-Item -Path $gdalData -Destination (Join-Path $stageShare "gdal") -Recurse -Force
 Copy-Item -Path $projData -Destination (Join-Path $stageShare "proj") -Recurse -Force
 
@@ -189,7 +263,8 @@ if (Test-Path $licensePath) {
 
 # Record lightweight bundle contents for traceability.
 $thirdParty = @(
-    "This backend bundle includes runtime components from vcpkg package builds.",
+    "This backend bundle includes runtime components from vcpkg package builds",
+    "and the Microsoft Visual C++ redistributable runtime DLLs.",
     "Triplet: $Triplet",
     "Generated: $(Get-Date -Format o)",
     "",
@@ -212,6 +287,67 @@ $envScript = @(
 )
 Set-Content -Path (Join-Path $stage "setenv.ps1") -Value $envScript -Encoding utf8
 
+# End-user README: audience is often non-technical, so cover the full path
+# from download to a working command. Single-quoted here-string, then
+# placeholder replacement, so $env: examples survive verbatim.
+$readme = @'
+# lsdtt3 backend for Windows (v@VERSION@)
+
+Self-contained LSDTopoTools command-line tools for 64-bit Windows. All
+required DLLs (including the Microsoft Visual C++ runtime) and the GDAL/PROJ
+support data are included -- there is nothing to install and no admin rights
+are needed. Just unzip and run.
+
+## Install and run
+
+1. Download `@BUNDLE_NAME@.zip`.
+2. Right-click the zip file and choose **Extract All...** (any folder is
+   fine, for example `C:\lsdtt3`).
+3. Open PowerShell and go to the extracted folder:
+
+   ```powershell
+   cd C:\lsdtt3\@BUNDLE_NAME@
+   ```
+
+4. Activate the tools for the current PowerShell session:
+
+   ```powershell
+   . .\setenv.ps1
+   ```
+
+   The leading dot-space matters. If Windows refuses to run the script
+   ("running scripts is disabled"), first run:
+
+   ```powershell
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+   ```
+
+5. Check that it works:
+
+   ```powershell
+   lsdtt-raster-preprocessing --help
+   ```
+
+You need to repeat step 4 in every new PowerShell window.
+
+## What is in this bundle
+
+- `bin\` -- the lsdtt command-line tools and their DLLs:
+@TOOL_LIST@
+- `share\gdal`, `share\proj` -- support data needed at runtime
+- `setenv.ps1` -- sets up PATH and data paths for the current session
+- `manifest.json` -- version info and SHA256 checksums
+'@
+
+$toolListMd = ($stagedCliNames | ForEach-Object { "  - ``$_.exe``" }) -join "`n"
+$readme = $readme.Replace('@VERSION@', $Version)
+$readme = $readme.Replace('@BUNDLE_NAME@', $bundleName)
+$readme = $readme.Replace('@TOOL_LIST@', $toolListMd)
+[System.IO.File]::WriteAllText(
+    (Join-Path $stage "README.md"),
+    $readme + "`n",
+    (New-Object System.Text.UTF8Encoding $false))
+
 # Build manifest with metadata and per-file SHA256 checksums.
 $manifest = [ordered]@{
     backend_version = $Version
@@ -224,11 +360,12 @@ $manifest = [ordered]@{
 }
 
 $filesForHash = @()
+$filesForHash += Get-Item (Join-Path $stage "README.md")
 $filesForHash += Get-ChildItem $stageBin -File
 $filesForHash += Get-ChildItem (Join-Path $stageShare "gdal") -Recurse -File
 $filesForHash += Get-ChildItem (Join-Path $stageShare "proj") -Recurse -File
 foreach ($f in $filesForHash) {
-    $rel = $f.FullName.Substring($stage.Length + 1).Replace('\\', '/')
+    $rel = $f.FullName.Substring($stage.Length + 1).Replace('\', '/')
     $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest.checksums_sha256[$rel] = $hash
 }
@@ -237,8 +374,13 @@ foreach ($cli in $stagedCliNames) {
     $manifest.tools += "$cli.exe"
 }
 
+# Write without a BOM: PowerShell 5.1's utf8 encoding prepends one, which
+# strict JSON parsers (e.g. Python json.load) reject.
 $manifestJson = $manifest | ConvertTo-Json -Depth 8
-Set-Content -Path (Join-Path $stage "manifest.json") -Value $manifestJson -Encoding utf8
+[System.IO.File]::WriteAllText(
+    (Join-Path $stage "manifest.json"),
+    $manifestJson + "`n",
+    (New-Object System.Text.UTF8Encoding $false))
 
 # Zip staged contents into the distributable backend artifact.
 if (-not (Test-Path $outAbs)) {
@@ -249,7 +391,15 @@ $zipPath = Join-Path $outAbs ("$bundleName.zip")
 if (Test-Path $zipPath) {
     Remove-Item -Force $zipPath
 }
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zipPath -CompressionLevel Optimal
+# Use .NET ZipFile rather than Compress-Archive: it includes the top-level
+# bundle folder (matching the Linux tar.gz layout, so unzipping never
+# scatters files into the current directory) and writes forward-slash
+# entry names, which non-Windows unzip tools require.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $stage, $zipPath,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $true)
 
 Write-Host "Created backend bundle: $zipPath"
 Write-Host "Staging directory: $stage"
