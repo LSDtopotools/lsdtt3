@@ -28,7 +28,7 @@ jobs:
     steps:
       # Full history + tags so the LSDTT3_VERSION git describe string and
       # the driver's exact-tag check both work.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload as workflow artifact (manual run)
         if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: lsdtt3-backend-linux
           path: dist/lsdtt3-backend-linux-*.tar.gz
