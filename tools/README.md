@@ -11,19 +11,36 @@ smoke-checks every release CLI (`-v`), packages via
 `package_linux_backend.sh`, and optionally publishes with `gh`.
 
 GitHub Actions (`.github/workflows/release.yml`) calls this same script on
-`v*` tag pushes, so a local run exercises exactly the CI path. The list of
-CLIs shipped in a release lives at the top of this script (`RELEASE_CLIS`).
+`v*` tag pushes, so a local run exercises exactly the CI path.
 
 ```bash
-# local test build only (artifact in dist/)
+# local test build only (artifact in dist/), default core profile
 tools/make_release.sh --version 0.3.0
 
-# local prerelease published to GitHub (zero Actions minutes)
-tools/make_release.sh --version 0.3.0-rc1 --publish --prerelease
+# local prerelease with every CLI, published to GitHub (zero Actions minutes)
+tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
 
 # repack an existing build without rebuilding
 tools/make_release.sh --version 0.3.0 --skip-build --build-dir build
 ```
+
+## CLI profiles (`cli_profiles.txt`)
+
+Which CLIs go into a bundle is controlled by a profile; the qgis and core
+lists live in `tools/cli_profiles.txt` (single source of truth for all four
+scripts).
+
+| Profile | Contents | Default for |
+|---|---|---|
+| `qgis` | small subset wired into the QGIS plugin | Windows bundles |
+| `core` | tested tools for official releases | Linux and macOS bundles, CI |
+| `all` | every `lsdtt-*` executable in the build dir (excl. `lsdtt-test-*`) | local releases only |
+
+Select with `--profile` on `make_release.sh`, `--cli-profile` on the bash
+packaging scripts, or `-CliProfile` on the PowerShell script. An explicit
+`--cli` / `-CliNames` list overrides the profile (bundle labelled `custom`).
+The profile appears in the bundle filename, e.g.
+`lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz`.
 
 Full release workflow and rationale: `docs/release_ci_plan.md`.
 Windows and macOS bundles are built by hand on the respective machines
@@ -36,9 +53,9 @@ layout (`bin/`, `lib/` on Unix, `share/gdal`, `share/proj`, `setenv.*`,
 
 | Script | Platform | Artifact |
 |---|---|---|
-| `package_linux_backend.sh` | Linux x86_64 | `dist/lsdtt3-backend-linux-<arch>-minimal-v<version>.tar.gz` |
-| `package_windows_backend.ps1` | Windows x64 | `dist/lsdtt3-backend-win64-minimal-v<version>.zip` |
-| `package_macos_backend.sh` | macOS (arm64/x86_64) | `dist/lsdtt3-backend-macos-<arch>-minimal-v<version>.tar.gz` *UNTESTED*|
+| `package_linux_backend.sh` | Linux x86_64 | `dist/lsdtt3-backend-linux-<arch>-<profile>-v<version>.tar.gz` |
+| `package_windows_backend.ps1` | Windows x64 | `dist/lsdtt3-backend-win64-<profile>-v<version>.zip` |
+| `package_macos_backend.sh` | macOS (arm64/x86_64) | `dist/lsdtt3-backend-macos-<arch>-<profile>-v<version>.tar.gz` *UNTESTED*|
 
 Bundles are aimed at (often non-technical) end users: download, unpack, run
 one activation command, and the tools work. Each bundle contains a generated
@@ -84,8 +101,8 @@ tools/package_linux_backend.sh --version 0.2.0 --build-dir build/minimal-linux -
 ### End-user install (also in the bundle's README.md)
 
 ```bash
-tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
-source lsdtt3-backend-linux-x86_64-minimal-v<version>/setenv.sh   # per shell session
+tar -xzf lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
+source lsdtt3-backend-linux-x86_64-<profile>-v<version>/setenv.sh   # per shell session
 lsdtt-raster-preprocessing --help
 ```
 
@@ -100,14 +117,14 @@ own throwaway shell. Set the environment from Python once per session
 instead:
 
 ```python
-!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
-!tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
+!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
+!tar -xzf lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
 ```
 
 ```python
 import os
 
-root = "/content/lsdtt3-backend-linux-x86_64-minimal-v<version>"
+root = "/content/lsdtt3-backend-linux-x86_64-<profile>-v<version>"
 os.environ["PATH"] = f"{root}/bin:" + os.environ["PATH"]
 os.environ["LD_LIBRARY_PATH"] = f"{root}/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
 os.environ["GDAL_DATA"] = f"{root}/share/gdal"

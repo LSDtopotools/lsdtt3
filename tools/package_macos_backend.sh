@@ -31,9 +31,13 @@ Options:
   --build-dir <path>           Build directory (default: build)
   --out-dir <path>             Output directory (default: dist)
   --arch <name>                Architecture label (default: uname -m)
-  --profile <name>             Profile label (default: minimal-macos)
+  --cli-profile <name>         CLI set: qgis / core / all (default: core).
+                               Defined in tools/cli_profiles.txt; all = every
+                               lsdtt-* executable in the build directory
+  --profile <name>             Manifest profile label (default: <cli-profile>-macos)
   --plugin-version-range <rng> Plugin compatibility range (default: >=0.1.0 <0.3.0)
-  --cli <name>                 Add CLI name to package (repeatable)
+  --cli <name>                 Package exactly this CLI (repeatable; overrides
+                               --cli-profile, bundle is labelled 'custom')
   --help                       Show this help
 
 Examples:
@@ -46,7 +50,8 @@ VERSION=""
 BUILD_DIR="build"
 OUT_DIR="dist"
 ARCH="$(uname -m)"
-PROFILE="minimal-macos"
+CLI_PROFILE="core"
+PROFILE=""
 PLUGIN_VERSION_RANGE=">=0.1.0 <0.3.0"
 CLI_NAMES=()
 
@@ -66,6 +71,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --arch)
             ARCH="${2:-}"
+            shift 2
+            ;;
+        --cli-profile)
+            CLI_PROFILE="${2:-}"
             shift 2
             ;;
         --profile)
@@ -98,13 +107,35 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 
-if [[ ${#CLI_NAMES[@]} -eq 0 ]]; then
-    CLI_NAMES=(
-        "lsdtt-raster-preprocessing"
-        "lsdtt-channel-extraction"
-        "lsdtt-chi-analysis"
-        "lsdtt-basin-extraction"
-    )
+# Resolve the CLI list: explicit --cli wins; otherwise the profile decides.
+# qgis / core come from cli_profiles.txt; all = every lsdtt-* executable in
+# the build directory (resolved after the build dir is validated below).
+# NOTE: macOS ships bash 3.2 - no associative arrays or mapfile here.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ${#CLI_NAMES[@]} -gt 0 ]]; then
+    CLI_PROFILE="custom"
+elif [[ "$CLI_PROFILE" == "qgis" || "$CLI_PROFILE" == "core" ]]; then
+    PROFILES_FILE="$SCRIPT_DIR/cli_profiles.txt"
+    if [[ ! -f "$PROFILES_FILE" ]]; then
+        echo "ERROR: profiles file not found: $PROFILES_FILE" >&2
+        exit 1
+    fi
+    while read -r profile name; do
+        if [[ "$profile" == "$CLI_PROFILE" ]]; then
+            CLI_NAMES+=("$name")
+        fi
+    done < <(grep -Ev '^[[:space:]]*(#|$)' "$PROFILES_FILE")
+    if [[ ${#CLI_NAMES[@]} -eq 0 ]]; then
+        echo "ERROR: profile '$CLI_PROFILE' has no entries in $PROFILES_FILE" >&2
+        exit 1
+    fi
+elif [[ "$CLI_PROFILE" != "all" ]]; then
+    echo "ERROR: unknown --cli-profile '$CLI_PROFILE' (use qgis, core, or all)" >&2
+    exit 1
+fi
+
+if [[ -z "$PROFILE" ]]; then
+    PROFILE="${CLI_PROFILE}-macos"
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -130,6 +161,24 @@ if [[ ! -d "$BUILD_ABS" ]]; then
     echo "ERROR: build directory not found: $BUILD_ABS" >&2
     exit 1
 fi
+
+# 'all' profile: discover every built lsdtt-* executable (skip test
+# harnesses). Portable dedupe - no associative arrays on bash 3.2.
+if [[ "$CLI_PROFILE" == "all" ]]; then
+    for exe in "$BUILD_ABS"/lsdtt-* "$BUILD_ABS"/bin/lsdtt-*; do
+        [[ -f "$exe" && -x "$exe" ]] || continue
+        name="$(basename "$exe")"
+        case "$name" in *.*|lsdtt-test-*) continue ;; esac
+        case " ${CLI_NAMES[*]:-} " in *" $name "*) continue ;; esac
+        CLI_NAMES+=("$name")
+    done
+    if [[ ${#CLI_NAMES[@]} -eq 0 ]]; then
+        echo "ERROR: --cli-profile all found no lsdtt-* executables in $BUILD_ABS" >&2
+        exit 1
+    fi
+    echo "Profile 'all': packaging ${#CLI_NAMES[@]} CLIs discovered in the build directory"
+fi
+
 
 for cmd in otool install_name_tool codesign gdal-config tar python3; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -207,7 +256,7 @@ resolve_dep_path() {
     esac
 }
 
-BUNDLE_NAME="lsdtt3-backend-macos-${ARCH}-minimal-v${VERSION}"
+BUNDLE_NAME="lsdtt3-backend-macos-${ARCH}-${CLI_PROFILE}-v${VERSION}"
 STAGE_DIR="$OUT_ABS/$BUNDLE_NAME"
 STAGE_BIN="$STAGE_DIR/bin"
 STAGE_LIB="$STAGE_DIR/lib"

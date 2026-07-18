@@ -1,0 +1,46 @@
+# CLI packaging profiles for lsdtt3 backend bundles.
+#
+# One entry per line: <profile> <cli-name>. Blank lines and # comments are
+# ignored. This file is the single source of truth for which CLIs ship in
+# each bundle; it is read by tools/make_release.sh,
+# tools/package_linux_backend.sh, tools/package_macos_backend.sh, and
+# tools/package_windows_backend.ps1.
+#
+# Profiles:
+#   qgis - the small subset wired into the QGIS plugin (Windows default)
+#   core - tested tools shipped in official Linux/macOS releases (default)
+#   all  - not listed here: means every lsdtt-* executable found in the
+#          build directory (excluding lsdtt-test-*); local releases only
+#
+# CURATE ME: the core list below is a provisional starting set - Simon
+# should add/remove entries to match what has actually been tested.
+
+qgis lsdtt-raster-preprocessing
+qgis lsdtt-channel-extraction
+qgis lsdtt-chi-analysis
+qgis lsdtt-basin-extraction
+qgis lsdtt-basin-stats
+qgis lsdtt-surface-metrics
+qgis lsdtt-channel-metwork-analysis
+
+core lsdtt-raster-preprocessing
+core lsdtt-channel-extraction
+core lsdtt-chi-analysis
+core lsdtt-basin-extraction
+core lsdtt-basin-stats
+core lsdtt-channel-network-analysis
+core lsdtt-drainage-analysis
+core lsdtt-surface-metrics
+core lsdtt-spectral-analysis
+core lsdtt-cosmo-tool
+core lsdtt-cosmo-prediction
+core lsdtt-crn-column-tool
+core lsdtt-mountain-front
+core lsdtt-raster-calculator
+core lsdtt-ridgeline-analysis
+core lsdtt-stream-burning
+core lsdtt-swath-profile
+core lsdtt-synthetic-networks
+core lsdtt-valley-centreline
+core lsdtt-lem
+core lsdtt-bearing-comparison

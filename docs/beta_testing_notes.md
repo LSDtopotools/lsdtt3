@@ -56,13 +56,13 @@ generateResolvConf = false
 
 You will have been given (or can download from the Releases page) a
 self-contained bundle named
-`lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz`. It contains the
+`lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz`. It contains the
 command-line tools plus every library they need - nothing is installed
 system-wide and no `sudo` is needed.
 
 ```bash
-tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
-source lsdtt3-backend-linux-x86_64-minimal-v<version>/setenv.sh
+tar -xzf lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
+source lsdtt3-backend-linux-x86_64-<profile>-v<version>/setenv.sh
 ```
 
 If the file is on your Windows desktop, the path in WSL2 is
@@ -178,8 +178,8 @@ login` asks.
 ```bash
 gh release download v0.3.0 --repo LSDtopotools/lsdtt3 \
     --pattern "lsdtt3-backend-linux-*.tar.gz" -D ~/
-tar -xzf ~/lsdtt3-backend-linux-x86_64-minimal-v0.3.0.tar.gz -C ~/
-source ~/lsdtt3-backend-linux-x86_64-minimal-v0.3.0/setenv.sh
+tar -xzf ~/lsdtt3-backend-linux-x86_64-<profile>-v0.3.0.tar.gz -C ~/
+source ~/lsdtt3-backend-linux-x86_64-<profile>-v0.3.0/setenv.sh
 ```
 
 Replace `v0.3.0` with the tag the developer told you to use. Then follow
@@ -205,7 +205,7 @@ The workflow:
 3. Runs `tools/make_release.sh`, which configures and builds in Release
    mode, smoke-checks the release CLIs, and packages the self-contained
    backend bundle (`tools/package_linux_backend.sh`).
-4. Attaches `lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz` to a
+4. Attaches `lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz` to a
    GitHub Release named after the tag.
 
 ### Creating an official release

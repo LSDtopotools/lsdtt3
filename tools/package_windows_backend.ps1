@@ -13,12 +13,14 @@ param(
     [string]$Triplet = "x64-windows",
     [string]$PluginVersionRange = ">=0.1.0 <0.3.0",
 
-    [string[]]$CliNames = @(
-        "lsdtt-raster-preprocessing",
-        "lsdtt-channel-extraction",
-        "lsdtt-chi-analysis",
-        "lsdtt-basin-extraction"
-    ),
+    # CLI set to package: qgis / core (from tools/cli_profiles.txt) or all
+    # (every lsdtt-*.exe in the build directory, excluding lsdtt-test-*).
+    # Windows bundles feed the QGIS plugin, so the default is qgis.
+    [ValidateSet("qgis", "core", "all")]
+    [string]$CliProfile = "qgis",
+
+    # Explicit list; overrides -CliProfile (bundle is labelled 'custom').
+    [string[]]$CliNames = @(),
 
     # Staged when present in the build, skipped with a warning otherwise
     # (lsdtt-spectral-analysis is only built when FFTW3 is available).
@@ -29,6 +31,41 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# ---------------------------------------------------------------------------
+# Resolve the CLI list: explicit -CliNames wins; otherwise -CliProfile
+# decides. qgis/core come from tools/cli_profiles.txt; all = every
+# lsdtt-*.exe in the build directory (excluding lsdtt-test-*).
+# ---------------------------------------------------------------------------
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if ($CliNames.Count -gt 0) {
+    $CliProfile = "custom"
+}
+elseif ($CliProfile -eq "all") {
+    $exeDirs = @($BuildDir, (Join-Path $BuildDir "bin")) | Where-Object { Test-Path $_ }
+    $CliNames = $exeDirs |
+        ForEach-Object { Get-ChildItem -Path $_ -Filter "lsdtt-*.exe" -File -ErrorAction SilentlyContinue } |
+        Where-Object { $_.BaseName -notlike "lsdtt-test-*" } |
+        ForEach-Object { $_.BaseName } |
+        Sort-Object -Unique
+    if ($CliNames.Count -eq 0) {
+        throw "CliProfile 'all' found no lsdtt-*.exe in $BuildDir"
+    }
+    Write-Host "Profile 'all': packaging $($CliNames.Count) CLIs discovered in the build directory"
+}
+else {
+    $profilesFile = Join-Path $scriptDir "cli_profiles.txt"
+    if (-not (Test-Path $profilesFile)) {
+        throw "profiles file not found: $profilesFile"
+    }
+    $CliNames = Get-Content $profilesFile |
+        Where-Object { $_ -notmatch '^\s*(#|$)' } |
+        ForEach-Object { $parts = $_ -split '\s+'; if ($parts[0] -eq $CliProfile) { $parts[1] } } |
+        Where-Object { $_ }
+    if ($CliNames.Count -eq 0) {
+        throw "profile '$CliProfile' has no entries in $profilesFile"
+    }
+}
 
 # Resolve a CLI executable from either:
 # - <build_dir>/<cli>.exe
@@ -215,7 +252,7 @@ if (-not (Test-Path $projData)) {
     throw "PROJ data directory not found: $projData"
 }
 
-$bundleName = "lsdtt3-backend-win64-minimal-v$Version"
+$bundleName = "lsdtt3-backend-win64-$CliProfile-v$Version"
 $stage = Join-Path $outAbs $bundleName
 $stageBin = Join-Path $stage "bin"
 $stageShare = Join-Path $stage "share"
@@ -238,6 +275,7 @@ foreach ($cli in $CliNames) {
     $stagedCliNames += $cli
 }
 foreach ($cli in $OptionalCliNames) {
+    if ($stagedCliNames -contains $cli) { continue }
     try {
         $exe = Resolve-ExePath -BaseDir $buildAbs -CliName $cli
     } catch {
@@ -351,7 +389,7 @@ $readme = $readme.Replace('@TOOL_LIST@', $toolListMd)
 # Build manifest with metadata and per-file SHA256 checksums.
 $manifest = [ordered]@{
     backend_version = $Version
-    profile = "minimal-windows"
+    profile = "$CliProfile-windows"
     architecture = "win64"
     plugin_version_range = $PluginVersionRange
     generated_utc = (Get-Date).ToUniversalTime().ToString("o")

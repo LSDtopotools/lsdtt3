@@ -26,12 +26,12 @@ Self-contained Linux bundles are attached to each
 You do not need to install a compiler, any system libraries, or use `sudo` -
 the bundle carries the command-line tools plus every library they need.
 
-Download `lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz` from the
+Download `lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz` from the
 Releases page and run:
 
 ```bash
-tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
-source lsdtt3-backend-linux-x86_64-minimal-v<version>/setenv.sh
+tar -xzf lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
+source lsdtt3-backend-linux-x86_64-<profile>-v<version>/setenv.sh
 ```
 
 `setenv.sh` must be **`source`d** (not run with `bash`); it sets `PATH` and
@@ -207,8 +207,8 @@ From the repository root (x64 Visual Studio developer shell):
 
 This creates:
 
-- `dist/lsdtt3-backend-win64-minimal-v0.2.0.zip` (the file to distribute)
-- `dist/lsdtt3-backend-win64-minimal-v0.2.0/` (staging folder used to build the zip)
+- `dist/lsdtt3-backend-win64-<profile>-v0.2.0.zip` (the file to distribute)
+- `dist/lsdtt3-backend-win64-<profile>-v0.2.0/` (staging folder used to build the zip)
 
 What the bundle includes:
 
@@ -339,8 +339,8 @@ chmod +x tools/package_linux_backend.sh
 
 This creates:
 
-- `dist/lsdtt3-backend-linux-x86_64-minimal-v0.2.0.tar.gz` (file to distribute)
-- `dist/lsdtt3-backend-linux-x86_64-minimal-v0.2.0/` (staging folder)
+- `dist/lsdtt3-backend-linux-x86_64-<profile>-v0.2.0.tar.gz` (file to distribute)
+- `dist/lsdtt3-backend-linux-x86_64-<profile>-v0.2.0/` (staging folder)
 
 Bundle contents:
 

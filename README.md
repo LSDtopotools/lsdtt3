@@ -50,7 +50,7 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, Claude Haiku, Sonn
 
 `lsdtt3` is currently in private beta. 
 
-Self-contained pre-built Linux bundles are attached to each [GitHub Release](../../releases/latest) as `lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz`.
+Self-contained pre-built Linux bundles are attached to each [GitHub Release](../../releases/latest) as `lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz`.
 
 If you wish to test the latest development routines you will need to compile the code. 
 
@@ -69,12 +69,12 @@ For more details see the `/docs` directory of this repository.
 ### Step 2a - install tagged versions of lsdtt3
 
 Download the Linux backend bundle
-(`lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz`) from the Releases
+(`lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz`) from the Releases
 page (or from the link the developer sent you), then unpack and activate it:
 
 ```bash
-tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
-source lsdtt3-backend-linux-x86_64-minimal-v<version>/setenv.sh
+tar -xzf lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
+source lsdtt3-backend-linux-x86_64-<profile>-v<version>/setenv.sh
 ```
 
 The bundle is self-contained: it includes the command-line tools and every
