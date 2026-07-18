@@ -76,11 +76,14 @@ static void print_banner()
     std::cout
         << "=========================================================\n"
         << "|| Welcome to lsdtt-surface-metrics                    ||\n"
-        << "|| I am going to analyse some rasters for you          ||\n"
+        << "|| Hillshade, slope, curvature, roughness, and         ||\n"
+        << "|| surface-shape classification from a DEM             ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
-        << "|| Version : " << k_version  << "\n"
-        << "|| Citation: " << k_citation << "\n"
+        << "|| CLI version: " << k_version  << "\n"
+        << "|| Citation   : " << k_citation << "\n"
+        << "|| -v or --version : full lsdtt3 release version\n"
+        << "|| -h              : help explaining the parameters\n"
         << "=========================================================\n\n";
 }
 

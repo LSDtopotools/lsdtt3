@@ -51,6 +51,13 @@ From: ubuntu:22.04
         libeigen3-dev
 
     # -------------------------------------------------------------------------
+    # NetCDF - C library, used for crn_parameters.nc (cosmogenic nuclide
+    # atmospheric / palaeomagnetic correction data)
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        libnetcdf-dev
+
+    # -------------------------------------------------------------------------
     # OpenCV - development headers
     # -------------------------------------------------------------------------
     apt-get install -y \
@@ -115,6 +122,9 @@ From: ubuntu:22.04
 
     echo "--- Checking Eigen3 ---"
     pkg-config --modversion eigen3
+
+    echo "--- Checking NetCDF ---"
+    pkg-config --modversion netcdf
 
     echo "--- Checking OpenCV ---"
     pkg-config --modversion opencv4 || pkg-config --modversion opencv

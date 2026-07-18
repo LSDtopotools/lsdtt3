@@ -2,6 +2,34 @@
 
 Utility scripts for building and packaging redistributable backend bundles.
 
+## `make_release.sh` (the release driver)
+
+Single entry point for producing a Linux release: resolves the version
+(from `--version` or an exact `v*` tag on HEAD), checks it against
+`project(lsdtt3 VERSION ...)` in CMakeLists.txt, configures and builds,
+smoke-checks every release CLI (`-v`), packages via
+`package_linux_backend.sh`, and optionally publishes with `gh`.
+
+GitHub Actions (`.github/workflows/release.yml`) calls this same script on
+`v*` tag pushes, so a local run exercises exactly the CI path. The list of
+CLIs shipped in a release lives at the top of this script (`RELEASE_CLIS`).
+
+```bash
+# local test build only (artifact in dist/)
+tools/make_release.sh --version 0.3.0
+
+# local prerelease published to GitHub (zero Actions minutes)
+tools/make_release.sh --version 0.3.0-rc1 --publish --prerelease
+
+# repack an existing build without rebuilding
+tools/make_release.sh --version 0.3.0 --skip-build --build-dir build
+```
+
+Full release workflow and rationale: `docs/release_ci_plan.md`.
+Windows and macOS bundles are built by hand on the respective machines
+with the per-platform scripts below, then attached with
+`gh release upload v<version> dist/<bundle>`.
+
 There is one packaging script per platform, all producing the same bundle
 layout (`bin/`, `lib/` on Unix, `share/gdal`, `share/proj`, `setenv.*`,
 `README.md`, `manifest.json`, `THIRD_PARTY_NOTICES.txt`, `LICENSE`):

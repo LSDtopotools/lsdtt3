@@ -7,7 +7,8 @@ A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) wit
 **Copyright:** Simon M. Mudd  
 **Licence:** GPL-3.0  
 **Additional developers:** Rutger Vervoordeldonk
-**Additional authors of proted code:** Fiona Clubb, Stuart Grieve, David Milodowski, Boris Gailleton, Martin Hurst, Declan Valters 
+
+**Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Boris Gailleton, Martin Hurst, Declan Valters 
 
 ---
 
@@ -39,7 +40,7 @@ Key improvements over LSDTopoTools2:
 - Many algorithms made more robust and/or faster (e.g., Spectral analysis, proximity tools, metrics based on moving windows). 
 - Overall, users should have more flexibility/ease for file I/O, should see less memory consumption (and as a result be able to process bigger datasets and have fewer segmentation faults), and should see speedup of a number of key algorithms.
 
-LLM Usage:
+## LLM Usage:
 
 Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, Claude Haiku, Sonnet, and Opus) and to port legacy code and write new routines, with testing against baselines (e.g., lsdtt2 outputs, previous iterations of algorithms) and regular code review. 
 
@@ -49,7 +50,7 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, Claude Haiku, Sonn
 
 `lsdtt3` is currently in private beta. 
 
-Pre-built executables for Ubuntu 22.04 are attached to each [GitHub Release](../../releases/latest) as `lsdtt3-ubuntu-22.04.tar.gz`.
+Self-contained pre-built Linux bundles are attached to each [GitHub Release](../../releases/latest) as `lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz`.
 
 If you wish to test the latest development routines you will need to compile the code. 
 
@@ -67,15 +68,21 @@ For more details see the `/docs` directory of this repository.
 
 ### Step 2a - install tagged versions of lsdtt3
 
-Download `lsdtt3-ubuntu-22.04.tar.gz` from the Releases page (or from the
-link the developer sent you) and run:
+Download the Linux backend bundle
+(`lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz`) from the Releases
+page (or from the link the developer sent you), then unpack and activate it:
 
 ```bash
-bash install.sh /mnt/c/Users/YourName/Desktop/lsdtt3-ubuntu-22.04.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
+source lsdtt3-backend-linux-x86_64-minimal-v<version>/setenv.sh
 ```
 
-The installer installs the required system libraries, unpacks all the
-command-line tools to `~/.local/lsdtt3/bin`, and adds them to your `PATH`.
+The bundle is self-contained: it includes the command-line tools and every
+library they need, so nothing is installed system-wide and no `sudo` is
+required. `setenv.sh` must be **`source`d** (not run with `bash`) and sets
+up the current terminal session only. To make it permanent, add that
+`source` line to the end of your `~/.bashrc` (use the full path to
+`setenv.sh`).
 
 ### Step 2b
 
@@ -95,7 +102,7 @@ If you see a list of parameters the installation succeeded.
 
 Please include:
 - the exact command you ran
-- the full terminal output (copy and paste)
+- the full terminal output (copy and paste, not a screenshot)
 - your Ubuntu version: `cat /etc/os-release | grep VERSION=`
 
 **Full installation and troubleshooting notes:** `docs/beta_testing_notes.md`

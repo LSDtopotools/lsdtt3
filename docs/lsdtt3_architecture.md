@@ -722,7 +722,11 @@ CLI source files follow this layout, in order:
 1. file-header comment block (copyright, brief description, outputs, usage)
 2. `#include` block
 3. `static const` version, citation, and tool-name strings
-4. `print_banner()` — fixed-width box to stdout
+4. `print_banner()` — fixed-width box to stdout. Required content: a
+   brief summary of what the CLI does; `|| CLI version: <k_version>`
+   (labelled as the CLI's own version, not the package version);
+   the citation; a line pointing to `-v` / `--version` for the full
+   lsdtt3 release version; and a line pointing to `-h` for parameter help
 5. helper free functions (if unavoidable — see helper rule below)
 6. `main()`:
    a. call `print_banner()` and `lsdtt_param_parser::parse_args_deferred()`
@@ -1061,6 +1065,17 @@ declarations via `print_terminal_help()` (see the CLI design rule and
 `parse_args` free function. Each CLI declares
 `static const std::string k_tool_name = "lsdtt-foo";`
 alongside `k_version` and `k_citation`.
+
+**Version reporting (`-v` / `--version`):** prints both the CLI's own
+`k_version` and the package-level version, e.g.
+`lsdtt-chi-analysis version 0.2.0 (lsdtt3 0.2.0)`. The package version is
+injected by CMake as the `LSDTT3_VERSION` compile definition on
+`lsdtt3_core` (used only in `lsdtt_param_parser.cpp`). A build made exactly
+on the release tag `v<PROJECT_VERSION>` reports the plain version; any
+other build reports a development string derived from `git describe`, e.g.
+`0.3.0-dev, git v0.2.0-14-g04460f4-dirty` — so distributed development
+builds self-identify. Captured at configure time (rerun cmake to refresh).
+Per-CLI `k_version` numbers are versioned independently of the package.
 
 ---
 

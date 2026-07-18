@@ -70,9 +70,11 @@ static void print_banner()
         << "|| This is a simple landscape evolution model                 ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd and Rutger Vervoordeldonk  ||\n"
         << "================================================================\n"
-        << "|| Version : " << k_version  << "\n"
-        << "|| Citation: " << k_citation << "\n"
-        << "=========================================================\n\n";
+        << "|| CLI version: " << k_version  << "\n"
+        << "|| Citation   : " << k_citation << "\n"
+        << "|| -v or --version : full lsdtt3 release version\n"
+        << "|| -h              : help explaining the parameters\n"
+        << "================================================================\n\n";
 }
 
 // -----------------------------------------------------------------------------

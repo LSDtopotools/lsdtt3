@@ -70,12 +70,14 @@ static void print_banner()
     std::cout
         << "=========================================================\n"
         << "|| Welcome to lsdtt-chi-analysis                       ||\n"
-        << "|| I am going to test chi extraction and analysis      ||\n"
-        << "|| extraction, fitting, disorder, and inversion        ||\n"
+        << "|| Chi analysis of channel networks: chi extraction,   ||\n"
+        << "|| profile fitting, disorder metrics, ksn inversion    ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
-        << "|| Version : " << k_version  << "\n"
-        << "|| Citation: " << k_citation << "\n"
+        << "|| CLI version: " << k_version  << "\n"
+        << "|| Citation   : " << k_citation << "\n"
+        << "|| -v or --version : full lsdtt3 release version\n"
+        << "|| -h              : help explaining the parameters\n"
         << "=========================================================\n\n";
 }
 

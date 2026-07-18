@@ -60,9 +60,11 @@ static void print_banner()
         << "|| Welcome to lsdtt-feature-finder                     ||\n"
         << "|| This looks for features like drains and channels    ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
-        << "========================================================\n"
-        << "|| Version : " << k_version  << "\n"
-        << "|| Citation: " << k_citation << "\n"
+        << "=========================================================\n"
+        << "|| CLI version: " << k_version  << "\n"
+        << "|| Citation   : " << k_citation << "\n"
+        << "|| -v or --version : full lsdtt3 release version\n"
+        << "|| -h              : help explaining the parameters\n"
         << "=========================================================\n\n";
 }
 

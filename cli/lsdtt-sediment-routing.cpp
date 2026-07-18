@@ -59,8 +59,10 @@ static void print_banner()
         << "|| 1D reach-scale bedload sediment routing        ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                ||\n"
         << "=====================================================\n"
-        << "|| Version : " << k_version  << "\n"
-        << "|| Citation: " << k_citation << "\n"
+        << "|| CLI version: " << k_version  << "\n"
+        << "|| Citation   : " << k_citation << "\n"
+        << "|| -v or --version : full lsdtt3 release version\n"
+        << "|| -h              : help explaining the parameters\n"
         << "=====================================================\n\n";
 }
 

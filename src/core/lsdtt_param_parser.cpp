@@ -24,6 +24,12 @@
 #include <sstream>
 #include <stdexcept>
 
+// Package-level version injected by CMake (release: "X.Y.Z"; development
+// build: "X.Y.Z-dev, git <describe>"). Distinct from each CLI's k_version.
+#ifndef LSDTT3_VERSION
+#define LSDTT3_VERSION "unknown"
+#endif
+
 namespace lsdtt {
 
 // -----------------------------------------------------------------------------
@@ -909,7 +915,8 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
         }
         if (is_flag(a, {"-v", "--version", "version", "-V"}))
         {
-            std::cout << tool_name << " version " << version << "\n";
+            std::cout << tool_name << " version " << version
+                      << " (lsdtt3 " << LSDTT3_VERSION << ")\n";
             std::exit(0);
         }
         if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))

@@ -4,6 +4,30 @@ project(lsdtt3 VERSION 0.2.0 LANGUAGES CXX)
 include(CTest)
 
 # =============================================================================
+# Full package version string (release vs development build)
+# =============================================================================
+# A build made exactly on the matching release tag (v<PROJECT_VERSION>)
+# reports the plain version. Any other build reports a -dev version plus
+# the git describe string (last tag, commits since, commit hash, -dirty).
+# Captured at configure time: rerun cmake to refresh after new commits.
+set(LSDTT3_FULL_VERSION "${PROJECT_VERSION}")
+find_package(Git QUIET)
+if(GIT_EXECUTABLE AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" describe --tags --dirty --always
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        RESULT_VARIABLE LSDTT3_GIT_RC
+        OUTPUT_VARIABLE LSDTT3_GIT_DESCRIBE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(LSDTT3_GIT_RC EQUAL 0 AND NOT LSDTT3_GIT_DESCRIBE STREQUAL "v${PROJECT_VERSION}")
+        set(LSDTT3_FULL_VERSION "${PROJECT_VERSION}-dev, git ${LSDTT3_GIT_DESCRIBE}")
+    endif()
+endif()
+message(STATUS "lsdtt3 package version: ${LSDTT3_FULL_VERSION}")
+
+# =============================================================================
 # C++ standard
 # =============================================================================
 set(CMAKE_CXX_STANDARD 17)
@@ -179,6 +203,11 @@ set(LSDTT3_CORE_SOURCES
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
+
+target_compile_definitions(lsdtt3_core
+    PRIVATE
+        LSDTT3_VERSION="${LSDTT3_FULL_VERSION}"
+)
 
 target_include_directories(lsdtt3_core
     PUBLIC

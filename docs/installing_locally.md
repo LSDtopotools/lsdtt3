@@ -21,20 +21,25 @@ points to the detailed instructions for each platform.
 
 ## Pre-built install (beta)
 
-Pre-built executables for Ubuntu 22.04 are attached to each
+Self-contained Linux bundles are attached to each
 [GitHub Release](https://github.com/LSDtopotools/lsdtt3/releases/latest).
-You do not need to install a compiler or manage any build dependencies.
+You do not need to install a compiler, any system libraries, or use `sudo` -
+the bundle carries the command-line tools plus every library they need.
 
-Download `lsdtt3-ubuntu-22.04.tar.gz` from the Releases page and run:
+Download `lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz` from the
+Releases page and run:
 
 ```bash
-bash install.sh /path/to/lsdtt3-ubuntu-22.04.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
+source lsdtt3-backend-linux-x86_64-minimal-v<version>/setenv.sh
 ```
 
-The script installs the required runtime libraries via `apt`, unpacks all
-command-line tools to `~/.local/lsdtt3/bin`, and adds them to your `PATH`.
-Open a new terminal afterwards and run `lsdtt-channel-extraction --help` to
-verify.
+`setenv.sh` must be **`source`d** (not run with `bash`); it sets `PATH` and
+the library/data environment for the current terminal session. To make the
+setup permanent, add that `source` line (with the full path to `setenv.sh`)
+to the end of your `~/.bashrc`. Verify with
+`lsdtt-raster-preprocessing --help`. The bundle's own `README.md` has full
+platform-specific instructions, including Google Colab.
 
 Full details, troubleshooting, and instructions for reporting bugs are in
 [`docs/beta_testing_notes.md`](beta_testing_notes.md).
@@ -48,7 +53,7 @@ full Ubuntu 22.04 environment without leaving Windows.
 
 **For beta testers (no compilation needed):**  
 Install WSL2 and Ubuntu, then follow the [pre-built install](#pre-built-install-beta)
-steps above. The `install.sh` script works identically inside WSL2.
+steps above. The bundle works identically inside WSL2.
 
 **For developers who want to build from source:**  
 See [`docs/lsdtt3_in_windows.md`](lsdtt3_in_windows.md) for the complete

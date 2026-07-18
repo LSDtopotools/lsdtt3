@@ -54,53 +54,45 @@ generateResolvConf = false
 
 ### Step 2 — Install lsdtt3
 
-**If you have been given a `.tar.gz` file directly** (the repo is private so the
-download link requires a GitHub account):
+You will have been given (or can download from the Releases page) a
+self-contained bundle named
+`lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz`. It contains the
+command-line tools plus every library they need - nothing is installed
+system-wide and no `sudo` is needed.
 
 ```bash
-bash install.sh /path/to/lsdtt3-ubuntu-22.04.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz
+source lsdtt3-backend-linux-x86_64-minimal-v<version>/setenv.sh
 ```
 
-Replace `/path/to/` with the actual location. If the file is on your Windows
-desktop, the path in WSL2 is:
-```bash
-bash install.sh /mnt/c/Users/YourWindowsUsername/Desktop/lsdtt3-ubuntu-22.04.tar.gz
-```
+If the file is on your Windows desktop, the path in WSL2 is
+`/mnt/c/Users/YourWindowsUsername/Desktop/...`.
 
-**If the repo is public and you have a GitHub account with access:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/LSDtopotools/lsdtt3/main/install.sh | bash
-```
-
-The installer:
-- installs the required system libraries (GDAL, FFTW, OpenCV) via `apt`
-- unpacks the pre-built executables to `~/.local/lsdtt3/bin`
-- adds that directory to your `PATH` in `~/.bashrc`
+`setenv.sh` must be **`source`d**, not run with `bash`: it only exports
+environment variables (`PATH`, `LD_LIBRARY_PATH`, `GDAL_DATA`, `PROJ_DATA`),
+which vanish with the child shell if executed. It applies to the current
+terminal session; to make it permanent, add the `source` line (with the
+full path to `setenv.sh`) to the end of your `~/.bashrc`.
 
 ### Step 3 — Verify the installation
 
-After the installer finishes, either open a new terminal or run:
-
-```bash
-source ~/.bashrc
-```
-
-Then check that the tools are visible:
+After sourcing `setenv.sh`, check that the tools are visible:
 
 ```bash
 lsdtt-channel-extraction --help
 lsdtt-basin-extraction --help
 ```
 
-Each command should print a list of parameters. If you see `command not found`,
-check that `~/.local/lsdtt3/bin` is in your `PATH`:
+Each command should print a list of parameters. If you see `command not
+found`, check that the bundle's `bin` directory is in your `PATH`:
 
 ```bash
 echo $PATH | tr ':' '\n' | grep lsdtt3
 ```
 
-If nothing is printed, run `source ~/.bashrc` again and retry.
+If nothing is printed, `source` the bundle's `setenv.sh` again in this
+terminal and retry (each new terminal needs it unless you added the source
+line to `~/.bashrc`).
 
 ### Step 4 — Accessing your Windows files from WSL2
 
@@ -184,12 +176,13 @@ login` asks.
 ### Step 3 — Download the release tarball and install
 
 ```bash
-gh release download v0.1.0 --repo LSDtopotools/lsdtt3 \
-    --pattern "lsdtt3-ubuntu-22.04.tar.gz" -D /tmp/
-bash install.sh /tmp/lsdtt3-ubuntu-22.04.tar.gz
+gh release download v0.3.0 --repo LSDtopotools/lsdtt3 \
+    --pattern "lsdtt3-backend-linux-*.tar.gz" -D ~/
+tar -xzf ~/lsdtt3-backend-linux-x86_64-minimal-v0.3.0.tar.gz -C ~/
+source ~/lsdtt3-backend-linux-x86_64-minimal-v0.3.0/setenv.sh
 ```
 
-Replace `v0.1.0` with the tag the developer told you to use. Then follow
+Replace `v0.3.0` with the tag the developer told you to use. Then follow
 Steps 3 and 4 from the section above (verify the installation and access your
 Windows files).
 
@@ -201,52 +194,70 @@ Windows files).
 
 The file `.github/workflows/release.yml` defines a GitHub Actions workflow that
 runs automatically whenever a version tag is pushed to the repository. GitHub
-Actions works on private repositories.
+Actions works on private repositories, but minutes are metered, so the
+workflow runs only on version tags (and manual dispatch) - see
+`docs/release_ci_plan.md` for the full design.
 
 The workflow:
 
 1. Starts an Ubuntu 22.04 virtual machine.
-2. Installs the same apt packages that beta testers will have (`libgdal-dev`,
-   `libfftw3-dev`, `libopencv-dev`, `libeigen3-dev`).
-3. Runs `cmake` and builds all `lsdtt-*` executables in Release mode.
-4. Packs them into `lsdtt3-ubuntu-22.04.tar.gz`.
-5. Attaches the tarball to a GitHub Release named after the tag.
+2. Installs the build dependencies via apt.
+3. Runs `tools/make_release.sh`, which configures and builds in Release
+   mode, smoke-checks the release CLIs, and packages the self-contained
+   backend bundle (`tools/package_linux_backend.sh`).
+4. Attaches `lsdtt3-backend-linux-x86_64-minimal-v<version>.tar.gz` to a
+   GitHub Release named after the tag.
 
-### Creating a release
+### Creating an official release
 
 1. Make sure `main` is in the state you want to release and all tests pass.
-2. Choose a version number following semantic versioning, e.g. `v0.2.1`.
-3. Tag and push:
+2. Choose a version number following semantic versioning, e.g. `0.3.0`.
+3. Bump `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` to match and
+   commit (the build fails on purpose if the tag and CMake version differ).
+4. Tag and push:
    ```bash
-   git tag v0.2.1
-   git push origin v0.2.1
+   git tag v0.3.0
+   git push origin main v0.3.0
    ```
-4. Go to the repository on GitHub → **Actions**. You will see the
-   "Build and release" workflow running. It takes roughly 5–10 minutes.
-5. When it finishes, go to **Releases**. A new release named `v0.2.1` will have
-   been created automatically with `lsdtt3-ubuntu-22.04.tar.gz` attached.
-6. Download that file and share it with beta testers (email, shared drive, etc.).
+5. Go to the repository on GitHub -> **Actions**. You will see the
+   "Build and release" workflow running.
+6. When it finishes, go to **Releases**. A new release named `v0.3.0` will
+   have been created automatically with the Linux bundle attached.
+7. Optionally build and attach the Windows / macOS bundles from the
+   respective machines (`tools/package_windows_backend.ps1`,
+   `tools/package_macos_backend.sh`), then
+   `gh release upload v0.3.0 dist/<bundle>`.
 
-### Running the build manually (without a tag)
+### Test releases between versions (no Actions minutes)
 
-You can trigger the workflow at any time from the GitHub Actions tab:
+The same release can be built entirely locally - useful for sharing an
+experimental build with a beta tester without spending CI minutes on the
+private repo:
 
-1. Go to **Actions** → **Build and release** → **Run workflow**.
-2. Leave the tag input blank and click **Run workflow**.
-3. After it completes the tarball is available as a workflow **artifact**
-   (visible in the run summary, downloadable for 14 days).
+```bash
+tools/make_release.sh --version 0.3.0-rc1 --publish --prerelease
+```
 
-This is useful for producing a test build to share with a beta tester without
-creating an official release.
+This builds, smoke-checks, packages, and creates a GitHub **prerelease**
+with the bundle attached (uploading release assets costs no Actions
+minutes). Without `--publish` it stops at `dist/` and you can share the
+tarball by any other route. Development builds self-identify: their
+binaries report e.g. `lsdtt3 0.3.0-dev, git v0.2.0-14-g04460f4` from
+`-v` / `--version`.
 
-### Updating the install script after a dependency change
+You can also trigger the CI workflow manually (Actions -> Build and
+release -> Run workflow); a manual run builds at the current CMake version
+and uploads the bundle as a workflow **artifact** (14-day retention), not
+a release.
 
-If a new optional dependency is added to CMakeLists.txt, update two places:
+### After a dependency change
 
-- **`.github/workflows/release.yml`** — add the `-dev` package to the
-  `Install dependencies` step so the CI build picks it up.
-- **`install.sh`** — add the corresponding runtime package to `RUNTIME_PACKAGES`
-  so beta testers have it installed before running the binary.
+If a new dependency is added to CMakeLists.txt, add the `-dev` package to
+the `Install dependencies` step of `.github/workflows/release.yml` (and to
+`apptainer_def/lsdtt3.def`). The bundle picks up new runtime libraries
+automatically - the packaging script resolves the dependency closure with
+`ldd` and fails if anything is missing, so there is no separate runtime
+package list to maintain.
 
 ---
 
