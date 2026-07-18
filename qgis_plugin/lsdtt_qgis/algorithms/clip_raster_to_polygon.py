@@ -14,7 +14,7 @@ from qgis.core import (
     QgsProcessingParameterVectorLayer,
 )
 
-from .support import layer_file_path, require_output, run_lsdtt_tool, split_layer_source
+from .support import attach_backend_help, layer_file_path, require_output, run_lsdtt_tool, split_layer_source
 
 
 class ClipRasterToPolygonAlgorithm(QgsProcessingAlgorithm):
@@ -81,6 +81,8 @@ class ClipRasterToPolygonAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(proj)
 
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_CLIPPED, "Clipped raster"))
+
+        attach_backend_help(self, "lsdtt-raster-preprocessing")
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

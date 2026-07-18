@@ -35,6 +35,93 @@ def expected_output_path(output_folder, output_prefix, suffix):
     return os.path.join(output_folder, "{}{}".format(output_prefix, suffix))
 
 
+def next_qgis_driver_name(directory, dem_stem):
+    """Return the next free parameter-file name for a QGIS-driven run.
+
+    Files follow <dem_stem>_qgis_analysis_NNN.driver with NNN starting at
+    001 and incrementing per existing file in `directory`, so every QGIS
+    run leaves a reproducible driver next to the input DEM.
+    """
+    prefix = "{}_qgis_analysis_".format(dem_stem)
+    highest = 0
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        entries = []
+    for entry in entries:
+        if not entry.startswith(prefix) or not entry.endswith(".driver"):
+            continue
+        counter = entry[len(prefix):-len(".driver")]
+        if counter.isdigit():
+            highest = max(highest, int(counter))
+    return "{}{:03d}.driver".format(prefix, highest + 1)
+
+
+# Aliases from common QGIS wrapper parameter names to lsdtt parameter keys,
+# for cases where the lowercased QGIS name is not itself an lsdtt key.
+_HELP_KEY_ALIASES = {
+    "input_dem": "read_fname",
+    "output_folder": "write_path",
+    "output_prefix": "write_fname",
+    "output_format": "write_output_format",
+    "threads": "n_threads",
+}
+
+
+def build_backend_help_index(payload):
+    """Return {lsdtt_key: parameter_record} from a --help-json payload.
+
+    Returns {} for None or malformed payloads so callers can no-op.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    params = payload.get("parameters")
+    if not isinstance(params, list):
+        return {}
+    index = {}
+    for record in params:
+        if isinstance(record, dict) and record.get("name"):
+            # Lowercased keys: lsdtt names are matched case-insensitively
+            # (e.g. QGIS "CHI_A0" vs backend "chi_A0").
+            index[record["name"].lower()] = record
+    return index
+
+
+def lookup_param_help(index, qgis_name, override=None):
+    """Return backend help text for a QGIS parameter name, or None.
+
+    Matching order: explicit override key, lowercased QGIS name, alias
+    table, then the lsdtt naming-convention suffixes `_raster` (bool
+    output switches), `_choice` (algorithm enums), and the
+    `*_format` -> `*_output_format` vector-format convention. All
+    comparisons are case-insensitive.
+    """
+    key = override.lower() if override else None
+    if key is None:
+        base = qgis_name.lower()
+        candidates = [
+            base,
+            _HELP_KEY_ALIASES.get(base),
+            base + "_raster",
+            base + "_choice",
+        ]
+        if base.endswith("_format"):
+            candidates.append(base[: -len("_format")] + "_output_format")
+        for candidate in candidates:
+            if candidate and candidate in index:
+                key = candidate
+                break
+    record = index.get(key) if key else None
+    if not isinstance(record, dict):
+        return None
+    description = (record.get("description") or "").strip()
+    guidance = (record.get("guidance") or "").strip()
+    parts = [p for p in (description, guidance) if p]
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
 def extract_json_payload(text):
     """Return the JSON object embedded in CLI output, or None.
 

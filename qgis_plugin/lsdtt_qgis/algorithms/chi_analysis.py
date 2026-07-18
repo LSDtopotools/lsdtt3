@@ -18,6 +18,7 @@ from qgis.core import (
 )
 
 from .support import (
+    attach_backend_help,
     extension_for_format,
     require_output,
     run_lsdtt_tool,
@@ -460,6 +461,33 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_DATA_MAP_LINES, "Chi data map lines"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_INVERSION_BEST, "Inversion best-model CSV"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_INVERSION_TRIALS, "Inversion trials CSV"))
+
+        attach_backend_help(
+            self,
+            "lsdtt-chi-analysis",
+            overrides={
+                self.BOOTSTRAP_SEED: "bootstrap_random_seed",
+                self.FIT_NETWORKS: "fit_chi_networks",
+                self.PRINT_DATA_MAPS: "print_chi_data_maps",
+                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.WRITE_DATA_MAP_LINES: "write_chi_data_map_lines",
+                self.WRITE_KSN_SUMMARY: "write_ksn_basin_summary",
+                self.WRITE_SEGMENT_LINES: "write_chi_fit_segment_lines",
+                self.BOOTSTRAP_FULL_TRIBUTARY_COUNT: "bootstrap_sample_full_tributary_count",
+                self.BOOTSTRAP_N_SIDE_BRANCHES: "bootstrap_n_side_branches_per_replicate",
+                self.DATA_MAPS_FORMAT: "chi_data_maps_output_format",
+                self.DATA_MAP_LINES_FORMAT: "chi_data_map_lines_output_format",
+                self.FIT_CRITICAL_DIVERGENCE: "fit_critical_divergence_m",
+                self.INVERSION_USE_MAE: "inversion_use_mae_for_model_selection",
+                self.MOVE_OUTLET_UPSTREAM: "n_pixels_move_outlet_upstream",
+                self.SEGMENT_LINES_FORMAT: "chi_fit_segment_lines_output_format",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SNAPPING_METHOD: "basin_outlet_snapping_method",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
+                self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
+                self.SUBSET_N_SIDE_BRANCHES: "subset_n_side_branches_per_sample",
+            },
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

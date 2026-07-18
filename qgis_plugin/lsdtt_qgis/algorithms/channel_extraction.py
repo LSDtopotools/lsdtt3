@@ -18,6 +18,7 @@ from qgis.core import (
 )
 
 from .support import (
+    attach_backend_help,
     extension_for_format,
     layer_file_path,
     require_output,
@@ -274,6 +275,30 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_WIENER_FILTERED_DEM, "Wiener filtered DEM"))
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_WIENER_CURVATURE, "Wiener tangential curvature"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_WIENER_QQ, "Wiener QQ table"))
+
+        attach_backend_help(
+            self,
+            "lsdtt-channel-extraction",
+            overrides={
+                self.JUNCTIONS_FORMAT: "channel_network_junctions_output_format",
+                self.LINES_FORMAT: "channel_network_lines_output_format",
+                self.POINTS_FORMAT: "channel_network_points_output_format",
+                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.WIENER_WRITE_CURVATURE: "wiener_write_tangential_curvature",
+                self.WIENER_WRITE_QQ: "wiener_write_qq_table",
+                self.WRITE_CHANNEL_LINES: "write_channel_network_lines",
+                self.WRITE_CHANNEL_POINTS: "write_channel_network_points",
+                self.WRITE_D8_FLOWDIR: "write_arcmap_d8_flowdirection_raster",
+                self.WRITE_JUNCTIONS: "write_channel_network_junctions",
+                self.BURNED_PROFILES_FORMAT: "burned_stream_profiles_output_format",
+                self.SOURCE_ALGORITHM: "source_extraction_algorithm_choice",
+                self.STREAM_VECTOR: "stream_vector_path",
+                self.WIENER_CC_THRESHOLD: "wiener_connected_components_threshold_pixels",
+                self.WIENER_FITTING_RADIUS: "wiener_surface_fitting_radius_m",
+                self.WIENER_PRUNING_AREA: "wiener_pruning_drainage_area_m2",
+                self.WRITE_BURNED_PROFILES: "write_burned_stream_profiles",
+            },
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

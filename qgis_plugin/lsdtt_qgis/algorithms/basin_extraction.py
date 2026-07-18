@@ -19,6 +19,7 @@ from qgis.core import (
 )
 
 from .support import (
+    attach_backend_help,
     extension_for_format,
     layer_file_path,
     require_output,
@@ -395,6 +396,38 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_CHANNEL_LINES, "Channel network lines"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_CHANNEL_POINTS, "Channel network points"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_JUNCTIONS, "Channel network junctions"))
+
+        attach_backend_help(
+            self,
+            "lsdtt-basin-extraction",
+            overrides={
+                self.FILTER_BY_AREA: "filter_basins_by_area",
+                self.FILTER_INCOMPLETE: "filter_incomplete_basins",
+                self.FILTER_NESTED: "filter_nested_basins",
+                self.MAX_AREA_PIXELS: "basins_max_area_pixels",
+                self.MAX_STREAM_ORDER: "basins_max_stream_order",
+                self.MIN_AREA_PIXELS: "basins_min_area_pixels",
+                self.MIN_STREAM_ORDER: "basins_min_stream_order",
+                self.OUTLINES_AS_POLYGON: "write_basin_outlines_as_polygon",
+                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.WRITE_BASIN_OUTLETS: "write_basin_outlet_points",
+                self.WRITE_CHANNEL_LINES: "write_channel_network_lines",
+                self.WRITE_CHANNEL_POINTS: "write_channel_network_points",
+                self.WRITE_JUNCTIONS: "write_channel_network_junctions",
+                self.WRITE_OUTLINES_CSV: "write_basin_outlines_to_csv",
+                self.WRITE_SELECTED_OUTLETS_CSV: "write_selected_basin_outlets_csv",
+                self.CROSSING_LINE: "crossing_line_fname",
+                self.CROSSING_MIN_PIXELS: "crossing_minimum_contributing_pixels",
+                self.FILTER_ALL_BUT_LARGEST: "filter_all_but_largest_basin",
+                self.FILTER_BY_STREAM_ORDER: "filter_basins_by_stream_order",
+                self.FILTER_NESTED_BY_ORDER: "filter_nested_by_stream_order",
+                self.OUTLINES_PER_ORDER: "write_basin_outlines_per_order",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SNAPPING_METHOD: "basin_outlet_snapping_method",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
+                self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
+            },
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

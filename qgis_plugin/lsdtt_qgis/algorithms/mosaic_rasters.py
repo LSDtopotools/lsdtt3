@@ -13,7 +13,7 @@ from qgis.core import (
     QgsProcessingParameterString,
 )
 
-from .support import layer_file_path, require_output, run_lsdtt_tool
+from .support import attach_backend_help, layer_file_path, require_output, run_lsdtt_tool
 
 
 class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
@@ -54,6 +54,8 @@ class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(proj)
 
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_MOSAIC, "Mosaic raster"))
+
+        attach_backend_help(self, "lsdtt-raster-preprocessing")
 
     def processAlgorithm(self, parameters, context, feedback):
         raster_layers = self.parameterAsLayerList(parameters, self.INPUT_RASTERS, context)

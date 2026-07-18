@@ -1,8 +1,11 @@
 import os
 
 from lsdtt_qgis.naming import (
+    build_backend_help_index,
     expected_output_path,
     extension_for_format,
+    lookup_param_help,
+    next_qgis_driver_name,
     split_source,
     strip_layer_suffix,
 )
@@ -36,3 +39,82 @@ def test_expected_output_path_concatenates_prefix_and_suffix():
     assert expected_output_path("/out", "demo", "_depressions.fgb") == os.path.join(
         "/out", "demo_depressions.fgb"
     )
+
+
+def test_next_qgis_driver_name_starts_at_001(tmp_path):
+    assert next_qgis_driver_name(str(tmp_path), "my_dem") == (
+        "my_dem_qgis_analysis_001.driver"
+    )
+
+
+def test_next_qgis_driver_name_increments_past_existing(tmp_path):
+    (tmp_path / "my_dem_qgis_analysis_001.driver").write_text("x")
+    (tmp_path / "my_dem_qgis_analysis_007.driver").write_text("x")
+    assert next_qgis_driver_name(str(tmp_path), "my_dem") == (
+        "my_dem_qgis_analysis_008.driver"
+    )
+
+
+def test_next_qgis_driver_name_ignores_other_stems_and_junk(tmp_path):
+    (tmp_path / "other_dem_qgis_analysis_004.driver").write_text("x")
+    (tmp_path / "my_dem_qgis_analysis_abc.driver").write_text("x")
+    (tmp_path / "my_dem_qgis_analysis_002.txt").write_text("x")
+    assert next_qgis_driver_name(str(tmp_path), "my_dem") == (
+        "my_dem_qgis_analysis_001.driver"
+    )
+
+
+def test_next_qgis_driver_name_survives_missing_directory():
+    assert next_qgis_driver_name("/nonexistent/dir", "dem").endswith("_001.driver")
+
+
+def _sample_help_payload():
+    return {
+        "tool": "lsdtt-raster-preprocessing",
+        "version": "0.2.0",
+        "parameters": [
+            {
+                "name": "minimum_elevation",
+                "description": "Mask pixels at or below this elevation [m].",
+                "guidance": "Default 0.0 catches ocean pixels.",
+            },
+            {
+                "name": "write_fill_raster",
+                "description": "Write the pit-filled DEM.",
+                "guidance": "",
+            },
+            {
+                "name": "fill_algorithm_choice",
+                "description": "Pit-filling algorithm.",
+                "guidance": "barnes2014 or wang_liu.",
+            },
+            {"name": "n_threads", "description": "Thread count.", "guidance": ""},
+            {"name": "no_text", "description": "", "guidance": ""},
+        ],
+    }
+
+
+def test_build_backend_help_index_handles_bad_payloads():
+    assert build_backend_help_index(None) == {}
+    assert build_backend_help_index({"parameters": "nope"}) == {}
+    index = build_backend_help_index(_sample_help_payload())
+    assert "minimum_elevation" in index
+
+
+def test_lookup_param_help_exact_and_suffix_matches():
+    index = build_backend_help_index(_sample_help_payload())
+    text = lookup_param_help(index, "MINIMUM_ELEVATION")
+    assert text.startswith("Mask pixels")
+    assert "ocean pixels" in text
+    assert lookup_param_help(index, "WRITE_FILL") == "Write the pit-filled DEM."
+    assert lookup_param_help(index, "FILL_ALGORITHM").startswith("Pit-filling")
+
+
+def test_lookup_param_help_alias_override_and_misses():
+    index = build_backend_help_index(_sample_help_payload())
+    assert lookup_param_help(index, "THREADS") == "Thread count."
+    assert lookup_param_help(index, "SOMETHING_ELSE") is None
+    assert lookup_param_help(index, "SOMETHING_ELSE", override="n_threads") == (
+        "Thread count."
+    )
+    assert lookup_param_help(index, "NO_TEXT") is None

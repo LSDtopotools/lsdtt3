@@ -16,6 +16,7 @@ from qgis.core import (
 )
 
 from .support import (
+    attach_backend_help,
     extension_for_format,
     require_output,
     run_lsdtt_tool,
@@ -431,6 +432,21 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_CARVE_DIFF, "Carve difference raster"))
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_BINARY_MASKED, "Binary-masked raster"))
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_DEPRESSIONS, "Depression polygons"))
+
+        attach_backend_help(
+            self,
+            "lsdtt-raster-preprocessing",
+            overrides={
+                self.ALLOW_LAMBERT: "allow_lambert_projection",
+                self.WRITE_CLIPPED_RECT: "write_clipped_rectangle_raster",
+                self.WRITE_MD_HILLSHADE: "write_multidirectional_hillshade_raster",
+                self.WRITE_NODATA_FILLED: "write_filled_nodata_raster",
+                self.BINARY_MASK: "binary_mask_fname",
+                self.DEPRESSION_FORMAT: "depression_polygons_output_format",
+                self.MD_N_DIRECTIONS: "multidirectional_hillshade_n_directions",
+                self.MD_START_AZIMUTH: "multidirectional_hillshade_start_azimuth",
+            },
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

@@ -16,6 +16,7 @@ from qgis.core import (
 )
 
 from .support import (
+    attach_backend_help,
     extension_for_format,
     layer_file_path,
     require_output,
@@ -162,6 +163,24 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_MAIN_CHANNEL, "Main channel"))
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_OUTLETS, "Tributary outlet points"))
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_OUTLINES, "Tributary basin outlines"))
+
+        attach_backend_help(
+            self,
+            "lsdtt-basin-extraction",
+            overrides={
+                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.WRITE_MAIN_CHANNEL: "write_side_tributary_main_channel",
+                self.WRITE_OUTLETS: "write_side_tributary_outlets",
+                self.WRITE_OUTLINES: "write_side_tributary_basin_outlines",
+                self.INPUT_POINTS: "side_tributary_points_fname",
+                self.MIN_CONTRIBUTING_PIXELS: "side_tributary_minimum_contributing_pixels",
+                self.POINTS_LAYER_NAME: "side_tributary_points_layer",
+                self.REJECT_INCOMPLETE: "reject_incomplete_side_tributary_basins",
+                self.STOPPING_WINDOW: "side_tributary_stopping_point_window_pixels",
+                self.USE_STOPPING_POINT: "include_side_tributary_stopping_point",
+                self.VECTOR_FORMAT: "side_tributary_vector_output_format",
+            },
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)
