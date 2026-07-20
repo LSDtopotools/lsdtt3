@@ -17,6 +17,44 @@
 //   models. Computers & Geosciences, 62, 117-127.
 //   DOI: 10.1016/j.cageo.2013.04.024
 //
+// -----------------------------------------------------------------------------
+// FLAT HANDLING: lsdtt3 and RichDEM do DIFFERENT things
+//
+// RichDEM is used as the external reference in the flow-routing benchmark
+// (docs/testing_and_benchmarking.md), so it is worth being explicit about
+// where the two agree and where they deliberately do not.
+//
+//   min_slope == 0  -- equivalent to RichDEM's FillDepressions(epsilon=false).
+//                      Verified bit-exact against it on both a high-relief and
+//                      a low-relief real DEM.
+//
+//   min_slope > 0   -- NOT equivalent to RichDEM's FillDepressions(epsilon=true),
+//                      despite both being described as "epsilon fill".
+//
+//                      lsdtt3 imposes a true SLOPE: each cell in a flat is
+//                      raised by min_slope * cell_size (times sqrt(2) on the
+//                      diagonal). The imposed gradient is uniform across the
+//                      raster, scales correctly with resolution, and is
+//                      independent of elevation and of the storage type.
+//
+//                      RichDEM instead raises each cell to the next
+//                      representable float above its neighbour
+//                      (std::nextafter, i.e. one ULP). That step depends on
+//                      elevation magnitude and data type: ~1.2e-4 m at 2000 m
+//                      in float32, ~7.6e-6 m at 100 m, and a denormal 1.4e-45 m
+//                      near zero elevation. RichDEM therefore refuses integer
+//                      rasters outright.
+//
+// Consequence for anyone comparing outputs: the two agree closely in high
+// relief, where the flat-gradient term is a negligible fraction of the total
+// fill volume (measured 0.01 % on an Alpine DEM), and diverge substantially in
+// low relief, where it is not (29.5 % on a Finnish Lakeland DEM, giving a 40x
+// difference in material moved). Neither is wrong; they are answering the
+// question differently. The slope-based formulation here is deliberate -- 
+// the ULP approach was evaluated and rejected for lsdtt3 because of potential 
+// errors in data type and rasters that cross 0 elevation.
+// -----------------------------------------------------------------------------
+//
 // Breach algorithm:
 //   Lindsay, J.B. (2016) Efficient hybrid breaching-filling sink removal
 //   methods for flow path enforcement in digital elevation models.

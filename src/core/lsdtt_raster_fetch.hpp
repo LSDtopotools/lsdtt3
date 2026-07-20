@@ -10,16 +10,16 @@
 // Native DEM fetching: turn a WGS84 bounding box into an analysis-ready
 // projected raster, using only GDAL. No Python, no extra dependency.
 //
-// Plan: docs/fetch_raster_cli_plan.md (Phase 1).
+// Testing and benchmarking notes: docs/testing_and_benchmarking.md
 //
-// Source (Phase 1): Copernicus GLO-30 on the AWS Open Data registry. Public,
+// Source: Copernicus GLO-30 on the AWS Open Data registry. Public,
 // keyless, stable URL scheme, stored as Cloud-Optimised GeoTIFFs, so only the
 // requested window travels over the wire (HTTP range requests) rather than a
 // whole 1-degree tile.
 //
 // *** CREDENTIALS ***
-// This header intentionally contains NO credential fields, and Phase 1 needs
-// none: the only source is keyless. When keyed providers arrive (plan Sec2
+// This header intentionally contains NO credential fields. The default source
+// is keyless, so most users never supply one. When keyed providers arrive (docs/testing_and_benchmarking.md
 // tiers 1-3) their secrets must come from lsdtt_secret (environment variable,
 // key file, or TTY prompt) and must NEVER become:
 //   - a member of lsdtt_fetch_options,
@@ -51,7 +51,7 @@ namespace lsdtt {
 // -----------------------------------------------------------------------------
 // lsdtt_dem_source
 //
-// Only cop30_aws is implemented in Phase 1. The others are declared so callers
+// Sources are declared here so callers
 // and CLI help can be written against the final vocabulary, and each returns a
 // clear "not implemented" result rather than silently doing something else.
 // -----------------------------------------------------------------------------

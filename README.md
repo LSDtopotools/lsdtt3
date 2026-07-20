@@ -185,6 +185,7 @@ export PATH=/path/to/lsdtt3/build:$PATH
 | `LSDTT_EIGEN` | `ON` | Build Eigen3-dependent routines (auto-disabled if Eigen3 not found) |
 | `LSDTT_ENABLE_BENCHMARKS` | `OFF` | Register the RichDEM comparison benchmarks (needs network + pixi) |
 | `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Register tests that download data |
+| `LSDTT_ENABLE_PERF_TESTS` | `OFF` | Register flow-routing performance benchmarks |
 
 ---
 
@@ -210,6 +211,7 @@ Tests are grouped by label, so you can run just the part you care about:
 | `cosmo` | Cosmogenic-nuclide physics against CRONUS and pinned numerics sentinels |
 | `flow` | Flow routing and depression handling: properties, and RichDEM comparison |
 | `fetch` | Native DEM fetching (`lsdtt_raster_fetch`); offline logic by default |
+| `performance` | In-process timings of the flow routines (opt-in; reported, not asserted) |
 | `benchmark` | Opt-in comparison against RichDEM on fetched real DEMs |
 
 ```sh
@@ -224,8 +226,11 @@ optional tool can never turn the build red.
 
 **No DEM is committed to this repository.** Tests that need real topography fetch
 it on demand from public keyless sources and cache it under
-`tests/data/dem_cache/` (gitignored), using `lsdtt-fetch-raster` itself. See
-`tests/README.md` for the full suite description.
+`tests/data/dem_cache/` (gitignored), using `lsdtt-fetch-raster` itself.
+
+See `tests/README.md` for what each test does, and
+`docs/testing_and_benchmarking.md` for methodology, benchmark results, and the
+places where lsdtt3 and RichDEM deliberately differ.
 
 ---
 
@@ -310,6 +315,7 @@ lsdtt-drainage-analysis     my_params.driver
 
 | Document | Contents |
 |---|---|
+| `docs/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
 | `docs/lsdtt3_architecture.md` | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
 | `docs/developer_onboarding.md` | Getting-started guide for new contributors. |
 | `docs/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |

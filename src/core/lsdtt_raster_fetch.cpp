@@ -94,7 +94,7 @@ private:
 // handler for the probe's lifetime only.
 //
 // This is also where credential masking will hook in once keyed providers land
-// (plan Sec1 rule 4): GDAL error messages include the failing URL, so a key in
+// (docs/testing_and_benchmarking.md rule 4): GDAL error messages include the failing URL, so a key in
 // a query string would otherwise leak to stderr on any failure.
 // -----------------------------------------------------------------------------
 class quiet_gdal_errors
@@ -1053,7 +1053,7 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
         return make_error(
             "lsdtt::fetch_dem: source '" + dem_source_name(options.source) +
             "' is not supported (available: cop30_aws, opentopography, "
-            "planetary_computer; see docs/fetch_raster_cli_plan.md)");
+            "planetary_computer; see docs/testing_and_benchmarking.md)");
     }
 
     if (options.source == lsdtt_dem_source::opentopography &&

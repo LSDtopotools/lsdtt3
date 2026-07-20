@@ -6,7 +6,7 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 //
 // -----------------------------------------------------------------------------
-// Phase 3 of docs/fetch_raster_cli_plan.md: tests for credential handling.
+// Part of the flow-routing benchmark (docs/testing_and_benchmarking.md): tests for credential handling.
 //
 // lsdtt_secret is the only place in lsdtt3 that touches secrets, so it gets its
 // own test driver rather than being folded into the fetch tests. Everything
@@ -308,7 +308,7 @@ int main(int argc, char** argv)
     const std::string work_dir = (argc > 1) ? argv[1] : ".";
 
     std::cout << "lsdtt3 credential handling tests "
-                 "(docs/fetch_raster_cli_plan.md Phase 3)\n\n";
+                 " (docs/testing_and_benchmarking.md)\n\n";
 
     test_masking();
     std::cout << "\n";

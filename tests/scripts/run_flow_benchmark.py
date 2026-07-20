@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Flow-routing benchmark driver: lsdtt3 vs RichDEM.
 
-Phase 2 of docs/flow_routing_benchmark_plan.md.
+docs/testing_and_benchmarking.md.
 
 Runs an lsdtt3 CLI and the corresponding RichDEM reference over the same fetched
-fixture, computes the comparison metrics of plan Sec4, and writes one row per
+fixture, computes the comparison metrics of docs/testing_and_benchmarking.md, and writes one row per
 comparison to benchmark_results.csv.
 
 Phase 2 scope is the harness: metrics are computed and REPORTED.  Tolerances are
-deliberately not asserted yet -- plan Sec8 Q2 requires pinning them just above
+deliberately not asserted yet -- docs/testing_and_benchmarking.md requires pinning them just above
 observed divergence once real numbers exist, otherwise a tolerance asserts
 nothing.  Pass --check to enforce whatever tolerances have been pinned in
 TOLERANCES so far.
@@ -34,6 +34,30 @@ import time
 
 SKIP_EXIT = 77
 
+# Comparisons that are recorded but NOT asserted, keyed "comparison@reference".
+# RichDEM's accumulation is here because its D8 rule differs from lsdtt3's by
+# design (see above), so pinning a tolerance against it would enshrine that
+# difference as if it were lsdtt3 error.
+REPORT_ONLY = {
+    "accum_d8@richdem", "accum_dinf@richdem", "accum_mfd@richdem",
+}
+
+# Reference implementations. Each is a standalone script invoked as a
+# subprocess so that a missing optional package is a clean skip rather than an
+# import failure in the driver.
+#
+# richdem     -- valid for depression handling; NOT valid for D8 flow direction
+#                (it uses lowest-neighbour with a diagonal-preferring tie-break
+#                rather than steepest descent, and fails a planar-ramp oracle).
+# topotoolbox -- true steepest descent, same rule as lsdtt3; the reference that
+#                accumulation comparisons are actually asserted against.
+#
+# See docs/testing_and_benchmarking.md.
+REFERENCE_SCRIPTS = {
+    "richdem":     "richdem_reference.py",
+    "topotoolbox": "topotoolbox_reference.py",
+}
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 FIXTURE_DIR = REPO_ROOT / "tests" / "data" / "dem_cache"
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
@@ -43,8 +67,8 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 #
 # Fixtures are fetched by the lsdtt3 CLI itself (`lsdtt-fetch-raster`), not by a
 # Python helper -- the Python fetcher was retired once the C++ path was shown to
-# produce byte-identical output (plan Sec4a). Two terrain regimes, because they
-# diverge very differently: see plan Sec2.3.
+# produce byte-identical output. Two terrain regimes, because they
+# diverge very differently: see docs/testing_and_benchmarking.md
 #
 # Each fixture is a centre point plus a pixel count. The bounding box is widened
 # by a margin so the exact centre crop cannot run off the edge onto nodata after
@@ -113,7 +137,7 @@ def ensure_fixture(fixture_key: str, fetch_exe: pathlib.Path) -> pathlib.Path:
 
     print(f"fetching fixture {fixture_key} ({FIXTURES[name]['description']})")
     proc = subprocess.run([str(fetch_exe), str(param_dir), param_path.name],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=system_env())
 
     if proc.returncode != 0:
         # An unreachable source is a missing dependency, not a test failure.
@@ -129,40 +153,173 @@ def ensure_fixture(fixture_key: str, fetch_exe: pathlib.Path) -> pathlib.Path:
 # Comparison definitions.  `richdem_routine` names a routine in
 # richdem_reference.py; `lsdtt_suffix` is the output file lsdtt3 writes.
 #
-# NOTE on fill (plan Sec4.2): lsdtt3's fill_min_slope defaults to 1e-4, which
+# NOTE on fill: lsdtt3's fill_min_slope defaults to 1e-4, which
 # imposes an epsilon gradient across flats, while RichDEM's epsilon=False gives
 # true flats.  These SHOULD disagree.  The tight comparison is min_slope=0 vs
 # epsilon=False; the epsilon pair is a loose shape-agreement check only.
+#
+# The two epsilon variants are NOT the same operation: RichDEM
+# raises each cell by one ULP (std::nextafter), which scales with elevation
+# magnitude and dtype, while lsdtt3 applies a constant slope.  They happen to
+# nearly coincide at Alpine elevations in float32 (ULP = 1.22e-4 vs 1e-4) and
+# diverge by ~40x in volume moved at Lakeland elevations (ULP = 7.6e-6).  That
+# is why the epsilon tolerances below differ so wildly between fixtures.
 COMPARISONS = {
     "fill": {
-        "richdem_routine": "fill",
+        "references": {"richdem": "fill", "topotoolbox": "fill"},
         "lsdtt_suffix": "_fill.tif",
         "params": {"write_fill_raster": "true", "fill_min_slope": "0"},
         "kind": "elevation",
         "note": "Barnes 2014, no epsilon -- the tight comparison",
     },
     "fill_epsilon": {
-        "richdem_routine": "fill_epsilon",
+        "references": {"richdem": "fill_epsilon"},
         "lsdtt_suffix": "_fill.tif",
         "params": {"write_fill_raster": "true", "fill_min_slope": "0.0001"},
         "kind": "elevation",
-        "note": "epsilon gradients differ in detail; shape agreement only",
+        "note": ("lsdtt3 steps by a constant min_slope, RichDEM by one ULP "
+                 " -- shape agreement only"),
     },
     "breach": {
-        "richdem_routine": "breach",
+        "references": {"richdem": "breach"},
         "lsdtt_suffix": "_breached.tif",
         "params": {"write_breached_raster": "true",
                    "breach_algorithm_choice": "lindsay2016"},
         "kind": "elevation",
-        "note": "both implementations pit-flatten before carving (plan Sec7a)",
+        "note": "both implementations pit-flatten before carving",
+    },
+
+    # -------------------------------------------------------------------------
+    # Flow accumulation (docs/testing_and_benchmarking.md, Phase 4)
+    #
+    # Run on the SAME filled DEM that lsdtt3 produced, with raster_is_filled so
+    # the drainage CLI does not fill again. That isolates the accumulation
+    # algorithm: any difference here cannot be blamed on the fill, which the
+    # `fill` comparison has already shown to be bit-exact.
+    #
+    # *** REPORT-ONLY, NOT ASSERTED ***
+    # RichDEM is not a valid reference for D8 flow direction: its D8 picks the
+    # neighbour with the LOWEST ELEVATION and breaks ties toward diagonals
+    # (richdem/flowmet/d8_flowdirs.hpp:63-71) rather than the steepest DESCENT
+    # (drop / distance). On a planar ramp with a known analytic answer it routes
+    # diagonally and gets the accumulation wrong, where lsdtt3 is exact. Pinning
+    # tolerances against it would enshrine that as if it were lsdtt3 error.
+    #
+    # The real assertions live in tests/cpp/test_flow_properties.cpp: P4 mass
+    # conservation, P5 monotonicity, P8 exact planar-ramp oracle -- none of
+    # which need a reference implementation.
+    # -------------------------------------------------------------------------
+    "accum_d8": {
+        "references": {"richdem": "accum_d8", "topotoolbox": "accum_d8"},
+        "lsdtt_suffix": "_d8_drainage_area.tif",
+        "params": {"write_d8_drainage_area_raster": "true",
+                   "raster_is_filled": "true"},
+        "kind": "accumulation",
+        "stage": "drainage",
+        "note": "D8, O'Callaghan & Mark (1984)",
+    },
+    "accum_dinf": {
+        "references": {"richdem": "accum_dinf"},
+        "lsdtt_suffix": "_dinf_drainage_area.tif",
+        "params": {"write_dinf_drainage_area_raster": "true",
+                   "raster_is_filled": "true"},
+        "kind": "accumulation",
+        "stage": "drainage",
+        "note": "D-infinity, Tarboton (1997) -- proportioning rules diverge more",
+    },
+    "accum_mfd": {
+        "references": {"richdem": "accum_mfd"},
+        "lsdtt_suffix": "_mfd_drainage_area.tif",
+        "params": {"write_mfd_drainage_area_raster": "true",
+                   "raster_is_filled": "true", "mfd_exponent": "1.0"},
+        "kind": "accumulation",
+        "stage": "drainage",
+        "note": "MFD, Quinn (1991) vs RichDEM's Freeman -- loosest comparison",
     },
 }
 
-# Pinned tolerances (plan Sec4).  None = not yet pinned, reported only.
+# -----------------------------------------------------------------------------
+# Pinned tolerances (docs/testing_and_benchmarking.md, Phase 3)
+#
+# Pinned just above OBSERVED divergence, per docs/testing_and_benchmarking.md: a tolerance set to a
+# round number far above reality asserts nothing.
+#
+# Keyed by FIXTURE as well as comparison, because breach divergence turned out
+# to be fixture-dependent -- alpine breach measured 4.54 m on one fixture build
+# and 0.00 m on another. A single global tolerance would either be too loose for
+# alpine or too tight for lakeland.
+#
+# Each entry:
+#   max_abs          maximum |lsdtt3 - richdem| over valid cells, metres
+#   frac_differing   fraction of valid cells differing by more than 1 cm
+#   volume_ratio_max upper bound on max(r, 1/r) where r is the ratio of material
+#                    each implementation moved. 1.0 means they moved exactly the
+#                    same volume; 40 means one moved 40x the other.
+#
+# The exact-zero pins are deliberate, not laziness. lsdtt3's Barnes 2014 fill is
+# bit-exact against RichDEM on both terrain regimes, and both routines are
+# serial, so the result is deterministic. Pinning 0.0 makes any future
+# divergence -- however small -- a failure, which is exactly what we want from a
+# port that is supposed to reproduce a reference implementation. It is only safe
+# because EXPECTED_FIXTURE_SHA below guarantees we are scoring the same raster.
+#
+# The volume bounds tell a story the cell-wise metrics do not: in LOW relief
+# lsdtt3's epsilon fill moves ~40x more material than RichDEM's, and its breach
+# carves ~3.7x more, while in HIGH relief the same comparisons are 1.002x and
+# 1.000x. The epsilon schemes are genuinely different operations (lsdtt3 imposes
+# min_slope across every flat; RichDEM adds a minimal float increment) and that
+# only becomes visible where flats dominate. These bounds are pinned to hold the
+# CURRENT behaviour, not to bless it -- see docs/testing_and_benchmarking.md
+# -----------------------------------------------------------------------------
 TOLERANCES = {
-    "fill":         {"max_abs": None, "frac_differing": None},
-    "fill_epsilon": {"max_abs": None, "frac_differing": None},
-    "breach":       {"max_abs": None, "frac_differing": None},
+    "alpine_small": {
+        # Barnes 2014 vs RichDEM epsilon=False: bit-exact.
+        "fill@richdem":         {"max_abs": 0.0,  "frac_differing": 0.0,
+                                 "volume_ratio_max": 1.0},
+        # ... and bit-exact against TopoToolbox's fillsinks too, which is a
+        # genuinely independent implementation rather than a sibling port.
+        "fill@topotoolbox":     {"max_abs": 0.0,  "frac_differing": 0.0,
+                                 "volume_ratio_max": 1.0},
+        "fill_epsilon@richdem": {"max_abs": 0.12, "frac_differing": 0.006,
+                                 "volume_ratio_max": 1.005},
+        "breach@richdem":       {"max_abs": 0.0,  "frac_differing": 0.0,
+                                 "volume_ratio_max": 1.0},
+        # D8 accumulation is IDENTICAL to TopoToolbox on this fixture -- same
+        # steepest-descent rule, and steep terrain leaves almost no ties to
+        # break. Pinned tight so any divergence fails.
+        "accum_d8@topotoolbox": {"rank_correlation_min": 0.9999,
+                                 "top_channels_rel": 1e-6, "total_rel": 1e-6},
+    },
+    "lakeland_small": {
+        "fill@richdem":         {"max_abs": 0.0,  "frac_differing": 0.0,
+                                 "volume_ratio_max": 1.0},
+        "fill@topotoolbox":     {"max_abs": 0.0,  "frac_differing": 0.0,
+                                 "volume_ratio_max": 1.0},
+        "fill_epsilon@richdem": {"max_abs": 0.55, "frac_differing": 0.92,
+                                 "volume_ratio_max": 45.0},
+        "breach@richdem":       {"max_abs": 0.95, "frac_differing": 0.032,
+                                 "volume_ratio_max": 4.0},
+        # Low relief does NOT reproduce exactly, and that is expected rather
+        # than alarming: after epsilon filling, flat ground still leaves many
+        # near-ties, and D8 must pick one neighbour. Tie-breaking moves WHICH
+        # cell carries a value without changing the network, which is precisely
+        # what rank correlation tolerates and a cell-wise diff would not. The
+        # binding constraint here is the rank correlation, not the channel
+        # agreement.
+        "accum_d8@topotoolbox": {"rank_correlation_min": 0.93,
+                                 "top_channels_rel": 0.17, "total_rel": 0.002},
+    },
+}
+
+# SHA256 (first 12 hex chars) of the fixture each tolerance set was pinned
+# against. Fixture content depends on the GDAL build that fetched it, and a
+# regenerated fixture is a different raster -- applying pinned tolerances to it
+# would be meaningless. On mismatch the run SKIPS with an explanation rather
+# than failing, because a different GDAL is an environment difference, not a
+# defect in lsdtt3.
+EXPECTED_FIXTURE_SHA = {
+    "alpine_small":   "899cc313e27c",
+    "lakeland_small": "2af105584b68",
 }
 
 
@@ -189,8 +346,18 @@ def load_raster(path: pathlib.Path):
     return arr, valid
 
 
-def elevation_metrics(a_path, b_path, tol=0.01):
-    """Plan Sec4.1 metrics for two elevation rasters."""
+def elevation_metrics(a_path, b_path, original_path=None, tol=0.01):
+    """Plan Sec4.1 metrics for two elevation rasters.
+
+    `original_path` is the unmodified input DEM. It is needed for the volume
+    check: docs/testing_and_benchmarking.md asks for a "total fill volume ratio", i.e. how much
+    material each implementation moved. Comparing sums of ELEVATIONS instead
+    would be datum-dependent -- adding 1000 m to every cell would change the
+    ratio without changing anything about the algorithms -- and in low relief it
+    is dominated by the datum rather than by the fill. Comparing sums of
+    |change from the original| is datum-independent and is what the metric was
+    meant to be.
+    """
     import numpy as np
 
     a, va = load_raster(a_path)
@@ -200,7 +367,7 @@ def elevation_metrics(a_path, b_path, tol=0.01):
         raise RuntimeError(f"shape mismatch {a.shape} vs {b.shape}")
 
     # The nodata masks must match exactly.  A mismatch is a bug, never
-    # something to absorb into a tolerance (plan Sec4.1).
+    # something to absorb into a tolerance.
     mask_identical = bool((va == vb).all())
     both = va & vb
     n = int(both.sum())
@@ -210,10 +377,21 @@ def elevation_metrics(a_path, b_path, tol=0.01):
     d = a[both] - b[both]
     ad = np.abs(d)
 
-    # Fill volume ratio: integral check that catches systematic offsets a
-    # cell-wise max would miss.
-    sum_a, sum_b = float(a[both].sum()), float(b[both].sum())
-    volume_ratio = (sum_a / sum_b) if sum_b != 0 else float("nan")
+    # Volume of material moved by each implementation, relative to the original
+    # DEM. Integral check: catches a systematic offset that a cell-wise maximum
+    # would miss.
+    volume_ratio = float("nan")
+    if original_path is not None:
+        original, vo = load_raster(original_path)
+        common = both & vo
+        if common.any():
+            moved_a = float(np.abs(a[common] - original[common]).sum())
+            moved_b = float(np.abs(b[common] - original[common]).sum())
+            if moved_b != 0.0:
+                volume_ratio = moved_a / moved_b
+            elif moved_a == 0.0:
+                # Neither implementation changed anything: agreement is perfect.
+                volume_ratio = 1.0
 
     return {
         "mask_identical": mask_identical,
@@ -225,6 +403,173 @@ def elevation_metrics(a_path, b_path, tol=0.01):
         "signed_max": float(d.max()),
         "volume_ratio": volume_ratio,
     }
+
+
+def system_env():
+    """Environment for running lsdtt3 binaries from inside the pixi env.
+
+    The driver runs under `pixi run -e benchmark` so that RichDEM is importable,
+    but the lsdtt3 CLIs are C++ binaries built against the SYSTEM GDAL. Left
+    alone, they inherit pixi's LD_LIBRARY_PATH and load pixi's libgdal.so.38,
+    which needs a newer libstdc++ than the system one they were linked with:
+
+        libstdc++.so.6: version `CXXABI_1.3.15' not found (required by
+        .../.pixi/envs/benchmark/lib/libgdal.so.38)
+
+    Stripping the environment-injected library and data paths makes each binary
+    resolve the libraries it was actually built against. This bit
+    lsdtt-drainage-analysis and not lsdtt-raster-preprocessing, purely because
+    of which libraries each happens to pull in -- so it is worth removing for
+    all of them rather than waiting for the next one to trip over it.
+    """
+    import os
+    env = dict(os.environ)
+    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GDAL_DATA",
+                "GDAL_DRIVER_PATH", "PROJ_DATA", "PROJ_LIB", "CONDA_PREFIX"):
+        env.pop(key, None)
+    return env
+
+
+def cell_area_of(path: pathlib.Path) -> float:
+    """Pixel area in projection units, from the geotransform."""
+    from osgeo import gdal
+    gdal.UseExceptions()
+    gt = gdal.Open(str(path)).GetGeoTransform()
+    return abs(gt[1] * gt[5])
+
+
+def accumulation_metrics(lsdtt_path, richdem_path, cell_area, top_fraction=0.01):
+    """Plan Sec4.3 metrics for two flow-accumulation rasters.
+
+    UNIT CONVENTION: lsdtt3 reports drainage AREA in m^2 (its accumulate()
+    weights each cell by cell_size^2); RichDEM reports a CELL COUNT, with
+    sources = 1. Dividing the lsdtt3 raster by the cell area puts both in cell
+    counts. Getting this wrong would show up as a constant 900x discrepancy on
+    a 30 m grid rather than as anything subtle, but it is worth stating.
+    """
+    import numpy as np
+
+    a, va = load_raster(lsdtt_path)
+    b, vb = load_raster(richdem_path)
+
+    if a.shape != b.shape:
+        raise RuntimeError(f"shape mismatch {a.shape} vs {b.shape}")
+
+    both = va & vb
+    n = int(both.sum())
+    if n == 0:
+        raise RuntimeError("no overlapping valid cells")
+
+    a_cells = a[both] / cell_area      # m^2 -> cell counts
+    b_cells = b[both]
+
+    # Rank correlation over all cells. Deliberately the primary structural
+    # metric: D8 tie-breaking on flats differs between implementations, which
+    # moves WHICH cell carries a value without changing the network. A
+    # cell-wise diff punishes that; a rank correlation tolerates it while still
+    # catching a genuine routing difference.
+    try:
+        from scipy.stats import spearmanr
+        rho = float(spearmanr(a_cells, b_cells).statistic)
+    except Exception:
+        # Fall back to Pearson on ranks, which is the same quantity.
+        ra = np.argsort(np.argsort(a_cells)).astype("float64")
+        rb = np.argsort(np.argsort(b_cells)).astype("float64")
+        rho = float(np.corrcoef(ra, rb)[0, 1])
+
+    # Main channels: the top fraction of cells by accumulation. These carry the
+    # signal most analyses actually depend on, and agreement there matters far
+    # more than agreement on hillslope cells with accumulation of 1-3.
+    k = max(1, int(round(top_fraction * n)))
+    top_a = np.sort(a_cells)[-k:]
+    top_b = np.sort(b_cells)[-k:]
+    denom = np.where(top_b == 0.0, 1.0, top_b)
+    top_rel = float(np.abs(top_a - top_b).max() / np.abs(denom).max())
+
+    sum_a, sum_b = float(a_cells.sum()), float(b_cells.sum())
+    total_rel = abs(sum_a - sum_b) / sum_b if sum_b else float("nan")
+
+    return {
+        "mask_identical": bool((va == vb).all()),
+        "n_valid": n,
+        "rank_correlation": rho,
+        "top_channels_rel": top_rel,
+        "total_rel": total_rel,
+        "max_cells_lsdtt": float(a_cells.max()),
+        "max_cells_richdem": float(b_cells.max()),
+    }
+
+
+def count_interior_minima(path: pathlib.Path) -> int:
+    """Interior cells strictly lower than all eight neighbours.
+
+    Plan Sec4.1 calls this the most valuable line in the benchmark: it says the
+    filled DEM is genuinely depression-free regardless of what RichDEM thinks,
+    so it still has teeth if both implementations are wrong in the same way.
+
+    The Phase 1 property tests assert this on synthetic surfaces; running it
+    here extends the same guarantee to real terrain, where flats and nodata
+    edges are far messier than anything a fractal generator produces.
+    """
+    import numpy as np
+
+    arr, valid = load_raster(path)
+
+    # Restrict to cells whose full 8-neighbourhood is in bounds and valid. Edge
+    # cells and cells touching nodata are legitimate drainage exits under open
+    # boundary conditions, so they can never be spurious minima.
+    interior = valid.copy()
+    interior[0, :] = interior[-1, :] = False
+    interior[:, 0] = interior[:, -1] = False
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            interior[1:-1, 1:-1] &= valid[1 + dr:arr.shape[0] - 1 + dr,
+                                          1 + dc:arr.shape[1] - 1 + dc]
+
+    has_non_higher = np.zeros_like(interior)
+    centre = arr[1:-1, 1:-1]
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            neighbour = arr[1 + dr:arr.shape[0] - 1 + dr,
+                            1 + dc:arr.shape[1] - 1 + dc]
+            has_non_higher[1:-1, 1:-1] |= (neighbour <= centre)
+
+    return int((interior & ~has_non_higher).sum())
+
+
+def ensure_filled_dem(exe: pathlib.Path, fixture: pathlib.Path,
+                      work_dir: pathlib.Path, digest: str) -> pathlib.Path:
+    """Fill the fixture once and reuse it for every accumulation comparison.
+
+    Uses the DEFAULT fill_min_slope (1e-4), not 0, even though min_slope=0 is
+    the variant proven bit-exact against RichDEM. Reason: lsdtt3's D8 router
+    cannot route a truly flat surface --
+
+        lsdtt_flowinfo: could not assign a receiver at row 12, col 129.
+        The DEM likely contains an unresolved sink or flat.
+
+    -- so a min_slope=0 fill produces a DEM that lsdtt-drainage-analysis
+    refuses outright. That is by design: the imposed gradient is what makes
+    flats routable (see docs/testing_and_benchmarking.md).
+
+    Using the epsilon-filled DEM does not weaken the comparison. Both tools
+    receive the SAME raster, so the accumulation algorithms are still compared
+    in isolation; and because that raster has no flats, flat-handling is
+    removed as a confounder for RichDEM too.
+    """
+    out_dir = work_dir / f"filled_{digest}"
+    filled = out_dir / f"{fixture.stem}_fill.tif"
+    if filled.exists():
+        return filled
+    run_lsdtt(exe, fixture, out_dir,
+              {"write_fill_raster": "true", "fill_min_slope": "0.0001"})
+    if not filled.exists():
+        raise RuntimeError(f"expected filled DEM {filled} not written")
+    return filled
 
 
 def run_lsdtt(exe: pathlib.Path, fixture: pathlib.Path, out_dir: pathlib.Path,
@@ -251,7 +596,7 @@ def run_lsdtt(exe: pathlib.Path, fixture: pathlib.Path, out_dir: pathlib.Path,
     # path (see tests/scripts/run_cli_smoke.py).
     t0 = time.perf_counter()
     proc = subprocess.run([str(exe), str(out_dir), param_path.name],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=system_env())
     elapsed = time.perf_counter() - t0
 
     if proc.returncode != 0:
@@ -262,9 +607,9 @@ def run_lsdtt(exe: pathlib.Path, fixture: pathlib.Path, out_dir: pathlib.Path,
     return elapsed
 
 
-def run_richdem(routine: str, fixture: pathlib.Path, out_path: pathlib.Path,
-                cache: bool = True):
-    """Run the RichDEM reference. Returns (seconds, cached_bool)."""
+def run_reference(reference: str, routine: str, fixture: pathlib.Path,
+                  out_path: pathlib.Path, cache: bool = True):
+    """Run one reference implementation. Returns (seconds, cached_bool)."""
     if cache and out_path.exists():
         meta_path = out_path.with_suffix(".json")
         if meta_path.exists():
@@ -272,14 +617,15 @@ def run_richdem(routine: str, fixture: pathlib.Path, out_path: pathlib.Path,
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
-        [sys.executable, str(SCRIPT_DIR / "richdem_reference.py"),
+        [sys.executable, str(SCRIPT_DIR / REFERENCE_SCRIPTS[reference]),
          "--routine", routine, "--in", str(fixture), "--out", str(out_path)],
         capture_output=True, text=True)
 
     if proc.returncode == SKIP_EXIT:
-        die_skip("richdem not available. Use `pixi run -e benchmark ...`")
+        die_skip(f"{reference} not available. Use `pixi run -e benchmark ...`")
     if proc.returncode != 0:
-        raise RuntimeError(f"richdem_reference.py failed:\n{proc.stderr[-2000:]}")
+        raise RuntimeError(f"{REFERENCE_SCRIPTS[reference]} failed:\n"
+                           f"{proc.stderr[-2000:]}")
 
     info = json.loads(proc.stdout.strip().splitlines()[-1])
     out_path.with_suffix(".json").write_text(json.dumps(info))
@@ -290,6 +636,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--exe", help="path to lsdtt-raster-preprocessing")
+    ap.add_argument("--drainage-exe",
+                    help="path to lsdtt-drainage-analysis (needed for the "
+                         "accum_* comparisons)")
     ap.add_argument("--fetch-exe",
                     help="path to lsdtt-fetch-raster (used to fetch missing "
                          "fixtures; defaults to build/lsdtt-fetch-raster)")
@@ -320,6 +669,20 @@ def main() -> int:
     # Short content hash of the fixture, used in the RichDEM cache key below.
     fixture_digest = hashlib.sha256(fixture.read_bytes()).hexdigest()[:12]
 
+    # Tolerances are pinned against a specific fixture build. A different GDAL
+    # produces a slightly different raster (a one-row registration shift was
+    # measured between GDAL 3.4.1 and 3.12.3), and pinned numbers do not
+    # transfer. Skip rather than fail: a different GDAL is an environment
+    # difference, not a defect.
+    expected_sha = EXPECTED_FIXTURE_SHA.get(args.fixture)
+    if args.check and expected_sha and expected_sha != fixture_digest:
+        die_skip(
+            f"fixture {args.fixture} has sha {fixture_digest}, but the pinned "
+            f"tolerances were measured against {expected_sha}. This normally "
+            f"means a different GDAL build fetched the fixture. Re-measure the "
+            f"tolerances (run without --check) and update TOLERANCES and "
+            f"EXPECTED_FIXTURE_SHA together before trusting a pass.")
+
     if not args.exe:
         die_skip("--exe not given")
     exe = pathlib.Path(args.exe).resolve()
@@ -329,6 +692,9 @@ def main() -> int:
     work_dir = pathlib.Path(args.work_dir).resolve() if args.work_dir else \
         REPO_ROOT / "build" / "flow_benchmark"
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    drainage_exe = pathlib.Path(args.drainage_exe).resolve() if args.drainage_exe \
+        else (REPO_ROOT / "build" / "lsdtt-drainage-analysis")
 
     names = list(COMPARISONS) if args.comparison == "all" else [args.comparison]
 
@@ -342,48 +708,116 @@ def main() -> int:
         if case_dir.exists():
             shutil.rmtree(case_dir)
 
-        lsdtt_s = run_lsdtt(exe, fixture, case_dir, spec["params"])
-        lsdtt_out = case_dir / f"{fixture.stem}{spec['lsdtt_suffix']}"
+        if spec.get("stage") == "drainage":
+            if drainage_exe is None or not drainage_exe.exists():
+                die_skip(f"{name} needs lsdtt-drainage-analysis "
+                         f"(looked for {drainage_exe}); pass --drainage-exe")
+            stage_exe   = drainage_exe
+            stage_input = ensure_filled_dem(exe, fixture, work_dir, fixture_digest)
+        else:
+            stage_exe   = exe
+            stage_input = fixture
+
+        lsdtt_s = run_lsdtt(stage_exe, stage_input, case_dir, spec["params"])
+        lsdtt_out = case_dir / f"{stage_input.stem}{spec['lsdtt_suffix']}"
         if not lsdtt_out.exists():
             raise RuntimeError(f"expected lsdtt3 output {lsdtt_out} not written")
 
-        # Key the cache on the fixture's CONTENT, not just its name. Keying on
-        # the name alone silently reuses a reference computed from a different
-        # raster whenever the fixture is regenerated -- which happened when
-        # fixture generation moved from pixi's GDAL to the C++ tool's, and
-        # produced a bogus "99.9 % of cells differ" instead of the true 0 %.
-        ref_out = (work_dir / "richdem_cache" /
-                   f"{args.fixture}_{fixture_digest}_{spec['richdem_routine']}.tif")
-        rd_s, cached = run_richdem(spec["richdem_routine"], fixture, ref_out)
+        # Depression-free property is a property of the lsdtt3 output alone,
+        # so it is computed once, not per reference.
+        minima = None
+        if spec["kind"] == "elevation" and name in ("fill", "fill_epsilon"):
+            minima = count_interior_minima(lsdtt_out)
+            print(f"    interior minima: {minima}  (must be 0)")
+        if minima is not None and minima > 0:
+            failures.append(
+                f"{name}: filled DEM still contains {minima} interior minima "
+                f"-- it is not depression-free")
 
-        m = elevation_metrics(lsdtt_out, ref_out)
+        # One comparison per available reference. Both are scored on the SAME
+        # lsdtt3 output, so any difference between the two rows is a difference
+        # between the references, not between lsdtt3 runs.
+        for reference, routine in spec["references"].items():
+            key = f"{name}@{reference}"
 
-        print(f"    lsdtt3   {lsdtt_s:8.3f} s")
-        print(f"    richdem  {rd_s:8.3f} s{'  (cached)' if cached else ''}")
-        print(f"    mask identical:  {m['mask_identical']}")
-        print(f"    max |diff|:      {m['max_abs']:.4f} m")
-        print(f"    mean |diff|:     {m['mean_abs']:.6f} m")
-        print(f"    cells >1cm:      {100.0 * m['frac_differing']:.4f} %")
-        print(f"    signed range:    [{m['signed_min']:.4f}, {m['signed_max']:.4f}] m")
-        print(f"    volume ratio:    {m['volume_ratio']:.9f}")
+            # Key the cache on the fixture's CONTENT, not just its name. Keying
+            # on the name alone silently reuses a reference computed from a
+            # different raster whenever the fixture is regenerated -- which
+            # happened when fixture generation moved from pixi's GDAL to the C++
+            # tool's, and produced a bogus "99.9 % of cells differ" instead of
+            # the true 0 %.
+            ref_out = (work_dir / f"{reference}_cache" /
+                       f"{args.fixture}_{fixture_digest}_{routine}.tif")
+            ref_s, cached = run_reference(reference, routine, stage_input, ref_out)
 
-        # Record which fixture build produced the row: benchmark_results.csv is
-        # append-only, and rows from different fixtures are otherwise
-        # indistinguishable and easy to compare by mistake.
-        row = {"fixture": args.fixture, "fixture_sha": fixture_digest,
-               "comparison": name,
-               "lsdtt_seconds": lsdtt_s, "richdem_seconds": rd_s, **m}
-        rows.append(row)
+            if spec["kind"] == "accumulation":
+                m = accumulation_metrics(lsdtt_out, ref_out,
+                                         cell_area_of(stage_input))
+            else:
+                m = elevation_metrics(lsdtt_out, ref_out, original_path=fixture)
 
-        if not m["mask_identical"]:
-            failures.append(f"{name}: nodata masks differ")
+            report_only = key in REPORT_ONLY
+            print(f"    -- vs {reference}{'  (report-only)' if report_only else ''}")
+            print(f"       mask identical: {m['mask_identical']}")
+            if spec["kind"] == "accumulation":
+                print(f"       rank correlation: {m['rank_correlation']:.6f}")
+                print(f"       top 1% channels:  {100.0 * m['top_channels_rel']:.4f} % rel")
+                print(f"       total accum:      {100.0 * m['total_rel']:.6f} % rel")
+                print(f"       max cells:        lsdtt3 {m['max_cells_lsdtt']:.0f}"
+                      f" / {reference} {m['max_cells_richdem']:.0f}")
+            else:
+                print(f"       max |diff|:       {m['max_abs']:.4f} m")
+                print(f"       cells >1cm:       {100.0 * m['frac_differing']:.4f} %")
+                print(f"       volume ratio:     {m['volume_ratio']:.9f}")
+            print(f"       lsdtt3 {lsdtt_s:.3f} s   {reference} {ref_s:.3f} s"
+                  f"{'  (cached)' if cached else ''}")
 
-        if args.check:
-            tol = TOLERANCES.get(name, {})
-            for key, limit in tol.items():
-                if limit is not None and m[key] > limit:
+            rows.append({"fixture": args.fixture, "fixture_sha": fixture_digest,
+                         "comparison": name, "reference": reference,
+                         "lsdtt_seconds": lsdtt_s, "reference_seconds": ref_s,
+                         "interior_minima": "" if minima is None else minima,
+                         **m})
+
+            # Always enforced: a nodata mismatch means the two rasters do not
+            # describe the same cells, so every other metric is meaningless.
+            if not m["mask_identical"]:
+                failures.append(f"{key}: nodata masks differ")
+
+            if not args.check:
+                continue
+            if report_only:
+                print("       (report-only: not asserted)")
+                continue
+
+            tol = TOLERANCES.get(args.fixture, {}).get(key)
+            if tol is None:
+                failures.append(
+                    f"{key}: --check requested but no tolerances are pinned "
+                    f"for fixture '{args.fixture}'. Run without --check, then "
+                    f"pin TOLERANCES and EXPECTED_FIXTURE_SHA together.")
+                continue
+
+            for metric, limit in tol.items():
+                if limit is None:
+                    continue
+                if metric == "volume_ratio_max":
+                    ratio = m["volume_ratio"]
+                    if ratio != ratio or ratio <= 0.0:
+                        continue
+                    value = max(ratio, 1.0 / ratio)
+                elif metric == "rank_correlation_min":
+                    # A minimum, not a maximum: flag when correlation FALLS below.
+                    if m["rank_correlation"] < limit:
+                        failures.append(
+                            f"{key}: rank_correlation = "
+                            f"{m['rank_correlation']:.6g} below pinned {limit:g}")
+                    continue
+                else:
+                    value = m[metric]
+
+                if value > limit:
                     failures.append(
-                        f"{name}: {key} = {m[key]:.6g} exceeds pinned {limit:g}")
+                        f"{key}: {metric} = {value:.6g} exceeds pinned {limit:g}")
 
     csv_path = work_dir / "benchmark_results.csv"
     write_header = not csv_path.exists()
@@ -401,7 +835,7 @@ def main() -> int:
         return 1
 
     if not args.check:
-        print("\n(reporting only -- tolerances not pinned yet, plan Sec8 Q2)")
+        print("\n(reporting only -- tolerances not pinned yet, docs/testing_and_benchmarking.md)")
     return 0
 
 

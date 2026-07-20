@@ -6,7 +6,7 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 //
 // -----------------------------------------------------------------------------
-// Phase 1 of docs/fetch_raster_cli_plan.md: tests for native DEM fetching.
+// Part of the flow-routing benchmark (docs/testing_and_benchmarking.md): tests for native DEM fetching.
 //
 // Two modes, because they have very different requirements:
 //
@@ -177,7 +177,7 @@ void test_source_parsing()
           lsdtt::parse_dem_source("planetary_computer", source) &&
           source == lsdtt::lsdtt_dem_source::planetary_computer);
 
-    // CDSE was cut (plan Sec6 Q4): a general public account does not unlock the
+    // CDSE was cut (docs/testing_and_benchmarking.md): a general public account does not unlock the
     // 10 m EU-DEM, so it would have added the only username/password credential
     // path for coverage already free from cop30_aws. It must not be silently
     // accepted and quietly served from a different provider.
@@ -554,7 +554,7 @@ int main(int argc, char** argv)
     }
 
     std::cout << "lsdtt3 raster fetch tests "
-                 "(docs/fetch_raster_cli_plan.md Phase 1) -- "
+                 " (docs/testing_and_benchmarking.md) -- "
               << (network_mode ? "network" : "offline") << " mode\n\n";
 
     if (network_mode)

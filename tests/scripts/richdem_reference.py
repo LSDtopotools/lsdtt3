@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RichDEM reference implementations for the flow-routing benchmark.
 
-Phase 2 of docs/flow_routing_benchmark_plan.md.
+docs/testing_and_benchmarking.md.
 
 Runs one RichDEM routine over a GeoTIFF and writes the result as a GeoTIFF.
 Kept as a standalone script, invoked as a subprocess by run_flow_benchmark.py,
@@ -16,7 +16,7 @@ for two reasons:
 Results are cached by the caller; RichDEM is deterministic, and the 2400^2
 fixture is slow.
 
-Routine -> RichDEM mapping (plan Sec1):
+Routine -> RichDEM mapping:
     fill              rd.FillDepressions(epsilon=False)   Barnes 2014
     fill_epsilon      rd.FillDepressions(epsilon=True)    Barnes 2014 + epsilon
     breach            rd.BreachDepressions()              Lindsay 2016

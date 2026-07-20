@@ -163,7 +163,7 @@ add_lsdtt_cli_smoke_test(
 )
 
 # -----------------------------------------------------------------------------
-# Flow-routing benchmark vs RichDEM (docs/flow_routing_benchmark_plan.md)
+# Flow-routing benchmark vs RichDEM (docs/testing_and_benchmarking.md)
 #
 # OFF by default: these tests need network access for the fixtures and an
 # optional RichDEM install, neither of which may turn CI red.  When enabled but
@@ -195,8 +195,12 @@ if(LSDTT_ENABLE_BENCHMARKS)
             --manifest-path "${CMAKE_SOURCE_DIR}/pixi.toml"
             -e benchmark python)
 
+    # accum_d8 is included because it is asserted against TopoToolbox, whose D8
+    # uses the same steepest-descent rule as lsdtt3. The RichDEM row for the
+    # same comparison is recorded but not asserted -- see REPORT_ONLY in the
+    # driver and docs/testing_and_benchmarking.md.
     foreach(bench_fixture alpine_small lakeland_small)
-        foreach(bench_case fill fill_epsilon breach)
+        foreach(bench_case fill fill_epsilon breach accum_d8)
             add_test(
                 NAME benchmark_${bench_case}_${bench_fixture}
                 COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
@@ -225,12 +229,12 @@ add_test(NAME unit_param_parser_help COMMAND lsdtt-test-param-parser-help)
 set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
 
 # Cosmogenic physics driver (docs/cosmo_cli_testing_plan.md).  Writes its
-# plottable CSVs (plan Sec7) into the test working directory.
+# plottable CSVs into the test working directory.
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
 target_link_libraries(lsdtt-test-cosmo-physics PRIVATE lsdtt3_cpu)
 
 # Flow routing / depression handling property tests
-# (docs/flow_routing_benchmark_plan.md Phase 1).  Synthetic fixtures only: no
+# (docs/testing_and_benchmarking.md).  Synthetic fixtures only: no
 # network, no RichDEM, so this runs in the default CTest suite.
 add_executable(lsdtt-test-flow-properties cpp/test_flow_properties.cpp)
 target_link_libraries(lsdtt-test-flow-properties PRIVATE lsdtt3_cpu)
@@ -242,7 +246,7 @@ set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 
 # -----------------------------------------------------------------------------
-# lsdtt-fetch-raster CLI (docs/fetch_raster_cli_plan.md Phase 2)
+# lsdtt-fetch-raster CLI (docs/testing_and_benchmarking.md)
 #
 # These run offline: they exercise the argument handling and validation that
 # happen before any network access is attempted.
@@ -283,7 +287,7 @@ set_tests_properties(smoke_fetch_raster_help PROPERTIES
 
 # The CLI must never grow a credential parameter: parameter files get committed
 # and print_parameters() echoes every parameter at the end of a run. This guards
-# the rule stated in the plan (Sec1) and in the CLI's own header.
+# the rule stated in docs/testing_and_benchmarking.md and in the CLI's own header.
 add_test(NAME rigorous_fetch_raster_no_credential_parameters
          COMMAND lsdtt-fetch-raster -h)
 set_tests_properties(rigorous_fetch_raster_no_credential_parameters PROPERTIES
@@ -329,7 +333,30 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
     set_tests_properties(network_fetch_raster_cli PROPERTIES LABELS "network;cli;fetch")
 endif()
 
-# Credential handling (docs/fetch_raster_cli_plan.md Phase 3).
+# Flow-routing performance (docs/testing_and_benchmarking.md).
+#
+# Reported, never asserted: wall-clock thresholds in CI are flaky on shared
+# runners. OFF by default because the sweep takes minutes; the value is a
+# record comparable across commits, each row carrying a git SHA.
+#
+# Timings are IN-PROCESS. The lsdtt_seconds column of benchmark_results.csv is
+# whole-process CLI wall time and is NOT comparable with RichDEM's in-routine
+# numbers -- that is precisely what this driver exists to fix.
+option(LSDTT_ENABLE_PERF_TESTS "Enable flow-routing performance benchmarks" OFF)
+
+add_executable(lsdtt-test-flow-performance cpp/test_flow_performance.cpp)
+target_link_libraries(lsdtt-test-flow-performance PRIVATE lsdtt3_cpu)
+
+if(LSDTT_ENABLE_PERF_TESTS)
+    add_test(NAME performance_flow_routines
+             COMMAND lsdtt-test-flow-performance
+                     ${CMAKE_CURRENT_BINARY_DIR}/perf_output --quick)
+    set_tests_properties(performance_flow_routines
+        PROPERTIES LABELS "performance;flow" TIMEOUT 1800)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/perf_output)
+endif()
+
+# Credential handling (docs/testing_and_benchmarking.md).
 #
 # lsdtt_secret is the only place in lsdtt3 that touches secrets, so it gets its
 # own driver. Offline and deterministic; always in the default suite.
@@ -342,7 +369,7 @@ add_test(NAME unit_secret
 set_tests_properties(unit_secret PROPERTIES LABELS "unit;fetch")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/secret_test_output)
 
-# Native DEM fetching (docs/fetch_raster_cli_plan.md Phase 1).
+# Native DEM fetching (docs/testing_and_benchmarking.md).
 #
 # The offline half needs no network and runs in the default suite: it covers UTM
 # zone derivation, tile naming, option validation, and -- most importantly --

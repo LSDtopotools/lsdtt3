@@ -57,8 +57,24 @@ osmnx = "*"
 # 0.3.4, which pins numpy<2 and will silently downgrade numpy in whatever
 # environment it lands in.  conda-forge ships 2.4.3 with numpy-2 builds.
 [feature.reference.dependencies]
+# Python is pinned HERE, not in [dependencies], so it applies only to
+# environments that include this feature -- the default environment stays on
+# whatever `python = ">=3.10"` resolves to and is completely unaffected.
+#
+# The upper bound exists because topotoolbox ships wheels for cp311-cp313 only.
+# Without it the environment resolves to 3.14 and silently builds from sdist,
+# which succeeds on a developer machine with a compiler and fails in a bare CI
+# container.
+python = ">=3.11,<3.14"
 richdem = "*"
 scipy = "*"
+
+# topotoolbox is not on conda-forge, so it has to come from PyPI. This is the
+# only PyPI dependency in the workspace and it is confined to this optional
+# feature. Pinned exactly because the package is pre-1.0 (0.0.x) and its API
+# still moves; the underlying algorithms are the mature TopoToolbox lineage.
+[feature.reference.pypi-dependencies]
+topotoolbox = "==0.0.12"
 
 [environments]
 osm = ["osm"]

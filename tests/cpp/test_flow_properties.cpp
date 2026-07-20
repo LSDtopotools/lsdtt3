@@ -6,7 +6,7 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 //
 // -----------------------------------------------------------------------------
-// Phase 1 of docs/flow_routing_benchmark_plan.md: property tests for depression
+// Part of the flow-routing benchmark (docs/testing_and_benchmarking.md): property tests for depression
 // handling and flow routing.
 //
 // These are *property* tests, not comparisons: each check asserts an invariant
@@ -16,7 +16,7 @@
 // default CTest run; the RichDEM comparisons of Phases 3-4 sit behind the
 // opt-in `benchmark` label.
 //
-// Properties checked (plan Sec5):
+// Properties checked:
 //   P1  filled DEM contains no interior local minimum (depression-free)
 //   P2  fill never lowers the surface            (filled  >= original)
 //   P3  breach never raises the surface          (breached <= original)
@@ -24,6 +24,7 @@
 //   P5  a receiver's accumulation is >= each donor's
 //   P6  filling an already-filled DEM is a no-op (idempotence)
 //   P7  D-inf / MFD receiver weights sum to 1.0 per cell that has receivers
+//   P8  D8 accumulation is exact on a planar ramp (analytic oracle; no reference)
 //
 // Section 8 additionally *characterises* (reports, does not assert) the
 // alternative fill algorithm exposed by lsdtt-raster-preprocessing, per Simon's
@@ -413,7 +414,7 @@ void test_breach_properties(const fixture& fx)
     }
 
     {
-        // Least-cost breaching has no RichDEM counterpart (plan Sec1), so
+        // Least-cost breaching has no RichDEM counterpart, so
         // property tests are the only correctness check it will ever get.
         // fill_remainder=true means the result should also be depression-free.
         const lsdtt::lsdtt_raster_cpu breached = lsdtt::breach_depressions_least_cost(
@@ -494,6 +495,100 @@ void test_d8_accumulation_properties(const fixture& fx)
           n_violations == 0,
           "violations = " + std::to_string(n_violations) +
           ", worst deficit = " + std::to_string(worst));
+}
+
+
+// =============================================================================
+// P8 -- exact D8 accumulation on a planar ramp (analytic oracle)
+//
+// A surface tilted purely north-south has an exactly known answer: every cell
+// drains straight down its own column, so row r accumulates r+1 cells.
+//
+// This is the check that distinguishes true steepest descent (drop / distance)
+// from "lowest neighbour by elevation". On a planar ramp the S, SE and SW
+// neighbours all sit at the same elevation, but the diagonals are sqrt(2)
+// further away, so only the cardinal S is the steepest DESCENT. An
+// implementation that compares raw elevation instead ties, breaks toward a
+// diagonal, and produces diagonal stripes rather than columns.
+//
+// RichDEM does exactly that (richdem/flowmet/d8_flowdirs.hpp:63-71 selects the
+// minimum-elevation neighbour with a diagonal-preferring tie-break), which is
+// why it is NOT a usable reference for D8 accumulation -- see
+// docs/testing_and_benchmarking.md Sec7d. Hence this analytic oracle rather
+// than a comparison.
+// =============================================================================
+void test_d8_accumulation_on_ramp()
+{
+    const int    n         = 50;
+    const double cell_size = 30.0;
+
+    lsdtt::lsdtt_raster_meta meta = make_meta(n, n, cell_size);
+    lsdtt::lsdtt_array2d_f   data(n, n, 0.0f);
+    lsdtt::lsdtt_array2d_u8  mask(n, n, 1);
+
+    for (int r = 0; r < n; ++r)
+        for (int c = 0; c < n; ++c)
+            data(r, c) = static_cast<float>(100.0 - r);   // tilts north -> south
+
+    lsdtt::lsdtt_raster_cpu ramp;
+    ramp.set_from_vectors(std::move(data.get_vector()),
+                          std::move(mask.get_vector()), meta);
+
+    lsdtt::lsdtt_flowinfo_options opts;
+    opts.boundary_conditions = "oooo";
+    lsdtt::lsdtt_flowinfo fi(ramp.get_data_array(), ramp.get_mask_array(),
+                             ramp.meta(), opts);
+
+    const std::vector<double> accum = fi.accumulate();
+    const double cell_area = cell_size * cell_size;
+
+    std::int64_t n_wrong = 0;
+    double worst = 0.0;
+    int    worst_row = -1;
+
+    // Skip the outermost columns: with open boundaries their upslope set is
+    // clipped by the edge, so the column-count oracle does not apply there.
+    for (int r = 0; r < n; ++r)
+    {
+        for (int c = 1; c < n - 1; ++c)
+        {
+            const double expected = static_cast<double>(r + 1) * cell_area;
+            const double got      = accum[static_cast<std::size_t>(r) * n + c];
+            if (std::fabs(got - expected) > 1e-6 * cell_area)
+            {
+                ++n_wrong;
+                if (std::fabs(got - expected) > worst)
+                {
+                    worst     = std::fabs(got - expected);
+                    worst_row = r;
+                }
+            }
+        }
+    }
+
+    check("P8 D8 accumulation exact on a planar ramp",
+          n_wrong == 0,
+          "cells wrong = " + std::to_string(n_wrong) +
+          ", worst error = " + std::to_string(worst / cell_area) +
+          " cells at row " + std::to_string(worst_row));
+
+    // State the discriminating property directly: flow must go S, not SE/SW.
+    std::int64_t n_diagonal = 0;
+    for (int r = 0; r < n - 1; ++r)
+    {
+        for (int c = 1; c < n - 1; ++c)
+        {
+            const std::int64_t flat = static_cast<std::int64_t>(r) * n + c;
+            if (!fi.is_valid_cell(flat) || fi.is_outlet(flat)) continue;
+            // Direction code 4 == due south (see lsdtt_flowinfo_cpu.hpp).
+            if (fi.receiver_dir_of_unchecked(flat) != 4) ++n_diagonal;
+        }
+    }
+
+    check("P8 ramp routes due south, not diagonally",
+          n_diagonal == 0,
+          "cells not routing south = " + std::to_string(n_diagonal) +
+          " (steepest DESCENT must divide the drop by distance)");
 }
 
 
@@ -650,7 +745,7 @@ int main(int argc, char** argv)
     const std::string output_dir = (argc > 1) ? argv[1] : ".";
 
     std::cout << "lsdtt3 flow-routing property tests "
-                 "(docs/flow_routing_benchmark_plan.md Phase 1)\n\n";
+                 " (docs/testing_and_benchmarking.md)\n\n";
 
     const std::vector<fixture> fixtures = build_fixtures();
 
@@ -666,6 +761,11 @@ int main(int argc, char** argv)
         test_flowgraph_weight_properties(fx);
         std::cout << "\n";
     }
+
+    // Analytic oracle: independent of any fixture, so run it once.
+    std::cout << "--- analytic: planar ramp ---\n";
+    test_d8_accumulation_on_ramp();
+    std::cout << "\n";
 
     characterise_fill_algorithms(fixtures, output_dir);
 

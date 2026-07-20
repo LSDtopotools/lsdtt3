@@ -1,6 +1,11 @@
 # lsdtt3 tests
 
-CTest-driven test suite. Four tiers, selected by label:
+What each test does and how to run it. For **methodology, benchmark results, and
+the documented differences between lsdtt3 and RichDEM**, see
+`docs/testing_and_benchmarking.md` — read that before concluding a mismatch
+against another tool is a bug.
+
+CTest-driven test suite, selected by label:
 
 | Label | Needs | What it covers |
 |---|---|---|
@@ -11,6 +16,7 @@ CTest-driven test suite. Four tiers, selected by label:
 | `cosmo` | nothing | cosmogenic-nuclide physics vs frozen CRONUS + numerics sentinel |
 | `flow` | nothing | flow routing and depression-handling properties |
 | `benchmark` | network + RichDEM | comparison against RichDEM on fetched real DEMs (opt-in) |
+| `performance` | nothing | in-process timings of the flow routines (opt-in, reported not asserted) |
 
 Everything except `benchmark` runs offline with committed fixtures. `benchmark`
 is off unless configured with `-DLSDTT_ENABLE_BENCHMARKS=ON`, and skips rather
@@ -50,11 +56,11 @@ data and prints one PASS/FAIL line per check.
 > encode years of manual verification. Any change to `lsdtt_crn_parameters.*`,
 > `lsdtt_crn_column.*`, `lsdtt_crn_particle.*` or `lsdtt_cosmo_raster_cpu.*`, or
 > to the reference values in `tests/expected/cosmo/`, requires Simon Mudd's
-> explicit review **before** merging. See plan Sec3b.
+> explicit review **before** merging. See docs/testing_and_benchmarking.md
 
 What it checks:
 
-- **Numerics sentinel** (plan Sec3b) — pinned values in
+- **Numerics sentinel** — pinned values in
   `tests/expected/cosmo/numerics_sentinel.csv` that fail on any drift in the
   numeric core. This is the guard that makes the lock enforceable.
 - **Equation fidelity (E1–E9)** — the library is checked against independent
@@ -87,7 +93,7 @@ regenerated CSV should be committed with a note explaining why it moved.
 
 `unit_raster_fetch` (labels `unit;fetch`) runs `tests/cpp/test_raster_fetch.cpp`
 in offline mode: 31 checks over `src/core/lsdtt_raster_fetch.*`, needing no
-network. Plan: `docs/fetch_raster_cli_plan.md` Phase 1.
+network. Plan: `docs/testing_and_benchmarking.md` Phase 1.
 
 - UTM zone derivation, including zone boundaries and the ±180 antimeridian
   (an off-by-one silently reprojects into the neighbouring zone rather than
@@ -115,7 +121,7 @@ are plausible alpine values, and exits 77 (skip) when the source is unreachable.
 
 `unit_secret` (labels `unit;fetch`) runs `tests/cpp/test_secret.cpp` — 24
 offline checks over `src/core/lsdtt_secret.*`, the only place in lsdtt3 that
-handles secrets. Plan: `docs/fetch_raster_cli_plan.md` §1.
+handles secrets. Plan: `docs/testing_and_benchmarking.md` §1.
 
 These are security properties, not conveniences:
 
@@ -166,11 +172,34 @@ get committed and `print_parameters()` echoes every parameter at the end of a
 run, so **a credential must never be a parameter**. The test exists to stop a
 future change quietly introducing one.
 
+## Flow-routing performance
+
+`performance_flow_routines` runs `tests/cpp/test_flow_performance.cpp`, behind
+`-DLSDTT_ENABLE_PERF_TESTS=ON`. It is **reported, never asserted** — wall-clock
+thresholds in CI are flaky on shared runners — and every row of
+`flow_performance.csv` carries a git SHA so runs are comparable across commits.
+
+```bash
+cmake -S . -B build -DLSDTT_ENABLE_PERF_TESTS=ON
+ctest --test-dir build -L performance --output-on-failure
+
+# or directly, including a real raster for a like-for-like RichDEM comparison
+build/tests/lsdtt-test-flow-performance out_dir --full \
+    --raster tests/data/dem_cache/alpine_small.tif
+```
+
+Timings are **in-process**: the raster is already in memory and nothing is
+written to disk. This matters — the `lsdtt_seconds` column of
+`benchmark_results.csv` is whole-process CLI wall time (startup, parameter
+parsing, GDAL open and write) and is **not** comparable with RichDEM's
+in-routine numbers. Timed properly, lsdtt3 is 1.8–6.6× *faster* than RichDEM
+across every routine (plan §7e).
+
 ## Flow-routing property tests
 
 `unit_flow_properties` (labels `unit;flow`) runs
 `tests/cpp/test_flow_properties.cpp` — Phase 1 of
-`docs/flow_routing_benchmark_plan.md`. It asserts invariants of depression
+`docs/testing_and_benchmarking.md`. It asserts invariants of depression
 handling and flow routing on deterministic synthetic DEMs generated in-process,
 so it needs no network, no downloaded DEM, and no RichDEM:
 
@@ -184,6 +213,11 @@ so it needs no network, no downloaded DEM, and no RichDEM:
 - **P5** accumulation increases downstream
 - **P6** filling an already-filled DEM is a no-op
 - **P7** D-inf / MFD receiver weights sum to 1; D-inf has ≤ 2 receivers per cell
+- **P8** D8 accumulation is **exact on a planar ramp**, and every cell routes due
+  south rather than diagonally — an analytic oracle needing no reference
+  implementation. This is the check that distinguishes true steepest descent
+  (drop ÷ distance) from "lowest neighbour by elevation"; RichDEM fails it, which
+  is why accumulation is validated here rather than by comparison (plan §7d).
 
 It also writes `fill_algorithm_characterisation.csv` (timings and divergence
 between fill algorithms) into its output directory. That table is reported, not
@@ -195,7 +229,7 @@ ctest --test-dir build -L flow --output-on-failure
 
 ## Flow-routing benchmark vs RichDEM (opt-in)
 
-Phases 0 and 2 of `docs/flow_routing_benchmark_plan.md`. Scores lsdtt3's
+Phases 0 and 2 of `docs/testing_and_benchmarking.md`. Scores lsdtt3's
 depression handling against RichDEM on DEM tiles fetched at test time — **no DEM
 is committed to the repo**.
 
@@ -217,13 +251,34 @@ cmake -S . -B build -DLSDTT_ENABLE_BENCHMARKS=ON
 ctest --test-dir build -L benchmark --output-on-failure
 ```
 
+Comparisons run against **two** external references: RichDEM for depression
+handling, and **TopoToolbox for D8 accumulation** — RichDEM's D8 is not steepest
+descent and is recorded but not asserted. lsdtt3 and TopoToolbox agree *exactly*
+on high-relief D8 accumulation (rank correlation 1.000000).
+
 Two terrain regimes are fetched, because they diverge very differently —
 `alpine_small` (σ = 510 m) and `lakeland_small` (σ = 2.9 m). Epsilon-fill
 disagreement with RichDEM is 0.5 % of cells on the former and 91 % on the
 latter, so the low-relief fixture is not optional.
 
-Tolerances in `run_flow_benchmark.py` are **not pinned yet** (Phase 3); the
-driver reports metrics and only enforces limits under `--check`.
+Tolerances are **pinned per fixture** in `run_flow_benchmark.py` and enforced
+under `--check` (which the CTest wiring passes). They are set just above
+observed divergence, so they assert something real — Barnes 2014 fill is pinned
+to **exactly 0.0** against RichDEM, since it is bit-exact and both routines are
+deterministic.
+
+Two guards make that safe:
+
+- Tolerances are per fixture, because breach divergence is fixture-dependent
+  (alpine breach measured 4.54 m on one fixture build and 0.00 m on another).
+- `EXPECTED_FIXTURE_SHA` records the fixture each tolerance set was measured
+  against. A different GDAL build produces a different raster, and the run
+  **skips** rather than applying numbers that no longer mean anything.
+
+The benchmark also asserts the **depression-free property** on the real
+fixtures — no interior minima after filling — with or without `--check`. That
+check needs no reference, so it still has teeth if both implementations were
+wrong in the same way.
 
 ## Run locally
 

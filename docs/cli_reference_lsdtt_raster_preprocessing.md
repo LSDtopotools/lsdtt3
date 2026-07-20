@@ -201,7 +201,49 @@ Output files:
 | `write_fill_raster` | bool | `false` | Write the pit-filled DEM. |
 | `write_fill_diff_raster` | bool | `false` | Write the difference raster (filled minus original). Positive values show where the surface was raised. For `barnesetal2021` this represents water depth standing in depressions. |
 | `fill_algorithm_choice` | string | `barnes2014` | Filling algorithm. `barnes2014`: Barnes et al. (2014) Improved Priority-Flood. `barnesetal2021`: Barnes et al. (2021) Fill-Spill-Merge — note this algorithm does not guarantee that all depressions are filled (see doi:10.5194/esurf-9-105-2021). |
-| `fill_min_slope` | float | `0.0001` | Minimum gradient imposed between adjacent filled cells to prevent flat regions that produce ambiguous flow directions. Increase slightly for very coarse DEMs. Not used with `barnesetal2021`. |
+| `fill_min_slope` | float | `0.0001` | Minimum gradient imposed between adjacent filled cells to prevent flat regions that produce ambiguous flow directions. Increase slightly for very coarse DEMs. Not used with `barnesetal2021`. See the note below on how this differs from RichDEM. |
+
+### Note: `fill_min_slope` is a slope, and differs from RichDEM's "epsilon fill"
+
+lsdtt3 is benchmarked against [RichDEM](https://github.com/r-barnes/richdem)
+(`docs/testing_and_benchmarking.md`). Both tools offer what is loosely called
+an "epsilon fill", but **they are not the same operation**, and comparing their
+outputs without knowing this is misleading.
+
+- **`fill_min_slope: 0`** is equivalent to RichDEM's
+  `FillDepressions(epsilon=false)`. Verified bit-exact against it on both a
+  high-relief and a low-relief real DEM.
+- **`fill_min_slope > 0`** imposes a true **slope**: each cell in a flat is
+  raised by `fill_min_slope × cell_size` (× √2 diagonally). On a 30 m grid the
+  default gives 3 mm of rise per cell. The gradient is uniform across the
+  raster, scales with resolution, and does not depend on elevation or on the
+  raster's data type.
+- **RichDEM's `epsilon=true`** instead raises each cell to the next
+  representable floating-point value (one ULP). That step depends on elevation
+  and data type — about 1.2e-4 m at 2000 m in float32, 7.6e-6 m at 100 m, and
+  effectively zero near sea level. RichDEM refuses integer rasters for this
+  reason.
+
+**What this means in practice.** The two approaches agree closely in high relief
+and diverge in low relief, because the flat-gradient term is a negligible share
+of the fill in steep terrain and a dominant one in flat terrain. Measured on
+256² real DEMs:
+
+| Terrain | Depression fill volume | Flat-gradient term | Its share |
+|---|---|---|---|
+| Alpine (Val Venosta) | 6091 m | 0.56 m | 0.01 % |
+| Lakeland (Finland) | 188 m | 78.8 m | 29.5 % |
+
+In the low-relief case lsdtt3 moves ~40× more material than RichDEM's epsilon
+fill. Neither is wrong — they answer the question differently — but if you work
+in **low-relief terrain** (coastal plains, glaciated shield, marsh, floodplain)
+be aware that `fill_min_slope` is doing a substantial amount of work there, and
+consider reducing it. The default is tuned for the steeper landscapes lsdtt3 is
+most often applied to.
+
+Setting `fill_min_slope: 0` removes the imposed gradient entirely, but leaves
+true flats whose flow directions are ambiguous. That is a reasonable choice only
+if the downstream analysis can tolerate them.
 | `fill_spill_merge_rainfall_rate` | float | `0.1` | Uniform rainfall depth in elevation units per cell for the Fill-Spill-Merge algorithm. Only used when `fill_algorithm_choice` is `barnesetal2021`. |
 | `fsm_boundary_conditions` | string | `oooo` | Boundary conditions for the depression hierarchy used by Fill-Spill-Merge, given as four characters in north–east–south–west order. `o` = open (edge drains freely to the ocean). `n` = no-flux (edge is not an ocean boundary). `p` = periodic (edge wraps; not ocean). Example: `oooo` for a typical DEM tile; `nnnn` for a closed basin. Only used when `fill_algorithm_choice` is `barnesetal2021`. |
 
