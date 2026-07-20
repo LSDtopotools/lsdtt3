@@ -163,6 +163,58 @@ add_lsdtt_cli_smoke_test(
 )
 
 # -----------------------------------------------------------------------------
+# Flow-routing benchmark vs RichDEM (docs/flow_routing_benchmark_plan.md)
+#
+# OFF by default: these tests need network access for the fixtures and an
+# optional RichDEM install, neither of which may turn CI red.  When enabled but
+# unavailable, the driver exits 77 and CTest records a skip.
+#
+# RichDEM comes from conda-forge via pixi -- NOT pip, whose richdem 0.3.4 pins
+# numpy<2 and will downgrade numpy in whatever environment it lands in:
+#   pixi run fetch-benchmark-dem
+#   pixi run -e benchmark flow-benchmark --exe build/lsdtt-raster-preprocessing
+# -----------------------------------------------------------------------------
+option(LSDTT_ENABLE_BENCHMARKS "Enable RichDEM flow-routing benchmark tests" OFF)
+
+if(LSDTT_ENABLE_BENCHMARKS)
+    # Launch through `pixi run`, not the environment's python directly.  pixi
+    # exports PROJ_DATA / GDAL_DATA when it activates the environment; invoking
+    # .pixi/envs/benchmark/bin/python straight from CTest skips activation and
+    # GDAL then fails to open the PROJ database at write time.
+    find_program(LSDTT_PIXI_EXECUTABLE pixi
+                 HINTS "$ENV{HOME}/.pixi/bin" "$ENV{PIXI_HOME}/bin")
+
+    if(NOT LSDTT_PIXI_EXECUTABLE)
+        message(WARNING
+            "LSDTT_ENABLE_BENCHMARKS is ON but pixi was not found. "
+            "Install pixi (https://pixi.sh) or set LSDTT_PIXI_EXECUTABLE. "
+            "Benchmark tests will not be registered.")
+    else()
+        set(LSDTT_BENCHMARK_LAUNCHER
+            "${LSDTT_PIXI_EXECUTABLE}" run
+            --manifest-path "${CMAKE_SOURCE_DIR}/pixi.toml"
+            -e benchmark python)
+
+    foreach(bench_fixture alpine_small lakeland_small)
+        foreach(bench_case fill fill_epsilon breach)
+            add_test(
+                NAME benchmark_${bench_case}_${bench_fixture}
+                COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
+                        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_flow_benchmark.py"
+                        --exe "$<TARGET_FILE:lsdtt-raster-preprocessing>"
+                        --fixture ${bench_fixture}
+                        --comparison ${bench_case}
+                        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flow_benchmark"
+                        --check
+            )
+            set_tests_properties(benchmark_${bench_case}_${bench_fixture}
+                PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77)
+        endforeach()
+    endforeach()
+    endif()
+endif()
+
+# -----------------------------------------------------------------------------
 # C++ unit tests
 # -----------------------------------------------------------------------------
 
@@ -176,6 +228,18 @@ set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
 # plottable CSVs (plan Sec7) into the test working directory.
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
 target_link_libraries(lsdtt-test-cosmo-physics PRIVATE lsdtt3_cpu)
+
+# Flow routing / depression handling property tests
+# (docs/flow_routing_benchmark_plan.md Phase 1).  Synthetic fixtures only: no
+# network, no RichDEM, so this runs in the default CTest suite.
+add_executable(lsdtt-test-flow-properties cpp/test_flow_properties.cpp)
+target_link_libraries(lsdtt-test-flow-properties PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_flow_properties
+         COMMAND lsdtt-test-flow-properties
+                 ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
+set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 
 add_test(NAME unit_cosmo_physics
          COMMAND lsdtt-test-cosmo-physics

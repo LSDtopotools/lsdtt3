@@ -183,6 +183,48 @@ export PATH=/path/to/lsdtt3/build:$PATH
 | `LSDTT_GPU` | `OFF` | Enable GPU compute backend (requires CUDA toolkit) |
 | `LSDTT_OPENCV` | `ON` | Build OpenCV-dependent routines (auto-disabled if OpenCV not found) |
 | `LSDTT_EIGEN` | `ON` | Build Eigen3-dependent routines (auto-disabled if Eigen3 not found) |
+| `LSDTT_ENABLE_BENCHMARKS` | `OFF` | Register the RichDEM comparison benchmarks (needs network + pixi) |
+
+---
+
+## Testing
+
+Tests are driven by CTest. The default suite is self-contained: it needs no
+network, no downloaded data, and no Python packages beyond a plain interpreter.
+
+```sh
+cmake -S . -B build
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+Tests are grouped by label, so you can run just the part you care about:
+
+| Label | What it covers |
+|---|---|
+| `smoke` | Each CLI runs end to end on a tiny fixture and produces its expected output |
+| `rigorous` | Exact checks on outputs — raster checksums, sizes, feature counts, file hashes |
+| `failure` | Bad parameters are rejected with the expected error message |
+| `unit` | C++ unit tests: parameter parser, cosmogenic physics, flow-routing properties |
+| `cosmo` | Cosmogenic-nuclide physics against CRONUS and pinned numerics sentinels |
+| `flow` | Flow routing and depression handling: properties, and RichDEM comparison |
+| `benchmark` | Opt-in comparison against RichDEM on fetched real DEMs |
+
+```sh
+ctest --test-dir build -L smoke --output-on-failure
+ctest --test-dir build -L unit  --output-on-failure
+```
+
+`benchmark` tests are **off by default** because they need network access and an
+optional RichDEM install; enable with `-DLSDTT_ENABLE_BENCHMARKS=ON`. When their
+dependencies are missing they report as skipped rather than failed, so an
+optional tool can never turn the build red.
+
+**No DEM is committed to this repository.** Tests that need real topography fetch
+it on demand from public keyless sources and cache it under
+`tests/data/dem_cache/` (gitignored). See `tests/README.md` for the full suite
+description and `tests/scripts/fetch_test_dem.py --list` for the available
+fixtures.
 
 ---
 
@@ -289,6 +331,52 @@ lsdtt-drainage-analysis     my_params.driver
 ## Python helpers
 
 We also provide various python helpers (in `python_helpers/`) for simple visualisation and downloading of DEMs. Maintaining python environments is very time consuming and annoying, which is why the core tools are written in c++. We provide helper functions for users familiar with maintaining a geospatial python environment, but if you don't know how to do this just use a GIS and the internet to get and look at `lsdtt3` data inputs and outputs.  
+
+| Script | Purpose |
+|---|---|
+| `download_dem_tiles.py` | Download DEMs from Planetary Computer (keyless), OpenTopography, a WCS endpoint, or Copernicus Data Space |
+| `tif_to_png.py` | Convert a GeoTIFF to a PNG for quick inspection |
+| `osm_download_features.py`, `osm_water_download.py` | Download OpenStreetMap features / water layers |
+| `download_gem_faults.py` | Download the GEM active-fault database |
+| `download_macrostrat_mvt.py` | Download Macrostrat geology vector tiles |
+
+Each has a `--help`; `dem_downloader_instructions.md` and
+`tif_to_png_instructions.md` give worked examples.
+
+### Python environments with pixi
+
+None of the above is needed to build or run lsdtt3 — the C++ tools have no
+Python dependency. If you do want the helpers or the test tooling, we use
+[pixi](https://pixi.sh) so you don't have to hand-maintain a geospatial Python
+environment. [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3), our
+visualisation package, uses pixi on the same conda-forge channel, so the two
+environments compose the same way.
+
+```sh
+curl -fsSL https://pixi.sh/install.sh | bash     # once
+cd lsdtt3
+pixi install                                     # solve the default environment
+pixi run python python_helpers/download_dem_tiles.py --help
+pixi shell                                       # or drop into a shell
+```
+
+The manifest is `pixi.toml`. It covers `python_helpers/` and `tests/scripts/`;
+heavier or optional packages sit in separate environments so the default solve
+stays quick:
+
+| Environment | Adds | For |
+|---|---|---|
+| default | GDAL, numpy, rasterio, geopandas, shapely, requests, STAC clients, pytest | helpers and test tooling |
+| `osm` | osmnx | the OpenStreetMap helpers |
+| `benchmark` | RichDEM, scipy | reference implementations used to validate lsdtt3 |
+
+```sh
+pixi run -e osm python python_helpers/osm_water_download.py --help
+```
+
+Install RichDEM from conda-forge via pixi rather than pip: `pip install richdem`
+installs a version that pins `numpy<2` and will downgrade numpy in whatever
+environment it lands in.
 
 ## References
 

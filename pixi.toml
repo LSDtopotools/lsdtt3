@@ -1,0 +1,72 @@
+[workspace]
+name = "lsdtt3"
+version = "0.1.0"
+description = "Python environment for lsdtt3 test tooling and the python_helpers scripts."
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+# -----------------------------------------------------------------------------
+# The C++ build is driven by CMake and does NOT need pixi.  This manifest exists
+# only for the Python side of the repository:
+#
+#   python_helpers/   user-facing helpers (DEM download, raster -> PNG, OSM and
+#                     geology vector downloads)
+#   tests/scripts/    test orchestration (fixture fetch, CLI smoke runner,
+#                     reference-data fetch, benchmark drivers)
+#
+# Users commonly have lsdviztools3 alongside lsdtt3, which also uses pixi on the
+# conda-forge channel, so the two environments compose the same way.
+#
+#   pixi install                 # default environment
+#   pixi run python python_helpers/download_dem_tiles.py --help
+#   pixi shell                   # interactive
+# -----------------------------------------------------------------------------
+
+[dependencies]
+python = ">=3.10"
+
+# Raster / geospatial core, used by both python_helpers and tests/scripts.
+gdal = "*"
+numpy = "*"
+rasterio = "*"
+
+# DEM and vector data download helpers.
+requests = "*"
+pystac-client = "*"
+planetary-computer = "*"
+geopandas = "*"
+shapely = "*"
+
+# Test tooling.
+pytest = "*"
+
+# -----------------------------------------------------------------------------
+# Optional features
+#
+# Kept out of the default environment because they are heavy, optional, or only
+# needed to score lsdtt3 rather than to build or run it.
+# -----------------------------------------------------------------------------
+
+# OSM feature download (python_helpers/osm_*.py).  osmnx pulls a large solve.
+[feature.osm.dependencies]
+osmnx = "*"
+
+# Reference implementations used to validate lsdtt3's own algorithms.
+#
+# RichDEM MUST come from conda-forge, not pip: `pip install richdem` installs
+# 0.3.4, which pins numpy<2 and will silently downgrade numpy in whatever
+# environment it lands in.  conda-forge ships 2.4.3 with numpy-2 builds.
+[feature.reference.dependencies]
+richdem = "*"
+scipy = "*"
+
+[environments]
+osm = ["osm"]
+benchmark = ["reference"]
+
+[tasks]
+# Generic entry points only -- individual test suites are invoked through CTest
+# or by calling their driver directly, so this file does not need editing when a
+# test is added.
+fetch-test-dem = "python tests/scripts/fetch_test_dem.py"
+test-python = "pytest tests"

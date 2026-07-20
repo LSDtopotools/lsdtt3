@@ -107,3 +107,16 @@ dist/
 # *.tif
 # *.tiff
 # *.vrt
+
+# -----------------------------------------------------------------------------
+# Benchmark DEM fixtures
+#
+# Fetched at test time from Copernicus GLO-30, never committed
+# (docs/flow_routing_benchmark_plan.md Sec2).
+# -----------------------------------------------------------------------------
+tests/data/dem_cache/
+
+# -----------------------------------------------------------------------------
+# pixi environments (pixi.toml and pixi.lock ARE tracked)
+# -----------------------------------------------------------------------------
+.pixi/

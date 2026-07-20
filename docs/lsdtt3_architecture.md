@@ -1673,7 +1673,7 @@ write_hillshade_raster, write_fill_raster, write_fill_diff_raster
 write_breached_raster, write_carve_diff_raster
 write_filled_nodata_raster, write_clipped_rectangle_raster
 breach_before_fill, fill_remainder_after_breach
-fill_algorithm_choice: barnes2014 / wang_liu
+fill_algorithm_choice: barnes2014 / barnesetal2021
 breach_algorithm_choice: lindsay2016 / least_cost
 nodata_fill_method_choice: laplacian / iterative_weighted_average
 hillshade_azimuth, hillshade_altitude, hillshade_z_factor
