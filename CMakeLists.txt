@@ -83,11 +83,36 @@ message(STATUS "GDAL libs    : ${GDAL_LIBRARIES}")
 # =============================================================================
 # Optional: OpenMP
 # =============================================================================
-find_package(OpenMP)
-if(OpenMP_CXX_FOUND)
-    message(STATUS "OpenMP found - parallel CPU operations enabled")
+option(LSDTT_OPENMP "Build with OpenMP parallelism" ON)
+set(LSDTT_HAS_OPENMP OFF)
+
+if(LSDTT_OPENMP)
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        set(LSDTT_HAS_OPENMP ON)
+        message(STATUS "OpenMP found - parallel CPU operations enabled")
+
+        # MSVC's plain /openmp switch selects OpenMP 2.0 (2002), which rejects
+        # unsigned loop indices, silently ignores `collapse`, and has no
+        # min/max reductions - all of which this codebase uses. The build will
+        # fail with C3016 / C4849 / C7660. Say so at configure time rather than
+        # leaving it to be discovered a hundred objects into the compile.
+        if(MSVC)
+            message(WARNING
+                "MSVC defaults to OpenMP 2.0, which cannot compile this "
+                "codebase (C3016 unsigned index, C4849 collapse ignored, "
+                "C7660 min/max reduction).\n"
+                "  Configure with -DLSDTT_OPENMP=OFF for a single-threaded "
+                "build (recommended for the QGIS bundle), or arrange for "
+                "/openmp:llvm - note that switches the runtime DLL from "
+                "vcomp140 to libomp140, which the packaging script does not "
+                "yet bundle.")
+        endif()
+    else()
+        message(WARNING "OpenMP not found - CPU operations will be single-threaded")
+    endif()
 else()
-    message(WARNING "OpenMP not found - CPU operations will be single-threaded")
+    message(STATUS "OpenMP disabled (LSDTT_OPENMP=OFF) - CPU operations will be single-threaded")
 endif()
 
 # =============================================================================
@@ -368,7 +393,7 @@ target_link_libraries(lsdtt3_cpu
         lsdtt3_utils
 )
 
-if(OpenMP_CXX_FOUND)
+if(LSDTT_HAS_OPENMP)
     target_link_libraries(lsdtt3_cpu PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
@@ -540,7 +565,7 @@ message(STATUS "=== lsdtt3 build configuration ===")
 message(STATUS "  Build type  : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ std     : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  GDAL        : ${GDAL_VERSION}")
-message(STATUS "  OpenMP      : ${OpenMP_CXX_FOUND}")
+message(STATUS "  OpenMP      : ${LSDTT_HAS_OPENMP}")
 message(STATUS "  FFTW3       : ${LSDTT_HAS_FFTW}")
 message(STATUS "  OpenCV      : ${LSDTT_HAS_OPENCV}")
 message(STATUS "  GPU (CUDA)  : ${LSDTT_GPU}")

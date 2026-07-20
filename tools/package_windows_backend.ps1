@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
 
-    [string]$BuildDir = "build/minimal-windows",
+    [string]$BuildDir = "build/windows-qgis",
     [string]$OutDir = "dist",
     [string]$VcpkgRoot = "$env:USERPROFILE/tools/vcpkg",
     [string]$Triplet = "x64-windows",

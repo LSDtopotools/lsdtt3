@@ -156,23 +156,48 @@ Notes:
 - If Visual Studio sets a conflicting `VCPKG_ROOT`, clear it in-session with
   `Remove-Item Env:VCPKG_ROOT`.
 
-### Configure and build minimal Windows profile
+### Configure and build the Windows (QGIS) profile
 
 From the repository root:
 
 ```powershell
-cmake -S . -B build\minimal-windows -G "Ninja" `
+cmake -S . -B build\windows-qgis -G "Ninja" `
   -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\tools\vcpkg\scripts\buildsystems\vcpkg.cmake" `
   -DVCPKG_TARGET_TRIPLET=x64-windows `
+  -DBUILD_TESTING=OFF `
+  -DLSDTT_OPENMP=OFF `
   -DLSDTT_EIGEN=OFF `
   -DLSDTT_OPENCV=OFF `
   -DLSDTT_GPU=OFF `
-  -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON `
-  -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=ON
+  -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
 
-cmake --build build\minimal-windows
+cmake --build build\windows-qgis
 ```
+
+Build only the seven CLIs the QGIS bundle needs, rather than the whole tree:
+
+```powershell
+cmake --build build\windows-qgis --target `
+  lsdtt-raster-preprocessing lsdtt-channel-extraction lsdtt-chi-analysis `
+  lsdtt-basin-extraction lsdtt-basin-stats lsdtt-surface-metrics `
+  lsdtt-channel-network-analysis
+```
+
+**`-DLSDTT_OPENMP=OFF` is not optional on MSVC.** Visual Studio's `/openmp`
+selects OpenMP **2.0** (2002), which rejects unsigned loop indices, silently
+ignores `collapse`, and has no min/max reductions — all of which this codebase
+uses. Leaving OpenMP enabled fails with `C3016`, `C4849` and `C7660` part-way
+through `lsdtt3_cpu`. CMake now warns about this at configure time.
+
+The loss is smaller than it sounds: `C4849` means `collapse` was being ignored
+anyway, so MSVC was only ever parallelising outer loops. `/openmp:llvm` would
+give real OpenMP 3.1+ support, but it switches the runtime from `vcomp140.dll`
+to `libomp140.x86_64.dll`, which `package_windows_backend.ps1` does not yet
+bundle — so that is a deliberate change, not a flag flip.
+
+**`-DBUILD_TESTING=OFF`** drops the test targets, which the bundle does not
+need and which pull in code that is only exercised on Linux.
 
 Note: disabling PkgConfig does not disable FFTW3 - on Windows FFTW3 is found
 through the vcpkg CMake config package. The configure summary should report
@@ -190,8 +215,8 @@ through the vcpkg CMake config package. The configure summary should report
 Optional verification:
 
 ```powershell
-Get-ChildItem build\minimal-windows\bin\lsdtt-*.exe
-.\build\minimal-windows\bin\lsdtt-raster-preprocessing.exe --version
+Get-ChildItem build\windows-qgis\lsdtt-*.exe
+.\build\windows-qgis\lsdtt-raster-preprocessing.exe --version
 ```
 
 ### Package a redistributable Windows backend zip
@@ -234,7 +259,7 @@ Advanced options:
 ```powershell
 .\tools\package_windows_backend.ps1 `
   -Version 0.2.0 `
-  -BuildDir build/minimal-windows `
+  -BuildDir build/windows-qgis `
   -OutDir dist
 ```
 

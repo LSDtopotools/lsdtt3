@@ -41,7 +41,18 @@ std::string trim(const std::string& text)
 std::string env_value(const std::string& name)
 {
     if (name.empty()) return "";
+    // MSVC deprecates getenv in favour of _dupenv_s (C4996). std::getenv is
+    // correct and portable here: the value is copied and trimmed immediately,
+    // and nothing writes to the returned buffer. Suppressed locally rather than
+    // defining _CRT_SECURE_NO_WARNINGS for the whole build.
+#ifdef _MSC_VER
+#  pragma warning(push)
+#  pragma warning(disable : 4996)
+#endif
     const char* raw = std::getenv(name.c_str());
+#ifdef _MSC_VER
+#  pragma warning(pop)
+#endif
     if (raw == nullptr) return "";
     return trim(raw);
 }

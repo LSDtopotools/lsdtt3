@@ -36,12 +36,24 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
+
+// popen/pclose are POSIX; MSVC provides them under underscored names.
+#ifdef _WIN32
+#  define LSDTT_PIPE_OPEN  _popen
+#  define LSDTT_PIPE_CLOSE _pclose
+#  define LSDTT_GIT_SHA_CMD "git rev-parse --short HEAD 2>NUL"
+#else
+#  define LSDTT_PIPE_OPEN  popen
+#  define LSDTT_PIPE_CLOSE pclose
+#  define LSDTT_GIT_SHA_CMD "git rev-parse --short HEAD 2>/dev/null"
+#endif
 
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_data_loader.hpp"
@@ -81,7 +93,7 @@ std::string git_sha()
     // Recorded per row so results can be tracked across commits. Best effort:
     // an absent or non-git checkout simply reports "unknown".
     std::string sha = "unknown";
-    if (FILE* pipe = popen("git rev-parse --short HEAD 2>/dev/null", "r"))
+    if (FILE* pipe = LSDTT_PIPE_OPEN(LSDTT_GIT_SHA_CMD, "r"))
     {
         char buffer[64] = {0};
         if (std::fgets(buffer, sizeof(buffer), pipe))
@@ -90,8 +102,15 @@ std::string git_sha()
             while (!sha.empty() && (sha.back() == '\n' || sha.back() == '\r'))
                 sha.pop_back();
         }
-        pclose(pipe);
-        if (sha.empty()) sha = "unknown";
+        LSDTT_PIPE_CLOSE(pipe);
+
+        // Only accept something that actually looks like a short hash. Without
+        // this, any stray text on the pipe -- a git error, a locale warning --
+        // would be written into the CSV as if it were a commit id.
+        const bool looks_like_sha =
+            !sha.empty() && sha.size() <= 40 &&
+            sha.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
+        if (!looks_like_sha) sha = "unknown";
     }
     return sha;
 }

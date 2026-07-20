@@ -274,7 +274,9 @@ later cell.
 
 - x64 Visual Studio developer shell (for `dumpbin.exe` and
   `$env:VCToolsRedistDir`)
-- completed Windows build (default: `build/minimal-windows`)
+- completed Windows build (default: `build/windows-qgis`) — see
+  `docs/installing_locally.md` for the configure/build commands, and note
+  `-DLSDTT_OPENMP=OFF` is required on MSVC
 - vcpkg install with GDAL/PROJ runtime files (default:
   `%USERPROFILE%/tools/vcpkg`)
 
@@ -282,7 +284,7 @@ later cell.
 
 ```powershell
 .\tools\package_windows_backend.ps1 -Version 0.2.0
-.\tools\package_windows_backend.ps1 -Version 0.2.0 -BuildDir build/minimal-windows -OutDir dist
+.\tools\package_windows_backend.ps1 -Version 0.2.0 -BuildDir build/windows-qgis -OutDir dist
 ```
 
 ### End-user install (also in the bundle's README.md)
