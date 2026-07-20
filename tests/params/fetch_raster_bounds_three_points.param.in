@@ -1,0 +1,6 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_three_points
+
+# Three points cannot define a rectangle unambiguously; exactly two are needed.
+bounds_fname: bounds/bounds_points_three.gpkg

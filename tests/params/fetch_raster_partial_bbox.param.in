@@ -1,0 +1,10 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_partial_bbox
+
+# Three edges given, north omitted. A partially specified box must be rejected
+# per-edge: silently defaulting the missing edge to zero would fetch a wildly
+# wrong area rather than failing.
+west: 10.3373594105
+south: 46.4568810636
+east: 10.4626405895

@@ -23,6 +23,7 @@ qgis lsdtt-basin-stats
 qgis lsdtt-surface-metrics
 qgis lsdtt-channel-network-analysis
 
+core lsdtt-fetch-raster
 core lsdtt-raster-preprocessing
 core lsdtt-channel-extraction
 core lsdtt-chi-analysis

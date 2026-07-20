@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_bad_source
+
+west: 10.3373594105
+south: 46.4568810636
+east: 10.4626405895
+north: 46.5431189364
+
+# An unrecognised source must be rejected, never silently substituted with the
+# default one -- that would hand back data from a provider the user did not ask
+# for, with no indication anything was wrong.
+dem_source: not_a_real_source

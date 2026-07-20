@@ -1,0 +1,11 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_conflict
+
+# Both ways of specifying the area at once. Accepting this would mean silently
+# picking a winner, leaving the user unsure which area was fetched.
+west: 10.3373594105
+south: 46.4568810636
+east: 10.4626405895
+north: 46.5431189364
+bounds_fname: bounds/bounds_polygon.fgb

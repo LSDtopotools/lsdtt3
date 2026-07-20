@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_missing_bbox
+
+# Deliberately omits west/south/east/north. All four are required, and a
+# missing edge must be a hard error rather than defaulting to zero -- a
+# silently zeroed bounding box would fetch the Gulf of Guinea.
+dem_source: cop30_aws

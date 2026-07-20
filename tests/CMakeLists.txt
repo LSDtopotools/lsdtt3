@@ -241,6 +241,133 @@ add_test(NAME unit_flow_properties
 set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 
+# -----------------------------------------------------------------------------
+# lsdtt-fetch-raster CLI (docs/fetch_raster_cli_plan.md Phase 2)
+#
+# These run offline: they exercise the argument handling and validation that
+# happen before any network access is attempted.
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_missing_bbox
+    lsdtt-fetch-raster
+    fetch_raster_missing_bbox.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: no area given"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_partial_bbox
+    lsdtt-fetch-raster
+    fetch_raster_partial_bbox.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: north must be set"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_source
+    lsdtt-fetch-raster
+    fetch_raster_bad_source.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: unknown dem_source"
+)
+
+# -h must work without a parameter file, and without touching the network.
+add_test(NAME smoke_fetch_raster_help
+         COMMAND lsdtt-fetch-raster -h)
+set_tests_properties(smoke_fetch_raster_help PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "Bounding box")
+
+# The CLI must never grow a credential parameter: parameter files get committed
+# and print_parameters() echoes every parameter at the end of a run. This guards
+# the rule stated in the plan (Sec1) and in the CLI's own header.
+add_test(NAME rigorous_fetch_raster_no_credential_parameters
+         COMMAND lsdtt-fetch-raster -h)
+set_tests_properties(rigorous_fetch_raster_no_credential_parameters PROPERTIES
+    LABELS "rigorous;cli;fetch"
+    FAIL_REGULAR_EXPRESSION "api_key;API_Key;password;secret;token;credential")
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bounds_conflict
+    lsdtt-fetch-raster
+    fetch_raster_bounds_conflict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: give either bounds_fname or west/south/east/north"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bounds_three_points
+    lsdtt-fetch-raster
+    fetch_raster_bounds_three_points.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "exactly two"
+)
+
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_lsdtt_cli_smoke_test(
+        network_fetch_raster_bounds_cli
+        lsdtt-fetch-raster
+        fetch_raster_bounds_network.param.in
+        frompoly_DEM.tif
+        --expect-raster-size frompoly_DEM.tif:128x128
+    )
+    set_tests_properties(network_fetch_raster_bounds_cli
+        PROPERTIES LABELS "network;cli;fetch")
+
+    add_lsdtt_cli_smoke_test(
+        network_fetch_raster_cli
+        lsdtt-fetch-raster
+        fetch_raster_network.param.in
+        ortler_test_DEM.tif
+        --expect-raster-size ortler_test_DEM.tif:128x128
+    )
+    set_tests_properties(network_fetch_raster_cli PROPERTIES LABELS "network;cli;fetch")
+endif()
+
+# Credential handling (docs/fetch_raster_cli_plan.md Phase 3).
+#
+# lsdtt_secret is the only place in lsdtt3 that touches secrets, so it gets its
+# own driver. Offline and deterministic; always in the default suite.
+add_executable(lsdtt-test-secret cpp/test_secret.cpp)
+target_link_libraries(lsdtt-test-secret PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-secret PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+
+add_test(NAME unit_secret
+         COMMAND lsdtt-test-secret ${CMAKE_CURRENT_BINARY_DIR}/secret_test_output)
+set_tests_properties(unit_secret PROPERTIES LABELS "unit;fetch")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/secret_test_output)
+
+# Native DEM fetching (docs/fetch_raster_cli_plan.md Phase 1).
+#
+# The offline half needs no network and runs in the default suite: it covers UTM
+# zone derivation, tile naming, option validation, and -- most importantly --
+# that an unobtainable source degrades to "skipped" rather than failing.
+add_executable(lsdtt-test-raster-fetch cpp/test_raster_fetch.cpp)
+target_link_libraries(lsdtt-test-raster-fetch PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-raster-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+
+add_test(NAME unit_raster_fetch
+         COMMAND lsdtt-test-raster-fetch --offline --data-dir=${CMAKE_CURRENT_SOURCE_DIR}/data/bounds)
+set_tests_properties(unit_raster_fetch PROPERTIES LABELS "unit;fetch")
+
+# The network half actually downloads. Off by default; skips (77) rather than
+# failing when the source is unreachable.
+option(LSDTT_ENABLE_NETWORK_TESTS "Enable tests that download data" OFF)
+
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_test(NAME network_raster_fetch
+             COMMAND lsdtt-test-raster-fetch --network
+                     ${CMAKE_CURRENT_BINARY_DIR}/fetch_test_output)
+    set_tests_properties(network_raster_fetch
+        PROPERTIES LABELS "network;fetch" SKIP_RETURN_CODE 77)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fetch_test_output)
+endif()
+
 add_test(NAME unit_cosmo_physics
          COMMAND lsdtt-test-cosmo-physics
                  ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output

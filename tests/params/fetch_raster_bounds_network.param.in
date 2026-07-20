@@ -1,0 +1,15 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: frompoly
+
+# Area comes from a UTM polygon rather than lat/lon edges; it is reprojected to
+# WGS84 automatically.
+bounds_fname: bounds/bounds_polygon_utm.gpkg
+
+dem_source: cop30_aws
+target_epsg: 32632
+grid_spacing: 30.0
+size_pixels: 128
+
+http_connect_timeout_seconds: 10
+http_timeout_seconds: 30

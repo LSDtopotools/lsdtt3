@@ -83,6 +83,89 @@ python tests/scripts/fetch_cronus_reference.py \
 It sends a single batched request, caches the raw XML alongside the CSV, and the
 regenerated CSV should be committed with a note explaining why it moved.
 
+## Native DEM fetch tests
+
+`unit_raster_fetch` (labels `unit;fetch`) runs `tests/cpp/test_raster_fetch.cpp`
+in offline mode: 31 checks over `src/core/lsdtt_raster_fetch.*`, needing no
+network. Plan: `docs/fetch_raster_cli_plan.md` Phase 1.
+
+- UTM zone derivation, including zone boundaries and the ±180 antimeridian
+  (an off-by-one silently reprojects into the neighbouring zone rather than
+  failing outright)
+- Copernicus tile naming, including bboxes crossing 1° boundaries in either or
+  both axes, and southern/western hemisphere naming
+- Option validation — a malformed bbox is an **error**, never a "skip"
+- **Graceful degradation** — an unobtainable tile yields `skipped=true`, so
+  callers can skip rather than fail
+- **No credential leakage** — asserts nothing credential-shaped appears in any
+  loggable result field. It passes trivially today (Phase 1 has no keyed
+  sources); its job is to fail the day a key is routed through these structs.
+
+`network_raster_fetch` actually downloads and is **off by default**:
+
+```bash
+cmake -S . -B build -DLSDTT_ENABLE_NETWORK_TESTS=ON
+ctest --test-dir build -L fetch --output-on-failure
+```
+
+It fetches a 128² window, checks the crop, EPSG, nodata and that the elevations
+are plausible alpine values, and exits 77 (skip) when the source is unreachable.
+
+## Credential handling tests
+
+`unit_secret` (labels `unit;fetch`) runs `tests/cpp/test_secret.cpp` — 24
+offline checks over `src/core/lsdtt_secret.*`, the only place in lsdtt3 that
+handles secrets. Plan: `docs/fetch_raster_cli_plan.md` §1.
+
+These are security properties, not conveniences:
+
+- **Masking removes every occurrence** of a key from a string, leaves the rest
+  of a URL intact for diagnosis, and treats an empty secret as a no-op (an empty
+  needle would otherwise match at every position and shred the text)
+- **Resolution order** is exactly `OT_API_KEY` → `OT_API_KEY_FILE` → TTY prompt,
+  and a named-but-unreadable key file is reported rather than silently skipped
+- **No prompt when stdin is not a terminal** — prompting under CTest would hang
+  the run forever instead of failing cleanly
+- **A world-readable key file warns** (and the warning does not contain the key)
+- **The secret never appears** in `source`, `warning` or `message` — the fields
+  intended for logging
+
+The `chmod 600` check is skipped where `chmod` is a no-op (NTFS under WSL); the
+test detects that rather than reporting a filesystem limitation as a defect. On
+a real POSIX filesystem all 24 checks assert.
+
+Why this matters concretely: the OpenTopography API **echoes the submitted key
+back in its own error message**. Without masking, every mistyped or expired key
+would be printed to the terminal and into any redirected log.
+
+### Bounds from a vector file
+
+`unit_raster_fetch` also covers deriving the fetch area from an `.fgb`/`.gpkg`
+containing a polygon or two corner points (fixtures in `tests/data/bounds/`,
+committed because they are a few kB each).
+
+The headline property: **both diagonals give the identical box.** Two points at
+lower-left/upper-right and at lower-right/upper-left produce the same
+`min`/`max`, so there is no orientation to detect and no way to hold it wrong.
+A test asserts the two arrangements agree to 1e-12.
+
+Also covered: reprojection from UTM (the geometry is transformed *before* the
+envelope is taken, since transforming envelope corners under-covers the true
+extent), rejection of three points, of mixed geometry types, and of missing
+files.
+
+The `lsdtt-fetch-raster` CLI adds four more offline tests plus one networked
+one: `smoke_fetch_raster_help`, `failure_fetch_raster_missing_bbox` (a missing
+bbox edge must be a hard error — a silently zeroed box fetches the Gulf of
+Guinea), `failure_fetch_raster_bad_source`, and
+`rigorous_fetch_raster_no_credential_parameters`.
+
+That last one scans the CLI's help output and fails if any parameter is named
+like a credential (`api_key`, `password`, `token`, `secret`). Parameter files
+get committed and `print_parameters()` echoes every parameter at the end of a
+run, so **a credential must never be a parameter**. The test exists to stop a
+future change quietly introducing one.
+
 ## Flow-routing property tests
 
 `unit_flow_properties` (labels `unit;flow`) runs

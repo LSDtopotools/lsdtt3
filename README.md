@@ -184,6 +184,7 @@ export PATH=/path/to/lsdtt3/build:$PATH
 | `LSDTT_OPENCV` | `ON` | Build OpenCV-dependent routines (auto-disabled if OpenCV not found) |
 | `LSDTT_EIGEN` | `ON` | Build Eigen3-dependent routines (auto-disabled if Eigen3 not found) |
 | `LSDTT_ENABLE_BENCHMARKS` | `OFF` | Register the RichDEM comparison benchmarks (needs network + pixi) |
+| `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Register tests that download data |
 
 ---
 
@@ -208,6 +209,7 @@ Tests are grouped by label, so you can run just the part you care about:
 | `unit` | C++ unit tests: parameter parser, cosmogenic physics, flow-routing properties |
 | `cosmo` | Cosmogenic-nuclide physics against CRONUS and pinned numerics sentinels |
 | `flow` | Flow routing and depression handling: properties, and RichDEM comparison |
+| `fetch` | Native DEM fetching (`lsdtt_raster_fetch`); offline logic by default |
 | `benchmark` | Opt-in comparison against RichDEM on fetched real DEMs |
 
 ```sh
@@ -244,6 +246,7 @@ lsdtt-drainage-analysis     my_params.driver
 
 | Program | Description | Reference |
 |---|---|---|
+| `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/fetch_raster_cli_plan.md` |
 | `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | `docs/cli_reference_lsdtt_raster_preprocessing.md` |
 | `lsdtt-raster-synthetic-tests` | Generates synthetic test surfaces (random, fractal, diamond-square, mountain-range geometries) for algorithm validation. | — |
 
@@ -346,7 +349,9 @@ Each has a `--help`; `dem_downloader_instructions.md` and
 ### Python environments with pixi
 
 None of the above is needed to build or run lsdtt3 — the C++ tools have no
-Python dependency. If you do want the helpers or the test tooling, we use
+Python dependency. For downloading DEMs in particular, `lsdtt-fetch-raster`
+does the common case (a bounding box from Copernicus GLO-30) with no Python at
+all; `download_dem_tiles.py` remains for the other providers. If you do want the helpers or the test tooling, we use
 [pixi](https://pixi.sh) so you don't have to hand-maintain a geospatial Python
 environment. [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3), our
 visualisation package, uses pixi on the same conda-forge channel, so the two

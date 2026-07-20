@@ -198,6 +198,8 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_raster_reproject.cpp
     src/core/lsdtt_vector_utils.cpp
     src/core/lsdtt_raster_warp.cpp
+    src/core/lsdtt_raster_fetch.cpp
+    src/core/lsdtt_secret.cpp
     src/core/lsdtt_point_input.cpp
     src/core/lsdtt_stat_csv.cpp
 )
@@ -499,6 +501,7 @@ lsdtt_cli(lsdtt-ridgeline-analysis     cli/lsdtt-ridgeline-analysis.cpp)
 lsdtt_cli(lsdtt-basin-surface-metrics  cli/lsdtt-basin-surface-metrics.cpp)
 lsdtt_cli(lsdtt-test-hillslope-implicit cli/lsdtt-test-hillslope-implicit.cpp)
 lsdtt_cli(lsdtt-raster-calculator      cli/lsdtt-raster-calculator.cpp)
+lsdtt_cli(lsdtt-fetch-raster           cli/lsdtt-fetch-raster.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)

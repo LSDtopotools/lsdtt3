@@ -1,0 +1,18 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ortler_test
+
+# Val Venosta / Ortler, Italian Alps. Small window, single source tile.
+west: 10.3373594105
+south: 46.4568810636
+east: 10.4626405895
+north: 46.5431189364
+
+dem_source: cop30_aws
+target_epsg: 32632
+grid_spacing: 30.0
+size_pixels: 128
+
+# Fail promptly rather than stalling a test run on an unresponsive host.
+http_connect_timeout_seconds: 10
+http_timeout_seconds: 30
