@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: vincent_bad_slope
+
+# Vincent reconstruction fills to exactly the spill level and cannot impose a
+# gradient across flats. Combining it with a positive fill_min_slope must be
+# refused, not silently ignored -- silently ignoring it would hand back a
+# surface with undrainable flats that the D8 router then rejects downstream.
+read_fname: tiny30_dem.tif
+enforce_projection: true
+write_fill_raster: true
+fill_algorithm_choice: vincent1993
+fill_min_slope: 0.0001

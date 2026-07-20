@@ -378,6 +378,160 @@ Timed like for like on the same raster:
 | D-inf build + accumulate | 0.0057 s | 0.0379 s | **6.6× faster** |
 | MFD build + accumulate | 0.0089 s | 0.0239 s | **2.7× faster** |
 
+### The reconstruction backend (2026-07-20)
+
+Investigating why TopoToolbox filled ~2× faster than lsdtt3 found that it is not
+an implementation-quality gap but a **different algorithm class**:
+
+- lsdtt3's `fill_pits` used Barnes et al. (2014) Improved Priority-Flood —
+  **O(N log N)**, because on continuous terrain nearly every cell passes through
+  the `std::priority_queue` rather than the flat-tie FIFO.
+- TopoToolbox's default `fillsinks(hybrid=True)` is Vincent (1993) grayscale
+  morphological reconstruction — **O(N)**: two raster scans plus a bounded FIFO
+  drain, almost entirely sequential memory access.
+
+The decisive control: TopoToolbox's *non*-hybrid path tracks lsdtt3 almost
+exactly at every size, so their implementation quality was never the
+differentiator — the hybrid reconstruction specifically was.
+
+lsdtt3 now has both. `fill_pits_reconstruction()` implements Vincent 1993, and
+`fill_pits()` dispatches on `min_slope`:
+
+| `min_slope` | backend | why |
+|---|---|---|
+| `<= 0` | reconstruction | 2–3× faster, bit-identical |
+| `> 0` | priority-flood | reconstruction cannot impose a gradient |
+
+Measured on synthetic surfaces (in-process, best of 3):
+
+| size | priority-flood | reconstruction | speed-up |
+|---|---|---|---|
+| 256² | 0.0051 s | 0.0024 s | 2.1× |
+| 512² | 0.0275 s | 0.0091 s | 3.0× |
+| 1024² | 0.1142 s | 0.0563 s | 2.0× |
+| 2048² | 0.6791 s | 0.2251 s | 3.0× |
+
+On the real `alpine_small` fixture the gain is larger — 0.0073 s → 0.0014 s,
+about **5×** — because alpine terrain has few depressions (0.9 % of cells), so
+the FIFO drain stays tiny while the heap still has to process everything.
+
+At 2048² lsdtt3's reconstruction (0.225 s) is now slightly **faster than
+TopoToolbox's** (0.250 s), which was the original benchmark.
+
+#### A negative result: flat resolution as a second pass does not pay
+
+The obvious way to extend the fast path to `min_slope > 0` is to fill by
+reconstruction and then impose the gradient in a separate step. That was
+implemented (`resolve_flats_gradient`) and **it is slower**, by 8–88 % against
+the priority-flood it was meant to replace, across every size tested. Two
+independent implementations were tried — fast-sweeping raster passes, then a
+work queue — and both lost.
+
+The reason is structural rather than a tuning problem. Imposing the gradient is
+a shortest-path problem over the surface: each cell must end one step above
+whichever neighbour it drains to. That is exactly the ordered propagation
+priority-flood already performs inline while flooding. Doing it as a second pass
+means paying for that propagation separately, on top of the fill, and the heap
+it removes costs less than the second pass adds. Solving the second pass
+"properly" with a priority queue would just be priority-flood again.
+
+Two bugs found along the way, both caught by asserting **routability** rather
+than only depression-freedom — worth recording because a depression-free check
+alone passes both:
+
+1. Adding `min_slope × cell_size × distance` post hoc can lift a flat cell
+   *above* a neighbouring cell that was previously lower, inverting that pair
+   and leaving the neighbour nowhere to drain. A new pit, and the D8 router
+   refuses the surface. The fix is to solve the monotone fixed point
+   `S(p) = max(F(p), min over q of [S(q) + step])` instead, where every cell
+   necessarily ends above whichever neighbour supplied its minimum.
+2. In that fixed point, pinning every already-draining cell to its filled
+   elevation reintroduces the same failure: if the neighbour it drains to is
+   later raised, the pinned cell must rise too, and pinning prevents it. Only
+   the drainage *exits* may be pinned; everything else must be computed.
+
+`resolve_flats_gradient` is retained — it is correct, tested, and defines the
+gradient by propagated distance rather than FIFO first-arrival, which may be
+independently useful — but it is not wired into any CLI and is not a default.
+
+#### The `min_slope > 0` output depends on heap tie-breaking
+
+Measured, not inferred. Changing **only** the tie-break in `pf_node::operator>`
+— adding `(row, col)` as a secondary key, algorithm otherwise untouched — and
+comparing filled rasters:
+
+| Case | Output |
+|---|---|
+| `min_slope = 0`, alpine and lakeland | **identical** |
+| `min_slope = 1e-4`, alpine (0.9 % flats) | identical |
+| `min_slope = 1e-4`, lakeland (flat-dominated) | **different** |
+
+On the flat-dominated fixture: max difference **0.053 m** (≈18 steps of
+`min_slope × cell_size`), **22.8 %** of cells differing at all, 4.2 % by more
+than 1 cm, mean 0.0016 m.
+
+The mechanism: a cell's filled value is assigned **once, on first arrival**
+(`idx != k_open` blocks reprocessing). At `min_slope = 0` the assigned value is
+the parent's elevation, and since priority-flood pops in increasing elevation,
+every tied parent carries the same value — the result is the spill level, a
+uniquely determined quantity. That is why it is bit-exact against RichDEM,
+TopoToolbox and reconstruction. At `min_slope > 0` the assigned value is
+`parent + step`, where the parent's value already includes its own accumulated
+increments, so two tied parents can carry different values and whichever arrives
+first wins. `std::priority_queue` leaves the order among equal elements
+**unspecified**.
+
+Two consequences worth knowing:
+
+- **A heap swap is not output-neutral for `min_slope > 0`.** An indexed or radix
+  heap would break ties differently and shift gradient values on flats by up to
+  a few centimetres in low-relief terrain. Not *wrong* — the current values are
+  one arbitrary choice among many valid ones — but it would change published
+  numbers for anyone working on flat ground, for an estimated 10–20 % on a path
+  that is not the bottleneck. Judged poor value; not done.
+- **The current output is already unspecified-order dependent.** Nothing
+  guarantees `std::priority_queue` behaves identically across libstdc++
+  versions, compilers or optimisation levels. Adding a defined tie-break would
+  make it deterministic at essentially no cost. Considered and deliberately
+  **not** adopted (Simon, 2026-07-20) — recorded here so the exposure is known
+  rather than forgotten. It matters only for gradient values on flat terrain;
+  depression fill levels, flow routing and everything at `min_slope = 0` are
+  unaffected.
+
+#### Why it is not the default everywhere
+
+Reconstruction fills to exactly the spill level and leaves **true flats**. It has
+no mechanism for the gradient that `fill_min_slope` imposes, and lsdtt3's own D8
+router *throws* on a truly flat surface. Since the default `fill_min_slope` is
+`1e-4`, the default path still uses priority-flood — there is no faster option
+for the gradient case. The dispatch is therefore an optimisation of the
+`min_slope == 0` case only, and changes no output.
+
+`fill_algorithm_choice: vincent1993` selects it explicitly in
+`lsdtt-raster-preprocessing`, and **refuses to run** with a positive
+`fill_min_slope` rather than silently ignoring it and returning undrainable
+flats.
+
+#### How the equivalence is verified
+
+**P9** in `tests/cpp/test_flow_properties.cpp` asserts the two backends agree
+**exactly** — `max |difference| == 0.0`, not a tolerance, because both are
+deterministic algorithms over the same float32 input and anything less than
+exact would mean one of them is wrong. Covered:
+
+- all four standard fixtures, including the interior-nodata one
+- six degenerate cases: single row, single column, 3×3, **perfectly flat**
+  (every cell ties with every neighbour — the worst case for any tie-breaking
+  difference), a monotonic ramp with nothing to fill, and a mostly-nodata raster
+  with a valid island containing its own pit
+
+P9 calls `fill_pits_priority_flood()` explicitly rather than `fill_pits()`,
+since the latter now dispatches and the comparison would otherwise be circular.
+
+Independently, the RichDEM and TopoToolbox benchmark comparisons run at
+`min_slope = 0` and so exercise the new default path — both still report
+bit-exact agreement.
+
 ### Scaling
 
 Constant throughput from 65k to 1M cells confirms the O(n) behaviour

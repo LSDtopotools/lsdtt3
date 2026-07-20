@@ -162,6 +162,18 @@ void time_depression_routines(const lsdtt::lsdtt_raster_cpu& dem,
     record(label + "fill_pits(min_slope=1e-4)", n_cells, 1,
            time_best_of([&] { (void)lsdtt::fill_pits(dem, 0.0001f); }));
 
+    // Vincent 1993 reconstruction: same result as fill_pits(min_slope=0),
+    // different cost class (O(N) scans + FIFO vs O(N log N) heap).
+    record(label + "fill_reconstruction(vincent)", n_cells, 1,
+           time_best_of([&] { (void)lsdtt::fill_pits_reconstruction(dem); }));
+
+    // Reconstruction + flat resolution: the O(N) route to a ROUTABLE surface,
+    // i.e. the candidate replacement for priority-flood at min_slope > 0.
+    record(label + "fill_reconstruction+gradient", n_cells, 1,
+           time_best_of([&] {
+               (void)lsdtt::fill_pits_reconstruction_with_gradient(dem, 0.0001f);
+           }));
+
     record(label + "breach_depressions", n_cells, 1,
            time_best_of([&] { (void)lsdtt::breach_depressions(dem); }));
 

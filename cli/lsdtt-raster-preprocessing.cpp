@@ -483,12 +483,18 @@ int main(int argc, char* argv[])
 
     string_default_map["fill_algorithm_choice"] = "barnes2014";
     help_map["fill_algorithm_choice"] = {"string","barnes2014",
-        "Algorithm for pit filling.",
-        "barnes2014: Improved Priority-Flood (Barnes et al. 2014). "
-        "barnesetal2021: The fill-spill-merge algorithm (note this intentionally"
-        " does not guarantee that all depressions are filled, see" 
-        " https://doi.org/10.5194/esurf-9-105-2021).",
-        "Pit filling", "param", "write_fill_raster"};
+        "Depression filling algorithm.",
+        "barnes2014: Improved Priority-Flood (Barnes et al. 2014). The default. "
+        "Imposes fill_min_slope across flats so the filled surface is routable. "
+        "vincent1993: grayscale morphological reconstruction (Vincent 1993). "
+        "Produces a BIT-IDENTICAL result to barnes2014 and is 2-3x faster, but "
+        "fills to exactly the spill level and so requires fill_min_slope: 0 -- "
+        "it cannot impose a gradient across flats, and lsdtt3's D8 router will "
+        "reject a surface with true flats. barnesetal2021: Fill-Spill-Merge "
+        "(https://doi.org/10.5194/esurf-9-105-2021); note this distributes a "
+        "finite rainfall volume and does not guarantee all depressions are "
+        "filled.",
+        "Filling", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -1345,9 +1351,36 @@ int main(int argc, char* argv[])
                 std::cout << "Algorithm: Barnes et al. (2014) "
                              "Priority-Flood\n";
 
-                filled_dem = lsdtt::fill_pits(
+                filled_dem = lsdtt::fill_pits_priority_flood(
                     working_dem,
                     ff["fill_min_slope"],
+                    n_threads
+                );
+            }
+            else if (algo == "vincent1993")
+            {
+                // Reconstruction fills to exactly the spill level and has no
+                // mechanism for a gradient across flats. Refusing is better
+                // than silently ignoring fill_min_slope and handing back a
+                // surface with undrainable flats that the D8 router will then
+                // reject.
+                if (ff["fill_min_slope"] > 0.0f)
+                {
+                    std::cerr << "FATAL: fill_algorithm_choice = vincent1993 "
+                                 "cannot impose a gradient across flats, but "
+                                 "fill_min_slope is "
+                              << ff["fill_min_slope"] << ".\n"
+                              << "Set fill_min_slope: 0 to use it, or use "
+                                 "barnes2014 (the default), which is what "
+                                 "imposes the gradient.\n";
+                    return 1;
+                }
+
+                std::cout << "Algorithm: Vincent (1993) grayscale morphological "
+                             "reconstruction\n";
+
+                filled_dem = lsdtt::fill_pits_reconstruction(
+                    working_dem,
                     n_threads
                 );
             }
@@ -1385,7 +1418,7 @@ int main(int argc, char* argv[])
             else {
                 std::cout << "Warning: no correct fill_algorithm choice supplied, "
                           << "choose one of: \n"
-                          << "barnes2014, barnesetal2021 \n"
+                          << "barnes2014, vincent1993, barnesetal2021 \n"
                           << "I will now simply take the non-filled dem as filled dem. \n";
 
                 filled_dem = working_dem;

@@ -334,6 +334,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `docs/lsdtt3_in_macos.md` | macOS setup including OpenMP workaround. |
 | `docs/debian_packaging.md` | Building a Debian package. |
 | `apptainer_def/apptainer_setup.md` | Apptainer container setup. |
+| `tools/README.md` | Building redistributable bundles, and the git/gh commands for cutting a tagged release. |
 
 ---
 

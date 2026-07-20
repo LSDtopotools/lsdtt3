@@ -24,6 +24,122 @@ tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
 tools/make_release.sh --version 0.3.0 --skip-build --build-dir build
 ```
 
+## Cutting a release from the command line
+
+Two routes. Both produce the same artefacts, because `.github/workflows/release.yml`
+just calls `tools/make_release.sh` — the difference is only who runs it.
+
+### Before anything else: bump the version in CMakeLists.txt
+
+`make_release.sh` **refuses to run** if the version it is releasing does not
+match `project(lsdtt3 VERSION ...)` — so this is step one, not an afterthought:
+
+```bash
+# CMakeLists.txt line 2:  project(lsdtt3 VERSION 0.3.0 LANGUAGES CXX)
+git add CMakeLists.txt
+git commit -m "Bump version to 0.3.0"
+git push
+```
+
+The tag must be exactly `v` + that version (`v0.3.0` for `VERSION 0.3.0`).
+CMakeLists.txt uses the same rule to decide whether a build reports a plain
+release version or a `-dev` one, so a mismatch silently produces `-dev` binaries
+in what looks like a release.
+
+### Route 1 — tag and push, let Actions build it
+
+```bash
+# annotated tag (-a with -m), not lightweight: it carries an author, date and
+# message, and `git describe` prefers it
+git tag -a v0.3.0 -m "lsdtt3 0.3.0"
+
+# push the tag on its own; pushing the branch does NOT push tags
+git push origin v0.3.0
+```
+
+That matches the workflow's `on: push: tags: - "v*"` trigger, which runs
+`make_release.sh --version 0.3.0` and publishes the Linux `core` bundle.
+
+To push every local tag at once (rarely what you want — it publishes anything
+you were still thinking about): `git push origin --tags`.
+
+### Route 2 — build and publish locally, zero Actions minutes
+
+```bash
+git tag -a v0.3.0 -m "lsdtt3 0.3.0"
+tools/make_release.sh --version 0.3.0 --publish
+git push origin v0.3.0
+```
+
+`--publish` creates the GitHub release and uploads the bundle via `gh`
+(re-running is safe — it uploads with `--clobber` if the release exists). Push
+the tag afterwards so the release and the tag agree; if you push first, Actions
+will also build it and you get two runs producing the same artefact.
+
+For a prerelease, which does not become "latest" for users:
+
+```bash
+git tag -a v0.3.0-rc1 -m "lsdtt3 0.3.0-rc1"
+tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
+git push origin v0.3.0-rc1
+```
+
+### Attaching the Windows and macOS bundles
+
+Those are built by hand on the respective machines (see the per-platform scripts
+below), then attached to the existing release:
+
+```bash
+gh release upload v0.3.0 dist/lsdtt3-backend-win64-qgis-v0.3.0.zip
+gh release upload v0.3.0 dist/lsdtt3-backend-macos-arm64-core-v0.3.0.tar.gz
+
+# replacing a bundle already attached
+gh release upload v0.3.0 dist/<bundle> --clobber
+```
+
+### Managing the release itself
+
+```bash
+gh release view   v0.3.0                  # what is attached, and the notes
+gh release list                           # all releases
+gh release create v0.3.0 --generate-notes # notes from merged PRs/commits
+```
+
+> `gh release edit` — for promoting a draft or an rc in place — **does not exist
+> in gh 2.4.0**, which is what `apt install gh` gives on Ubuntu 22.04 (verified
+> on this machine). `view`, `list`, `create`, `delete` and `upload --clobber` all
+> work there. If you want `edit`, install a current gh from
+> <https://cli.github.com>; otherwise promote a prerelease through the web UI, or
+> delete and recreate it before anyone has fetched the tag.
+
+### Undoing a mistake
+
+Order matters: delete the release before the tag, or you leave a release
+pointing at a tag that no longer exists.
+
+```bash
+gh release delete v0.3.0 --yes    # remove the GitHub release
+git tag -d v0.3.0                 # delete locally
+git push origin --delete v0.3.0   # delete on the remote
+```
+
+> **Do not move a tag that others may have pulled.** Re-pointing a published tag
+> (`git tag -f` + `git push --force`) means two people can have different code
+> under the same version, and anyone who already fetched it keeps the old commit
+> silently. Cut `v0.3.1` instead. Deleting is only safe in the minutes after a
+> mistake, before anyone has fetched.
+
+### Checking what you are about to release
+
+```bash
+git describe --tags --dirty --always   # what CMakeLists.txt will embed
+git tag -l                             # tags that already exist
+git log --oneline $(git describe --tags --abbrev=0)..HEAD   # since last tag
+```
+
+A `-dirty` suffix means uncommitted changes are in the build. Release from a
+clean tree.
+
 ## CLI profiles (`cli_profiles.txt`)
 
 Which CLIs go into a bundle is controlled by a profile; the qgis and core

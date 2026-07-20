@@ -25,6 +25,8 @@
 //   P6  filling an already-filled DEM is a no-op (idempotence)
 //   P7  D-inf / MFD receiver weights sum to 1.0 per cell that has receivers
 //   P8  D8 accumulation is exact on a planar ramp (analytic oracle; no reference)
+//   P9  the Vincent reconstruction backend matches priority-flood exactly
+//   P10 reconstruction + flat resolution yields a ROUTABLE surface
 //
 // Section 8 additionally *characterises* (reports, does not assert) the
 // alternative fill algorithm exposed by lsdtt-raster-preprocessing, per Simon's
@@ -499,6 +501,226 @@ void test_d8_accumulation_properties(const fixture& fx)
 
 
 // =============================================================================
+// P9 -- the reconstruction backend agrees with priority-flood
+//
+// fill_pits_reconstruction() (Vincent 1993 grayscale reconstruction) and
+// fill_pits() (Barnes 2014 priority-flood) compute the same fixed point by
+// different routes, so at min_slope == 0 they must agree EXACTLY. Anything less
+// than exact agreement means one of them is wrong, not that tolerances need
+// widening -- both are deterministic integer-order algorithms over the same
+// float32 input.
+//
+// This is the check that has to pass before the faster backend can be trusted
+// anywhere near real data.
+// =============================================================================
+// =============================================================================
+// P10 -- reconstruction + flat resolution produces a ROUTABLE surface
+//
+// The whole point of the gradient is that lsdtt3's D8 router refuses a surface
+// containing true flats. So the test that matters is not "does it look like
+// priority-flood's output" but "can it actually be routed" -- built without
+// throwing, every valid cell reaching an outlet, and mass conserved.
+//
+// Agreement with priority-flood is REPORTED, not asserted: the two assign flat
+// elevations by different rules (first-arrival FIFO vs true geodesic chamfer
+// distance), so they legitimately differ. See resolve_flats_gradient()'s header.
+// =============================================================================
+void test_reconstruction_gradient_is_routable(const fixture& fx)
+{
+    const float min_slope = 0.0001f;
+
+    const lsdtt::lsdtt_raster_cpu barnes =
+        lsdtt::fill_pits_priority_flood(fx.dem, min_slope);
+    const lsdtt::lsdtt_raster_cpu recon =
+        lsdtt::fill_pits_reconstruction_with_gradient(fx.dem, min_slope);
+
+    // -- must be depression-free ------------------------------------------
+    check("P10 reconstruction+gradient is depression-free: " + fx.name,
+          count_interior_minima(recon) == 0,
+          "interior minima = " + std::to_string(count_interior_minima(recon)));
+
+    // -- must not lower the original surface -------------------------------
+    const diff_stats vs_original = compare(recon, fx.dem, 0.0);
+    check("P10 reconstruction+gradient is non-lowering: " + fx.name,
+          vs_original.signed_min >= -1e-6,
+          "most negative (result - original) = " +
+          std::to_string(vs_original.signed_min));
+
+    // -- must be routable: the D8 router throws on an unresolved flat ------
+    bool routed = true;
+    std::string routing_error;
+    double outlet_total = 0.0;
+    std::int64_t n_valid = 0;
+
+    try
+    {
+        lsdtt::lsdtt_flowinfo_options opts;
+        opts.boundary_conditions = "oooo";
+        lsdtt::lsdtt_flowinfo fi(recon.get_data_array(), recon.get_mask_array(),
+                                 recon.meta(), opts);
+
+        const std::vector<double> accum = fi.accumulate();
+        for (std::int64_t flat = 0; flat < recon.meta().n_pixels(); ++flat)
+        {
+            if (!fi.is_valid_cell(flat)) continue;
+            ++n_valid;
+            if (fi.is_outlet(flat)) outlet_total += accum[flat];
+        }
+    }
+    catch (const std::exception& e)
+    {
+        routed = false;
+        routing_error = e.what();
+    }
+
+    check("P10 reconstruction+gradient routes without throwing: " + fx.name,
+          routed, routing_error);
+
+    if (routed)
+    {
+        const double cell_area = recon.meta().cell_size * recon.meta().cell_size;
+        const double expected  = static_cast<double>(n_valid) * cell_area;
+        const double rel_err   = (expected > 0.0)
+                               ? std::fabs(outlet_total - expected) / expected
+                               : 0.0;
+        check("P10 reconstruction+gradient conserves mass: " + fx.name,
+              rel_err <= 1e-9,
+              "outlet total = " + std::to_string(outlet_total) +
+              ", expected = " + std::to_string(expected));
+    }
+
+    // -- reported only: how far it sits from priority-flood ----------------
+    const diff_stats vs_barnes = compare(recon, barnes, 0.01);
+    std::cout << "      (vs priority-flood: max |diff| "
+              << vs_barnes.max_abs << " m, "
+              << (100.0 * static_cast<double>(vs_barnes.n_differing) /
+                  std::max<std::int64_t>(vs_barnes.n_compared, 1))
+              << " % of cells differ by >1 cm)\n";
+}
+
+
+// Degenerate and edge-case rasters, checked once rather than per fixture.
+// "Bit-exact on four well-behaved surfaces" is not the same as "always", and
+// these are the shapes where a scan-based algorithm is most likely to differ
+// from a queue-based one: no interior at all, nothing to fill, everything the
+// same height, and a raster that is entirely nodata except for a rim.
+void test_reconstruction_edge_cases()
+{
+    struct edge_case
+    {
+        std::string name;
+        lsdtt::lsdtt_raster_cpu dem;
+    };
+
+    std::vector<edge_case> cases;
+
+    auto build = [](int nr, int nc, auto fn) {
+        lsdtt::lsdtt_raster_meta meta = make_meta(nr, nc, 30.0);
+        lsdtt::lsdtt_array2d_f  data(nr, nc, 0.0f);
+        lsdtt::lsdtt_array2d_u8 mask(nr, nc, 1);
+        fn(data, mask, meta);
+        lsdtt::lsdtt_raster_cpu dem;
+        dem.set_from_vectors(std::move(data.get_vector()),
+                             std::move(mask.get_vector()), meta);
+        return dem;
+    };
+
+    // A single row: the interior loops have no iterations at all.
+    cases.push_back({"single_row", build(1, 32, [](auto& d, auto&, auto&) {
+        for (int c = 0; c < 32; ++c) d(0, c) = 100.0f - 0.5f * c;
+    })});
+
+    // A single column, the transpose of the above.
+    cases.push_back({"single_column", build(32, 1, [](auto& d, auto&, auto&) {
+        for (int r = 0; r < 32; ++r) d(r, 0) = 100.0f - 0.5f * r;
+    })});
+
+    // 3x3: the smallest raster that has an interior cell at all.
+    cases.push_back({"three_by_three", build(3, 3, [](auto& d, auto&, auto&) {
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) d(r, c) = 10.0f;
+        d(1, 1) = 1.0f;                       // one interior pit
+    })});
+
+    // Perfectly flat: every cell ties with every neighbour, which is the worst
+    // case for any tie-breaking difference between the two algorithms.
+    cases.push_back({"perfectly_flat", build(24, 24, [](auto& d, auto&, auto&) {
+        for (int r = 0; r < 24; ++r)
+            for (int c = 0; c < 24; ++c) d(r, c) = 42.0f;
+    })});
+
+    // Monotonic ramp: nothing to fill, so both must return the input untouched.
+    cases.push_back({"no_depressions", build(24, 24, [](auto& d, auto&, auto&) {
+        for (int r = 0; r < 24; ++r)
+            for (int c = 0; c < 24; ++c) d(r, c) = 100.0f - r;
+    })});
+
+    // Mostly nodata, with a small valid island that has its own pit. Exercises
+    // the interior-nodata seeding path on both sides.
+    cases.push_back({"nodata_island", build(24, 24,
+        [](auto& d, auto& m, auto& meta) {
+            for (int r = 0; r < 24; ++r)
+                for (int c = 0; c < 24; ++c)
+                {
+                    d(r, c) = static_cast<float>(meta.no_data_value);
+                    m(r, c) = 0;
+                }
+            for (int r = 8; r < 16; ++r)
+                for (int c = 8; c < 16; ++c)
+                {
+                    d(r, c) = 50.0f; m(r, c) = 1;
+                }
+            d(12, 12) = 20.0f;                // pit inside the island
+        })});
+
+    for (const edge_case& c : cases)
+    {
+        // fill_pits() now dispatches to reconstruction at min_slope == 0, so
+        // the comparison must name the priority-flood backend explicitly or it
+        // would compare the reconstruction against itself.
+        const lsdtt::lsdtt_raster_cpu barnes  =
+            lsdtt::fill_pits_priority_flood(c.dem, 0.0f);
+        const lsdtt::lsdtt_raster_cpu vincent = lsdtt::fill_pits_reconstruction(c.dem);
+        const diff_stats d = compare(vincent, barnes, 0.0);
+
+        check("P9 edge case matches priority-flood: " + c.name,
+              d.max_abs == 0.0,
+              "max |vincent - barnes| = " + std::to_string(d.max_abs) +
+              ", cells differing = " + std::to_string(d.n_differing) +
+              " of " + std::to_string(d.n_compared));
+    }
+}
+
+
+void test_reconstruction_matches_priority_flood(const fixture& fx)
+{
+    // Explicitly the priority-flood backend: fill_pits() dispatches to
+    // reconstruction at min_slope == 0, which would make this circular.
+    const lsdtt::lsdtt_raster_cpu barnes  =
+        lsdtt::fill_pits_priority_flood(fx.dem, 0.0f);
+    const lsdtt::lsdtt_raster_cpu vincent = lsdtt::fill_pits_reconstruction(fx.dem);
+
+    const diff_stats d = compare(vincent, barnes, 0.0);
+
+    check("P9 reconstruction == priority-flood at min_slope=0: " + fx.name,
+          d.max_abs == 0.0,
+          "max |vincent - barnes| = " + std::to_string(d.max_abs) +
+          ", cells differing = " + std::to_string(d.n_differing) +
+          " of " + std::to_string(d.n_compared));
+
+    // The backend must independently satisfy the same property the whole
+    // exercise is about, not merely agree with the other implementation.
+    check("P9 reconstruction output is depression-free: " + fx.name,
+          count_interior_minima(vincent) == 0,
+          "interior minima = " + std::to_string(count_interior_minima(vincent)));
+
+    check("P9 reconstruction is non-lowering: " + fx.name,
+          d.signed_min >= -1e-6,
+          "most negative (vincent - original) = " + std::to_string(d.signed_min));
+}
+
+
+// =============================================================================
 // P8 -- exact D8 accumulation on a planar ramp (analytic oracle)
 //
 // A surface tilted purely north-south has an exactly known answer: every cell
@@ -758,11 +980,17 @@ int main(int argc, char** argv)
         test_fill_properties(fx);
         test_breach_properties(fx);
         test_d8_accumulation_properties(fx);
+        test_reconstruction_matches_priority_flood(fx);
+        test_reconstruction_gradient_is_routable(fx);
         test_flowgraph_weight_properties(fx);
         std::cout << "\n";
     }
 
     // Analytic oracle: independent of any fixture, so run it once.
+    std::cout << "--- reconstruction backend: edge cases ---\n";
+    test_reconstruction_edge_cases();
+    std::cout << "\n";
+
     std::cout << "--- analytic: planar ramp ---\n";
     test_d8_accumulation_on_ramp();
     std::cout << "\n";

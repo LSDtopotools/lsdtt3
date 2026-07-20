@@ -295,6 +295,15 @@ set_tests_properties(rigorous_fetch_raster_no_credential_parameters PROPERTIES
     FAIL_REGULAR_EXPRESSION "api_key;API_Key;password;secret;token;credential")
 
 add_lsdtt_cli_smoke_test(
+    failure_fill_vincent_needs_zero_slope
+    lsdtt-raster-preprocessing
+    fill_vincent_needs_zero_slope.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "cannot impose a gradient across flats"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_fetch_raster_bounds_conflict
     lsdtt-fetch-raster
     fetch_raster_bounds_conflict.param.in

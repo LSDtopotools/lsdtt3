@@ -200,8 +200,30 @@ Output files:
 |---|---|---|---|
 | `write_fill_raster` | bool | `false` | Write the pit-filled DEM. |
 | `write_fill_diff_raster` | bool | `false` | Write the difference raster (filled minus original). Positive values show where the surface was raised. For `barnesetal2021` this represents water depth standing in depressions. |
-| `fill_algorithm_choice` | string | `barnes2014` | Filling algorithm. `barnes2014`: Barnes et al. (2014) Improved Priority-Flood. `barnesetal2021`: Barnes et al. (2021) Fill-Spill-Merge — note this algorithm does not guarantee that all depressions are filled (see doi:10.5194/esurf-9-105-2021). |
+| `fill_algorithm_choice` | string | `barnes2014` | Filling algorithm. `barnes2014`: Improved Priority-Flood (Barnes et al. 2014) — the default, and the only one that imposes `fill_min_slope` across flats. `vincent1993`: grayscale morphological reconstruction (Vincent 1993) — bit-identical to `barnes2014` and 2–3× faster, but requires `fill_min_slope: 0` (see below). `barnesetal2021`: Fill-Spill-Merge — note this algorithm does not guarantee that all depressions are filled (see doi:10.5194/esurf-9-105-2021). |
 | `fill_min_slope` | float | `0.0001` | Minimum gradient imposed between adjacent filled cells to prevent flat regions that produce ambiguous flow directions. Increase slightly for very coarse DEMs. Not used with `barnesetal2021`. See the note below on how this differs from RichDEM. |
+
+### Note: `vincent1993` is faster but cannot impose a gradient
+
+`vincent1993` computes the same fixed point as `barnes2014` by a different
+route — two raster scans plus a FIFO drain (O(N)) instead of a priority queue
+(O(N log N)). It is verified **bit-identical** to `barnes2014` across all test
+fixtures and degenerate cases, and is 2–3× faster (up to ~5× on real terrain
+with few depressions).
+
+The catch: it fills depressions to exactly their spill level, leaving **true
+flats**. It has no mechanism for the gradient `fill_min_slope` imposes. Since
+lsdtt3's D8 router rejects a surface containing true flats, `vincent1993` is
+only usable with `fill_min_slope: 0`, and the CLI will refuse to run otherwise
+rather than silently ignore the parameter.
+
+Use it when you want a filled surface and are not routing flow across it, or
+when a downstream step will resolve the flats itself. For the normal
+fill-then-route workflow, stay on `barnes2014`.
+
+Note that `fill_pits()` in the library already dispatches to reconstruction
+automatically whenever `min_slope` is zero, so the speed-up is applied without
+you asking for it — this parameter is for pinning the backend explicitly.
 
 ### Note: `fill_min_slope` is a slope, and differs from RichDEM's "epsilon fill"
 

@@ -89,10 +89,138 @@ lsdtt_raster_cpu mask_to_nodata_using_threshold(
 
 // -----------------------------------------------------------------------------
 // fill_pits
+//
+// Depression filling. Dispatches on min_slope:
+//
+//   min_slope <= 0  -> fill_pits_reconstruction() (Vincent 1993), which is
+//                      2-3x faster and produces a BIT-IDENTICAL result. Verified
+//                      exactly equal to the priority-flood on every fixture and
+//                      edge case in tests/cpp/test_flow_properties.cpp (P9),
+//                      including perfectly flat surfaces and interior nodata.
+//
+//   min_slope >  0  -> fill_pits_priority_flood() (Barnes et al. 2014), which
+//                      imposes the gradient across flats as it floods.
+//                      Reconstruction cannot do this, so there is no faster
+//                      option for this case.
+//
+// The dispatch is an optimisation only: for a given min_slope the output is
+// unchanged. Call the two backends directly if you need to pin one.
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu fill_pits(
     const lsdtt_raster_cpu& raster,
     float min_slope = 0.0001f,
+    int   n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits_priority_flood
+//
+// The Barnes et al. (2014) Improved Priority-Flood backend, always, regardless
+// of min_slope. This is what fill_pits() used to be unconditionally; it is
+// exposed so that the reconstruction backend can be compared against it without
+// the comparison becoming circular once fill_pits() started dispatching.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_pits_priority_flood(
+    const lsdtt_raster_cpu& raster,
+    float min_slope = 0.0001f,
+    int   n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits_reconstruction
+//
+// Alternative depression-filling backend: grayscale morphological
+// reconstruction by erosion (Vincent 1993), using the hybrid algorithm --
+// a forward raster scan, a backward raster scan, then a FIFO queue that
+// propagates the few remaining changes.
+//
+// Same result, different cost class. fill_pits() uses the Barnes et al. (2014)
+// Improved Priority-Flood, which is O(N log N) because nearly every cell passes
+// through a binary heap. This routine is O(N) with a small constant and almost
+// entirely sequential memory access, which is why TopoToolbox's equivalent is
+// roughly twice as fast as ours (see docs/testing_and_benchmarking.md).
+//
+// *** IT DOES NOT SUPPORT min_slope > 0 ***
+//
+// Reconstruction fills depressions to exactly their spill level, leaving true
+// flats. It has no mechanism for imposing a gradient across those flats, which
+// is what fill_pits(min_slope > 0) does inline during the flood. The two agree
+// bit-for-bit at min_slope == 0 and cannot agree otherwise -- so this is a fast
+// path for the no-gradient case, not a drop-in replacement.
+//
+// Callers that need drainable flats (lsdtt3's own D8 router throws on a truly
+// flat surface) must use fill_pits() with a positive min_slope.
+//
+// Throws std::invalid_argument rather than silently producing flats that the
+// caller did not ask for.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_pits_reconstruction(
+    const lsdtt_raster_cpu& raster,
+    int n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
+// resolve_flats_gradient
+//
+// Imposes a drainage gradient across the flat regions of an already-filled DEM,
+// so the surface can be routed.
+//
+// *** THIS IS NOT A PERFORMANCE OPTIMISATION -- IT IS SLOWER ***
+//
+// It was written to let the O(N) reconstruction backend cover the min_slope > 0
+// case, and MEASURABLY FAILS at that. Reconstruction + this step runs 8-88 %
+// slower than fill_pits_priority_flood() on the same input, across every size
+// tested. Two independent implementations (fast-sweeping, and the work queue
+// used here) both came out behind.
+//
+// The reason is structural, not a tuning problem. Imposing the gradient is a
+// shortest-path problem over the surface: each cell must end one step above
+// whichever neighbour it drains to, which is precisely the ordered propagation
+// priority-flood already performs inline as it floods. Splitting it into a
+// second pass means paying for that propagation separately, on top of the fill,
+// and the heap it removes is cheaper than the second pass costs. Solving the
+// second pass "properly" with a priority queue would simply be priority-flood
+// again.
+//
+// It is retained because it is correct, tested, and defines the gradient
+// differently from priority-flood -- by true propagated distance rather than
+// FIFO first arrival -- which may be independently useful. It is not wired into
+// any CLI and is not the default anywhere.
+//
+// Method: every cell that has a strictly lower valid neighbour can already
+// drain, and is a seed at distance zero. Every other valid cell sits in a flat.
+// A geodesic chamfer distance transform (1 per cardinal step, sqrt(2) per
+// diagonal, propagated only through flat cells) gives each flat cell its
+// distance to the nearest draining cell, and the cell is raised by
+//
+//     min_slope * cell_size * distance
+//
+// so elevation increases away from the outlet and flow runs back towards it.
+//
+// This reproduces what priority-flood's inline increment achieves, but not
+// always the identical surface: priority-flood assigns each flat cell on FIRST
+// ARRIVAL through a FIFO, which is not necessarily the shortest chamfer path,
+// whereas this uses the true geodesic distance. Where they differ, this one is
+// the better-defined answer -- but it is a DIFFERENT answer, so it is offered
+// as a choice rather than substituted silently.
+//
+// Input must already be depression-free. Returns a new raster.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu resolve_flats_gradient(
+    const lsdtt_raster_cpu& filled_raster,
+    float min_slope,
+    int   n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits_reconstruction_with_gradient
+//
+// Reconstruction fill followed by resolve_flats_gradient(): the fast O(N)
+// equivalent of fill_pits() for min_slope > 0.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_pits_reconstruction_with_gradient(
+    const lsdtt_raster_cpu& raster,
+    float min_slope,
     int   n_threads = 0
 );
 
