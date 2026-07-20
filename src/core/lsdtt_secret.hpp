@@ -124,6 +124,19 @@ std::string mask_secret(const std::string& text, const std::string& secret);
 
 
 // -----------------------------------------------------------------------------
+// mask_url_query
+//
+// Replace a URL's query string with "?***". Use for URLs whose credential is
+// the whole query rather than a known substring -- notably Azure SAS tokens,
+// where the signature is generated per request so there is no fixed secret to
+// pass to mask_secret(). A SAS token grants time-limited read access to the
+// blob, so it must not be written to logs even though obtaining one needs no
+// account.
+// -----------------------------------------------------------------------------
+std::string mask_url_query(const std::string& url);
+
+
+// -----------------------------------------------------------------------------
 // read_secret_from_file
 //
 // First non-blank, non-comment ('#') line of a file, trimmed. Empty return

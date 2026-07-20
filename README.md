@@ -224,9 +224,8 @@ optional tool can never turn the build red.
 
 **No DEM is committed to this repository.** Tests that need real topography fetch
 it on demand from public keyless sources and cache it under
-`tests/data/dem_cache/` (gitignored). See `tests/README.md` for the full suite
-description and `tests/scripts/fetch_test_dem.py --list` for the available
-fixtures.
+`tests/data/dem_cache/` (gitignored), using `lsdtt-fetch-raster` itself. See
+`tests/README.md` for the full suite description.
 
 ---
 
@@ -246,7 +245,7 @@ lsdtt-drainage-analysis     my_params.driver
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/fetch_raster_cli_plan.md` |
+| `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/cli_reference_lsdtt_fetch_raster.md` |
 | `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | `docs/cli_reference_lsdtt_raster_preprocessing.md` |
 | `lsdtt-raster-synthetic-tests` | Generates synthetic test surfaces (random, fractal, diamond-square, mountain-range geometries) for algorithm validation. | — |
 
@@ -319,6 +318,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `docs/basin_extraction_guide.md` | Basin extraction workflow in detail. |
 | `docs/cli_reference_lsdtt_channel_extraction.md` | Channel network extraction: parameters, output formats, stream burning. |
 | `docs/cli_reference_lsdtt_basin_stats.md` | Basin statistics: outlet CSV format, snapping, output columns. |
+| `docs/cli_reference_lsdtt_fetch_raster.md` | Fetching DEMs: bounding boxes, bounds from a polygon or two points, sources, API-key handling. |
 | `docs/cli_reference_lsdtt_chi_analysis.md` | Chi analysis: m/n sweep, disorder metrics, bootstrap, k_sn inversion. |
 | `docs/cli_reference_lsdtt_cosmo_prediction.md` | CRN prediction: steady-state, step-change, accumulated concentration. |
 | `docs/beta_testing_notes.md` | Beta tester install guide (WSL2), release pipeline, and future conda-forge plan. |

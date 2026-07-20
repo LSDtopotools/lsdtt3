@@ -169,7 +169,26 @@ int main(int argc, char* argv[])
         "global 30 m coverage -- start here. "
         "opentopography: the OpenTopography REST API, which offers other "
         "datasets but needs a free API key (see ot_dem_type). "
+        "planetary_computer: Microsoft Planetary Computer. Also keyless -- its "
+        "asset URLs are signed automatically for you -- and gives access to "
+        "many other STAC collections (see pc_collection). "
         "Any other value is an error rather than a silent substitution.",
+        "Source", "param", ""};
+
+    string_default_map["pc_collection"] = "cop-dem-glo-30";
+    help_map["pc_collection"] = {"string","cop-dem-glo-30",
+        "Planetary Computer STAC collection (only used when dem_source is planetary_computer).",
+        "Examples: cop-dem-glo-30, cop-dem-glo-90, nasadem, alos-dem, "
+        "3dep-seamless. Browse the full catalogue at "
+        "https://planetarycomputer.microsoft.com/catalog. No account or key is "
+        "needed: asset URLs are signed automatically.",
+        "Source", "param", ""};
+
+    string_default_map["pc_asset"] = "data";
+    help_map["pc_asset"] = {"string","data",
+        "Asset key within each Planetary Computer STAC item.",
+        "Most elevation collections expose the raster as 'data'. Change this "
+        "only if the collection you are using names it differently.",
         "Source", "param", ""};
 
     string_default_map["ot_dem_type"] = "COP30";
@@ -412,6 +431,8 @@ int main(int argc, char* argv[])
     options.http_connect_timeout_seconds = ifs["http_connect_timeout_seconds"];
     options.http_max_retry               = ifs["http_max_retry"];
     options.ot_dem_type                  = sf["ot_dem_type"];
+    options.pc_collection                = sf["pc_collection"];
+    options.pc_asset                     = sf["pc_asset"];
 
     // -------------------------------------------------------------------------
     // Credential resolution

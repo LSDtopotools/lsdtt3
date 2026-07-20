@@ -55,12 +55,15 @@ namespace lsdtt {
 // and CLI help can be written against the final vocabulary, and each returns a
 // clear "not implemented" result rather than silently doing something else.
 // -----------------------------------------------------------------------------
+// Copernicus Data Space (CDSE) is deliberately NOT offered (Simon, 2026-07-20):
+// its only distinctive product is EU-DEM at 10 m, which a general public account
+// does not unlock, so it would carry the only username/password credential risk
+// in the tool for coverage already available keyless from cop30_aws.
 enum class lsdtt_dem_source
 {
     cop30_aws,            // Copernicus GLO-30, AWS Open Data. No key.
     opentopography,       // OpenTopography REST. Needs an API key.
-    planetary_computer,   // Phase 4. Keyless, but asset URLs need SAS signing.
-    cdse                  // Phase 5. OAuth. See plan Sec6 Q4.
+    planetary_computer    // Keyless, but asset URLs need SAS signing.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -113,6 +116,10 @@ struct lsdtt_fetch_options
     // OpenTopography dataset identifier, e.g. "COP30", "SRTMGL1", "NASADEM".
     // Ignored by keyless sources.
     std::string ot_dem_type = "COP30";
+
+    // Planetary Computer STAC collection and asset key.
+    std::string pc_collection = "cop-dem-glo-30";
+    std::string pc_asset      = "data";
 
     // *** NOT A CREDENTIAL FIELD ***
     // This is resolved by lsdtt_secret at the call site and passed in, rather

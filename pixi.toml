@@ -68,5 +68,7 @@ benchmark = ["reference"]
 # Generic entry points only -- individual test suites are invoked through CTest
 # or by calling their driver directly, so this file does not need editing when a
 # test is added.
-fetch-test-dem = "python tests/scripts/fetch_test_dem.py"
+#
+# Note there is no DEM-fetching task: fetching is done by the lsdtt3 CLI itself
+# (`lsdtt-fetch-raster`), which needs no Python at all.
 test-python = "pytest tests"

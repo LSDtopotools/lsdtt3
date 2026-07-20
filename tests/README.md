@@ -208,7 +208,7 @@ richdem` gives 0.3.4, which pins `numpy<2` and downgrades numpy in whatever
 environment it lands in. conda-forge ships 2.4.3 with numpy-2 builds.
 
 ```bash
-pixi run fetch-test-dem --suite flow      # cache fixtures into tests/data/dem_cache/
+# Fixtures are fetched automatically by lsdtt-fetch-raster on first run.
 pixi run -e benchmark python tests/scripts/run_flow_benchmark.py \
     --exe build/lsdtt-raster-preprocessing
 
@@ -272,27 +272,21 @@ Fetched on demand, never committed:
   GLO-30 on AWS Open Data. Public, keyless, and read as Cloud-Optimised GeoTIFFs
   so only the requested window is transferred.
 
-`tests/scripts/fetch_test_dem.py` is shared by any test suite needing real
-topography, not just one. Fixtures are reprojected to a metric CRS **at fetch
-time** rather than by the CLI under test — when two implementations are
-compared, both must read a byte-identical raster or the differences mean
-nothing.
+Fixtures are fetched by **`lsdtt-fetch-raster`**, the lsdtt3 CLI itself — there
+is no Python fetcher any more. `run_flow_benchmark.py` calls it automatically
+the first time a fixture is needed, so there is no separate step to remember.
+The fixture registry (centre point, EPSG, pixel size) lives in
+`run_flow_benchmark.py`.
+
+Fixtures are reprojected to a metric CRS **at fetch time** rather than by the
+CLI under test — when two implementations are compared, both must read a
+byte-identical raster or the differences mean nothing.
+
+To fetch one by hand:
 
 ```bash
-pixi run fetch-test-dem --list                    # registry
-pixi run fetch-test-dem --suite flow              # everything one suite needs
-pixi run fetch-test-dem --fixture alpine --size small
-
-# Ad-hoc bbox for the download-run-delete validation tier: transient DEM,
-# only a small summary CSV is kept (docs/cosmo_cli_testing_plan.md Sec5b).
-pixi run fetch-test-dem --bbox 10.3 46.4 10.5 46.6 \
-    --dest /tmp/work/dem.tif --no-cache
+build/lsdtt-fetch-raster <dir> <param file>     # see docs/cli_reference_lsdtt_fetch_raster.md
 ```
-
-Bounding boxes spanning several source tiles are mosaicked automatically, and
-the UTM zone is derived from the bbox centre unless `--epsg` is given. To add a
-fixture, add an entry to `REGISTRY` in that script rather than writing a new
-fetcher.
 
 Named fixtures can be SHA256-pinned (`--print-hashes` prints a paste-ready
 block). A hash mismatch is a hard failure, not a silent re-download: it means

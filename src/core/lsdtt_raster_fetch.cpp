@@ -25,6 +25,7 @@
 #include <cpl_vsi.h>         // VSIStatL, VSIUnlink
 #include <gdal.h>
 #include <gdal_utils.h>      // GDALTranslate / GDALWarp
+#include <cpl_json.h>        // CPLJSONDocument (STAC + SAS responses)
 #include <ogr_api.h>         // OGR_L_* / OGR_G_* vector access
 #include <ogr_srs_api.h>     // OSR* / OCT* coordinate transforms
 
@@ -123,7 +124,11 @@ public:
     http_config_guard(int timeout_s, int connect_timeout_s, int max_retry)
     {
         set("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR");
-        set("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif");
+        // Deliberately NOT setting CPL_VSIL_CURL_ALLOWED_EXTENSIONS: Planetary
+        // Computer asset hrefs carry no file extension at all
+        // (".../Copernicus_DSM_COG_10_N46_00_E010_00_DEM"), so an extension
+        // allow-list silently blocks every one of them. READDIR_ON_OPEN above
+        // already provides the bulk of the latency win.
         set("GDAL_HTTP_TIMEOUT",        std::to_string(timeout_s).c_str());
         set("GDAL_HTTP_CONNECTTIMEOUT", std::to_string(connect_timeout_s).c_str());
         set("GDAL_HTTP_MAX_RETRY",      std::to_string(max_retry).c_str());
@@ -348,6 +353,183 @@ bool download_to_vsimem(const std::string& url,
 lsdtt_fetch_result make_error(const std::string& message);
 lsdtt_fetch_result make_skip(const std::string& message);
 
+
+// -----------------------------------------------------------------------------
+// http_get_body / http_post_body
+//
+// Small wrappers returning the response body as a string. Errors are reported
+// with the URL query masked, because Planetary Computer signed hrefs carry a
+// SAS token in the query string.
+// -----------------------------------------------------------------------------
+bool http_request_body(const std::string& url,
+                       const std::string& post_body,   // empty = GET
+                       int timeout_seconds,
+                       int max_retry,
+                       std::string& body,
+                       std::string& error)
+{
+    gdal_string_list_guard opts;
+    opts.add("TIMEOUT="     + std::to_string(timeout_seconds));
+    opts.add("MAX_RETRY="   + std::to_string(max_retry));
+    opts.add("RETRY_DELAY=2");
+    if (!post_body.empty())
+    {
+        opts.add("POSTFIELDS=" + post_body);
+        opts.add("HEADERS=Content-Type: application/json");
+    }
+
+    CPLHTTPResult* response = nullptr;
+    {
+        quiet_gdal_errors quiet;
+        response = CPLHTTPFetch(url.c_str(), opts.get());
+    }
+
+    if (response == nullptr)
+    {
+        error = "no response from " + mask_url_query(url);
+        return false;
+    }
+    if (response->nStatus != 0)
+    {
+        error = "request to " + mask_url_query(url) + " failed: " +
+                (response->pszErrBuf ? response->pszErrBuf : "transport error");
+        CPLHTTPDestroyResult(response);
+        return false;
+    }
+    if (response->nDataLen <= 0 || response->pabyData == nullptr)
+    {
+        error = "empty response from " + mask_url_query(url);
+        CPLHTTPDestroyResult(response);
+        return false;
+    }
+
+    body.assign(reinterpret_cast<const char*>(response->pabyData),
+                static_cast<std::size_t>(response->nDataLen));
+    CPLHTTPDestroyResult(response);
+    return true;
+}
+
+
+// -----------------------------------------------------------------------------
+// pc_sign_href
+//
+// Planetary Computer asset URLs are not publicly readable -- an unsigned GET
+// returns HTTP 409. The signing endpoint needs no account and no key, and
+// returns a time-limited SAS token appended as a query string.
+//
+// The returned URL is therefore a short-lived credential: never log it
+// unmasked.
+// -----------------------------------------------------------------------------
+bool pc_sign_href(const std::string& href, int timeout_seconds, int max_retry,
+                  std::string& signed_href, std::string& error)
+{
+    const std::string sign_url =
+        "https://planetarycomputer.microsoft.com/api/sas/v1/sign?href=" + href;
+
+    std::string body;
+    if (!http_request_body(sign_url, "", timeout_seconds, max_retry, body, error))
+    {
+        return false;
+    }
+
+    CPLJSONDocument document;
+    if (!document.LoadMemory(body))
+    {
+        error = "could not parse the signing response as JSON";
+        return false;
+    }
+
+    signed_href = document.GetRoot().GetString("href", "");
+    if (signed_href.empty())
+    {
+        error = "the signing response contained no 'href' field";
+        return false;
+    }
+    return true;
+}
+
+
+// -----------------------------------------------------------------------------
+// pc_search_assets
+//
+// STAC search for items intersecting the bounding box, returning the signed
+// href of the chosen asset for each item.
+// -----------------------------------------------------------------------------
+bool pc_search_assets(const lsdtt_fetch_options& o,
+                      std::vector<std::string>& signed_hrefs,
+                      std::vector<std::string>& item_ids,
+                      std::string& error)
+{
+    const std::string collection =
+        o.pc_collection.empty() ? "cop-dem-glo-30" : o.pc_collection;
+    const std::string asset_key =
+        o.pc_asset.empty() ? "data" : o.pc_asset;
+
+    std::ostringstream request;
+    request << "{\"collections\":[\"" << collection << "\"],"
+            << "\"bbox\":[" << format_double(o.west,  10) << ','
+                            << format_double(o.south, 10) << ','
+                            << format_double(o.east,  10) << ','
+                            << format_double(o.north, 10) << "],"
+            << "\"limit\":100}";
+
+    std::string body;
+    if (!http_request_body(
+            "https://planetarycomputer.microsoft.com/api/stac/v1/search",
+            request.str(), o.http_timeout_seconds, o.http_max_retry,
+            body, error))
+    {
+        return false;
+    }
+
+    CPLJSONDocument document;
+    if (!document.LoadMemory(body))
+    {
+        error = "could not parse the STAC search response as JSON";
+        return false;
+    }
+
+    CPLJSONArray features = document.GetRoot().GetArray("features");
+    if (!features.IsValid() || features.Size() == 0)
+    {
+        error = "the STAC search returned no items for this bounding box in "
+                "collection '" + collection + "'";
+        return false;
+    }
+
+    for (int i = 0; i < features.Size(); ++i)
+    {
+        CPLJSONObject feature = features[i];
+        const std::string id = feature.GetString("id", "");
+
+        CPLJSONObject asset = feature.GetObj("assets/" + asset_key);
+        if (!asset.IsValid())
+        {
+            error = "item '" + id + "' has no asset named '" + asset_key + "'";
+            return false;
+        }
+
+        const std::string href = asset.GetString("href", "");
+        if (href.empty())
+        {
+            error = "asset '" + asset_key + "' of item '" + id + "' has no href";
+            return false;
+        }
+
+        std::string signed_href;
+        if (!pc_sign_href(href, o.http_timeout_seconds, o.http_max_retry,
+                          signed_href, error))
+        {
+            return false;
+        }
+
+        signed_hrefs.push_back(signed_href);
+        item_ids.push_back(id.empty() ? "(unnamed item)" : id);
+    }
+
+    return true;
+}
+
 // -----------------------------------------------------------------------------
 // warp_and_write
 //
@@ -546,7 +728,6 @@ bool parse_dem_source(const std::string& name, lsdtt_dem_source& out)
     if (name == "cop30_aws")          { out = lsdtt_dem_source::cop30_aws;          return true; }
     if (name == "opentopography")     { out = lsdtt_dem_source::opentopography;     return true; }
     if (name == "planetary_computer") { out = lsdtt_dem_source::planetary_computer; return true; }
-    if (name == "cdse")               { out = lsdtt_dem_source::cdse;               return true; }
     return false;
 }
 
@@ -558,7 +739,6 @@ std::string dem_source_name(lsdtt_dem_source source)
         case lsdtt_dem_source::cop30_aws:          return "cop30_aws";
         case lsdtt_dem_source::opentopography:     return "opentopography";
         case lsdtt_dem_source::planetary_computer: return "planetary_computer";
-        case lsdtt_dem_source::cdse:               return "cdse";
     }
     return "unknown";
 }
@@ -866,13 +1046,14 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
     }
 
     if (options.source != lsdtt_dem_source::cop30_aws &&
-        options.source != lsdtt_dem_source::opentopography)
+        options.source != lsdtt_dem_source::opentopography &&
+        options.source != lsdtt_dem_source::planetary_computer)
     {
         // Explicit rather than silently substituting a different source.
         return make_error(
             "lsdtt::fetch_dem: source '" + dem_source_name(options.source) +
-            "' is not implemented yet (supported: cop30_aws, opentopography; "
-            "see docs/fetch_raster_cli_plan.md)");
+            "' is not supported (available: cop30_aws, opentopography, "
+            "planetary_computer; see docs/fetch_raster_cli_plan.md)");
     }
 
     if (options.source == lsdtt_dem_source::opentopography &&
@@ -902,12 +1083,13 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
         result.tiles = cop30_tiles_for_bbox(options.west, options.south,
                                             options.east, options.north);
     }
-    else
+    else if (options.source == lsdtt_dem_source::opentopography)
     {
         // OpenTopography serves an arbitrary window; there are no tiles to name.
         result.tiles.push_back(options.ot_dem_type.empty() ? "COP30"
                                                            : options.ot_dem_type);
     }
+    // Planetary Computer tiles are discovered by the STAC search below.
     result.epsg  = (options.target_epsg > 0)
                  ? options.target_epsg
                  : utm_epsg_for_point(0.5 * (options.west + options.east),
@@ -1007,11 +1189,54 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
         return warped_result;
     }
 
+    // ---------------------------------------------------------------------
+    // Planetary Computer: discover items via STAC, sign each asset, then hand
+    // the signed URLs to the same windowed-read path as the AWS source.
+    // ---------------------------------------------------------------------
+    std::vector<std::string> pc_urls;
+    if (options.source == lsdtt_dem_source::planetary_computer)
+    {
+        std::vector<std::string> signed_hrefs;
+        std::string search_error;
+
+        if (!pc_search_assets(options, signed_hrefs, result.tiles, search_error))
+        {
+            // Any failure here is "data not obtainable right now" from the
+            // caller's point of view, so skip rather than fail: an offline
+            // machine and an empty search look the same to a test.
+            return make_skip("lsdtt::fetch_dem: " + search_error);
+        }
+
+        pc_urls.reserve(signed_hrefs.size());
+        for (const std::string& href : signed_hrefs)
+        {
+            pc_urls.push_back("/vsicurl/" + href);
+        }
+    }
+
     gdal_dataset_guard source;
     {
         quiet_gdal_errors quiet;   // an offline probe must not spray stderr
 
-        if (result.tiles.size() == 1)
+        if (!pc_urls.empty())
+        {
+            if (pc_urls.size() == 1)
+            {
+                source.reset(GDALOpen(pc_urls[0].c_str(), GA_ReadOnly));
+            }
+            else
+            {
+                std::vector<const char*> url_ptrs;
+                url_ptrs.reserve(pc_urls.size());
+                for (const std::string& url : pc_urls) url_ptrs.push_back(url.c_str());
+
+                source.reset(GDALBuildVRT(
+                    "/vsimem/lsdtt_fetch_mosaic.vrt",
+                    static_cast<int>(url_ptrs.size()),
+                    nullptr, url_ptrs.data(), nullptr, nullptr));
+            }
+        }
+        else if (result.tiles.size() == 1)
         {
             source.reset(GDALOpen(cop30_tile_url(result.tiles[0]).c_str(),
                                   GA_ReadOnly));

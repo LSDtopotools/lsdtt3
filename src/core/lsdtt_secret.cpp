@@ -230,6 +230,14 @@ lsdtt_secret_result resolve_secret(const lsdtt_secret_request& request)
 }
 
 
+std::string mask_url_query(const std::string& url)
+{
+    const std::size_t question = url.find('?');
+    if (question == std::string::npos) return url;
+    return url.substr(0, question) + "?***";
+}
+
+
 std::string mask_secret(const std::string& text, const std::string& secret)
 {
     // An empty secret would otherwise match at every position and corrupt the

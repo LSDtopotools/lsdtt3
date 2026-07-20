@@ -173,18 +173,23 @@ void test_source_parsing()
           lsdtt::parse_dem_source("opentopography", source) &&
           source == lsdtt::lsdtt_dem_source::opentopography);
 
-    // Declared-but-unimplemented sources must fail loudly rather than quietly
-    // falling back to the keyless one and returning the wrong data.
-    lsdtt::lsdtt_fetch_options options;
-    options.west = 10.30; options.south = 46.40;
-    options.east = 10.40; options.north = 46.50;
-    options.source = lsdtt::lsdtt_dem_source::planetary_computer;
+    check("source: planetary_computer parses",
+          lsdtt::parse_dem_source("planetary_computer", source) &&
+          source == lsdtt::lsdtt_dem_source::planetary_computer);
 
-    const auto result = lsdtt::fetch_dem(options, "/vsimem/should_not_exist.tif");
-    check("source: unimplemented source is an error, not a silent substitution",
-          !result.ok && !result.skipped &&
-          result.message.find("not implemented") != std::string::npos,
-          result.message);
+    // CDSE was cut (plan Sec6 Q4): a general public account does not unlock the
+    // 10 m EU-DEM, so it would have added the only username/password credential
+    // path for coverage already free from cop30_aws. It must not be silently
+    // accepted and quietly served from a different provider.
+    check("source: cdse is rejected, not silently substituted",
+          !lsdtt::parse_dem_source("cdse", source));
+
+    // NOTE: there is deliberately no "unimplemented enum value" check here.
+    // Every value in lsdtt_dem_source is implemented, and a previous version of
+    // this test used a not-yet-implemented value as its subject -- which meant
+    // that once the value was implemented, this OFFLINE test silently started
+    // performing a real network fetch. Assert on the parsing vocabulary
+    // instead, which needs no network by construction.
 }
 
 
