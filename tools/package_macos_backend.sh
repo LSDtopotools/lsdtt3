@@ -28,7 +28,7 @@ Usage:
 
 Options:
   --version <ver>              Backend version (required)
-  --build-dir <path>           Build directory (default: build)
+  --build-dir <path>           Build directory (default: build/macos-core)
   --out-dir <path>             Output directory (default: dist)
   --arch <name>                Architecture label (default: uname -m)
   --cli-profile <name>         CLI set: qgis / core / all (default: core).
@@ -42,12 +42,15 @@ Options:
 
 Examples:
   tools/package_macos_backend.sh --version 0.2.0
-  tools/package_macos_backend.sh --version 0.2.0 --build-dir build/minimal-macos
+  tools/package_macos_backend.sh --version 0.2.0 --build-dir build/other-macos
 EOF
 }
 
 VERSION=""
-BUILD_DIR="build"
+# Per-platform build directory, mirroring build/windows-qgis on Windows: the
+# macOS tree is configured separately from the Linux one, so they must not
+# share a build dir. See tools/README.md.
+BUILD_DIR="build/macos-core"
 OUT_DIR="dist"
 ARCH="$(uname -m)"
 CLI_PROFILE="core"

@@ -1,99 +1,227 @@
-# tools
+# Making lsdtt3 releases
 
-Utility scripts for building and packaging redistributable backend bundles.
+This directory contains utility scripts for building and packaging
+redistributable backend bundles. This readme also contains a cheat sheet for
+spinning up a new `lsdtt3` release.
 
-## `make_release.sh` (the release driver)
+## Release cheat sheet
 
-Single entry point for producing a Linux release: resolves the version
-(from `--version` or an exact `v*` tag on HEAD), checks it against
-`project(lsdtt3 VERSION ...)` in CMakeLists.txt, configures and builds,
-smoke-checks every release CLI (`-v`), packages via
-`package_linux_backend.sh`, and optionally publishes with `gh`.
+> **The scripts never create, move, or push a git tag.** `make_release.sh`
+> only *reads* a tag, and only when you leave `--version` off. Tagging is
+> yours to do — with one exception: `--publish` calls `gh release create`,
+> and if the tag does not already exist on GitHub, **gh creates it
+> server-side** from the tip of the default branch. See route 2.
 
-GitHub Actions (`.github/workflows/release.yml`) calls this same script on
-`v*` tag pushes, so a local run exercises exactly the CI path.
+Releasing `0.3.0`, start to finish:
 
-```bash
-# local test build only (artifact in dist/), default core profile
-tools/make_release.sh --version 0.3.0
-
-# local prerelease with every CLI, published to GitHub (zero Actions minutes)
-tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
-
-# repack an existing build without rebuilding
-tools/make_release.sh --version 0.3.0 --skip-build --build-dir build
-```
-
-## Cutting a release from the command line
-
-Two routes. Both produce the same artefacts, because `.github/workflows/release.yml`
-just calls `tools/make_release.sh` — the difference is only who runs it.
-
-### Before anything else: bump the version in CMakeLists.txt
-
-`make_release.sh` **refuses to run** if the version it is releasing does not
-match `project(lsdtt3 VERSION ...)` — so this is step one, not an afterthought:
+**1. Bump the version and get it onto main.** 
+*You must first of all increment the version in the CMakeLists.txt file.* This version number will need to match your tag.
+`make_release.sh` refuses to run
+if the version it is releasing does not match `project(lsdtt3 VERSION ...)` in
+`CMakeLists.txt`, so this is step one, not an afterthought. The tag must be
+exactly `v` + that version (`v0.3.0` for `VERSION 0.3.0`); `CMakeLists.txt` uses
+the same rule to decide whether a build reports a plain release version or a
+`-dev` one, so a mismatch silently produces `-dev` binaries in what looks like
+a release.
 
 ```bash
 # CMakeLists.txt line 2:  project(lsdtt3 VERSION 0.3.0 LANGUAGES CXX)
 git add CMakeLists.txt
 git commit -m "Bump version to 0.3.0"
 git push
+git status                       # release from a clean tree: see step 6
 ```
 
-The tag must be exactly `v` + that version (`v0.3.0` for `VERSION 0.3.0`).
-CMakeLists.txt uses the same rule to decide whether a build reports a plain
-release version or a `-dev` one, so a mismatch silently produces `-dev` binaries
-in what looks like a release.
+**2. Rehearse locally** (optional but cheap — it is the same script CI runs,
+and it catches a version mismatch or a CLI that fails `-v` before a tag exists):
+
+```bash
+tools/make_release.sh --version 0.3.0        # builds + packages, publishes nothing
+```
+
+**3. Tag and push — this is what triggers the release.**
+
+```bash
+# annotated (-a with -m), not lightweight: it carries an author, date and
+# message, and `git describe` prefers it
+git tag -a v0.3.0 -m "lsdtt3 0.3.0"
+git push origin v0.3.0           # pushing the branch does NOT push tags
+```
+
+**4. Wait for Actions**, which builds and publishes the Linux `core` bundle
+(see [route 1](#route-1--tag-and-push-let-actions-build-it) for what it
+actually runs):
+
+```bash
+gh run list --workflow "Build and release" --limit 3
+gh release view v0.3.0
+```
+
+**5. Attach the Windows and macOS bundles**, built by hand on those machines
+(see [Attaching the Windows and macOS bundles](#attaching-the-windows-and-macos-bundles)).
+
+**6. Sanity checks** — before step 3, and after step 4:
+
+```bash
+git describe --tags --dirty --always   # what CMakeLists.txt will embed; -dirty = uncommitted changes in the build
+git log --oneline $(git describe --tags --abbrev=0)..HEAD   # what is going into this release
+gh release view v0.3.0                 # what ended up attached, and the notes
+```
+
+Went wrong? See [Undoing a mistake](#undoing-a-mistake) — and do not move a
+tag anyone may have pulled.
+
+## Cutting a release from the command line
+
+Two routes. Both build the identical bundle, because both end up running
+`tools/make_release.sh`. They differ in **who runs it** and, more importantly,
+**who creates the tag and the GitHub release**.
+
+|  | Route 1 — push a tag, Actions builds | Route 2 — build and publish locally |
+|---|---|---|
+| Runs `make_release.sh` | `ubuntu-22.04` runner | your machine |
+| Version comes from | the tag name, passed by the workflow as `--version` | your `--version` flag |
+| CLI profile | `core` (the script default; the workflow passes no `--profile`) | whatever you pass |
+| Tag | **must already exist** — pushing it is the trigger | created by `gh` if absent, at default-branch tip |
+| Creates the GitHub release | `softprops/action-gh-release` step in the workflow | `gh release create`, inside the script |
+| Release notes | generated **plus a commit-author roll-call** (`git shortlog` since the previous tag) | `--generate-notes` only — no roll-call |
+| Actions minutes | one Linux build | none |
+
+Route 1 is the one to use for an official release: it produces the fuller
+notes and it is the path that stays exercised. Route 2 is for prereleases and
+one-off bundles where you do not want to spend Actions minutes.
 
 ### Route 1 — tag and push, let Actions build it
 
 ```bash
-# annotated tag (-a with -m), not lightweight: it carries an author, date and
-# message, and `git describe` prefers it
 git tag -a v0.3.0 -m "lsdtt3 0.3.0"
-
-# push the tag on its own; pushing the branch does NOT push tags
 git push origin v0.3.0
 ```
 
-That matches the workflow's `on: push: tags: - "v*"` trigger, which runs
-`make_release.sh --version 0.3.0` and publishes the Linux `core` bundle.
+That matches the workflow's `on: push: tags: - "v*"` trigger. The workflow then
+installs the build dependencies, runs
+
+```bash
+tools/make_release.sh --version 0.3.0      # VERSION="${GITHUB_REF_NAME#v}"
+```
+
+— i.e. **exactly the command you would run locally**, without `--publish` — and
+a separate `softprops/action-gh-release` step creates the release and attaches
+`dist/lsdtt3-backend-linux-*.tar.gz`. So `make_release.sh` builds and packages
+in both routes; the difference is that in route 1 the *publishing* is done by
+the workflow instead of by the script's `--publish`.
+
+The workflow can also be run manually from the Actions tab (`workflow_dispatch`).
+With no tag it builds at the current CMakeLists.txt version and uploads the
+bundle as a 14-day workflow artifact — it does not create a release.
 
 To push every local tag at once (rarely what you want — it publishes anything
 you were still thinking about): `git push origin --tags`.
 
 ### Route 2 — build and publish locally, zero Actions minutes
 
-```bash
-git tag -a v0.3.0 -m "lsdtt3 0.3.0"
-tools/make_release.sh --version 0.3.0 --publish
-git push origin v0.3.0
-```
-
-`--publish` creates the GitHub release and uploads the bundle via `gh`
-(re-running is safe — it uploads with `--clobber` if the release exists). Push
-the tag afterwards so the release and the tag agree; if you push first, Actions
-will also build it and you get two runs producing the same artefact.
-
-For a prerelease, which does not become "latest" for users:
+**Do not pre-create a local tag for this route.** `gh release create` (which
+`--publish` calls) says it plainly: *"If a matching git tag does not yet exist,
+one will automatically get created from the latest state of the default
+branch."* So:
 
 ```bash
-git tag -a v0.3.0-rc1 -m "lsdtt3 0.3.0-rc1"
+git push                                   # make sure the default branch tip IS the commit you want
 tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
-git push origin v0.3.0-rc1
+git fetch --tags origin                    # pull down the tag gh just made
 ```
+
+`--prerelease` keeps it from becoming "latest" for users. Re-running is safe:
+if the release already exists the script uploads with `--clobber`.
+
+> **Why not tag locally first?** If you create a local *annotated* tag and let
+> gh create the remote one, the two are different objects, and pushing yours
+> afterwards is **rejected** — verified: `! [rejected] v0.3.0 -> v0.3.0
+> (already exists)` — even when both point at the same commit. You are then
+> left with a lightweight remote tag and an unpushable local one. If you want a
+> proper annotated tag on the remote, push the tag first and let route 1 do the
+> build.
 
 ### Attaching the Windows and macOS bundles
 
-Those are built by hand on the respective machines (see the per-platform scripts
-below), then attached to the existing release:
+Neither is built by CI: you build and package them by hand on that machine,
+then attach the artefact to the release the Linux build already created.
+
+**Each packaging script looks in a specific build directory**, and they do not
+all use the same one. Keep to these conventions and the commands below work
+unedited:
+
+| Platform | Build directory | Script default | Profile | Artefact |
+|---|---|---|---|---|
+| Linux | `build/release` | `build` — but `make_release.sh` passes `--build-dir build/release` for you | `core` | `dist/lsdtt3-backend-linux-x86_64-core-v<version>.tar.gz` |
+| Windows | `build/windows-qgis` | `build/windows-qgis` ✔ nothing to pass | `qgis` | `dist/lsdtt3-backend-win64-qgis-v<version>.zip` |
+| macOS | `build/macos-core` | `build/macos-core` ✔ nothing to pass | `core` | `dist/lsdtt3-backend-macos-<arch>-core-v<version>.tar.gz` |
+
+The build directory is separate per platform on purpose: the Windows tree is
+configured with a different, deliberately minimal option set (no OpenMP, no
+Eigen, no OpenCV), so reusing one `build/` for two profiles would silently ship
+the wrong binaries.
+
+#### Windows
+
+In an **x64 Visual Studio Developer PowerShell**, from the repository root. Full
+walkthrough (vcpkg, GDAL, the mandatory `-DLSDTT_OPENMP=OFF`, troubleshooting)
+is in
+[`docs/installing_locally.md#windows-native-developers-only-limited`](../docs/installing_locally.md#windows-native-developers-only-limited):
+
+```powershell
+# configure once per checkout
+cmake -S . -B build\windows-qgis -G "Ninja" `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\tools\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows `
+  -DBUILD_TESTING=OFF -DLSDTT_OPENMP=OFF -DLSDTT_EIGEN=OFF `
+  -DLSDTT_OPENCV=OFF -DLSDTT_GPU=OFF `
+  -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
+
+# build just the CLIs the qgis profile ships
+cmake --build build\windows-qgis --target `
+  lsdtt-raster-preprocessing lsdtt-channel-extraction lsdtt-chi-analysis `
+  lsdtt-basin-extraction lsdtt-basin-stats lsdtt-surface-metrics `
+  lsdtt-channel-network-analysis
+
+# package (BuildDir defaults to build/windows-qgis, CliProfile to qgis)
+.\tools\package_windows_backend.ps1 -Version 0.3.0
+
+gh release upload v0.3.0 dist\lsdtt3-backend-win64-qgis-v0.3.0.zip
+```
+
+`-DLSDTT_OPENMP=OFF` is not optional on MSVC — see the installing-locally note.
+The script also expects vcpkg at `%USERPROFILE%/tools/vcpkg`; override with
+`-VcpkgRoot`.
+
+#### macOS
+
+> **Not yet done, on either count.** `package_macos_backend.sh` is written but
+> **untested**, and `docs/installing_locally.md` records that lsdtt3 does not
+> currently build with Apple Clang — the supported way to *run* it on a Mac is
+> the Ubuntu VM in [`docs/lsdtt3_in_macos.md`](../docs/lsdtt3_in_macos.md),
+> which produces a Linux bundle, not a macOS one. What follows is the shape to
+> follow when a native build is attempted, so the convention matches Windows.
 
 ```bash
-gh release upload v0.3.0 dist/lsdtt3-backend-win64-qgis-v0.3.0.zip
-gh release upload v0.3.0 dist/lsdtt3-backend-macos-arm64-core-v0.3.0.tar.gz
+cmake -S . -B build/macos-core -DCMAKE_BUILD_TYPE=Release
+cmake --build build/macos-core -j"$(sysctl -n hw.ncpu)"
 
-# replacing a bundle already attached
+# BuildDir defaults to build/macos-core, cli-profile to core
+tools/package_macos_backend.sh --version 0.3.0
+
+gh release upload v0.3.0 dist/lsdtt3-backend-macos-arm64-core-v0.3.0.tar.gz
+```
+
+Bundles are architecture-specific: package on Apple Silicon for `arm64` users,
+on Intel (or with a cross-built tree plus `--arch x86_64`) for `x86_64` users.
+The self-containment check fails hard, so a first run reports exactly what is
+still unresolved rather than shipping a broken bundle.
+
+#### Replacing a bundle already attached
+
+```bash
 gh release upload v0.3.0 dist/<bundle> --clobber
 ```
 
@@ -139,6 +267,44 @@ git log --oneline $(git describe --tags --abbrev=0)..HEAD   # since last tag
 
 A `-dirty` suffix means uncommitted changes are in the build. Release from a
 clean tree.
+
+## `make_release.sh` (the release driver)
+
+Single entry point for producing a Linux release, used identically by you and
+by GitHub Actions. In order it:
+
+1. **Resolves the version** — from `--version`, or, if you omit it, from an
+   exact `v*` tag on HEAD (`git describe --tags --exact-match`). With
+   `--version` it does not consult git for the version at all.
+2. **Checks it against `project(lsdtt3 VERSION ...)`** in CMakeLists.txt and
+   aborts on a mismatch. A pre-release (`0.3.0-rc1`) compares only the `0.3.0`
+   stem and warns instead of failing.
+3. **Configures and builds** `build/release` (Release, OpenCV + Eigen on),
+   unless `--skip-build`.
+4. **Smoke-checks every CLI in the profile** by running it with `-v`; a
+   non-zero exit fails the release.
+5. **Packages** via `package_linux_backend.sh`.
+6. **Publishes** with `gh`, only if you pass `--publish`.
+
+What it does **not** do: create a tag, push a tag, move a tag, bump the
+version in CMakeLists.txt, or commit anything. The only git operations are the
+version lookup in step 1 and the dirty-tree check (a warning, not an error).
+
+```bash
+# local test build only (artifact in dist/), default core profile
+tools/make_release.sh --version 0.3.0
+
+# on an already-tagged commit: version taken from the tag
+tools/make_release.sh
+
+# local prerelease with every CLI, published to GitHub (zero Actions minutes)
+tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
+
+# repack an existing build without rebuilding
+tools/make_release.sh --version 0.3.0 --skip-build --build-dir build
+```
+
+`tools/make_release.sh --help` lists every flag.
 
 ## CLI profiles (`cli_profiles.txt`)
 
@@ -328,7 +494,9 @@ shipping a broken bundle.
 
 - macOS build host with Xcode command-line tools (`otool`,
   `install_name_tool`, `codesign`), `gdal-config`, `python3`
-- completed macOS build (default: `build`)
+- completed macOS build in `build/macos-core` (the default; mirrors
+  `build/windows-qgis` on Windows so the two platform trees never collide —
+  override with `--build-dir`)
 - bundles are architecture-specific: package on an Apple Silicon Mac for
   `arm64` users, on an Intel Mac (or with a cross-built tree and
   `--arch x86_64`) for `x86_64` users

@@ -1551,11 +1551,7 @@ std::size_t keep_n_largest_complete_chi_basins(
     std::size_t                  n_largest
 )
 {
-    if (n_largest == 0)
-    {
-        return 0;  // 0 == keep all complete basins (no size cap).
-    }
-
+    // n_largest == 0 means "no size cap"; the completeness filter still runs.
     const std::size_t n_before = chi.basins.size();
 
     // Rank complete basins by total basin pixels (drainage area proxy).
@@ -1592,7 +1588,7 @@ std::size_t keep_n_largest_complete_chi_basins(
             return a.n_basin_pixels > b.n_basin_pixels;
         });
 
-    if (complete.size() > n_largest)
+    if (n_largest > 0 && complete.size() > n_largest)
     {
         complete.resize(n_largest);
     }

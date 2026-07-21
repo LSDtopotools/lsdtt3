@@ -15,6 +15,7 @@
 //   2. chi-network fitting
 //   3. chi disorder metrics and uncertainty products
 //   4. spatial k_sn / u* inversion with m/n sweep
+//   5. a chi coordinate raster covering every pixel of the complete basins
 //
 // Outlets can be supplied as a CSV of latitude/longitude points. If no outlet
 // CSV is provided, the largest basin in the DEM is used automatically.
@@ -58,7 +59,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 
-static const std::string k_version  = "0.2.0";
+static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-chi-analysis";
 
@@ -480,6 +481,23 @@ int main(int argc, char* argv[])
         "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines.",
         "Diagnostic data maps", "param", ""};
 
+    // --- Chi coordinate raster ---
+    bool_default_map["write_chi_coordinate_raster"] = false;
+    help_map["write_chi_coordinate_raster"] = {"bool","false",
+        "Write a raster of the chi coordinate for every pixel of every complete basin.",
+        "Chi is integrated upstream from each retained basin outlet (chi = 0 at "
+        "the outlet) across the whole upslope domain, so hillslope pixels get a "
+        "chi value as well as channel pixels: this is the chi map used for "
+        "divide-migration and cross-divide chi-contrast analysis. Basins are "
+        "selected exactly as for the other chi outputs (source_pixels_threshold, "
+        "then minimum_channel_pixels, then n_largest_basins), except that the "
+        "completeness filter always runs: basins whose upslope area touches "
+        "nodata or the DEM edge are never written, and every pixel outside the "
+        "retained basins is nodata. Uses one m/n value per run (the first value "
+        "of m_over_n, or of the mn sweep). Output: "
+        "<write_fname>_chi_coordinate_mn_*.tif in write_output_format.",
+        "Chi coordinate raster", "switch", ""};
+
     // --- Source extraction ---
     int_default_map["source_pixels_threshold"] = 1000;
     help_map["source_pixels_threshold"] = {"int","1000",
@@ -682,7 +700,7 @@ int main(int argc, char* argv[])
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
-        "Raster output format for inversion rasters.",
+        "Raster output format for the chi coordinate and inversion rasters.",
         "Allowed values: cog, gtiff, same_as_input.",
         "Outputs", "io", ""};
 
@@ -728,10 +746,8 @@ int main(int argc, char* argv[])
         ifs["n_largest_basins"] > 0
             ? static_cast<std::size_t>(ifs["n_largest_basins"])
             : std::size_t{0};
-    #if defined(LSDTT_HAS_EIGEN)
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
-    #endif
     const lsdtt::vector_output_format chi_dm_lines_fmt =
         lsdtt::resolve_vector_output_format(sf["chi_data_map_lines_output_format"]);
     const lsdtt::vector_output_format chi_fit_lines_fmt =
@@ -1006,6 +1022,93 @@ int main(int argc, char* argv[])
                 std::cerr << "Warning: writing chi data map lines failed: "
                           << e.what() << "\n";
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Chi coordinate raster
+    //
+    // Chi for every pixel of every retained complete basin, not just the
+    // channel pixels: the chi map used for divide-migration analysis.
+    // -------------------------------------------------------------------------
+    if (bf["write_chi_coordinate_raster"])
+    {
+        std::cout << "\n--- Chi coordinate raster ---\n";
+
+        if (tested_mn.size() > 1)
+        {
+            std::cout << "  Note: the chi coordinate raster uses one m/n value "
+                      << "per run; using the first value: " << tested_mn.front()
+                      << "\n";
+        }
+
+        lsdtt::lsdtt_chi_options chi_opts_raster;
+        chi_opts_raster.m_over_n = tested_mn.front();
+        chi_opts_raster.A_0      = static_cast<double>(ff["chi_A0"]);
+
+        try
+        {
+            // Select basins exactly as the other chi outputs do so that basin
+            // membership stays identical across products. The completeness
+            // filter runs unconditionally here (n_largest_basins == 0 keeps
+            // every complete basin): only complete basins get chi pixels.
+            std::cout << "  Extracting chi networks (m/n = "
+                      << chi_opts_raster.m_over_n << ")...\n";
+            std::cout.flush();
+
+            lsdtt::lsdtt_chi_collection_result chi_networks =
+                lsdtt::get_chi_from_outlets_zero_base_threshold(
+                    *flow, outlet_flats, ifs["source_pixels_threshold"],
+                    chi_opts_raster);
+
+            if (minimum_channel_pixels > 1)
+            {
+                const std::size_t n_removed =
+                    lsdtt::reject_chi_basins_with_few_channel_pixels(
+                        chi_networks, minimum_channel_pixels);
+                std::cout << "  Rejected " << n_removed
+                          << " basin(s) with fewer than " << minimum_channel_pixels
+                          << " channel pixels.\n";
+            }
+
+            const std::size_t n_dropped =
+                lsdtt::keep_n_largest_complete_chi_basins(
+                    chi_networks, *flow, n_largest_basins);
+            std::cout << "  Retained " << chi_networks.basins.size()
+                      << " complete basin(s); dropped " << n_dropped
+                      << " incomplete/smaller basin(s).\n";
+            std::cout.flush();
+
+            if (chi_networks.basins.empty())
+            {
+                std::cerr << "Warning: no complete basins remain; skipping the "
+                             "chi coordinate raster.\n";
+            }
+            else
+            {
+                std::vector<std::int64_t> complete_outlets;
+                complete_outlets.reserve(chi_networks.basins.size());
+                for (const auto& basin : chi_networks.basins)
+                {
+                    complete_outlets.push_back(basin.outlet_flat);
+                }
+
+                const lsdtt::lsdtt_raster_cpu chi_raster =
+                    lsdtt::get_chi_raster_from_outlets_zero_base(
+                        *flow, complete_outlets, chi_opts_raster);
+
+                const std::string o = pp.make_output_path(
+                    "_chi_coordinate_mn_" + mn_suffix(chi_opts_raster.m_over_n),
+                    ".tif");
+                std::cout << "  Writing: " << o << "\n";
+                loader.write_full(
+                    chi_raster.get_data(), chi_raster.get_meta(), o, out_fmt);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: chi coordinate raster failed: "
+                      << e.what() << "\n";
         }
     }
 

@@ -33,9 +33,10 @@ Steps are gated by booleans and run in this order:
 | 2. D8 flow routing | always |
 | 3. Source extraction | `source_pixels_threshold` |
 | 4. Chi extraction + data map | `print_chi_data_maps: true` |
-| 5. Chi network fitting + disorder sweep | `fit_chi_networks: true` |
-| 6. Disorder uncertainty | `run_subset_sensitivity`, `run_jackknife`, `run_bootstrap` |
-| 7. Spatial k_sn / u* inversion | `run_inversion: true` (requires Eigen3) |
+| 5. Chi coordinate raster | `write_chi_coordinate_raster: true` |
+| 6. Chi network fitting + disorder sweep | `fit_chi_networks: true` |
+| 7. Disorder uncertainty | `run_subset_sensitivity`, `run_jackknife`, `run_bootstrap` |
+| 8. Spatial k_sn / u* inversion | `run_inversion: true` (requires Eigen3) |
 
 ---
 
@@ -47,7 +48,7 @@ Steps are gated by booleans and run in this order:
 | `read_fname` | string | parameter file stem | Input DEM filename. Any GDAL-supported format. |
 | `write_path` | string | same as `read_path` | Directory for output files. |
 | `write_fname` | string | same as `read_fname` | Output filename stem. |
-| `write_output_format` | string | `cog` | Raster output format for inversion rasters. `cog`, `gtiff`, or `same_as_input`. |
+| `write_output_format` | string | `cog` | Raster output format for the chi coordinate and inversion rasters. `cog`, `gtiff`, or `same_as_input`. |
 
 ---
 
@@ -88,6 +89,9 @@ If `basin_outlet_file` is `NULL` the largest basin in the DEM is used automatica
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `source_pixels_threshold` | int | `1000` | Contributing-pixel count used to define channel heads. Chi is computed only on pixels upstream of channel heads. |
+| `minimum_channel_pixels` | int | `20` | Reject basins whose extracted channel has fewer than this many nodes. `0` or `1` keeps all basins. |
+| `n_pixels_move_outlet_upstream` | int | `10` | Move interior (non-edge) auto-detected outlets this many pixels upstream so the basin clears a coastal nodata fringe. `0` disables. |
+| `n_largest_basins` | int | `5` | Keep only the N largest complete basins, ranked by basin pixels. `0` = no size cap. |
 
 ---
 
@@ -101,6 +105,31 @@ Runs before `fit_chi_networks`. Use to verify basin and network geometry before 
 | `chi_data_maps_output_format` | string | `csv` | Output format for chi data map **point** files. `csv`: latitude/longitude in EPSG:4326. `gpkg`: GeoPackage. `flatgeobuf` / `fgb`: FlatGeobuf. Basin polygons are always vector (FlatGeobuf fallback when `csv` is requested). |
 | `write_chi_data_map_lines` | bool | `false` | Write chi channels as polylines (one feature per `source_key`). Attributes: `source_key`, `basin_key`. |
 | `chi_data_map_lines_output_format` | string | `flatgeobuf` | Output format for chi channel polylines. `flatgeobuf` / `fgb` or `gpkg`. CSV not supported for lines. |
+
+---
+
+## Chi coordinate raster
+
+A raster of chi for **every pixel** of every retained complete basin, hillslopes
+included, rather than for channel pixels only. This is the chi map used for
+divide-migration and cross-divide chi-contrast analysis.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_chi_coordinate_raster` | bool | `false` | Write `<write_fname>_chi_coordinate_mn_*.tif` in `write_output_format`. |
+
+Behaviour:
+
+- Chi is integrated upstream from each retained basin outlet with chi = 0 at the outlet.
+- Basins are selected exactly as for the other chi outputs: `source_pixels_threshold`,
+  then `minimum_channel_pixels`, then `n_largest_basins`. The completeness filter
+  **always** runs here, so a basin whose upslope area touches nodata or the DEM edge
+  is never written even when `n_largest_basins: 0`.
+- Every pixel outside the retained basins is nodata.
+- One m/n value per run: the first value of `m_over_n`, or the first value of the
+  `mn_min`/`mn_max`/`mn_step` sweep. Set `m_over_n` explicitly to control it.
+- Nested outlets that disagree on baselevel produce inconsistent chi in a single
+  raster; the step then warns and is skipped rather than aborting the run.
 
 ---
 
