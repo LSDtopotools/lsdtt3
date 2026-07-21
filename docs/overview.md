@@ -1,12 +1,12 @@
 # Overview
 
-lsdtt3 is a redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) that retains the same scientific algorithms while rebuilding the codebase for modern C++17, better memory efficiency, and easier ongoing development.
+`lsdtt3` is a redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) that retains the many of the same scientific algorithms while rebuilding the codebase for modern C++17, better memory efficiency, and easier ongoing development. It also includes a number of new analyses and some replacement algorithms where there is a substantial improvement in performance or accuracy. 
 
 ---
 
 ## What it does
 
-lsdtt3 provides a collection of command-line programs for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. The tools cover:
+`lsdtt3` provides a collection of command-line programs for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. The tools cover:
 
 - **DEM preparation** — reprojection, depression filling, breaching, nodata handling.
 - **Surface morphology** — curvature, roughness, hillshade, local relief, cloth-drape upper envelope, Frangi vessel filter.
@@ -15,6 +15,8 @@ lsdtt3 provides a collection of command-line programs for analysing digital elev
 - **Basin analysis** — delineation, statistics, chi analysis, k_sn and m/n estimation.
 - **Cosmogenic nuclides** — basin-averaged erosion rates, concentration prediction, transient 1-D column modelling.
 - **Landscape evolution modelling** — stream-power incision, hillslope diffusion, tectonic uplift.
+
+And many other features. 
 
 ---
 
@@ -30,6 +32,7 @@ lsdtt3 provides a collection of command-line programs for analysing digital elev
 | Memory | Higher | Reduced (8/32-bit types used where appropriate) |
 | Parallelism | Limited OpenMP | OpenMP across most bottleneck routines |
 | Output format | Standard GeoTIFF | Cloud-Optimised GeoTIFF (COG) by default |
+| Testing | No test suite | Multiple test suites to comare against alternative analyses (e.g., TopoToolbox3, RichDEM, Cronus Calculator) 
 
 ---
 
@@ -45,13 +48,15 @@ See [Architecture](lsdtt3_architecture.md) for the full layer design and naming 
 
 ## Who it is for
 
-lsdtt3 is aimed at geomorphologists, physical geographers, and earth scientists who need to:
+lsdtt3 is aimed at geomorphologists, physical geographers, hydrologists and earth scientists who need to:
 
 - process large or many DEMs in batch workflows,
 - run reproducible analyses from parameter files,
 - integrate topographic analysis into scripted pipelines.
 
-It is not a GIS — it has no interactive GUI. Inputs and outputs are files; visualisation is done in QGIS, Python, or R.
+It is not a GIS — it has no interactive GUI. Inputs and outputs are files. 
+
+However we have provided a lightweight QGIS plugin (which is under development). The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R.
 
 ---
 
@@ -59,4 +64,8 @@ It is not a GIS — it has no interactive GUI. Inputs and outputs are files; vis
 
 lsdtt3 is **not backward-compatible** with LSDTopoTools2. Parameter files, output file names, and some algorithm defaults differ. If you have existing LSDTopoTools2 workflows, consult the [command-line reference](cli_reference_lsdtt_channel_extraction.md) for the updated parameter names.
 
-lsdtt3 runs on Linux. Windows users run it inside WSL2; macOS users inside a Multipass Ubuntu VM. See [Installation](installing_locally.md) for details.
+lsdtt3 is best run on Linux. 
+
+
+Windows users best run it inside WSL2, although it is possible to compile natively in Windows using Visual Studio and `vcpkg`. Windows releases are provided.
+At present we have not provided MacOS releases so it is best used in macOS within a Multipass Ubuntu VM. See [Installation](installing_locally.md) for details.

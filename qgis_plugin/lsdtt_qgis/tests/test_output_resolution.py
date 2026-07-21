@@ -161,3 +161,116 @@ def test_vector_output_suffixes():
         assert expected_output_path(
             "/out", "demo", "_sampled_points.{}".format(extension_for_format(fmt))
         ).endswith("demo_sampled_points." + ext)
+
+
+# Suffixes written by lsdtt-basin-stats, keyed by enabling flag ("always" for
+# the statistics table, which is written on every run).
+# Kept in sync with cli/lsdtt-basin-stats.cpp.
+BASIN_STATS_SUFFIXES = {
+    "always": "_basin_stats.csv",
+    "write_basin_polygons": "_basin_polygons",
+    "calculate_junction_area_ratios": "_junction_area_ratios.csv",
+    "calculate_junction_area_ratios(summary)": "_junction_area_ratio_summary.csv",
+    "write_hillshade_raster": "_hillshade.tif",
+}
+
+
+def test_basin_stats_suffixes():
+    assert expected_output_path(
+        "/out", "demo", BASIN_STATS_SUFFIXES["always"]
+    ).endswith("demo_basin_stats.csv")
+    assert expected_output_path(
+        "/out", "demo",
+        BASIN_STATS_SUFFIXES["write_basin_polygons"]
+        + "." + extension_for_format("flatgeobuf"),
+    ).endswith("demo_basin_polygons.fgb")
+    assert expected_output_path(
+        "/out", "demo", BASIN_STATS_SUFFIXES["calculate_junction_area_ratios"]
+    ).endswith("demo_junction_area_ratios.csv")
+
+
+# Suffixes written by lsdtt-channel-network-analysis, keyed by enabling flag.
+# The bearing/angle/channel layers take the chosen vector extension; the
+# summary tables are always CSV.
+# Kept in sync with cli/lsdtt-channel-network-analysis.cpp.
+CHANNEL_NETWORK_ANALYSIS_SUFFIXES = {
+    "write_channel_link_bearings": "_channel_link_bearings",
+    "write_junction_angles": "_junction_angles",
+    "write_strahler_channels": "_strahler_channels",
+    "write_tokunaga_channels": "_tokunaga_channels",
+    "write_tokunaga_channel_data": "_tokunaga_channel_data.csv",
+    "write_tokunaga_summary_data": "_tokunaga_summary.csv",
+    "write_junction_area_ratio_data": "_junction_area_ratios.csv",
+    "write_junction_area_ratio_summary": "_junction_area_ratio_summary.csv",
+    "write_junction_centre_of_mass_bearings": "_junction_com_bearings.csv",
+    "write_channel_link_bearing_vectors": "_channel_link_bearing_vectors",
+    "write_junction_angle_bearing_vectors": "_junction_angle_bearing_vectors",
+}
+
+
+def test_channel_network_analysis_layer_suffixes_follow_format():
+    for fmt, ext in [("flatgeobuf", "fgb"), ("gpkg", "gpkg"), ("csv", "csv")]:
+        assert expected_output_path(
+            "/out", "demo",
+            CHANNEL_NETWORK_ANALYSIS_SUFFIXES["write_channel_link_bearings"]
+            + "." + extension_for_format(fmt),
+        ).endswith("demo_channel_link_bearings." + ext)
+        assert expected_output_path(
+            "/out", "demo",
+            CHANNEL_NETWORK_ANALYSIS_SUFFIXES["write_tokunaga_channels"]
+            + "." + extension_for_format(fmt),
+        ).endswith("demo_tokunaga_channels." + ext)
+
+
+def test_channel_network_analysis_summary_tables_are_csv():
+    for key in (
+        "write_tokunaga_summary_data",
+        "write_junction_area_ratio_data",
+        "write_junction_centre_of_mass_bearings",
+    ):
+        assert CHANNEL_NETWORK_ANALYSIS_SUFFIXES[key].endswith(".csv")
+    assert expected_output_path(
+        "/out", "demo",
+        CHANNEL_NETWORK_ANALYSIS_SUFFIXES["write_junction_centre_of_mass_bearings"],
+    ).endswith("demo_junction_com_bearings.csv")
+
+
+# Suffixes written by lsdtt-surface-metrics. Polyfit-derived rasters carry the
+# fit method in the suffix; the wrapper pins the method to "direct".
+# Kept in sync with cli/lsdtt-surface-metrics.cpp.
+SURFACE_METRICS_SUFFIXES = {
+    "write_hillshade_raster": "_hillshade.tif",
+    "write_local_relief_raster": "_local_relief.tif",
+    "write_shape_classification": "_direct_shape_class.tif",
+    "write_shape_curvature_rasters": "_direct_shape_gaussian_curvature.tif",
+    "write_madk2_rasters": "_madk2_ra.tif",
+    "write_cloth_envelope_raster": "_cloth_envelope.tif",
+    "write_cloth_incision_raster": "_cloth_incision.tif",
+    "write_cloth_crest_mask_raster": "_cloth_crest_mask.tif",
+}
+
+
+def polyfit_metric_suffix(metric, method="direct"):
+    """Mirror of polyfit_metric_suffix() in cli/lsdtt-surface-metrics.cpp."""
+    return "_{}_polyfit_{}.tif".format(method, metric)
+
+
+def test_surface_metrics_suffixes():
+    assert expected_output_path(
+        "/out", "demo", SURFACE_METRICS_SUFFIXES["write_local_relief_raster"]
+    ).endswith("demo_local_relief.tif")
+    assert expected_output_path(
+        "/out", "demo", SURFACE_METRICS_SUFFIXES["write_shape_classification"]
+    ).endswith("demo_direct_shape_class.tif")
+    assert expected_output_path(
+        "/out", "demo", SURFACE_METRICS_SUFFIXES["write_cloth_incision_raster"]
+    ).endswith("demo_cloth_incision.tif")
+
+
+def test_polyfit_metric_suffix_includes_method():
+    assert expected_output_path(
+        "/out", "demo", polyfit_metric_suffix("plan_curvature")
+    ).endswith("demo_direct_polyfit_plan_curvature.tif")
+    assert polyfit_metric_suffix("slope_degrees", "wavelet") == (
+        "_wavelet_polyfit_slope_degrees.tif"
+    )

@@ -1,6 +1,9 @@
 # Installing lsdtt3
 
-lsdtt3 runs on Linux. This page describes the three ways to get it running and
+`lsdtt3` is built for Linux, although we are developing packages for other operating systems. 
+
+The simplest way to install is to grab a pre-built release. These may run behind the latest version, however, so we include instructions here for installing 
+. This page describes the three ways to get it running and
 points to the detailed instructions for each platform.
 
 ---

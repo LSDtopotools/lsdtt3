@@ -7,11 +7,16 @@ Pure path/format logic lives in lsdtt_qgis.naming (qgis-free, unit-testable);
 this module adds the qgis-dependent wrappers around it.
 """
 
+import csv
 import datetime
 import os
 import tempfile
 
-from qgis.core import QgsProcessingException
+from qgis.core import (
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsProcessingException,
+)
 
 from ..backend.manager import BackendManager
 from ..backend.runner import run_cli, write_log
@@ -28,12 +33,17 @@ from ..templates.lsdtt_params import write_parameter_file
 
 __all__ = [
     "attach_backend_help",
+    "export_points_as_latlon_csv",
     "extension_for_format",
     "layer_file_path",
     "require_output",
     "run_lsdtt_tool",
     "split_layer_source",
 ]
+
+# Attribute columns passed through to an exported outlet CSV when the source
+# layer carries them: lsdtt-basin-stats picks these up by name.
+PASSTHROUGH_POINT_FIELDS = ("gauge_id", "gauge_name")
 
 
 def attach_backend_help(alg, tool_name, overrides=None):
@@ -78,6 +88,52 @@ def split_layer_source(source, kind="layer"):
 def layer_file_path(source):
     """Return the plain file path of a layer source (pipe suffix stripped)."""
     return strip_layer_suffix(source)
+
+
+def export_points_as_latlon_csv(layer, csv_path, context, feedback=None):
+    """Write a QGIS point layer to a latitude/longitude CSV in EPSG:4326.
+
+    Some lsdtt CLIs (lsdtt-basin-stats) read outlet points only as a CSV
+    with `latitude`/`longitude` columns, so a layer in any CRS is
+    reprojected here. Any PASSTHROUGH_POINT_FIELDS present on the layer are
+    copied through as extra columns. Returns the CSV path.
+    """
+    wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
+    transform = QgsCoordinateTransform(layer.crs(), wgs84, context.transformContext())
+
+    field_names = [f.name() for f in layer.fields()]
+    passthrough = [name for name in PASSTHROUGH_POINT_FIELDS if name in field_names]
+
+    written = 0
+    with open(csv_path, "w", encoding="utf-8", newline="") as dst:
+        writer = csv.writer(dst)
+        writer.writerow(["latitude", "longitude"] + passthrough)
+        for feature in layer.getFeatures():
+            geometry = feature.geometry()
+            if geometry is None or geometry.isEmpty():
+                continue
+            point = geometry.centroid().asPoint()
+            try:
+                point = transform.transform(point)
+            except Exception as exc:
+                raise QgsProcessingException(
+                    "Could not reproject outlet points to EPSG:4326: {}".format(exc)
+                )
+            writer.writerow(
+                ["{:.10f}".format(point.y()), "{:.10f}".format(point.x())]
+                + [feature[name] for name in passthrough]
+            )
+            written += 1
+
+    if written == 0:
+        raise QgsProcessingException(
+            "Outlet point layer contains no usable point geometries."
+        )
+    if feedback is not None:
+        feedback.pushInfo(
+            "Wrote {} outlet point(s) to {}".format(written, csv_path)
+        )
+    return csv_path
 
 
 def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedback):
