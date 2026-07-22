@@ -215,12 +215,62 @@ if(LSDTT_ENABLE_BENCHMARKS)
                 PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77)
         endforeach()
     endforeach()
+
+    # Surface-metrics SPEED benchmark vs TopoToolbox (surface-metrics plan,
+    # Phases 3-4).  TopoToolbox is a PERFORMANCE reference here, not a
+    # correctness one -- correctness comes from the Tier A analytic oracle in
+    # lsdtt-test-surface-metrics, which needs no network.  So --check enforces
+    # ONLY the rank-correlation guard: it fails when the two tools turn out not
+    # to be computing the same kind of quantity, which would make the timing
+    # meaningless.  No wall-clock threshold is ever asserted.
+    #
+    # The _medium fixtures, not the _small ones the flow benchmark uses: at
+    # 256x256 the polyfit is ~5 ms and every timing is noise.
+    foreach(surf_fixture alpine_medium lakeland_medium)
+        foreach(surf_case slope curvature_all4 hillshade)
+            add_test(
+                NAME benchmark_surface_${surf_case}_${surf_fixture}
+                COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
+                        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_surface_benchmark.py"
+                        --exe "$<TARGET_FILE:lsdtt-surface-metrics>"
+                        --fixture ${surf_fixture}
+                        --comparison ${surf_case}
+                        --repeats 5
+                        --skip-studies
+                        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/surface_benchmark"
+                        --check
+            )
+            set_tests_properties(benchmark_surface_${surf_case}_${surf_fixture}
+                PROPERTIES LABELS "benchmark;surface" SKIP_RETURN_CODE 77
+                           TIMEOUT 1800)
+        endforeach()
+    endforeach()
     endif()
 endif()
 
 # -----------------------------------------------------------------------------
 # C++ unit tests
 # -----------------------------------------------------------------------------
+
+# Surface-metrics validation: Tier A analytic oracle (global quadratic and
+# periodic-wave surfaces with exact Taylor coefficients, sphere, cylinder,
+# plane) plus Tier C property tests (algebraic identities, SMAP classification,
+# rotation invariance, thread determinism, MADk2 invariants).  Synthetic
+# fixtures only: no network and no committed DEM, so it runs in the default
+# suite.
+#
+# NOTE: two MADk2 checks are KNOWN FAILURES (the anisotropy/DMC estimator treats
+# axial directions as vectors).  They are reported as KNOWN-FAIL and do not fail
+# the run; flip k_madk2_axial_is_fixed in the driver once the estimator is
+# corrected.
+add_executable(lsdtt-test-surface-metrics cpp/test_surface_metrics.cpp)
+target_link_libraries(lsdtt-test-surface-metrics PRIVATE lsdtt3_cpu)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
+add_test(NAME unit_surface_metrics
+         COMMAND lsdtt-test-surface-metrics
+                 ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
+set_tests_properties(unit_surface_metrics PROPERTIES LABELS "unit;surface")
 
 add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
 target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
@@ -303,6 +353,52 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "cannot impose a gradient across flats"
 )
 
+# lsdtt-surface-metrics.  Uses tiny_dem.asc (UTM 30N) rather than tiny30_dem.tif,
+# which is EPSG:4326 and is rejected by the CLI's projected-CRS check - that
+# rejection is itself covered by failure_surface_metrics_geographic_crs below.
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics
+    lsdtt-surface-metrics
+    surface_metrics_smoke.param.in
+    tiny_hillshade.tif
+    --expect tiny_local_relief.tif
+    --expect tiny_direct_polyfit_slope.tif
+    --expect tiny_direct_polyfit_aspect_degrees.tif
+    --expect tiny_direct_polyfit_mean_curvature.tif
+    --expect tiny_direct_polyfit_maximum_curvature.tif
+    --expect tiny_direct_polyfit_minimum_curvature.tif
+    --expect tiny_direct_shape_class.tif
+    --expect tiny_direct_shape_gaussian_curvature.tif
+    --expect tiny_direct_shape_mean_curvature.tif
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_madk2
+    lsdtt-surface-metrics
+    surface_metrics_madk2_smoke.param.in
+    tiny_madk2_or.tif
+    --expect tiny_madk2_dmc.tif
+    --expect tiny_madk2_ra.tif
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_surface_metrics_invalid_metric
+    lsdtt-surface-metrics
+    surface_metrics_invalid_metric.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "Unknown polyfit metric: not_a_metric"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_surface_metrics_geographic_crs
+    lsdtt-surface-metrics
+    surface_metrics_geographic_crs.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "geographic coordinate system"
+)
+
 add_lsdtt_cli_smoke_test(
     failure_fetch_raster_bounds_conflict
     lsdtt-fetch-raster
@@ -362,6 +458,27 @@ if(LSDTT_ENABLE_PERF_TESTS)
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --quick)
     set_tests_properties(performance_flow_routines
         PROPERTIES LABELS "performance;flow" TIMEOUT 1800)
+
+    # Surface-metrics timing sweep: every comparison, plus the
+    # marginal-cost-per-extra-metric and window-size (O(n)) studies.
+    # Reported, never asserted -- no --check, so a slow shared runner cannot
+    # turn it red.  Needs pixi + topotoolbox + a fetched fixture; skips (77)
+    # when any of the three is missing.
+    if(LSDTT_ENABLE_BENCHMARKS AND LSDTT_PIXI_EXECUTABLE)
+        add_test(
+            NAME performance_surface_metrics
+            COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_surface_benchmark.py"
+                    --exe "$<TARGET_FILE:lsdtt-surface-metrics>"
+                    --fixture alpine_medium
+                    --comparison all
+                    --repeats 5
+                    --work-dir "${CMAKE_CURRENT_BINARY_DIR}/surface_benchmark"
+        )
+        set_tests_properties(performance_surface_metrics
+            PROPERTIES LABELS "performance;surface" SKIP_RETURN_CODE 77
+                       TIMEOUT 3600)
+    endif()
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/perf_output)
 endif()
 

@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny
+
+write_output_format: gtiff
+n_threads: 1
+
+# The fixture is 5x5 with 1 m cells.  MADk2 needs a margin of
+# (window radius + lag) pixels, so radius 1 m with lag 1 leaves exactly the
+# centre pixel valid; anything larger returns an all-nodata raster.
+write_madk2_rasters: true
+madk2_window_radius_metres: 1.0
+madk2_lag_pixels: 1

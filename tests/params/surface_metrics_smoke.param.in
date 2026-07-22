@@ -1,0 +1,28 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny
+
+write_output_format: gtiff
+n_threads: 1
+
+write_hillshade_raster: true
+hillshade_azimuth: 315
+hillshade_altitude: 45
+hillshade_z_factor: 1.0
+
+write_local_relief_raster: true
+local_relief_radius_metres: 2.0
+local_relief_window_shape: circular
+
+# NOTE: no spaces after the commas.  The parameter parser keeps only the first
+# whitespace-delimited token of a value, so "slope, aspect_degrees" silently
+# becomes "slope,".
+polyfit_method: direct
+polyfit_lambda_metres: 2.0
+polyfit_metrics: slope,aspect_degrees,mean_curvature
+
+write_shape_classification: true
+shape_curvature_method: polyfit
+shape_curvature_threshold: 0.0
+write_shape_curvature_rasters: true

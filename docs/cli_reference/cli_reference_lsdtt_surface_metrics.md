@@ -103,6 +103,13 @@ Fits a quadratic polynomial `z = ax² + by² + cxy + dx + ey + f` over a moving 
 
 Set `polyfit_metrics` to a comma-separated list of metric names, or `all` to write every metric.
 
+> **No spaces in the list.** Write `slope,aspect_degrees,mean_curvature`, not
+> `slope, aspect_degrees, mean_curvature`. The parameter parser terminates a
+> value at the first space, so a spaced list is silently truncated to its first
+> entry — the run succeeds and quietly computes only that one metric. The same
+> applies to `slope_thresholds` and to comma-separated lists in other CLIs
+> (`m_over_n`, `gsd_fractions`, `psi_mm`).
+
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `polyfit_metrics` | string | _(empty)_ | Comma-separated list of derived metrics to compute and write. Empty = none. |
@@ -320,7 +327,7 @@ hillshade_z_factor:     1.0
 # Polynomial surface fit — slope and curvatures at 30 m scale
 polyfit_lambda_metres: 70.0
 polyfit_method:        direct
-polyfit_metrics:       slope, plan_curvature, profile_curvature, vertical_excess_curvature
+polyfit_metrics:       slope,plan_curvature,profile_curvature,vertical_excess_curvature
 
 # Surface shape classification (SMAP)
 write_shape_classification:    true

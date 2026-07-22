@@ -196,6 +196,25 @@ madk2_result calculate_madk2(
     // extends a further lag_pixels in any direction.  A single outer-edge check
     // eliminates all per-window-pixel inner bounds checks.
     const int combined_radius = pixel_radius + lag_pixels;
+
+    // Every pixel within combined_radius of an edge is skipped, so if the
+    // raster is not wider than 2*combined_radius in BOTH directions the result
+    // is entirely nodata.  That used to be produced silently: three rasters
+    // written, 100% nodata, exit 0.  Refuse instead, and say what to change.
+    if (nrows <= 2 * combined_radius || ncols <= 2 * combined_radius)
+    {
+        throw std::runtime_error(
+            "lsdtt::calculate_madk2: window radius " +
+            std::to_string(window_radius_metres) + " m (" +
+            std::to_string(pixel_radius) + " px) plus lag " +
+            std::to_string(lag_pixels) + " px needs a margin of " +
+            std::to_string(combined_radius) + " px on every side, but the "
+            "raster is only " + std::to_string(nrows) + " x " +
+            std::to_string(ncols) + " px. Every output pixel would be nodata. "
+            "Reduce madk2_window_radius_metres or madk2_lag_pixels, or use a "
+            "larger raster."
+        );
+    }
     std::atomic<int> rows_done{0};
     const int progress_step = std::max(1, nrows / 20);   // print every ~5 %
 
@@ -304,15 +323,29 @@ madk2_result calculate_madk2(
 
             for (std::size_t d = 0; d < dirs.size(); ++d)
             {
-                rx      += mad_dir[d] * std::cos(dirs[d].axis_angle_rad);
-                ry      += mad_dir[d] * std::sin(dirs[d].axis_angle_rad);
+                // AXIAL data: the four sampling directions are axes, not
+                // vectors -- (dr,dc) and (-dr,-dc) give an identical
+                // second-order difference, so the statistic has period 180
+                // degrees, not 360.  The resultant must therefore be formed at
+                // the DOUBLED angle and the recovered angle halved (Mardia's
+                // method for axial data).
+                //
+                // Using the raw angle here made RA = 0.6533 on a perfectly
+                // isotropic surface instead of 0 -- so RA never reached its own
+                // lower end and "low RA means isotropic" could not be read off
+                // the output -- and put DMC 35.26 degrees out for N-S
+                // corrugation while leaving it exact for E-W.  Guarded by the
+                // C5 checks in tests/cpp/test_surface_metrics.cpp.
+                rx      += mad_dir[d] * std::cos(2.0 * dirs[d].axis_angle_rad);
+                ry      += mad_dir[d] * std::sin(2.0 * dirs[d].axis_angle_rad);
                 mad_sum += mad_dir[d];
             }
 
             const double r_mag  = std::sqrt(rx * rx + ry * ry);
             const double ra_val = (mad_sum > 0.0) ? (r_mag / mad_sum) : 0.0;
 
-            const double max_rough_angle_rad = std::atan2(ry, rx);
+            // Halve to undo the angle doubling above and return to axis space.
+            const double max_rough_angle_rad = 0.5 * std::atan2(ry, rx);
             double dmc_deg = (max_rough_angle_rad + k_pi / 2.0) * (180.0 / k_pi);
             while (dmc_deg <    0.0) dmc_deg += 180.0;
             while (dmc_deg >= 180.0) dmc_deg -= 180.0;

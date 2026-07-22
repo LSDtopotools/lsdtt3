@@ -1,0 +1,10 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny_invalid_metric
+
+write_output_format: gtiff
+
+polyfit_method: direct
+polyfit_lambda_metres: 2.0
+polyfit_metrics: not_a_metric

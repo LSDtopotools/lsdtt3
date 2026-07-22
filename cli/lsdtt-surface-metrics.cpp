@@ -1023,6 +1023,47 @@ int main(int argc, char* argv[])
     }
 #endif
 
+    // -------------------------------------------------------------------------
+    // Nothing-to-do check
+    //
+    // Every output in this CLI is opt-in, so a parameter file that enables none
+    // of them used to run to completion, write only the README/ingested-params
+    // files, and exit 0 -- indistinguishable from a successful analysis. A
+    // typo'd switch name lands exactly here. Fail with the list instead.
+    // -------------------------------------------------------------------------
+    {
+        static const char* const k_output_switches[] = {
+            "write_hillshade_raster", "write_local_relief_raster",
+            "write_polyfit_rasters",  "write_shape_classification",
+            "write_shape_curvature_rasters", "write_madk2_rasters",
+            "write_slope_threshold_layers",
+            "write_cloth_envelope_raster", "write_cloth_incision_raster",
+            "write_cloth_crest_mask_raster",
+            "write_frangi_raster", "write_frangi_scale_raster",
+            "write_otsu_raster", "write_hough_lines_raster",
+            "write_curvature_skeletons",
+            "write_vec_adaptive_threshold", "write_vec_adaptive_skeletons"
+        };
+
+        bool any_output = !requested_polyfit_metrics.empty();
+        for (const char* sw : k_output_switches)
+        {
+            if (bf[sw]) { any_output = true; break; }
+        }
+
+        if (!any_output)
+        {
+            std::cerr
+                << "FATAL: no outputs requested, so there is nothing to do.\n"
+                << "  Set polyfit_metrics, or enable at least one of:\n";
+            for (const char* sw : k_output_switches)
+                std::cerr << "    " << sw << "\n";
+            std::cerr << "  Run 'lsdtt-surface-metrics -h' for what each one "
+                         "produces.\n";
+            return 1;
+        }
+    }
+
     const int n_threads = ifs["n_threads"];
     const lsdtt::raster_output_format out_fmt =
         resolve_output_format(sf["write_output_format"]);
@@ -1166,12 +1207,22 @@ int main(int argc, char* argv[])
 
         try
         {
+            // In-process timing of the compute only, matching the
+            // "Running direct fit... done (X s)" line the polyfit already
+            // prints.  Without it the only measurable number is whole-process
+            // wall time, which on this workload is dominated by the GeoTIFF
+            // write and makes an honest speed comparison impossible.
+            const auto hs_t0 = std::chrono::steady_clock::now();
             lsdtt::lsdtt_raster_cpu hillshade = lsdtt::compute_hillshade(
                 dem,
                 ff["hillshade_azimuth"],
                 ff["hillshade_altitude"],
                 ff["hillshade_z_factor"]
             );
+            const auto hs_t1 = std::chrono::steady_clock::now();
+            std::cout << "  Computed hillshade... done ("
+                      << std::chrono::duration<double>(hs_t1 - hs_t0).count()
+                      << " s)\n";
 
             const std::string o = pp.make_output_path( "_hillshade.tif");
             std::cout << "Writing: " << o << "\n";
@@ -1435,8 +1486,13 @@ int main(int argc, char* argv[])
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Warning: wavelet polynomial fit failed: "
+                // A fit the user explicitly asked for did not run.  This used
+                // to be a warning on a successful exit, so a mistyped
+                // polyfit_lambda_metres produced NO polyfit outputs, exit 0,
+                // and looked like a successful run.  Fail instead.
+                std::cerr << "FATAL: wavelet polynomial fit failed: "
                           << e.what() << "\n";
+                return 1;
             }
         }
 
@@ -1462,8 +1518,13 @@ int main(int argc, char* argv[])
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Warning: direct polynomial fit failed: "
+                // A fit the user explicitly asked for did not run.  This used
+                // to be a warning on a successful exit, so a mistyped
+                // polyfit_lambda_metres produced NO polyfit outputs, exit 0,
+                // and looked like a successful run.  Fail instead.
+                std::cerr << "FATAL: direct polynomial fit failed: "
                           << e.what() << "\n";
+                return 1;
             }
         }
 
@@ -1611,7 +1672,8 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: MADk2 failed: " << e.what() << "\n";
+            std::cerr << "FATAL: MADk2 failed: " << e.what() << "\n";
+            return 1;
         }
     }
 

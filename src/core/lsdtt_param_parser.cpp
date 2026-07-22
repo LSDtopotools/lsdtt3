@@ -1378,6 +1378,60 @@ void lsdtt_param_parser::parse_line(
             else if (word == 1) value     = buff;
             ++word;
             pos = 0;
+
+            // A value ends at the first whitespace.  Anything further on the
+            // line (other than a # comment) therefore used to be DISCARDED
+            // SILENTLY -- so "polyfit_metrics: a, b, c" ingested as "a," and
+            // the run computed one metric instead of three, exit 0, no warning.
+            // Reject it instead: a value the user wrote and we cannot honour is
+            // an error, not a default.  Trailing whitespace and trailing
+            // comments remain valid.
+            if (c == ' ' || c == '\t')
+            {
+                std::string tail;
+                char        t;
+                while (infile.get(t) && t != '\n') tail += t;
+
+                std::size_t first = tail.find_first_not_of(" \t\r");
+                if (first != std::string::npos && tail[first] != '#')
+                {
+                    // Strip a trailing comment before echoing the value back.
+                    std::string shown = tail.substr(first);
+                    const std::size_t hash = shown.find('#');
+                    if (hash != std::string::npos) shown = shown.substr(0, hash);
+                    while (!shown.empty() &&
+                           (shown.back() == ' ' || shown.back() == '\t' ||
+                            shown.back() == '\r'))
+                    {
+                        shown.pop_back();
+                    }
+
+                    // Suggestion: the same value with ALL whitespace removed,
+                    // which is the fix in the overwhelmingly common case of a
+                    // comma-separated list typed with spaces after the commas.
+                    std::string suggestion = value + shown;
+                    suggestion.erase(
+                        std::remove_if(suggestion.begin(), suggestion.end(),
+                                       [](unsigned char ch) {
+                                           return ch == ' ' || ch == '\t' ||
+                                                  ch == '\r';
+                                       }),
+                        suggestion.end());
+
+                    throw std::runtime_error(
+                        "lsdtt_param_parser: parameter '" + parameter +
+                        "' has a value containing spaces: '" + value + " " +
+                        shown + "'.\n"
+                        "  A value must be a single unbroken token: everything "
+                        "after the first space is ignored,\n"
+                        "  so this would silently run with only '" + value +
+                        "'.\n"
+                        "  If this is a comma-separated list, remove the "
+                        "spaces:\n    " + parameter + ": " + suggestion
+                    );
+                }
+                break;   // rest of the line was blank or a comment
+            }
         }
         else if (c == '\n' && word == 0)
         {
