@@ -46,55 +46,46 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, Claude Haiku, Sonn
 
 ---
 
-## Beta testing: quick install (Windows / WSL2)
+## Installation
 
-`lsdtt3` is currently in private beta. 
+`lsdtt3` is currently in **private beta**.
 
-Self-contained pre-built Linux bundles are attached to each [GitHub Release](../../releases/latest) as `lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz`.
+Everything below installs a pre-built release package: no compiler, no GDAL
+install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
+and troubleshooting, are in [`docs/install_lsdtt3.md`](docs/install_lsdtt3.md).**
 
-If you wish to test the latest development routines you will need to compile the code. 
+Packages are on the [Releases page](../../releases/latest) and at
+<https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>.
 
-Full explanations of these steps are in the `/docs` folder of this repository. 
-
-### Step 1 - get a Linux terminal
-
-On Windows, install WSL2 and Ubuntu 22.04 if you have not already done so:
-
-1. Open PowerShell as administrator and run `wsl --install`.
-2. Restart, then install **Ubuntu 22.04 LTS** from the Microsoft Store.
-3. Launch Ubuntu and set a username and password when prompted.
-
-For more details see the `/docs` directory of this repository. 
-
-### Step 2a - install tagged versions of lsdtt3
-
-Download the Linux backend bundle
-(`lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz`) from the Releases
-page (or from the link the developer sent you), then unpack and activate it:
+### Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
-tar -xzf lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
-source lsdtt3-backend-linux-x86_64-<profile>-v<version>/setenv.sh
-```
-
-The bundle is self-contained: it includes the command-line tools and every
-library they need, so nothing is installed system-wide and no `sudo` is
-required. `setenv.sh` must be **`source`d** (not run with `bash`) and sets
-up the current terminal session only. To make it permanent, add that
-`source` line to the end of your `~/.bashrc` (use the full path to
-`setenv.sh`).
-
-### Step 2b
-
-Compile (if you want the latest versions). See the `/docs` directory. 
-
-### Step 3 — open a new terminal and verify
-
-```bash
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.2.2.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.2.2.tar.gz
+source lsdtt3-backend-linux-x86_64-core-v0.2.2/setenv.sh
 lsdtt-channel-extraction --help
 ```
 
-If you see a list of parameters the installation succeeded.
+`setenv.sh` must be **`source`d**, not run with `bash` — it only exports
+environment variables, which would vanish with a child shell. It applies to the
+current terminal; append the same line (with the full path) to `~/.bashrc` to
+make it permanent.
+
+On **Windows**, first `wsl --install` from an administrator PowerShell, install
+**Ubuntu 22.04 LTS** from the Microsoft Store, then run the above inside it.
+Your Windows drives are visible under `/mnt/c/`. A native Windows `.zip` also
+exists but ships a reduced tool set — see the install guide.
+
+On **macOS** there is no package yet; run the Linux one inside a Multipass
+Ubuntu VM (`brew install --cask multipass`).
+
+On **Google Colab**, `!source setenv.sh` does not work — set the environment
+from Python instead. The install guide has the cell to paste.
+
+### Want the latest code rather than a release?
+
+Then you need to compile it:
+[`docs/developer_notes/building_from_source.md`](docs/developer_notes/building_from_source.md).
 
 ### Reporting bugs
 
@@ -103,13 +94,15 @@ If you see a list of parameters the installation succeeded.
 Please include:
 - the exact command you ran
 - the full terminal output (copy and paste, not a screenshot)
-- your Ubuntu version: `cat /etc/os-release | grep VERSION=`
-
-**Full installation and troubleshooting notes:** `docs/developer_notes/beta_testing_notes.md`
+- your Linux version: `cat /etc/os-release | grep VERSION=`
+- the lsdtt3 version: `lsdtt-channel-extraction -v`
 
 ---
 
 ## Dependencies
+
+**You do not need any of this to use a release package** — the packages bundle
+every library they need. This section is for building from source.
 
 `lsdtt3` has more dependencies than `lsdtopotools2`. However all dependencies are stabile and easily installable on Linux (and by extension linux subsystems for Windows and MacOS). We also provide an apptainer container (although not frequently updated) that allows running of the softare without having to manage installation. 
 
@@ -143,11 +136,16 @@ OpenMP is included with GCC and needs no separate install.
 
 ### Windows (WSL2)
 
-Run lsdtt3 inside a WSL2 Ubuntu environment and use the Ubuntu instructions above. See `docs/wsl2_notes.md` and `docs/developer_notes/lsdtt3_in_windows.md` for WSL2-specific setup notes.
+Build inside a WSL2 Ubuntu environment and use the Ubuntu instructions above.
+`docs/developer_notes/lsdtt3_in_windows.md` has the full walkthrough. A native
+Windows build is possible with Visual Studio and vcpkg but is a deliberately
+reduced profile (no Eigen, no OpenCV, no OpenMP) intended as the QGIS plugin
+backend — see `docs/developer_notes/building_from_source.md`.
 
 ### macOS
 
-See `docs/developer_notes/lsdtt3_in_macos.md`. Apple Clang does not ship with OpenMP; the doc covers the Homebrew workaround.
+lsdtt3 does not build with Apple Clang. Build inside an Ubuntu VM managed by
+Multipass — see `docs/developer_notes/lsdtt3_in_macos.md`.
 
 ### Apptainer container
 
@@ -155,7 +153,7 @@ A pre-configured Apptainer definition is provided that includes all dependencies
 
 ### Debian packaging
 
-See `docs/debian_packaging.md` for building a `.deb` package for distribution on Debian-based systems.
+See `docs/developer_notes/debian_packaging.md` for building a `.deb` package for distribution on Debian-based systems.
 
 ---
 
@@ -164,9 +162,8 @@ See `docs/debian_packaging.md` for building a `.deb` package for distribution on
 ```sh
 git clone https://github.com/LSDtopotools/lsdtt3.git
 cd lsdtt3
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
 
 Compiled executables are written to `build/`. To use them from any directory:
@@ -174,6 +171,9 @@ Compiled executables are written to `build/`. To use them from any directory:
 ```sh
 export PATH=/path/to/lsdtt3/build:$PATH
 ```
+
+Full instructions for every platform, including the CMake option reference:
+[`docs/developer_notes/building_from_source.md`](docs/developer_notes/building_from_source.md).
 
 ### CMake options
 
@@ -270,7 +270,7 @@ lsdtt-drainage-analysis     my_params.driver
 |---|---|---|
 | `lsdtt-drainage-analysis` | Drainage area via D8, D-infinity, or MFD routing. Topographic Wetness Index (TWI). | `docs/cli_reference/cli_reference_lsdtt_drainage_analysis.md` |
 | `lsdtt-channel-extraction` | D8 flow routing, contributing-pixel threshold source extraction, junction/channel network construction, network export to CSV / GeoPackage / FlatGeobuf. | `docs/cli_reference/cli_reference_lsdtt_channel_extraction.md` |
-| `lsdtt-basin-extraction` | D8 flow routing, channel/junction network, junction-aware basin extraction. Writes basin outlines, raster labels, and statistics. | `docs/basin_extraction_guide.md` |
+| `lsdtt-basin-extraction` | D8 flow routing, channel/junction network, junction-aware basin extraction. Writes basin outlines, raster labels, and statistics. | `docs/cli_reference/cli_reference_lsdtt_basin_extraction.md` |
 | `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` |
 | `lsdtt-hydraulic-routing` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | — |
 | `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | — |
@@ -313,28 +313,45 @@ lsdtt-drainage-analysis     my_params.driver
 
 ## Other Documentation
 
+The `docs/` tree is organised by audience:
+
+| Directory | Audience |
+|---|---|
+| `docs/` (top level) | **Users** — installation and overview. Also the source for the documentation site (`mkdocs.yml`). |
+| `docs/cli_reference/` | **Users** — one parameter reference per command-line tool. |
+| `docs/developer_notes/` | **Developers** — architecture, building, packaging. |
+| `docs/plan_docs/` | Working design documents. Not published, not committed. |
+| `docs/tex_technical/` | LaTeX sources for method write-ups with full equations. |
+
+### For users
+
 | Document | Contents |
 |---|---|
-| `docs/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
+| `docs/install_lsdtt3.md` | **Start here.** Installing a release package on Linux, Windows (WSL2 or native), macOS, or Google Colab. |
+| `docs/overview.md` | What lsdtt3 is, what it does, and how it differs from LSDTopoTools2. |
+| `docs/cli_reference/` | Parameter reference for every tool — see the table above for which file. |
+
+### For developers
+
+| Document | Contents |
+|---|---|
 | `docs/developer_notes/lsdtt3_architecture.md` | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
 | `docs/developer_notes/developer_onboarding.md` | Getting-started guide for new contributors. |
+| `docs/developer_notes/git_notes.md` | Setting up an SSH key and cloning, for people new to git. |
+| `docs/developer_notes/building_from_source.md` | Compiling on Linux, Windows (WSL2 and native) and macOS; CMake options. |
+| `docs/developer_notes/making_release_packages.md` | How the release packages are built and published. |
+| `docs/developer_notes/building_the_docs.md` | Building the documentation site with MkDocs, and publishing it. |
 | `docs/developer_notes/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |
 | `docs/developer_notes/using_lsdtt_flowinfo.md` | How to use the D8 flow routing object in analysis code. |
 | `docs/developer_notes/lsdtt_utils_guide.md` | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
-| `docs/basin_extraction_guide.md` | Basin extraction workflow in detail. |
-| `docs/cli_reference/cli_reference_lsdtt_channel_extraction.md` | Channel network extraction: parameters, output formats, stream burning. |
-| `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` | Basin statistics: outlet CSV format, snapping, output columns. |
-| `docs/cli_reference/cli_reference_lsdtt_fetch_raster.md` | Fetching DEMs: bounding boxes, bounds from a polygon or two points, sources, API-key handling. |
-| `docs/cli_reference/cli_reference_lsdtt_chi_analysis.md` | Chi analysis: m/n sweep, disorder metrics, bootstrap, k_sn inversion. |
-| `docs/cli_reference/cli_reference_lsdtt_cosmo_prediction.md` | CRN prediction: steady-state, step-change, accumulated concentration. |
-| `docs/developer_notes/beta_testing_notes.md` | Beta tester install guide (WSL2), release pipeline, and future conda-forge plan. |
-| `docs/installing_locally.md` | Local installation notes. |
-| `docs/developer_notes/lsdtt3_in_windows.md` | Windows (WSL2) setup. |
-| `docs/wsl2_notes.md` | WSL2-specific notes. |
-| `docs/developer_notes/lsdtt3_in_macos.md` | macOS setup including OpenMP workaround. |
-| `docs/debian_packaging.md` | Building a Debian package. |
-| `apptainer_def/apptainer_setup.md` | Apptainer container setup. |
+| `docs/developer_notes/gpu_compute.md` | GPU backend design and the compute-dispatch mechanism. |
+| `docs/developer_notes/beta_testing_notes.md` | Getting bundles to beta testers, the release pipeline, and the future conda-forge plan. |
+| `docs/developer_notes/lsdtt3_in_windows.md` | Windows (WSL2) development setup. |
+| `docs/developer_notes/lsdtt3_in_macos.md` | macOS development setup via a Multipass Ubuntu VM. |
+| `docs/developer_notes/debian_packaging.md` | Building a Debian package. |
+| `docs/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
 | `tools/README.md` | Building redistributable bundles, and the git/gh commands for cutting a tagged release. |
+| `apptainer_def/apptainer_setup.md` | Apptainer container setup. |
 
 ---
 

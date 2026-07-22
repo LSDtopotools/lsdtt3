@@ -35,7 +35,7 @@
 // not exactly reproduce them. The CLI reports the realised fidelity.
 //
 // Design reference: Carraro et al. (2020) OCNet; Rodriguez-Iturbe & Rinaldo
-// (1997). See docs/synthetic_networks_plan.md (and ../OCNet for the R package).
+// (1997); see ../OCNet for the reference R package.
 // -----------------------------------------------------------------------------
 
 #pragma once

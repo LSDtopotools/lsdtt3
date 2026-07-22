@@ -21,7 +21,7 @@ sudo apt-get install -y \
 ```
 
 You also need all of lsdtt3's build dependencies installed — see
-`docs/apptainer_setup.md` or the main README for the full list.
+`apptainer_def/apptainer_setup.md`, `building_from_source.md`, or the main README for the full list.
 
 ---
 

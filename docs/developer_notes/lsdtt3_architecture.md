@@ -49,13 +49,20 @@ lsdtt3/
 │   ├── lsdtt-raster-synthetic-tests.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
 │   └── lsdtt-surface-metrics.cpp
-├── docs/
-│   ├── basin_extraction_guide.md
-│   ├── debian_packaging.md
-│   ├── developer_onboarding.md
-│   ├── lsdtt3_architecture.md
-│   ├── lsdtt_utils_guide.md
-│   └── using_lsdtt_flowinfo.md
+├── docs/                                   — organised by audience
+│   ├── index.md, overview.md               — user-facing, and the mkdocs site root
+│   ├── install_lsdtt3.md                   — user-facing install guide
+│   ├── testing_and_benchmarking.md
+│   ├── cli_reference/                      — one parameter reference per CLI
+│   ├── developer_notes/                    — architecture, building, packaging
+│   │   ├── lsdtt3_architecture.md          — this file
+│   │   ├── developer_onboarding.md
+│   │   ├── building_from_source.md
+│   │   ├── making_release_packages.md
+│   │   ├── debian_packaging.md
+│   │   ├── lsdtt_utils_guide.md
+│   │   └── using_lsdtt_flowinfo.md
+│   └── tex_technical/                      — LaTeX method write-ups (untracked)
 ├── graphflood/                             — third-party graph-based flood routing (Gailleton et al.)
 │   ├── graphflood.hpp
 │   ├── graphflood_v2.hpp
@@ -553,7 +560,7 @@ Current CLI programs are:
   nodata. Outputs a synthetic DEM, the OCN drainage-area raster, and a summary
   CSV that includes the **D8 round-trip fidelity** (fraction of interior pixels whose D8 receiver equals the OCN
   receiver — ~1 for relaxed low-T networks, lower for random high-T networks, an
-  inherent OCN self-consistency property). Design: `docs/synthetic_networks_plan.md`.
+  inherent OCN self-consistency property).
 
 - **`lsdtt-surface-metrics.cpp`**  
   Surface-analysis workflow that does not require flow routing: hillshade,
@@ -746,8 +753,7 @@ CLI source files follow this layout, in order:
 
 All CLIs use this deferred flow (the legacy `parse_args()` was removed
 2026-07-15 once the last CLI migrated). See `cli/lsdtt-raster-preprocessing.cpp`
-and `cli/lsdtt-channel-extraction.cpp` for reference implementations and
-`docs/plan_docs/cli_help_plan.md` for the design.
+and `cli/lsdtt-channel-extraction.cpp` for reference implementations.
 
 ### Parameter map pattern (mandatory)
 
@@ -1060,8 +1066,8 @@ Parameter file format: `key: value` (snake_case keys, `#` for comments).
 `parse_args_deferred(argc, argv, tool_name, version, citation)` — handles
 `-v`/`-c` (print and exit) and records `-h` variants in the returned
 `lsdtt_cli_args` struct so the CLI can render help from its parameter
-declarations via `print_terminal_help()` (see the CLI design rule and
-`docs/plan_docs/cli_help_plan.md`). Every CLI uses this instead of a per-file
+declarations via `print_terminal_help()` (see the CLI design rule above).
+Every CLI uses this instead of a per-file
 `parse_args` free function. Each CLI declares
 `static const std::string k_tool_name = "lsdtt-foo";`
 alongside `k_version` and `k_citation`.

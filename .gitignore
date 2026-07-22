@@ -112,7 +112,7 @@ dist/
 # Benchmark DEM fixtures
 #
 # Fetched at test time from Copernicus GLO-30, never committed
-# (docs/plan_docs/flow_routing_benchmark_plan.md Sec2).
+# (see docs/testing_and_benchmarking.md).
 # -----------------------------------------------------------------------------
 tests/data/dem_cache/
 

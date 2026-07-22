@@ -64,8 +64,18 @@ However we have provided a lightweight QGIS plugin (which is under development).
 
 lsdtt3 is **not backward-compatible** with LSDTopoTools2. Parameter files, output file names, and some algorithm defaults differ. If you have existing LSDTopoTools2 workflows, consult the [command-line reference](cli_reference/cli_reference_lsdtt_channel_extraction.md) for the updated parameter names.
 
-lsdtt3 is best run on Linux. 
+lsdtt3 is best run on Linux, and pre-built Linux packages are the main way to
+install it. They are self-contained: no compiler, no library installation, no
+`sudo`.
 
+- **Windows** — run the Linux package inside WSL2. This is the recommended
+  route and gives the full tool set; in our testing it is also faster than a
+  native Windows build on the same machine. A native Windows package is
+  provided as well, but it is a reduced build intended as the QGIS plugin
+  backend.
+- **macOS** — no macOS package yet. Run the Linux package inside a Multipass
+  Ubuntu VM.
+- **Google Colab** — the Linux package works there with nothing installed
+  locally at all.
 
-Windows users best run it inside WSL2, although it is possible to compile natively in Windows using Visual Studio and `vcpkg`. Windows releases are provided.
-At present we have not provided MacOS releases so it is best used in macOS within a Multipass Ubuntu VM. See [Installation](installing_locally.md) for details.
+See [Installation](install_lsdtt3.md) for all of these.

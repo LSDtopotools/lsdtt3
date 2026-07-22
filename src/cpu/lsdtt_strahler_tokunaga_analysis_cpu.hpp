@@ -445,7 +445,7 @@ void write_tokunaga_channels(
 // Strahler-order bins. The distribution of r encodes the network's
 // area-accumulation self-similarity.
 //
-// CAVEATS (see docs/synthetic_networks_plan.md and the project notes):
+// CAVEATS:
 //   - This measures area accumulation, NOT side-branching topology; it does not
 //     uniquely recover Tokunaga (a,c). The c_equivalent below is a
 //     model-dependent estimate (c ~= R_A^lambda), not a substitute for (a,c).

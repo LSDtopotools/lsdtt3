@@ -34,19 +34,23 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+# Working documents that live under docs/ for convenience but are not part of
+# the published site. Without this they would build as orphan pages: internal
+# planning notes and LaTeX sources are not user documentation.
+exclude_docs: |
+  plan_docs/
+  tex_technical/
+  test_scripts/
+
 nav:
   - Home: index.md
   - What is lsdtt3:
     - Overview: overview.md
   - Installation:
-    - Installation hub: installing_locally.md
-    - Beta testing (Windows / WSL2): developer_notes/beta_testing_notes.md
-    - Windows (WSL2): developer_notes/lsdtt3_in_windows.md
-    - macOS (Multipass): developer_notes/lsdtt3_in_macos.md
-    - WSL2 notes: wsl2_notes.md
-    - Debian packaging: debian_packaging.md
+    - Install lsdtt3: install_lsdtt3.md
   - Command-line reference:
     - DEM preparation:
+      - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
       - Raster preprocessing: cli_reference/cli_reference_lsdtt_raster_preprocessing.md
     - Surface analysis:
       - Surface metrics: cli_reference/cli_reference_lsdtt_surface_metrics.md
@@ -55,6 +59,7 @@ nav:
       - Drainage analysis: cli_reference/cli_reference_lsdtt_drainage_analysis.md
       - Channel extraction: cli_reference/cli_reference_lsdtt_channel_extraction.md
       - Stream burning: cli_reference/cli_reference_lsdtt_stream_burning.md
+      - Valley centreline: cli_reference/cli_reference_lsdtt_valley_centreline.md
       - Basin extraction: cli_reference/cli_reference_lsdtt_basin_extraction.md
       - Basin statistics: cli_reference/cli_reference_lsdtt_basin_stats.md
     - Channel network analysis:
@@ -72,8 +77,18 @@ nav:
     - Landscape evolution:
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
   - Developer notes:
-    - Architecture: developer_notes/lsdtt3_architecture.md
     - Developer onboarding: developer_notes/developer_onboarding.md
+    - Git from the command line: developer_notes/git_notes.md
+    - Architecture: developer_notes/lsdtt3_architecture.md
+    - Building from source: developer_notes/building_from_source.md
+    - Building on Windows (WSL2): developer_notes/lsdtt3_in_windows.md
+    - Building on macOS (Multipass): developer_notes/lsdtt3_in_macos.md
+    - Making release packages: developer_notes/making_release_packages.md
+    - Building the docs site: developer_notes/building_the_docs.md
+    - Beta testing and distribution: developer_notes/beta_testing_notes.md
+    - Debian packaging: developer_notes/debian_packaging.md
     - Backend abstraction rules: developer_notes/backend_abstraction_rules.md
+    - GPU compute: developer_notes/gpu_compute.md
     - Flow routing (D8): developer_notes/using_lsdtt_flowinfo.md
     - Utilities layer: developer_notes/lsdtt_utils_guide.md
+    - Testing and benchmarking: testing_and_benchmarking.md

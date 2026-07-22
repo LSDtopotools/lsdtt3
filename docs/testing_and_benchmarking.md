@@ -1111,11 +1111,9 @@ in **2.8 s**.
 
 ---
 
-## 12. Detailed plans
+## 12. Status of this document
 
-Working plans with the full derivation of the findings above live in
-`docs/plan_docs/flow_routing_benchmark_plan.md`, `docs/plan_docs/fetch_raster_cli_plan.md`,
-`docs/plan_docs/cosmo_cli_testing_plan.md` and `docs/plan_docs/roering_implicit_transient_plan.md`.
-Those are local working documents and **may not be present in any given
-checkout**; nothing here depends on them. **This document is self-contained and
-is the durable record.**
+**This document is the durable record.** The working documents that produced
+the findings above are uncommitted local scratch files: they may not be present
+in any given checkout, and nothing in the tracked tree cites them. Everything
+needed to understand, reproduce, or challenge a result above is in this file.

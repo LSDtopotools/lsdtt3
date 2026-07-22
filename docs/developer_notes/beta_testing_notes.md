@@ -196,7 +196,7 @@ The file `.github/workflows/release.yml` defines a GitHub Actions workflow that
 runs automatically whenever a version tag is pushed to the repository. GitHub
 Actions works on private repositories, but minutes are metered, so the
 workflow runs only on version tags (and manual dispatch) - see
-`docs/plan_docs/release_ci_plan.md` for the full design.
+`docs/developer_notes/making_release_packages.md` and `tools/README.md`.
 
 The workflow:
 

@@ -23,7 +23,8 @@
 // only for relaxed (low-T) networks. The summary reports the realised fidelity
 // (fraction of interior pixels whose D8 receiver equals the OCN receiver).
 //
-// See docs/synthetic_networks_plan.md for the full design and references.
+// Design references: Carraro et al. (2020) OCNet; Rodriguez-Iturbe & Rinaldo
+// (1997).
 //
 // Usage:
 //   lsdtt-synthetic-networks <path> <parameter_file>

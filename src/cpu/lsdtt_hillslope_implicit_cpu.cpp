@@ -9,14 +9,14 @@
 // -----------------------------------------------------------------------------
 // Implicit transient Roering hillslope solver.
 //
-// Phase 0 scaffolding: the function is callable and returns a valid, filled
-// lsdtt_roering_implicit_result regardless of whether Eigen is present.  The
-// Eigen branch currently logs its intent, builds the hillslope DOF map, and then
-// delegates to the explicit subcycling solver; the backward-Euler + Picard core
-// is staged behind TODO tags matching the phased checklist (Sec12 of
-// docs/plan_docs/roering_implicit_transient_plan.md).  When Eigen is unavailable the
-// function falls back to the explicit solver and prints a one-line notice, so
-// callers need no #ifdef.
+// The function is callable and returns a valid, filled
+// lsdtt_roering_implicit_result regardless of whether Eigen is present.  With
+// Eigen it runs the backward-Euler + damped-Picard core (and the TR-BDF2
+// variant) described below; without Eigen it falls back to the explicit
+// subcycling solver and prints a one-line notice, so callers need no #ifdef.
+//
+// Design and derivation: docs/developer_notes/lsdtt3_architecture.md
+// (hillslope transport section); validation: docs/testing_and_benchmarking.md.
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_hillslope_implicit_cpu.hpp"

@@ -4,7 +4,7 @@
 #
 # Used identically by GitHub Actions (on a v* tag) and by a local machine
 # (test/pre-releases between versions), so local releases exercise exactly
-# the path CI uses. See docs/plan_docs/release_ci_plan.md.
+# the path CI uses. See tools/README.md for the full release workflow.
 #
 # Steps:
 #   1. Resolve the release version (--version flag, else exact git tag).

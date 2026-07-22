@@ -167,7 +167,7 @@ the wrong binaries.
 In an **x64 Visual Studio Developer PowerShell**, from the repository root. Full
 walkthrough (vcpkg, GDAL, the mandatory `-DLSDTT_OPENMP=OFF`, troubleshooting)
 is in
-[`docs/installing_locally.md#windows-native-developers-only-limited`](../docs/installing_locally.md#windows-native-developers-only-limited):
+[`docs/developer_notes/building_from_source.md`](../docs/developer_notes/building_from_source.md#windows-native-qgis-backend-only):
 
 ```powershell
 # configure once per checkout
@@ -191,14 +191,14 @@ cmake --build build\windows-qgis --target `
 gh release upload v0.3.0 dist\lsdtt3-backend-win64-qgis-v0.3.0.zip
 ```
 
-`-DLSDTT_OPENMP=OFF` is not optional on MSVC — see the installing-locally note.
+`-DLSDTT_OPENMP=OFF` is not optional on MSVC — see the building-from-source note.
 The script also expects vcpkg at `%USERPROFILE%/tools/vcpkg`; override with
 `-VcpkgRoot`.
 
 #### macOS
 
 > **Not yet done, on either count.** `package_macos_backend.sh` is written but
-> **untested**, and `docs/installing_locally.md` records that lsdtt3 does not
+> **untested**, and `docs/developer_notes/building_from_source.md` records that lsdtt3 does not
 > currently build with Apple Clang — the supported way to *run* it on a Mac is
 > the Ubuntu VM in [`docs/developer_notes/lsdtt3_in_macos.md`](../docs/developer_notes/lsdtt3_in_macos.md),
 > which produces a Linux bundle, not a macOS one. What follows is the shape to
@@ -324,7 +324,6 @@ packaging scripts, or `-CliProfile` on the PowerShell script. An explicit
 The profile appears in the bundle filename, e.g.
 `lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz`.
 
-Full release workflow and rationale: `docs/plan_docs/release_ci_plan.md`.
 Windows and macOS bundles are built by hand on the respective machines
 with the per-platform scripts below, then attached with
 `gh release upload v<version> dist/<bundle>`.
@@ -441,7 +440,7 @@ later cell.
 - x64 Visual Studio developer shell (for `dumpbin.exe` and
   `$env:VCToolsRedistDir`)
 - completed Windows build (default: `build/windows-qgis`) — see
-  `docs/installing_locally.md` for the configure/build commands, and note
+  `docs/developer_notes/building_from_source.md` for the configure/build commands, and note
   `-DLSDTT_OPENMP=OFF` is required on MSVC
 - vcpkg install with GDAL/PROJ runtime files (default:
   `%USERPROFILE%/tools/vcpkg`)

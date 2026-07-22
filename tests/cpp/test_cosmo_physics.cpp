@@ -6,13 +6,14 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 //
 // -----------------------------------------------------------------------------
-// Standalone validation driver for the cosmogenic-nuclide (CRN) physics core,
-// per docs/plan_docs/cosmo_cli_testing_plan.md.  Phase 0: scaffold, reference helpers,
-// single-basin synthetic fixture, CSV emitters, and smoke tests.  The full
-// equation-fidelity battery (plan Sec3, E1-E9) lands in Phases 1-2; the
-// numerics sentinel (plan Sec3b) lands FIRST in Phase 1.
+// Standalone validation driver for the cosmogenic-nuclide (CRN) physics core.
+// Methodology, reference sources and findings: docs/testing_and_benchmarking.md.
 //
-// *** COSMO NUMERICS WARNING (plan Sec3b) ***********************************
+// Covers: reference helpers, the single-basin synthetic fixture, CSV emitters,
+// smoke tests, the parameter pins, the numerics sentinel, and the
+// equation-fidelity battery E1-E9.
+//
+// *** COSMO NUMERICS WARNING ************************************************
 // The analytical solutions exercised here (CAIRN steady-state / inversion;
 // muon-based step change) encode years of manual verification by Simon Mudd.
 // Any change to the numeric core (lsdtt_crn_parameters.*, lsdtt_crn_column.*,
@@ -1372,7 +1373,7 @@ void write_sentinel_file(const std::string& path,
 {
     std::ofstream out(path);
     out << std::setprecision(17);
-    out << "# COSMO NUMERICS SENTINEL - docs/plan_docs/cosmo_cli_testing_plan.md Sec3b\n"
+    out << "# COSMO NUMERICS SENTINEL - see docs/testing_and_benchmarking.md\n"
         << "# These values encode years of manual verification of the CAIRN\n"
         << "# and step-change analytical solutions.  DO NOT regenerate this\n"
         << "# file to silence a test failure.  Any change requires review\n"
@@ -1671,9 +1672,9 @@ int main(int argc, char** argv)
 
     std::cout << "=========================================================\n"
               << "|| lsdtt3 cosmogenic physics test driver               ||\n"
-              << "|| Plan: docs/plan_docs/cosmo_cli_testing_plan.md                ||\n"
-              << "|| Phases 0-2: fixtures, parameter pins, sentinel,     ||\n"
-              << "||             equation fidelity E1-E9                 ||\n"
+              << "|| Method: docs/testing_and_benchmarking.md            ||\n"
+              << "|| Fixtures, parameter pins, numerics sentinel,        ||\n"
+              << "|| and equation fidelity E1-E9                         ||\n"
               << "=========================================================\n";
 
     try

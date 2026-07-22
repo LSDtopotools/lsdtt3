@@ -48,8 +48,8 @@ More rigorous checks currently included:
 ## Cosmogenic nuclide tests
 
 `unit_cosmo_physics` (labels `unit;cosmo`) runs `tests/cpp/test_cosmo_physics.cpp`,
-the validation driver for the CRN physics core. Plan:
-`docs/plan_docs/cosmo_cli_testing_plan.md`. It runs offline against committed reference
+the validation driver for the CRN physics core (methodology:
+`docs/testing_and_benchmarking.md`). It runs offline against committed reference
 data and prints one PASS/FAIL line per check.
 
 > **The CRN numeric core is locked.** The analytical solutions exercised here

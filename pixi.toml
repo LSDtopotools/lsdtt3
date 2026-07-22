@@ -76,9 +76,26 @@ scipy = "*"
 [feature.reference.pypi-dependencies]
 topotoolbox = "==0.0.12"
 
+# Documentation site (mkdocs.yml at the repo root).  Kept out of the default
+# environment because nobody building or running lsdtt3 needs it -- only whoever
+# is publishing the site.
+[feature.docs.dependencies]
+mkdocs = "*"
+mkdocs-material = "*"
+
+# Tasks live on the feature, so they run in the docs environment automatically:
+# `pixi run docs-build`, not `pixi run -e docs ...`.
+#
+# --strict turns broken internal links and pages missing from the nav into
+# errors. A docs build that "succeeds" with dangling links is how a site rots.
+[feature.docs.tasks]
+docs-serve = "mkdocs serve"
+docs-build = "mkdocs build --strict"
+
 [environments]
 osm = ["osm"]
 benchmark = ["reference"]
+docs = ["docs"]
 
 [tasks]
 # Generic entry points only -- individual test suites are invoked through CTest
@@ -88,3 +105,4 @@ benchmark = ["reference"]
 # Note there is no DEM-fetching task: fetching is done by the lsdtt3 CLI itself
 # (`lsdtt-fetch-raster`), which needs no Python at all.
 test-python = "pytest tests"
+

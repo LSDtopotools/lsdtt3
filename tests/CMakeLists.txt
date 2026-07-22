@@ -228,7 +228,7 @@ target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
 add_test(NAME unit_param_parser_help COMMAND lsdtt-test-param-parser-help)
 set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
 
-# Cosmogenic physics driver (docs/plan_docs/cosmo_cli_testing_plan.md).  Writes its
+# Cosmogenic physics driver (docs/testing_and_benchmarking.md).  Writes its
 # plottable CSVs into the test working directory.
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
 target_link_libraries(lsdtt-test-cosmo-physics PRIVATE lsdtt3_cpu)

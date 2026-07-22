@@ -802,8 +802,8 @@ std::string json_escape(const std::string& s)
     return out;
 }
 
-// Machine-readable help for "--help-json" (see docs/plan_docs/cli_help_plan.md
-// phase 4). Consumed by the QGIS plugin for capability gating.
+// Machine-readable help for "--help-json". Consumed by the QGIS plugin for
+// capability gating.
 void write_json_help(std::ostream& os,
                      const std::string& tool_name,
                      const std::string& version,

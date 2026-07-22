@@ -70,7 +70,7 @@ namespace lsdtt {
 // Result of parse_args_deferred(). Unlike the legacy parse_args(), help
 // requests do not exit immediately: the CLI declares its parameter maps
 // first and then renders help from them, so -h can show real parameter
-// documentation. See docs/plan_docs/cli_help_plan.md.
+// documentation. See docs/developer_notes/lsdtt3_architecture.md (CLI design).
 // -----------------------------------------------------------------------------
 struct lsdtt_cli_args
 {
@@ -264,7 +264,7 @@ public:
     static std::string extension(const std::string& filename);
 
     // Parse command-line arguments for a standard lsdtt3 CLI
-    // (see docs/plan_docs/cli_help_plan.md).
+    // (see docs/developer_notes/lsdtt3_architecture.md, CLI design).
     // -v and -c print and exit. Help flags do NOT exit: they are
     // recorded in the returned struct so the CLI can declare its parameter
     // maps and then call print_terminal_help(). Accepted help forms:

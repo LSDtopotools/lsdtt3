@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fetch the frozen CRONUS v3 erosion-rate reference for the lsdtt3 cosmo
-comparison tests (docs/plan_docs/cosmo_cli_testing_plan.md Sec5).
+comparison tests (see docs/testing_and_benchmarking.md).
 
 Reads the fixture sample table written by the C++ test driver
 (cronus_fixture_samples.csv), submits ONE batch request to the CRONUS v3
@@ -191,7 +191,7 @@ def main():
     with open(out_path, "w", newline="") as f:
         f.write(
             "# CRONUS v3 online-calculator erosion rates for the lsdtt3\n"
-            "# comparison fixture (docs/plan_docs/cosmo_cli_testing_plan.md Sec5).\n"
+            "# comparison fixture - see docs/testing_and_benchmarking.md\n"
             "# FROZEN reference - refreshing it is a reviewable event.\n"
         )
         w = csv.writer(f)
