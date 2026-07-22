@@ -557,7 +557,9 @@ int main(int argc, char* argv[])
     };
 
     string_default_map["slope_thresholds"] = "3,7,12";
-    help_map["slope_threshold_layers"] = {"string", "3,7,12",
+    // Key must match the parameter name, or -h slope_thresholds finds
+    // nothing and this entry documents a parameter that does not exist.
+    help_map["slope_thresholds"] = {"string", "3,7,12",
         "The threshold values for which slope threshold layers are to "
         "be written.",
         "Defaults to the categories used by the Environment Agency's "

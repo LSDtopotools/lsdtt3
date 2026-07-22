@@ -196,6 +196,45 @@ Here `<method>` is `wavelet` or `direct` (the `polyfit_method`); for `fundamenta
 
 ---
 
+## Step 3c: Slope threshold layers
+
+Writes one raster per threshold showing where `slope_degrees` exceeds that
+threshold. Requires the polynomial fit; `slope_degrees` is added to
+`polyfit_metrics` automatically.
+
+Outputs: `<write_fname>_<method>_slope_threshold_<threshold>.tif`, one per value.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_slope_threshold_layers` | bool | `false` | Enable the slope-threshold layers. |
+| `slope_thresholds` | string | `3,7,12` | Comma-separated threshold values in **degrees**. Defaults to the categories used by the Environment Agency's ALERT tool. **No spaces** — see the warning under Derived metrics. |
+| `clamp_slope_to_threshold` | bool | `true` | `true`: pixels above the threshold take the threshold value. `false`: they keep their original `slope_degrees` value. |
+
+---
+
+## Step 3d: Cloth-drape envelope
+
+Runs a Verlet cloth simulation: a flat sheet starting at the maximum DEM
+elevation falls under gravity and comes to rest on ridges and summits. The
+resting surface is an upper envelope of the topography, and the gap between it
+and the DEM is a measure of valley incision.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_cloth_envelope_raster` | bool | `false` | Write the resting cloth surface. Output `_cloth_envelope.tif`. |
+| `write_cloth_incision_raster` | bool | `false` | Write envelope minus DEM. Positive = how far terrain lies below the envelope (incision depth). Output `_cloth_incision.tif`. |
+| `write_cloth_crest_mask_raster` | bool | `false` | Write the contact mask: `1` where a cloth particle was pinned by terrain (ridge or summit), `0` where it settled freely. Useful for diagnosing whether the cloth is too rigid or too slack. Output `_cloth_crest_mask.tif`. |
+| `cloth_rigidity` | int | *(see `-h`)* | Stiffness of the sheet: higher spans wider valleys without sagging. |
+| `cloth_gravity` | float | *(see `-h`)* | Step size for the fall. |
+| `cloth_max_iterations` | int | *(see `-h`)* | Iteration cap. |
+| `cloth_convergence_tol` | float | *(see `-h`)* | Movement below which the cloth is considered settled. |
+| `cloth_class_threshold` | float | *(see `-h`)* | Contact distance for the crest mask. |
+
+Run `lsdtt-surface-metrics -h <parameter>` for the current defaults and the
+full guidance on each.
+
+---
+
 ## Step 4: MADk2 roughness
 
 Computes omnidirectional roughness (OR), direction of maximum continuity (DMC), and roughness anisotropy (RA) following Trevisani et al. (2023) using second-order directional differences.

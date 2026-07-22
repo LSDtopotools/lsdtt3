@@ -1094,6 +1094,127 @@ in **2.8 s**.
 
 ---
 
+## 10b. Surface metrics (`lsdtt-surface-metrics`)
+
+### How correctness is established
+
+**Not** by comparison with another tool. The oracle is analytic:
+`generate_global_quadratic_test_surface()` and
+`generate_periodic_wave_test_surface()` return exact local Taylor coefficients
+at every pixel, and on a globally quadratic surface the fitted model matches the
+true surface class exactly. Since all 27 derived metrics are algebraic functions
+of the six coefficients, this validates the whole chain. Sphere-cap, cylinder,
+saddle and tilted-plane surfaces with textbook closed-form curvatures give a
+second, independent oracle.
+
+`tests/cpp/test_surface_metrics.cpp` runs 124 checks in ~1 s, offline, no
+committed data (`unit;surface`). Note that **23 of the 27 metrics have no
+TopoToolbox counterpart at all**, so an external reference could not have
+covered them.
+
+### Measured accuracy, and why 1e-6 is not the right target everywhere
+
+| Quantity | Measured worst | Pinned tolerance |
+|---|---|---|
+| Quadratic, 2nd-derivative coeffs (a/b/c), W=1 | 1.05e-3 | 5e-3 |
+| Quadratic, same at W=5 | 9.6e-6 | 5e-5 |
+| Quadratic, 1st-derivative coeffs (d/e) | 2.5e-6 | 1e-5 |
+| Sphere / cylinder curvatures | 3.5e-5 – 7.0e-5 | 2e-4 |
+| Plane, all curvatures (exact zero) | 5.3e-15 1/m | 1e-6 |
+| Algebraic identities (mean, Gaussian) | 9.4e-8 / 1.45e-7 | 1e-5 / 1e-4 |
+
+The second-derivative coefficients cannot reach 1e-6 from a float32 DEM at W=1,
+and this is arithmetic, not a defect: `z_xx` is recovered from elevation
+differences over `(W*L)^2`, so a float32 quantum `eps*Z` propagates to
+`eps*Z/(W*L)^2` — with Z~1e3 m, W=1, L=10 m that is ~1e-3 relative. At W=5 it
+falls to ~1e-5, as predicted. First-derivative and constant coefficients do meet
+1e-6. Tolerances are pinned to measurement with ~5x headroom.
+
+### Conventions that differ from other tools
+
+Three traps for anyone comparing lsdtt3 against ArcGIS, GDAL or TopoToolbox:
+
+1. **Aspect is the azimuth of the UP-slope direction** (`atan2(p, q)`), not the
+   down-slope direction ArcGIS and GDAL report. A 180-degree difference.
+2. **Hillshade azimuth is offset by 90 degrees from TopoToolbox**: measured
+   across two independent sweeps, `ttb_azimuth = lsdtt3_azimuth + 90 (mod 360)`
+   with correlation 1.0000 at the match. A mirror hypothesis fits one point and
+   is refuted by the second.
+3. **Curvature sign**: convex-up (ridge, peak) gives NEGATIVE mean curvature.
+   This is not the Zevenbergen & Thorne convention.
+
+Also: on low-relief terrain lsdtt3 masks substantially more ground as flat.
+On a Lakeland fixture the direction-dependent metrics gave lsdtt3 246,450 valid
+cells against TopoToolbox's 518,400 — 52% fewer. Comparisons there are not
+like-for-like and the harness warns above a 10% asymmetry.
+
+### Speed vs TopoToolbox
+
+**TopoToolbox is used here as a performance reference only, not a correctness
+one.** `evansslope` and `curvature` use the same Evans 3x3 kernels lsdtt3's
+polyfit uses at W=1 — verified from source — but they are **single-threaded
+`scipy.ndimage.convolve` calls**, so the 1-thread column is the honest
+comparison. `aspect` is plain `np.gradient` central differences, which does less
+work than a quadratic fit, and is report-only.
+
+alpine_medium (720x720 @ 30 m), W=1 forced via `polyfit_lambda_metres: 60`,
+best-of-5 after a warm-up, both sides float32, native ext4 filesystem:
+
+| comparison | lsdtt3 1t | lsdtt3 8t | topotoolbox | speedup 1t |
+|---|---|---|---|---|
+| slope | 41.2 ms | 29.9 ms | 10.1 ms* | 0.25x |
+| profile curvature | 39.8 ms | 39.7 ms | 24.8 ms | 0.62x |
+| mean curvature | 41.2 ms | 23.6 ms | 22.8 ms | 0.55x |
+| plan curvature | 39.3 ms | 30.0 ms | 95.0 ms | 2.42x |
+| **all four curvatures** | **37.6 ms** | **23.1 ms** | **98.7 ms** | **2.62x** |
+| hillshade (fused, compiled) | 18.0 ms | 9.8 ms | 4.1 ms | 0.23x |
+
+\* after subtracting `distance_transform_edt` NaN in-filling, which lsdtt3 does
+not do. Rows where that discount exceeds 75% are auto-demoted to report-only.
+
+**Read this honestly: for a single metric lsdtt3 is slower**, because the direct
+polyfit always solves all six quadratic coefficients whatever you ask for. It
+wins once you want more than one product of the same fit. The hillshade row is
+the only compiled-vs-compiled comparison (libtopotoolbox), and lsdtt3 loses it
+by a factor of ~4.
+
+Threading buys only ~1.3-1.7x on 8 cores, not 8x — worth investigating
+separately.
+
+**Memory is a consistent win**: lsdtt3 83-86 MB peak against TopoToolbox's
+207-233 MB on the same fixture; 64 MB vs 208 MB for hillshade.
+
+### Two structural properties worth knowing
+
+**Adding a metric is nearly free.** The fit is unchanged between a 4-metric and
+a 27-metric request (47.9 ms vs 41.7 ms — the difference is noise, and the
+27-metric run was faster). What you pay is the raster write, plus memory: peak
+RSS goes 86.4 MB to 143.7 MB, about 2.5 MB per extra metric, which is one
+float32 raster of that size. TopoToolbox has no equivalent — each extra
+curvature type is another five convolutions before any write.
+
+**The direct polyfit really is O(n) independent of window size.** Fit time
+across W = 1, 5, 15, 40 (9 to 6561 window cells, a 729x increase):
+39.8 / 43.3 / 42.5 / 47.5 ms — a 1.19x spread. The separable rolling-moment
+claim in the CLI reference is correct.
+
+
+### Running it
+
+```bash
+ctest -L surface                       # unit tests, ~1 s, no network
+ctest -R benchmark_surface             # vs TopoToolbox, needs pixi + network
+ctest -R performance_surface_metrics   # full sweep, ~4 min
+```
+
+The benchmark and performance tests are opt-in
+(`LSDTT_ENABLE_BENCHMARKS`, `LSDTT_ENABLE_PERF_TESTS`) and skip (77) when pixi,
+topotoolbox or the network is missing. Timings are reported, never asserted;
+the only assertion is a correlation guard that fails when the two tools turn
+out not to be computing the same kind of quantity.
+
+---
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a
