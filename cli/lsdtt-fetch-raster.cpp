@@ -75,6 +75,35 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
+// -----------------------------------------------------------------------------
+// print_ot_catalogue
+//
+// The OpenTopography global datasets, one block each. Shown by
+// `-h ot_dem_type`, where a user is choosing between them and needs the
+// resolution and coverage side by side rather than a bare list of identifiers.
+// -----------------------------------------------------------------------------
+static void print_ot_catalogue()
+{
+    std::cout << "\nOpenTopography global datasets (ot_dem_type)\n"
+              << "--------------------------------------------\n"
+              << "Used only when dem_source: opentopography. All of them need "
+                 "a free API key.\n\n";
+
+    for (const lsdtt::lsdtt_ot_dataset& d : lsdtt::ot_dataset_catalogue())
+    {
+        std::cout << "  " << d.demtype << "\n"
+                  << "      " << d.name << " -- " << d.resolution
+                  << ", " << d.coverage << "\n"
+                  << "      " << d.description << "\n"
+                  << "      Cite: " << d.citation << "\n\n";
+    }
+
+    std::cout << "Reference: "
+                 "https://portal.opentopography.org/apidocs/#/Public/getGlobalDem\n"
+              << "The citation for whichever dataset you fetch is printed at "
+                 "the end of a successful run.\n\n";
+}
+
 // =============================================================================
 // main
 // =============================================================================
@@ -194,9 +223,14 @@ int main(int argc, char* argv[])
     string_default_map["ot_dem_type"] = "COP30";
     help_map["ot_dem_type"] = {"string","COP30",
         "OpenTopography dataset identifier (only used when dem_source is opentopography).",
-        "Examples: COP30, COP90, SRTMGL1, SRTMGL3, NASADEM, AW3D30, "
-        "SRTM15Plus, GEBCOIceTopo. See the OpenTopography API documentation "
-        "for the current list. "
+        "One of: " + lsdtt::ot_dataset_demtype_list() + ". "
+        "Run -h ot_dem_type for a table giving the resolution, coverage and "
+        "purpose of each, or see "
+        "https://portal.opentopography.org/apidocs/#/Public/getGlobalDem. "
+        "Anything else is rejected before the request is sent. "
+        "Every one of these datasets carries a citation requirement; the "
+        "citation for the dataset you used is printed at the end of a "
+        "successful run. "
         "THE API KEY IS NOT A PARAMETER: set the OT_API_KEY environment "
         "variable, or set OT_API_KEY_FILE to a file containing it. Parameter "
         "files are routinely committed and every parameter is echoed at the "
@@ -277,6 +311,15 @@ int main(int argc, char* argv[])
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
             k_tool_name, k_version, k_citation, help_map, cli_args);
+
+        // The help printer word-wraps, so a table cannot live in help_map.
+        // Print it here instead: the dataset list is the thing a user actually
+        // needs when choosing an OpenTopography product.
+        if (cli_args.help_topic == "ot_dem_type" ||
+            cli_args.help_topic == "dem_source")
+        {
+            print_ot_catalogue();
+        }
         return 0;
     }
 
@@ -416,7 +459,8 @@ int main(int argc, char* argv[])
     if (!lsdtt::parse_dem_source(sf["dem_source"], options.source))
     {
         std::cerr << "FATAL: unknown dem_source '" << sf["dem_source"]
-                  << "'. Supported: cop30_aws.\n";
+                  << "'. Supported: cop30_aws, opentopography, "
+                     "planetary_computer.\n";
         return 1;
     }
 
@@ -515,6 +559,25 @@ int main(int argc, char* argv[])
     std::cout << "\n";
     if (result.from_cache) std::cout << "(reused from cache)\n";
     std::cout << "Wrote: " << result.path << "\n\n";
+
+    // OpenTopography distributions are DOI-minted and their providers require
+    // attribution, so print the citation where the user cannot miss it rather
+    // than leaving them to go and find it. Printed for cached reuses too: the
+    // obligation follows the data, not the download.
+    if (options.source == lsdtt::lsdtt_dem_source::opentopography)
+    {
+        const lsdtt::lsdtt_ot_dataset* dataset =
+            lsdtt::ot_dataset_info(options.ot_dem_type);
+        if (dataset != nullptr)
+        {
+            std::cout << "--- Please cite this data ---\n"
+                      << dataset->name << " (" << dataset->demtype << ")\n"
+                      << dataset->citation << "\n\n"
+                      << "Also acknowledge OpenTopography, which is supported "
+                         "by the US National Science\nFoundation "
+                         "(NSF awards 2410799, 2410800, 2410801).\n\n";
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Write help/parameter echo and exit

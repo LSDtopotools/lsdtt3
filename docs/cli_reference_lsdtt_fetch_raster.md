@@ -118,7 +118,7 @@ Silently preferring one would leave you unsure which area you actually got.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `dem_source` | string | `cop30_aws` | Which provider to fetch from |
-| `ot_dem_type` | string | `COP30` | OpenTopography dataset (that source only) |
+| `ot_dem_type` | string | `COP30` | OpenTopography dataset (that source only); see the table below |
 | `pc_collection` | string | `cop-dem-glo-30` | Planetary Computer STAC collection (that source only) |
 | `pc_asset` | string | `data` | Asset key within each STAC item |
 
@@ -135,8 +135,67 @@ verified to produce byte-identical output. Prefer `planetary_computer` when you
 want a collection other than GLO-30 (`nasadem`, `alos-dem`, `3dep-seamless`, …;
 browse <https://planetarycomputer.microsoft.com/catalog>).
 
-Useful `ot_dem_type` values: `COP30`, `COP90`, `SRTMGL1`, `SRTMGL3`, `NASADEM`,
-`AW3D30`, `SRTM15Plus`, `GEBCOIceTopo`.
+#### OpenTopography datasets (`ot_dem_type`)
+
+These are the `demtype` values the OpenTopography
+[`/globaldem`](https://portal.opentopography.org/apidocs/#/Public/getGlobalDem)
+endpoint serves. All of them need the free API key. A value not in this list is
+rejected before the request is sent, with the list printed — the API itself
+answers a bad `demtype` with a bare 400.
+
+Run `lsdtt-fetch-raster -h ot_dem_type` for the same table with citations.
+
+| `ot_dem_type` | Dataset | Res. | Coverage | Notes |
+|---|---|---|---|---|
+| `COP30` | Copernicus GLO-30 | 30 m | global | TanDEM-X **DSM**, edited water bodies and coastlines. The default, and the same data `cop30_aws` serves keylessly. |
+| `COP90` | Copernicus GLO-90 | 90 m | global | The 90 m Copernicus DSM. Use it when the area exceeds the 30 m request limit. |
+| `SRTMGL1` | SRTM GL1 | 30 m | 60 N–56 S | 1 arc-second SRTM, EGM96 heights. The long-standing comparison baseline. |
+| `SRTMGL1_E` | SRTM GL1 Ellipsoidal | 30 m | 60 N–56 S | As `SRTMGL1` but WGS84 ellipsoidal heights — for co-registering with GNSS or lidar. |
+| `SRTMGL3` | SRTM GL3 | 90 m | 60 N–56 S | 3 arc-second SRTM. Larger request limit than GL1. |
+| `NASADEM` | NASADEM | 30 m | 60 N–56 S | SRTM reprocessed: better geolocation, voids filled from ASTER GDEM and ICESat. Generally preferable to raw `SRTMGL1`. |
+| `AW3D30` | ALOS World 3D | 30 m | global | JAXA optical-stereo DSM. An *independent* global 30 m surface — useful as a cross-check on the radar products. |
+| `AW3D30_E` | ALOS World 3D Ellipsoidal | 30 m | global | `AW3D30` with ellipsoidal rather than geoid heights. |
+| `GEDTM30` | Global Ensemble DTM | 30 m | global | Machine-learning ensemble **DTM** — bare earth, vegetation and buildings removed. |
+| `EU_DTM` | Continental Europe DTM | 30 m | Europe | Bare-earth DTM from national lidar and photogrammetric surveys. |
+| `ANADEM` | ANADEM | 30 m | South America | Bare-earth DTM; vegetation bias removed from Copernicus GLO-30. |
+| `CA_MRDEM_DTM` | Canada MRDEM (terrain) | 30 m | Canada | Natural Resources Canada medium-resolution bare-earth model. |
+| `CA_MRDEM_DSM` | Canada MRDEM (surface) | 30 m | Canada | The surface-model companion to `CA_MRDEM_DTM`. |
+| `SRTM15Plus` | SRTM15+ V2.1 | 500 m | global, land and sea | Merged topography and bathymetry. Use it when the domain continues offshore. |
+| `GEBCOIceTopo` | GEBCO 2023 (ice surface) | 500 m | global, land and sea | Bathymetry and topography, with the *ice-sheet surface* over Greenland and Antarctica. |
+| `GEBCOSubIceTopo` | GEBCO 2023 (bed under ice) | 500 m | global, land and sea | As above, but the ice sheets are replaced by the underlying bed. |
+| `GEDI_L3` | GEDI L3 gridded metrics | 1000 m | 52 N–52 S | Gridded GEDI lidar land-surface metrics. A metrics product, **not** a DEM for flow routing. |
+
+**DSM or DTM matters.** `COP30`, `AW3D30` and the `CA_MRDEM_DSM` product are
+*surface* models: they include canopy and buildings, so hillslope curvature and
+roughness over forest are vegetation, not ground. `GEDTM30`, `EU_DTM`, `ANADEM`
+and `CA_MRDEM_DTM` are bare-earth *terrain* models over their coverage.
+
+**Per-request area limits** are set by the API, not by this tool: 450 000 km² for
+the 30 m products, 4 050 000 km² for `COP90` and `SRTMGL3`, 125 000 000 km² for
+the 500 m bathymetry products, and 500 000 000 km² for `GEDI_L3`. Exceeding one
+comes back as an API error naming the limit.
+
+#### Citation is printed for you
+
+Every OpenTopography dataset is a DOI-minted distribution whose provider
+requires attribution. After a successful `dem_source: opentopography` run the
+tool prints the citation for the dataset you actually fetched, together with the
+OpenTopography NSF acknowledgement — so it lands in your terminal and your log
+rather than needing to be looked up months later:
+
+```
+--- Please cite this data ---
+SRTM GL1 (SRTMGL1)
+NASA Shuttle Radar Topography Mission (SRTM) (2013). Shuttle Radar Topography
+Mission (SRTM) Global. Distributed by OpenTopography.
+https://doi.org/10.5069/G9445JDF
+
+Also acknowledge OpenTopography, which is supported by the US National Science
+Foundation (NSF awards 2410799, 2410800, 2410801).
+```
+
+The citation is printed on a cached reuse too: the obligation follows the data,
+not the download.
 
 ### Output grid
 
@@ -315,6 +374,11 @@ it must be two.
 `dem_source: opentopography` without a key. Set `OT_API_KEY`, or use
 `cop30_aws`, which needs no key and gives the same global 30 m coverage.
 
+**`FATAL: ... unknown ot_dem_type '...'`**
+A typo, or a dataset that is not on the `/globaldem` endpoint. The message lists
+every valid value; `-h ot_dem_type` describes them. This is caught locally, so
+no request is sent.
+
 **`the OpenTopography API returned an error: ... API Key: ***`**
 The key was rejected. The `***` is the masking working as intended — your key
 is not being printed.
@@ -331,3 +395,7 @@ support.
 - `docs/testing_and_benchmarking.md` — design rationale, credential rules, findings
 - `docs/cli_reference_lsdtt_raster_preprocessing.md` — the usual next step
 - `python_helpers/download_dem_tiles.py` — Python helper covering other providers
+- <https://portal.opentopography.org/apidocs/#/Public/getGlobalDem> — the
+  upstream `demtype` list this tool's catalogue mirrors
+- <https://planetarycomputer.microsoft.com/catalog> — collections for
+  `pc_collection`

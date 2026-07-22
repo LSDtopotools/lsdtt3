@@ -74,6 +74,47 @@ std::string dem_source_name(lsdtt_dem_source source);
 
 
 // -----------------------------------------------------------------------------
+// lsdtt_ot_dataset
+//
+// One entry of the OpenTopography global raster catalogue: the `demtype` values
+// accepted by https://portal.opentopography.org/API/globaldem.
+//
+// The catalogue is carried in the binary rather than being discovered at run
+// time so that `-h ot_dem_type` works offline, and so that a mistyped demtype
+// fails immediately with the list of valid values instead of after a network
+// round trip that returns an opaque 400.
+//
+// `citation` is the citation OpenTopography publishes for the dataset. It is
+// printed after every successful OpenTopography download: these are DOI-minted
+// distributions whose providers require attribution, and a citation nobody sees
+// until they go looking for it is a citation that does not get used.
+//
+// Source of the fields: the globaldem OpenAPI description and the
+// otCatalog API (accessed 2026-07-22).
+// -----------------------------------------------------------------------------
+struct lsdtt_ot_dataset
+{
+    std::string demtype;      // value passed as demtype=, e.g. "COP30"
+    std::string name;         // human-readable dataset name
+    std::string resolution;   // nominal grid spacing, e.g. "30 m"
+    std::string coverage;     // "global", "South America", ...
+    std::string description;  // one line: what it is and when to reach for it
+    std::string citation;     // full citation including DOI
+    double max_area_km2 = 0;  // per-request area limit imposed by the API
+};
+
+// The full catalogue, in the order it should be shown to a user.
+const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue();
+
+// Look up one entry by demtype. Returns nullptr if the demtype is not known.
+// The comparison is case sensitive: the API is.
+const lsdtt_ot_dataset* ot_dataset_info(const std::string& demtype);
+
+// Comma-separated list of valid demtype values, for error messages.
+std::string ot_dataset_demtype_list();
+
+
+// -----------------------------------------------------------------------------
 // lsdtt_fetch_options
 //
 // NOTE: deliberately contains no credential fields. See the header comment.

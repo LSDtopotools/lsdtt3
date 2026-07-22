@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -221,6 +222,84 @@ void test_opentopography_requires_key()
 
     check("opentopography: missing-key message points at the keyless option",
           result.message.find("cop30_aws") != std::string::npos,
+          result.message);
+}
+
+
+// =============================================================================
+// OpenTopography dataset catalogue
+//
+// The catalogue is compiled in rather than fetched, so it can drift from the
+// upstream /globaldem demtype list. These checks cannot detect that drift --
+// only that the table is internally coherent and actually used for validation,
+// which is what stops a typo reaching the API as an opaque 400.
+// =============================================================================
+void test_ot_dataset_catalogue()
+{
+    const auto& catalogue = lsdtt::ot_dataset_catalogue();
+
+    check("ot catalogue: is populated", catalogue.size() >= 17,
+          std::to_string(catalogue.size()) + " entries");
+
+    bool all_fields_set = true;
+    bool all_cited      = true;
+    std::set<std::string> seen;
+    bool unique = true;
+
+    for (const auto& d : catalogue)
+    {
+        if (d.demtype.empty() || d.name.empty() || d.resolution.empty() ||
+            d.coverage.empty() || d.description.empty() || d.max_area_km2 <= 0.0)
+        {
+            all_fields_set = false;
+        }
+        // A citation without a resolvable identifier is not a citation.
+        if (d.citation.find("https://doi.org/") == std::string::npos)
+        {
+            all_cited = false;
+        }
+        if (!seen.insert(d.demtype).second) unique = false;
+    }
+
+    check("ot catalogue: every entry has all descriptive fields", all_fields_set);
+    check("ot catalogue: every entry carries a DOI citation", all_cited);
+    check("ot catalogue: demtype values are unique", unique);
+
+    check("ot catalogue: lookup finds a known demtype",
+          lsdtt::ot_dataset_info("COP30") != nullptr);
+
+    // The API is case sensitive, so the lookup must be too: silently accepting
+    // "cop30" here would send a request that fails downstream instead.
+    check("ot catalogue: lookup is case sensitive",
+          lsdtt::ot_dataset_info("cop30") == nullptr);
+
+    check("ot catalogue: lookup rejects an unknown demtype",
+          lsdtt::ot_dataset_info("SRTMGL1_typo") == nullptr);
+
+    const std::string list = lsdtt::ot_dataset_demtype_list();
+    check("ot catalogue: demtype list names each entry",
+          list.find("COP30") != std::string::npos &&
+          list.find("GEDI_L3") != std::string::npos,
+          list);
+
+    // A bad demtype must fail locally, before the key is even used.
+    lsdtt::lsdtt_fetch_options options;
+    options.west = 10.30; options.south = 46.40;
+    options.east = 10.40; options.north = 46.50;
+    options.source      = lsdtt::lsdtt_dem_source::opentopography;
+    options.api_key     = "dummy_key_not_used";
+    options.ot_dem_type = "NOT_A_DATASET";
+
+    const auto result = lsdtt::fetch_dem(options, "/vsimem/bad_demtype.tif");
+
+    check("ot catalogue: bad demtype is an error, not a skip",
+          !result.ok && !result.skipped,
+          "ok=" + std::to_string(result.ok) +
+          " skipped=" + std::to_string(result.skipped));
+
+    check("ot catalogue: bad-demtype message lists the valid values",
+          result.message.find("NOT_A_DATASET") != std::string::npos &&
+          result.message.find("COP30")         != std::string::npos,
           result.message);
 }
 
@@ -574,6 +653,8 @@ int main(int argc, char** argv)
     test_source_parsing();
     std::cout << "\n";
     test_opentopography_requires_key();
+    std::cout << "\n";
+    test_ot_dataset_catalogue();
     std::cout << "\n";
     test_bounds_from_vector(data_dir);
     std::cout << "\n";

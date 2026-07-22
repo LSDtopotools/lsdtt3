@@ -190,6 +190,20 @@ std::string cache_key_for(const lsdtt_fetch_options& o)
         << "_px" << o.size_px
         << "_nd" << format_double(o.no_data_value, 4);
 
+    // Which dataset was asked for changes the pixels just as much as the bbox
+    // does, so it has to be in the key: otherwise a COP30 fetch and a later
+    // SRTMGL1 fetch over the same area would collide and the second would
+    // silently return the first. Added per-source so keys for the single-dataset
+    // cop30_aws source are unaffected.
+    if (o.source == lsdtt_dem_source::opentopography)
+    {
+        key << '_' << (o.ot_dem_type.empty() ? "COP30" : o.ot_dem_type);
+    }
+    else if (o.source == lsdtt_dem_source::planetary_computer)
+    {
+        key << '_' << o.pc_collection << '_' << o.pc_asset;
+    }
+
     // Keep it filesystem-safe.
     std::string out = key.str();
     for (char& c : out)
@@ -744,6 +758,180 @@ std::string dem_source_name(lsdtt_dem_source source)
 }
 
 
+// -----------------------------------------------------------------------------
+// The OpenTopography global raster catalogue.
+//
+// Per-request area limits are those stated by the globaldem endpoint: 500e6 km2
+// for GEDI L3; 125e6 km2 for the 500 m bathymetry products; 4.05e6 km2 for the
+// 90 m products; 450e3 km2 for everything else.
+//
+// Ordered roughly by how often a geomorphologist reaches for them, not
+// alphabetically: the Copernicus and SRTM families first, regional and
+// specialist products last.
+// -----------------------------------------------------------------------------
+const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
+{
+    static const std::vector<lsdtt_ot_dataset> catalogue = {
+        {"COP30", "Copernicus GLO-30", "30 m", "global",
+         "TanDEM-X derived DSM with edited water bodies and coastlines. The "
+         "best general-purpose global 30 m surface; the same data the keyless "
+         "cop30_aws source serves.",
+         "European Space Agency (2024). Copernicus Global Digital Elevation "
+         "Model. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9028PQB",
+         450000.0},
+
+        {"COP90", "Copernicus GLO-90", "90 m", "global",
+         "The 90 m Copernicus DSM. Use it when the area is too large for the "
+         "30 m request limit.",
+         "European Space Agency (2024). Copernicus Global Digital Elevation "
+         "Model. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9028PQB",
+         4050000.0},
+
+        {"SRTMGL1", "SRTM GL1", "30 m", "60 N to 56 S",
+         "NASA Shuttle Radar Topography Mission, 1 arc-second, EGM96 heights. "
+         "The long-standing comparison baseline in the literature.",
+         "NASA Shuttle Radar Topography Mission (SRTM) (2013). Shuttle Radar "
+         "Topography Mission (SRTM) Global. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9445JDF",
+         450000.0},
+
+        {"SRTMGL1_E", "SRTM GL1 Ellipsoidal", "30 m", "60 N to 56 S",
+         "SRTM GL1 with heights referenced to the WGS84 ellipsoid rather than "
+         "EGM96. Use it when co-registering with GNSS or lidar point clouds.",
+         "NASA Shuttle Radar Topography Mission (SRTM) (2013). Shuttle Radar "
+         "Topography Mission (SRTM) Global. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9445JDF",
+         450000.0},
+
+        {"SRTMGL3", "SRTM GL3", "90 m", "60 N to 56 S",
+         "SRTM at 3 arc-seconds. Larger request limit than GL1.",
+         "NASA Shuttle Radar Topography Mission (SRTM) (2013). Shuttle Radar "
+         "Topography Mission (SRTM) Global. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9445JDF",
+         4050000.0},
+
+        {"NASADEM", "NASADEM", "30 m", "60 N to 56 S",
+         "SRTM reprocessed with improved geolocation and void filling from ASTER "
+         "GDEM and ICESat. Generally preferable to raw SRTMGL1.",
+         "NASA JPL (2021). NASADEM Merged DEM Global 1 arc second V001. "
+         "Distributed by OpenTopography. https://doi.org/10.5069/G93T9FD9",
+         450000.0},
+
+        {"AW3D30", "ALOS World 3D", "30 m", "global",
+         "JAXA optical-stereo DSM (PRISM). An independent global 30 m surface, "
+         "useful as a cross-check on the radar products.",
+         "Japan Aerospace Exploration Agency (2021). ALOS World 3D 30 meter "
+         "DEM. V3.2, Jan 2021. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G94M92HB",
+         450000.0},
+
+        {"AW3D30_E", "ALOS World 3D Ellipsoidal", "30 m", "global",
+         "AW3D30 with ellipsoidal rather than geoid heights.",
+         "Japan Aerospace Exploration Agency (2021). ALOS World 3D 30 meter "
+         "DEM. V3.2, Jan 2021. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G94M92HB",
+         450000.0},
+
+        {"GEDTM30", "Global Ensemble DTM", "30 m", "global",
+         "Machine-learning ensemble bare-earth DTM. A terrain model rather than "
+         "a surface model, so vegetation and buildings are removed.",
+         "Ho, Y.-F., & Hengl, T. (2025). Global ensemble digital terrain model "
+         "30m (GEDTM30) (Version v20250619). Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9BV7DT1",
+         450000.0},
+
+        {"EU_DTM", "Continental Europe DTM", "30 m", "Europe",
+         "Bare-earth DTM for continental Europe, built from national lidar and "
+         "photogrammetric surveys.",
+         "Hengl, T., Leal Parente, L., Krizan, J., and Bonannella, C. (2022). "
+         "Continental Europe Digital Terrain Model. Distributed by "
+         "OpenTopography. https://doi.org/10.5069/G99021ZF",
+         450000.0},
+
+        {"ANADEM", "ANADEM", "30 m", "South America",
+         "Bare-earth DTM for South America, with vegetation bias removed from "
+         "Copernicus GLO-30.",
+         "Agencia Nacional de Aguas e Saneamento Basico (2025). ANADEM: A "
+         "Digital Terrain Model for South America. Distributed by "
+         "OpenTopography. https://doi.org/10.5069/G9736P4G",
+         450000.0},
+
+        {"CA_MRDEM_DTM", "Canada MRDEM (terrain)", "30 m", "Canada",
+         "Natural Resources Canada medium-resolution bare-earth model.",
+         "Natural Resources Canada (2025). Medium Resolution Digital Elevation "
+         "Model of Canada. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9N8780J",
+         450000.0},
+
+        {"CA_MRDEM_DSM", "Canada MRDEM (surface)", "30 m", "Canada",
+         "The surface-model companion to CA_MRDEM_DTM.",
+         "Natural Resources Canada (2025). Medium Resolution Digital Elevation "
+         "Model of Canada. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G9N8780J",
+         450000.0},
+
+        {"SRTM15Plus", "SRTM15+ V2.1", "500 m", "global, land and sea",
+         "Merged topography and bathymetry at 15 arc-seconds. Use it when the "
+         "domain has to continue offshore.",
+         "Tozer, B., Sandwell, D. T., Smith, W. H. F., Olson, C., Beale, J. R., "
+         "& Wessel, P. (2019). Global bathymetry and topography at 15 arc sec: "
+         "SRTM15+. Distributed by OpenTopography. "
+         "https://doi.org/10.5069/G92R3PT9",
+         125000000.0},
+
+        {"GEBCOIceTopo", "GEBCO 2023 (ice surface)", "500 m",
+         "global, land and sea",
+         "GEBCO global bathymetry and topography, with the ice-sheet surface as "
+         "the elevation over Greenland and Antarctica.",
+         "GEBCO Compilation Group (2023). GEBCO 2023 Grid. Distributed by "
+         "OpenTopography. https://doi.org/10.5069/G9D21VTT",
+         125000000.0},
+
+        {"GEBCOSubIceTopo", "GEBCO 2023 (bed under ice)", "500 m",
+         "global, land and sea",
+         "As GEBCOIceTopo, but the ice sheets are replaced by the underlying "
+         "bed topography.",
+         "GEBCO Compilation Group (2023). GEBCO 2023 Grid. Distributed by "
+         "OpenTopography. https://doi.org/10.5069/G9D21VTT",
+         125000000.0},
+
+        {"GEDI_L3", "GEDI L3 gridded metrics", "1000 m", "52 N to 52 S",
+         "Gridded GEDI lidar land-surface metrics. A canopy and elevation "
+         "metrics product, not a DEM for flow routing.",
+         "Dubayah, R. O., Luthcke, S. B., Sabaka, T. J., Nicholas, J. B., "
+         "Preaux, S., and Hofton, M. A. (2021). GEDI L3 Gridded Land Surface "
+         "Metrics, Version 2. ORNL DAAC, Oak Ridge, Tennessee, USA. Distributed "
+         "by OpenTopography. https://doi.org/10.3334/ORNLDAAC/1952",
+         500000000.0}
+    };
+    return catalogue;
+}
+
+
+const lsdtt_ot_dataset* ot_dataset_info(const std::string& demtype)
+{
+    for (const lsdtt_ot_dataset& entry : ot_dataset_catalogue())
+    {
+        if (entry.demtype == demtype) return &entry;
+    }
+    return nullptr;
+}
+
+
+std::string ot_dataset_demtype_list()
+{
+    std::string out;
+    for (const lsdtt_ot_dataset& entry : ot_dataset_catalogue())
+    {
+        if (!out.empty()) out += ", ";
+        out += entry.demtype;
+    }
+    return out;
+}
+
+
 int utm_epsg_for_point(double lon, double lat)
 {
     // Normalise so that lon = 180 lands in zone 60 rather than a non-existent 61.
@@ -1063,6 +1251,18 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
             "lsdtt::fetch_dem: the opentopography source needs an API key. "
             "Set OT_API_KEY, or set OT_API_KEY_FILE to a file containing it. "
             "(cop30_aws needs no key and gives the same global 30 m coverage.)");
+    }
+
+    // Caught here rather than at the API, which answers a bad demtype with a
+    // bare 400 that says nothing about what would have been valid.
+    if (options.source == lsdtt_dem_source::opentopography &&
+        !options.ot_dem_type.empty() &&
+        ot_dataset_info(options.ot_dem_type) == nullptr)
+    {
+        return make_error(
+            "lsdtt::fetch_dem: unknown ot_dem_type '" + options.ot_dem_type +
+            "'. Available datasets: " + ot_dataset_demtype_list() +
+            " (run lsdtt-fetch-raster -h ot_dem_type for descriptions)");
     }
 
     if (out_path.empty())
