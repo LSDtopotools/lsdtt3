@@ -200,7 +200,7 @@ The script also expects vcpkg at `%USERPROFILE%/tools/vcpkg`; override with
 > **Not yet done, on either count.** `package_macos_backend.sh` is written but
 > **untested**, and `docs/installing_locally.md` records that lsdtt3 does not
 > currently build with Apple Clang — the supported way to *run* it on a Mac is
-> the Ubuntu VM in [`docs/lsdtt3_in_macos.md`](../docs/lsdtt3_in_macos.md),
+> the Ubuntu VM in [`docs/developer_notes/lsdtt3_in_macos.md`](../docs/developer_notes/lsdtt3_in_macos.md),
 > which produces a Linux bundle, not a macOS one. What follows is the shape to
 > follow when a native build is attempted, so the convention matches Windows.
 
@@ -324,7 +324,7 @@ packaging scripts, or `-CliProfile` on the PowerShell script. An explicit
 The profile appears in the bundle filename, e.g.
 `lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz`.
 
-Full release workflow and rationale: `docs/release_ci_plan.md`.
+Full release workflow and rationale: `docs/plan_docs/release_ci_plan.md`.
 Windows and macOS bundles are built by hand on the respective machines
 with the per-platform scripts below, then attached with
 `gh release upload v<version> dist/<bundle>`.

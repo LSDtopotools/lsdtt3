@@ -7,7 +7,7 @@
 //
 // -----------------------------------------------------------------------------
 // Standalone validation driver for the cosmogenic-nuclide (CRN) physics core,
-// per docs/cosmo_cli_testing_plan.md.  Phase 0: scaffold, reference helpers,
+// per docs/plan_docs/cosmo_cli_testing_plan.md.  Phase 0: scaffold, reference helpers,
 // single-basin synthetic fixture, CSV emitters, and smoke tests.  The full
 // equation-fidelity battery (plan Sec3, E1-E9) lands in Phases 1-2; the
 // numerics sentinel (plan Sec3b) lands FIRST in Phase 1.
@@ -1372,7 +1372,7 @@ void write_sentinel_file(const std::string& path,
 {
     std::ofstream out(path);
     out << std::setprecision(17);
-    out << "# COSMO NUMERICS SENTINEL - docs/cosmo_cli_testing_plan.md Sec3b\n"
+    out << "# COSMO NUMERICS SENTINEL - docs/plan_docs/cosmo_cli_testing_plan.md Sec3b\n"
         << "# These values encode years of manual verification of the CAIRN\n"
         << "# and step-change analytical solutions.  DO NOT regenerate this\n"
         << "# file to silence a test failure.  Any change requires review\n"
@@ -1671,7 +1671,7 @@ int main(int argc, char** argv)
 
     std::cout << "=========================================================\n"
               << "|| lsdtt3 cosmogenic physics test driver               ||\n"
-              << "|| Plan: docs/cosmo_cli_testing_plan.md                ||\n"
+              << "|| Plan: docs/plan_docs/cosmo_cli_testing_plan.md                ||\n"
               << "|| Phases 0-2: fixtures, parameter pins, sentinel,     ||\n"
               << "||             equation fidelity E1-E9                 ||\n"
               << "=========================================================\n";

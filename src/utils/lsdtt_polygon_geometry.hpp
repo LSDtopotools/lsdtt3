@@ -27,7 +27,7 @@
 // Feret diameters, and second moments of area. compute_basin_shape() at the
 // bottom assembles the headline metrics.
 //
-// See docs/basin_shape_metrics.tex for the derivations, the mapping from
+// See docs/tex_technical/basin_shape_metrics.tex for the derivations, the mapping from
 // geomorphic indices to these primitives, and the bibliography.
 // -----------------------------------------------------------------------------
 
@@ -627,7 +627,7 @@ inline double equivalent_circle_diameter(double area)
 //
 // Assembles the headline drainage-basin shape metrics from a projected basin
 // outline ring (in metres). Computes the geometric primitives once and derives
-// every index as a ratio. See docs/basin_shape_metrics.tex for the full theory
+// every index as a ratio. See docs/tex_technical/basin_shape_metrics.tex for the full theory
 // and references.
 //
 // Inputs:

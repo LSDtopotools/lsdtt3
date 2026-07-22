@@ -9,7 +9,7 @@
 // -----------------------------------------------------------------------------
 // Standalone validation driver for the implicit *Roering nonlinear* hillslope
 // solver (compute_roering_hillslope_transport_implicit), exercising the
-// rectangular-domain tests from docs/roering_implicit_transient_plan.md Sec9
+// rectangular-domain tests from docs/plan_docs/roering_implicit_transient_plan.md Sec9
 // tests 1 (Roering steady state, two boundary scenarios) and 2 (step-change
 // uplift transient).  It drives the solver directly (NOT through lsdtt-lem),
 // because the LEM's boundary-restore pins edge cells only AFTER the hillslope

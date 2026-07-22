@@ -393,7 +393,7 @@ support.
 ## See also
 
 - `docs/testing_and_benchmarking.md` — design rationale, credential rules, findings
-- `docs/cli_reference_lsdtt_raster_preprocessing.md` — the usual next step
+- `docs/cli_reference/cli_reference_lsdtt_raster_preprocessing.md` — the usual next step
 - `python_helpers/download_dem_tiles.py` — Python helper covering other providers
 - <https://portal.opentopography.org/apidocs/#/Public/getGlobalDem> — the
   upstream `demtype` list this tool's catalogue mirrors

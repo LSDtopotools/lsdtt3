@@ -138,7 +138,7 @@ struct basin_stats_record
     // -1.0 indicates channel stats were not calculated
     std::map<int, double> channel_length_by_order;
 
-    // Basin planform shape metrics (see docs/basin_shape_metrics.tex)
+    // Basin planform shape metrics (see docs/tex_technical/basin_shape_metrics.tex)
     // basin_length_m is L_b under the chosen basin_length_definition.
     bool   shape_valid           = false;
     double basin_length_m        = 0.0;
@@ -743,7 +743,7 @@ int main(int argc, char* argv[])
         "gravelius_compactness, solidity, eccentricity, orientation_deg, and "
         "hypsometric_integral columns to the output CSV. When false, the outline "
         "is not traced and those columns are omitted, reproducing the original "
-        "basin-stats output. See docs/basin_shape_metrics.tex.",
+        "basin-stats output. See docs/tex_technical/basin_shape_metrics.tex.",
         "Basin shape metrics", "switch", ""};
 
     string_default_map["basin_length_definition"] = "flow_path";
@@ -753,7 +753,7 @@ int main(int argc, char* argv[])
         "basin length; the default and the usual geomorphic convention). "
         "geometric: the maximum Feret diameter of the basin outline polygon "
         "(longest straight-line caliper). The two are not interchangeable and "
-        "Re, Rf both scale with L_b. See docs/basin_shape_metrics.tex.",
+        "Re, Rf both scale with L_b. See docs/tex_technical/basin_shape_metrics.tex.",
         "Basin shape metrics", "param", "calculate_shape_metrics"};
 
     float_default_map["shape_perimeter_simplify_cells"] = 1.0f;
@@ -1686,7 +1686,7 @@ int main(int argc, char* argv[])
             //
             // Trace the basin outline polygon, convert the pixel-corner divide
             // ring to projected coordinates, and derive shape metrics.
-            // See docs/basin_shape_metrics.tex for derivations and references.
+            // See docs/tex_technical/basin_shape_metrics.tex for derivations and references.
             // ------------------------------------------------------------------
             lsdtt::lsdtt_basin_shape shape;
             bool shape_ok = false;

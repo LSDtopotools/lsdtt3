@@ -55,7 +55,7 @@ POLYFIT_METRIC_OPTIONS = [
 
 # The wrapper pins polyfit_method to the CLI default: the direct fit needs no
 # FFTW and is the preferred method, and pinning it keeps output suffixes
-# predictable (see docs/qgis_plugin_plan.md section 5.8).
+# predictable (see docs/plan_docs/qgis_plugin_plan.md section 5.8).
 POLYFIT_METHOD = "direct"
 
 

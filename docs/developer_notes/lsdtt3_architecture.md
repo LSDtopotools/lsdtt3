@@ -273,7 +273,7 @@ link to `lsdtt3_cpu`.
 Compile definition: `LSDTT_HAS_FFTW=1`. Stub in `lsdtt_raster_spectral_cpu.cpp`
 throws at runtime if FFTW not available.
 
-**`docs/lsdtt_utils_guide.md`**  
+**`docs/developer_notes/lsdtt_utils_guide.md`**  
 Developer guide to the `src/utils/` layer. Explains what belongs in utils,
 what should remain in `core` / `cpu` / `gpu`, the valid-data contract for
 utility functions, and when to use the main statistical tests and distance
@@ -356,7 +356,7 @@ GPU flow backend is added — only the factory changes.
 ### Backend abstraction rules
 
 `lsdtt3` uses **two backend-abstraction patterns**. See
-`docs/backend_abstraction_rules.md` for the full design notes, rationale, and examples.
+`docs/developer_notes/backend_abstraction_rules.md` for the full design notes, rationale, and examples.
 
 1. **Selective dispatch for broad compute substrates**  
    `lsdtt_raster_cpu` is a special case and remains a concrete CPU-side working
@@ -383,7 +383,7 @@ use narrow abstract bases and factories.**
 The selective-dispatch pattern (#1 above) is realised for GPU offload of heavy
 per-pixel free functions. The first ported kernel is `direct_polyfit`; more
 surface-fitting / roughness kernels follow the same template. Full design notes
-are in `docs/gpu_compute.md`; the essentials:
+are in `docs/developer_notes/gpu_compute.md`; the essentials:
 
 **Two independent GPU axes — do not conflate them:**
 
@@ -597,7 +597,7 @@ Current CLI programs are:
   (`flow_path` default, or `geometric` = max Feret diameter); the perimeter for
   circularity/Gravelius is measured on a Douglas–Peucker-simplified ring
   (`shape_perimeter_simplify_cells`) to mitigate the staircased divide-grid boundary.
-  Theory and references: `docs/basin_shape_metrics.tex`.
+  Theory and references: `docs/tex_technical/basin_shape_metrics.tex`.
   Also has an independent `calculate_junction_area_ratios` switch that writes the
   per-junction drainage-area ratio table + distribution summary (see below).
   `write_basin_polygons` writes one basin-outline polygon per basin to a vector
@@ -747,7 +747,7 @@ CLI source files follow this layout, in order:
 All CLIs use this deferred flow (the legacy `parse_args()` was removed
 2026-07-15 once the last CLI migrated). See `cli/lsdtt-raster-preprocessing.cpp`
 and `cli/lsdtt-channel-extraction.cpp` for reference implementations and
-`docs/cli_help_plan.md` for the design.
+`docs/plan_docs/cli_help_plan.md` for the design.
 
 ### Parameter map pattern (mandatory)
 
@@ -1061,7 +1061,7 @@ Parameter file format: `key: value` (snake_case keys, `#` for comments).
 `-v`/`-c` (print and exit) and records `-h` variants in the returned
 `lsdtt_cli_args` struct so the CLI can render help from its parameter
 declarations via `print_terminal_help()` (see the CLI design rule and
-`docs/cli_help_plan.md`). Every CLI uses this instead of a per-file
+`docs/plan_docs/cli_help_plan.md`). Every CLI uses this instead of a per-file
 `parse_args` free function. Each CLI declares
 `static const std::string k_tool_name = "lsdtt-foo";`
 alongside `k_version` and `k_citation`.
@@ -2132,7 +2132,7 @@ Does NOT perform DEM feature scoring, polygon conversion, or skeleton analysis �
 - `polygon_central_moments` — Green's-theorem mu20/mu11/mu02 (feeds `sym2x2_eigen`)
 - `simplify_douglas_peucker` — strips the pixel-staircase before perimeter-based metrics
 - `convex_hull` (Andrew monotone chain), `min_area_bounding_rect` (rotating calipers), `feret_diameters`, `equivalent_circle_diameter` (Heywood)
-- `compute_basin_shape(...)` → `lsdtt_basin_shape` — headline drainage-basin shape indices (elongation, form factor, circularity, Gravelius compactness, solidity, moment eccentricity/orientation, hypsometric integral). Theory + references: `docs/basin_shape_metrics.tex`.
+- `compute_basin_shape(...)` → `lsdtt_basin_shape` — headline drainage-basin shape indices (elongation, form factor, circularity, Gravelius compactness, solidity, moment eccentricity/orientation, hypsometric integral). Theory + references: `docs/tex_technical/basin_shape_metrics.tex`.
 
 **`lsdtt_thread_utils.hpp`** — header-only: `resolve_thread_count(n_threads)` returns `n_threads` if > 0, otherwise the OpenMP or hardware maximum.
 
@@ -2448,4 +2448,4 @@ The `graphflood/` directory contains third-party header-only graph-based flood r
     the dispatch decision and the `lsdtt3_cpu → lsdtt3_gpu` link live in `src/cpu`,
     so `src/core` stays CUDA-free. GPU kernels take POD pointers only (no
     `lsdtt_raster_cpu`/GDAL), accumulate in double for CPU parity, and always have
-    a CPU fallback. See `docs/gpu_compute.md`.
+    a CPU fallback. See `docs/developer_notes/gpu_compute.md`.

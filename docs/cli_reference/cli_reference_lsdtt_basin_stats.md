@@ -121,7 +121,7 @@ When enabled, builds a Strahler-order channel network and computes total channel
 
 ## Basin shape metrics
 
-Opt-in planform shape metrics for each basin. Off by default so the original curated hydromorphic stat set is reproduced unless explicitly requested. When enabled, the program traces each basin outline polygon (on the pixel-corner divide grid), converts it to projected coordinates, and derives a set of dimensionless shape indices. Nine columns are appended to `_basin_stats.csv`. See `docs/basin_shape_metrics.tex` for the full derivations, references, and bibliography.
+Opt-in planform shape metrics for each basin. Off by default so the original curated hydromorphic stat set is reproduced unless explicitly requested. When enabled, the program traces each basin outline polygon (on the pixel-corner divide grid), converts it to projected coordinates, and derives a set of dimensionless shape indices. Nine columns are appended to `_basin_stats.csv`. See `docs/tex_technical/basin_shape_metrics.tex` for the full derivations, references, and bibliography.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|

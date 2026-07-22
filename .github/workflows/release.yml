@@ -3,7 +3,7 @@ name: Build and release
 # Runs ONLY on version tags (plus manual dispatch) to keep private-repo
 # Actions minutes to one Linux build per official release. Local test
 # releases use tools/make_release.sh directly and cost no minutes.
-# See docs/release_ci_plan.md.
+# See docs/plan_docs/release_ci_plan.md.
 #
 # Triggers:
 #   - push of a version tag (e.g. git tag v0.3.0 && git push origin v0.3.0)

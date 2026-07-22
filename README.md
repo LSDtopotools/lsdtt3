@@ -105,7 +105,7 @@ Please include:
 - the full terminal output (copy and paste, not a screenshot)
 - your Ubuntu version: `cat /etc/os-release | grep VERSION=`
 
-**Full installation and troubleshooting notes:** `docs/beta_testing_notes.md`
+**Full installation and troubleshooting notes:** `docs/developer_notes/beta_testing_notes.md`
 
 ---
 
@@ -143,11 +143,11 @@ OpenMP is included with GCC and needs no separate install.
 
 ### Windows (WSL2)
 
-Run lsdtt3 inside a WSL2 Ubuntu environment and use the Ubuntu instructions above. See `docs/wsl2_notes.md` and `docs/lsdtt3_in_windows.md` for WSL2-specific setup notes.
+Run lsdtt3 inside a WSL2 Ubuntu environment and use the Ubuntu instructions above. See `docs/wsl2_notes.md` and `docs/developer_notes/lsdtt3_in_windows.md` for WSL2-specific setup notes.
 
 ### macOS
 
-See `docs/lsdtt3_in_macos.md`. Apple Clang does not ship with OpenMP; the doc covers the Homebrew workaround.
+See `docs/developer_notes/lsdtt3_in_macos.md`. Apple Clang does not ship with OpenMP; the doc covers the Homebrew workaround.
 
 ### Apptainer container
 
@@ -250,17 +250,17 @@ lsdtt-drainage-analysis     my_params.driver
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/cli_reference_lsdtt_fetch_raster.md` |
-| `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | `docs/cli_reference_lsdtt_raster_preprocessing.md` |
+| `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/cli_reference/cli_reference_lsdtt_fetch_raster.md` |
+| `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | `docs/cli_reference/cli_reference_lsdtt_raster_preprocessing.md` |
 | `lsdtt-raster-synthetic-tests` | Generates synthetic test surfaces (random, fractal, diamond-square, mountain-range geometries) for algorithm validation. | — |
 
 ### Surface analysis
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-surface-metrics` | Hillshade, local relief, polynomial surface fit (direct and wavelet), curvature metrics, MADk2 roughness, Frangi filter, Otsu segmentation, Hough line extraction, curvature skeletons, cloth-drape upper envelope and incision depth. | `docs/cli_reference_lsdtt_surface_metrics.md` |
+| `lsdtt-surface-metrics` | Hillshade, local relief, polynomial surface fit (direct and wavelet), curvature metrics, MADk2 roughness, Frangi filter, Otsu segmentation, Hough line extraction, curvature skeletons, cloth-drape upper envelope and incision depth. | `docs/cli_reference/cli_reference_lsdtt_surface_metrics.md` |
 | `lsdtt-flat-surface-finder` | Identifies low-texture surfaces (alluvial fans, terraces, piedmonts) using MADk2, residual IQR, and normal-vector dispersion (NVD). | — |
-| `lsdtt-mountain-front` | Identifies mountain fronts from multi-scale relief, piedmont surface fitting, and residual thresholding. Supports synthetic DEM validation mode. | `docs/cli_reference_lsdtt_mountain_front.md` |
+| `lsdtt-mountain-front` | Identifies mountain fronts from multi-scale relief, piedmont surface fitting, and residual thresholding. Supports synthetic DEM validation mode. | `docs/cli_reference/cli_reference_lsdtt_mountain_front.md` |
 | `lsdtt-feature-finder` | Feature-detection workflows (terraces, piedmonts, hillslope morphology). | — |
 | `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | — |
 
@@ -268,10 +268,10 @@ lsdtt-drainage-analysis     my_params.driver
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-drainage-analysis` | Drainage area via D8, D-infinity, or MFD routing. Topographic Wetness Index (TWI). | `docs/cli_reference_lsdtt_drainage_analysis.md` |
-| `lsdtt-channel-extraction` | D8 flow routing, contributing-pixel threshold source extraction, junction/channel network construction, network export to CSV / GeoPackage / FlatGeobuf. | `docs/cli_reference_lsdtt_channel_extraction.md` |
+| `lsdtt-drainage-analysis` | Drainage area via D8, D-infinity, or MFD routing. Topographic Wetness Index (TWI). | `docs/cli_reference/cli_reference_lsdtt_drainage_analysis.md` |
+| `lsdtt-channel-extraction` | D8 flow routing, contributing-pixel threshold source extraction, junction/channel network construction, network export to CSV / GeoPackage / FlatGeobuf. | `docs/cli_reference/cli_reference_lsdtt_channel_extraction.md` |
 | `lsdtt-basin-extraction` | D8 flow routing, channel/junction network, junction-aware basin extraction. Writes basin outlines, raster labels, and statistics. | `docs/basin_extraction_guide.md` |
-| `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | `docs/cli_reference_lsdtt_basin_stats.md` |
+| `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` |
 | `lsdtt-hydraulic-routing` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | — |
 | `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | — |
 
@@ -279,23 +279,23 @@ lsdtt-drainage-analysis     my_params.driver
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-channel-network-analysis` | Channel-link bearing fitting, junction-angle calculation (donor opening, bending angle), Strahler/Tokunaga self-similarity analysis. | `docs/cli_reference_lsdtt_channel_network_analysis.md` |
-| `lsdtt-chi-analysis` *(requires Eigen3)* | End-to-end chi workflow: chi extraction, piecewise-linear network fitting, disorder metrics with jackknife/bootstrap uncertainty, spatial k_sn / u* inversion with m/n model selection. | `docs/cli_reference_lsdtt_chi_analysis.md` |
-| `lsdtt-cross-sections` | Cross-section extraction along channel networks or user-defined transects. | `docs/cli_reference_lsdtt_cross_sections.md` |
+| `lsdtt-channel-network-analysis` | Channel-link bearing fitting, junction-angle calculation (donor opening, bending angle), Strahler/Tokunaga self-similarity analysis. | `docs/cli_reference/cli_reference_lsdtt_channel_network_analysis.md` |
+| `lsdtt-chi-analysis` *(requires Eigen3)* | End-to-end chi workflow: chi extraction, piecewise-linear network fitting, disorder metrics with jackknife/bootstrap uncertainty, spatial k_sn / u* inversion with m/n model selection. | `docs/cli_reference/cli_reference_lsdtt_chi_analysis.md` |
+| `lsdtt-cross-sections` | Cross-section extraction along channel networks or user-defined transects. | `docs/cli_reference/cli_reference_lsdtt_cross_sections.md` |
 
 ### Tidal / marsh
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-marsh-topography` | Marsh platform identification, tidal channel extraction, skeleton-based channel metrics. | `docs/cli_reference_lsdtt_marsh_topography.md` |
+| `lsdtt-marsh-topography` | Marsh platform identification, tidal channel extraction, skeleton-based channel metrics. | `docs/cli_reference/cli_reference_lsdtt_marsh_topography.md` |
 
 ### Cosmogenic nuclides
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-cosmo-tool` | Basin-averaged CRN erosion-rate inversion. Reads measured nuclide concentrations, computes Stone 2000 production, snaps points to D8 network, inverts via Newton-Raphson + bisection. Optional ERA40 / palaeomagnetic correction (requires NetCDF). | `docs/cli_reference_lsdtt_cosmo_tool.md` |
-| `lsdtt-cosmo-prediction` | Predicts CRN concentrations across a DEM: steady-state, step-change transient, and erosion-weighted accumulated concentration. | `docs/cli_reference_lsdtt_cosmo_prediction.md` |
-| `lsdtt-crn-column-tool` | 1-D transient cosmogenic nuclide column simulation. Steady-state, step-change, and full-transient (user-supplied erosion history) modes. No DEM required. | `docs/cli_reference_lsdtt_crn_column_tool.md` |
+| `lsdtt-cosmo-tool` | Basin-averaged CRN erosion-rate inversion. Reads measured nuclide concentrations, computes Stone 2000 production, snaps points to D8 network, inverts via Newton-Raphson + bisection. Optional ERA40 / palaeomagnetic correction (requires NetCDF). | `docs/cli_reference/cli_reference_lsdtt_cosmo_tool.md` |
+| `lsdtt-cosmo-prediction` | Predicts CRN concentrations across a DEM: steady-state, step-change transient, and erosion-weighted accumulated concentration. | `docs/cli_reference/cli_reference_lsdtt_cosmo_prediction.md` |
+| `lsdtt-crn-column-tool` | 1-D transient cosmogenic nuclide column simulation. Steady-state, step-change, and full-transient (user-supplied erosion history) modes. No DEM required. | `docs/cli_reference/cli_reference_lsdtt_crn_column_tool.md` |
 
 ### Landscape evolution
 
@@ -316,22 +316,22 @@ lsdtt-drainage-analysis     my_params.driver
 | Document | Contents |
 |---|---|
 | `docs/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
-| `docs/lsdtt3_architecture.md` | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
-| `docs/developer_onboarding.md` | Getting-started guide for new contributors. |
-| `docs/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |
-| `docs/using_lsdtt_flowinfo.md` | How to use the D8 flow routing object in analysis code. |
-| `docs/lsdtt_utils_guide.md` | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
+| `docs/developer_notes/lsdtt3_architecture.md` | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
+| `docs/developer_notes/developer_onboarding.md` | Getting-started guide for new contributors. |
+| `docs/developer_notes/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |
+| `docs/developer_notes/using_lsdtt_flowinfo.md` | How to use the D8 flow routing object in analysis code. |
+| `docs/developer_notes/lsdtt_utils_guide.md` | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
 | `docs/basin_extraction_guide.md` | Basin extraction workflow in detail. |
-| `docs/cli_reference_lsdtt_channel_extraction.md` | Channel network extraction: parameters, output formats, stream burning. |
-| `docs/cli_reference_lsdtt_basin_stats.md` | Basin statistics: outlet CSV format, snapping, output columns. |
-| `docs/cli_reference_lsdtt_fetch_raster.md` | Fetching DEMs: bounding boxes, bounds from a polygon or two points, sources, API-key handling. |
-| `docs/cli_reference_lsdtt_chi_analysis.md` | Chi analysis: m/n sweep, disorder metrics, bootstrap, k_sn inversion. |
-| `docs/cli_reference_lsdtt_cosmo_prediction.md` | CRN prediction: steady-state, step-change, accumulated concentration. |
-| `docs/beta_testing_notes.md` | Beta tester install guide (WSL2), release pipeline, and future conda-forge plan. |
+| `docs/cli_reference/cli_reference_lsdtt_channel_extraction.md` | Channel network extraction: parameters, output formats, stream burning. |
+| `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` | Basin statistics: outlet CSV format, snapping, output columns. |
+| `docs/cli_reference/cli_reference_lsdtt_fetch_raster.md` | Fetching DEMs: bounding boxes, bounds from a polygon or two points, sources, API-key handling. |
+| `docs/cli_reference/cli_reference_lsdtt_chi_analysis.md` | Chi analysis: m/n sweep, disorder metrics, bootstrap, k_sn inversion. |
+| `docs/cli_reference/cli_reference_lsdtt_cosmo_prediction.md` | CRN prediction: steady-state, step-change, accumulated concentration. |
+| `docs/developer_notes/beta_testing_notes.md` | Beta tester install guide (WSL2), release pipeline, and future conda-forge plan. |
 | `docs/installing_locally.md` | Local installation notes. |
-| `docs/lsdtt3_in_windows.md` | Windows (WSL2) setup. |
+| `docs/developer_notes/lsdtt3_in_windows.md` | Windows (WSL2) setup. |
 | `docs/wsl2_notes.md` | WSL2-specific notes. |
-| `docs/lsdtt3_in_macos.md` | macOS setup including OpenMP workaround. |
+| `docs/developer_notes/lsdtt3_in_macos.md` | macOS setup including OpenMP workaround. |
 | `docs/debian_packaging.md` | Building a Debian package. |
 | `apptainer_def/apptainer_setup.md` | Apptainer container setup. |
 | `tools/README.md` | Building redistributable bundles, and the git/gh commands for cutting a tagged release. |

@@ -42,7 +42,7 @@ lsdtt3 is organised as a set of free functions grouped by task, compiled into a 
 
 The build system is CMake. Optional dependencies (FFTW3, Eigen3, OpenCV, NetCDF) are detected automatically; tools that need a missing library are skipped rather than failing the build.
 
-See [Architecture](lsdtt3_architecture.md) for the full layer design and naming conventions.
+See [Architecture](developer_notes/lsdtt3_architecture.md) for the full layer design and naming conventions.
 
 ---
 
@@ -62,7 +62,7 @@ However we have provided a lightweight QGIS plugin (which is under development).
 
 ## Compatibility
 
-lsdtt3 is **not backward-compatible** with LSDTopoTools2. Parameter files, output file names, and some algorithm defaults differ. If you have existing LSDTopoTools2 workflows, consult the [command-line reference](cli_reference_lsdtt_channel_extraction.md) for the updated parameter names.
+lsdtt3 is **not backward-compatible** with LSDTopoTools2. Parameter files, output file names, and some algorithm defaults differ. If you have existing LSDTopoTools2 workflows, consult the [command-line reference](cli_reference/cli_reference_lsdtt_channel_extraction.md) for the updated parameter names.
 
 lsdtt3 is best run on Linux. 
 

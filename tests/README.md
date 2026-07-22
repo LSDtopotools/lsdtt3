@@ -49,7 +49,7 @@ More rigorous checks currently included:
 
 `unit_cosmo_physics` (labels `unit;cosmo`) runs `tests/cpp/test_cosmo_physics.cpp`,
 the validation driver for the CRN physics core. Plan:
-`docs/cosmo_cli_testing_plan.md`. It runs offline against committed reference
+`docs/plan_docs/cosmo_cli_testing_plan.md`. It runs offline against committed reference
 data and prints one PASS/FAIL line per check.
 
 > **The CRN numeric core is locked.** The analytical solutions exercised here
@@ -340,7 +340,7 @@ byte-identical raster or the differences mean nothing.
 To fetch one by hand:
 
 ```bash
-build/lsdtt-fetch-raster <dir> <param file>     # see docs/cli_reference_lsdtt_fetch_raster.md
+build/lsdtt-fetch-raster <dir> <param file>     # see docs/cli_reference/cli_reference_lsdtt_fetch_raster.md
 ```
 
 Named fixtures can be SHA256-pinned (`--print-hashes` prints a paste-ready

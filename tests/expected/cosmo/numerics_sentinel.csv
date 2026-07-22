@@ -1,4 +1,4 @@
-# COSMO NUMERICS SENTINEL - docs/cosmo_cli_testing_plan.md Sec3b
+# COSMO NUMERICS SENTINEL - docs/plan_docs/cosmo_cli_testing_plan.md Sec3b
 # These values encode years of manual verification of the CAIRN
 # and step-change analytical solutions.  DO NOT regenerate this
 # file to silence a test failure.  Any change requires review

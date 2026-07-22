@@ -45,7 +45,7 @@ to the end of your `~/.bashrc`. Verify with
 platform-specific instructions, including Google Colab.
 
 Full details, troubleshooting, and instructions for reporting bugs are in
-[`docs/beta_testing_notes.md`](beta_testing_notes.md).
+[`docs/developer_notes/beta_testing_notes.md`](developer_notes/beta_testing_notes.md).
 
 ---
 
@@ -59,7 +59,7 @@ Install WSL2 and Ubuntu, then follow the [pre-built install](#pre-built-install-
 steps above. The bundle works identically inside WSL2.
 
 **For developers who want to build from source:**  
-See [`docs/lsdtt3_in_windows.md`](lsdtt3_in_windows.md) for the complete
+See [`docs/developer_notes/lsdtt3_in_windows.md`](developer_notes/lsdtt3_in_windows.md) for the complete
 walkthrough:
 
 1. Install WSL2 and Ubuntu 22.04
@@ -278,7 +278,7 @@ lsdtt3 does not build natively on macOS (Apple Clang lacks several required
 features). The recommended approach is to run it inside an Ubuntu 22.04 virtual
 machine managed by **Multipass**, a lightweight tool from Canonical.
 
-See [`docs/lsdtt3_in_macos.md`](lsdtt3_in_macos.md) for the complete
+See [`docs/developer_notes/lsdtt3_in_macos.md`](developer_notes/lsdtt3_in_macos.md) for the complete
 walkthrough:
 
 1. Install Homebrew and Multipass

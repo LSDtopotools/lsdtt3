@@ -5,7 +5,7 @@
 // Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 //
-// Unit tests for the CLI help infrastructure (docs/cli_help_plan.md phase 1):
+// Unit tests for the CLI help infrastructure (docs/plan_docs/cli_help_plan.md phase 1):
 // lsdtt_help_registry insertion order, parse_args_deferred flag handling,
 // and print_terminal_help rendering (grouping, switch/child nesting,
 // 4-element entry fallback).

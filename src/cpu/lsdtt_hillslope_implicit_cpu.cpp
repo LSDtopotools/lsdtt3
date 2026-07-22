@@ -14,7 +14,7 @@
 // Eigen branch currently logs its intent, builds the hillslope DOF map, and then
 // delegates to the explicit subcycling solver; the backward-Euler + Picard core
 // is staged behind TODO tags matching the phased checklist (Sec12 of
-// docs/roering_implicit_transient_plan.md).  When Eigen is unavailable the
+// docs/plan_docs/roering_implicit_transient_plan.md).  When Eigen is unavailable the
 // function falls back to the explicit solver and prints a one-line notice, so
 // callers need no #ifdef.
 // -----------------------------------------------------------------------------
