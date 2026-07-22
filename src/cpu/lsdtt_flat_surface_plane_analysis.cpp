@@ -400,7 +400,17 @@ plane_analysis_result analyse_flat_surface_planes(
         pf.c               = c;
         pf.rmse            = rmse;
         pf.slope_magnitude = std::sqrt(a * a + b * b);
-        pf.aspect_degrees  = std::atan2(b, a) * k_rad2deg;
+        // COMPASS down-slope azimuth: 0 = north, clockwise, [0, 360).
+        // a = dz/dx (east-positive), b = dz/dy (north-positive), so the
+        // direction the plane FACES is atan2(-a, -b).  Was atan2(b, a) until
+        // 2026-07-22, which was the maths convention (0 = east, anticlockwise)
+        // AND the up-slope direction - wrong twice over, and it shares the
+        // column name `aspect_degrees` with lsdtt-surface-metrics.
+        {
+            double asp = std::atan2(-a, -b) * k_rad2deg;
+            if (asp < 0.0) asp += 360.0;
+            pf.aspect_degrees = asp;
+        }
         pf.valid           = true;
     }
 

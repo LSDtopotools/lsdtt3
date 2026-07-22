@@ -33,6 +33,30 @@
 
 #pragma once
 
+// -----------------------------------------------------------------------------
+// ANGULAR CONVENTION (project-wide)
+//
+// Every bearing, aspect and orientation lsdtt3 emits uses the COMPASS
+// convention: 0 degrees = NORTH, increasing CLOCKWISE (90 = east, 180 = south,
+// 270 = west).  This matches GDAL, ArcGIS and the geomorphology literature.
+//
+// It is NOT the mathematical convention (0 = +x axis, increasing
+// anticlockwise), which in map view puts 0 at EAST.  To convert:
+//     compass = fmod(90 - maths + 360, 360)
+// Note that `atan2(y, x)` is the maths form; a compass angle is
+// `atan2(east, north)` -- arguments in that order.
+//
+// ASPECT additionally means the DOWN-SLOPE azimuth: the direction the slope
+// FACES.  With p = dz/dx (east-positive) and q = dz/dy (north-positive) that is
+// `atan2(-p, -q)`.  `atan2(p, q)` is the up-slope azimuth and is 180 degrees
+// wrong.
+//
+// AXIAL quantities (line orientations, which have no head or tail: MADk2 DMC,
+// basin principal axis, skeleton dominant orientation, feature azimuths) use
+// the same zero and sense but fold to [0, 180).
+// -----------------------------------------------------------------------------
+
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -751,7 +775,16 @@ inline lsdtt_basin_shape compute_basin_shape(
             if (ratio > 1.0) ratio = 1.0;
             s.eccentricity = std::sqrt(1.0 - ratio);
         }
-        s.orientation_deg = e.theta_rad * (180.0 / M_PI);
+        // COMPASS axial orientation: 0 = north, clockwise, [0, 180).
+        // sym2x2_eigen returns theta_rad in the MATHS convention (anticlockwise
+        // from +x, i.e. from east), so convert.  Was emitted unconverted until
+        // 2026-07-22.
+        {
+            const double maths_deg = e.theta_rad * (180.0 / M_PI);
+            double compass = std::fmod(90.0 - maths_deg, 180.0);
+            if (compass < 0.0) compass += 180.0;
+            s.orientation_deg = compass;
+        }
     }
 
     {

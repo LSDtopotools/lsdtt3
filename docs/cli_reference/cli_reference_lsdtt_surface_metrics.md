@@ -116,6 +116,14 @@ Set `polyfit_metrics` to a comma-separated list of metric names, or `all` to wri
 
 Available metric names and their output suffixes:
 
+> **Aspect convention.** `aspect_radians` and `aspect_degrees` report the
+> **down-slope** azimuth — the direction the slope *faces* — clockwise from
+> north, so 0 = faces north, 90 = faces east. This matches GDAL, ArcGIS and the
+> geomorphology literature. **Changed 2026-07-22**: before that release the
+> value was the *up-slope* azimuth, i.e. 180° opposite, so rasters produced by
+> earlier versions must be rotated by 180° before being compared with new ones.
+
+
 | Metric name | Output suffix |
 |---|---|
 | `fitted_surface` | `_<method>_polyfit_fitted_surface.tif` |

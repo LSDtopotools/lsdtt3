@@ -1990,17 +1990,20 @@ road_flow_result find_road_flow_discrimination(
     rreq.n_threads = request.n_threads;
     polyfit_metric_result rmetrics = compute_polyfit_metrics(regional_coeffs, rreq);
 
-    const lsdtt_raster_cpu& aspect_uphill = rmetrics.at(polyfit_metric::aspect_degrees);
-    const auto& asp_d = aspect_uphill.get_data();
-    const auto& asp_m = aspect_uphill.get_mask();
+    // aspect_degrees is the DOWN-slope azimuth (GDAL convention) as of
+    // 2026-07-22, so it IS the regional slope bearing and needs no rotation.
+    // Before that it was the up-slope azimuth and this block added 180 degrees.
+    const lsdtt_raster_cpu& aspect_downslope =
+        rmetrics.at(polyfit_metric::aspect_degrees);
+    const auto& asp_d = aspect_downslope.get_data();
+    const auto& asp_m = aspect_downslope.get_mask();
 
     std::vector<float>   downslope_d(npix, nodata);
     std::vector<uint8_t> downslope_m(npix, 0u);
     for (std::size_t k = 0; k < npix; ++k)
     {
         if (!asp_m[k]) continue;
-        double b = static_cast<double>(asp_d[k]) + 180.0;
-        b = std::fmod(b, 360.0);
+        double b = std::fmod(static_cast<double>(asp_d[k]), 360.0);
         if (b < 0.0) b += 360.0;
         downslope_d[k] = static_cast<float>(b);
         downslope_m[k] = 1u;

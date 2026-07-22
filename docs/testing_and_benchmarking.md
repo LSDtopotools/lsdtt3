@@ -1130,16 +1130,99 @@ differences over `(W*L)^2`, so a float32 quantum `eps*Z` propagates to
 falls to ~1e-5, as predicted. First-derivative and constant coefficients do meet
 1e-6. Tolerances are pinned to measurement with ~5x headroom.
 
+### Angular conventions (project-wide, enforced 2026-07-22)
+
+**Every bearing, aspect and orientation lsdtt3 emits uses the COMPASS
+convention: 0 degrees = NORTH, increasing CLOCKWISE** (90 = east, 180 = south,
+270 = west). This matches GDAL, ArcGIS and the geomorphology literature.
+
+It is **not** the mathematical convention (0 = +x axis, anticlockwise), which
+in map view puts 0 at **east**. To convert: `compass = fmod(90 - maths + 360,
+360)`. Note `atan2(y, x)` is the maths form; a compass angle is
+`atan2(east, north)`, arguments in that order - getting them the wrong way round
+is the classic defect and accounted for three of the five found here.
+
+**Aspect** additionally means the **down-slope** azimuth - the direction the
+slope FACES - i.e. `atan2(-p, -q)` with p = dz/dx east-positive, q = dz/dy
+north-positive. `atan2(p, q)` is the up-slope azimuth and is 180 degrees wrong.
+
+**Axial** quantities (line orientations with no head or tail: MADk2 DMC, basin
+principal axis, skeleton dominant orientation, feature azimuths) use the same
+zero and sense but fold to [0, 180).
+
+This note is repeated in the headers of every module that emits such a value.
+
+#### The five defects fixed on 2026-07-22
+
+An audit of every angular expression under `src/`, `cli/` and `tests/` found
+five wrong sites. All are fixed; each is guarded by a test or verified against
+a known-answer surface.
+
+| # | Site | Was | Now |
+|---|---|---|---|
+| 1 | `aspect_radians` / `aspect_degrees` | `atan2(p,q)` - up-slope, so 0 meant "faces south" | `atan2(-p,-q)`, 0 = faces north |
+| 2 | `compute_hillshade` sun azimuth | `A = az - pi/2`, lighting as though the sun were at az+90 | `A = az - pi` |
+| 3 | MADk2 `DMC` | `+pi/2` applied, emitting the compass bearing of the maximum-**roughness** axis | halved resultant directly; now the maximum-**continuity** axis in compass axial degrees |
+| 4 | `lsdtt-flat-surface-finder` `aspect_degrees` | `atan2(b,a)` - maths frame **and** up-slope | `atan2(-a,-b)`, [0,360) |
+| 5 | basin `orientation_deg`; skeleton `dominant_orientation_degrees` | maths frame; and `atan2(dc,dr)` mirrored (NE-SW read 135 where compass says 45) | compass axial [0,180) |
+
+Sites 1 and 2 shared a root cause: the textbook hillshade formula
+`cos(az - pi/2 - aspect)` is only valid when `aspect` is the down-slope azimuth,
+and lsdtt3's was up-slope. Fixing either alone would have left them
+inconsistent.
+
+Verified correct and unchanged by the audit: streamline steepest-descent
+bearings (the reference implementation in the repo), channel-link and
+centre-of-mass bearings, junction angles, D-infinity flow direction,
+cross-section and tidal tangent/normal bearings, linear-feature and spectral
+azimuths, and basin-extraction fault geometry.
+
+**Compatibility.** Aspect rasters from earlier versions need rotating by 180
+degrees; hillshades were lit from 90 degrees off the requested azimuth; DMC
+rasters need rotating by 90 degrees; flat-surface aspect and basin
+`orientation_deg` change frame entirely.
+
+### Conventions that differ from other tools
+
 ### Conventions that differ from other tools
 
 Three traps for anyone comparing lsdtt3 against ArcGIS, GDAL or TopoToolbox:
 
-1. **Aspect is the azimuth of the UP-slope direction** (`atan2(p, q)`), not the
-   down-slope direction ArcGIS and GDAL report. A 180-degree difference.
-2. **Hillshade azimuth is offset by 90 degrees from TopoToolbox**: measured
-   across two independent sweeps, `ttb_azimuth = lsdtt3_azimuth + 90 (mod 360)`
-   with correlation 1.0000 at the match. A mirror hypothesis fits one point and
-   is refuted by the second.
+1. ~~**Aspect is the azimuth of the UP-slope direction**~~ **FIXED 2026-07-22.**
+   `aspect_radians` / `aspect_degrees` are now `atan2(-p, -q)` - the **down-slope**
+   azimuth, clockwise from north, the direction the slope FACES. 0 = faces north.
+   This is the GDAL / ArcGIS convention and the universal meaning of "aspect" in
+   the geomorphology literature (Smith & Bookhagen 2020 calls `gdaldem Aspect`
+   directly; Pelletier et al. 2018, Poulos et al. 2012 and Yetemen et al. 2015
+   all use pole-/equator-facing framing that presumes it).
+
+   Before the fix, 0 meant "faces south", so anyone binning lsdtt3 aspect as
+   north-facing got exactly the opposite hemisphere - silently, with plausible
+   output. Verified after the fix on planes descending toward 0/45/90/180/270
+   degrees: aspect returns the descent azimuth exactly in every case.
+
+   The only internal consumer, `lsdtt_raster_feature_finder_cpu.cpp`, added 180
+   degrees to recover a downslope bearing; that rotation was removed in the same
+   change. `lsdtt_streamlines_cpu.cpp` computes its own `atan2(-p,-q)` descent
+   bearing and was always correct.
+
+2. ~~**Hillshade azimuth is offset by 90 degrees from TopoToolbox**~~
+   **THIS WAS A BUG IN lsdtt3, NOT A CONVENTION DIFFERENCE. FIXED 2026-07-22.**
+   An earlier version of this section recorded the measured relation
+   `ttb_azimuth = lsdtt3_azimuth + 90 (mod 360)` as a difference of convention.
+   It was not: `compute_hillshade` used `A = az - pi/2` where the physics gives
+   `A = az - pi`.
+
+   Illumination is the dot product of the unit normal `n ~ (-p, -q, 1)` with the
+   unit sun vector `s = (sin(az)cos(alt), cos(az)cos(alt), sin(alt))`, giving
+   `hs ~ sin(alt) - cos(alt)*(p*sin(az) + q*cos(az))`, which requires
+   `sin_A = -sin(az)`, `cos_A = -cos(az)`. The old code lit the terrain as
+   though the sun were at **az + 90 degrees** - which is precisely the measured
+   offset, so the benchmark had detected the defect and it was mis-filed as a
+   convention. The root cause was the base formula `cos(az - pi/2 - aspect)`,
+   which is only valid when `aspect` is the down-slope azimuth; the aspect in
+   use was the up-slope one. Both errors had the same origin.
+
 3. **Curvature sign**: convex-up (ridge, peak) gives NEGATIVE mean curvature.
    This is not the Zevenbergen & Thorne convention.
 
@@ -1198,6 +1281,124 @@ across W = 1, 5, 15, 40 (9 to 6561 window cells, a 729x increase):
 39.8 / 43.3 / 42.5 / 47.5 ms — a 1.19x spread. The separable rolling-moment
 claim in the CLI reference is correct.
 
+
+### Why hillshade is ~4x slower, and why threading buys so little
+
+Investigated 2026-07-22 after the benchmark raised both. Neither is what it
+looks like.
+
+**Hillshade: five transcendentals per pixel that cancel algebraically.**
+`compute_hillshade` evaluates, per pixel, in double precision:
+`atan(sqrt(p*p+q*q))`, `atan2(p,q)`, `cos(slope)`, `sin(slope)` and
+`cos(az - pi/2 - aspect)`. That is where essentially all the time goes, and it
+is avoidable. With `r^2 = p^2+q^2` and `A = az - pi/2`, using
+`cos(slope) = 1/sqrt(1+r^2)`, `cos(aspect) = q/r`, `sin(aspect) = p/r`, the
+expression collapses to a dot product of the surface normal with the sun
+vector:
+
+```
+hs = 1 + 254 * (sin_alt + cos_alt*(sinA*p + cosA*q)) / sqrt(1 + p^2 + q^2)
+```
+
+One square root per pixel, no transcendentals; the flat-pixel case `r = 0` is
+handled identically by both forms. Measured on 720x720, single thread:
+
+| | time | agreement |
+|---|---|---|
+| current implementation | 31.5 ms | - |
+| closed form | **2.74 ms** | **max abs difference 0.000e+00 over 515,524 px** |
+
+**APPLIED 2026-07-22.** Verified bit-identical against the previous
+implementation across **252 cases** - 2 terrain types (random quadratic,
+diamond-square) x 7 azimuths x 3 altitudes x 2 z-factors x 3 seeds - with zero
+differing pixels and a maximum absolute difference of 0.000e+00.
+
+In place, `compute_hillshade` went from **31.5 ms to 7.58 ms single-threaded on
+720x720: 4.2x faster.** It does not reach the 2.74 ms of the bare kernel above
+because the real function also runs a 3x3 nodata check per pixel (nine mask
+lookups) and writes an output mask; that check, not the arithmetic, is now the
+dominant remaining cost and is the next lever if hillshade ever matters more.
+
+Note on the end-to-end benchmark: it is too noisy on this thermally-constrained
+laptop to confirm the ratio cleanly - TopoToolbox's *own* reference time moved
+from 4.07 ms to 2.61 ms between two runs of the identical code, and an 8-thread
+figure came out worse than the 1-thread one. The controlled in-process
+microbenchmark (same process, same thermal state, best-of-7) is the number to
+trust. Re-measure the end-to-end comparison on a machine that is not power- and
+thermally-limited before quoting a lsdtt3-vs-TopoToolbox hillshade ratio.
+
+**Threading: this machine's ceiling is 3.3x, not 8x.** Measured on the
+benchmark box (Intel i5-1145G7: **4 physical cores, 8 hyperthreads, 15 W laptop
+part** that cannot hold turbo across all cores):
+
+| kernel | 1t | 2t | 4t | 8t |
+|---|---|---|---|---|
+| pure compute, negligible memory traffic | 1.00x | 1.76x | 3.00x | **3.30x** |
+| pure streaming (triad, ~12.4 GB/s) | 1.00x | 1.31x | 1.30x | 1.13x |
+| `compute_hillshade` | 1.00x | 1.77x | 2.45x | **3.10x** |
+| `direct_polyfit` | 1.00x | 1.43x | 1.57x | 0.99x |
+
+Two ceilings, and each kernel sits on the right one. 3.30x is the compute
+ceiling - hyperthreads are not cores. Memory bandwidth saturates at **2
+threads**, so anything bandwidth-bound is capped near 1.3x however many threads
+it gets.
+
+`compute_hillshade` reaches 3.10x against a 3.30x ceiling: **its threading is
+working correctly.** `direct_polyfit` tops out at 1.43-1.57x and degrades past
+4 threads, matching the streaming profile - it is **not
+parallelism-limited**, and more threads cannot help it.
+
+**It is cache-line-utilisation bound, not bandwidth bound.** (An earlier draft
+of this section said `direct_polyfit` allocated two complete sets of six
+coefficient rasters. That was wrong: the `g_*` set is inside
+`#ifdef LSDTT_GPU_KERNELS` behind a live-device check and is not compiled in a
+CPU build. Peak is 58 B/pixel, measured - `VmHWM` delta 58.1 B/pixel at n =
+1440, 2880 and 4096 against an analytic 58; two live sets would give 83.)
+
+The cause is traversal order. Pass 2 parallelises over columns and walks *down*
+a column of row-major arrays, so every 8-byte read pulls a 64-byte cache line
+and every 4-byte write pulls one for ownership, across seven strided streams.
+That is how ~58 bytes of data per pixel generates ~1.6 kB of traffic, and why
+per-pixel cost **grows with raster size** - 104.7 / 196.5 / 321.6 ns/pixel at
+n = 1440 / 2880 / 4096 - which a genuinely streaming kernel does not do. Pass 2
+is 55-65% of the function; allocation is ~10% and pass 1 ~3%.
+
+Processing columns in blocks of 8, with the prefix arrays interleaved so reads
+and writes run along rows, measures **2.8x on pass 2 and ~1.7x on the whole
+function at 2880x2880, bit-identical** - the arithmetic and its order are
+untouched, only the iteration order over independent columns changes. Blocked
+pass 2 at one thread beats the current pass 2 at four. There is no gain at
+1440x1440, where the working set still fits in cache: the expected signature.
+
+Second item: the zero-fill of `H0`/`H1`/`H2`/`Hn` (28 B/pixel, 232 MB at
+2880x2880) is dead, because pass 1 writes every element; it costs a measured
+5-10% of runtime. The `out_*` nodata fill is *not* dead - border and
+skipped-window pixels are never written.
+
+Re-check the 3.30x ceiling before reading any thread-scaling number measured on
+a different machine.
+
+### Defects this work found
+
+All fixed 2026-07-22. Recorded because each was a case of "the run succeeds
+while doing less than you asked", which is the failure mode tests exist for.
+
+1. **MADk2 treated axial directions as vectors.** The four sampling directions
+   are axes (period 180 degrees), so the anisotropy resultant must be formed at
+   the doubled angle and halved. Using the raw angle gave RA = 0.653 on a
+   perfectly isotropic surface instead of 0 - so RA never reached its own lower
+   end and "low RA means isotropic" could not be read off the output - and put
+   DMC 35.26 degrees out for one corrugation orientation while leaving it exact
+   for the perpendicular. Guarded by the C5 checks.
+2. **Parameter values were truncated at the first space**, silently:
+   `polyfit_metrics: slope, aspect, mean_curvature` computed only `slope`,
+   exit 0, no warning - and the CLI reference's own example used that spaced
+   form. Affected every space-containing value in every CLI. The parser now
+   rejects it with a copy-pasteable correction.
+3. **Three silent no-ops**: a sub-cell-size `polyfit_lambda_metres` warned on
+   stdout and exited 0 with no outputs; requesting no outputs at all exited 0;
+   an over-large MADk2 window wrote three 100%-nodata rasters. All now fail
+   with an explanation.
 
 ### Running it
 

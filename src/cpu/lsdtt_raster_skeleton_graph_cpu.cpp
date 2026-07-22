@@ -2673,8 +2673,16 @@ compute_skeleton_topology(
 
             if (chord_len > 0.0)
             {
+                // COMPASS axial orientation: 0 = north, clockwise, [0, 180).
+                // dc is a column difference (east-positive) and dr a ROW
+                // difference (south-positive), so north is -dr and the compass
+                // form is atan2(east, north) = atan2(dc, -dr).  Using
+                // atan2(dc, dr) - as this did until 2026-07-22 - mirrors the
+                // result: N-S and E-W came out right by accident, but a NE-SW
+                // axis reported 135 where compass says 45.
+                //
                 // atan2 in (-pi, pi). Fold to [0, pi) for undirected orientation.
-                double theta = std::atan2(dc, dr);
+                double theta = std::atan2(dc, -dr);
                 if (theta < 0.0) theta += 3.14159265358979323846;
 
                 const double two_theta = 2.0 * theta;

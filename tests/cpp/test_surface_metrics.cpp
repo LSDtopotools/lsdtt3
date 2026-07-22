@@ -814,13 +814,18 @@ void test_tilted_plane()
               s.n > 0 && s.normalised() <= 1e-6, dt.str());
     }
 
-    // Aspect.  The header documents "clockwise from north"; the implementation
-    // is atan2(p, q) on the gradient (p = dz/dx, q = dz/dy), which is the
-    // azimuth of the UP-slope direction, not the down-slope direction that many
-    // GIS packages report.  With Gx = 0.3, Gy = 0.4 the surface rises toward
-    // 036.87 degrees, so that is the expected value.
+    // Aspect: DOWN-slope azimuth, clockwise from north -- atan2(-p, -q), the
+    // direction the slope FACES.  This is the GDAL / ArcGIS convention and the
+    // universal meaning of "aspect" in the geomorphology literature.
+    //
+    // With Gx = 0.3, Gy = 0.4 the surface RISES toward 036.87 degrees, so it
+    // FACES 216.87 degrees, and that is the expected value.  (Before
+    // 2026-07-22 the code returned the up-slope 36.87 and this test asserted
+    // it; 0 then meant "faces south", which inverted any north/south-facing
+    // analysis.)
     {
-        const double expect = std::atan2(Gx, Gy) * 180.0 / k_pi;   // 36.8699 deg
+        double expect = std::atan2(-Gx, -Gy) * 180.0 / k_pi;       // 216.87 deg
+        if (expect < 0.0) expect += 360.0;
         const err_stats s = compare_analytic(res.at(polyfit_metric::aspect_degrees),
                                              [expect](double, double) { return expect; },
                                              border);
@@ -1442,7 +1447,10 @@ void test_madk2()
     // ---- directional response on corrugated surfaces -----------------------
     // z = A * cos(2*pi*x/L): parallel ridges running NORTH-SOUTH, so the
     // surface is perfectly continuous along y and roughest along x.  The
-    // direction of maximum continuity must therefore be the N-S axis, 90 deg.
+    // direction of maximum continuity is therefore the N-S axis, which in the
+    // COMPASS convention (0 = north, clockwise, axial [0,180)) is 0 deg.
+    // Asserted 90 before 2026-07-22, when DMC was emitted in an internal frame
+    // rotated 90 deg from compass.
     {
         const double A = 5.0, L = 80.0;
         const lsdtt_raster_cpu dem = make_surface(meta, [=](double x, double) {
@@ -1451,18 +1459,19 @@ void test_madk2()
         const lsdtt::madk2_result mk = lsdtt::calculate_madk2(dem, radius, 1, 1);
 
         double med = 0.0;
-        const double worst = max_axial_deviation(mk.direction_maximum_continuity, 90.0, 8, med);
+        const double worst = max_axial_deviation(mk.direction_maximum_continuity, 0.0, 8, med);
         record("C5 madk2", "dmc_dev_ns_ridges_median_deg", med);
         record("C5 madk2", "dmc_dev_ns_ridges_max_deg",    worst);
 
         std::ostringstream dt;
-        dt << "median deviation from 90 deg = " << std::fixed << std::setprecision(3)
+        dt << "median deviation from 0 deg = " << std::fixed << std::setprecision(3)
            << med << " deg, max " << worst << " deg (tol 5 deg)";
-        check("C5 MADk2 DMC aligns with N-S corrugation ridges (== 90 deg)",
+        check("C5 MADk2 DMC aligns with N-S corrugation ridges (== 0 deg)",
               med <= 5.0, dt.str());
     }
 
-    // z = A * cos(2*pi*y/L): ridges running EAST-WEST, so DMC must be 0 deg.
+    // z = A * cos(2*pi*y/L): ridges running EAST-WEST, so continuity runs E-W,
+    // which in compass axial degrees is 90.  Asserted 0 before 2026-07-22.
     {
         const double A = 5.0, L = 80.0;
         const lsdtt_raster_cpu dem = make_surface(meta, [=](double, double y) {
@@ -1471,14 +1480,14 @@ void test_madk2()
         const lsdtt::madk2_result mk = lsdtt::calculate_madk2(dem, radius, 1, 1);
 
         double med = 0.0;
-        const double worst = max_axial_deviation(mk.direction_maximum_continuity, 0.0, 8, med);
+        const double worst = max_axial_deviation(mk.direction_maximum_continuity, 90.0, 8, med);
         record("C5 madk2", "dmc_dev_ew_ridges_median_deg", med);
         record("C5 madk2", "dmc_dev_ew_ridges_max_deg",    worst);
 
         std::ostringstream dt;
-        dt << "median deviation from 0 deg = " << std::fixed << std::setprecision(3)
+        dt << "median deviation from 90 deg = " << std::fixed << std::setprecision(3)
            << med << " deg, max " << worst << " deg (tol 5 deg)";
-        check("C5 MADk2 DMC aligns with E-W corrugation ridges (== 0 deg)",
+        check("C5 MADk2 DMC aligns with E-W corrugation ridges (== 90 deg)",
               med <= 5.0, dt.str());
     }
 

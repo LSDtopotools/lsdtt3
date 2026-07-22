@@ -250,6 +250,14 @@ COMPARISONS = {
     # benchmark's clothes. `lsdtt_seconds_1t_est_compute` subtracts a measured
     # per-write cost to give an indicative figure; treat it as an estimate.
     #
+    # AZIMUTH: both sides now take the SAME azimuth. Until 2026-07-22 this
+    # spec passed 45 to TopoToolbox against lsdtt3's 315, to compensate for a
+    # measured `ttb_az = lsdtt3_az + 90` offset that was recorded as a
+    # convention difference. It was not - it was a defect in lsdtt3's
+    # compute_hillshade (`A = az - pi/2` where the physics gives `A = az - pi`),
+    # since fixed. The compensation would now introduce the error it used to
+    # cancel, so it is gone.
+    #
     # RESOLVED 2026-07-22: cli/lsdtt-surface-metrics.cpp now prints
     # "Computed hillshade... done (X s)" around compute_hillshade, matching the
     # polyfit timer, so both sides are in-process compute-only and these rows
@@ -263,14 +271,14 @@ COMPARISONS = {
         "params": {"write_hillshade_raster": "true",
                    "hillshade_azimuth": "315", "hillshade_altitude": "60",
                    "hillshade_z_factor": "1.0"},
-        "ref_args": ["--azimuth", "45", "--altitude", "60"],
+        "ref_args": ["--azimuth", "315", "--altitude", "60"],
         "suffix": "_hillshade.tif",
         "timing_basis": "in_process",
         "report_only": False,
         "note": ("compiled vs compiled (libtopotoolbox fused hillshade), but "
                  "in-process on both sides since the CLI gained a timer "
                  "around compute_hillshade (2026-07-22). "
-                 "lsdtt3 az 315 == ttb az 45"),
+                 "same azimuth on both sides since the lsdtt3 sun-azimuth defect was fixed 2026-07-22"),
     },
     "hillshade_unfused": {
         "routine": "hillshade_unfused",
@@ -278,7 +286,7 @@ COMPARISONS = {
         "params": {"write_hillshade_raster": "true",
                    "hillshade_azimuth": "315", "hillshade_altitude": "60",
                    "hillshade_z_factor": "1.0"},
-        "ref_args": ["--azimuth", "45", "--altitude", "60"],
+        "ref_args": ["--azimuth", "315", "--altitude", "60"],
         "suffix": "_hillshade.tif",
         "timing_basis": "in_process",
         "report_only": False,

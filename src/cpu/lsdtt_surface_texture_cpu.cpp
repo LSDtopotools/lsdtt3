@@ -346,7 +346,23 @@ madk2_result calculate_madk2(
 
             // Halve to undo the angle doubling above and return to axis space.
             const double max_rough_angle_rad = 0.5 * std::atan2(ry, rx);
-            double dmc_deg = (max_rough_angle_rad + k_pi / 2.0) * (180.0 / k_pi);
+
+            // DMC = direction of maximum CONTINUITY, in COMPASS axial degrees
+            // (0 = north, clockwise, folded to [0,180)).
+            //
+            // Two 90-degree rotations are involved and they cancel mod 180:
+            //   (a) the sampling axes are indexed as atan2(dr, dc), so the
+            //       internal frame has 0 = the EAST-WEST axis and 90 = the
+            //       NORTH-SOUTH axis, i.e. compass = internal + 90 (mod 180);
+            //   (b) maximum continuity is PERPENDICULAR to maximum roughness,
+            //       another + 90.
+            // internal + 90 + 90 == internal (mod 180), so the compass DMC is
+            // the halved resultant angle directly, with no offset.
+            //
+            // Until 2026-07-22 a `+ pi/2` was applied here, which emitted the
+            // compass bearing of the maximum-ROUGHNESS axis instead - 90
+            // degrees from the documented "direction of maximum continuity".
+            double dmc_deg = max_rough_angle_rad * (180.0 / k_pi);
             while (dmc_deg <    0.0) dmc_deg += 180.0;
             while (dmc_deg >= 180.0) dmc_deg -= 180.0;
 

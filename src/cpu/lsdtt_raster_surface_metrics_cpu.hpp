@@ -109,6 +109,30 @@
 
 #pragma once
 
+// -----------------------------------------------------------------------------
+// ANGULAR CONVENTION (project-wide)
+//
+// Every bearing, aspect and orientation lsdtt3 emits uses the COMPASS
+// convention: 0 degrees = NORTH, increasing CLOCKWISE (90 = east, 180 = south,
+// 270 = west).  This matches GDAL, ArcGIS and the geomorphology literature.
+//
+// It is NOT the mathematical convention (0 = +x axis, increasing
+// anticlockwise), which in map view puts 0 at EAST.  To convert:
+//     compass = fmod(90 - maths + 360, 360)
+// Note that `atan2(y, x)` is the maths form; a compass angle is
+// `atan2(east, north)` -- arguments in that order.
+//
+// ASPECT additionally means the DOWN-SLOPE azimuth: the direction the slope
+// FACES.  With p = dz/dx (east-positive) and q = dz/dy (north-positive) that is
+// `atan2(-p, -q)`.  `atan2(p, q)` is the up-slope azimuth and is 180 degrees
+// wrong.
+//
+// AXIAL quantities (line orientations, which have no head or tail: MADk2 DMC,
+// basin principal axis, skeleton dominant orientation, feature azimuths) use
+// the same zero and sense but fold to [0, 180).
+// -----------------------------------------------------------------------------
+
+
 #include <map>
 #include <vector>
 
