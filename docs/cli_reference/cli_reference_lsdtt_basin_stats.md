@@ -142,7 +142,7 @@ Opt-in planform shape metrics for each basin. Off by default so the original cur
 | `gravelius_compactness` | `Kc = P / (2√(πA)) = 0.2821·P / √A` | Gravelius (1914) |
 | `solidity` | `A / A_hull` (≤ 1; 1 = convex) | — |
 | `eccentricity` | `√(1 − λ2/λ1)` from the area inertia tensor | — |
-| `orientation_deg` | principal-axis angle (degrees) from the inertia tensor | — |
+| `orientation_deg` | COMPASS axial orientation (degrees clockwise from north, [0, 180)) of the principal axis from the area inertia tensor. Changed 2026-07-22 from the mathematical convention; older rasters in mathematical frame need converting via `compass_axial = (90 - maths_deg) mod 180`. | — |
 | `hypsometric_integral` | `HI = (mean_elev − min_elev) / (max_elev − min_elev)` | Pike & Wilson (1971) |
 
 Two algebraic identities act as internal cross-checks (they hold to rounding): `Kc²·Rc = 1` (Gravelius and Miller circularity carry the same `{P, A}` information) and `Re = (2/√π)·√Rf` (elongation and form factor carry the same `{A, L_b}` information).

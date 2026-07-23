@@ -1241,25 +1241,38 @@ comparison. `aspect` is plain `np.gradient` central differences, which does less
 work than a quadratic fit, and is report-only.
 
 alpine_medium (720x720 @ 30 m), W=1 forced via `polyfit_lambda_metres: 60`,
-best-of-5 after a warm-up, both sides float32, native ext4 filesystem:
+best-of-5 after a warm-up, both sides float32, native ext4.
 
-| comparison | lsdtt3 1t | lsdtt3 8t | topotoolbox | speedup 1t |
-|---|---|---|---|---|
-| slope | 41.2 ms | 29.9 ms | 10.1 ms* | 0.25x |
-| profile curvature | 39.8 ms | 39.7 ms | 24.8 ms | 0.62x |
-| mean curvature | 41.2 ms | 23.6 ms | 22.8 ms | 0.55x |
-| plan curvature | 39.3 ms | 30.0 ms | 95.0 ms | 2.42x |
-| **all four curvatures** | **37.6 ms** | **23.1 ms** | **98.7 ms** | **2.62x** |
-| hillshade (fused, compiled) | 18.0 ms | 9.8 ms | 4.1 ms | 0.23x |
+**These ratios are NOT publication-grade on this hardware.** Re-running the
+identical sweep moved TopoToolbox's *own* reference times by up to 4x between
+runs (slope 10.1 -> 40.4 ms; curvature_all4 98.7 -> 159.8 ms) on a 15 W laptop
+part that throttles under sustained load. The lsdtt3 absolute times below are
+stable and were cross-checked against controlled in-process microbenchmarks;
+**the ratio column should be treated as indicative only** until the sweep is
+re-run on a machine that is not power- and thermally-limited.
 
-\* after subtracting `distance_transform_edt` NaN in-filling, which lsdtt3 does
-not do. Rows where that discount exceeds 75% are auto-demoted to report-only.
+Measured after the 2026-07-22 optimisations (`direct_polyfit` column blocking,
+2.07x; `compute_hillshade` transcendental removal, 5.2x):
 
-**Read this honestly: for a single metric lsdtt3 is slower**, because the direct
-polyfit always solves all six quadratic coefficients whatever you ask for. It
-wins once you want more than one product of the same fit. The hillshade row is
-the only compiled-vs-compiled comparison (libtopotoolbox), and lsdtt3 loses it
-by a factor of ~4.
+| comparison | lsdtt3 1t | topotoolbox | ratio (indicative) |
+|---|---|---|---|
+| slope | 35.4 ms | 40.4 ms | 0.5 - 1.0x |
+| profile curvature | 31.5 ms | 27.0 ms | ~0.9x |
+| mean curvature | 27.4 ms | 28.6 ms | ~1.0x |
+| plan curvature | 28.1 ms | 27.8 ms | ~1.0x |
+| **all four curvatures** | **30.2 ms** | **159.8 ms** | **~5x** |
+| hillshade (fused, compiled) | 11.2 ms | 3.0 ms | ~0.3x |
+
+For reference, the same table before those optimisations read: slope 41.2 ms,
+all-four 37.6 ms, hillshade 18.0 ms.
+
+**Read this honestly.** For a *single* metric lsdtt3 is roughly at parity or
+somewhat slower, because the direct polyfit always solves all six quadratic
+coefficients whatever you ask for; it wins decisively once you want more than
+one product of the same fit (~5x on four curvatures). The hillshade row is the
+only compiled-vs-compiled comparison (libtopotoolbox) and lsdtt3 still loses it
+by ~3x even after the 5.2x rewrite - the remaining cost there is the per-pixel
+3x3 nodata check, not the arithmetic.
 
 Threading buys only ~1.3-1.7x on 8 cores, not 8x — worth investigating
 separately.
