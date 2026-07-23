@@ -353,6 +353,12 @@ fi
 cp -a "$GDAL_DATA_DIR" "$STAGE_SHARE/gdal"
 cp -a "$PROJ_DATA_DIR" "$STAGE_SHARE/proj"
 
+# lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3)
+if [[ -f "$REPO_ROOT/data/crn_parameters.nc" ]]; then
+    mkdir -p "$STAGE_SHARE/lsdtt3"
+    cp -a "$REPO_ROOT/data/crn_parameters.nc" "$STAGE_SHARE/lsdtt3/"
+fi
+
 if [[ -f "$REPO_ROOT/LICENSE" ]]; then
     cp -a "$REPO_ROOT/LICENSE" "$STAGE_DIR/LICENSE"
 fi

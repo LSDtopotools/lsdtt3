@@ -63,7 +63,7 @@ The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `crn_nc_file` | string | `` | Path to `crn_parameters.nc` (ERA40 grids + Muscheler VDM record). Required for ERA40 atmosphere and palaeomagnetic correction. Leave empty to use the standard (SLHL) atmosphere with no correction. |
+| `crn_nc_file` | string | `` | Path to `crn_parameters.nc` (ERA40 grids + Muscheler VDM record), for the ERA40 atmosphere and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically relative to the executable); if that is missing too, the standard (SLHL) atmosphere is used with no correction. |
 | `sample_age_yr` | float | `0` | Sample exposure age (yr BP). Used for palaeomagnetic correction. Set > 0 to apply time-integrated Muscheler VDM correction. Requires `crn_nc_file`. |
 
 ---

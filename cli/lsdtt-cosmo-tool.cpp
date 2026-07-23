@@ -54,6 +54,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_exe_path.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
@@ -133,8 +134,9 @@ int main(int argc, char* argv[])
     string_default_map["crn_nc_file"] = "";
     help_map["crn_nc_file"] = {"string","",
         "Path to crn_parameters.nc (ERA40 grids + Muscheler VDM record).",
-        "Required for ERA40 atmosphere and paleomagnetic correction. "
-        "Leave empty to use the standard (SLHL) atmosphere with no paleomagetic correction.",
+        "For the ERA40 atmosphere and paleomagnetic correction. Leave empty to use the "
+        "crn_parameters.nc bundled with lsdtt3 (found automatically); if that is not "
+        "present either, the standard (SLHL) atmosphere is used with no correction.",
         "Atmosphere and palaeomagnetic correction", "param", ""};
 
     float_default_map["sample_age_yr"] = 0.0f;
@@ -292,11 +294,14 @@ int main(int argc, char* argv[])
 
     const std::string points_path = pp.add_read_path_if_needed(sf["points_filename"]);
     const std::string write_base  = pp.get_full_write_path();
+    // If the user does not give a path, fall back to the crn_parameters.nc bundled
+    // with lsdtt3 (located relative to this executable). Empty => standard atmosphere.
     const std::string crn_nc_file = sf["crn_nc_file"].empty()
-        ? "" : pp.add_read_path_if_needed(sf["crn_nc_file"]);
+        ? lsdtt::default_crn_nc_path()
+        : pp.add_read_path_if_needed(sf["crn_nc_file"]);
     const double sample_age_yr    = static_cast<double>(ff["sample_age_yr"]);
 
-    // Load ERA40 / Muscheler NC data if requested
+    // Load ERA40 / Muscheler NC data if available
     lsdtt::CrnNcData crn_nc;
     if (!crn_nc_file.empty())
     {

@@ -295,7 +295,7 @@ lsdtt-drainage-analysis     my_params.driver
 |---|---|---|
 | `lsdtt-cosmo-tool` | Basin-averaged CRN erosion-rate inversion. Reads measured nuclide concentrations, computes Stone 2000 production, snaps points to D8 network, inverts via Newton-Raphson + bisection. Optional ERA40 / palaeomagnetic correction (requires NetCDF). | `docs/cli_reference/cli_reference_lsdtt_cosmo_tool.md` |
 | `lsdtt-cosmo-prediction` | Predicts CRN concentrations across a DEM: steady-state, step-change transient, and erosion-weighted accumulated concentration. | `docs/cli_reference/cli_reference_lsdtt_cosmo_prediction.md` |
-| `lsdtt-crn-column-tool` | 1-D transient cosmogenic nuclide column simulation. Steady-state, step-change, and full-transient (user-supplied erosion history) modes. No DEM required. | `docs/cli_reference/cli_reference_lsdtt_crn_column_tool.md` |
+| `lsdtt-cosmo-column-tool` | 1-D transient cosmogenic nuclide column simulation. Steady-state, step-change, and full-transient (user-supplied erosion history) modes. No DEM required. | `docs/cli_reference/cli_reference_lsdtt_cosmo_column_tool.md` |
 
 ### Landscape evolution
 

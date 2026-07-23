@@ -1,0 +1,4 @@
+# Treat binary data files as binary so no platform (esp. Windows with
+# core.autocrlf) performs end-of-line translation that would corrupt them.
+*.nc   binary
+*.tif  binary

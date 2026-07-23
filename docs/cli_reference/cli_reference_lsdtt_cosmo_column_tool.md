@@ -1,4 +1,4 @@
-# CLI reference: lsdtt-crn-column-tool
+# CLI reference: lsdtt-cosmo-column-tool
 
 Simulates cosmogenic nuclide concentrations (¹⁰Be, ²⁶Al, ¹⁴C) in a bedrock or sediment column undergoing a known or hypothesised erosion history. No DEM or raster is required — this is a purely 1-D particle calculation.
 
@@ -7,10 +7,10 @@ Three simulation modes are available, selected by `column_mode`.
 ## Usage
 
 ```
-lsdtt-crn-column-tool <path> <parameter_file>
-lsdtt-crn-column-tool <parameter_file>         # path defaults to ./
-lsdtt-crn-column-tool -h                       # print help and exit
-lsdtt-crn-column-tool -v                       # print version and exit
+lsdtt-cosmo-column-tool <path> <parameter_file>
+lsdtt-cosmo-column-tool <parameter_file>         # path defaults to ./
+lsdtt-cosmo-column-tool -h                       # print help and exit
+lsdtt-cosmo-column-tool -v                       # print version and exit
 ```
 
 ## Parameter file format

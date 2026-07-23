@@ -49,6 +49,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_exe_path.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
@@ -195,7 +196,8 @@ int main(int argc, char* argv[])
     string_default_map["crn_nc_file"] = "";
     help_map["crn_nc_file"] = {"string","",
         "Path to crn_parameters.nc for ERA40 atmospheric scaling and palaeomagnetic correction.",
-        "Leave empty for standard-atmosphere Stone 2000 (no palaeomagnetic correction).",
+        "Leave empty to use the crn_parameters.nc bundled with lsdtt3 (found "
+        "automatically); if absent, standard-atmosphere Stone 2000 (no palaeomagnetic correction).",
         "Production raster", "param", "write_production_raster"};
 
     float_default_map["sample_age_yr"] = 0.0f;
@@ -448,9 +450,13 @@ int main(int argc, char* argv[])
     {
         std::cout << "Computing Stone 2000 production raster...\n";
         lsdtt::CrnNcData crn_nc;
-        if (!sf["crn_nc_file"].empty())
+        // Fall back to the bundled crn_parameters.nc (relative to this executable)
+        // when the user gives no path. Empty => standard atmosphere.
+        const std::string nc_path = sf["crn_nc_file"].empty()
+            ? lsdtt::default_crn_nc_path()
+            : pp.add_read_path_if_needed(sf["crn_nc_file"]);
+        if (!nc_path.empty())
         {
-            const std::string nc_path = pp.add_read_path_if_needed(sf["crn_nc_file"]);
             std::cout << "  Loading CRN NC data: " << nc_path << "\n";
             crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
         }

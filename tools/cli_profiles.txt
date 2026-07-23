@@ -35,7 +35,7 @@ core lsdtt-surface-metrics
 core lsdtt-spectral-analysis
 core lsdtt-cosmo-tool
 core lsdtt-cosmo-prediction
-core lsdtt-crn-column-tool
+core lsdtt-cosmo-column-tool
 core lsdtt-mountain-front
 core lsdtt-raster-calculator
 core lsdtt-ridgeline-analysis

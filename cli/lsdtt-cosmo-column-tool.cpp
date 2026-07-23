@@ -1,4 +1,4 @@
-// lsdtt-crn-column-tool.cpp
+// lsdtt-cosmo-column-tool.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -6,7 +6,7 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 //
 // -----------------------------------------------------------------------------
-// lsdtt-crn-column-tool
+// lsdtt-cosmo-column-tool
 //
 // Simulates cosmogenic nuclide concentrations in a bedrock/sediment column
 // undergoing known or hypothesised erosion history.  No DEM or raster is
@@ -37,8 +37,8 @@
 //                 [use_initial_concentration, initial_*_conc_atoms_g]
 //
 // Usage:
-//   lsdtt-crn-column-tool <path> <parameter_file>
-//   lsdtt-crn-column-tool <parameter_file>
+//   lsdtt-cosmo-column-tool <path> <parameter_file>
+//   lsdtt-cosmo-column-tool <parameter_file>
 // -----------------------------------------------------------------------------
 
 #include <cmath>
@@ -56,14 +56,14 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
-static const std::string k_tool_name = "lsdtt-crn-column-tool";
+static const std::string k_tool_name = "lsdtt-cosmo-column-tool";
 
 // ---------------------------------------------------------------------------
 static void print_banner()
 {
     std::cout
         << "========================================================\n"
-        << "|| Welcome to lsdtt-crn-column-tool                  ||\n"
+        << "|| Welcome to lsdtt-cosmo-column-tool                 ||\n"
         << "|| Cosmogenic nuclide column / transient simulation   ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                    ||\n"
         << "========================================================\n"

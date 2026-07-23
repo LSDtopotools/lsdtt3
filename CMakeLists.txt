@@ -515,7 +515,7 @@ lsdtt_cli(lsdtt-water-line-repair      cli/lsdtt-water-line-repair.cpp)
 lsdtt_cli(lsdtt-water-centreline       cli/lsdtt-water-centreline.cpp)
 lsdtt_cli(lsdtt-cosmo-tool             cli/lsdtt-cosmo-tool.cpp)
 lsdtt_cli(lsdtt-cosmo-prediction       cli/lsdtt-cosmo-prediction.cpp)
-lsdtt_cli(lsdtt-crn-column-tool        cli/lsdtt-crn-column-tool.cpp)
+lsdtt_cli(lsdtt-cosmo-column-tool      cli/lsdtt-cosmo-column-tool.cpp)
 lsdtt_cli(lsdtt-marsh-topography       cli/lsdtt-marsh-topography.cpp)
 lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
 lsdtt_cli(lsdtt-bearing-comparison     cli/lsdtt-bearing-comparison.cpp)
@@ -555,6 +555,17 @@ install(DIRECTORY src/core/ DESTINATION include/lsdtt3
 install(DIRECTORY src/utils/ DESTINATION include/lsdtt3/utils
     FILES_MATCHING PATTERN "*.hpp"
 )
+
+# =============================================================================
+# Bundled runtime data (share/lsdtt3)
+# =============================================================================
+# crn_parameters.nc ships with lsdtt3 so the cosmo tools work with no download.
+# Copy it into the build tree (so in-build binaries find <exe>/share/lsdtt3/...)
+# and install it to share/lsdtt3 (so installed binaries find <exe>/../share/lsdtt3/...).
+file(COPY ${CMAKE_SOURCE_DIR}/data/crn_parameters.nc
+     DESTINATION ${CMAKE_BINARY_DIR}/share/lsdtt3)
+
+install(FILES data/crn_parameters.nc DESTINATION share/lsdtt3)
 
 
 # =============================================================================

@@ -36,7 +36,7 @@ lsdtt3/
 │   ├── lsdtt-chi-analysis.cpp             *(requires Eigen3)*
 │   ├── lsdtt-cosmo-prediction.cpp
 │   ├── lsdtt-cosmo-tool.cpp
-│   ├── lsdtt-crn-column-tool.cpp
+│   ├── lsdtt-cosmo-column-tool.cpp
 │   ├── lsdtt-drainage-analysis.cpp
 │   ├── lsdtt-feature-finder.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
@@ -706,7 +706,7 @@ Current CLI programs are:
   Outputs: `_<nuclide>_crn_conc.tif`, `_<nuclide>_step_crn_conc.tif`,
   `_<nuclide>_crn_acc.tif`.
 
-- **`lsdtt-crn-column-tool.cpp`**  
+- **`lsdtt-cosmo-column-tool.cpp`**  
   1-D cosmogenic nuclide column simulation (no DEM required).  Three modes:
   `steady_state`, `step_change`, and `full_transient` (user-supplied erosion-history CSV).
   Uses `lsdtt_crn_column` and `lsdtt_crn_parameters`.

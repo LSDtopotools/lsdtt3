@@ -82,7 +82,7 @@ By default the Stone 2000 spallation production rate is computed from DEM elevat
 | `load_production_raster` | bool | `false` | Load production raster from disk instead of computing. |
 | `production_raster_prefix` | string | `NULL` | Filename prefix (no extension) for a pre-computed production raster. Path: `read_path + prefix + .tif`. Used when `load_production_raster: true`. |
 | `write_production_raster` | bool | `false` | Write the computed production raster to disk. Output: `<write_fname>_crn_prod.tif`. |
-| `crn_nc_file` | string | _(empty)_ | Path to `crn_parameters.nc` for ERA40 atmospheric scaling and palaeomagnetic correction. Leave empty for standard-atmosphere Stone 2000. |
+| `crn_nc_file` | string | _(empty)_ | Path to `crn_parameters.nc` for ERA40 atmospheric scaling and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically); if absent, standard-atmosphere Stone 2000. |
 | `sample_age_yr` | float | `0` | Sample exposure age (yr) for palaeomagnetic correction. Only used when `crn_nc_file` is set and value > 0. |
 
 ---
