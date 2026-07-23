@@ -1,4 +1,21 @@
 #pragma once
+// =============================================================================
+//  DO NOT CHANGE THE NUMBERS THIS CODE PRODUCES — ask Simon Mudd first.
+//
+//  The cosmogenic calculations in this file (the CAIRN erosion-rate method and
+//  the step-change concentration solutions) were checked by hand over several
+//  years. To stop anyone changing those numbers by accident, the test suite
+//  keeps a stored list of known-correct output values in
+//  tests/expected/cosmo/numerics_sentinel.csv. The tests in
+//  tests/cpp/test_cosmo_physics.cpp re-run these calculations and compare the
+//  results against that stored list to 12 decimal places.
+//
+//  So if you edit this file and any output value changes — even from a refactor
+//  or an algebra rewrite you believe is harmless — those tests will fail. When
+//  that happens, do NOT edit the stored list to make the tests pass again. A
+//  changed value has to be reviewed and approved by Simon Mudd before it is
+//  committed.
+// =============================================================================
 #include "lsdtt_crn_parameters.hpp"
 #include "lsdtt_crn_particle.hpp"
 #include <string>

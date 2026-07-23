@@ -75,8 +75,24 @@ What it checks:
   `tests/expected/cosmo/cronus_v3_reference.csv`. Pressure is submitted directly
   so atmosphere-model differences are excluded from the comparison by
   construction.
-- **Plottable CSVs** — written to the test output directory for inspection with
-  lsdviztools3.
+- **Geomagnetic / time-varying production (G1–G4, §6c(A))** — the Muscheler/
+  Knudsen VDM time-integrated Stone/Lal correction (`stone2000sp_paleomag`) and
+  the ERA40 atmosphere. G1 static/degenerate limits (a constant-VDM record must
+  reproduce the time-independent factor exactly; `!loaded`/`age≤0` fallbacks),
+  G2 physics invariants (high-latitude insensitivity, equatorial sign and
+  monotonicity, ERA40 grid interpolation), G4 golden trajectories against the
+  committed `data/crn_parameters.nc` (Knudsen VDM), and the equatorial LSDTT-1
+  geomag ON/OFF delta. These run against the bundled `crn_parameters.nc`,
+  **auto-discovered** relative to the executable (`src/core/lsdtt_exe_path.hpp`).
+- **Plottable CSVs** — `production_vs_depth.csv`, `geomag_scaling.csv`,
+  `geomag_on_off_LSDTT1.csv` and the earlier ones, written to the test output
+  directory for inspection with lsdviztools3.
+
+The three cosmo CLIs have offline integration tests (labels `smoke;cli;cosmo`
+and `failure;cli;cosmo`): `smoke_cosmo_{tool,prediction,column_tool}_help` check
+that every parameter declaration renders, and `failure_cosmo_tool_geographic_crs`
+checks that a non-projected (EPSG:4326) DEM is rejected with a clean FATAL rather
+than a crash or a silent wrong-units run.
 
 Refreshing the CRONUS reference is a **manual, reviewable** step and is never
 done by CI:

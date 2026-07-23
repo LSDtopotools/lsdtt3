@@ -1,3 +1,23 @@
+// =============================================================================
+//  DO NOT CHANGE THE NUMBERS THIS CODE PRODUCES — ask Simon Mudd first.
+//
+//  This applies to the concentration and erosion-rate (inversion) calculations
+//  in this file. The raster reading/writing and flow-routing helpers here are
+//  ordinary code and can be changed normally.
+//
+//  Those cosmogenic calculations were checked by hand over several years. To
+//  stop anyone changing their results by accident, the test suite keeps a stored
+//  list of known-correct output values in
+//  tests/expected/cosmo/numerics_sentinel.csv. The tests in
+//  tests/cpp/test_cosmo_physics.cpp re-run these calculations and compare the
+//  results against that stored list to 12 decimal places.
+//
+//  So if you edit those calculations and any output value changes — even from a
+//  refactor or an algebra rewrite you believe is harmless — those tests will
+//  fail. When that happens, do NOT edit the stored list to make the tests pass
+//  again. A changed value has to be reviewed and approved by Simon Mudd before
+//  it is committed.
+// =============================================================================
 #include "lsdtt_cosmo_raster_cpu.hpp"
 #include "lsdtt_crn_particle.hpp"
 #include "../utils/lsdtt_array2d.hpp"

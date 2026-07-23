@@ -1,0 +1,6 @@
+read_path: __READ_PATH__
+read_fname: tiny30_dem.tif
+write_path: __WRITE_PATH__
+write_fname: cosmo_geographic
+
+points_filename: nonexistent_points.csv

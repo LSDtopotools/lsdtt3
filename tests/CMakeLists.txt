@@ -527,3 +527,43 @@ add_test(NAME unit_cosmo_physics
                  ${CMAKE_CURRENT_SOURCE_DIR}/expected/cosmo/numerics_sentinel.csv)
 set_tests_properties(unit_cosmo_physics PROPERTIES LABELS "unit;cosmo")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output)
+
+# -----------------------------------------------------------------------------
+# Cosmo CLI integration tests (plan Phase 4; docs/testing_and_benchmarking.md)
+#
+# Offline: they exercise parameter-file parsing, help rendering, and the
+# projected-CRS guard on the three cosmo CLIs. The help tests also drive the
+# bundled-crn_parameters.nc auto-discovery path (src/core/lsdtt_exe_path.hpp)
+# indirectly; the direct auto-discovery check lives in unit_cosmo_physics.
+# -----------------------------------------------------------------------------
+
+# Robustness: a geographic (non-projected) DEM must be a clean FATAL, not a
+# crash or a silent wrong-units run. tiny30_dem.tif is EPSG:4326.
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_tool_geographic_crs
+    lsdtt-cosmo-tool
+    cosmo_tool_geographic_crs.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "DEM must be in a projected CRS"
+)
+set_tests_properties(failure_cosmo_tool_geographic_crs
+    PROPERTIES LABELS "failure;cli;cosmo")
+
+# Help must render every parameter without a parameter file and without
+# touching the DEM or the network. Guards that the parameter declarations for
+# each cosmo CLI stay well-formed.
+add_test(NAME smoke_cosmo_tool_help COMMAND lsdtt-cosmo-tool -h)
+set_tests_properties(smoke_cosmo_tool_help PROPERTIES
+    LABELS "smoke;cli;cosmo"
+    PASS_REGULAR_EXPRESSION "sample_age_yr")
+
+add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
+set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
+    LABELS "smoke;cli;cosmo"
+    PASS_REGULAR_EXPRESSION "sample_age_yr")
+
+add_test(NAME smoke_cosmo_column_tool_help COMMAND lsdtt-cosmo-column-tool -h)
+set_tests_properties(smoke_cosmo_column_tool_help PROPERTIES
+    LABELS "smoke;cli;cosmo"
+    PASS_REGULAR_EXPRESSION "nuclide")

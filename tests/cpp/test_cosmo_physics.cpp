@@ -54,6 +54,7 @@
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_crn_parameters.hpp"
 #include "lsdtt_cosmo_raster_cpu.hpp"
+#include "lsdtt_exe_path.hpp"
 
 namespace
 {
@@ -85,6 +86,27 @@ std::string diff_str(double a, double b)
     std::ostringstream os;
     os << std::setprecision(17) << a << " vs " << b;
     return os.str();
+}
+
+// =============================================================================
+// Consolidated frozen tolerances (plan Sec3b S6)
+// =============================================================================
+// Every frozen bound in this driver lives here, each carrying the measured
+// value and the date it was frozen.  Loosening any of these to make a test
+// pass is the SAME class of event as regenerating the numerics sentinel: it is
+// gated and needs Simon Mudd's review (plan S6).  Do not relax a bound to
+// silence a failure - a failure here is a result.
+namespace tol
+{
+// Phases 0-3 (measured 2026-07-16):
+constexpr double sentinel_rel = 1e-12;   // S1 numerics sentinel (pins the core)
+constexpr double e7_analytic  = 5e-7;    // E7 analytic vs integrator; worst 9.25e-8
+constexpr double e6_roundtrip = 3e-3;    // E6 forward/inverse round-trip; worst 9.93e-4
+constexpr double tc2_cronus   = 10.0;    // T-C2 vs CRONUS v3 St, percent; worst 6.65
+// Phase 5 geomagnetic (measured-then-frozen 2026-07-23; see plan Sec9b):
+constexpr double g1_static    = 1e-12;   // G1 constant-VDM correction is exactly 1
+constexpr double g4_golden    = 1e-9;    // G4 paleomag goldens; deterministic double core
+constexpr double g6c_band     = 25.0;    // 6c(A) equatorial ON-OFF |delta|, percent
 }
 
 // =============================================================================
@@ -824,7 +846,7 @@ void phase2_E7_analytic_vs_integrator(const single_basin_fixture& fx,
               << std::setprecision(3) << worst << "  (" << worst_case << ")\n"
               << std::setprecision(17);
     check("E7: analytic vs particle integrator agree (< 5e-7, float floor)",
-          worst < 5e-7, "worst = " + std::to_string(worst));
+          worst < tol::e7_analytic, "worst = " + std::to_string(worst));
     check("csv: analytic_vs_integrator.csv written", csv.good());
 }
 
@@ -880,7 +902,7 @@ void phase2_E6_round_trip(const single_basin_fixture& fx,
             check(std::string("E6: round-trip recovers eps [") + rc.nuclide
                       + "/" + rc.scheme + " eps=" + std::to_string(eps)
                       + (rc.topo != 1.0f ? " shielded" : "") + "]",
-                  rd < 3e-3,
+                  rd < tol::e6_roundtrip,
                   "recovered " + std::to_string(eps_out) + ", rel err "
                       + std::to_string(rd));
         }
@@ -1220,7 +1242,7 @@ void phase3_TC2_cronus_comparison(const std::string& expected_dir,
     // vs our time-INdependent rates - that spread is the size of the
     // geomagnetic correction itself (baseline for the Sec6 G-tests).
     check("T-C2: vs CRONUS v3 St within band (< 10 %)",
-          n_compared > 0 && worst_st < 10.0,
+          n_compared > 0 && worst_st < tol::tc2_cronus,
           "worst = " + std::to_string(worst_st) + " % (n=" + std::to_string(n_compared) + ")");
     check("csv: cronus_comparison.csv written", csv.good());
 }
@@ -1235,7 +1257,7 @@ void phase3_TC2_cronus_comparison(const std::string& expected_dir,
 // DO NOT loosen it or regenerate the file to make a failure go away - that is
 // exactly the event the sentinel exists to gate (Sec3b S6).
 
-constexpr double k_sentinel_rel_tol = 1e-12;
+constexpr double k_sentinel_rel_tol = tol::sentinel_rel;
 
 struct sentinel_entry
 {
@@ -1480,6 +1502,379 @@ void phase1_sentinel(const single_basin_fixture& fx,
 }
 
 // =============================================================================
+// Phase 4: bundled-data auto-discovery + production-vs-depth emitter (plan Sec9)
+// =============================================================================
+
+// The cosmo CLIs locate the shipped crn_parameters.nc relative to the running
+// executable (src/core/lsdtt_exe_path.hpp -> default_crn_nc_path()).  The test
+// binary lives in build/tests/, so the build-tree layout <exe>/../share/lsdtt3
+// resolves to build/share/lsdtt3/crn_parameters.nc.  This guards the discovery
+// path the CLIs rely on when the user gives no crn_nc_file.
+lsdtt::CrnNcData phase4_auto_discovery()
+{
+    const std::string nc_path = lsdtt::default_crn_nc_path();
+    const bool found = !nc_path.empty();
+    check("Phase4: bundled crn_parameters.nc auto-discovered via exe path",
+          found, "default_crn_nc_path() returned empty (share/lsdtt3 not staged?)");
+
+    lsdtt::CrnNcData nc;
+    if (found)
+    {
+        nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
+        check("Phase4: discovered crn_parameters.nc loads (ERA40 + VDM present)",
+              nc.loaded,
+              "load_nc_data reported loaded=false for " + nc_path);
+    }
+    return nc;
+}
+
+// production_vs_depth.csv (plan Sec7 / Fig. 8 analogue): per-pathway and total
+// production P_j(z) = P0 * F_j * exp(-z/Gamma_j) over depth for each scheme and
+// nuclide.  Pure library values (no external oracle - the Balco full-integration
+// reference of plan Sec6d D1 is out of scope here).  Asserts the physical
+// invariants: total production is positive, strictly decreasing with depth, and
+// equals P0*sum(F) at the surface.
+void phase4_production_vs_depth(const std::string& out_dir)
+{
+    csv_writer csv(out_dir + "/production_vs_depth.csv",
+                   "nuclide,scheme,depth_gcm2,P_spallation,P_slowmuon,"
+                   "P_fastmuon,P_veryfastmuon,P_total,source");
+    const char* schemes[]  = {"Braucher", "BraucherBorchers", "newCRONUS"};
+    const char* nuclides[] = {"Be10", "Al26", "C14"};
+    const double depths[]  = {0.0, 50.0, 100.0, 200.0, 500.0, 1000.0,
+                              2000.0, 3000.0, 5000.0};
+    bool ok = true;
+    std::string bad;
+    for (const char* scheme : schemes)
+    {
+        for (const char* nuc : nuclides)
+        {
+            const ref_params p = ref_params_from_scheme(scheme, nuc);
+            double f_sum = 0.0;
+            for (int j = 0; j < 4; ++j) f_sum += p.F[j];
+
+            double prev_total = -1.0;
+            for (double z : depths)
+            {
+                double pj[4], total = 0.0;
+                for (int j = 0; j < 4; ++j)
+                {
+                    pj[j] = p.P0 * p.F[j] * std::exp(-z / p.Gamma[j]);
+                    total += pj[j];
+                }
+                csv.row(nuc, scheme, z, pj[0], pj[1], pj[2], pj[3], total,
+                        "lsdtt");
+                if (!std::isfinite(total) || total <= 0.0) { ok = false; bad = "non-positive total"; }
+                if (prev_total > 0.0 && total >= prev_total) { ok = false; bad = "not decreasing with depth"; }
+                if (z == 0.0 && !approx_rel(total, p.P0 * f_sum, 1e-12))
+                { ok = false; bad = "surface != P0*sum(F)"; }
+                prev_total = total;
+            }
+        }
+    }
+    check("Phase4: production-vs-depth positive, monotone, surface==P0*sum(F)",
+          ok, bad);
+    check("csv: production_vs_depth.csv written", csv.good());
+}
+
+// =============================================================================
+// Phase 5: geomagnetic / time-varying production tests G1-G4 + Sec6c(A)
+// =============================================================================
+//
+// Exercises stone2000sp_paleomag (the Muscheler/Knudsen VDM time-integrated
+// Stone/Lal correction) and the ERA40 atmosphere - the ONLY physics in the
+// core that had zero coverage.  The core is LOCKED: these tests call it
+// read-only, build synthetic CrnNcData in-code (no external file), and pin our
+// trajectory against the committed data/crn_parameters.nc (Knudsen VDM record).
+// They never assert exact agreement with CRONUS's Lm/LSDn (which use a
+// different VDM record); see plan Sec6c.
+
+// Synthetic CrnNcData with a CONSTANT VDM record (G1 constant-field limit).
+// loaded=true is enough for stone2000sp_paleomag: it only reads muscheler_*.
+// A constant VDM makes the time-average equal the modern reference, so the
+// correction is exactly 1 for any age/lat/pressure - this validates the
+// time-integration loop itself, independent of any real record.
+lsdtt::CrnNcData make_constant_vdm_nc(double vdm_value, int n = 50,
+                                      double dt_yr = 1000.0)
+{
+    lsdtt::CrnNcData nc;
+    for (int i = 0; i < n; ++i)
+    {
+        nc.muscheler_time.push_back(static_cast<double>(i) * dt_yr);
+        nc.muscheler_vdm.push_back(static_cast<float>(vdm_value));
+    }
+    nc.loaded = true;
+    return nc;
+}
+
+// Synthetic record: modern (index 0) VDM, then a uniform "past" level for t>0.
+// Lets a test dial the sign/size of the correction deterministically.
+lsdtt::CrnNcData make_two_level_vdm_nc(double modern_vdm, double past_vdm,
+                                       int n = 50, double dt_yr = 1000.0)
+{
+    lsdtt::CrnNcData nc;
+    for (int i = 0; i < n; ++i)
+    {
+        nc.muscheler_time.push_back(static_cast<double>(i) * dt_yr);
+        nc.muscheler_vdm.push_back(
+            static_cast<float>(i == 0 ? modern_vdm : past_vdm));
+    }
+    nc.loaded = true;
+    return nc;
+}
+
+// G1 - static-field / degenerate limits.
+void phase5_G1_static_limits(const lsdtt::CrnNcData& nc_real)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+
+    // G1(a) constant-VDM record reproduces the time-independent Stone factor to
+    // machine precision for ANY age/lat/pressure (correction == 1 exactly).
+    {
+        const lsdtt::CrnNcData nc = make_constant_vdm_nc(7.5);
+        bool ok = true;
+        std::string bad;
+        for (double lat : {0.0, 30.0, 60.0})
+            for (double P : {1013.25, 700.0})
+                for (double age : {1000.0, 20000.0, 49000.0})
+                {
+                    const double on  = cp.stone2000sp_paleomag(lat, P, 1.0, age, nc);
+                    const double off = cp.stone2000sp(lat, P, 1.0);
+                    if (!approx_rel(on, off, tol::g1_static))
+                    { ok = false; bad = diff_str(on, off); }
+                }
+        check("G1: constant-VDM record == time-independent Stone (any age)",
+              ok, bad);
+    }
+
+    // G1(b) degenerate fallbacks return the time-independent result EXACTLY:
+    // not loaded, age <= 0, and fewer than two record points within the age.
+    {
+        const lsdtt::CrnNcData empty;                 // loaded == false
+        const lsdtt::CrnNcData nc = make_constant_vdm_nc(7.5, 50, 1000.0);
+        const double lat = 0.0, P = 1013.25;
+        const double off = cp.stone2000sp(lat, P, 1.0);
+        const bool ok =
+            cp.stone2000sp_paleomag(lat, P, 1.0, 20000.0, empty) == off   // not loaded
+         && cp.stone2000sp_paleomag(lat, P, 1.0, 0.0,     nc)    == off   // age == 0
+         && cp.stone2000sp_paleomag(lat, P, 1.0, -5.0,    nc)    == off   // age < 0
+         && cp.stone2000sp_paleomag(lat, P, 1.0, 500.0,   nc)    == off;  // < 2 pts <= age
+        check("G1: degenerate fallbacks return time-independent Stone (exact)",
+              ok);
+    }
+
+    // G1(a') real record at age 0 is exactly the time-independent Stone factor
+    // (the geomag-OFF path the CLIs use when sample_age_yr == 0).
+    if (nc_real.loaded)
+    {
+        const double lat = 0.0, P = 1013.25;
+        check("G1: real nc at age=0 == time-independent Stone (exact)",
+              cp.stone2000sp_paleomag(lat, P, 1.0, 0.0, nc_real)
+                  == cp.stone2000sp(lat, P, 1.0));
+    }
+}
+
+// G2 - physics invariants (synthetic low-/high-field records).
+void phase5_G2_invariants()
+{
+    lsdtt::lsdtt_crn_parameters cp;
+
+    // G2(a) HIGH geomagnetic latitude: above the cutoff-rigidity knee the Stone
+    // factor is on its polar plateau, so production is insensitive to VDM - a
+    // large field swing barely changes the time-averaged scaling at 70 deg.
+    {
+        const double lat = 70.0, P = 1007.0, age = 30000.0;
+        const double base    = cp.stone2000sp(lat, P, 1.0);
+        const double sf_low  = cp.stone2000sp_paleomag(lat, P, 1.0, age,
+                                   make_constant_vdm_nc(3.0));
+        const double sf_high = cp.stone2000sp_paleomag(lat, P, 1.0, age,
+                                   make_two_level_vdm_nc(8.0, 12.0));
+        check("G2a: high-lat production insensitive to VDM (<0.5%)",
+              std::abs(sf_low - base) / base < 5e-3
+                  && std::abs(sf_high - base) / base < 5e-3,
+              "low=" + diff_str(sf_low, base) + " high=" + diff_str(sf_high, base));
+    }
+
+    // G2(b) LOW latitude sign: at the equator higher past field -> higher cutoff
+    // rigidity -> LOWER production (correction < 1); lower past field -> HIGHER
+    // production (correction > 1).
+    {
+        const double lat = 0.0, P = 1013.25, age = 30000.0;
+        const double base = cp.stone2000sp(lat, P, 1.0);
+        const double sf_lowfield  = cp.stone2000sp_paleomag(lat, P, 1.0, age,
+                                        make_two_level_vdm_nc(8.0, 4.0));
+        const double sf_highfield = cp.stone2000sp_paleomag(lat, P, 1.0, age,
+                                        make_two_level_vdm_nc(8.0, 12.0));
+        check("G2b: equator low past-field -> more production (corr>1)",
+              sf_lowfield > base, diff_str(sf_lowfield, base));
+        check("G2b: equator high past-field -> less production (corr<1)",
+              sf_highfield < base, diff_str(sf_highfield, base));
+    }
+
+    // G2(c) monotonicity: at the equator a deeper low-field excursion gives a
+    // larger correction (production rises as the past field falls).
+    {
+        const double lat = 0.0, P = 1013.25, age = 30000.0;
+        double prev = -1.0;
+        bool mono = true;
+        for (double past : {8.0, 6.0, 4.0, 2.0})   // modern 8, past field falling
+        {
+            const double sf = cp.stone2000sp_paleomag(lat, P, 1.0, age,
+                                  make_two_level_vdm_nc(8.0, past));
+            if (prev > 0.0 && sf < prev) mono = false;
+            prev = sf;
+        }
+        check("G2c: equatorial correction monotone in past-field depth", mono);
+    }
+
+    // G2(d) ERA40 interpolation on a synthetic UNIFORM grid: bilinear returns
+    // the constant exactly, pressure at z=0 equals the SLP, and pressure falls
+    // with elevation; the difference from the standard atmosphere is bounded.
+    {
+        lsdtt::CrnNcData nc;
+        nc.era40_lat = {90.0, -90.0};    // descending
+        nc.era40_lon = {0.0, 360.0};     // ascending
+        const float Pconst = 1013.0f, Tconst = 288.0f;
+        nc.era40_meanP = {Pconst, Pconst, Pconst, Pconst};
+        nc.era40_meanT = {Tconst, Tconst, Tconst, Tconst};
+        nc.lifton_lr   = {-6.1517e-3, 0, 0, 0, 0, 0, 0};   // constant lapse rate
+        nc.muscheler_time = {0.0, 1000.0};
+        nc.muscheler_vdm  = {7.5f, 7.5f};
+        nc.loaded = true;
+
+        const double p0 = lsdtt::lsdtt_crn_parameters::atmospheric_pressure_era40(
+            0.0, 45.0, 0.0, nc);
+        check("G2d: ERA40 uniform-grid pressure at z=0 == SLP",
+              approx_rel(p0, Pconst, 1e-6), diff_str(p0, Pconst));
+
+        const double p1000 = lsdtt::lsdtt_crn_parameters::atmospheric_pressure_era40(
+            0.0, 45.0, 1000.0, nc);
+        const double p_std = lsdtt::lsdtt_crn_parameters::atmospheric_pressure_standard(1000.0);
+        check("G2d: ERA40 pressure falls with elevation and is bounded",
+              p1000 < p0 && std::abs(p1000 - p_std) < 50.0,
+              "era40=" + std::to_string(p1000) + " std=" + std::to_string(p_std));
+    }
+}
+
+// G4 - golden trajectories against the committed Knudsen VDM record.  These pin
+// OUR time-integrated Stone factor at a few (lat, pressure, age) triplets;
+// measured 2026-07-23 against data/crn_parameters.nc and frozen at tol::g4_golden.
+// They are NOT a CRONUS comparison (different VDM record - plan Sec6c).
+void phase5_G4_golden_trajectories(const lsdtt::CrnNcData& nc_real,
+                                   const std::string& out_dir)
+{
+    if (!nc_real.loaded)
+    {
+        check("G4: golden trajectories (SKIPPED - real nc not loaded)", true);
+        return;
+    }
+    lsdtt::lsdtt_crn_parameters cp;
+    struct golden { double lat, P, age, expected; };
+    const golden g[] = {
+        {0.0,  1013.25, 20000.0, 0.60474384759202182},
+        {0.0,  700.0,   20000.0, 4.738527144189737},
+        {30.0, 1013.25, 20000.0, 0.82691194517522892},
+        {60.0, 1013.25, 20000.0, 1.0026856559878936},
+        {0.0,  1013.25, 50000.0, 0.70258020553273326},
+        {70.0, 1007.0,  20000.0, 1.0612665967394139},
+    };
+    csv_writer csv(out_dir + "/geomag_scaling.csv",
+                   "lat,pressure_hPa,t_yr,sf_paleomag,sf_modern,ratio,source");
+    bool ok = true;
+    std::string bad;
+    for (const golden& x : g)
+    {
+        const double got = cp.stone2000sp_paleomag(x.lat, x.P, 1.0, x.age, nc_real);
+        const double off = cp.stone2000sp(x.lat, x.P, 1.0);
+        csv.row(x.lat, x.P, x.age, got, off, got / off, "lsdtt_knudsen");
+        if (!approx_rel(got, x.expected, tol::g4_golden))
+        { ok = false; bad = "lat=" + std::to_string(x.lat) + " age="
+                            + std::to_string(x.age) + ": " + diff_str(got, x.expected); }
+    }
+    check("G4: paleomag goldens match frozen Knudsen trajectory (1e-9)", ok, bad);
+    check("csv: geomag_scaling.csv written", csv.good());
+}
+
+// Sec6c(A) - equatorial geomag ON/OFF at the LSDTT-1 fixture (lat 0, 250 m),
+// where the VDM/cutoff-rigidity effect is strongest.  Reports the ON-OFF
+// production-scaling delta across integration ages and asserts its documented
+// SIGN behaviour and a frozen magnitude band.  The Knudsen record has HIGHER-
+// than-modern VDM in the last few kyr (vdm[1..] > vdm[0]) and lower-than-modern
+// field deeper in time, so the delta reverses sign from short to long ages.
+//
+// The frozen CRONUS reference's Lm-vs-St spread at LSDTT-1 is read for CONTEXT
+// only: it is the size of a time-dependent correction, but its sign need not
+// match ours - CRONUS uses a different (Pavon-family) VDM record, so absolute
+// agreement is not expected and is NOT asserted (plan Sec6c).
+void phase5_G6c_equator_on_off(const lsdtt::CrnNcData& nc_real,
+                               const std::string& expected_dir,
+                               const std::string& out_dir)
+{
+    if (!nc_real.loaded)
+    {
+        check("6cA: equatorial ON/OFF (SKIPPED - real nc not loaded)", true);
+        return;
+    }
+    lsdtt::lsdtt_crn_parameters cp;
+    const double lat = 0.0;
+    const double P =
+        lsdtt::lsdtt_crn_parameters::atmospheric_pressure_standard(250.0);
+    const double off = cp.stone2000sp(lat, P, 1.0);
+
+    csv_writer csv(out_dir + "/geomag_on_off_LSDTT1.csv",
+                   "lat,elev_m,t_yr,sf_off,sf_on,delta_pct,source");
+    double worst_abs = 0.0;
+    for (double age : {5000.0, 10000.0, 20000.0, 49500.0})
+    {
+        const double on  = cp.stone2000sp_paleomag(lat, P, 1.0, age, nc_real);
+        const double dpct = 100.0 * (on - off) / off;
+        csv.row(lat, 250.0, age, off, on, dpct, "lsdtt_knudsen");
+        worst_abs = std::max(worst_abs, std::abs(dpct));
+    }
+
+    const double d_short =
+        100.0 * (cp.stone2000sp_paleomag(lat, P, 1.0, 5000.0, nc_real) - off) / off;
+    const double d_long =
+        100.0 * (cp.stone2000sp_paleomag(lat, P, 1.0, 49500.0, nc_real) - off) / off;
+
+    check("6cA: short-age ON-OFF delta negative (recent VDM above modern)",
+          d_short < 0.0, "delta = " + std::to_string(d_short) + " %");
+    check("6cA: record-spanning ON-OFF delta positive (deep field below modern)",
+          d_long > 0.0, "delta = " + std::to_string(d_long) + " %");
+    check("6cA: equatorial ON-OFF |delta| within frozen band (<=25%)",
+          worst_abs <= tol::g6c_band,
+          "worst = " + std::to_string(worst_abs) + " %");
+
+    // CONTEXT (reported, not asserted): CRONUS St/Lm spread at LSDTT-1.
+    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
+    std::ifstream in(ref_path);
+    double st = 0.0, lm = 0.0;
+    if (in.good())
+    {
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (line.rfind("LSDTT-1,Be-10,St,", 0) == 0)
+                st = std::stod(line.substr(line.find(",St,") + 4));
+            else if (line.rfind("LSDTT-1,Be-10,Lm,", 0) == 0)
+                lm = std::stod(line.substr(line.find(",Lm,") + 4));
+        }
+    }
+    if (st > 0.0 && lm > 0.0)
+    {
+        std::cout << "      6cA CONTEXT: CRONUS LSDTT-1 Be-10 St=" << st
+                  << " Lm=" << lm << " (Lm/St=" << lm / st << ", +"
+                  << std::setprecision(3) << 100.0 * (lm - st) / st << " %); "
+                  << "our equatorial ON-OFF production delta spans "
+                  << std::setprecision(4) << d_short << " to " << d_long
+                  << " % across 5-49.5 kyr (Knudsen VDM; opposite net sign to "
+                  << "CRONUS is the record difference, plan Sec6c).\n"
+                  << std::setprecision(17);
+    }
+    check("csv: geomag_on_off_LSDTT1.csv written", csv.good());
+}
+
+// =============================================================================
 // Phase 0 smoke tests
 // =============================================================================
 
@@ -1710,6 +2105,16 @@ int main(int argc, char** argv)
         phase3_TC1_site_curve(out_dir);
         phase3_write_cronus_fixture(out_dir);
         phase3_TC2_cronus_comparison(expected_dir, out_dir);
+
+        // Phase 4: bundled-data auto-discovery + production-vs-depth emitter.
+        const lsdtt::CrnNcData crn_nc = phase4_auto_discovery();
+        phase4_production_vs_depth(out_dir);
+
+        // Phase 5: geomagnetic / time-varying production (G1-G4 + Sec6c(A)).
+        phase5_G1_static_limits(crn_nc);
+        phase5_G2_invariants();
+        phase5_G4_golden_trajectories(crn_nc, out_dir);
+        phase5_G6c_equator_on_off(crn_nc, expected_dir, out_dir);
 
         phase1_sentinel(fx, flow, sentinel_path, regenerate_sentinel);
     }
