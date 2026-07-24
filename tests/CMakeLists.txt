@@ -574,9 +574,11 @@ set_tests_properties(smoke_cosmo_column_tool_help PROPERTIES
 #
 # "download -> run -> delete": run_cosmo_validation.py fetches a DEM KEYLESS via
 # lsdtt-fetch-raster (Copernicus GLO-30 / Planetary Computer -- no API key),
-# clips it, runs lsdtt-cosmo-tool, compares to the published rates in the tracked
-# sample table, appends the small frozen summary CSV, then deletes the temporary
-# working directory INCLUDING ON FAILURE (cleanup trap).
+# clips it, runs lsdtt-cosmo-tool, compares to the OCTOPUS-harvested published
+# rates in the tracked sample table, then deletes the temporary working directory
+# INCLUDING ON FAILURE (cleanup trap). Without --check a run FREEZES the summary
+# (append); the ctest test below uses --check to REGRESS a fresh run against the
+# frozen summary WITHOUT modifying the tracked file.
 # -----------------------------------------------------------------------------
 
 # Harness self-test: OFFLINE. Exercises the cleanup-trap contract (the trap fires
@@ -590,15 +592,17 @@ add_test(NAME unit_cosmo_validation_harness
                  --self-test)
 set_tests_properties(unit_cosmo_validation_harness PROPERTIES LABELS "unit;cosmo")
 
-# Real download -> run -> delete for the pilot dataset. NEEDS NETWORK and time;
-# deliberately kept OUT of the default unit;cosmo CI suite (label cosmo_realworld,
-# invoked manually via `ctest -L cosmo_realworld`). Skips (exit 77) when the
-# network/DEM source is unavailable OR the manifest/sample table is still a
-# template, so it can never turn CI red.
+# Real download -> run -> delete for the pilot dataset, in --check (regression)
+# mode: it reproduces the fresh inverted rates and compares them to the FROZEN
+# tracked summary without modifying it. NEEDS NETWORK and time; deliberately kept
+# OUT of the default unit;cosmo CI suite (label cosmo_realworld, invoked manually
+# via `ctest -L cosmo_realworld`). Skips (exit 77) when the network/DEM source is
+# unavailable OR the manifest/sample table is still a template, so it can never
+# turn CI red.
 add_test(NAME cosmo_realworld_dethier2014
          COMMAND ${Python3_EXECUTABLE}
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
-                 dethier2014
+                 dethier2014 --check
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
 set_tests_properties(cosmo_realworld_dethier2014 PROPERTIES

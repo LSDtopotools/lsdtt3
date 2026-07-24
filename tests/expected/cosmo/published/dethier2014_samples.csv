@@ -1,21 +1,39 @@
-# Dethier et al. (2014) sample table -- TEMPLATE / SCHEMA ONLY (cosmo plan Phase 6).
+# Dethier et al. (2014) Front Range 10Be basins -- REAL regression targets.
 #
-# This is a DOCUMENTED TEMPLATE, not real data. The values below are the TODO
-# sentinel, NOT measurements. Populate the real rows from the LSDTopoTools data
-# repository named in dethier2014_manifest.json (data_repo) -- do NOT copy from
-# the paper tables and do NOT invent numbers. run_cosmo_validation.py refuses to
-# run while any TODO sentinel remains, so an un-populated template cannot produce
-# a bogus comparison.
+# Provenance: harvested 2026-07-24 from the OCTOPUS database (v2.3) via WFS, NOT
+# scraped from the paper and NOT invented. OCTOPUS recalculates every rate with
+# CAIRN (Mudd et al. 2016; github LSDTopoTools_CRNBasinwide) -- the same algorithm
+# lsdtt-cosmo-tool implements -- so these are a NEAR-CAIRN oracle, not bit-exact.
+#   WFS: http://geoserver.octopusdata.org/geoserver/wfs
+#        typeName=be10-denude:crn_int_basins (+ crn_int_outlets), CQL_FILTER STUDYID='S169'
+#   OCTOPUS DBVERNO=v2.3(4)  DBDOI=10.71747/uow-... (per-feature)  STUDYID=S169
+#   Study DOI: 10.1130/G34922.1 (Dethier et al. 2014, Geology 42(2),167-170)
 #
-# Columns:
-#   sample_name        : study sample id
-#   latitude,longitude : decimal degrees (WGS84); the cosmo CLIs read these
-#   Be10_CONC          : measured 10Be concentration, atoms/g (cosmo-tool default
-#                        concentration column for nuclide=Be10)
-#   Be10_uncertainty   : 1-sigma concentration uncertainty, atoms/g
-#   standardisation    : AMS standard name (e.g. 07KNSTD)
-#   published_erate_gcm2yr : published basin-averaged erosion rate, g/cm2/yr
-#   published_erate_mm_kyr : same rate in mm/kyr as reported (density-dependent)
-#   published_calculator   : calculator + version that produced the published rate
-sample_name,latitude,longitude,Be10_CONC,Be10_uncertainty,standardisation,published_erate_gcm2yr,published_erate_mm_kyr,published_calculator
-TODO,TODO,TODO,TODO,TODO,TODO,TODO,TODO,TODO
+# EXPECTED, NOT ZERO residual (Simon 2026-07-24): lsdtt3 has diverged from stock
+# CAIRN -- updated production-rate parameters + a HIGH-ELEVATION production-scaling
+# fix this suite found (S_tot>=1 clamp, plan §9b). Residual is ELEVATION-DEPENDENT;
+# the cluster below deliberately spans 1962-3480 m so the trend is visible.
+# elevation_ave_m is carried through to the summary for exactly this reason.
+#
+# Scaling: EBE_* is OCTOPUS's default Stone/Lal (St) recalculation; run
+# lsdtt-cosmo-tool in the matching (St) scheme for a like-for-like compare
+# (OCTOPUS also stores EBEL/EBELNS = LSDn variants). Confirm scheme at run time.
+#
+# Columns: latitude/longitude are the OCTOPUS basin OUTLET point (crn_int_outlets),
+# used to seed our basin averaging. published_erate_gcm2yr = EBE_GCMYR (the field
+# the harness compares against); published_erate_mm_kyr = EBE_MMKYR (+/- EBE_ERR).
+sample_name,latitude,longitude,Be10_CONC,Be10_uncertainty,standardisation,snow_shielding,published_erate_gcm2yr,published_erate_mm_kyr,published_erate_mm_kyr_err,elevation_ave_m,atm_pressure_hpa,octopus_area_km2,published_calculator,octopus_obsid
+S169WTS036,40.01047,-105.31009,236300,5463,07KNSTD,1,0.01233,46.53,8.89,1962,802.83,0.07,OCTOPUS_v2.3_CAIRN_St,S169WTS036
+S169WTS035,40.00065,-105.33782,313500,7642,07KNSTD,1,0.01081,40.78,7.71,2115,786.99,0.28,OCTOPUS_v2.3_CAIRN_St,S169WTS035
+S169WTS032,40.03356,-105.36046,235300,13140,07KNSTD,1,0.01503,56.72,11.05,2187,779.74,0.07,OCTOPUS_v2.3_CAIRN_St,S169WTS032
+S169WTS029,39.99087,-105.38275,412665,11600,LLNL3000,1,0.01019,38.45,7.19,2461,754.20,0.87,OCTOPUS_v2.3_CAIRN_St,S169WTS029
+S169WTS005,39.95991,-105.40397,567386,12505,KNSTD,1,0.0077,29.06,5.41,2517,748.74,10.11,OCTOPUS_v2.3_CAIRN_St,S169WTS005
+S169WTS030,40.03903,-105.42100,626900,8021,07KNSTD,1,0.00692,26.11,4.84,2518,748.32,4.18,OCTOPUS_v2.3_CAIRN_St,S169WTS030
+S169WTS031,40.03195,-105.42238,353400,10660,07KNSTD,1,0.0123,46.41,8.67,2558,747.12,0.24,OCTOPUS_v2.3_CAIRN_St,S169WTS031
+S169WTS033,39.97758,-105.44698,487300,11760,07KNSTD,1,0.00924,34.86,6.48,2580,744.00,0.57,OCTOPUS_v2.3_CAIRN_St,S169WTS033
+S169WTS001,39.96720,-105.47852,620462,11239,KNSTD,1,0.0075,28.28,5.24,2618,739.29,2.53,OCTOPUS_v2.3_CAIRN_St,S169WTS001
+S169WTS020,40.01320,-105.45844,910200,10490,07KNSTD,1,0.0051,19.23,3.56,2626,738.50,2.65,OCTOPUS_v2.3_CAIRN_St,S169WTS020
+S169WTS021,40.01741,-105.47502,1270000,22230,07KNSTD,1,0.00377,14.22,2.65,2686,732.96,0.93,OCTOPUS_v2.3_CAIRN_St,S169WTS021
+S169WTS022,40.02345,-105.53399,1284868,40219,KNSTD,1,0.00465,17.55,3.26,3048,700.29,0.77,OCTOPUS_v2.3_CAIRN_St,S169WTS022
+S169WTS014,39.93806,-105.63318,1526290,48131,KNSTD,1,0.00456,17.22,3.19,3323,676.44,0.87,OCTOPUS_v2.3_CAIRN_St,S169WTS014
+S169WTS024,39.97884,-105.63916,1303000,14530,07KNSTD,1,0.00585,22.07,4.01,3480,663.08,0.46,OCTOPUS_v2.3_CAIRN_St,S169WTS024

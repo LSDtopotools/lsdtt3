@@ -193,22 +193,58 @@ def fetch_dem(fetch_exe: Path, manifest: dict, workdir: Path) -> Path:
 # --------------------------------------------------------------------------- #
 # Run + compare
 # --------------------------------------------------------------------------- #
-def run_cosmo_tool(exe: Path, dem_path: Path, sample_table: Path,
-                   workdir: Path) -> Path:
-    """Invert concentrations with lsdtt-cosmo-tool; return the _CN_ERATE.csv."""
-    # The CLI reads a parameter file; write a minimal one into the workdir.
+def write_crn_input(samples: list, workdir: Path) -> Path:
+    """Translate our tracked sample table into the points CSV lsdtt-cosmo-tool
+    reads. The CLI requires `latitude`, `longitude`, a `sample_name` column, and
+    (for nuclide Be10, by default) `Be10_CONC` / `Be10_uncertainty` /
+    `standardisation` columns. We emit exactly those so the CLI's defaults apply --
+    we do NOT blindly copy the tracked table, whose extra provenance columns
+    (elevation, published rate) and comment header are ours, not the CLI's."""
     points_csv = workdir / "points.csv"
-    shutil.copyfile(sample_table, points_csv)
+    fields = ["sample_name", "latitude", "longitude", "Be10_CONC",
+              "Be10_uncertainty", "standardisation"]
+    with open(points_csv, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for s in samples:
+            w.writerow({
+                "sample_name": s.get("sample_name", ""),
+                "latitude": s.get("latitude", ""),
+                "longitude": s.get("longitude", ""),
+                "Be10_CONC": s.get("Be10_CONC", ""),
+                "Be10_uncertainty": s.get("Be10_uncertainty", ""),
+                "standardisation": s.get("standardisation", ""),
+            })
+    return points_csv
+
+
+def run_cosmo_tool(exe: Path, dem_path: Path, samples: list,
+                   workdir: Path, run_params: dict = None) -> Path:
+    """Invert concentrations with lsdtt-cosmo-tool; return the _CN_ERATE.csv.
+
+    The lsdtt param parser uses UNDERSCORE keys (read_fname/read_path/...); with
+    a space ("read fname") the key is ignored and read_fname silently defaults to
+    the parameter-file stem -- which is exactly the DEM-not-found trap this hit on
+    the first networked run."""
+    run_params = run_params or {}
+    points_csv = write_crn_input(samples, workdir)
     write_base = "validation"
     param = workdir / "cosmo_validation.param"
-    param.write_text(
-        f"read path: {workdir}\n"
-        f"read fname: {dem_path.stem}\n"
-        f"write path: {workdir}\n"
-        f"write fname: {write_base}\n"
-        f"nuclide: Be10\n"
-        f"points_filename: {points_csv.name}\n"
-    )
+    lines = [
+        f"read_path: {workdir}",
+        f"read_fname: {dem_path.name}",       # parser strips the .tif extension
+        f"write_path: {workdir}",
+        f"write_fname: {write_base}",
+        "nuclide: Be10",
+        f"points_filename: {points_csv.name}",
+    ]
+    # Optional per-dataset run knobs (e.g. a channel-snap threshold suited to the
+    # basin sizes -- the 1000-pixel default is wrong for sub-km2 catchments).
+    for key, val in run_params.items():
+        if key == "_comment":
+            continue
+        lines.append(f"{key}: {val}")
+    param.write_text("\n".join(lines) + "\n")
     subprocess.run([str(exe), str(workdir), param.name], check=True, cwd=str(workdir))
     out = workdir / f"{write_base}_CN_ERATE.csv"
     if not out.is_file():
@@ -217,28 +253,56 @@ def run_cosmo_tool(exe: Path, dem_path: Path, sample_table: Path,
 
 
 def compare(lsdtt_csv: Path, samples: list, manifest: dict) -> list:
-    """Join lsdtt results to published rates by row order; build summary rows."""
+    """Join lsdtt results to published rates BY sample_name (channel snapping may
+    drop or reorder samples, so a positional zip is unsafe); build summary rows."""
     with open(lsdtt_csv, newline="") as f:
-        results = list(csv.DictReader(f))
-    if len(results) != len(samples):
-        raise RuntimeError(
-            f"result count ({len(results)}) != sample count ({len(samples)})"
-        )
+        results = {r["sample_name"]: r for r in csv.DictReader(f)}
+    missing = [s["sample_name"] for s in samples
+               if s["sample_name"] not in results]
+    if missing:
+        print(f"WARNING: {len(missing)} sample(s) absent from cosmo-tool output "
+              f"(snapping/extent): {', '.join(missing)}")
     dem = manifest["dem"]
+    # Basins whose true (OCTOPUS) area is below the snap-threshold footprint cannot
+    # be delineated faithfully -- the outlet snaps onto a larger channel, so the
+    # comparison for them reflects delineation mismatch, not the numerics. Flag
+    # them so the frozen band can be read on the reliable subset.
+    res_m = float(dem.get("resolution_m", 30) or 30)
+    thr_px = float((manifest.get("run_params") or {}).get(
+        "threshold_contributing_pixels", 1000) or 1000)
+    min_reliable_km2 = thr_px * res_m * res_m / 1.0e6
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sha = git_sha()
     out_rows = []
-    for res, samp in zip(results, samples):
+    for samp in samples:
+        res = results.get(samp["sample_name"])
+        if res is None:
+            continue
         lsdtt_e = float(res["apparent_eff_e_g_cm2_yr"])
         pub_e = float(samp["published_erate_gcm2yr"])
         pct = 100.0 * (lsdtt_e - pub_e) / pub_e if pub_e else float("nan")
+        area = samp.get("octopus_area_km2", "")
+        try:
+            reliable = "yes" if float(area) >= min_reliable_km2 else "no"
+        except (TypeError, ValueError):
+            reliable = ""
         out_rows.append({
             "sample_name": samp.get("sample_name", ""),
             "nuclide": "Be-10",
             "standardisation": samp.get("standardisation", ""),
+            # elevation carried through so the residual-vs-elevation trend is
+            # visible in the tracked summary (Simon 2026-07-24: residual is
+            # expected to be elevation-dependent, see manifest residual_expectation).
+            "elevation_ave_m": samp.get("elevation_ave_m", ""),
+            "octopus_area_km2": area,
+            # "no" => basin smaller than the snap-threshold footprint; its rate
+            # reflects delineation mismatch, exclude from the residual band.
+            "delineation_reliable": reliable,
             "lsdtt_erate_gcm2yr": f"{lsdtt_e:.8g}",
             "published_erate_gcm2yr": f"{pub_e:.8g}",
+            "published_erate_mm_kyr": samp.get("published_erate_mm_kyr", ""),
             "pct_diff": f"{pct:.4g}",
+            "abs_pct_diff": f"{abs(pct):.4g}",
             "published_calculator": samp.get("published_calculator", ""),
             "dem_source": f"{dem.get('provider')}:{dem.get('dataset_id')}",
             "resolution_m": dem.get("resolution_m", ""),
@@ -249,10 +313,59 @@ def compare(lsdtt_csv: Path, samples: list, manifest: dict) -> list:
 
 
 SUMMARY_FIELDS = [
-    "sample_name", "nuclide", "standardisation", "lsdtt_erate_gcm2yr",
-    "published_erate_gcm2yr", "pct_diff", "published_calculator",
+    "sample_name", "nuclide", "standardisation", "elevation_ave_m",
+    "octopus_area_km2", "delineation_reliable",
+    "lsdtt_erate_gcm2yr", "published_erate_gcm2yr", "published_erate_mm_kyr",
+    "pct_diff", "abs_pct_diff", "published_calculator",
     "dem_source", "resolution_m", "run_date_utc", "git_sha",
 ]
+
+
+def read_frozen_summary(summary_path: Path) -> dict:
+    """Read the tracked (frozen) summary's data rows, keyed by sample_name."""
+    with open(summary_path, newline="") as f:
+        lines = [ln for ln in f if not ln.lstrip().startswith("#")]
+    return {r["sample_name"]: r for r in csv.DictReader(lines)}
+
+
+# Regression tolerance: a rerun on the same code + the deterministic COP30 fetch
+# should reproduce the frozen inverted rate closely. Allow a little slack for
+# fetch/interpolation non-determinism, not a physics band.
+CHECK_REL_TOL = 0.02
+
+
+def check_against_frozen(new_rows: list, summary_path: Path) -> int:
+    """Compare a fresh run against the frozen tracked summary WITHOUT modifying it
+    (the plan's cheap tracked regression check). Returns EXIT_OK / EXIT_FAIL."""
+    frozen = read_frozen_summary(summary_path)
+    if not frozen:
+        print("CHECK: no frozen rows to compare against; run once without --check "
+              "to freeze a reference first.")
+        return EXIT_FAIL
+    ok = True
+    for r in new_rows:
+        name = r["sample_name"]
+        ref = frozen.get(name)
+        if ref is None:
+            print(f"[CHECK][FAIL] {name}: not in frozen summary")
+            ok = False
+            continue
+        new_e = float(r["lsdtt_erate_gcm2yr"])
+        ref_e = float(ref["lsdtt_erate_gcm2yr"])
+        rel = abs(new_e - ref_e) / ref_e if ref_e else float("inf")
+        status = "PASS" if rel <= CHECK_REL_TOL else "FAIL"
+        if status == "FAIL":
+            ok = False
+        print(f"[CHECK][{status}] {name}: lsdtt={new_e:.6g} frozen={ref_e:.6g} "
+              f"rel={rel:.3g}")
+    missing = set(frozen) - {r["sample_name"] for r in new_rows}
+    if missing:
+        print(f"[CHECK][FAIL] frozen samples absent from this run: "
+              f"{', '.join(sorted(missing))}")
+        ok = False
+    print(f"CHECK: {'PASS' if ok else 'FAIL'} "
+          f"(tol {CHECK_REL_TOL:.0%}, {len(new_rows)} samples)")
+    return EXIT_OK if ok else EXIT_FAIL
 
 
 def append_summary(summary_path: Path, rows: list) -> None:
@@ -288,13 +401,17 @@ def validate_one(dataset: str, args) -> int:
             raise ValueError("--fetch-exe (path to lsdtt-fetch-raster) is required")
         dem_path = fetch_dem(Path(args.fetch_exe), manifest, workdir)
         print(f"[{dataset}] DEM: {dem_path} ({dem_path.stat().st_size} bytes)")
-        lsdtt_csv = run_cosmo_tool(Path(args.exe), dem_path, sample_table, workdir)
+        lsdtt_csv = run_cosmo_tool(Path(args.exe), dem_path, samples, workdir,
+                                   manifest.get("run_params"))
         rows = compare(lsdtt_csv, samples, manifest)
-        append_summary(summary_path, rows)
         for r in rows:
             print(f"[{dataset}] {r['sample_name']}: lsdtt="
                   f"{r['lsdtt_erate_gcm2yr']} published="
                   f"{r['published_erate_gcm2yr']} pct_diff={r['pct_diff']}")
+        if getattr(args, "check", False):
+            # Regression mode: compare against the frozen summary, do NOT touch it.
+            return check_against_frozen(rows, summary_path)
+        append_summary(summary_path, rows)
         print(f"[{dataset}] appended {len(rows)} rows to {summary_path}")
         return EXIT_OK
     finally:
@@ -361,26 +478,56 @@ def self_test() -> int:
         print(f"       manifest load error: {exc}")
     check("manifest: dethier2014 loads with required keys", loaded)
 
-    # 4. The pilot manifest is correctly flagged as still having TODOs (so the
-    #    harness will SKIP rather than run against an unfinished manifest).
+    # 4a. The pilot manifest is now fully populated (OCTOPUS-harvested), so the
+    #     unresolved-TODO guard must be CLEAN -- the harness will run it, not skip.
     if loaded:
-        check("manifest: unresolved-TODO guard trips on the pilot template",
-              manifest_has_unresolved_todo(manifest))
+        check("manifest: pilot dethier2014 has no unresolved TODO (ready to run)",
+              not manifest_has_unresolved_todo(manifest))
 
-    # 5. The sample-table TEMPLATE is rejected (TODO sentinel), so a bogus
-    #    comparison can never be produced from an un-populated table.
-    rejected = False
+    # 4b. But the guard must still TRIP on an un-finished (TODO) manifest, so an
+    #     unpopulated future dataset can never silently run.
+    check("manifest: unresolved-TODO guard still trips on a TODO template",
+          manifest_has_unresolved_todo({"dem": {"target_epsg": "TODO: set me"}}))
+
+    # 5a. The pilot sample table is now populated (real OCTOPUS rows) and reads
+    #     cleanly -- no TODO sentinel, at least one data row.
+    real_rows = []
     try:
-        read_sample_table(published_dir / "dethier2014_samples.csv")
-    except ValueError:
-        rejected = True
-    check("sample table: TODO template is refused (no fabricated comparison)",
+        real_rows = read_sample_table(published_dir / "dethier2014_samples.csv")
+        table_ok = len(real_rows) > 0
+    except Exception as exc:  # noqa: BLE001
+        table_ok = False
+        print(f"       sample table error: {exc}")
+    check("sample table: pilot dethier2014 reads real rows (no TODO sentinel)",
+          table_ok)
+
+    # 5b. A TODO template is still refused, so a bogus comparison can never be
+    #     produced from an un-populated table.
+    rejected = False
+    with tempfile.TemporaryDirectory() as td:
+        tmpl = Path(td) / "tmpl.csv"
+        tmpl.write_text(
+            "sample_name,latitude,longitude,Be10_CONC,Be10_uncertainty,"
+            "standardisation,published_erate_gcm2yr\n"
+            "TODO,TODO,TODO,TODO,TODO,TODO,TODO\n")
+        try:
+            read_sample_table(tmpl)
+        except ValueError:
+            rejected = True
+    check("sample table: a TODO template is refused (no fabricated comparison)",
           rejected)
 
-    # 6. Summary append round-trips against a COPY of the frozen skeleton, and
-    #    leaves the tracked file untouched.
+    # 6. Summary append round-trips against a COPY of the tracked summary (which
+    #    now holds a frozen accepted run), adding EXACTLY one row and leaving the
+    #    tracked file untouched.
     tracked_summary = published_dir / "dethier2014_summary.csv"
     before = tracked_summary.read_text()
+
+    def data_rows_of(text):
+        return [ln for ln in text.splitlines() if ln.strip()
+                and not ln.startswith("#") and not ln.startswith("sample_name,")]
+
+    n_before = len(data_rows_of(before))
     with tempfile.TemporaryDirectory() as td:
         tmp_summary = Path(td) / "summary.csv"
         tmp_summary.write_text(before)
@@ -392,13 +539,13 @@ def self_test() -> int:
             "resolution_m": 90, "run_date_utc": "2026-07-24T00:00:00Z",
             "git_sha": "deadbee",
         }])
-        with open(tmp_summary, newline="") as f:
-            data_rows = [ln for ln in f if ln.strip()
-                         and not ln.startswith("#") and "sample_name" not in ln]
-        appended_ok = len(data_rows) == 1 and "MOCK-1" in data_rows[0]
+        after_rows = data_rows_of(tmp_summary.read_text())
+        appended_ok = (len(after_rows) == n_before + 1
+                       and "MOCK-1" in after_rows[-1])
     untouched = tracked_summary.read_text() == before
-    check("summary: append writes one schema-correct row to a copy", appended_ok)
-    check("summary: tracked frozen skeleton left byte-unchanged", untouched)
+    check("summary: append adds exactly one schema-correct row to a copy",
+          appended_ok)
+    check("summary: tracked frozen summary left byte-unchanged", untouched)
 
     # 7. End-to-end validate_one cleanup: a POPULATED (no-TODO) manifest + a
     #    fetch-exe that fails mid-run must (a) SKIP, not fail, and (b) leave no
@@ -458,6 +605,9 @@ def main() -> int:
     ap.add_argument("--published-dir", type=Path, default=default_published_dir())
     ap.add_argument("--keep", action="store_true",
                     help="keep the working directory for debugging (default: delete)")
+    ap.add_argument("--check", action="store_true",
+                    help="regression mode: compare a fresh run against the frozen "
+                         "summary WITHOUT modifying it (used by the ctest wiring)")
     ap.add_argument("--self-test", action="store_true",
                     help="offline harness self-test (cleanup trap + schema guards)")
     args = ap.parse_args()

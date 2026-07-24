@@ -2,20 +2,53 @@
   "_comment": [
     "Real-landscape validation manifest (cosmo plan Phase 6 / §5b).",
     "Small, TRACKED file. Names the DEM to fetch and where the authoritative",
-    "per-sample regression targets live. NO large data is ever committed.",
+    "per-sample regression targets come from. NO large data is ever committed.",
     "The DEM is fetched keyless via the lsdtt-fetch-raster CLI (Copernicus",
     "GLO-30 on AWS / Microsoft Planetary Computer -- NO API key), clipped to the",
     "bounding box below into a temporary workdir by",
     "tests/scripts/run_cosmo_validation.py, and deleted after the run.",
-    "TODO fields must be confirmed against the LSDTopoTools data repo before an",
-    "accepted run is frozen; the harness treats unresolved TODOs as blocking."
+    "Regression targets are HARVESTED from OCTOPUS (v2.3) via WFS -- see",
+    "octopus_source below and the sample-table header for full provenance."
   ],
   "dataset": "dethier2014",
-  "description": "Dethier et al. (2014) Front Range basin-averaged 10Be erosion rates; small, low-relief catchments chosen to shake out the harness before GB-scale Himalayan datasets.",
+  "description": "Dethier et al. (2014) Front Range 10Be basins. Pilot subset = a compact Boulder Creek / Front Range cluster of 14 small catchments (0.07-10.11 km2) deliberately spanning 1962-3480 m elevation, to (a) shake out the harness on a single modest DEM and (b) expose the elevation-dependent residual (see caveat below) before GB-scale Himalayan datasets.",
   "published_reference": {
     "citation": "Dethier, D.P., Ouimet, W., Bierman, P.R., Rood, D.H., Balco, G. (2014), Geology 42(2), 167-170.",
-    "calculator": "TODO: original calculator + version reported by the study (CRONUS vX / expage); record here when populating the sample table",
-    "doi": "10.1130/G34922.1"
+    "doi": "10.1130/G34922.1",
+    "calculator": "OCTOPUS v2.3 recalculation with CAIRN (Mudd et al. 2016; github LSDTopoTools_CRNBasinwide), default Stone/Lal 'St' scaling (EBE_* fields)."
+  },
+  "octopus_source": {
+    "_comment": [
+      "Regression targets (concentration, uncertainty, standard, denudation rate)",
+      "are harvested from OCTOPUS, NOT scraped from the paper and NOT invented.",
+      "OCTOPUS recalculates every rate with CAIRN -- the same algorithm",
+      "lsdtt-cosmo-tool implements -- so these are a NEAR-CAIRN oracle, not",
+      "bit-exact (see residual_expectation)."
+    ],
+    "wfs_endpoint": "http://geoserver.octopusdata.org/geoserver/wfs",
+    "typenames": ["be10-denude:crn_int_basins", "be10-denude:crn_int_outlets"],
+    "cql_filter": "STUDYID='S169'",
+    "cql_note": "Filter with CQL_FILTER, not bbox: the OCTOPUS server throws a ProjectionException on the WFS 2.0.0 bbox parameter.",
+    "output_format": "application/json",
+    "srs": "EPSG:4326",
+    "db_version": "v2.3(4)",
+    "study_id": "S169",
+    "harvested_utc": "2026-07-24",
+    "basins_in_study": 46,
+    "basins_in_pilot_subset": 14,
+    "scaling_scheme": "St (Stone/Lal) -- EBE_MMKYR / EBE_GCMYR. OCTOPUS also stores EBEL/EBELNS (LSDn). Run lsdtt-cosmo-tool in the matching St scheme for a like-for-like compare; confirm the scheme flag at run time."
+  },
+  "residual_expectation": {
+    "_comment": [
+      "Simon 2026-07-24: agreement will NOT be exact. lsdtt3 has diverged from",
+      "stock CAIRN -- updated production-rate parameters, plus a high-elevation",
+      "production-scaling fix THIS suite found (the S_tot>=1 clamp defect, plan",
+      "§9b findings log). The residual is expected to be ELEVATION-DEPENDENT."
+    ],
+    "expect_zero": false,
+    "elevation_dependent": true,
+    "band": "measured-then-frozen on the FIRST accepted network run; do NOT assert a tight zero-residual band. Record elevation_ave_m per basin in the summary so the residual-vs-elevation trend is visible.",
+    "attribute_residual_to": "production-parameter divergence + high-elevation scaling scheme + DEM product (COP30 vs the SRTM used in the OCTOPUS recalculation) + basin pixel binning -- NOT to bugs."
   },
   "dem": {
     "provider": "Copernicus GLO-30 (keyless)",
@@ -27,23 +60,31 @@
     "grid_spacing": 30.0,
     "resampling_method": "cubic",
     "target_epsg": 32613,
-    "target_epsg_note": "UTM 13N (EPSG:32613) for the Colorado Front Range. The cosmo CLIs require a PROJECTED CRS, so the DEM is warped to UTM at fetch time. Confirm the zone matches the populated sample-catchment footprint.",
-    "resolution_choice_note": "This keyless path delivers Copernicus GLO-30 (30 m). The CAIRN paper used SRTM 90 m throughout (plan open question 7); COP30 vs SRTM90 is a DOCUMENTED, attributable difference in the validation (DEM resolution + product), not a bug -- record it alongside the muon-scheme residual in the summary.",
+    "target_epsg_note": "UTM 13N (EPSG:32613) for the Colorado Front Range; matches OCTOPUS PROJEPSGID for these S169 basins. The cosmo CLIs require a PROJECTED CRS, so the DEM is warped to UTM at fetch time.",
+    "resolution_choice_note": "COP30 (30 m) vs the DEM used in the OCTOPUS/CAIRN recalculation is a DOCUMENTED, attributable difference in the validation (DEM resolution + product), not a bug -- record it alongside the production-scheme residual in the summary.",
     "size_pixels": 0,
     "bounding_box": {
-      "_comment": "TODO: set to the union of the sample catchments' footprints (padded) once the sample table is populated from the data repo. Placeholder Front Range extent below is a SCAFFOLDING value, not a validated footprint.",
-      "west": -105.7,
-      "south": 39.9,
-      "east": -105.4,
-      "north": 40.1
+      "_comment": "Union of the 14 pilot basins' OCTOPUS outline footprints, padded ~0.02 deg. Covers the whole cluster in one modest DEM.",
+      "west": -105.672,
+      "south": 39.915,
+      "east": -105.29,
+      "north": 40.081
     }
   },
+  "run_params": {
+    "_comment": [
+      "lsdtt-cosmo-tool run knobs for this dataset. The default",
+      "threshold_contributing_pixels (1000 = 0.9 km2 at 30 m) is TOO HIGH for",
+      "these sub-km2 Front Range catchments: it snaps small outlets onto a much",
+      "larger channel, inflating the basin and wrecking the comparison, and skips",
+      "basins that never reach 1000 px. Lowered here so small basins delineate",
+      "near their true size. Basins below ~this*cellsize remain unreliable (outlet",
+      "snap cannot resolve a catchment smaller than the threshold) and are flagged",
+      "in the summary; that is a delineation limit, not a numeric bug."
+    ],
+    "threshold_contributing_pixels": 250,
+    "snap_search_radius_pixels": 20
+  },
   "sample_table": "dethier2014_samples.csv",
-  "summary": "dethier2014_summary.csv",
-  "data_repo": {
-    "_comment": "The authoritative per-sample regression targets (lat/lon, concentration, uncertainty, standard, published rate) live in the LSDTopoTools GitHub data repositories, per CAIRN section 9 - NOT in the paper tables. Confirm the exact repo + path when populating the sample table.",
-    "org": "https://github.com/LSDtopotools",
-    "repo": "TODO: confirm the specific data repository (e.g. LSDTopoTools example/CRN data repo) and the path to the Dethier 2014 sample file",
-    "path": "TODO"
-  }
+  "summary": "dethier2014_summary.csv"
 }
