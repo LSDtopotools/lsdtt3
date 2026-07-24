@@ -422,6 +422,7 @@ void lsdtt_hydraulic_graph_cpu::rebuild_routing_from_current_water_surface()
     );
 
     copy_routing_snapshot_from_flowgraph(updated_flowgraph);
+    routing_.is_dynamic = true;
 }
 
 
@@ -495,7 +496,7 @@ void lsdtt_hydraulic_graph_cpu::perform_one_iteration_without_banner()
             break;
 
         case lsdtt_hydraulic_run_mode::transient_dynamic_graph:
-            perform_one_transient_iteration_fixed_graph();
+            perform_one_transient_iteration_dynamic_graph();
             break;
     }
 }
@@ -985,6 +986,28 @@ void lsdtt_hydraulic_graph_cpu::apply_water_depth_update_from_balance()
 
 void lsdtt_hydraulic_graph_cpu::perform_one_transient_iteration_fixed_graph()
 {
+    reset_flux_fields();
+    build_source_q();
+
+    for (std::int64_t flat : valid_flats_)
+    {
+        qin_[flat] = source_q_[flat];
+    }
+
+    accumulate_full_qin_fixed_graph();
+    compute_qout_from_current_surface();
+    apply_water_depth_update_from_balance();
+}
+
+
+void lsdtt_hydraulic_graph_cpu::perform_one_transient_iteration_dynamic_graph()
+{
+    if (step_count_ == 0 ||
+        (step_count_ % static_cast<std::int64_t>(reroute_every_) == 0))
+    {
+        rebuild_routing_from_current_water_surface();
+    }
+
     reset_flux_fields();
     build_source_q();
 

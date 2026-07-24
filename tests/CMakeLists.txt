@@ -99,6 +99,14 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    smoke_hydraulic_routing
+    lsdtt-hydraulic-routing
+    hydraulic_routing_smoke.param.in
+    tiny_hydraulic_water_depth.tif
+    --expect tiny_hydraulic_water_surface.tif
+)
+
+add_lsdtt_cli_smoke_test(
     smoke_chi_analysis
     lsdtt-chi-analysis
     chi_analysis_smoke.param.in
@@ -128,6 +136,15 @@ add_lsdtt_cli_smoke_test(
     tiny_missing_second_difference.tif
     --expect-failure
     --stderr-contains "FATAL: second_raster_fname must be set."
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_hydraulic_routing_invalid_mode
+    lsdtt-hydraulic-routing
+    hydraulic_routing_invalid_mode.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: hydraulic_run_mode must be 'stationary' or 'transient'."
 )
 
 add_lsdtt_cli_smoke_test(
@@ -246,6 +263,34 @@ if(LSDTT_ENABLE_BENCHMARKS)
         endforeach()
     endforeach()
     endif()
+
+    # Hydraulic DAGGER scaffold benchmark (plan Phase 0 wiring).
+    # This harness is currently a metadata/availability scaffold, not a full
+    # parity comparator yet. It is still useful in CTest because it establishes
+    # the opt-in benchmark entry point and the skip contract (77) when DAGGER
+    # is unavailable.
+    set(LSDTT_DAGGER_ROOT_DEFAULT "${CMAKE_SOURCE_DIR}/../DAGGER")
+    set(LSDTT_DAGGER_REF_DEFAULT  "${LSDTT_DAGGER_ROOT_DEFAULT}/README.md")
+
+    foreach(hyd_fixture tiny_dem.asc)
+        foreach(hyd_scenario stationary_fixed transient_dynamic)
+            add_test(
+                NAME benchmark_hydraulic_dagger_scaffold_${hyd_scenario}_${hyd_fixture}
+                COMMAND ${Python3_EXECUTABLE}
+                        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_hydraulic_dagger_benchmark.py"
+                        --exe "$<TARGET_FILE:lsdtt-hydraulic-routing>"
+                        --dagger-root "${LSDTT_DAGGER_ROOT_DEFAULT}"
+                        --dagger-ref "${LSDTT_DAGGER_REF_DEFAULT}"
+                        --fixture ${hyd_fixture}
+                        --scenario ${hyd_scenario}
+                        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/hydraulic_benchmark/${hyd_scenario}_${hyd_fixture}"
+                        --write-json
+            )
+            set_tests_properties(
+                benchmark_hydraulic_dagger_scaffold_${hyd_scenario}_${hyd_fixture}
+                PROPERTIES LABELS "benchmark;hydraulic" SKIP_RETURN_CODE 77)
+        endforeach()
+    endforeach()
 endif()
 
 # -----------------------------------------------------------------------------
@@ -294,6 +339,13 @@ add_test(NAME unit_flow_properties
                  ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
+
+add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
+target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hydraulic_routing
+         COMMAND lsdtt-test-hydraulic-routing)
+set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "unit;hydraulic")
 
 # -----------------------------------------------------------------------------
 # lsdtt-fetch-raster CLI (docs/testing_and_benchmarking.md)

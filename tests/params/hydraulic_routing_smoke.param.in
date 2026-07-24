@@ -1,0 +1,33 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny_hydraulic
+
+write_output_format: gtiff
+n_threads: 1
+
+raster_is_filled: false
+fill_min_slope: 0.0001
+boundary_conditions: oooo
+flow_routing_method: mfd
+mfd_exponent: 1.0
+
+hydraulic_run_mode: transient
+run_until_converged: false
+n_steps: 5
+hydraulic_dt: 1e-3
+mannings_n: 0.033
+hydraulic_min_slope: 1e-8
+uniform_rainfall_rate: 1e-6
+
+write_water_depth_raster: true
+write_water_surface_raster: true
+write_qin_raster: false
+write_qout_raster: false
+write_dhw_raster: false
+write_bed_raster: false
+write_hydraulic_slope_raster: false
+write_specific_discharge_raster: false
+write_total_discharge_raster: false
+write_specific_drainage_area_raster: false
+write_effective_width_raster: false
