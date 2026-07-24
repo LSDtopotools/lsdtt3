@@ -94,6 +94,27 @@ that every parameter declaration renders, and `failure_cosmo_tool_geographic_crs
 checks that a non-projected (EPSG:4326) DEM is rejected with a clean FATAL rather
 than a crash or a silent wrong-units run.
 
+### Real-landscape validation tier (download → run → delete)
+
+`unit_cosmo_validation_harness` (labels `unit;cosmo`) runs the **offline**
+self-test of `tests/scripts/run_cosmo_validation.py` — the "download → run →
+delete" harness for published-basin validation (plan §5b/§6c(B),
+`tests/expected/cosmo/published/README.md`). The self-test proves the cleanup
+trap removes the temporary working directory on a *failed* run (with a mock
+workdir, no network), that `--keep` is honoured, that the manifest/sample-table
+schema guards trip, and that summary-append leaves the frozen skeleton
+byte-unchanged.
+
+`cosmo_realworld_dethier2014` (label `cosmo_realworld`, **not** in the default
+suite) is the real thing: it fetches a DEM **keyless** via `lsdtt-fetch-raster`
+(Copernicus GLO-30 / Planetary Computer, no API key), clips it, runs
+`lsdtt-cosmo-tool`, compares to the tracked published rates, appends the frozen
+summary CSV, then deletes the temporary workdir including on failure. It needs
+network and is invoked manually (`ctest -L cosmo_realworld`); it exits 77 (skip)
+when the network/DEM source is unavailable or the sample table is still a
+template, so it never turns CI red. **No DEM is ever committed** — only the small
+manifest, sample table, and frozen summary under `tests/expected/cosmo/published/`.
+
 Refreshing the CRONUS reference is a **manual, reviewable** step and is never
 done by CI:
 

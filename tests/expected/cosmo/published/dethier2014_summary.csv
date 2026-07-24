@@ -1,0 +1,16 @@
+# Dethier et al. (2014) validation SUMMARY -- FROZEN skeleton (cosmo plan Phase 6).
+#
+# Written/refreshed by tests/scripts/run_cosmo_validation.py. Each accepted run
+# appends one row per sample: the lsdtt3 inverted rate vs the published rate and
+# the percent difference. Refreshing this file is a REVIEWABLE event (like the
+# CRONUS reference) -- a fresh run is compared against these frozen rows as a
+# cheap tracked regression check.
+#
+# Difference is expected, NOT zero: our Braucher-family sum-of-exponentials muon
+# model vs the published calculator's scheme, plus basin pixel binning and DEM
+# resolution. Attribute residual to those, not to bugs (plan §5b/§6c).
+#
+# NO DATA ROWS YET: no accepted run exists (the authoring environment had no
+# network / OpenTopography key and the sample table is still a template). The
+# header below is the frozen schema.
+sample_name,nuclide,standardisation,lsdtt_erate_gcm2yr,published_erate_gcm2yr,pct_diff,published_calculator,dem_source,resolution_m,run_date_utc,git_sha

@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Real-landscape validation manifest (cosmo plan Phase 6 / §5b).",
+    "Small, TRACKED file. Names the DEM to fetch and where the authoritative",
+    "per-sample regression targets live. NO large data is ever committed.",
+    "The DEM is fetched keyless via the lsdtt-fetch-raster CLI (Copernicus",
+    "GLO-30 on AWS / Microsoft Planetary Computer -- NO API key), clipped to the",
+    "bounding box below into a temporary workdir by",
+    "tests/scripts/run_cosmo_validation.py, and deleted after the run.",
+    "TODO fields must be confirmed against the LSDTopoTools data repo before an",
+    "accepted run is frozen; the harness treats unresolved TODOs as blocking."
+  ],
+  "dataset": "dethier2014",
+  "description": "Dethier et al. (2014) Front Range basin-averaged 10Be erosion rates; small, low-relief catchments chosen to shake out the harness before GB-scale Himalayan datasets.",
+  "published_reference": {
+    "citation": "Dethier, D.P., Ouimet, W., Bierman, P.R., Rood, D.H., Balco, G. (2014), Geology 42(2), 167-170.",
+    "calculator": "TODO: original calculator + version reported by the study (CRONUS vX / expage); record here when populating the sample table",
+    "doi": "10.1130/G34922.1"
+  },
+  "dem": {
+    "provider": "Copernicus GLO-30 (keyless)",
+    "dem_source": "cop30_aws",
+    "dem_source_note": "Keyless. Driven through the lsdtt-fetch-raster CLI, which retrieves and clips Copernicus GLO-30 from AWS Open Data (dem_source: cop30_aws) or Microsoft Planetary Computer (dem_source: planetary_computer) with NO account or API key. Set dem_source to planetary_computer to use the PC STAC mirror instead.",
+    "pc_collection": "cop-dem-glo-30",
+    "dataset_id": "COP30",
+    "resolution_m": 30,
+    "grid_spacing": 30.0,
+    "resampling_method": "cubic",
+    "target_epsg": 32613,
+    "target_epsg_note": "UTM 13N (EPSG:32613) for the Colorado Front Range. The cosmo CLIs require a PROJECTED CRS, so the DEM is warped to UTM at fetch time. Confirm the zone matches the populated sample-catchment footprint.",
+    "resolution_choice_note": "This keyless path delivers Copernicus GLO-30 (30 m). The CAIRN paper used SRTM 90 m throughout (plan open question 7); COP30 vs SRTM90 is a DOCUMENTED, attributable difference in the validation (DEM resolution + product), not a bug -- record it alongside the muon-scheme residual in the summary.",
+    "size_pixels": 0,
+    "bounding_box": {
+      "_comment": "TODO: set to the union of the sample catchments' footprints (padded) once the sample table is populated from the data repo. Placeholder Front Range extent below is a SCAFFOLDING value, not a validated footprint.",
+      "west": -105.7,
+      "south": 39.9,
+      "east": -105.4,
+      "north": 40.1
+    }
+  },
+  "sample_table": "dethier2014_samples.csv",
+  "summary": "dethier2014_summary.csv",
+  "data_repo": {
+    "_comment": "The authoritative per-sample regression targets (lat/lon, concentration, uncertainty, standard, published rate) live in the LSDTopoTools GitHub data repositories, per CAIRN section 9 - NOT in the paper tables. Confirm the exact repo + path when populating the sample table.",
+    "org": "https://github.com/LSDtopotools",
+    "repo": "TODO: confirm the specific data repository (e.g. LSDTopoTools example/CRN data repo) and the path to the Dethier 2014 sample file",
+    "path": "TODO"
+  }
+}

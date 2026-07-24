@@ -1,0 +1,21 @@
+# Dethier et al. (2014) sample table -- TEMPLATE / SCHEMA ONLY (cosmo plan Phase 6).
+#
+# This is a DOCUMENTED TEMPLATE, not real data. The values below are the TODO
+# sentinel, NOT measurements. Populate the real rows from the LSDTopoTools data
+# repository named in dethier2014_manifest.json (data_repo) -- do NOT copy from
+# the paper tables and do NOT invent numbers. run_cosmo_validation.py refuses to
+# run while any TODO sentinel remains, so an un-populated template cannot produce
+# a bogus comparison.
+#
+# Columns:
+#   sample_name        : study sample id
+#   latitude,longitude : decimal degrees (WGS84); the cosmo CLIs read these
+#   Be10_CONC          : measured 10Be concentration, atoms/g (cosmo-tool default
+#                        concentration column for nuclide=Be10)
+#   Be10_uncertainty   : 1-sigma concentration uncertainty, atoms/g
+#   standardisation    : AMS standard name (e.g. 07KNSTD)
+#   published_erate_gcm2yr : published basin-averaged erosion rate, g/cm2/yr
+#   published_erate_mm_kyr : same rate in mm/kyr as reported (density-dependent)
+#   published_calculator   : calculator + version that produced the published rate
+sample_name,latitude,longitude,Be10_CONC,Be10_uncertainty,standardisation,published_erate_gcm2yr,published_erate_mm_kyr,published_calculator
+TODO,TODO,TODO,TODO,TODO,TODO,TODO,TODO,TODO
