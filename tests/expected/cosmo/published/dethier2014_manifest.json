@@ -40,14 +40,19 @@
   },
   "residual_expectation": {
     "_comment": [
-      "Simon 2026-07-24: agreement will NOT be exact. lsdtt3 has diverged from",
-      "the OCTOPUS/CAIRN configuration in three known ways (see",
-      "calculator_differences), plus a high-elevation production-scaling fix THIS",
-      "suite found (the S_tot>=1 clamp defect, plan §9b findings log)."
+      "UPDATED 2026-07-24 (post §6e isolation test + standardisation fix). The frozen",
+      "DEFAULT-config residual is now a CLEAN, UNIFORM ~-5.6% (lsdtt3 LOWER), single-",
+      "signed across all basins -- it is the ONE intentional default difference vs",
+      "OCTOPUS's CAIRN: the muon scheme (lsdtt3 BraucherBorchers vs OCTOPUS Braucher,",
+      "~5.65% lower production). When lsdtt3 is MATCHED to OCTOPUS (muon_scheme Braucher,",
+      "atmosphere NCEP, 07KNSTD) it reproduces OCTOPUS/CAIRN erate to +0.38% mean (§6e",
+      "isolation test) and basin-mean production to -0.19% vs BEPROD -- i.e. ESSENTIALLY",
+      "EXACT. The earlier ~+4% 'surplus' was a HARNESS BUG (standardisation double-count),",
+      "now fixed; see standardisation_convention below and plan §6e."
     ],
     "expect_zero": false,
-    "band": "measured-then-frozen on the FIRST accepted network run; do NOT assert a tight zero-residual band. Record elevation_ave_m + octopus_area_km2 per basin in the summary.",
-    "attribute_residual_to": "muon-scheme + topographic-shielding + atmosphere differences (calculator_differences) + high-elevation scaling + DEM product (COP30 vs the DEM in the OCTOPUS recalculation) + basin pixel binning -- NOT to bugs."
+    "band": "measured-then-frozen. DEFAULT config (this summary): reliable basins ~-5.6% (range -6.98..-2.27%, 12 reliable; WTS036 +71% and WTS032 flagged delineation-unreliable). This is the muon-scheme offset, uniform and single-signed. MATCHED config (isolation test): +0.38%.",
+    "attribute_residual_to": "the frozen -5.6% is the muon scheme (BraucherBorchers vs Braucher, intentional lsdtt3 update) ALONE; small terrain modulation from ignored topo shielding + atmosphere. NOT DEM/hypsometry (production matches BEPROD to -0.19%, elevation matches ELEV_AVE), NOT a bug. Matched-config residual +0.38% is delineation scatter on tiny basins."
   },
   "calculator_differences": {
     "_comment": [
@@ -71,19 +76,34 @@
     "atmosphere": {
       "octopus": "NCEP (Balco NCEPatm_2)",
       "lsdtt3": "ERA40 (Balco/Lifton, latitude-dependent lapse) by default; NCEP now available via `atmosphere: NCEP`",
-      "effect": "QUANTIFIED 2026-07-24: running lsdtt3 with NCEP instead of ERA40 raises erate by +0.64% mean (range +0.44 to +0.89%), and the shift is ELEVATION-DEPENDENT (+0.44% at 2115 m -> +0.89% at 3480 m). Small, smooth, mostly systematic -- mean|delta| vs OCTOPUS barely moves (4.98 -> 4.92). NCEP support added to lsdtt3 (crn_parameters.nc ncep_* grids + atmospheric_pressure_ncep, a port of Balco NCEPatm_2); ERA40 remains the default and the sentinel is bit-unchanged."
+      "effect": "QUANTIFIED 2026-07-24: running lsdtt3 with NCEP instead of ERA40 raises erate by +0.64% mean (range +0.44 to +0.89%), and the shift is ELEVATION-DEPENDENT (+0.44% at 2115 m -> +0.89% at 3480 m). Small, smooth, mostly systematic. NCEP support added to lsdtt3 (crn_parameters.nc ncep_* grids + atmospheric_pressure_ncep, a port of Balco NCEPatm_2); ERA40 remains the default and the sentinel is bit-unchanged."
+    },
+    "standardisation_convention": {
+      "_comment": "ADDED 2026-07-24. The DOMINANT term in the OLD apparent residual was NOT a calculator difference at all -- it was a HARNESS BUG, now fixed.",
+      "octopus": "BE10NC is already RENORMALISED to 07KNSTD (Nishiizumi 2007); BESTND holds the ORIGINAL source-paper standard as provenance only (OCTOPUS docs octopus-db.github.io/documentation/output_tables.html; Codilean 2018/2022 ESSD).",
+      "lsdtt3": "lsdtt-cosmo-tool converts a NATIVE input concentration to 07KNSTD via be10_std_map_ (identical to CAIRN LSDCosmoData.cpp:313). CORRECT behaviour.",
+      "bug_and_fix": "The harness was harvesting the already-07KNSTD BE10NC AND passing the native BESTND label, so lsdtt3 applied the standard factor a SECOND time -- inflating erate by exactly 1/factor-1 on every non-07KNSTD basin (KNSTD 0.9042 -> +10.6%, LLNL3000 0.8644 -> +15.7%; 07KNSTD basins unaffected). Fixed 2026-07-24: run_cosmo_validation.py write_crn_input() now passes 07KNSTD (BE10NC is already there). be10_std_map_ (numeric core) UNCHANGED.",
+      "effect": "REMOVING this double-count is what collapsed the old sign-dependent scatter (07KNSTD ~0% vs non-07KNSTD +10..+16%) to the clean uniform -5.6% muon offset, and drove the MATCHED-config residual from +5.30% to +0.38%."
     },
     "consistency_check_2026_07_24": {
+      "_comment": "SUPERSEDED by the 2026-07-24 standardisation fix + §6e isolation test. The A/B/C/D scenarios below were computed WITH the standardisation double-count still present, so their signed means are NOT comparable to the fixed frozen summary; kept only as a record. The near-zero 'baseline A' (-0.97%) was itself coincidental cancellation of the muon -5.65% against the standardisation double-count. Use decisive_result instead.",
       "reliable_basins": 12,
-      "mean_signed_pct": {
+      "effect_sizes_pct": {"muon_BB_to_Braucher": 5.65, "topo_shielding": -0.70, "atmosphere_ERA40_to_NCEP": 0.64},
+      "pre_fix_scenarios_signed_pct_SUPERSEDED": {
         "A_baseline_BraucherBorchers_noTopo_ERA40": -0.97,
         "B_muonMatch_Braucher_noTopo_ERA40": 4.63,
         "C_Braucher_plus_perBasin_topo_ERA40": 3.90,
         "D_Braucher_topo_plus_NCEP_all_matched": 4.54
-      },
-      "mean_abs_pct": {"A": 4.98, "B": 4.95, "C": 4.80, "D_approx": 4.9},
-      "effect_sizes_pct": {"muon_BB_to_Braucher": 5.65, "topo_shielding": -0.70, "atmosphere_ERA40_to_NCEP": 0.64},
-      "conclusion": "All THREE named differences are now quantified. Muon dominates (+5.65%); topo shielding (-0.70% mean, up to -6% steep) and atmosphere (+0.64%, elevation-dependent) are small. Muon and topo act in OPPOSITE directions and partly cancel, so lsdtt3's near-zero baseline (-0.97%) is partly coincidental cancellation. Matching ALL THREE does NOT drive agreement to zero -- it OVERSHOOTS to ~+4.5% (D), so a residual ~+4-4.5% net SURPLUS in lsdtt3 remains that these three do NOT explain: it must come from production P0 values (Braucher2011/Borchers2016 vs OCTOPUS's exact P0), the COP30-vs-original DEM (basin hypsometry), the high-elevation scaling fix, and delineation. The per-basin SCATTER (mean|delta| ~5%) is nearly INSENSITIVE to all three uniform corrections (4.98 -> 4.95 -> 4.80 -> ~4.9), confirming the scatter is SPATIAL (DEM resolution/delineation), not the muon/topo/atmosphere systematics."
+      }
+    },
+    "decisive_result_2026_07_24": {
+      "_comment": "§6e production-vs-BEPROD isolation test, AFTER the standardisation fix. The definitive statement.",
+      "matched_config": "muon_scheme Braucher, atmosphere NCEP, sample_age_yr 0, thr 250, snap 20, standardisation 07KNSTD (fixed)",
+      "P_lsdtt_vs_BEPROD_pct": -0.19,
+      "elev_lsdtt_minus_ELEV_AVE_m": -7.6,
+      "matched_erate_vs_octopus_pct": 0.38,
+      "default_config_frozen_erate_pct": -5.59,
+      "conclusion": "MATCHED to OCTOPUS, lsdtt3 reproduces CAIRN erate to +0.38% and production to -0.19% vs BEPROD -- ESSENTIALLY EXACT. The DEFAULT-config -5.59% is the single intentional muon-scheme difference (BraucherBorchers, ~5.65% lower). The geometric/DEM hypothesis is REFUTED (production + elevation both match OCTOPUS to ~0%). The former ~+4% 'unexplained surplus' was entirely the standardisation double-count (harness bug), now fixed. lsdtt3's numeric core is VINDICATED: it equals CAIRN when configured identically."
     }
   },
   "dem": {

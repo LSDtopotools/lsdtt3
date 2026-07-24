@@ -45,16 +45,17 @@
   },
   "residual_expectation": {
     "_comment": [
-      "Agreement will NOT be exact. lsdtt3 differs from OCTOPUS's CAIRN in",
-      "muon scheme (BraucherBorchers vs Braucher), topographic shielding",
-      "(lsdtt3 ignores it by default), and atmosphere (ERA40 vs NCEP), plus",
-      "the high-elevation scaling fix this suite found. See the pilot",
-      "dethier2014_manifest calculator_differences block for the quantified",
-      "three-way breakdown."
+      "UPDATED 2026-07-24 (standardisation double-count FIXED; see pilot",
+      "dethier2014_manifest standardisation_convention + §6e). Before the fix this",
+      "dataset read +6.6% (mean) -- that positive residual, and the whole apparent",
+      "'sign flip' vs dibiase2010, was the harness re-applying the AMS standard to an",
+      "already-07KNSTD BE10NC on the non-07KNSTD samples. With the fix the residual is",
+      "a CLEAN, UNIFORM, single-signed ~-4% (lsdtt3 LOWER) = the muon-scheme offset",
+      "(BraucherBorchers vs Braucher), consistent with dethier2014 and dibiase2010."
     ],
     "expect_zero": false,
-    "band": "measured-then-frozen on the FIRST accepted network run; do NOT assert a tight zero-residual band.",
-    "attribute_residual_to": "muon-scheme + topographic-shielding + atmosphere + high-elevation scaling + DEM product (COP30 vs original) + delineation -- NOT bugs."
+    "band": "frozen 2026-07-24 (post-fix): all 21 basins reliable, -3.57 to -5.49% (mean -4.09%). Single-signed, no sign flip. Low-relief/low-elevation, so the muon offset shows near-full (topo shielding ~1).",
+    "attribute_residual_to": "muon scheme (BraucherBorchers vs Braucher, intentional lsdtt3 update) ALONE, with tiny topo/atmosphere modulation -- NOT standardisation (fixed), NOT DEM/hypsometry, NOT bugs. Matched to OCTOPUS lsdtt3 reproduces CAIRN to ~0% (see pilot decisive_result)."
   },
   "dem": {
     "provider": "Copernicus GLO-30 (keyless)",

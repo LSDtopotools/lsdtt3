@@ -199,7 +199,22 @@ def write_crn_input(samples: list, workdir: Path) -> Path:
     (for nuclide Be10, by default) `Be10_CONC` / `Be10_uncertainty` /
     `standardisation` columns. We emit exactly those so the CLI's defaults apply --
     we do NOT blindly copy the tracked table, whose extra provenance columns
-    (elevation, published rate) and comment header are ours, not the CLI's."""
+    (elevation, published rate) and comment header are ours, not the CLI's.
+
+    STANDARDISATION -- pass 07KNSTD, NOT the sample's original standard
+    ------------------------------------------------------------------
+    The concentration we harvest, `Be10_CONC`, is OCTOPUS's `BE10NC`, which OCTOPUS
+    has ALREADY renormalised to the Nishiizumi-2007 (07KNSTD) AMS standard
+    (Codilean et al. 2018/2022, ESSD; octopus-db.github.io output_tables docs). The
+    sample table's `standardisation` column is OCTOPUS's `BESTND` -- the ORIGINAL
+    standard from the source paper (KNSTD, LLNL3000, ...), kept as PROVENANCE only.
+    lsdtt-cosmo-tool (like CAIRN, LSDCosmoData.cpp:313) converts a NATIVE input
+    concentration to 07KNSTD by multiplying by be10_std_map_[standard]; feeding it
+    the already-07KNSTD BE10NC together with the native BESTND label made it apply
+    that factor a SECOND time, inflating erate by exactly 1/factor-1 on every
+    non-07KNSTD basin (the whole ~+4-5% tier "residual"; see plan 6e). Since BE10NC
+    is already 07KNSTD, we pass 07KNSTD (factor 1.0) so no conversion is applied.
+    The original standard stays in the tracked samples CSV for traceability."""
     points_csv = workdir / "points.csv"
     fields = ["sample_name", "latitude", "longitude", "Be10_CONC",
               "Be10_uncertainty", "standardisation"]
@@ -213,7 +228,9 @@ def write_crn_input(samples: list, workdir: Path) -> Path:
                 "longitude": s.get("longitude", ""),
                 "Be10_CONC": s.get("Be10_CONC", ""),
                 "Be10_uncertainty": s.get("Be10_uncertainty", ""),
-                "standardisation": s.get("standardisation", ""),
+                # OCTOPUS BE10NC is already 07KNSTD-normalised -- do NOT re-convert
+                # using the original BESTND label (double-count). See docstring.
+                "standardisation": "07KNSTD",
             })
     return points_csv
 

@@ -92,30 +92,37 @@ per-dataset run knobs (`run_params`, e.g. `threshold_contributing_pixels`, or
 
 | dataset | OCTOPUS | region | basins | area (km²) | elev (m) | frozen band vs OCTOPUS |
 |---|---|---|---|---|---|---|
-| **dethier2014** (pilot) | S169 | Front Range, CO | 14 | 0.07–10.11 | 1962–3480 | \|Δ\| ≤ 9.3 % (mean ~5 %); 12 reliable |
-| **clapp2002** | S014 | Yuma Wash, AZ (arid, low-relief) | 21 | 0.48–29.1 | 230–436 | **+5.1 to +7.3 % (mean +6.6 %)**; all 21 reliable |
-| **dibiase2010** | S055 | San Gabriel Mts, CA (steep) | 15 | 0.08–6.4 | 1533–2079 | **−11.5 to +3.1 % (mean ~−5 %)**; 14 reliable |
+| **dethier2014** (pilot) | S169 | Front Range, CO | 14 | 0.07–10.11 | 1962–3480 | **−6.98 to −2.27 % (mean −5.59 %)**; 12 reliable |
+| **clapp2002** | S014 | Yuma Wash, AZ (arid, low-relief) | 21 | 0.48–29.1 | 230–436 | **−5.49 to −3.57 % (mean −4.09 %)**; all 21 reliable |
+| **dibiase2010** | S055 | San Gabriel Mts, CA (steep) | 15 | 0.08–6.4 | 1533–2079 | **−11.45 to +3.08 % (mean −5.25 %)**; 14 reliable |
 
-All frozen **2026-07-24** (keyless COP30, St scaling, snap threshold 250 px).
+All frozen **2026-07-24** (keyless COP30, St scaling, snap threshold 250 px), AFTER
+the standardisation-double-count fix (below).
 
-**The two new datasets deliberately CONTRAST the pilot** — `clapp2002` is
-low-relief / near-sea-level arid desert (topo shielding ~1.0, high-elevation
-S_tot scaling absent), `dibiase2010` is steep high-relief with the largest topo-
-shielding departures and erosion rates an order of magnitude faster. The residual
-**flips sign** between them (clapp `+6.6 %`, dibiase `~−5 %`), a genuine
-terrain/elevation-dependent divergence that feeds the parallel numerics
-investigation. Agreement is near-CAIRN, not exact, for the same three documented
-config differences as the pilot (muon scheme, topographic shielding, atmosphere;
-see each manifest's `residual_expectation` and the pilot `calculator_differences`
-block). Sub-snap-threshold basins are flagged `delineation_reliable=no` (pilot
-`S169WTS036` +71 %, dibiase `S055WTS044`) and excluded from the band — a
-delineation limit, not a numeric bug.
+**All three datasets now share ONE uniform, single-signed offset: lsdtt3 ~4–6 %
+LOWER than OCTOPUS.** That offset is the single *intentional* default difference vs
+OCTOPUS's CAIRN — the **muon scheme** (lsdtt3 `BraucherBorchers` vs OCTOPUS
+`Braucher`, ~5.65 % lower production). When lsdtt3 is **matched** to OCTOPUS
+(`muon_scheme: Braucher`, `atmosphere: NCEP`, 07KNSTD) it reproduces OCTOPUS/CAIRN
+erate to **+0.38 %** and basin-mean production to **−0.19 %** vs `BEPROD` — essentially
+exact (the §6e isolation test). `clapp2002` (low-relief) shows the muon offset nearly
+full (~−4 %, topo shielding ≈ 1); `dibiase2010` (steep) has larger per-basin scatter
+from ignored per-pixel topo shielding. Sub-snap-threshold basins are flagged
+`delineation_reliable=no` (`S169WTS036` +71 %, `S169WTS032`, `S055WTS044`) and
+excluded from the band — a delineation limit, not a numeric bug.
 
-**Why not exact — three config differences vs OCTOPUS's CAIRN** (quantified in the
-manifest `calculator_differences` block, Simon-directed 2026-07-24): (1) muon
-scheme — OCTOPUS Braucher vs lsdtt3 **BraucherBorchers** ⇒ lsdtt3 ~5.65 % lower
-production; (2) **topographic shielding** — OCTOPUS applies it (per-basin
-`octopus_topo_shield`), lsdtt3 ignores it ⇒ lsdtt3 ~+0.7 % (up to +6 % steep);
-(3) atmosphere — OCTOPUS **NCEP** vs lsdtt3 **ERA40**, not yet quantified. (1) and
-(2) oppose and partly cancel; matching both overshoots to +3.9 %, and the per-basin
-scatter is spatial (DEM/atmosphere), not these offsets. See the plan §9b findings log.
+**A standardisation double-count (harness bug) was found and fixed 2026-07-24.** The
+earlier bands (`dethier` |Δ|≤9.3 %, `clapp` **+6.6 %**, `dibiase` ~−5 %) and the
+apparent **sign flip** between `clapp` and `dibiase` were an artefact: OCTOPUS's
+`BE10NC` is *already renormalised to 07KNSTD*, while `BESTND` is the original
+source-paper standard kept as provenance (OCTOPUS docs; Codilean 2018/2022 ESSD). The
+harness was harvesting the already-07KNSTD `BE10NC` **and** passing the native `BESTND`
+label, so lsdtt3 (correctly, like CAIRN `LSDCosmoData.cpp:313`) applied the AMS factor a
+*second* time, inflating erate by exactly `1/factor − 1` on every non-07KNSTD basin
+(KNSTD 0.9042 ⇒ +10.6 %, LLNL3000 0.8644 ⇒ +15.7 %). The fix is harness-only —
+`run_cosmo_validation.py write_crn_input()` now passes `07KNSTD`; the numeric-core
+`be10_std_map_` is unchanged. Removing the double-count collapsed the sign-dependent
+scatter to the clean uniform muon offset above. The three *calculator* differences
+(muon 5.65 %, topo −0.7 %, atmosphere +0.64 %) remain real but small; see each
+manifest's `residual_expectation`, the pilot `calculator_differences` +
+`standardisation_convention` + `decisive_result` blocks, and the plan §6e / §9b log.
