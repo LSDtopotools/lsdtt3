@@ -146,6 +146,15 @@ int main(int argc, char* argv[])
         "correction. Requires crn_nc_file to be set. Default 0 = no correction (modern field).",
         "Atmosphere and palaeomagnetic correction", "param", ""};
 
+    string_default_map["atmosphere"] = "ERA40";
+    help_map["atmosphere"] = {"string","ERA40",
+        "Atmosphere model: ERA40 (default), NCEP, or standard.",
+        "ERA40 = Balco/Lifton ERA40 climatology + latitude-dependent lapse (lsdtt3 "
+        "default). NCEP = Balco NCEPatm_2 (the atmosphere CAIRN/OCTOPUS use; requires "
+        "NCEP grids in the crn_parameters.nc). standard = SLHL barometric formula, no "
+        "climatology. ERA40/NCEP fall back to standard if the required grids are absent.",
+        "Atmosphere and palaeomagnetic correction", "param", ""};
+
 
     // --- Sample points ---
     string_default_map["points_filename"] = "CRN_points.csv";
@@ -308,13 +317,24 @@ int main(int argc, char* argv[])
         std::cout << "Loading CRN NC data: " << crn_nc_file << "\n";
         crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(crn_nc_file);
     }
-    const bool use_era40     = crn_nc.loaded;
+    // Resolve the atmosphere model. ERA40/NCEP fall back to standard if their
+    // grids are absent. Default "ERA40" preserves the historical behaviour.
+    std::string atm_name = sf["atmosphere"];
+    lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
+    if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
+    else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
+    else                             atm_source = lsdtt::AtmSource::ERA40;
+
+    const bool use_ncep      = (atm_source == lsdtt::AtmSource::NCEP) && crn_nc.ncep_loaded;
+    const bool use_era40     = (atm_source == lsdtt::AtmSource::ERA40) && crn_nc.loaded;
     const bool use_paleomag  = crn_nc.loaded && (sample_age_yr > 0.0);
+    const std::string atm_report = use_ncep ? "NCEP"
+                                 : use_era40 ? "ERA40" : "standard";
 
     std::cout << "Nuclide       : " << nuclide << "\n"
               << "Muon scheme   : " << muon_scheme << "\n"
               << "Rock density  : " << rock_density_kg_m3 << " kg/m3\n"
-              << "Atmosphere    : " << (use_era40 ? "ERA40" : "standard") << "\n"
+              << "Atmosphere    : " << atm_report << "\n"
               << "Palaeomag     : " << (use_paleomag
                                         ? "Muscheler VDM (" + std::to_string(static_cast<int>(sample_age_yr)) + " yr)"
                                         : "off (modern field)") << "\n"
@@ -378,13 +398,13 @@ int main(int argc, char* argv[])
     }
     const auto& flow = dynamic_cast<const lsdtt::lsdtt_flowinfo&>(*flow_ptr);
 
-    //  3. Production raster 
+    //  3. Production raster
     std::cout << "Calculating Stone 2000 production raster"
-              << (use_era40    ? " (ERA40 atmosphere)"          : "")
+              << " (" << atm_report << " atmosphere)"
               << (use_paleomag ? " + palaeomagnetic correction" : "")
               << "...\n";
     lsdtt::lsdtt_raster_cpu prod_raster =
-        lsdtt::calculate_production_raster(filled_dem, crn_nc, sample_age_yr);
+        lsdtt::calculate_production_raster(filled_dem, crn_nc, sample_age_yr, atm_source);
 
     if (bf["write_production_raster"])
     {

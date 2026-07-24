@@ -72,10 +72,18 @@ a compact Boulder Creek cluster of **14 small catchments (0.07–10.11 km²) spa
 1962–3480 m**, chosen per plan §5b/§6c(B) to shake out the harness and expose any
 elevation-dependent residual before the GB-scale Himalayan datasets.
 
-**First accepted run frozen 2026-07-24** (keyless COP30, St scheme, snap
+**First accepted run frozen 2026-07-24** (keyless COP30, St scaling, snap
 threshold 250 px). The 12 delineation-reliable basins agree with OCTOPUS/CAIRN to
 **|Δ| ≤ 9.3 % (mean ~5 %)** — tight for a near-CAIRN oracle, with no strong
 elevation trend at COP30. One sub-threshold basin (`S169WTS036`, 0.07 km²) is
 flagged `delineation_reliable=no` (+71 %: the outlet snaps onto a larger channel
-than its true catchment — a delineation limit, not a numeric bug). See the plan
-§9b findings log.
+than its true catchment — a delineation limit, not a numeric bug).
+
+**Why not exact — three config differences vs OCTOPUS's CAIRN** (quantified in the
+manifest `calculator_differences` block, Simon-directed 2026-07-24): (1) muon
+scheme — OCTOPUS Braucher vs lsdtt3 **BraucherBorchers** ⇒ lsdtt3 ~5.65 % lower
+production; (2) **topographic shielding** — OCTOPUS applies it (per-basin
+`octopus_topo_shield`), lsdtt3 ignores it ⇒ lsdtt3 ~+0.7 % (up to +6 % steep);
+(3) atmosphere — OCTOPUS **NCEP** vs lsdtt3 **ERA40**, not yet quantified. (1) and
+(2) oppose and partly cancel; matching both overshoots to +3.9 %, and the per-basin
+scatter is spatial (DEM/atmosphere), not these offsets. See the plan §9b findings log.

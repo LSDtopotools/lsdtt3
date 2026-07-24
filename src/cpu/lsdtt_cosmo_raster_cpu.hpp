@@ -60,9 +60,17 @@ namespace lsdtt
 //           scaling factor.  When 0 (default), modern field only.
 //
 // Returns a raster with the same geometry as dem; nodata pixels are preserved.
+//
+// Atmosphere source selector. Auto (the default) preserves the historical
+// behaviour exactly: ERA40 when nc.loaded, else the standard atmosphere. NCEP
+// selects the Balco NCEPatm_2 atmosphere CAIRN/OCTOPUS use (requires
+// nc.ncep_loaded; falls back to standard otherwise).
+enum class AtmSource { Auto, Standard, ERA40, NCEP };
+
 lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               const CrnNcData&         nc,
-                                              double                   age_yr = 0.0);
+                                              double                   age_yr = 0.0,
+                                              AtmSource                atm = AtmSource::Auto);
 
 // Backward-compatible overload: standard atmosphere, no paleomagnetic correction.
 inline lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem)

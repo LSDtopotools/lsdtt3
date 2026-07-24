@@ -479,14 +479,23 @@ CrnNcData lsdtt_crn_parameters::load_nc_data(const std::string& nc_path)
     read_var1d_d("muscheler_time",  out.muscheler_time);
     read_var1d_f("muscheler_vdm",   out.muscheler_vdm);
 
+    // NCEP2 atmosphere (optional; absent in older files).
+    read_var1d_d("ncep_lat",        out.ncep_lat);
+    read_var1d_d("ncep_lon",        out.ncep_lon);
+    read_var2d_f("ncep_meanP",      out.ncep_meanP);
+    read_var2d_f("ncep_meanT",      out.ncep_meanT);
+
     nc_close(ncid);
 
     out.loaded = (!out.era40_lat.empty() && !out.era40_meanP.empty() &&
                   !out.lifton_lr.empty() && !out.muscheler_vdm.empty());
+    out.ncep_loaded = (!out.ncep_lat.empty() && !out.ncep_lon.empty() &&
+                       !out.ncep_meanP.empty() && !out.ncep_meanT.empty());
     if (out.loaded)
         std::cout << "load_nc_data: loaded " << nc_path
                   << "  ERA40=" << out.era40_lat.size() << "x" << out.era40_lon.size()
-                  << "  Muscheler=" << out.muscheler_time.size() << " steps\n";
+                  << "  Muscheler=" << out.muscheler_time.size() << " steps"
+                  << (out.ncep_loaded ? "  NCEP=on" : "") << "\n";
     else
         std::cerr << "load_nc_data: file opened but variables missing in \"" << nc_path << "\"\n";
 #else
@@ -576,6 +585,38 @@ double lsdtt_crn_parameters::atmospheric_pressure_era40(double lat_deg, double l
     double T_site = T_sl - dtdz * elevation_m;
     if (T_site <= 0.0) T_site = 1.0;   // guard unphysical elevations
     return P_sl * std::exp((gmr / dtdz) * (std::log(T_sl) - std::log(T_site)));
+}
+
+//
+// atmospheric_pressure_ncep
+// Faithful port of Balco's NCEPatm_2 (the CRONUS/CAIRN atmosphere). Interpolates
+// the NCEP2 mean sea-level pressure (hPa) and 1000 hPa temperature (degC) grids to
+// the site, then applies the standard-atmosphere barometric formula with a single
+// fixed lapse rate. Unlike atmospheric_pressure_era40 this uses a constant
+// dtdz = 0.0065 K/m rather than the Lifton latitude polynomial. The NCEP2 grid
+// shares the ERA40 axis conventions (lat 90->-90 descending, lon 0->360 ascending)
+// so bilinear_era40 is reused.
+//
+double lsdtt_crn_parameters::atmospheric_pressure_ncep(double lat_deg, double lon_deg,
+                                                       double elevation_m,
+                                                       const CrnNcData& nc)
+{
+    if (!nc.ncep_loaded || nc.ncep_lat.empty() || nc.ncep_meanP.empty())
+        return atmospheric_pressure_standard(elevation_m);
+
+    // Normalise longitude to [0, 360)
+    if (lon_deg < 0.0) lon_deg += 360.0;
+
+    double site_slp = bilinear_era40(nc.ncep_lat, nc.ncep_lon, nc.ncep_meanP, lat_deg, lon_deg);
+    double site_T   = bilinear_era40(nc.ncep_lat, nc.ncep_lon, nc.ncep_meanT, lat_deg, lon_deg);
+
+    double T_degK = site_T + 273.15;   // NCEP2 temperature is stored in degC
+
+    const double gmr  = -0.03417;      // -g*M/R (Balco 2008)
+    const double dtdz = 0.0065;        // fixed standard-atmosphere lapse rate (K/m)
+    double T_site = T_degK - elevation_m * dtdz;
+    if (T_site <= 0.0) T_site = 1.0;   // guard unphysical elevations
+    return site_slp * std::exp((gmr / dtdz) * (std::log(T_degK) - std::log(T_site)));
 }
 
 // 

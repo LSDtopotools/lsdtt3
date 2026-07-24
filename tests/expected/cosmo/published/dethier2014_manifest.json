@@ -41,14 +41,50 @@
   "residual_expectation": {
     "_comment": [
       "Simon 2026-07-24: agreement will NOT be exact. lsdtt3 has diverged from",
-      "stock CAIRN -- updated production-rate parameters, plus a high-elevation",
-      "production-scaling fix THIS suite found (the S_tot>=1 clamp defect, plan",
-      "§9b findings log). The residual is expected to be ELEVATION-DEPENDENT."
+      "the OCTOPUS/CAIRN configuration in three known ways (see",
+      "calculator_differences), plus a high-elevation production-scaling fix THIS",
+      "suite found (the S_tot>=1 clamp defect, plan §9b findings log)."
     ],
     "expect_zero": false,
-    "elevation_dependent": true,
-    "band": "measured-then-frozen on the FIRST accepted network run; do NOT assert a tight zero-residual band. Record elevation_ave_m per basin in the summary so the residual-vs-elevation trend is visible.",
-    "attribute_residual_to": "production-parameter divergence + high-elevation scaling scheme + DEM product (COP30 vs the SRTM used in the OCTOPUS recalculation) + basin pixel binning -- NOT to bugs."
+    "band": "measured-then-frozen on the FIRST accepted network run; do NOT assert a tight zero-residual band. Record elevation_ave_m + octopus_area_km2 per basin in the summary.",
+    "attribute_residual_to": "muon-scheme + topographic-shielding + atmosphere differences (calculator_differences) + high-elevation scaling + DEM product (COP30 vs the DEM in the OCTOPUS recalculation) + basin pixel binning -- NOT to bugs."
+  },
+  "calculator_differences": {
+    "_comment": [
+      "Simon 2026-07-24: the THREE concrete config differences between lsdtt3's",
+      "default run and OCTOPUS's CAIRN recalculation, and a quantified consistency",
+      "check (same COP30 DEM, muon scheme toggled, topo shielding applied per-basin;",
+      "12 delineation-reliable basins). E scales ~linearly with production and with",
+      "topo_shield_value (verified: E ratio 0.98864 at topo=0.9885)."
+    ],
+    "muon_scheme": {
+      "octopus": "Braucher (CAIRN default)",
+      "lsdtt3": "BraucherBorchers (lsdtt3 default; updated Braucher2011 F + Borchers2016 P0)",
+      "effect": "lsdtt3 BraucherBorchers gives ~5.65% LOWER production/erate than Braucher on these basins (switching lsdtt3 to Braucher raised mean E by +5.65%). This is the DOMINANT named difference and matches Simon's 'lsdtt3 has lower production'."
+    },
+    "topographic_shielding": {
+      "octopus": "per-pixel topographic shielding applied (BETOPO field; pilot mean 0.9885, range 0.942-0.999)",
+      "lsdtt3": "IGNORED (topo_shield_value default 1.0; no per-pixel topo shielding computed)",
+      "effect": "ignoring shielding makes lsdtt3 erate HIGHER by ~(1/BETOPO - 1): ~+0.7% mean on the reliable basins, but up to +6% in the steepest/most-shielded basin (S169WTS036, BETOPO 0.942). octopus_topo_shield is recorded per basin in the sample table.",
+      "caveat": "Simon 2026-07-24: OCTOPUS shielding is computed PIXEL-BY-PIXEL, so the basin-average BETOPO used here UNDER-captures it -- our correction applies one basin-mean factor, whereas the true effect is the production-WEIGHTED average of per-pixel shielding (steep, high-production ridgelines are shielded more). So the +0.7% is a LOWER BOUND on the real topo-shielding contribution; lsdtt3 computes no per-pixel topo shielding at all, so it cannot yet reproduce OCTOPUS's exactly."
+    },
+    "atmosphere": {
+      "octopus": "NCEP (Balco NCEPatm_2)",
+      "lsdtt3": "ERA40 (Balco/Lifton, latitude-dependent lapse) by default; NCEP now available via `atmosphere: NCEP`",
+      "effect": "QUANTIFIED 2026-07-24: running lsdtt3 with NCEP instead of ERA40 raises erate by +0.64% mean (range +0.44 to +0.89%), and the shift is ELEVATION-DEPENDENT (+0.44% at 2115 m -> +0.89% at 3480 m). Small, smooth, mostly systematic -- mean|delta| vs OCTOPUS barely moves (4.98 -> 4.92). NCEP support added to lsdtt3 (crn_parameters.nc ncep_* grids + atmospheric_pressure_ncep, a port of Balco NCEPatm_2); ERA40 remains the default and the sentinel is bit-unchanged."
+    },
+    "consistency_check_2026_07_24": {
+      "reliable_basins": 12,
+      "mean_signed_pct": {
+        "A_baseline_BraucherBorchers_noTopo_ERA40": -0.97,
+        "B_muonMatch_Braucher_noTopo_ERA40": 4.63,
+        "C_Braucher_plus_perBasin_topo_ERA40": 3.90,
+        "D_Braucher_topo_plus_NCEP_all_matched": 4.54
+      },
+      "mean_abs_pct": {"A": 4.98, "B": 4.95, "C": 4.80, "D_approx": 4.9},
+      "effect_sizes_pct": {"muon_BB_to_Braucher": 5.65, "topo_shielding": -0.70, "atmosphere_ERA40_to_NCEP": 0.64},
+      "conclusion": "All THREE named differences are now quantified. Muon dominates (+5.65%); topo shielding (-0.70% mean, up to -6% steep) and atmosphere (+0.64%, elevation-dependent) are small. Muon and topo act in OPPOSITE directions and partly cancel, so lsdtt3's near-zero baseline (-0.97%) is partly coincidental cancellation. Matching ALL THREE does NOT drive agreement to zero -- it OVERSHOOTS to ~+4.5% (D), so a residual ~+4-4.5% net SURPLUS in lsdtt3 remains that these three do NOT explain: it must come from production P0 values (Braucher2011/Borchers2016 vs OCTOPUS's exact P0), the COP30-vs-original DEM (basin hypsometry), the high-elevation scaling fix, and delineation. The per-basin SCATTER (mean|delta| ~5%) is nearly INSENSITIVE to all three uniform corrections (4.98 -> 4.95 -> 4.80 -> ~4.9), confirming the scatter is SPATIAL (DEM resolution/delineation), not the muon/topo/atmosphere systematics."
+    }
   },
   "dem": {
     "provider": "Copernicus GLO-30 (keyless)",

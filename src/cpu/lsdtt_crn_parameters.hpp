@@ -44,6 +44,15 @@ struct CrnNcData
     std::vector<double> muscheler_time; // (5970,) yr BP, ascending
     std::vector<float>  muscheler_vdm;  // (5970,) 10^2^2 Am^2
     bool loaded = false;
+    // NCEP2 reanalysis climatology (the atmosphere CAIRN/OCTOPUS use; Balco
+    // NCEPatm_2). Optional: absent in older crn_parameters.nc files. Only the
+    // sea-level pressure + 1000 hPa temperature grids are needed - the legacy
+    // geopotential-height arrays are never used in the pressure calculation.
+    std::vector<double> ncep_lat;      // (73,)   deg, 90 -> -90 (descending)
+    std::vector<double> ncep_lon;      // (145,)  deg, 0 -> 360 (ascending)
+    std::vector<float>  ncep_meanP;    // (73x145) hPa (mean sea-level pressure)
+    std::vector<float>  ncep_meanT;    // (73x145) degC (mean 1000 hPa temperature)
+    bool ncep_loaded = false;
 };
 
 // 
@@ -107,6 +116,18 @@ public:
     static double atmospheric_pressure_era40(double lat_deg, double lon_deg,
                                               double elevation_m,
                                               const CrnNcData& nc);
+
+    // NCEP2-based atmospheric pressure - a faithful port of Balco's NCEPatm_2
+    // (the atmosphere CAIRN/OCTOPUS use). Bilinear interpolation of the NCEP2
+    // sea-level pressure and 1000 hPa temperature grids, then the standard-
+    // atmosphere barometric formula with a single fixed lapse rate (0.0065 K/m)
+    // - NOT the Lifton latitude polynomial the ERA40 path uses. This is the ONLY
+    // difference in atmosphere model between the two; the climatology grids differ
+    // too. Falls back to atmospheric_pressure_standard if nc.ncep_loaded == false.
+    // Returns pressure in mbar.
+    static double atmospheric_pressure_ncep(double lat_deg, double lon_deg,
+                                             double elevation_m,
+                                             const CrnNcData& nc);
 
     // Load ERA40 and paleomagnetic data from a crn_parameters.nc file.
     // Returns CrnNcData with loaded=false if the file cannot be read or if

@@ -25,10 +25,21 @@ requires a ~200 MB reanalysis download, so the ~100 kB product is committed here
 | `era40_meanT` | 1000 hPa mean temperature (K) — the sea-level reference in the barometric formula | NCEP-DOE Reanalysis 2, 1981–2010 annual climatology |
 | `lifton_lr` | Lifton CIRA-86 lapse-rate polynomial (7 coeffs) | Balco/Lifton `ERA40atm` (Lifton, Sato & Dunai 2014) |
 | `muscheler_time`, `muscheler_vdm` | virtual (axial) dipole moment vs age; absolute VDM in 10²² A m², 108 points, 0–49500 yr BP | Knudsen et al. (2008) supplement + a present-day (t=0) point (IGRF-2000 dipole moment, 7.79×10²² A m²) |
+| `ncep_lat`, `ncep_lon` | 2.5° grid axes, 73×145 (lat 90→−90, lon 0→360) | — |
+| `ncep_meanP` | NCEP2 mean sea-level pressure (hPa) | legacy `NCEP2.bin` (LSDTopoTools_CRNBasinwide); the atmosphere CAIRN/OCTOPUS use |
+| `ncep_meanT` | NCEP2 mean 1000 hPa temperature (**°C**) | legacy `NCEP2.bin` |
 
-The atmosphere routine (`atmospheric_pressure_era40`) ports Balco/Lifton's
+The default atmosphere routine (`atmospheric_pressure_era40`) ports Balco/Lifton's
 `ERA40atm`; `muscheler_vdm` is read as absolute VDM by `stone2000sp_paleomag`, which
 takes index 0 as the modern reference (hence the prepended present-day point).
+
+The `ncep_*` grids (added via `python_helpers/add_ncep_to_crn_nc.py`) supply the
+alternative NCEP atmosphere (`atmospheric_pressure_ncep`, a port of Balco's
+`NCEPatm_2`) selectable with `atmosphere: NCEP` in `lsdtt-cosmo-tool` — the
+atmosphere CAIRN/OCTOPUS use, for like-for-like comparison. Only the SLP + 1000 hPa
+temperature grids are stored (float32 + zlib): the legacy `NCEP_hgt.bin`
+geopotential heights are never used by `NCEPatm_2`. **Note the units differ from
+ERA40**: `ncep_meanT` is in °C, `era40_meanT` in K.
 
 ### Citations
 

@@ -220,7 +220,8 @@ static double erate_initial_guess(double measured_conc,
 // 
 lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               const CrnNcData&         nc,
-                                              double                   age_yr)
+                                              double                   age_yr,
+                                              AtmSource                atm)
 {
     const auto& meta = dem.get_meta();
     const auto& data = dem.get_data_array();
@@ -269,14 +270,26 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
     OCTDestroyCoordinateTransformation(ct);
 
     // xs now holds longitudes, ys holds latitudes.
-    const bool use_era40  = nc.loaded;
+    // Resolve the atmosphere source to an integer mode for the parallel loop.
+    // Auto reproduces the historical behaviour exactly (ERA40 if loaded, else
+    // standard), so existing callers and the numerics sentinel are unaffected.
+    // 0 = standard, 1 = ERA40, 2 = NCEP.
+    int atm_mode;
+    switch (atm)
+    {
+        case AtmSource::Standard: atm_mode = 0; break;
+        case AtmSource::ERA40:    atm_mode = nc.loaded ? 1 : 0; break;
+        case AtmSource::NCEP:     atm_mode = nc.ncep_loaded ? 2 : 0; break;
+        case AtmSource::Auto:
+        default:                  atm_mode = nc.loaded ? 1 : 0; break;
+    }
     const bool use_paleomag = nc.loaded && (age_yr > 0.0);
 
     lsdtt_crn_parameters ref_params;
 
 #pragma omp parallel for schedule(static) default(none) \
     shared(n_valid, valid_r, valid_c, xs, ys, data, prod_data, prod_mask, \
-           ref_params, meta, nc, age_yr, use_era40, use_paleomag)
+           ref_params, meta, nc, age_yr, atm_mode, use_paleomag)
     for (int k = 0; k < n_valid; ++k)
     {
         int r = valid_r[k], c = valid_c[k];
@@ -284,9 +297,12 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
         double lon  = xs[k];
         double elev = static_cast<double>(data(r, c));
 
-        double pressure = use_era40
-            ? lsdtt_crn_parameters::atmospheric_pressure_era40(lat, lon, elev, nc)
-            : lsdtt_crn_parameters::atmospheric_pressure_standard(elev);
+        double pressure =
+            atm_mode == 2
+                ? lsdtt_crn_parameters::atmospheric_pressure_ncep(lat, lon, elev, nc)
+          : atm_mode == 1
+                ? lsdtt_crn_parameters::atmospheric_pressure_era40(lat, lon, elev, nc)
+                : lsdtt_crn_parameters::atmospheric_pressure_standard(elev);
 
         double scaling = use_paleomag
             ? ref_params.stone2000sp_paleomag(lat, pressure, 1.0, age_yr, nc)
