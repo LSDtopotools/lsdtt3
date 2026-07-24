@@ -1,0 +1,33 @@
+# OCTOPUS study S055 10Be basins -- REAL regression targets (cosmo plan Phase 6).
+#
+# HARVESTED 2026-07-24 from the OCTOPUS database via WFS by tests/scripts/harvest_octopus.py -- NOT scraped from the paper and NOT
+# invented. OCTOPUS recalculates every rate with CAIRN (Mudd et al. 2016) -- the
+# same algorithm lsdtt-cosmo-tool implements -- so these are a NEAR-CAIRN oracle,
+# not bit-exact (lsdtt3 has since diverged: updated production params + a high-
+# elevation S_tot>=1 scaling fix this suite found, plan §9b).
+#   WFS: http://geoserver.octopusdata.org/geoserver/wfs
+#        typeName=be10-denude:crn_int_basins (+ be10-denude:crn_int_outlets), CQL_FILTER STUDYID='S055'
+#   OCTOPUS DBVERNO=v2.3(4)   STUDYID=S055   harvested 2026-07-24
+#
+# Scaling: EBE_* is OCTOPUS's default Stone/Lal (St) recalculation; run lsdtt-
+# cosmo-tool in the matching (St) scheme for a like-for-like compare.
+# Columns: latitude/longitude = OCTOPUS basin OUTLET point (crn_int_outlets);
+# published_erate_gcm2yr = EBE_GCMYR (the compared field); published_erate_mm_kyr
+# = EBE_MMKYR (+/- published_erate_mm_kyr_err = EBE_ERR); octopus_topo_shield = BETOPO;
+# snow_shielding = BESNOW; octopus_area_km2 = AREA; atm_pressure_hpa = ATM_PRESS.
+sample_name,latitude,longitude,Be10_CONC,Be10_uncertainty,standardisation,snow_shielding,octopus_topo_shield,published_erate_gcm2yr,published_erate_mm_kyr,published_erate_mm_kyr_err,elevation_ave_m,atm_pressure_hpa,octopus_area_km2,published_calculator,octopus_obsid
+S055WTS013,34.27976,-118.02100,27150,2540,07KNSTD,1,0.994,0.07769,293.18,63.78,1533,844.16,1.09,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS013
+S055WTS014,34.27892,-118.02757,32570,2250,07KNSTD,1,0.994,0.06471,244.18,50.77,1537,844.12,6.42,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS014
+S055WTS016,34.34192,-118.04903,52550,3060,07KNSTD,1,0.98,0.04173,157.46,32.06,1579,835.77,1.23,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS016
+S055WTS030,34.28439,-118.02670,23820,2570,07KNSTD,1,0.988,0.09297,350.84,78.32,1582,835.77,0.68,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS030
+S055WTS022,34.37830,-117.98927,138470,9040,07KNSTD,1,0.996,0.017,64.14,13.12,1716,825.95,1.16,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS022
+S055WTS020,34.33756,-118.01042,250690,20680,07KNSTD,1,0.999,0.00987,37.25,7.84,1735,817.31,2.41,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS020
+S055WTS023,34.36658,-117.99196,102880,12700,07KNSTD,1,0.998,0.02341,88.33,20.37,1736,823.2,2.52,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS023
+S055WTS024,34.36582,-117.98913,94480,4540,07KNSTD,1,0.998,0.0255,96.21,19.13,1737,823.22,1.14,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS024
+S055WTS043,34.36501,-117.99288,81270,3490,07KNSTD,1,0.998,0.02987,112.72,22.25,1745,822.25,2.26,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS043
+S055WTS015,34.35363,-118.04729,93680,3950,07KNSTD,1,0.98,0.02623,98.99,19.5,1752,817.64,3.16,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS015
+S055WTS040,34.36187,-117.99566,89340,5770,07KNSTD,1,0.999,0.02664,100.52,20.49,1761,825.32,1.83,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS040
+S055WTS039,34.36030,-117.99659,16000,2180,07KNSTD,1,0.998,0.15449,582.98,138.15,1768,820.31,1.63,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS039
+S055WTS021,34.34068,-118.01046,213830,57300,07KNSTD,1,0.999,0.01163,43.87,15.39,1794,817.04,2.24,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS021
+S055WTS049,34.32154,-117.96604,78640,4280,07KNSTD,1,0.987,0.03535,133.4,26.35,1896,799.69,2.3,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS049
+S055WTS044,34.38187,-118.02883,167580,8310,07KNSTD,1,0.995,0.01795,67.73,13.23,2079,788.12,0.08,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,S055WTS044

@@ -607,3 +607,27 @@ add_test(NAME cosmo_realworld_dethier2014
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
 set_tests_properties(cosmo_realworld_dethier2014 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+# Additional real-landscape datasets (harvested with tests/scripts/harvest_octopus.py),
+# chosen to CONTRAST with the moderate-relief Front Range pilot across terrain and
+# elevation: clapp2002 = Yuma Wash arid LOW-relief / LOW-elevation (OCTOPUS S014);
+# dibiase2010 = San Gabriel STEEP / HIGH-relief (OCTOPUS S055). Each is fully
+# manifest-driven (bbox, target UTM, run knobs) and frozen from its own accepted
+# networked run. Same --check regression mode, same skip-77 / out-of-CI wiring.
+add_test(NAME cosmo_realworld_clapp2002
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
+                 clapp2002 --check
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+set_tests_properties(cosmo_realworld_clapp2002 PROPERTIES
+    LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+add_test(NAME cosmo_realworld_dibiase2010
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
+                 dibiase2010 --check
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+set_tests_properties(cosmo_realworld_dibiase2010 PROPERTIES
+    LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)

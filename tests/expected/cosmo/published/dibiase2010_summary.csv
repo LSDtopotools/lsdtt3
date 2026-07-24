@@ -1,0 +1,43 @@
+# DiBiase et al. (2010) San Gabriel validation SUMMARY -- FROZEN (cosmo plan Phase 6).
+#
+# Written/refreshed by tests/scripts/run_cosmo_validation.py. Each accepted run
+# appends one row per basin: the lsdtt3 inverted rate vs the OCTOPUS-published
+# (CAIRN-recalculated) rate, percent difference, and basin elevation. Refreshing
+# this file is a REVIEWABLE event; a fresh run is compared (--check) against these
+# frozen rows as a cheap tracked regression check.
+#
+# STEEP, HIGH-RELIEF contrast to the pilot (dethier2014) and the arid clapp2002.
+# A compact West-Fork cluster, 1533-2079 m, SLP_AVE ~363, erosion 37-583 mm/kyr
+# (an order of magnitude faster than the pilot). Carries the largest topographic-
+# shielding departures of the three datasets (BETOPO down to 0.98 here).
+#
+# Difference is EXPECTED, NOT zero (near-CAIRN oracle; see manifest
+# residual_expectation + the pilot calculator_differences block for the quantified
+# muon/topo/atmosphere breakdown). FIRST ACCEPTED RUN frozen 2026-07-24 (keyless
+# COP30, St scaling, threshold_contributing_pixels=250). Measured band on the 14
+# delineation_reliable basins: pct_diff -11.45% to +3.08% (13 of 14 within
+# +/-7.1%; the -11.45% is S055WTS014, a 6.4 km2 basin whose COP30 delineation
+# departs most from OCTOPUS). Mean signed ~-5%, i.e. lsdtt3 runs LOWER than
+# OCTOPUS/CAIRN here -- the OPPOSITE sign to the low-elevation arid clapp2002
+# (mean ~+6.6%). This sign flip across terrain/elevation is the divergence the
+# parallel numerics investigation targets: at these steeper, higher basins the
+# BraucherBorchers-vs-Braucher lower-production and the (ignored) per-pixel topo
+# shielding dominate. One sub-threshold basin (S055WTS044, 0.08 km2 < the 0.225
+# km2 snap footprint) is flagged delineation_reliable=no and excluded from the
+# band. One >100%-uncertainty sample (S055WTS004) was dropped at harvest time.
+sample_name,nuclide,standardisation,elevation_ave_m,octopus_area_km2,delineation_reliable,lsdtt_erate_gcm2yr,published_erate_gcm2yr,published_erate_mm_kyr,pct_diff,abs_pct_diff,published_calculator,dem_source,resolution_m,run_date_utc,git_sha
+S055WTS013,Be-10,07KNSTD,1533,1.09,yes,0.073780552,0.07769,293.18,-5.032,5.032,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS014,Be-10,07KNSTD,1537,6.42,yes,0.05730228,0.06471,244.18,-11.45,11.45,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS016,Be-10,07KNSTD,1579,1.23,yes,0.043017081,0.04173,157.46,3.084,3.084,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS030,Be-10,07KNSTD,1582,0.68,yes,0.086430539,0.09297,350.84,-7.034,7.034,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS022,Be-10,07KNSTD,1716,1.16,yes,0.016302567,0.017,64.14,-4.103,4.103,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS020,Be-10,07KNSTD,1735,2.41,yes,0.0093057084,0.00987,37.25,-5.717,5.717,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS023,Be-10,07KNSTD,1736,2.52,yes,0.022136692,0.02341,88.33,-5.439,5.439,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS024,Be-10,07KNSTD,1737,1.14,yes,0.024188132,0.0255,96.21,-5.145,5.145,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS043,Be-10,07KNSTD,1745,2.26,yes,0.02810139,0.02987,112.72,-5.921,5.921,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS015,Be-10,07KNSTD,1752,3.16,yes,0.024652538,0.02623,98.99,-6.014,6.014,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS040,Be-10,07KNSTD,1761,1.83,yes,0.025918186,0.02664,100.52,-2.71,2.71,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS039,Be-10,07KNSTD,1768,1.63,yes,0.14628149,0.15449,582.98,-5.313,5.313,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS021,Be-10,07KNSTD,1794,2.24,yes,0.010974283,0.01163,43.87,-5.638,5.638,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS049,Be-10,07KNSTD,1896,2.3,yes,0.032846846,0.03535,133.4,-7.081,7.081,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100
+S055WTS044,Be-10,07KNSTD,2079,0.08,no,0.016874122,0.01795,67.73,-5.994,5.994,OCTOPUS_v2.3(4)_CAIRN_St_Braucher,Copernicus GLO-30 (keyless):COP30,30,2026-07-24T13:58:46Z,1d19100

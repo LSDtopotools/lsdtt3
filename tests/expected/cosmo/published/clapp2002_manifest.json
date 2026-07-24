@@ -1,0 +1,94 @@
+{
+  "_comment": [
+    "Real-landscape validation manifest (cosmo plan Phase 6 / \u00a75b).",
+    "SKELETON written by tests/scripts/harvest_octopus.py -- hand-edit the",
+    "'description' and any narrative caveats; the numeric fields (bbox,",
+    "target_epsg, octopus_source, run_params) are complete as written.",
+    "The DEM is fetched KEYLESS (Copernicus GLO-30) into a temp workdir by",
+    "run_cosmo_validation.py, compared, then deleted. No large data is",
+    "ever committed."
+  ],
+  "dataset": "clapp2002",
+  "description": "Clapp et al. (2002) Yuma Wash 10Be basins, Sonoran Desert, Arizona (OCTOPUS S014). 21 small catchments (0.48-29.1 km2), 230-436 m, LOW relief (OCTOPUS ELEV_STD ~50 m), topographic shielding ~1.0. A deliberately LOW-RELIEF, LOW-ELEVATION contrast to the pilot Front Range dataset (dethier2014, 1242-3480 m, relief ~94 m) and to the steep San Gabriel dataset (dibiase2010), spanning the terrain and elevation axes for the parallel numerics investigation (production scaling is near-unity at these low elevations, so the high-elevation S_tot scaling effect is absent here). Several outlets carry grain-size/aliquot replicates at the same coordinates (same delineated basin, different measured concentration).",
+  "published_reference": {
+    "citation": "Clapp, E.M., Bierman, P.R., Caffee, M. (2002), Geomorphology 45(1-2), 89-104.",
+    "doi": "10.1016/S0169-555X(01)00191-X",
+    "calculator": "OCTOPUS v2.3(4) recalculation with CAIRN (Mudd et al. 2016), default Stone/Lal 'St' scaling (EBE_* fields)."
+  },
+  "octopus_source": {
+    "_comment": [
+      "Regression targets harvested from OCTOPUS, NOT scraped or invented.",
+      "OCTOPUS recalculates with CAIRN = the algorithm lsdtt-cosmo-tool",
+      "implements, so a NEAR-CAIRN oracle (see residual_expectation)."
+    ],
+    "wfs_endpoint": "http://geoserver.octopusdata.org/geoserver/wfs",
+    "typenames": [
+      "be10-denude:crn_int_basins",
+      "be10-denude:crn_int_outlets"
+    ],
+    "cql_filter": "STUDYID='S014'",
+    "cql_note": "Filter with CQL_FILTER, not bbox: the OCTOPUS WFS 2.0.0 bbox parameter throws a ProjectionException.",
+    "output_format": "application/json",
+    "srs": "EPSG:4326",
+    "db_version": "v2.3(4)",
+    "study_id": "S014",
+    "harvested_utc": "2026-07-24",
+    "basins_in_study": 36,
+    "basins_in_subset": 21,
+    "subset_bbox_deg": "none (whole study, area-filtered)",
+    "area_filter_km2": {
+      "min": 0.0,
+      "max": 30.0
+    },
+    "max_rel_uncertainty": 0.5,
+    "scaling_scheme": "St (Stone/Lal) -- EBE_MMKYR / EBE_GCMYR. OCTOPUS also stores EBEL/EBELNS (LSDn)."
+  },
+  "residual_expectation": {
+    "_comment": [
+      "Agreement will NOT be exact. lsdtt3 differs from OCTOPUS's CAIRN in",
+      "muon scheme (BraucherBorchers vs Braucher), topographic shielding",
+      "(lsdtt3 ignores it by default), and atmosphere (ERA40 vs NCEP), plus",
+      "the high-elevation scaling fix this suite found. See the pilot",
+      "dethier2014_manifest calculator_differences block for the quantified",
+      "three-way breakdown."
+    ],
+    "expect_zero": false,
+    "band": "measured-then-frozen on the FIRST accepted network run; do NOT assert a tight zero-residual band.",
+    "attribute_residual_to": "muon-scheme + topographic-shielding + atmosphere + high-elevation scaling + DEM product (COP30 vs original) + delineation -- NOT bugs."
+  },
+  "dem": {
+    "provider": "Copernicus GLO-30 (keyless)",
+    "dem_source": "cop30_aws",
+    "dem_source_note": "Keyless. lsdtt-fetch-raster retrieves+clips Copernicus GLO-30 from AWS Open Data (cop30_aws) or Microsoft Planetary Computer (planetary_computer) with NO API key.",
+    "pc_collection": "cop-dem-glo-30",
+    "dataset_id": "COP30",
+    "resolution_m": 30,
+    "grid_spacing": 30.0,
+    "resampling_method": "cubic",
+    "target_epsg": 32611,
+    "target_epsg_note": "UTM zone from OCTOPUS PROJEPSGID=32611. The cosmo CLIs require a PROJECTED CRS, so the DEM is warped to UTM at fetch time.",
+    "resolution_choice_note": "COP30 (30 m) vs the DEM in the OCTOPUS/CAIRN recalculation is a DOCUMENTED, attributable validation difference, not a bug.",
+    "size_pixels": 0,
+    "bounding_box": {
+      "_comment": "Union of the 21 selected basins' OCTOPUS polygon bounds, padded 0.02 deg.",
+      "west": -114.6142,
+      "south": 33.045,
+      "east": -114.4317,
+      "north": 33.2991
+    }
+  },
+  "run_params": {
+    "_comment": [
+      "lsdtt-cosmo-tool run knobs. threshold_contributing_pixels lowered",
+      "from the 1000 default (= 0.9 km2 at 30 m) so sub-km2 basins",
+      "delineate near their true size; basins below this*cellsize^2 remain",
+      "unreliable (outlet snaps onto a larger channel) and are flagged in",
+      "the summary. To match OCTOPUS's atmosphere add 'atmosphere: NCEP'",
+      "(default ERA40)."
+    ],
+    "threshold_contributing_pixels": 250,
+    "snap_search_radius_pixels": 20
+  },
+  "sample_table": "clapp2002_samples.csv",
+  "summary": "clapp2002_summary.csv"
+}
