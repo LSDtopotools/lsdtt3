@@ -245,6 +245,18 @@ int main(int argc, char* argv[])
         "Filename: <write_fname>_PROD.tif",
         "Output", "switch", ""};
 
+    // Reporting-only diagnostic (no effect on the erosion-rate inversion). For each
+    // snapped sample it averages the Stone-2000 production SCALING raster and the DEM
+    // elevation over the EXACT same upslope pixel set the inversion uses, so the
+    // basin-mean production can be compared to an external oracle (e.g. OCTOPUS
+    // BEPROD/ELEV_AVE). Filename: <write_fname>_BASIN_PROD.csv
+    bool_default_map["write_basin_production_csv"] = false;
+    help_map["write_basin_production_csv"] = {"bool","false",
+        "Write a per-sample basin-mean production-scaling + mean-elevation CSV "
+        "(diagnostic; does not affect the inversion).",
+        "Filename: <write_fname>_BASIN_PROD.csv",
+        "Output", "switch", ""};
+
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
@@ -571,6 +583,24 @@ int main(int argc, char* argv[])
     }
     csv_out << "\n";
 
+    // Optional diagnostic CSV: basin-mean production scaling + mean elevation over
+    // the exact upslope set of each snapped sample (reporting-only; §6e isolation).
+    const bool write_basin_prod = bf["write_basin_production_csv"];
+    std::ofstream basin_prod_out;
+    if (write_basin_prod)
+    {
+        std::string bp_fname = write_base + "_BASIN_PROD.csv";
+        basin_prod_out.open(bp_fname);
+        if (!basin_prod_out.is_open())
+        {
+            std::cerr << "Error: cannot open output file " << bp_fname << "\n";
+            return 1;
+        }
+        basin_prod_out.precision(10);
+        basin_prod_out << "sample_name,snapped_latitude,snapped_longitude,"
+                       << "n_upslope_pixels,mean_prod_scaling,mean_elev_m\n";
+    }
+
     const double e_scale = 1.0e7 / rock_density_kg_m3;  // g/cm2/yr -> mm/kyr
     lsdtt::lsdtt_crn_parameters crn_params;
 
@@ -624,6 +654,36 @@ int main(int argc, char* argv[])
                   << "  Snapped to    : row=" << snapped.snapped_row
                   << " col=" << snapped.snapped_col
                   << " (contributing=" << snapped.snapped_contributing_pixels << ")\n";
+
+        // Reporting-only: basin-mean production scaling + mean elevation over the
+        // exact upslope pixel set (same set the inversion averages). No effect on
+        // the erosion-rate result below.
+        if (write_basin_prod)
+        {
+            const int nc_cols = meta.n_cols;
+            const auto& ps_data = prod_raster.get_data_array();
+            const auto& ps_mask = prod_raster.get_mask_array();
+            const auto& dz_data = dem.get_data_array();
+            const auto& dz_mask = dem.get_mask_array();
+            lsdtt::lsdtt_flat_index_slice up = flow.upslope_nodes(outlet_node);
+            double sum_scal = 0.0, sum_elev = 0.0;
+            std::int64_t n_pix = 0;
+            for (std::size_t kk = 0; kk < up.size(); ++kk)
+            {
+                std::int64_t f = up[kk];
+                int rr = static_cast<int>(f / nc_cols);
+                int cc = static_cast<int>(f % nc_cols);
+                if (!ps_mask(rr, cc) || !dz_mask(rr, cc)) continue;
+                sum_scal += static_cast<double>(ps_data(rr, cc));
+                sum_elev += static_cast<double>(dz_data(rr, cc));
+                ++n_pix;
+            }
+            double mean_scal = n_pix > 0 ? sum_scal / n_pix : 0.0;
+            double mean_elev = n_pix > 0 ? sum_elev / n_pix : 0.0;
+            basin_prod_out << (has_sample_name ? get_col_str(sample_col_name, csv_row) : "")
+                           << "," << out_lat << "," << out_lon
+                           << "," << n_pix << "," << mean_scal << "," << mean_elev << "\n";
+        }
 
         double conc = get_col_float(concentration_col_name, csv_row);
 

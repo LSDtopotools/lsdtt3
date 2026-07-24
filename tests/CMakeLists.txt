@@ -683,3 +683,19 @@ add_test(NAME cosmo_realworld_dibiase2010
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
 set_tests_properties(cosmo_realworld_dibiase2010 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+# §6e production-vs-BEPROD isolation (decisive test for the ~+4% Dethier residual).
+# At fixed concentration inferred erosion is proportional to basin-mean production;
+# this fetches the keyless COP30 DEM, runs lsdtt-cosmo-tool MATCHED to OCTOPUS
+# (Braucher / NCEP / paleomag-off) with the reporting-only basin-production CSV, and
+# compares lsdtt's basin-mean Stone-2000 production scaling to OCTOPUS BEPROD/BETOTS
+# and its basin-mean elevation to ELEV_AVE (harvested live from the OCTOPUS WFS).
+# NEEDS NETWORK; kept OUT of the default unit;cosmo suite (label cosmo_realworld,
+# `ctest -L cosmo_realworld`). Skips (exit 77) when the network is unavailable.
+add_test(NAME cosmo_realworld_production_isolation
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_production_isolation.py"
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+set_tests_properties(cosmo_realworld_production_isolation PROPERTIES
+    LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)

@@ -1,0 +1,25 @@
+# Dethier (2014) §6e production-vs-BEPROD isolation -- FROZEN artefact.
+# P_lsdtt = basin-mean Stone-2000 production SCALING from lsdtt-cosmo-tool _BASIN_PROD.csv
+# (stone2000sp, Fsp=1), averaged over the EXACT upslope set the inversion uses. NO P0 multiply:
+# OCTOPUS BEPROD is itself a P0-normalised scaling in the same units (lsdtt mean-S == BEPROD
+# to ~1%); the plan's 'x P0_ref' over-scales by ~4.3x and is a units error (tester 2026-07-24).
+# BEPROD/BETOTS/BETOPO/ELEV_AVE harvested from OCTOPUS WFS (STUDYID S169), NOT fabricated.
+# pct_a = 100*(P_lsdtt-BEPROD)/BEPROD ; pct_b = 100*(P_lsdtt*BETOPO-BETOTS)/BETOTS ; d_elev_m = lsdtt_mean - ELEV_AVE ;
+# erate_pct = 100*(lsdtt EBE - OCTOPUS EBE_GCMYR)/EBE_GCMYR (inversion residual, same basin).
+# Run: muon_scheme=Braucher atmosphere=NCEP sample_age_yr=0 threshold_px=250 snap_px=20 ; git 259624c
+# MEANS over 12 delineation-reliable basins: pct_a=-0.19% pct_b=-0.21% d_elev=-7.6 m erate_pct=+5.30%.
+basin,delineation_reliable,P_lsdtt,BEPROD,pct_a,P_lsdtt_x_BETOPO,BETOTS,pct_b,lsdtt_mean_elev_m,ELEV_AVE,d_elev_m,erate_pct,n_upslope_pixels
+S169WTS036,no,7.49257,4.28200,74.978,7.05801,4.03700,74.833,2757.53,1961.77,795.76,81.895,358837
+S169WTS035,yes,4.74768,4.78100,-0.697,4.70495,4.73800,-0.698,2104.46,2114.59,-10.13,0.162,323
+S169WTS032,no,4.90229,5.03100,-2.558,4.80915,4.93500,-2.550,2149.21,2187.32,-38.11,-0.636,324
+S169WTS029,yes,5.94619,5.99500,-0.814,5.88673,5.93600,-0.830,2442.64,2460.75,-18.11,15.899,1039
+S169WTS005,yes,6.20531,6.22100,-0.252,6.18670,6.20500,-0.295,2511.02,2517.23,-6.21,10.659,11226
+S169WTS030,yes,6.21958,6.25000,-0.487,6.13873,6.17200,-0.539,2509.27,2517.66,-8.39,0.655,4584
+S169WTS031,yes,6.37500,6.29900,1.207,6.20288,6.12900,1.205,2550.32,2558.28,-7.96,3.765,269
+S169WTS033,yes,6.43901,6.42800,0.171,6.38749,6.38100,0.102,2569.19,2580.21,-11.02,0.761,672
+S169WTS001,yes,6.55490,6.63500,-1.207,6.54179,6.62000,-1.181,2598.14,2618.11,-19.97,9.508,1950
+S169WTS020,yes,6.66331,6.68000,-0.250,6.63666,6.65600,-0.291,2620.98,2625.53,-4.55,-0.045,2938
+S169WTS021,yes,6.91275,6.93700,-0.350,6.89892,6.92700,-0.405,2680.24,2685.55,-5.31,-0.334,1060
+S169WTS022,yes,8.60236,8.65100,-0.562,8.59375,8.64300,-0.570,3038.02,3048.26,-10.24,10.259,780
+S169WTS014,yes,10.12867,10.12300,0.056,10.11854,10.11000,0.084,3322.30,3323.44,-1.14,11.076,972
+S169WTS024,yes,11.16230,11.06800,0.852,11.11765,11.02400,0.849,3491.88,3480.27,11.61,1.196,507
