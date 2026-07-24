@@ -23,9 +23,13 @@
 // compared across commits, which is why every row carries a git SHA.
 //
 // Usage:
-//   lsdtt-test-flow-performance [output_dir] [--quick|--full] [--raster PATH]
+//   lsdtt-test-flow-performance [output_dir] [--quick|--full]
+//                               [--threads CSV] [--raster PATH]
 //     --quick   (default) 256, 512, 1024 square synthetic surfaces
 //     --full    adds 2048, and the thread sweep at that size
+//     --threads comma-separated thread counts (for example 1,2,4,8,16).
+//               When set, this sweep runs at every synthetic size and for
+//               --raster too. When absent, legacy behaviour is kept.
 //     --raster  additionally time a real raster, so the numbers can be compared
 //               directly against the richdem_seconds column of
 //               benchmark_results.csv for the same file
@@ -35,12 +39,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -79,6 +85,69 @@ struct timing_row
 };
 
 std::vector<timing_row> g_rows;
+
+
+std::string trim_copy(std::string s)
+{
+    auto not_space = [](unsigned char c) {
+        return !std::isspace(c);
+    };
+
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+    s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+    return s;
+}
+
+
+bool parse_thread_list(const std::string& csv,
+                       std::vector<int>& out,
+                       std::string& error)
+{
+    out.clear();
+    std::set<int> seen;
+
+    std::size_t pos = 0;
+    while (pos <= csv.size())
+    {
+        const std::size_t comma = csv.find(',', pos);
+        const std::string token = trim_copy(
+            csv.substr(pos, (comma == std::string::npos)
+                              ? std::string::npos
+                              : (comma - pos)));
+
+        if (!token.empty())
+        {
+            try
+            {
+                const int t = std::stoi(token);
+                if (t < 1)
+                {
+                    error = "thread counts must be >= 1";
+                    return false;
+                }
+                if (seen.insert(t).second)
+                    out.push_back(t);
+            }
+            catch (const std::exception&)
+            {
+                error = "could not parse thread count '" + token + "'";
+                return false;
+            }
+        }
+
+        if (comma == std::string::npos)
+            break;
+        pos = comma + 1;
+    }
+
+    if (out.empty())
+    {
+        error = "empty --threads list";
+        return false;
+    }
+
+    return true;
+}
 
 
 double seconds_since(std::chrono::steady_clock::time_point t0)
@@ -304,13 +373,25 @@ int main(int argc, char** argv)
 {
     std::string output_dir  = ".";
     std::string raster_path;
+    std::vector<int> requested_threads;
     bool        full        = false;
+    bool        have_requested_threads = false;
 
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
         if      (arg == "--full")  full = true;
         else if (arg == "--quick") full = false;
+        else if (arg == "--threads" && i + 1 < argc)
+        {
+            std::string error;
+            if (!parse_thread_list(argv[++i], requested_threads, error))
+            {
+                std::cout << "ERROR: invalid --threads value: " << error << "\n";
+                return 1;
+            }
+            have_requested_threads = true;
+        }
         else if (arg == "--raster" && i + 1 < argc) raster_path = argv[++i];
         else    output_dir = arg;
     }
@@ -319,8 +400,19 @@ int main(int argc, char** argv)
 
     std::cout << "lsdtt3 flow routing performance "
                  " (docs/testing_and_benchmarking.md)\n"
-              << "git " << sha << ", best of " << k_repeats
-              << ", timings are IN-PROCESS (no file I/O, no CLI startup)\n\n";
+               << "git " << sha << ", best of " << k_repeats
+               << ", timings are IN-PROCESS (no file I/O, no CLI startup)\n\n";
+
+    if (have_requested_threads)
+    {
+        std::cout << "explicit thread sweep: ";
+        for (std::size_t i = 0; i < requested_threads.size(); ++i)
+        {
+            if (i) std::cout << ',';
+            std::cout << requested_threads[i];
+        }
+        std::cout << " (all synthetic sizes and --raster if provided)\n\n";
+    }
 
     std::vector<int> sizes = {256, 512, 1024};
     if (full) sizes.push_back(2048);
@@ -331,11 +423,13 @@ int main(int argc, char** argv)
         const lsdtt::lsdtt_raster_cpu dem = make_surface(n);
         time_depression_routines(dem, "");
 
-        // Thread sweep only at the largest size: at small sizes the work is
-        // dominated by setup and the numbers say nothing about scaling.
-        const std::vector<int> threads =
-            (n == sizes.back()) ? std::vector<int>{1, 2, 4, 8}
-                                : std::vector<int>{0};
+        // Backwards compatible default: on small sizes use the existing
+        // n_threads=0 pass; at the largest size use the historical 1/2/4/8
+        // sweep. When --threads is set, use the explicit sweep everywhere.
+        const std::vector<int> threads = have_requested_threads
+            ? requested_threads
+            : ((n == sizes.back()) ? std::vector<int>{1, 2, 4, 8}
+                                   : std::vector<int>{0});
         time_routing(dem, "", threads);
         std::cout << "\n";
     }
@@ -353,7 +447,9 @@ int main(int argc, char** argv)
             dem.set_from_vectors(std::move(tile.data), std::move(tile.mask),
                                  tile.meta);
             time_depression_routines(dem, "raster:");
-            time_routing(dem, "raster:", {0});
+            time_routing(dem, "raster:",
+                         have_requested_threads ? requested_threads
+                                                : std::vector<int>{0});
         }
         catch (const std::exception& e)
         {
