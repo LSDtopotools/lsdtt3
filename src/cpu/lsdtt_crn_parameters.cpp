@@ -471,6 +471,12 @@ CrnNcData lsdtt_crn_parameters::load_nc_data(const std::string& nc_path)
         nc_get_var_float(ncid, varid, v.data());
     };
 
+    auto read_scalar_d = [&](const char* name, double& v) {
+        int varid;
+        if (nc_inq_varid(ncid, name, &varid) != NC_NOERR) return;
+        nc_get_var_double(ncid, varid, &v);
+    };
+
     read_var1d_d("era40_lat",       out.era40_lat);
     read_var1d_d("era40_lon",       out.era40_lon);
     read_var2d_f("era40_meanP",     out.era40_meanP);
@@ -485,17 +491,49 @@ CrnNcData lsdtt_crn_parameters::load_nc_data(const std::string& nc_path)
     read_var2d_f("ncep_meanP",      out.ncep_meanP);
     read_var2d_f("ncep_meanT",      out.ncep_meanT);
 
+    // LSDn scaling grids and the paleomagnetic / solar records that drive them
+    // (optional; absent in older files). The b/m grids are stored (p, Rc) with
+    // p slow, so the flat index is ip*201 + irc - no transpose at read time.
+    read_var1d_d("lsdn_rc",         out.lsdn_rc);
+    read_var1d_d("lsdn_p",          out.lsdn_p);
+    read_var2d_f("lsdn_b_Be10",     out.lsdn_b_Be10);
+    read_var2d_f("lsdn_m_Be10",     out.lsdn_m_Be10);
+    read_var2d_f("lsdn_b_Al26",     out.lsdn_b_Al26);
+    read_var2d_f("lsdn_m_Al26",     out.lsdn_m_Al26);
+    read_var2d_f("lsdn_b_C14",      out.lsdn_b_C14);
+    read_var2d_f("lsdn_m_C14",      out.lsdn_m_C14);
+    read_var1d_d("lsdn_sphi",       out.lsdn_sphi);
+    read_scalar_d("lsdn_sphi_inf",  out.lsdn_sphi_inf);
+    read_var1d_d("pavon_mm01",      out.pavon_mm01);
+    read_var1d_d("pavon_t1min",     out.pavon_t1min);
+    read_var1d_d("pavon_t1max",     out.pavon_t1max);
+    read_var1d_d("pavon_pole_lat",  out.pavon_pole_lat);
+    read_var1d_d("pavon_pole_lon",  out.pavon_pole_lon);
+    read_var1d_d("pavon_mm02",      out.pavon_mm02);
+    read_var1d_d("pavon_t2min",     out.pavon_t2min);
+    read_var1d_d("pavon_t2max",     out.pavon_t2max);
+    read_var1d_d("pavon_t2",        out.pavon_t2);
+    read_scalar_d("pavon_tzero",    out.pavon_tzero);
+
     nc_close(ncid);
 
     out.loaded = (!out.era40_lat.empty() && !out.era40_meanP.empty() &&
                   !out.lifton_lr.empty() && !out.muscheler_vdm.empty());
     out.ncep_loaded = (!out.ncep_lat.empty() && !out.ncep_lon.empty() &&
                        !out.ncep_meanP.empty() && !out.ncep_meanT.empty());
+    // Be-10 is the minimum viable LSDn payload; the Al-26 and C-14 grids are
+    // checked per-nuclide at use, so a Be-10-only file still loads and fails
+    // cleanly for the other nuclides.
+    out.lsdn_loaded = (!out.lsdn_rc.empty()     && !out.lsdn_p.empty() &&
+                       !out.lsdn_b_Be10.empty() && !out.lsdn_m_Be10.empty() &&
+                       !out.lsdn_sphi.empty()   && !out.pavon_mm01.empty() &&
+                       !out.pavon_t1min.empty() && !out.pavon_mm02.empty());
     if (out.loaded)
         std::cout << "load_nc_data: loaded " << nc_path
                   << "  ERA40=" << out.era40_lat.size() << "x" << out.era40_lon.size()
                   << "  Muscheler=" << out.muscheler_time.size() << " steps"
-                  << (out.ncep_loaded ? "  NCEP=on" : "") << "\n";
+                  << (out.ncep_loaded ? "  NCEP=on" : "")
+                  << (out.lsdn_loaded ? "  LSDn=on" : "") << "\n";
     else
         std::cerr << "load_nc_data: file opened but variables missing in \"" << nc_path << "\"\n";
 #else
@@ -734,6 +772,268 @@ double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
     // (correction applies to the spallation component only; muon term unchanged)
     double correction = sf_avg / sf_modern;
     return stone2000sp(lat_deg, P_mbar, Fsp) * correction;
+}
+
+// =============================================================================
+//  LSDn (Lifton, Sato & Dunai 2014) scaling: grid lookup and cutoff rigidity
+//
+//  Written from the published equations of Lifton, Sato & Dunai (2014), EPSL
+//  386:149-160, and from the reference data tables packed into
+//  crn_parameters.nc by python_helpers/add_lsdn_to_crn_nc.py. The precomputed
+//  b/m scaling grids encode the Sato et al. (2008) Rad. Res. PARMA spectra;
+//  the paleomagnetic record is Pavon-Carrasco et al. and the solar modulation
+//  record is Usoskin et al. (2011). Grids and records were extracted from the
+//  Balco v3 calculator data distribution (LSDn2015_grid.mat,
+//  LSDn2015_N{10,26,14}quartz.mat, LiftonS2015.mat, PavonDip.mat); the
+//  algorithms mirror the behaviour described in v3's get_LSDnSF.m and
+//  get_DipRc.m but are implemented independently here.
+// =============================================================================
+
+//
+// bilinear_regular
+// Regular ascending axes, x fast and y slow: flat index = iy*nx + ix.
+//
+double lsdtt_crn_parameters::bilinear_regular(const std::vector<double>& x_ax,
+                                               const std::vector<double>& y_ax,
+                                               const std::vector<float>&  grid,
+                                               double x, double y)
+{
+    const int nx = static_cast<int>(x_ax.size());
+    const int ny = static_cast<int>(y_ax.size());
+    if (nx < 2 || ny < 2) return std::numeric_limits<double>::quiet_NaN();
+
+    // Regular spacing, so the bracketing cell follows directly from the offset
+    const double dx = (x_ax[nx-1] - x_ax[0]) / (nx - 1);
+    const double dy = (y_ax[ny-1] - y_ax[0]) / (ny - 1);
+
+    // Clamp to the grid bounds (see lsdn_grid_value for why clamping rather
+    // than returning NaN as v3's interp2 would)
+    x = std::max(x_ax[0], std::min(x_ax[nx-1], x));
+    y = std::max(y_ax[0], std::min(y_ax[ny-1], y));
+
+    int ix = static_cast<int>(std::floor((x - x_ax[0]) / dx));
+    int iy = static_cast<int>(std::floor((y - y_ax[0]) / dy));
+    ix = std::max(0, std::min(nx - 2, ix));
+    iy = std::max(0, std::min(ny - 2, iy));
+
+    const double tx = (x - x_ax[ix]) / dx;
+    const double ty = (y - y_ax[iy]) / dy;
+
+    auto idx = [&](int j, int i) { return static_cast<std::size_t>(j) * nx + i; };
+    const double v00 = grid[idx(iy,   ix)];
+    const double v01 = grid[idx(iy,   ix+1)];
+    const double v10 = grid[idx(iy+1, ix)];
+    const double v11 = grid[idx(iy+1, ix+1)];
+
+    // Interpolate in the v0 + t*(v1 - v0) form rather than the four-weight sum:
+    // it returns the corner value EXACTLY when the bracketing values are equal,
+    // which is what makes lsdn_scaling exactly 1 at SLHL for every nuclide (the
+    // sub-1 GV grid columns are flat, and Rc there is a rounding-level non-zero
+    // coming out of the acos in lsd_geomagnetic_lat).
+    const double a = v00 + tx * (v01 - v00);
+    const double b = v10 + tx * (v11 - v10);
+    return a + ty * (b - a);
+}
+
+//
+// lsdn_grid_value
+// Raw (unnormalised) LSDn scaling b(Rc,P) + S*m(Rc,P); mirrors the model
+// evaluated by the Balco v3 calculator, including its clamp of Rc at 20 GV.
+//
+double lsdtt_crn_parameters::lsdn_grid_value(const CrnNcData& nc,
+                                              const std::string& nuclide,
+                                              double Rc_GV, double P_hPa,
+                                              double S_MV)
+{
+    const std::vector<float>* b = nullptr;
+    const std::vector<float>* m = nullptr;
+    if      (nuclide == "Be10") { b = &nc.lsdn_b_Be10; m = &nc.lsdn_m_Be10; }
+    else if (nuclide == "Al26") { b = &nc.lsdn_b_Al26; m = &nc.lsdn_m_Al26; }
+    else if (nuclide == "C14")  { b = &nc.lsdn_b_C14;  m = &nc.lsdn_m_C14;  }
+    else
+        throw std::runtime_error("lsdn_grid_value: unsupported nuclide \"" + nuclide
+                                 + "\" (expected Be10, Al26 or C14)");
+
+    if (!nc.lsdn_loaded || nc.lsdn_rc.empty() || nc.lsdn_p.empty() ||
+        b->empty() || m->empty())
+        throw std::runtime_error("lsdn_grid_value: no LSDn scaling grid for nuclide \""
+                                 + nuclide + "\" in the loaded crn_parameters.nc "
+                                 "- LSDn is never silently substituted by Stone");
+
+    // Rc above the grid maximum (20 GV) is clamped, not extrapolated. Nothing
+    // is done at the low end: Eq. 2 with the absolute value is >= 0, and the
+    // sub-1 GV grid columns are already flat because the generator floored Rc
+    // there, so the runtime needs no floor of its own.
+    const double Rc = std::min(Rc_GV, nc.lsdn_rc.back());
+
+    // P outside [300, 1058] hPa is clamped by bilinear_regular. v3's interp2
+    // would return NaN; for a raster tool a NaN would silently poison a basin
+    // mean, and both ends are far outside any real DEM (p < 300 hPa is above
+    // ~9.2 km; p > 1058 hPa needs a deep depression).
+    const double bv = bilinear_regular(nc.lsdn_rc, nc.lsdn_p, *b, Rc, P_hPa);
+    const double mv = bilinear_regular(nc.lsdn_rc, nc.lsdn_p, *m, Rc, P_hPa);
+    return bv + S_MV * mv;
+}
+
+//
+// lsdn_scaling
+// SLHL-normalised LSDn production scaling, evaluated for one site. Reference
+// per-pixel path: a direct, allocation-free duration-weighted average over the
+// Pavon-Carrasco field record and the Lifton solar record. The record structure
+// (short Holocene record with a moving paleopole, then a long GAD record, then
+// the beyond-the-record case) follows the scheme described for the Balco v3
+// calculator's get_DipRc.m; the time weighting is by step duration because the
+// records are supplied on step bounds which abut exactly.
+//
+double lsdtt_crn_parameters::lsdn_scaling(const std::string& nuclide,
+                                           double lat_deg, double lon_deg,
+                                           double P_mbar, double age_yr,
+                                           const CrnNcData& nc) const
+{
+    if (!nc.lsdn_loaded)
+        throw std::runtime_error("lsdn_scaling: the loaded crn_parameters.nc has no LSDn "
+                                 "scaling grids or paleomagnetic records - LSDn is never "
+                                 "silently substituted by Stone");
+    if (nc.lsdn_sphi.empty() || nc.pavon_mm01.empty() ||
+        nc.pavon_pole_lat.empty() || nc.pavon_pole_lon.empty())
+        throw std::runtime_error("lsdn_scaling: incomplete LSDn records in crn_parameters.nc");
+
+    const double lat_rad = lat_deg * kPi / 180.0;
+    // No longitude normalisation is needed: the great-circle formula uses only
+    // sines and cosines of longitude, so -180..180 and 0..360 agree exactly.
+    const double lon_rad = lon_deg * kPi / 180.0;
+
+    // SLHL reference: Rc = 0 GV, P = 1013.25 hPa, S = S_ref = sphi[0]. Two
+    // bilinear lookups, so it is recomputed per call rather than cached - that
+    // keeps the function free of shared mutable state inside an OpenMP loop.
+    const double S_ref = nc.lsdn_sphi[0];
+    const double lsdn_ref = lsdn_grid_value(nc, nuclide, 0.0, 1013.25, S_ref);
+    if (!(lsdn_ref > 0.0))
+        throw std::runtime_error("lsdn_scaling: non-positive SLHL reference value for nuclide \""
+                                 + nuclide + "\"");
+
+    // Present-day field and solar modulation: record step 0, no time loop.
+    if (age_yr <= 0.0)
+    {
+        const double gm_lat = lsd_geomagnetic_lat(lat_rad, lon_rad,
+                                                  nc.pavon_pole_lat[0], nc.pavon_pole_lon[0]);
+        const double Rc = lsd_dipole_rc(nc.pavon_mm01[0], gm_lat);
+        return lsdn_grid_value(nc, nuclide, Rc, P_mbar, nc.lsdn_sphi[0]) / lsdn_ref;
+    }
+
+    const int n_short = static_cast<int>(nc.pavon_mm01.size());
+    const int n_long  = static_cast<int>(nc.pavon_mm02.size());
+    const bool have_long = (n_long > 0 && !nc.pavon_t2min.empty() &&
+                            !nc.pavon_t2max.empty() && !nc.pavon_t2.empty());
+
+    // How much of each record is used. The branch conditions are the v3 ones:
+    //  - age <= t2min[0] (= 13960 yr)  -> short record only;
+    //  - age <= t2.back() (= 2.00074e7 yr, the last long-record step CENTRE, NOT
+    //    t2max.back() = 2.02044e7) -> short record plus the long-record steps
+    //    that start before age;
+    //  - older than that -> the whole of both records, with the final step
+    //    stretched out to age.
+    // In every case the last included step's upper bound is replaced by age.
+    int n1 = n_short;
+    int n2 = 0;
+    if (!have_long || age_yr <= nc.pavon_t2min.front())
+    {
+        n1 = 0;
+        for (int k = 0; k < n_short; ++k)
+            if (nc.pavon_t1min[k] < age_yr) n1 = k + 1; else break;
+    }
+    else if (age_yr <= nc.pavon_t2.back())
+    {
+        for (int j = 0; j < n_long; ++j)
+            if (nc.pavon_t2min[j] < age_yr) n2 = j + 1; else break;
+    }
+    else
+    {
+        n2 = n_long;
+    }
+    if (n1 < 1)
+        throw std::runtime_error("lsdn_scaling: age_yr does not span any time step of the "
+                                 "Pavon-Carrasco record");
+
+    // Duration-weighted accumulation; nothing is allocated.
+    double num = 0.0, den = 0.0;
+    auto add_step = [&](double tmin, double tmax, double Rc, double S_MV) {
+        const double dt = tmax - tmin;
+        if (dt <= 0.0) return;
+        num += lsdn_grid_value(nc, nuclide, Rc, P_mbar, S_MV) * dt;
+        den += dt;
+    };
+
+    // Short (Holocene) record: Rc from the moving paleopole, so the geomagnetic
+    // latitude - and hence Rc - changes with the time step at a fixed site.
+    for (int k = 0; k < n1; ++k)
+    {
+        const bool is_last = (n2 == 0 && k == n1 - 1);
+        const double tmax  = is_last ? age_yr : nc.pavon_t1max[k];
+        const double gm_lat = lsd_geomagnetic_lat(lat_rad, lon_rad,
+                                                  nc.pavon_pole_lat[k], nc.pavon_pole_lon[k]);
+        add_step(nc.pavon_t1min[k], tmax,
+                 lsd_dipole_rc(nc.pavon_mm01[k], gm_lat), nc.lsdn_sphi[k]);
+    }
+
+    // Long record: geocentric axial dipole, so the geomagnetic latitude is just
+    // |site latitude| and only M_t/M_0 varies. Solar modulation is the
+    // long-term mean.
+    const double gm_lat_gad = std::fabs(lat_rad);
+    for (int j = 0; j < n2; ++j)
+    {
+        const bool is_last = (j == n2 - 1);
+        const double tmax  = is_last ? age_yr : nc.pavon_t2max[j];
+        add_step(nc.pavon_t2min[j], tmax,
+                 lsd_dipole_rc(nc.pavon_mm02[j], gm_lat_gad), nc.lsdn_sphi_inf);
+    }
+
+    if (den <= 0.0)
+        throw std::runtime_error("lsdn_scaling: zero total duration in the time average");
+
+    return (num / den) / lsdn_ref;
+}
+
+//
+// lsd_dipole_rc
+// Lifton, Sato & Dunai (2014) Eq. 2.
+//
+double lsdtt_crn_parameters::lsd_dipole_rc(double MM0, double gm_lat_rad)
+{
+    // Eq. 2 as published, in descending powers of cos(lambda):
+    //   Rc = (M_t/M_0)*( -448.004 cos^6 + 1189.18 cos^5 - 1152.15 cos^4
+    //                    + 522.061 cos^3 - 103.241 cos^2 + 6.89901 cos )
+    // stored here in ascending powers for Horner evaluation.
+    static const double pRc[7] = { 0.0, 6.89901, -103.241, 522.061,
+                                   -1152.15, 1189.18, -448.004 };
+
+    const double c = std::cos(gm_lat_rad);
+    double poly = pRc[6];
+    for (int k = 5; k >= 0; --k) poly = poly * c + pRc[k];
+
+    // The polynomial leaks slightly negative above ~80 deg; take the modulus.
+    return std::fabs(MM0 * poly);
+}
+
+//
+// lsd_geomagnetic_lat
+// Geomagnetic latitude from the great-circle angular distance to a (paleo)pole.
+//
+double lsdtt_crn_parameters::lsd_geomagnetic_lat(double lat_rad, double lon_rad,
+                                                  double pole_lat_rad,
+                                                  double pole_lon_rad)
+{
+    // Angular distance theta between two points on a sphere, from the dot
+    // product of the two position vectors in polar coordinates:
+    //   cos(theta) = cos(lat1)cos(lat2)cos(lon1 - lon2) + sin(lat1)sin(lat2)
+    double cos_theta = std::cos(lat_rad) * std::cos(pole_lat_rad)
+                         * (std::cos(lon_rad) * std::cos(pole_lon_rad)
+                            + std::sin(lon_rad) * std::sin(pole_lon_rad))
+                     + std::sin(lat_rad) * std::sin(pole_lat_rad);
+    // Guard the acos against rounding just outside [-1, 1]
+    cos_theta = std::max(-1.0, std::min(1.0, cos_theta));
+
+    return std::fabs(0.5 * kPi - std::acos(cos_theta));
 }
 
 } // namespace lsdtt

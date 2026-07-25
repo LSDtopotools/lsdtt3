@@ -53,6 +53,30 @@ struct CrnNcData
     std::vector<float>  ncep_meanP;    // (73x145) hPa (mean sea-level pressure)
     std::vector<float>  ncep_meanT;    // (73x145) degC (mean 1000 hPa temperature)
     bool ncep_loaded = false;
+
+    // LSDn (Lifton, Sato & Dunai 2014) nuclide-specific scaling grids and the
+    // paleomagnetic / solar-modulation records they are driven by. Optional:
+    // absent in older crn_parameters.nc files.
+    std::vector<double> lsdn_rc;       // (201,) GV, ascending 0 -> 20 step 0.1
+    std::vector<double> lsdn_p;        // (380,) hPa, ascending 300 -> 1058 step 2
+    std::vector<float>  lsdn_b_Be10;   // (380x201) row-major [ip][irc]
+    std::vector<float>  lsdn_m_Be10;   // (380x201)
+    std::vector<float>  lsdn_b_Al26, lsdn_m_Al26;
+    std::vector<float>  lsdn_b_C14,  lsdn_m_C14;
+    std::vector<double> lsdn_sphi;     // (91,)  MV, per Holocene time step
+    double              lsdn_sphi_inf = 0.0;            // MV, long-term mean
+    std::vector<double> pavon_t1min, pavon_t1max;       // (91,)   yr
+    std::vector<double> pavon_mm01;                     // (91,)   M_t / M_0
+    std::vector<double> pavon_pole_lat, pavon_pole_lon; // (91,)   rad
+    std::vector<double> pavon_t2min, pavon_t2max;       // (1710,) yr
+    std::vector<double> pavon_mm02;                     // (1710,) M_t / M_0
+    // Long-record step CENTRES. Used ONLY as the branch threshold for
+    // "exposure longer than the long record" (get_DipRc.m uses m.t2(end) =
+    // 2.00074e7 yr, NOT t2max.back() = 2.02044e7 yr). Never a time weight -
+    // the duration averaging uses the bounds above.
+    std::vector<double> pavon_t2;                       // (1710,) yr
+    double              pavon_tzero = 0.0;              // yr CE (2010)
+    bool                lsdn_loaded = false;
 };
 
 // 
@@ -151,6 +175,99 @@ public:
     double stone2000sp_paleomag(double lat_deg, double P_mbar, double Fsp,
                                 double age_yr, const CrnNcData& nc) const;
 
+    //  LSDn scaling (Lifton, Sato & Dunai 2014)
+    // Dimensionless production-rate scaling factor, normalised so that it is
+    // exactly 1 at SLHL (Rc = 0 GV, P = 1013.25 hPa, S = S_ref = nc.lsdn_sphi[0]
+    // = 624.5717522098033 MV):
+    //
+    //   lsdn_scaling = <LSDn_raw(Rc(t), P, S(t))>_t / LSDn_raw(0, 1013.25, S_ref)
+    //
+    // Drops into the same slot as stone2000sp(); P0, F[], Gamma[] and the muon
+    // pathway are unaffected. Spallation scaling only - the muon pathways
+    // receive it through the Vermeesch redistribution in scale_F_values(),
+    // exactly as under Stone.
+    //
+    // nuclide : "Be10", "Al26" or "C14".
+    // lat_deg, lon_deg : site position (deg; lon may be -180..180 or 0..360).
+    //           LONGITUDE IS REQUIRED, not decorative: the Holocene geomagnetic
+    //           latitude is the great-circle distance to a MOVING paleopole, so
+    //           Rc(t) depends on site longitude as well as latitude. (The long
+    //           record is GAD and uses |latitude| only.)
+    // P_mbar  : atmospheric pressure (from any of the atmospheric_pressure_* fns).
+    // age_yr  : <= 0 -> present-day field and solar modulation (record step 0),
+    //                   two bilinear lookups, no time loop;
+    //           >  0 -> duration-weighted mean over the Pavon-Carrasco field
+    //                   record and the Lifton solar record, truncated at age_yr.
+    //                   The records are defined on time-step BOUNDS that abut
+    //                   exactly, so the average is duration-weighted over those
+    //                   bounds - NOT the trapezoidal average over points that
+    //                   stone2000sp_paleomag applies to the Muscheler record.
+    //                   Allocation-free: accumulates scalars, never a per-call
+    //                   std::vector.
+    //
+    // ASSUMPTION (documented, not silent): lsdtt3 has no sample-collection-year
+    // input, so "now" is taken to be the records' reference year
+    // nc.pavon_tzero = 2010 CE. The v3 calculator instead shifts the record by
+    // (collection year - tzero); that shift is deliberately not applied here. A
+    // sample_year parameter may be added later and will default to 2010.
+    //
+    // This is the REFERENCE path: correctness first. For raster work the caller
+    // will later build a precomputed time-averaged surface once per run and
+    // evaluate that per pixel; the two must agree, and this function is that
+    // comparison's oracle as well as the clearest statement of the definition.
+    //
+    // Throws std::runtime_error if nc.lsdn_loaded is false or the nuclide has no
+    // packed grid - LSDn is never silently substituted by Stone (deliberately
+    // unlike the atmosphere selector, which may fall back quietly because it
+    // refines one input rather than replacing the physics).
+    double lsdn_scaling(const std::string& nuclide,
+                        double lat_deg, double lon_deg, double P_mbar,
+                        double age_yr, const CrnNcData& nc) const;
+
+    // Raw grid value b(Rc,P) + S*m(Rc,P) for one nuclide, bilinearly
+    // interpolated on the packed LSDn scaling grids.  This is NOT SLHL-
+    // normalised - the SLHL normalisation lives in the scaling function that
+    // consumes it, so that lsdn_scaling == 1 at (Rc = 0, P = 1013.25 hPa,
+    // S = nc.lsdn_sphi[0]).
+    //
+    // nuclide : "Be10", "Al26" or "C14".
+    // Rc_GV   : geomagnetic cutoff rigidity, clamped to [0, 20] GV (the grid's
+    //           range; the same clamp the Balco v3 calculator applies).  No
+    //           low-Rc floor is applied: the grid columns below 1 GV are
+    //           already flat because the generator floored Rc there.
+    // P_hPa   : atmospheric pressure, clamped to the grid range [300, 1058]
+    //           hPa.  v3 would return NaN outside it; clamping is the right
+    //           behaviour for a raster tool, where one NaN poisons a basin mean.
+    // S_MV    : solar modulation potential.
+    // Throws std::runtime_error if the nuclide has no packed grid.
+    //
+    // Grids and their axes are from the Balco v3 calculator data distribution
+    // (LSDn2015_grid.mat, LSDn2015_N{10,26,14}quartz.mat), which precomputes the
+    // Sato et al. (2008) PARMA spectral integration used by Lifton, Sato &
+    // Dunai (2014) EPSL 386:149-160.
+    static double lsdn_grid_value(const CrnNcData& nc, const std::string& nuclide,
+                                  double Rc_GV, double P_hPa, double S_MV);
+
+    // Lifton, Sato & Dunai (2014) EPSL 386:149-160, Eq. 2: geocentric dipole
+    // effective vertical cutoff rigidity [GV].
+    //   MM0        = M_t / M_0, dimensionless (M_0 = 7.746e22 A m^-^2, 2010 DGRF)
+    //   gm_lat_rad = geomagnetic latitude [rad]
+    // Returns |Rc|: the 6th-order polynomial in cos(lambda) leaks slightly
+    // negative above ~80 deg, and Lifton et al. take the absolute value.
+    // Deliberately NOT the Rc = Rc_c*vdm*cos^4(lat) form used by
+    // stone2000sp_paleomag - the two differ by ~+12 to +24 % at mid to high
+    // latitudes and must not be interchanged.
+    static double lsd_dipole_rc(double MM0, double gm_lat_rad);
+
+    // Geomagnetic latitude [rad] of a site given a (paleo)pole position, from
+    // the great-circle angular distance theta to that pole:
+    //   gm_lat = |pi/2 - theta|.
+    // Used with the moving Pavon-Carrasco paleopole for the Holocene record, so
+    // the geomagnetic latitude depends on site LONGITUDE as well as latitude.
+    // The long (GAD) record instead uses |site latitude| directly.
+    static double lsd_geomagnetic_lat(double lat_rad, double lon_rad,
+                                      double pole_lat_rad, double pole_lon_rad);
+
     //  Production scaling 
     // Multiplies P0 for all nuclides by the Stone 2000 factor (or any other
     // site-specific production scaling).  Call after reset_scaling(), before
@@ -224,6 +341,24 @@ private:
                                  const std::vector<double>& lon_ax,
                                  const std::vector<float>&  grid,
                                  double lat, double lon);
+
+    // Bilinear interpolation on a REGULAR ascending grid, x fast and y slow, so
+    // the flat index is iy*x_ax.size() + ix.  THIS AXIS ORDER IS BINDING: the
+    // packed LSDn grids are stored (p, Rc) with p slow, so LSDn callers pass
+    // (x_ax = lsdn_rc, y_ax = lsdn_p, x = Rc, y = P), and any later precomputed
+    // surface must store and index its grids the same way.  A transposed lookup
+    // is the silent failure mode here - it is caught by evaluating
+    // b + 624.5718*m at the deliberately off-node (Rc = 0, p = 1013.25), which
+    // must give 4.880884 for Be-10.
+    // No search loop: the bracketing
+    // index comes straight from (v - v0)/dv.  Distinct from bilinear_era40,
+    // whose lat axis descends, whose lon axis wraps, and which searches.
+    // Both axes are clamped to the grid bounds.
+    // Returns NaN if either axis has fewer than two nodes.
+    static double bilinear_regular(const std::vector<double>& x_ax,
+                                   const std::vector<double>& y_ax,
+                                   const std::vector<float>&  grid,
+                                   double x, double y);
 
     // Stone spallation factor as a function of geomagnetic cutoff rigidity Rc [GV].
     // Builds the Rc->sf look-up table at pressure P_mbar using the Stone (2000)
