@@ -79,6 +79,67 @@ struct CrnNcData
     bool                lsdn_loaded = false;
 };
 
+//
+// LsdnTimeAvgSurface
+//
+// Time-averaged LSDn scaling precomputed over a horizontal (lat, lon) grid and
+// the native pressure nodes of the packed LSDn grids, for ONE nuclide and ONE
+// sample age.
+//
+// Why it exists: the Pavon-Carrasco record has 91 Holocene steps plus up to
+// 1710 long-record steps, so the direct per-pixel time loop of lsdn_scaling()
+// costs up to ~1800 grid evaluations per pixel.  But the time average
+//
+//   Abar(lat, lon, P) = < b(Rc(t, lat, lon), P) + S(t)*m(Rc(t, lat, lon), P) >_t
+//
+// depends on the site only through (lat, lon, P) - the time axis, the field
+// record and the solar record are common to every pixel.  So the average is
+// built once over a modest horizontal grid and evaluated per pixel with a
+// single trilinear interpolation.
+//
+// LONGITUDE IS PART OF THE SURFACE, not an optimisation to be dropped: the
+// Holocene geomagnetic latitude is the great-circle distance to a MOVING
+// paleopole, so Rc(t) depends on site longitude too.  A latitude-only surface
+// would carry an error growing with distance from the paleopole meridian, and
+// a latitude-only sensitivity sweep would never see it.
+//
+// THE PRESSURE AXIS IS EXACT, NOT APPROXIMATED.  b and m are linear in P
+// between adjacent grid rows and the time average is a linear operator, so
+// building on the 380 native pressure nodes and then interpolating linearly in
+// P is identical (to floating point) to time-averaging at an arbitrary P.  The
+// ONLY approximation in this object is the horizontal one.
+//
+// LIFETIME AND THREADING: built ONCE per raster call, before the OpenMP
+// region; thereafter READ-ONLY and safe to share by const& across threads.
+// Evaluation allocates nothing and touches no global or static mutable state,
+// so it can never go stale against a different nuclide, age or extent.
+//
+struct LsdnTimeAvgSurface
+{
+    std::string         nuclide;            // "Be10" | "Al26" | "C14" | "Stone"
+    double              age_yr   = 0.0;
+    std::vector<double> lat_ax;             // ascending, deg, regular
+    // Ascending, deg, regular.  Kept in the CALLER'S longitude convention (the
+    // convention of the bounds it was built from), NOT forced into [0,360):
+    // normalising would tear a raster that straddles the prime meridian.
+    // lsdn_scaling_from_surface() shifts a query longitude by +/-360 as needed,
+    // so either convention works at call time.  May legitimately hold a single
+    // node for a kernel with no longitude dependence (Stone paleomag).
+    std::vector<double> lon_ax;
+    std::vector<double> p_ax;               // copy of nc.lsdn_p (380 native nodes)
+    // n_lat*n_lon*n_p time-averaged RAW values (NOT SLHL-normalised), indexed
+    // ((ilat*n_lon) + ilon)*n_p + ip.
+    std::vector<double> avg;
+    double              ref      = 0.0;     // SLHL denominator for this nuclide
+    bool                valid    = false;   // false => caller uses the direct path
+    // Why the surface was or was not built; for the run header.
+    std::string         reason;
+    // Diagnostics for the run header and the performance CSV.
+    std::size_t         n_nodes  = 0;
+    std::size_t         n_bytes  = 0;
+    double              build_seconds = 0.0;
+};
+
 // 
 // lsdtt_crn_parameters
 //
@@ -267,6 +328,60 @@ public:
     // The long (GAD) record instead uses |site latitude| directly.
     static double lsd_geomagnetic_lat(double lat_rad, double lon_rad,
                                       double pole_lat_rad, double pole_lon_rad);
+
+    // Builds the LSDn time-averaged surface for a raster's actual footprint.
+    // The lat/lon bounds are the raster's WGS84 extent; the caller should pad
+    // them by about one cell so that every pixel is interior to the surface
+    // (queries outside are clamped, not extrapolated).  The axes are snapped
+    // outward to multiples of h_step_deg, so node positions are reproducible
+    // and independent of the exact bounds.
+    //
+    // nuclide     : "Be10", "Al26" or "C14".
+    // age_yr      : the sample age driving the time average, as in lsdn_scaling.
+    // n_pixels    : the number of pixels the surface would serve; used only by
+    //               the cost model below.
+    // h_step_deg  : horizontal resolution of the surface, in degrees.  ***THE
+    //               DEFAULT IS A PLACEHOLDER*** carried over from the plan; it
+    //               has NOT yet been chosen by the L11 sensitivity sweep.  Do
+    //               not cite it as a validated value.
+    // force_build : build even when the cost model would decline.  Exists so
+    //               the equivalence test (L10) can exercise the surface path on
+    //               small rasters where the direct path is cheaper - the whole
+    //               point of that test is that it must not depend on which path
+    //               the cost model happens to pick.
+    //
+    // Returns valid == false (having allocated nothing) when a surface is not
+    // worthwhile, with the decision recorded in .reason:
+    //   - the loaded nc has no LSDn data;
+    //   - age_yr <= 0                : the static path is already two lookups;
+    //   - n_h * n_p >= n_pixels      : the direct per-pixel loop is cheaper.
+    // The caller then uses lsdn_scaling() per pixel.  Both paths compute the
+    // same quantity (test L10), so the choice is purely one of cost.
+    static LsdnTimeAvgSurface build_lsdn_time_avg_surface(
+        const CrnNcData& nc, const std::string& nuclide, double age_yr,
+        double lat_min_deg, double lat_max_deg,
+        double lon_min_deg, double lon_max_deg,
+        std::size_t n_pixels, double h_step_deg = 0.1,
+        bool force_build = false);
+
+    // SLHL-normalised LSDn scaling at one site from a prebuilt surface:
+    // trilinear in (lat, lon, P) - P innermost, then lon, then lat, so that a
+    // query sitting exactly on a horizontal node reproduces the pure pressure
+    // interpolation exactly - then divided by surface.ref.
+    //
+    // Equivalent to lsdn_scaling(surface.nuclide, lat, lon, P, surface.age_yr,
+    // nc) to within the surface's horizontal interpolation error; exact (to
+    // rounding) in pressure and at horizontal nodes.  This is test L10.
+    //
+    // Pure arithmetic on const data: no allocation, no locking, no static
+    // state, so it is safe to call from inside an OpenMP parallel-for.
+    // Queries outside the surface's horizontal extent are clamped to it - the
+    // caller is expected to have built the surface with a pad.
+    // Throws std::runtime_error if the surface is not valid; that is a caller
+    // bug (the validity check belongs outside the parallel region).
+    static double lsdn_scaling_from_surface(const LsdnTimeAvgSurface& surface,
+                                            double lat_deg, double lon_deg,
+                                            double P_mbar);
 
     //  Production scaling 
     // Multiplies P0 for all nuclides by the Stone 2000 factor (or any other

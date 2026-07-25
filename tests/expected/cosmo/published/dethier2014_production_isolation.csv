@@ -6,7 +6,7 @@
 # BEPROD/BETOTS/BETOPO/ELEV_AVE harvested from OCTOPUS WFS (STUDYID S169), NOT fabricated.
 # pct_a = 100*(P_lsdtt-BEPROD)/BEPROD ; pct_b = 100*(P_lsdtt*BETOPO-BETOTS)/BETOTS ; d_elev_m = lsdtt_mean - ELEV_AVE ;
 # erate_pct = 100*(lsdtt EBE - OCTOPUS EBE_GCMYR)/EBE_GCMYR (inversion residual, same basin).
-# Run: muon_scheme=Braucher atmosphere=NCEP sample_age_yr=0 threshold_px=250 snap_px=20 ; git fc947b2
+# Run: muon_scheme=Braucher atmosphere=NCEP sample_age_yr=0 threshold_px=250 snap_px=20 ; git 8fa3633
 # MEANS over 12 delineation-reliable basins: pct_a=-0.19% pct_b=-0.21% d_elev=-7.6 m erate_pct=+0.38%.
 basin,delineation_reliable,P_lsdtt,BEPROD,pct_a,P_lsdtt_x_BETOPO,BETOTS,pct_b,lsdtt_mean_elev_m,ELEV_AVE,d_elev_m,erate_pct,n_upslope_pixels
 S169WTS036,no,7.49257,4.28200,74.978,7.05801,4.03700,74.833,2757.53,1961.77,795.76,81.895,358837

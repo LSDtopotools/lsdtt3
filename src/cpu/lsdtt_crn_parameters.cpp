@@ -20,6 +20,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <algorithm>
+#include <chrono>
 #ifdef LSDTT_HAS_NETCDF
 #include <netcdf.h>
 #endif
@@ -1034,6 +1035,380 @@ double lsdtt_crn_parameters::lsd_geomagnetic_lat(double lat_rad, double lon_rad,
     cos_theta = std::max(-1.0, std::min(1.0, cos_theta));
 
     return std::fabs(0.5 * kPi - std::acos(cos_theta));
+}
+
+// -----------------------------------------------------------------------------
+//  The precomputed time-averaged surface
+//
+//  Everything below computes exactly the quantity lsdn_scaling() defines - only
+//  the order of operations changes.  lsdn_scaling() time-averages at a site;
+//  this time-averages at every node of a coarse horizontal grid, on the native
+//  pressure rows of the packed b/m grids, and interpolates afterwards.  The
+//  time average is linear and b/m are linear in P between rows, so moving the
+//  pressure interpolation from before the average to after it is exact; only
+//  the horizontal interpolation approximates.
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// Bracketing index and weight on a REGULAR ASCENDING axis, clamped to the axis
+// bounds.  Deliberately identical arithmetic to bilinear_regular(), so that a
+// surface node evaluated here and a direct lookup there agree bit for bit.
+// A single-node axis returns (0, 0) - it contributes nothing, which is what a
+// degenerate longitude axis needs.
+inline void regular_axis_weight(const std::vector<double>& ax, double v,
+                                int& i0, double& t)
+{
+    const int n = static_cast<int>(ax.size());
+    if (n < 2) { i0 = 0; t = 0.0; return; }
+
+    const double dv = (ax[n-1] - ax[0]) / (n - 1);
+    v = std::max(ax[0], std::min(ax[n-1], v));
+    i0 = static_cast<int>(std::floor((v - ax[0]) / dv));
+    i0 = std::max(0, std::min(n - 2, i0));
+    t  = (v - ax[i0]) / dv;
+}
+
+// One row of a packed (p, Rc) grid, linearly interpolated along the Rc axis.
+// This is bilinear_regular()'s inner lerp with the pressure weight left off.
+inline double lsdn_row_lerp(const std::vector<float>& g, int n_rc, int ip,
+                            int irc, double trc)
+{
+    const std::size_t o = static_cast<std::size_t>(ip) * n_rc + irc;
+    const double v0 = g[o];
+    const double v1 = g[o + 1];
+    return v0 + trc * (v1 - v0);
+}
+
+// Builds a regular ascending axis covering [lo, hi], snapped OUTWARD to
+// multiples of step so that node positions depend on the step alone and not on
+// the exact raster bounds.  Always returns at least two nodes.
+std::vector<double> make_regular_axis(double lo, double hi, double step)
+{
+    if (!(step > 0.0)) step = 0.1;
+    if (hi < lo) std::swap(lo, hi);
+
+    const double a = std::floor(lo / step) * step;
+    double       b = std::ceil (hi / step) * step;
+    int n = static_cast<int>(std::llround((b - a) / step)) + 1;
+    if (n < 2) { n = 2; b = a + step; }
+
+    std::vector<double> ax(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) ax[static_cast<std::size_t>(i)] = a + i * step;
+    // Pin the ends exactly so the regular-axis arithmetic above recovers step.
+    ax.back() = a + (n - 1) * step;
+    return ax;
+}
+
+} // anonymous namespace
+
+//
+// build_lsdn_time_avg_surface
+//
+LsdnTimeAvgSurface lsdtt_crn_parameters::build_lsdn_time_avg_surface(
+    const CrnNcData& nc, const std::string& nuclide, double age_yr,
+    double lat_min_deg, double lat_max_deg,
+    double lon_min_deg, double lon_max_deg,
+    std::size_t n_pixels, double h_step_deg, bool force_build)
+{
+    LsdnTimeAvgSurface s;
+    s.nuclide = nuclide;
+    s.age_yr  = age_yr;
+
+    if (!nc.lsdn_loaded || nc.lsdn_rc.size() < 2 || nc.lsdn_p.size() < 2 ||
+        nc.lsdn_sphi.empty() || nc.pavon_mm01.empty() ||
+        nc.pavon_pole_lat.empty() || nc.pavon_pole_lon.empty())
+    {
+        s.reason = "no LSDn data in the loaded crn_parameters.nc";
+        return s;
+    }
+
+    // A modern (age <= 0) evaluation is already only two bilinear lookups, so a
+    // surface can never pay for itself.  force_build overrides this so that the
+    // equivalence test can drive the static branch through the surface too.
+    if (age_yr <= 0.0 && !force_build)
+    {
+        s.reason = "age_yr <= 0: the static path is two lookups, no surface needed";
+        return s;
+    }
+
+    const std::vector<float>* gb = nullptr;
+    const std::vector<float>* gm = nullptr;
+    if      (nuclide == "Be10") { gb = &nc.lsdn_b_Be10; gm = &nc.lsdn_m_Be10; }
+    else if (nuclide == "Al26") { gb = &nc.lsdn_b_Al26; gm = &nc.lsdn_m_Al26; }
+    else if (nuclide == "C14")  { gb = &nc.lsdn_b_C14;  gm = &nc.lsdn_m_C14;  }
+    else
+    {
+        s.reason = "unsupported nuclide \"" + nuclide + "\"";
+        return s;
+    }
+    if (gb->empty() || gm->empty())
+    {
+        s.reason = "no packed LSDn grid for nuclide \"" + nuclide + "\"";
+        return s;
+    }
+
+    const std::vector<double> lat_ax = make_regular_axis(lat_min_deg, lat_max_deg,
+                                                         h_step_deg);
+    const std::vector<double> lon_ax = make_regular_axis(lon_min_deg, lon_max_deg,
+                                                         h_step_deg);
+    const std::size_t n_lat = lat_ax.size();
+    const std::size_t n_lon = lon_ax.size();
+    const std::size_t n_p   = nc.lsdn_p.size();
+    const std::size_t n_h   = n_lat * n_lon;
+
+    // Cost model.  The direct path costs about n_pixels * n_steps * 2 bilinear
+    // lookups; the surface costs about n_h * n_p * n_steps cheap row lerps plus
+    // n_pixels trilinear evaluations.  So the surface wins when n_h * n_p is
+    // comfortably below n_pixels.  (The plan's prose says the crossover is at
+    // 2 * n_pixels because a bilinear lookup is about twice a row lerp; the
+    // condition written into its signature block - and used here - is the
+    // conservative n_h * n_p >= n_pixels.  On a 40x31 fixture the surface is
+    // correctly declined; the measured crossover is reported separately.)
+    if (!force_build && n_h * n_p >= n_pixels)
+    {
+        s.reason = "cost model: n_h*n_p (" + std::to_string(n_h * n_p)
+                 + ") >= n_pixels (" + std::to_string(n_pixels)
+                 + "): the direct per-pixel loop is cheaper";
+        return s;
+    }
+
+    const auto t_start = std::chrono::steady_clock::now();
+
+    // ---- Which record steps the average runs over -------------------------
+    // This mirrors the branch logic of lsdn_scaling() step for step, and is
+    // deliberately written out again rather than shared: if the two ever
+    // disagree about the record, test L10 must be able to see it.  Note the
+    // final-step STRETCH - in every branch the last included step's upper bound
+    // is replaced by age_yr, so beyond the long record the OLDEST step carries
+    // the weight (age - t2min.back()), not its native width.  Dropping that
+    // would diverge from lsdn_scaling() at long ages.
+    const int  n_short   = static_cast<int>(nc.pavon_mm01.size());
+    const int  n_long    = static_cast<int>(nc.pavon_mm02.size());
+    const bool have_long = (n_long > 0 && !nc.pavon_t2min.empty() &&
+                            !nc.pavon_t2max.empty() && !nc.pavon_t2.empty());
+    const bool modern    = (age_yr <= 0.0);
+
+    int n1 = n_short;
+    int n2 = 0;
+    if (modern)
+    {
+        n1 = 1;   // record step 0 only; weight is irrelevant to a mean of one
+    }
+    else if (!have_long || age_yr <= nc.pavon_t2min.front())
+    {
+        n1 = 0;
+        for (int k = 0; k < n_short; ++k)
+            if (nc.pavon_t1min[k] < age_yr) n1 = k + 1; else break;
+    }
+    else if (age_yr <= nc.pavon_t2.back())
+    {
+        for (int j = 0; j < n_long; ++j)
+            if (nc.pavon_t2min[j] < age_yr) n2 = j + 1; else break;
+    }
+    else
+    {
+        n2 = n_long;
+    }
+    if (n1 < 1)
+    {
+        s.reason = "age_yr does not span any time step of the Pavon-Carrasco record";
+        return s;
+    }
+
+    // ---- Allocate and fill -------------------------------------------------
+    s.lat_ax = lat_ax;
+    s.lon_ax = lon_ax;
+    s.p_ax   = nc.lsdn_p;
+    s.avg.assign(n_h * n_p, 0.0);
+
+    const int    n_rc   = static_cast<int>(nc.lsdn_rc.size());
+    const double rc_max = nc.lsdn_rc.back();
+    const int    ip_top = static_cast<int>(n_p) - 1;
+
+    // Every horizontal node shares the same step durations, so the denominator
+    // is computed once rather than per node.
+    double den = 0.0;
+    if (modern)
+    {
+        den = 1.0;
+    }
+    else
+    {
+        for (int k = 0; k < n1; ++k)
+        {
+            const double tmax = (n2 == 0 && k == n1 - 1) ? age_yr : nc.pavon_t1max[k];
+            const double dt   = tmax - nc.pavon_t1min[k];
+            if (dt > 0.0) den += dt;
+        }
+        for (int j = 0; j < n2; ++j)
+        {
+            const double tmax = (j == n2 - 1) ? age_yr : nc.pavon_t2max[j];
+            const double dt   = tmax - nc.pavon_t2min[j];
+            if (dt > 0.0) den += dt;
+        }
+    }
+    if (!(den > 0.0))
+    {
+        s.reason = "zero total duration in the time average";
+        s.avg.clear();
+        s.lat_ax.clear(); s.lon_ax.clear(); s.p_ax.clear();
+        return s;
+    }
+
+    const long long n_h_ll = static_cast<long long>(n_h);
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (long long ih = 0; ih < n_h_ll; ++ih)
+    {
+        const std::size_t ilat = static_cast<std::size_t>(ih) / n_lon;
+        const std::size_t ilon = static_cast<std::size_t>(ih) % n_lon;
+        const double lat_rad = lat_ax[ilat] * kPi / 180.0;
+        const double lon_rad = lon_ax[ilon] * kPi / 180.0;
+        // Long record is a geocentric axial dipole: geomagnetic latitude is
+        // just |site latitude| and only M_t/M_0 varies with time.
+        const double gm_lat_gad = std::fabs(lat_rad);
+
+        double* out = &s.avg[static_cast<std::size_t>(ih) * n_p];
+
+        // One pass per record step: the cutoff rigidity - and therefore the
+        // position on the Rc axis - is fixed for the whole pressure column, so
+        // it is resolved once and then reused for all 380 rows.
+        auto accumulate_step = [&](double Rc_GV, double S_MV, double dt)
+        {
+            if (dt <= 0.0) return;
+
+            const double Rc = std::min(Rc_GV, rc_max);
+            int    irc = 0;
+            double trc = 0.0;
+            regular_axis_weight(nc.lsdn_rc, Rc, irc, trc);
+
+            for (int ip = 0; ip < ip_top; ++ip)
+            {
+                // Interior pressure node: the pressure weight is exactly zero,
+                // so bilinear_regular() reduces to this row lerp exactly.
+                const double bv = lsdn_row_lerp(*gb, n_rc, ip, irc, trc);
+                const double mv = lsdn_row_lerp(*gm, n_rc, ip, irc, trc);
+                out[static_cast<std::size_t>(ip)] += (bv + S_MV * mv) * dt;
+            }
+            // Top pressure node: bilinear_regular() clamps its bracketing row
+            // to ny-2 and uses a weight of exactly 1, so reproduce that same
+            // expression rather than reading the top row directly - it keeps
+            // the surface bit-comparable with the direct path.
+            const double b0 = lsdn_row_lerp(*gb, n_rc, ip_top - 1, irc, trc);
+            const double b1 = lsdn_row_lerp(*gb, n_rc, ip_top,     irc, trc);
+            const double m0 = lsdn_row_lerp(*gm, n_rc, ip_top - 1, irc, trc);
+            const double m1 = lsdn_row_lerp(*gm, n_rc, ip_top,     irc, trc);
+            const double bv = b0 + 1.0 * (b1 - b0);
+            const double mv = m0 + 1.0 * (m1 - m0);
+            out[static_cast<std::size_t>(ip_top)] += (bv + S_MV * mv) * dt;
+        };
+
+        // Short (Holocene) record: the paleopole moves, so the geomagnetic
+        // latitude - and hence Rc - changes with the step at a fixed site.
+        for (int k = 0; k < n1; ++k)
+        {
+            const double tmax = modern ? 1.0
+                              : ((n2 == 0 && k == n1 - 1) ? age_yr : nc.pavon_t1max[k]);
+            const double tmin = modern ? 0.0 : nc.pavon_t1min[k];
+            const double gm_lat = lsd_geomagnetic_lat(lat_rad, lon_rad,
+                                                      nc.pavon_pole_lat[k],
+                                                      nc.pavon_pole_lon[k]);
+            accumulate_step(lsd_dipole_rc(nc.pavon_mm01[k], gm_lat),
+                            nc.lsdn_sphi[k], tmax - tmin);
+        }
+
+        // Long record: GAD field, long-term mean solar modulation.
+        for (int j = 0; j < n2; ++j)
+        {
+            const double tmax = (j == n2 - 1) ? age_yr : nc.pavon_t2max[j];
+            accumulate_step(lsd_dipole_rc(nc.pavon_mm02[j], gm_lat_gad),
+                            nc.lsdn_sphi_inf, tmax - nc.pavon_t2min[j]);
+        }
+
+        for (std::size_t ip = 0; ip < n_p; ++ip) out[ip] /= den;
+    }
+
+    // SLHL denominator: Rc = 0 GV, P = 1013.25 hPa, S = S_ref = sphi[0], the
+    // same reference lsdn_scaling() divides by.
+    s.ref = lsdn_grid_value(nc, nuclide, 0.0, 1013.25, nc.lsdn_sphi[0]);
+    if (!(s.ref > 0.0))
+    {
+        s.reason = "non-positive SLHL reference value for nuclide \"" + nuclide + "\"";
+        s.avg.clear();
+        s.lat_ax.clear(); s.lon_ax.clear(); s.p_ax.clear();
+        return s;
+    }
+
+    s.n_nodes = s.avg.size();
+    s.n_bytes = s.avg.size() * sizeof(double)
+              + (lat_ax.size() + lon_ax.size() + n_p) * sizeof(double);
+    s.build_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
+    s.valid  = true;
+    s.reason = "built: " + std::to_string(n_lat) + " lat x "
+             + std::to_string(n_lon) + " lon x " + std::to_string(n_p)
+             + " p nodes over " + std::to_string(n1 + n2) + " record steps";
+    return s;
+}
+
+//
+// lsdn_scaling_from_surface
+// Trilinear in (lat, lon, P), pressure innermost so that a query on a
+// horizontal node reproduces the pure pressure interpolation exactly.
+//
+double lsdtt_crn_parameters::lsdn_scaling_from_surface(
+    const LsdnTimeAvgSurface& surface,
+    double lat_deg, double lon_deg, double P_mbar)
+{
+    if (!surface.valid)
+        throw std::runtime_error("lsdn_scaling_from_surface: the surface is not valid ("
+                                 + surface.reason + ") - the caller must check "
+                                 "surface.valid outside the parallel region and use "
+                                 "lsdn_scaling() instead");
+
+    const std::size_t n_lon = surface.lon_ax.size();
+    const std::size_t n_p   = surface.p_ax.size();
+
+    // The axis keeps whatever longitude convention the raster bounds used, so
+    // bring the query into that branch rather than forcing either convention.
+    if (n_lon > 1)
+    {
+        while (lon_deg < surface.lon_ax.front() - 180.0) lon_deg += 360.0;
+        while (lon_deg > surface.lon_ax.back()  + 180.0) lon_deg -= 360.0;
+    }
+
+    int    ilat = 0, ilon = 0, ip = 0;
+    double tlat = 0.0, tlon = 0.0, tp = 0.0;
+    regular_axis_weight(surface.lat_ax, lat_deg, ilat, tlat);
+    regular_axis_weight(surface.lon_ax, lon_deg, ilon, tlon);
+    regular_axis_weight(surface.p_ax,   P_mbar,  ip,   tp);
+
+    const std::size_t d_lon = (n_lon > 1) ? n_p : 0;          // stride to ilon+1
+    const std::size_t d_lat = (surface.lat_ax.size() > 1) ? n_lon * n_p : 0u;
+    const std::size_t d_p   = (n_p  > 1) ? 1u : 0u;           // stride to ip+1
+    const std::size_t base  = (static_cast<std::size_t>(ilat) * n_lon
+                               + static_cast<std::size_t>(ilon)) * n_p
+                            + static_cast<std::size_t>(ip);
+
+    // Pressure first: with tlat = tlon = 0 the two outer lerps return the inner
+    // value untouched, so a node query is exactly the pressure interpolation.
+    auto lerp_p = [&](std::size_t o) {
+        const double v0 = surface.avg[o];
+        const double v1 = surface.avg[o + d_p];
+        return v0 + tp * (v1 - v0);
+    };
+
+    const double c00 = lerp_p(base);
+    const double c01 = lerp_p(base + d_lon);
+    const double c10 = lerp_p(base + d_lat);
+    const double c11 = lerp_p(base + d_lat + d_lon);
+
+    const double c0 = c00 + tlon * (c01 - c00);
+    const double c1 = c10 + tlon * (c11 - c10);
+
+    return (c0 + tlat * (c1 - c0)) / surface.ref;
 }
 
 } // namespace lsdtt
