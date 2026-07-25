@@ -16,9 +16,31 @@ Knudsen VDM record are hardcoded), so a complete file needs only the atmosphere:
 python build_crn_parameters_nc.py --fetch-era40 --out crn_parameters.nc
 ```
 
+> **This script is only step 1 of rebuilding the committed `data/crn_parameters.nc`.**
+> The shipped file also carries the NCEP atmosphere and the LSDn (Lifton–Sato–Dunai
+> 2014) scaling data, appended afterwards by two further helpers. Regenerating with
+> this script alone produces a file that loads but silently drops
+> `atmosphere: NCEP` and `scaling_scheme: lsdn`.
+>
+> ```bash
+> # 1. atmosphere + Lifton lapse rate + VDM (this script)
+> python build_crn_parameters_nc.py --fetch-era40 --out crn_parameters.nc
+> # 2. NCEP atmosphere
+> python add_ncep_to_crn_nc.py --ncep2 NCEP2.bin --nc crn_parameters.nc
+> # 3. LSDn grids + Pavon/Lifton records (needs the Balco v3 .mat files)
+> python extract_lsdn_reference.py --data-dir <v3 data/> --out-dir <scratch>
+> python add_lsdn_to_crn_nc.py --npz <scratch>/lsdn_reference.npz \
+>     --nc crn_parameters.nc --verify
+> ```
+>
+> Steps 2 and 3 are non-destructive, idempotent appends: they never modify what step
+> 1 wrote, and each verifies that before finishing. See `data/README.md` for the
+> full variable list and provenance.
+
 ## Requirements
 
-- Python with `netCDF4` and `numpy` (conda-forge).
+- Python with `netCDF4`, `numpy` and (for the LSDn step) `scipy` — all declared in
+  the repo-root `pixi.toml`, so `pixi run python …` from the repo root just works.
 
 ## The three inputs
 

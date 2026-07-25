@@ -52,6 +52,25 @@ supplied via `--vdm <2-col table>` (derive from GEOMAGIA50 / the paper supplemen
 LIFTON coefficients: Lifton, Sato & Dunai (2014), EPSL 386:149,
 doi:10.1016/j.epsl.2013.10.052 (supplementary MATLAB 'lr' field); supply via
 `--lifton <7-number text file>`.
+
+------------------------------------------------------------------------------
+REBUILDING THE COMMITTED data/crn_parameters.nc -- THIS SCRIPT IS ONLY STEP 1.
+
+The shipped file also carries the NCEP atmosphere and the LSDn scaling data, both
+appended in place afterwards. If you regenerate from scratch you must re-run BOTH
+appends or the committed file will lose `atmosphere: NCEP` and `scaling_scheme:
+lsdn`:
+
+  1. python_helpers/build_crn_parameters_nc.py  --fetch-era40 --out crn_parameters.nc
+  2. python_helpers/add_ncep_to_crn_nc.py       --ncep2 NCEP2.bin --nc crn_parameters.nc
+  3. python_helpers/extract_lsdn_reference.py   --data-dir <Balco v3 data/> --out-dir <scratch>
+     python_helpers/add_lsdn_to_crn_nc.py       --npz <scratch>/lsdn_reference.npz \
+                                                --nc crn_parameters.nc --verify
+
+Steps 2 and 3 are non-destructive, idempotent appends and never modify what this
+script wrote. Step 3 needs the Balco v3 reference `.mat` files, which are not in
+this repository; see data/README.md for what the LSDn variables are and where they
+come from.
 ------------------------------------------------------------------------------
 """
 from __future__ import annotations

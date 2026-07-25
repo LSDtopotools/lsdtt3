@@ -30,6 +30,15 @@ gdal = "*"
 numpy = "*"
 rasterio = "*"
 
+# MATLAB .mat reader, used by python_helpers/extract_lsdn_reference.py to read
+# the Balco v3 LSDn reference grids.  It was already in the environment as a
+# transitive dependency, but a helper that imports it must declare it.
+scipy = "*"
+
+# netCDF writer for the data/crn_parameters.nc packers
+# (add_ncep_to_crn_nc.py, add_lsdn_to_crn_nc.py, build_crn_parameters_nc.py).
+netcdf4 = "*"
+
 # DEM and vector data download helpers.
 requests = "*"
 pystac-client = "*"
@@ -67,7 +76,7 @@ osmnx = "*"
 # container.
 python = ">=3.11,<3.14"
 richdem = "*"
-scipy = "*"
+# (scipy is in [dependencies], so it is already in this environment too.)
 
 # topotoolbox is not on conda-forge, so it has to come from PyPI. This is the
 # only PyPI dependency in the workspace and it is confined to this optional
