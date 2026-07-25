@@ -415,6 +415,113 @@ def extract(data_dir, log):
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
+def emit_reference_csv(path, arrays, prov):
+    """Write the FROZEN L2 grid reference (lsdn_implementation_plan Sec5, L2).
+
+    The values are evaluated from the float64 `.mat` grids with scipy's
+    RegularGridInterpolator (method='linear'), which is the same 4-point formula
+    MATLAB `interp2` linear uses.  lsdtt3 must reproduce these from the FLOAT32
+    grids packed into `crn_parameters.nc`, so the residual is the float32
+    round-trip, not a formula difference.  At grid NODES the formula is the
+    identity, so those rows are a pure data-fidelity test.
+
+    Regenerating this file is a MANUAL, REVIEWABLE event: it re-derives a frozen
+    reference from the untracked v3 `.mat` files and must be signed off before
+    it is committed.
+    """
+    from scipy.interpolate import RegularGridInterpolator
+
+    rc = np.asarray(arrays["lsdn_rc"], dtype=np.float64)
+    p = np.asarray(arrays["lsdn_p"], dtype=np.float64)
+    sphi0 = float(np.asarray(arrays["lsdn_sphi"])[0])
+    rc_max = float(rc[-1])
+
+    # -- the case list --------------------------------------------------------
+    # (a) the 15 CRONUS fixture samples: 5 latitudes x 3 elevations, standard
+    #     atmosphere, present-day field and paleopole, longitude 0.
+    cases = []  # (case, Rc_GV, p_hPa, S_MV)
+    mm01_0 = float(np.asarray(arrays["pavon_mm01"])[0])
+    pole_lat = float(np.asarray(arrays["pavon_pole_lat"])[0])
+    pole_lon = float(np.asarray(arrays["pavon_pole_lon"])[0])
+    for lat_deg in (0.0, 20.0, 40.0, 60.0, 70.0):
+        for elev_m in (250.0, 1500.0, 3000.0):
+            # Balco's barometric equation with SLHL values (lsdtt3's
+            # atmospheric_pressure_standard).
+            press = 1013.25 * np.exp(
+                (-0.03417 / 0.0065)
+                * (np.log(288.15) - np.log(288.15 - 0.0065 * elev_m)))
+            lat = np.radians(lat_deg)
+            cos_theta = (np.cos(lat) * np.cos(pole_lat) * np.cos(0.0 - pole_lon)
+                         + np.sin(lat) * np.sin(pole_lat))
+            gm_lat = abs(0.5 * np.pi - np.arccos(min(1.0, max(-1.0, cos_theta))))
+            c = np.cos(gm_lat)
+            poly = mm01_0 * (-448.004 * c**6 + 1189.18 * c**5 - 1152.15 * c**4
+                             + 522.061 * c**3 - 103.241 * c**2 + 6.89901 * c)
+            cases.append(("fixture", abs(float(poly)), float(press), sphi0))
+
+    # (b) exact grid nodes: the four corners plus interior nodes.
+    for irc, ip in [(0, 0), (0, P_N - 1), (RC_N - 1, 0), (RC_N - 1, P_N - 1),
+                    (1, 1), (50, 100), (100, 190), (150, 250), (200, 379),
+                    (10, 5), (75, 300), (199, 378)]:
+        cases.append(("node", float(rc[irc]), float(p[ip]), sphi0))
+
+    # (c) deliberate off-node points: cell midpoints and points 1e-3 inside
+    #     each edge of the grid.
+    for irc, ip in [(0, 0), (50, 100), (100, 190), (150, 250), (199, 378)]:
+        cases.append(("midcell", float(rc[irc] + 0.05), float(p[ip] + 1.0), sphi0))
+    cases += [
+        ("edge_in", float(rc[0] + 1e-3), float(p[0] + 1e-3), sphi0),
+        ("edge_in", float(rc[-1] - 1e-3), float(p[0] + 1e-3), sphi0),
+        ("edge_in", float(rc[0] + 1e-3), float(p[-1] - 1e-3), sphi0),
+        ("edge_in", float(rc[-1] - 1e-3), float(p[-1] - 1e-3), sphi0),
+        ("offnode", 3.7317, 913.7, sphi0),
+        ("offnode", 11.2481, 657.3, sphi0),
+        ("offnode", 7.5, 1013.25, 462.54064664694187),
+    ]
+
+    # (d) the SLHL point - off-node in p, which is the ORIENTATION check: it
+    #     only comes out at 4.8809 for Be-10 if p is slow and Rc fast.
+    cases.append(("slhl", 0.0, 1013.25, sphi0))
+
+    # (e) the Rc clamp (25 GV -> 20 GV, as the runtime and v3 both clamp) and a
+    #     point below the generator's 1 GV floor.
+    cases.append(("rc_clamp", 25.0, 850.0, sphi0))
+    cases.append(("rc_sub1", 0.5, 850.0, sphi0))
+
+    interps = {}
+    for nuc in NUCLIDE_MATS:
+        interps[nuc] = (
+            RegularGridInterpolator((p, rc), arrays[f"lsdn_b_{nuc}"],
+                                    method="linear", bounds_error=True),
+            RegularGridInterpolator((p, rc), arrays[f"lsdn_m_{nuc}"],
+                                    method="linear", bounds_error=True))
+
+    with open(path, "w") as fh:
+        fh.write(
+            "# LSDn v3 GRID REFERENCE (frozen) - lsdn_implementation_plan Sec5 L2\n"
+            "# Evaluated from the FLOAT64 v3 .mat grids with scipy\n"
+            "# RegularGridInterpolator(method='linear'); lsdtt3 must reproduce\n"
+            "# these from the float32 grids packed in data/crn_parameters.nc.\n"
+            "# Regenerating this file is a MANUAL, REVIEWABLE event and needs\n"
+            "# sign-off by Simon Mudd before it is committed.\n"
+            f"# generated_utc: {prov['extracted_utc']}\n"
+            f"# generating_script: python_helpers/extract_lsdn_reference.py "
+            "--emit-reference\n")
+        for fn, h in sorted(prov["sha256"].items()):
+            fh.write(f"# source_sha256 {h}  {fn}\n")
+        fh.write("# Rc_GV is the REQUESTED rigidity; values are evaluated at\n"
+                 "# min(Rc, 20) because both v3 and lsdtt3 clamp there.\n")
+        fh.write("nuclide,case,Rc_GV,p_hPa,S_MV,value\n")
+        for nuc, (bi, mi) in interps.items():
+            for case, rcv, pv_, s in cases:
+                rc_eval = min(rcv, rc_max)
+                bval = float(bi([[pv_, rc_eval]])[0])
+                mval = float(mi([[pv_, rc_eval]])[0])
+                fh.write(f"{nuc},{case},{rcv!r},{pv_!r},{s!r},"
+                         f"{bval + s * mval!r}\n")
+    print(f"wrote {path} ({len(cases) * len(interps)} rows)")
+
+
 def write_dump(path, arrays, prov, log):
     """Human-readable companion to the .npz -- what was read, from what, and
     whether it checked out."""
@@ -455,6 +562,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default="/mnt/c/LSDTopoTools/crn_reference/v3/data",
                     help="directory holding the v3 reference .mat files")
+    ap.add_argument("--emit-reference", metavar="CSV",
+                    help="ALSO write the frozen L2 grid reference CSV to this "
+                         "path (a manual, reviewable regeneration event; the "
+                         "normal path is to leave the committed file alone)")
     ap.add_argument("--out-dir", required=True,
                     help="scratch directory for the .npz and the dump "
                          "(deliberately NOT inside the repository)")
@@ -469,6 +580,9 @@ def main():
     np.savez_compressed(npz_path, provenance_json=np.array(json.dumps(prov, indent=2)),
                         **arrays)
     write_dump(dump_path, arrays, prov, log)
+
+    if args.emit_reference:
+        emit_reference_csv(args.emit_reference, arrays, prov)
 
     print("\n" + log.table())
     print(f"\nwrote {npz_path} ({os.path.getsize(npz_path)} B)")

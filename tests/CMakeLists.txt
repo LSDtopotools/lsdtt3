@@ -573,10 +573,15 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fetch_test_output)
 endif()
 
+# Arguments: output dir, Stone sentinel, LSDn sentinel (a SEPARATE file with its
+# own gated regeneration flag; plan Sec3b), and the tests/data fixture dir (the
+# pre-LSDn crn_parameters.nc used by L5).
 add_test(NAME unit_cosmo_physics
          COMMAND lsdtt-test-cosmo-physics
                  ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output
-                 ${CMAKE_CURRENT_SOURCE_DIR}/expected/cosmo/numerics_sentinel.csv)
+                 ${CMAKE_CURRENT_SOURCE_DIR}/expected/cosmo/numerics_sentinel.csv
+                 ${CMAKE_CURRENT_SOURCE_DIR}/expected/cosmo/numerics_sentinel_lsdn.csv
+                 ${CMAKE_CURRENT_SOURCE_DIR}/data)
 set_tests_properties(unit_cosmo_physics PROPERTIES LABELS "unit;cosmo")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output)
 

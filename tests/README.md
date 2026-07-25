@@ -84,9 +84,31 @@ What it checks:
   committed `data/crn_parameters.nc` (Knudsen VDM), and the equatorial LSDTT-1
   geomag ON/OFF delta. These run against the bundled `crn_parameters.nc`,
   **auto-discovered** relative to the executable (`src/core/lsdtt_exe_path.hpp`).
+- **LSDn scaling (L0–L6, L10, L11)** — the Lifton–Sato–Dunai (2014) production
+  scaling that runs additively alongside Stone. L0 pins the packed grid axes and
+  the Pavón-Carrasco/Lifton record constants by exact equality; **L1 is a
+  SEPARATE numerics sentinel**, `tests/expected/cosmo/numerics_sentinel_lsdn.csv`
+  (360 values, own gated flag `--regenerate-lsdn-sentinel-i-have-simons-approval`
+  — the Stone `numerics_sentinel.csv` must stay byte-identical); L2 reproduces
+  the frozen v3 grid reference `lsdn_grid_reference.csv` (generated offline by
+  `python_helpers/extract_lsdn_reference.py --emit-reference` from the untracked
+  v3 `.mat` files) including the axis-orientation value 4.880884; L3 checks
+  LSD2014 Eq. 2 against an independent re-implementation, its negative leak above
+  80° and the genuine longitude dependence of the moving paleopole; L4 the clamps
+  and the flat sub-1 GV columns; L5 the degenerate cases — a missing LSDn grid is
+  a **hard failure, never a silent Stone fallback** (checked against a pre-LSDn
+  `crn_parameters.nc` in `tests/data`); L6 the physics invariants and the `S_tot`
+  interaction with `scale_F_values`; L10 that the precomputed time-averaged
+  surface equals the direct per-pixel loop (both paths invoked explicitly via
+  `force_build`, including an age past the end of the long record so the
+  final-step stretch is exercised); L11 a measured horizontal-resolution sweep
+  emitting `lsdn_surface_resolution_sweep.csv`. The Stone half of L11 — and
+  therefore the shipped `h_step_deg` — is still open.
 - **Plottable CSVs** — `production_vs_depth.csv`, `geomag_scaling.csv`,
-  `geomag_on_off_LSDTT1.csv` and the earlier ones, written to the test output
-  directory for inspection with lsdviztools3.
+  `geomag_on_off_LSDTT1.csv`, `lsdn_vs_stone.csv`,
+  `lsdn_surface_vs_direct.csv`, `lsdn_surface_resolution_sweep.csv` and the
+  earlier ones, written to the test output directory for inspection with
+  lsdviztools3.
 
 The three cosmo CLIs have offline integration tests (labels `smoke;cli;cosmo`
 and `failure;cli;cosmo`): `smoke_cosmo_{tool,prediction,column_tool}_help` check
