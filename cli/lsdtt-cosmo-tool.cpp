@@ -124,6 +124,18 @@ int main(int argc, char* argv[])
         "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
         "CRN physics", "param", ""};
 
+    string_default_map["scaling_scheme"] = "stone";
+    help_map["scaling_scheme"] = {"string","stone",
+        "Production-rate scaling scheme.",
+        "stone = Stone (2000)/Lal, the lsdtt3 default and the CAIRN/OCTOPUS scheme. "
+        "lsdn = Lifton, Sato & Dunai (2014) nuclide-specific scaling, interpolated from "
+        "the LSDn2015 scaling grids; requires the LSDn grids in crn_parameters.nc and "
+        "supports Be10, Al26 and C14 only. Both schemes are evaluated per pixel, "
+        "including when sample_age_yr > 0. muon_scheme is unaffected: LSDn is a "
+        "spallation scaling and the muon pathways receive it through the same "
+        "Vermeesch redistribution as Stone.",
+        "CRN physics", "param", ""};
+
     float_default_map["rock_density_kg_m3"] = 2650.0f;
     help_map["rock_density_kg_m3"] = {"float","2650",
         "Rock (bulk) density in kg/m3.",
@@ -141,9 +153,18 @@ int main(int argc, char* argv[])
 
     float_default_map["sample_age_yr"] = 0.0f;
     help_map["sample_age_yr"] = {"float","0",
-        "Sample exposure age in years (yr BP). Used for paleomagnetic correction.",
-        "Set > 0 to apply the Muscheler VDM time-integrated Stone/Lal paleomagnetic "
-        "correction. Requires crn_nc_file to be set. Default 0 = no correction (modern field).",
+        "Sample exposure age in years (yr BP). Drives the time-integrated production "
+        "correction; what it selects depends on scaling_scheme.",
+        "Set > 0 to apply a time-integrated correction; requires crn_nc_file. Default 0 "
+        "= no correction (modern field). Under scaling_scheme=stone this is the "
+        "Muscheler VDM Stone/Lal paleomagnetic correction. Under scaling_scheme=lsdn it "
+        "instead drives the duration-weighted average of LSDn production over the "
+        "Pavon-Carrasco geomagnetic record (Holocene moving paleopole, then a GAD dipole "
+        "record to ~20 Ma), so it is longitude-dependent as well as latitude-dependent. "
+        "NOTE: \"now\" is assumed to be 2010 (the reference year of the packed record); "
+        "lsdtt3 has no sample-collection-year input yet, so no (collection year - 2010) "
+        "shift is applied. That offset is at most ~16 yr against records of 1e2-1e7 yr "
+        "and is therefore negligible, but it IS an assumption, not an exact treatment.",
         "Atmosphere and palaeomagnetic correction", "param", ""};
 
     string_default_map["atmosphere"] = "ERA40";
@@ -241,8 +262,8 @@ int main(int argc, char* argv[])
     // --- Output ---
     bool_default_map["write_production_raster"] = false;
     help_map["write_production_raster"] = {"bool","false",
-        "Write the Stone 2000 production scaling raster to a GeoTIFF.",
-        "Filename: <write_fname>_PROD.tif",
+        "Write the production scaling raster to a GeoTIFF.",
+        "Stone 2000 or LSDn, per scaling_scheme. Filename: <write_fname>_PROD.tif",
         "Output", "switch", ""};
 
     // Reporting-only diagnostic (no effect on the erosion-rate inversion). For each
@@ -337,19 +358,63 @@ int main(int argc, char* argv[])
     else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
     else                             atm_source = lsdtt::AtmSource::ERA40;
 
+    // Resolve the production scaling scheme. Unlike the atmosphere selector,
+    // this NEVER falls back: an unknown value, an LSDn run with no LSDn grids,
+    // or an LSDn run with an unsupported nuclide is FATAL. Silently degrading
+    // LSDn to Stone would change the physics without telling anyone.
+    const std::string scheme_name = sf["scaling_scheme"];
+    lsdtt::ScalingScheme scaling_scheme = lsdtt::ScalingScheme::Stone;
+    if (scheme_name == "lsdn")       scaling_scheme = lsdtt::ScalingScheme::LSDn;
+    else if (scheme_name == "stone") scaling_scheme = lsdtt::ScalingScheme::Stone;
+    else
+    {
+        std::cerr << "FATAL: unknown scaling_scheme \"" << scheme_name
+                  << "\". Allowed values: stone, lsdn.\n";
+        return 1;
+    }
+    const bool use_lsdn = (scaling_scheme == lsdtt::ScalingScheme::LSDn);
+    if (use_lsdn)
+    {
+        if (!crn_nc.lsdn_loaded)
+        {
+            std::cerr << "FATAL: scaling_scheme: lsdn requires the LSDn scaling grids in "
+                      << "crn_parameters.nc, but none were found in \""
+                      << (crn_nc_file.empty() ? std::string("<no crn_parameters.nc located>")
+                                              : crn_nc_file)
+                      << "\".\nSet crn_nc_file to an nc that carries the LSDn grids, or "
+                      << "use scaling_scheme: stone.\n";
+            return 1;
+        }
+        if (nuclide != "Be10" && nuclide != "Al26" && nuclide != "C14")
+        {
+            std::cerr << "FATAL: scaling_scheme: lsdn supports nuclide Be10, Al26 or C14 "
+                      << "only (got \"" << nuclide << "\").\n";
+            return 1;
+        }
+    }
+
     const bool use_ncep      = (atm_source == lsdtt::AtmSource::NCEP) && crn_nc.ncep_loaded;
     const bool use_era40     = (atm_source == lsdtt::AtmSource::ERA40) && crn_nc.loaded;
     const bool use_paleomag  = crn_nc.loaded && (sample_age_yr > 0.0);
     const std::string atm_report = use_ncep ? "NCEP"
                                  : use_era40 ? "ERA40" : "standard";
 
+    // Time-varying field: under Stone this is the Muscheler VDM correction;
+    // under LSDn it is the Pavon-Carrasco/Lifton record average. Both per pixel.
+    const std::string age_str = std::to_string(static_cast<int>(sample_age_yr));
+    const std::string paleomag_report =
+        use_lsdn ? (sample_age_yr > 0.0
+                        ? "Pavon-Carrasco record (" + age_str + " yr)"
+                        : "off (modern field)")
+                 : (use_paleomag ? "Muscheler VDM (" + age_str + " yr)"
+                                 : "off (modern field)");
+
     std::cout << "Nuclide       : " << nuclide << "\n"
               << "Muon scheme   : " << muon_scheme << "\n"
+              << "Scaling scheme: " << (use_lsdn ? "LSDn" : "Stone") << "\n"
               << "Rock density  : " << rock_density_kg_m3 << " kg/m3\n"
               << "Atmosphere    : " << atm_report << "\n"
-              << "Palaeomag     : " << (use_paleomag
-                                        ? "Muscheler VDM (" + std::to_string(static_cast<int>(sample_age_yr)) + " yr)"
-                                        : "off (modern field)") << "\n"
+              << "Palaeomag     : " << paleomag_report << "\n"
               << "Points file   : " << points_path << "\n"
               << "Conc column   : " << concentration_col_name << "\n\n";
 
@@ -411,12 +476,23 @@ int main(int argc, char* argv[])
     const auto& flow = dynamic_cast<const lsdtt::lsdtt_flowinfo&>(*flow_ptr);
 
     //  3. Production raster
-    std::cout << "Calculating Stone 2000 production raster"
+    std::cout << "Calculating " << (use_lsdn ? "LSDn" : "Stone 2000")
+              << " production raster"
               << " (" << atm_report << " atmosphere)"
-              << (use_paleomag ? " + palaeomagnetic correction" : "")
+              << ((use_lsdn ? sample_age_yr > 0.0 : use_paleomag)
+                      ? " + palaeomagnetic correction" : "")
               << "...\n";
-    lsdtt::lsdtt_raster_cpu prod_raster =
-        lsdtt::calculate_production_raster(filled_dem, crn_nc, sample_age_yr, atm_source);
+    lsdtt::lsdtt_raster_cpu prod_raster;
+    try
+    {
+        prod_raster = lsdtt::calculate_production_raster(
+            filled_dem, crn_nc, sample_age_yr, atm_source, scaling_scheme, nuclide);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: production raster failed: " << e.what() << "\n";
+        return 1;
+    }
 
     if (bf["write_production_raster"])
     {

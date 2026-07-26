@@ -155,6 +155,18 @@ int main(int argc, char* argv[])
         "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.","",
         "Nuclide and muon scheme", "param", ""};
 
+    string_default_map["scaling_scheme"] = "stone";
+    help_map["scaling_scheme"] = {"string","stone",
+        "Production-rate scaling scheme.",
+        "stone = Stone (2000)/Lal, the lsdtt3 default and the CAIRN/OCTOPUS scheme. "
+        "lsdn = Lifton, Sato & Dunai (2014) nuclide-specific scaling, interpolated from "
+        "the LSDn2015 scaling grids; requires the LSDn grids in crn_parameters.nc and "
+        "supports Be10, Al26 and C14 only. Both schemes are evaluated per pixel, "
+        "including when sample_age_yr > 0. muon_scheme is unaffected: LSDn is a "
+        "spallation scaling and the muon pathways receive it through the same "
+        "Vermeesch redistribution as Stone.",
+        "Nuclide and muon scheme", "param", ""};
+
     // --- Prediction modes ---
     bool_default_map["calculate_crn_concentration_raster"] = false;
     help_map["calculate_crn_concentration_raster"] = {"bool","false",
@@ -202,8 +214,17 @@ int main(int argc, char* argv[])
 
     float_default_map["sample_age_yr"] = 0.0f;
     help_map["sample_age_yr"] = {"float","0",
-        "Sample exposure age (yr) for palaeomagnetic correction to Stone 2000 scaling.",
-        "Only used when crn_nc_file is set and > 0.",
+        "Sample exposure age (yr BP) driving the time-integrated production correction; "
+        "what it selects depends on scaling_scheme.",
+        "Only used when crn_nc_file is set and > 0. Under scaling_scheme=stone this is "
+        "the Muscheler VDM palaeomagnetic correction to Stone 2000 scaling. Under "
+        "scaling_scheme=lsdn it drives the duration-weighted average of LSDn production "
+        "over the Pavon-Carrasco geomagnetic record (Holocene moving paleopole, then a "
+        "GAD dipole record to ~20 Ma), making it longitude-dependent as well as "
+        "latitude-dependent. NOTE: \"now\" is assumed to be 2010 (the packed record's "
+        "reference year); lsdtt3 has no sample-collection-year input yet, so no "
+        "(collection year - 2010) shift is applied - negligible (<=~16 yr against "
+        "1e2-1e7 yr records) but an assumption, not an exact treatment.",
         "Production raster", "param", "write_production_raster"};
 
     // --- Topographic shielding ---
@@ -393,6 +414,27 @@ int main(int argc, char* argv[])
     const std::string muon_scheme = sf["muon_scheme"];
     const std::string write_base  = pp.get_full_write_path();
 
+    // Production scaling scheme. Never falls back: an unknown value is FATAL,
+    // and (below, once the nc is loaded) so is lsdn with no LSDn grids.
+    const std::string scheme_name = sf["scaling_scheme"];
+    lsdtt::ScalingScheme scaling_scheme = lsdtt::ScalingScheme::Stone;
+    if (scheme_name == "lsdn")       scaling_scheme = lsdtt::ScalingScheme::LSDn;
+    else if (scheme_name == "stone") scaling_scheme = lsdtt::ScalingScheme::Stone;
+    else
+    {
+        std::cerr << "FATAL: unknown scaling_scheme \"" << scheme_name
+                  << "\". Allowed values: stone, lsdn.\n";
+        return 1;
+    }
+    const bool use_lsdn = (scaling_scheme == lsdtt::ScalingScheme::LSDn);
+    if (use_lsdn && nuclide != "Be10" && nuclide != "Al26" && nuclide != "C14")
+    {
+        std::cerr << "FATAL: scaling_scheme: lsdn supports nuclide Be10, Al26 or C14 "
+                  << "only (got \"" << nuclide << "\").\n";
+        return 1;
+    }
+    std::cout << "Scaling scheme: " << (use_lsdn ? "LSDn" : "Stone") << "\n";
+
     lsdtt::raster_output_format out_fmt = lsdtt::raster_output_format::cog;
     if (sf["write_output_format"] == "gtiff")
         out_fmt = lsdtt::raster_output_format::gtiff;
@@ -448,7 +490,8 @@ int main(int argc, char* argv[])
     }
     else
     {
-        std::cout << "Computing Stone 2000 production raster...\n";
+        std::cout << "Computing " << (use_lsdn ? "LSDn" : "Stone 2000")
+                  << " production raster...\n";
         lsdtt::CrnNcData crn_nc;
         // Fall back to the bundled crn_parameters.nc (relative to this executable)
         // when the user gives no path. Empty => standard atmosphere.
@@ -460,8 +503,27 @@ int main(int argc, char* argv[])
             std::cout << "  Loading CRN NC data: " << nc_path << "\n";
             crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
         }
+        if (use_lsdn && !crn_nc.lsdn_loaded)
+        {
+            std::cerr << "FATAL: scaling_scheme: lsdn requires the LSDn scaling grids in "
+                      << "crn_parameters.nc, but none were found in \""
+                      << (nc_path.empty() ? std::string("<no crn_parameters.nc located>")
+                                          : nc_path)
+                      << "\".\nSet crn_nc_file to an nc that carries the LSDn grids, or "
+                      << "use scaling_scheme: stone.\n";
+            return 1;
+        }
         double age_yr = static_cast<double>(ff["sample_age_yr"]);
-        prod_raster = lsdtt::calculate_production_raster(dem, crn_nc, age_yr);
+        try
+        {
+            prod_raster = lsdtt::calculate_production_raster(
+                dem, crn_nc, age_yr, lsdtt::AtmSource::Auto, scaling_scheme, nuclide);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: production raster failed: " << e.what() << "\n";
+            return 1;
+        }
         std::cout << "  Production raster computed.\n";
     }
 

@@ -49,7 +49,8 @@ namespace lsdtt
 // 
 
 //  Production raster 
-// Computes the Stone (2000) spallation scaling factor at every valid pixel.
+// Computes the spallation production scaling factor at every valid pixel, using
+// either the Stone (2000) scheme (the default) or LSDn (see ScalingScheme).
 // Requires a projected DEM (UTM/polar).
 //
 // nc      : ERA40 / paleomagnetic data loaded via lsdtt_crn_parameters::load_nc_data().
@@ -67,10 +68,37 @@ namespace lsdtt
 // nc.ncep_loaded; falls back to standard otherwise).
 enum class AtmSource { Auto, Standard, ERA40, NCEP };
 
+// Production-rate scaling scheme. Stone (the default) preserves the historical
+// behaviour exactly, including the Muscheler paleomagnetic correction when
+// age_yr > 0. LSDn selects the Lifton, Sato & Dunai (2014) nuclide-specific
+// scheme, interpolated from the packed LSDn2015 scaling grids; it requires the
+// LSDn grids in crn_parameters.nc and supports Be10, Al26 and C14 only.
+//
+// BOTH schemes are evaluated PER PIXEL, including when time-varying: the raster
+// is never reduced to a point first. That per-pixel production is what CAIRN
+// contributed over the online calculators, and LSDn inherits it here. Under
+// LSDn with age_yr > 0 the time average is precomputed ONCE per call over a
+// (lat, lon) x pressure surface (LsdnTimeAvgSurface) and then evaluated per
+// pixel, which is what makes the per-pixel time-varying path affordable; when
+// the cost model declines the surface, the direct per-pixel time loop runs
+// instead. The two agree (test L10), so the choice is purely one of cost.
+enum class ScalingScheme { Stone, LSDn };
+
+// scheme  : Stone (default, historical behaviour) or LSDn.
+// nuclide : "Be10", "Al26" or "C14"; used by LSDn only (the Stone scaling is
+//           nuclide-independent), and ignored under Stone.
+//
+// Under ScalingScheme::LSDn a missing/incomplete LSDn dataset or an unsupported
+// nuclide is a std::runtime_error thrown BEFORE the parallel region: LSDn is
+// never silently substituted by Stone. (This deliberately differs from the
+// atmosphere selector, which may fall back quietly because it refines one input
+// rather than replacing the physics.)
 lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               const CrnNcData&         nc,
                                               double                   age_yr = 0.0,
-                                              AtmSource                atm = AtmSource::Auto);
+                                              AtmSource                atm = AtmSource::Auto,
+                                              ScalingScheme            scheme = ScalingScheme::Stone,
+                                              const std::string&       nuclide = "Be10");
 
 // Backward-compatible overload: standard atmosphere, no paleomagnetic correction.
 inline lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem)

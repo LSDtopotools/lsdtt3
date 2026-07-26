@@ -1157,18 +1157,32 @@ LsdnTimeAvgSurface lsdtt_crn_parameters::build_lsdn_time_avg_surface(
     const std::size_t n_p   = nc.lsdn_p.size();
     const std::size_t n_h   = n_lat * n_lon;
 
-    // Cost model.  The direct path costs about n_pixels * n_steps * 2 bilinear
-    // lookups; the surface costs about n_h * n_p * n_steps cheap row lerps plus
-    // n_pixels trilinear evaluations.  So the surface wins when n_h * n_p is
-    // comfortably below n_pixels.  (The plan's prose says the crossover is at
-    // 2 * n_pixels because a bilinear lookup is about twice a row lerp; the
-    // condition written into its signature block - and used here - is the
-    // conservative n_h * n_p >= n_pixels.  On a 40x31 fixture the surface is
-    // correctly declined; the measured crossover is reported separately.)
-    if (!force_build && n_h * n_p >= n_pixels)
+    // Cost model, CALIBRATED BY MEASUREMENT (2026-07-26), not derived.
+    //
+    // The direct path costs about n_pixels * n_steps * 2 bilinear lookups; the
+    // surface costs about n_h * n_p * n_steps row lerps plus n_pixels trilinear
+    // evaluations.  Counting operations that way suggests a crossover at
+    // n_h * n_p ~ n_pixels, i.e. 13680 pixels for a typical n_h = 36.  That is
+    // WRONG BY 26-72x: the measured crossover is 190-522 pixels.  The operation
+    // count misses that the surface build walks the pressure axis with unit
+    // stride and reuses one Rc per row, so its inner loop runs at a very
+    // different cost per operation than the direct path's strided lookups.
+    //
+    // The rule below is fitted to that measurement with margin: build the
+    // surface once n_pixels exceeds 16 * n_h.  With h_step_deg = 0.1 a typical
+    // basin gives n_h ~ 9-36, so the surface now switches on at ~144-576 pixels
+    // instead of ~13680 - which is what makes it available on the 0.07-29 km^2
+    // validation basins rather than only on whole-tile runs.  The n_p factor
+    // drops out of the condition entirely: it is a constant of the grid, and
+    // folding it in is what produced the 26-72x error.
+    //
+    // If h_step_deg or the pressure-axis length changes, RE-MEASURE the
+    // crossover; do not re-derive this constant from operation counts.
+    constexpr std::size_t surface_pixels_per_node = 16;
+    if (!force_build && n_pixels <= surface_pixels_per_node * n_h)
     {
-        s.reason = "cost model: n_h*n_p (" + std::to_string(n_h * n_p)
-                 + ") >= n_pixels (" + std::to_string(n_pixels)
+        s.reason = "cost model: n_pixels (" + std::to_string(n_pixels)
+                 + ") <= 16 * n_h (" + std::to_string(surface_pixels_per_node * n_h)
                  + "): the direct per-pixel loop is cheaper";
         return s;
     }

@@ -19,15 +19,28 @@ Procedure (plan §6e):
      inversion averages. P_lsdtt = P0_ref x mean_scaling, P0_ref = Braucher total
      SLHL 10Be production 4.30 atoms/g/yr (set_braucher_parameters).
   4. Compare per basin: (a) P_lsdtt vs BEPROD; (b) P_lsdtt x BETOPO vs BETOTS;
-     (c) lsdtt mean elevation vs ELEV_AVE. Emit the frozen artefact.
+     (c) lsdtt mean elevation vs ELEV_AVE, against the frozen artefact.
+
+FROZEN-ARTEFACT DISCIPLINE (fixed 2026-07-26). dethier2014_production_isolation.csv
+is TRACKED and described as frozen, so the DEFAULT mode is now --check: compare and
+report, never write. Previously every run rewrote the file -- in practice only its
+'# Run: ... ; git <sha>' provenance line moved, so a clean tree went dirty purely by
+running the suite, and the numbers were never actually regression-checked despite
+the file being called frozen. Pass --freeze to regenerate deliberately, then review
+the diff: a numeric change there is a change in the production/DEM result.
 
 This is NOT in CI (needs network + time). Exit 77 = SKIP (network down), like the
 rest of the real-landscape tier. --harvest pulls BEPROD/BETOTS/BETOPO/ELEV_AVE from
 the OCTOPUS WFS (STUDYID S169); --run does the DEM fetch + tool run + compare.
 
 Usage:
+  # regression check (what CTest runs; does not modify the artefact)
   python3 tests/scripts/run_cosmo_production_isolation.py \
       --exe build/lsdtt-cosmo-tool --fetch-exe build/lsdtt-fetch-raster [--keep]
+
+  # deliberate re-freeze (review the diff before committing)
+  python3 tests/scripts/run_cosmo_production_isolation.py \
+      --exe build/lsdtt-cosmo-tool --fetch-exe build/lsdtt-fetch-raster --freeze
 """
 
 import argparse
@@ -275,10 +288,18 @@ def run_isolation(args) -> int:
           f"(n={len(e_pcts)})")
 
     out_csv = pdir / "dethier2014_production_isolation.csv"
-    sha = rcv.git_sha()
     fields = ["basin", "delineation_reliable", "P_lsdtt", "BEPROD", "pct_a",
               "P_lsdtt_x_BETOPO", "BETOTS", "pct_b", "lsdtt_mean_elev_m",
               "ELEV_AVE", "d_elev_m", "erate_pct", "n_upslope_pixels"]
+
+    # DEFAULT IS --check: compare against the tracked artefact WITHOUT touching it.
+    # This file is described as FROZEN and is tracked by git, so a plain suite run
+    # must not rewrite it.  Regenerating is an explicit, reviewed act (--freeze),
+    # exactly as for the sibling summaries in run_cosmo_validation.py.
+    if not getattr(args, "freeze", False):
+        return check_against_frozen_isolation(rows, out_csv)
+
+    sha = rcv.git_sha()
     with open(out_csv, "w", newline="") as f:
         f.write("# Dethier (2014) §6e production-vs-BEPROD isolation -- FROZEN artefact.\n")
         f.write("# P_lsdtt = basin-mean Stone-2000 production SCALING from "
@@ -302,8 +323,88 @@ def run_isolation(args) -> int:
         w.writeheader()
         for r in rows:
             w.writerow({k: r.get(k, "") for k in fields})
-    print(f"\nwrote frozen artefact: {out_csv}")
+    print(f"\nREFROZE artefact (--freeze): {out_csv}")
+    print("  This file is tracked. Review the diff before committing: a numeric "
+          "change here is a change in the production/DEM result, not bookkeeping.")
     return EXIT_OK
+
+
+# Relative tolerance for the frozen-artefact regression check.  The quantities are
+# deterministic given the same DEM and executable, so this is tight on purpose; it
+# exists to absorb COP30 tile-server and float-formatting noise, not real drift.
+ISOLATION_CHECK_REL_TOL = 1e-3
+
+# Columns compared numerically by --check.  n_upslope_pixels is an integer pixel
+# count and is compared exactly: if the delineation moves, the test must say so
+# rather than average it away.
+ISOLATION_CHECK_COLS = ["P_lsdtt", "BEPROD", "pct_a", "P_lsdtt_x_BETOPO", "BETOTS",
+                        "pct_b", "lsdtt_mean_elev_m", "ELEV_AVE", "d_elev_m",
+                        "erate_pct"]
+ISOLATION_CHECK_EXACT_COLS = ["n_upslope_pixels"]
+
+
+def read_frozen_isolation(path: Path) -> dict:
+    """Read the tracked artefact, skipping its '#' comment header.  Keyed by basin."""
+    if not path.is_file():
+        return {}
+    with open(path, newline="") as f:
+        lines = [ln for ln in f if not ln.startswith("#")]
+    return {r["basin"]: r for r in csv.DictReader(lines) if r.get("basin")}
+
+
+def check_against_frozen_isolation(rows: list, out_csv: Path) -> int:
+    """Compare a fresh run against the tracked frozen artefact WITHOUT modifying it.
+
+    The artefact carries a '# Run: ... ; git <sha>' provenance line.  That line is
+    deliberately NOT compared and NOT rewritten here: it changes on every commit and
+    rewriting it dirtied a tracked file on every suite run, which is the defect this
+    mode fixes.  Only the numbers are regression-checked.
+    """
+    frozen = read_frozen_isolation(out_csv)
+    if not frozen:
+        print(f"CHECK: no frozen artefact at {out_csv}; run once with --freeze to "
+              "create a reference first.")
+        return EXIT_FAIL
+
+    ok = True
+    for r in rows:
+        name = r.get("basin")
+        ref = frozen.get(name)
+        if ref is None:
+            print(f"[CHECK][FAIL] {name}: not in the frozen artefact")
+            ok = False
+            continue
+        for col in ISOLATION_CHECK_COLS:
+            try:
+                new_v, ref_v = float(r.get(col)), float(ref.get(col))
+            except (TypeError, ValueError):
+                print(f"[CHECK][FAIL] {name}.{col}: non-numeric "
+                      f"(new={r.get(col)!r} frozen={ref.get(col)!r})")
+                ok = False
+                continue
+            denom = abs(ref_v)
+            rel = abs(new_v - ref_v) / denom if denom else abs(new_v - ref_v)
+            if rel > ISOLATION_CHECK_REL_TOL:
+                print(f"[CHECK][FAIL] {name}.{col}: new={new_v:.6g} "
+                      f"frozen={ref_v:.6g} rel={rel:.3g}")
+                ok = False
+        for col in ISOLATION_CHECK_EXACT_COLS:
+            if str(r.get(col)) != str(ref.get(col)):
+                print(f"[CHECK][FAIL] {name}.{col}: new={r.get(col)} "
+                      f"frozen={ref.get(col)} (must match exactly)")
+                ok = False
+
+    missing = set(frozen) - {r.get("basin") for r in rows}
+    if missing:
+        print(f"[CHECK][FAIL] frozen basins absent from this run: "
+              f"{', '.join(sorted(missing))}")
+        ok = False
+
+    print(f"CHECK: {'PASS' if ok else 'FAIL'} (rel tol {ISOLATION_CHECK_REL_TOL:g}, "
+          f"{len(rows)} basins, artefact NOT modified)")
+    if not ok:
+        print("  If the change is intended, re-run with --freeze and review the diff.")
+    return EXIT_OK if ok else EXIT_FAIL
 
 
 def main() -> int:
@@ -316,6 +417,11 @@ def main() -> int:
     ap.add_argument("--harvest-only", action="store_true",
                     help="only harvest the OCTOPUS fields, do not run the tool")
     ap.add_argument("--keep", action="store_true", help="keep the workdir")
+    ap.add_argument("--freeze", action="store_true",
+                    help="REGENERATE the tracked frozen artefact instead of "
+                         "checking against it. Deliberate, reviewed act: the "
+                         "artefact is tracked by git and a numeric change in it is "
+                         "a change in the result. Default is check-only.")
     args = ap.parse_args()
 
     if args.harvest_only:

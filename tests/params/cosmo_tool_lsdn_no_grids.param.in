@@ -1,0 +1,10 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: cosmo_lsdn_no_grids
+
+points_filename: cosmo_tiny_points.csv
+scaling_scheme: lsdn
+crn_nc_file: crn_parameters_pre_lsdn.nc
+threshold_contributing_pixels: 2
+snap_search_radius_pixels: 3

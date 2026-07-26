@@ -531,6 +531,21 @@ if(LSDTT_ENABLE_PERF_TESTS)
             PROPERTIES LABELS "performance;surface" SKIP_RETURN_CODE 77
                        TIMEOUT 3600)
     endif()
+    # Per-pixel LSDn production cost (LSDn plan Sec3.8). Four cases: Stone vs
+    # LSDn at age 0; LSDn age 0 vs 20 ka vs 1 Ma (1 Ma pulls in the long record);
+    # the time-averaged surface vs the direct per-pixel loop, both driven
+    # explicitly, with the measured crossover pixel count; and the PRE-Phase-8
+    # stone2000sp_paleomag baseline. Emits lsdn_performance.csv.
+    #
+    # REPORTED, NEVER ASSERTED -- it can only fail by not running. That the
+    # surface and the direct path AGREE is asserted in L10 (unit_cosmo_physics),
+    # which is where a correctness claim belongs.
+    add_test(NAME perf_cosmo_lsdn_production
+             COMMAND lsdtt-test-cosmo-physics
+                     ${CMAKE_CURRENT_BINARY_DIR}/perf_output --performance)
+    set_tests_properties(perf_cosmo_lsdn_production
+        PROPERTIES LABELS "performance;cosmo" TIMEOUT 1800)
+
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/perf_output)
 endif()
 
@@ -605,6 +620,60 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "DEM must be in a projected CRS"
 )
 set_tests_properties(failure_cosmo_tool_geographic_crs
+    PROPERTIES LABELS "failure;cli;cosmo")
+
+# --- LSDn scaling scheme through the CLI (LSDn plan L8) ----------------------
+#
+# tiny_dem.asc is a 5x5 tilted plane in EPSG:32630 (UTM 30N) with its origin at
+# easting/northing 0, which places it near the equator at about 7.489 deg W;
+# cosmo_tiny_points.csv holds one sample at the WGS84 position of the (4.5, 0.5)
+# cell centre, i.e. the low corner the plane drains to. threshold_contributing_
+# pixels is dropped to 2 so a 25-pixel DEM has a channel to snap to.
+#
+# The run must SUCCEED, write _PROD.tif with every pixel valid and positive, and
+# report the scheme in its run header. The header assertion is the point: a
+# silent fall back to Stone would otherwise pass every other check here.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_tool_lsdn
+    lsdtt-cosmo-tool
+    cosmo_tool_lsdn_smoke.param.in
+    cosmo_lsdn_PROD.tif
+    --expect cosmo_lsdn_CN_ERATE.csv
+    --expect-raster-min cosmo_lsdn_PROD.tif:0.0001
+    --stdout-contains "Scaling scheme: LSDn"
+    --stdout-contains "LSDn scaling (Be10)"
+)
+set_tests_properties(smoke_cosmo_tool_lsdn
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
+# An unknown scheme is FATAL, and the message names both allowed values.
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_tool_bad_scaling_scheme
+    lsdtt-cosmo-tool
+    cosmo_tool_bad_scaling_scheme.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "unknown scaling_scheme"
+    --stderr-contains "stone"
+    --stderr-contains "lsdn"
+)
+set_tests_properties(failure_cosmo_tool_bad_scaling_scheme
+    PROPERTIES LABELS "failure;cli;cosmo")
+
+# scaling_scheme: lsdn against an nc with NO LSDn grids must fail hard and name
+# the nc it searched -- never silently degrade to Stone. crn_parameters_pre_lsdn.nc
+# is the tracked pre-LSDn nc, which is exactly that situation. Library-level
+# counterpart: L5(e) in unit_cosmo_physics.
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_tool_lsdn_without_grids
+    lsdtt-cosmo-tool
+    cosmo_tool_lsdn_no_grids.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "requires the LSDn scaling grids"
+    --stderr-contains "crn_parameters_pre_lsdn.nc"
+)
+set_tests_properties(failure_cosmo_tool_lsdn_without_grids
     PROPERTIES LABELS "failure;cli;cosmo")
 
 # Help must render every parameter without a parameter file and without
@@ -697,6 +766,9 @@ set_tests_properties(cosmo_realworld_dibiase2010 PROPERTIES
 # and its basin-mean elevation to ELEV_AVE (harvested live from the OCTOPUS WFS).
 # NEEDS NETWORK; kept OUT of the default unit;cosmo suite (label cosmo_realworld,
 # `ctest -L cosmo_realworld`). Skips (exit 77) when the network is unavailable.
+# Runs in check-only mode: it compares against the tracked frozen artefact and must
+# NOT rewrite it. Re-freezing is a deliberate act -- run the script with --freeze by
+# hand and review the diff.
 add_test(NAME cosmo_realworld_production_isolation
          COMMAND ${Python3_EXECUTABLE}
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_production_isolation.py"

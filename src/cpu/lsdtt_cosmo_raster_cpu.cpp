@@ -221,7 +221,9 @@ static double erate_initial_guess(double measured_conc,
 lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               const CrnNcData&         nc,
                                               double                   age_yr,
-                                              AtmSource                atm)
+                                              AtmSource                atm,
+                                              ScalingScheme            scheme,
+                                              const std::string&       nuclide)
 {
     const auto& meta = dem.get_meta();
     const auto& data = dem.get_data_array();
@@ -284,12 +286,60 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
         default:                  atm_mode = nc.loaded ? 1 : 0; break;
     }
     const bool use_paleomag = nc.loaded && (age_yr > 0.0);
+    const bool use_lsdn     = (scheme == ScalingScheme::LSDn);
 
     lsdtt_crn_parameters ref_params;
 
+    // ---- LSDn set-up, ALL of it outside the parallel region -----------------
+    // Two things have to happen here rather than in the loop:
+    //   1. validity. LSDn with no grids, or with an unsupported nuclide, is a
+    //      hard failure - never a silent fall back to Stone. One probe call to
+    //      the reference path raises the library's own (test-pinned) message,
+    //      so the wording lives in exactly one place. An exception must not
+    //      escape an OpenMP region, so it is raised before we enter one.
+    //   2. the time-averaged surface. For age_yr > 0 the direct per-pixel loop
+    //      costs up to ~1800 grid evaluations per pixel; the surface collapses
+    //      that to one trilinear interpolation. It is built ONCE, here, and
+    //      thereafter read-only - safe to share by const& across the threads.
+    LsdnTimeAvgSurface lsdn_surface;
+    if (use_lsdn)
+    {
+        // Probe at the first valid pixel: throws if the grids are missing,
+        // incomplete, or have no entry for this nuclide.
+        (void)ref_params.lsdn_scaling(nuclide, ys[0], xs[0], 1013.25, age_yr, nc);
+
+        // Surface footprint: the raster's own WGS84 extent, padded by about one
+        // cell so every pixel is interior to the surface rather than clamped to
+        // its edge. The builder snaps the axes outward to multiples of the step.
+        double lat_lo = ys[0], lat_hi = ys[0], lon_lo = xs[0], lon_hi = xs[0];
+        for (int k = 1; k < n_valid; ++k)
+        {
+            lat_lo = std::min(lat_lo, ys[k]); lat_hi = std::max(lat_hi, ys[k]);
+            lon_lo = std::min(lon_lo, xs[k]); lon_hi = std::max(lon_hi, xs[k]);
+        }
+        const double pad_deg = meta.cell_size / 111320.0;   // ~1 cell, in degrees
+        lsdn_surface = lsdtt_crn_parameters::build_lsdn_time_avg_surface(
+            nc, nuclide, age_yr,
+            lat_lo - pad_deg, lat_hi + pad_deg,
+            lon_lo - pad_deg, lon_hi + pad_deg,
+            static_cast<std::size_t>(n_valid));
+
+        // Report the cost-model decision so it is visible in any run log.
+        std::cout << "  LSDn scaling (" << nuclide << ")";
+        if (lsdn_surface.valid)
+            std::cout << ": time-averaged surface built, "
+                      << lsdn_surface.n_nodes << " nodes, "
+                      << (lsdn_surface.n_bytes / 1024.0) << " kB, "
+                      << lsdn_surface.build_seconds << " s\n";
+        else
+            std::cout << ": direct per-pixel path (" << lsdn_surface.reason << ")\n";
+    }
+    const bool use_lsdn_surface = use_lsdn && lsdn_surface.valid;
+
 #pragma omp parallel for schedule(static) default(none) \
     shared(n_valid, valid_r, valid_c, xs, ys, data, prod_data, prod_mask, \
-           ref_params, meta, nc, age_yr, atm_mode, use_paleomag)
+           ref_params, meta, nc, age_yr, atm_mode, use_paleomag, \
+           use_lsdn, use_lsdn_surface, lsdn_surface, nuclide)
     for (int k = 0; k < n_valid; ++k)
     {
         int r = valid_r[k], c = valid_c[k];
@@ -304,9 +354,18 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                 ? lsdtt_crn_parameters::atmospheric_pressure_era40(lat, lon, elev, nc)
                 : lsdtt_crn_parameters::atmospheric_pressure_standard(elev);
 
-        double scaling = use_paleomag
-            ? ref_params.stone2000sp_paleomag(lat, pressure, 1.0, age_yr, nc)
-            : ref_params.stone2000sp(lat, pressure, 1.0);
+        // Scheme dispatch. The Stone branches are textually what they always
+        // were, so the default path is bit-identical to the pre-LSDn code.
+        double scaling;
+        if (use_lsdn)
+            scaling = use_lsdn_surface
+                ? lsdtt_crn_parameters::lsdn_scaling_from_surface(lsdn_surface,
+                                                                  lat, lon, pressure)
+                : ref_params.lsdn_scaling(nuclide, lat, lon, pressure, age_yr, nc);
+        else
+            scaling = use_paleomag
+                ? ref_params.stone2000sp_paleomag(lat, pressure, 1.0, age_yr, nc)
+                : ref_params.stone2000sp(lat, pressure, 1.0);
 
         prod_data(r, c) = static_cast<float>(scaling);
         prod_mask(r, c) = 1;

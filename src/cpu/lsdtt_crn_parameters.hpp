@@ -354,7 +354,13 @@ public:
     // worthwhile, with the decision recorded in .reason:
     //   - the loaded nc has no LSDn data;
     //   - age_yr <= 0                : the static path is already two lookups;
-    //   - n_h * n_p >= n_pixels      : the direct per-pixel loop is cheaper.
+    //   - n_pixels <= 16 * n_h       : the direct per-pixel loop is cheaper.
+    //                                  The 16 is FITTED to a measured crossover
+    //                                  of 190-522 pixels (2026-07-26), not
+    //                                  derived from operation counts - counting
+    //                                  operations gave n_h * n_p, which is
+    //                                  26-72x too conservative.  Re-measure if
+    //                                  h_step_deg or the pressure axis changes.
     // The caller then uses lsdn_scaling() per pixel.  Both paths compute the
     // same quantity (test L10), so the choice is purely one of cost.
     static LsdnTimeAvgSurface build_lsdn_time_avg_surface(

@@ -46,6 +46,7 @@
 // Prints one PASS/FAIL line per check and a final "RESULT: PASS|FAIL".
 // -----------------------------------------------------------------------------
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -61,6 +62,10 @@
 #include "lsdtt_crn_parameters.hpp"
 #include "lsdtt_cosmo_raster_cpu.hpp"
 #include "lsdtt_exe_path.hpp"
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace
 {
@@ -126,6 +131,13 @@ constexpr double lsdn_surface_pnode = 1e-13; // L10 off-node in pressure; worst 
 constexpr double lsdn_surface_h     = 5e-5;  // L10/L11 between nodes at h=0.1 deg; worst 6.88e-6
 constexpr double lsdn_sweep_rate    = 2.5;   // L11 error ratio per halving of h; worst 3.06
 constexpr double lsdn_node    = 1e-15;   // L4 grid-node round trip; worst 3.47e-16
+// Phase 4 dispatch (measured-then-frozen 2026-07-26).  A REGRESSION GUARD on
+// our own numbers, not a claim about either scheme: LSDn and Stone genuinely
+// differ, and how much is a result (plan Sec3.0.1), not an error.  Measured over
+// the 15-sample CRONUS fixture x {Be10, Al26, C14} x ages {0, 2e4}: min 0.83608,
+// max 1.14456; and per pixel on the 40x31 fixture, which is well inside that.
+constexpr double lsdn_stone_ratio_lo = 0.80;  // L7 LSDn/Stone band, low
+constexpr double lsdn_stone_ratio_hi = 1.18;  // L7 LSDn/Stone band, high
 }
 
 // =============================================================================
@@ -2815,13 +2827,64 @@ void phase7_L6_invariants(const lsdtt::CrnNcData& nc, const std::string& out_dir
     // (e) LSDn and Stone must stay within a sanity band of each other.  This is
     // NOT a physics claim - it is the guard that catches an axis transposition
     // or a units error, which would move the ratio by orders of magnitude.
-    // Emitted as lsdn_vs_stone.csv for inspection (plan L7's emitter).
+    // The CSV emitter and the TIGHT frozen band moved to L7 (Phase 4), which
+    // owns lsdn_vs_stone.csv; this loose guard stays here as the physics check.
+    {
+        const auto samples = make_cronus_fixture_samples();
+        double lo = 1e30, hi = -1e30;
+        for (const auto& s : samples)
+            for (double age : {0.0, 2.0e4})
+            {
+                const double st = cp.stone2000sp(s.lat, s.pressure_hPa, 1.0);
+                for (const char* nuc : {"Be10", "Al26", "C14"})
+                {
+                    const double r = cp.lsdn_scaling(nuc, s.lat, 0.0,
+                                                     s.pressure_hPa, age, nc) / st;
+                    lo = std::min(lo, r);
+                    hi = std::max(hi, r);
+                }
+            }
+        check("L6(e): LSDn/Stone stays inside the sanity band [0.5, 2]",
+              lo > 0.5 && hi < 2.0,
+              "min " + std::to_string(lo) + " max " + std::to_string(hi));
+        std::cout << "      L6(e) measured LSDn/Stone ratio range = " << lo
+                  << " .. " << hi << "\n";
+    }
+}
+
+// L7 - Stone vs LSDn, as a plottable CSV and a FROZEN band (Phase 4).
+//
+// Two halves, and they answer different questions:
+//   (a) POINT level: lsdn_scaling vs stone2000sp over the 15-sample CRONUS
+//       fixture x {Be10, Al26, C14} x ages {0, 2e4}, emitted as
+//       lsdn_vs_stone.csv and bounded by a band measured then frozen.  The band
+//       is a regression guard on OUR number, not a claim about either scheme.
+//   (b) RASTER level: the Phase 4 dispatch itself.  Nothing else in the suite
+//       runs calculate_production_raster under ScalingScheme::LSDn, so this is
+//       where "the CLI actually gets LSDn" is established:
+//         - passing ScalingScheme::Stone explicitly is BIT-IDENTICAL to the
+//           default call (the additive-change guarantee, per pixel);
+//         - the LSDn raster is finite, positive, and differs from the Stone one
+//           by a per-pixel ratio inside the same frozen band;
+//         - LSDn on an nc with no LSDn grids THROWS, and so does an unsupported
+//           nuclide - the fail-hard policy of L5(e) held at raster level, and
+//           thrown from OUTSIDE the OpenMP region.
+void phase7_L7_stone_vs_lsdn(const lsdtt::CrnNcData& nc,
+                             const single_basin_fixture& fx,
+                             const std::string& test_data_dir,
+                             const std::string& out_dir)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+    if (!nc.lsdn_loaded) return;
+
+    // ---- (a) point level ---------------------------------------------------
     {
         csv_writer csv(out_dir + "/lsdn_vs_stone.csv",
                        "nuclide,scheme,lat,lon,pressure_hPa,t_yr,scaling,"
                        "ratio_to_stone");
         const auto samples = make_cronus_fixture_samples();
-        double lo = 1e30, hi = -1e30;
+        double lo = 1e30, hi = -1e30, sum = 0.0;
+        int n = 0;
         for (const auto& s : samples)
             for (double age : {0.0, 2.0e4})
             {
@@ -2832,17 +2895,97 @@ void phase7_L6_invariants(const lsdtt::CrnNcData& nc, const std::string& out_dir
                     const double ls = cp.lsdn_scaling(nuc, s.lat, 0.0,
                                                       s.pressure_hPa, age, nc);
                     const double r = ls / st;
-                    lo = std::min(lo, r);
-                    hi = std::max(hi, r);
+                    lo = std::min(lo, r); hi = std::max(hi, r);
+                    sum += r; ++n;
                     csv.row(nuc, "LSDn", s.lat, 0.0, s.pressure_hPa, age, ls, r);
                 }
             }
-        check("L6(e): LSDn/Stone stays inside the sanity band [0.5, 2]",
-              lo > 0.5 && hi < 2.0,
+        check("L7(a): LSDn/Stone inside the frozen band "
+              "[tol::lsdn_stone_ratio_lo, hi]",
+              lo >= tol::lsdn_stone_ratio_lo && hi <= tol::lsdn_stone_ratio_hi,
               "min " + std::to_string(lo) + " max " + std::to_string(hi));
         check("csv: lsdn_vs_stone.csv written", csv.good());
-        std::cout << "      L6(e) measured LSDn/Stone ratio range = " << lo
-                  << " .. " << hi << "\n";
+        std::cout << "      L7(a) measured LSDn/Stone ratio: min " << lo
+                  << " max " << hi << " mean " << (n ? sum / n : 0.0)
+                  << " over " << n << " cases\n";
+    }
+
+    // ---- (b) raster level: the Phase 4 dispatch ----------------------------
+    {
+        // Stone stays Stone.  Same call, once through the historical default and
+        // once naming the scheme: the two rasters must agree bit for bit.
+        const lsdtt::lsdtt_raster_cpu prod_default =
+            lsdtt::calculate_production_raster(fx.dem, nc, 0.0, lsdtt::AtmSource::Auto);
+        const lsdtt::lsdtt_raster_cpu prod_stone =
+            lsdtt::calculate_production_raster(fx.dem, nc, 0.0, lsdtt::AtmSource::Auto,
+                                               lsdtt::ScalingScheme::Stone, "Be10");
+        const lsdtt::lsdtt_raster_cpu prod_lsdn =
+            lsdtt::calculate_production_raster(fx.dem, nc, 0.0, lsdtt::AtmSource::Auto,
+                                               lsdtt::ScalingScheme::LSDn, "Be10");
+
+        const auto& d_def   = prod_default.get_data_array();
+        const auto& d_stone = prod_stone.get_data_array();
+        const auto& d_lsdn  = prod_lsdn.get_data_array();
+        const auto& m       = prod_default.get_mask_array();
+
+        bool identical = true, finite_pos = true, in_band = true, differs = false;
+        double lo = 1e30, hi = -1e30;
+        for (int r = 0; r < fx.meta.n_rows; ++r)
+            for (int c = 0; c < fx.meta.n_cols; ++c)
+            {
+                if (!m(r, c)) continue;
+                if (d_def(r, c) != d_stone(r, c)) identical = false;
+                const double ls = static_cast<double>(d_lsdn(r, c));
+                const double st = static_cast<double>(d_stone(r, c));
+                if (!std::isfinite(ls) || !(ls > 0.0)) finite_pos = false;
+                if (ls != st) differs = true;
+                const double ratio = ls / st;
+                lo = std::min(lo, ratio); hi = std::max(hi, ratio);
+                if (ratio < tol::lsdn_stone_ratio_lo || ratio > tol::lsdn_stone_ratio_hi)
+                    in_band = false;
+            }
+        check("L7(b): explicit ScalingScheme::Stone is BIT-IDENTICAL to the "
+              "default production raster", identical);
+        check("L7(b): the LSDn production raster is finite and positive at every "
+              "valid pixel", finite_pos);
+        check("L7(b): the LSDn raster actually differs from the Stone raster "
+              "(the dispatch is reached, not silently ignored)", differs);
+        check("L7(b): per-pixel LSDn/Stone inside the frozen band", in_band,
+              "min " + std::to_string(lo) + " max " + std::to_string(hi));
+        std::cout << "      L7(b) per-pixel LSDn/Stone on the 40x31 fixture: "
+                  << lo << " .. " << hi << "\n";
+
+        // Fail-hard at raster level.  Both throws happen before the parallel
+        // region; an exception escaping an OpenMP loop is undefined behaviour,
+        // so "it threw at all" is itself part of the check.
+        bool threw_nuclide = false;
+        try
+        {
+            (void)lsdtt::calculate_production_raster(
+                fx.dem, nc, 0.0, lsdtt::AtmSource::Auto,
+                lsdtt::ScalingScheme::LSDn, "Cl36");
+        }
+        catch (const std::runtime_error&) { threw_nuclide = true; }
+        check("L7(b): LSDn production raster with an unsupported nuclide THROWS",
+              threw_nuclide);
+
+        const std::string pre_path = test_data_dir + "/crn_parameters_pre_lsdn.nc";
+        std::ifstream probe(pre_path);
+        if (probe.good())
+        {
+            const lsdtt::CrnNcData old_nc =
+                lsdtt::lsdtt_crn_parameters::load_nc_data(pre_path);
+            bool threw_grids = false;
+            try
+            {
+                (void)lsdtt::calculate_production_raster(
+                    fx.dem, old_nc, 0.0, lsdtt::AtmSource::Auto,
+                    lsdtt::ScalingScheme::LSDn, "Be10");
+            }
+            catch (const std::runtime_error&) { threw_grids = true; }
+            check("L7(b): LSDn production raster on an nc with NO LSDn grids "
+                  "THROWS (never a silent Stone fallback)", threw_grids);
+        }
     }
 }
 
@@ -2856,19 +2999,31 @@ void phase7_L10_surface_equivalence(const lsdtt::CrnNcData& nc,
     lsdtt::lsdtt_crn_parameters cp;
     if (!nc.lsdn_loaded) return;
 
-    // A basin-sized footprint, i.e. the case where the cost model correctly
-    // declines.  Asserting BOTH outcomes is what proves the two paths are
-    // separately reachable.
+    // The cost model was RECALIBRATED 2026-07-26: the old n_h*n_p >= n_pixels
+    // rule was 26-72x too conservative against a measured crossover of 190-522
+    // pixels, and declined the surface on every validation basin.  The rule is
+    // now n_pixels <= 16 * n_h.  This footprint spans 6 lat x 5 lon = 30 nodes
+    // at h = 0.1 deg, so the threshold sits at 480 pixels; we pin BOTH sides of
+    // it, which is also what proves the two paths are separately reachable.
     const double lat_lo = 44.9, lat_hi = 45.3;
     const double lon_lo = -110.3, lon_hi = -109.9;
     {
+        // Below the threshold: 200 px <= 480, so the direct loop is cheaper.
         const lsdtt::LsdnTimeAvgSurface declined =
             CP::build_lsdn_time_avg_surface(nc, "Be10", 2.0e4, lat_lo, lat_hi,
-                                            lon_lo, lon_hi, 40u * 31u, 0.1, false);
-        check("L10: the cost model declines a surface on a basin-sized raster",
+                                            lon_lo, lon_hi, 200u, 0.1, false);
+        check("L10: the cost model declines a surface below the 16*n_h threshold",
               !declined.valid
                   && declined.reason.find("cost model") != std::string::npos,
               declined.reason);
+        // Above it: a basin-sized raster (40x31 = 1240 px > 480) must now BUILD.
+        // Under the pre-2026-07-26 model this was declined; that was the defect.
+        const lsdtt::LsdnTimeAvgSurface accepted =
+            CP::build_lsdn_time_avg_surface(nc, "Be10", 2.0e4, lat_lo, lat_hi,
+                                            lon_lo, lon_hi, 40u * 31u, 0.1, false);
+        check("L10: the cost model ACCEPTS a surface on a basin-sized raster "
+              "(recalibrated model; the old n_h*n_p rule declined this)",
+              accepted.valid, accepted.reason);
         const lsdtt::LsdnTimeAvgSurface forced =
             CP::build_lsdn_time_avg_surface(nc, "Be10", 2.0e4, lat_lo, lat_hi,
                                             lon_lo, lon_hi, 40u * 31u, 0.1, true);
@@ -3271,6 +3426,166 @@ void phase7_L1_sentinel(const lsdtt::CrnNcData& nc,
               << " relative\n";
 }
 
+// =============================================================================
+// Performance tier (plan Sec3.8; label "performance", OUT of the default suite)
+// =============================================================================
+//
+// TIMINGS ARE REPORTED, NEVER ASSERTED.  Machine-dependent numbers must not
+// gate CI, so the only thing this can fail on is not running to completion (the
+// surface/direct AGREEMENT is asserted in L10, which is where it belongs).
+// Emits lsdn_performance.csv for lsdviztools3:
+//   case, n_pixels, threads, scheme, age_yr, path, seconds, surface_nodes,
+//   surface_bytes
+//
+// The four cases of Sec3.8:
+//   1 calculate_production_raster, Stone vs LSDn at age 0 - the honest baseline
+//     (both are ~two table lookups per pixel).
+//   2 LSDn at age 0 vs 2e4 vs 1e6 - 1 Ma pulls in the long record (~1800 steps).
+//   3 surface vs direct for time-varying LSDn, at LIBRARY level so both paths
+//     are driven explicitly rather than through the cost model, plus the
+//     measured crossover pixel count implied by the timings.
+//   4 Stone time-varying (stone2000sp_paleomag) - the PRE-Phase-8 baseline,
+//     recorded now so the Phase 8 speed-up is weighed against a number rather
+//     than a memory.
+double seconds_since(const std::chrono::steady_clock::time_point& t0)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+}
+
+void perf_lsdn_production(const lsdtt::CrnNcData& nc, const std::string& out_dir)
+{
+    using CP = lsdtt::lsdtt_crn_parameters;
+    lsdtt::lsdtt_crn_parameters cp;
+    if (!nc.lsdn_loaded)
+    {
+        check("perf: crn_parameters.nc carries the LSDn grids", false,
+              "no LSDn data - nothing to measure");
+        return;
+    }
+
+    int max_threads = 1;
+#ifdef _OPENMP
+    max_threads = omp_get_max_threads();
+#endif
+
+    csv_writer csv(out_dir + "/lsdn_performance.csv",
+                   "case,n_pixels,threads,scheme,age_yr,path,seconds,"
+                   "surface_nodes,surface_bytes");
+    std::cout << "  lsdn_performance: max threads = " << max_threads << "\n";
+
+    // ---- cases 1 and 2: through calculate_production_raster ----------------
+    // Two sizes: the 40x31 fixture and a generated ~1000x1000 raster.
+    const int sizes[][2] = {{40, 31}, {1000, 1000}};
+    for (const auto& sz : sizes)
+    {
+        const single_basin_fixture big = make_single_basin(sz[0], sz[1]);
+        const std::size_t n_px = static_cast<std::size_t>(sz[0]) * sz[1];
+        for (int threads : {1, max_threads})
+        {
+#ifdef _OPENMP
+            omp_set_num_threads(threads);
+#endif
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                (void)lsdtt::calculate_production_raster(big.dem, nc, 0.0,
+                                                         lsdtt::AtmSource::Auto);
+                csv.row("1_scheme", n_px, threads, "Stone", 0.0, "direct",
+                        seconds_since(t0), 0, 0);
+            }
+            for (double age : {0.0, 2.0e4, 1.0e6})
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                (void)lsdtt::calculate_production_raster(
+                    big.dem, nc, age, lsdtt::AtmSource::Auto,
+                    lsdtt::ScalingScheme::LSDn, "Be10");
+                csv.row(age == 0.0 ? "1_scheme" : "2_age", n_px, threads, "LSDn",
+                        age, "cost_model", seconds_since(t0), 0, 0);
+            }
+            // Case 4 baseline: Stone time-varying, the path Phase 8 will change.
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                (void)lsdtt::calculate_production_raster(big.dem, nc, 2.0e4,
+                                                         lsdtt::AtmSource::Auto);
+                csv.row("4_stone_paleomag_before", n_px, threads, "Stone", 2.0e4,
+                        "direct", seconds_since(t0), 0, 0);
+            }
+        }
+    }
+#ifdef _OPENMP
+    omp_set_num_threads(max_threads);
+#endif
+
+    // ---- case 3: surface vs direct, both driven explicitly -----------------
+    // Single-threaded and at library level: the cost model is what we are
+    // measuring, so it must not be the thing choosing the path.  The site set
+    // is a regular sweep over a basin-sized footprint.
+    const double lat_lo = 44.9, lat_hi = 45.3, lon_lo = -110.3, lon_hi = -109.9;
+    const std::size_t n_sites = 4000;
+    std::vector<double> site_lat(n_sites), site_lon(n_sites), site_p(n_sites);
+    for (std::size_t i = 0; i < n_sites; ++i)
+    {
+        const double f = static_cast<double>(i) / static_cast<double>(n_sites - 1);
+        site_lat[i] = lat_lo + f * (lat_hi - lat_lo);
+        site_lon[i] = lon_lo + f * (lon_hi - lon_lo);
+        site_p[i]   = 700.0 + 300.0 * f;
+    }
+
+    for (double age : {2.0e4, 1.0e6})
+    {
+        double acc = 0.0;
+        const auto t_direct0 = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < n_sites; ++i)
+            acc += cp.lsdn_scaling("Be10", site_lat[i], site_lon[i], site_p[i],
+                                   age, nc);
+        const double t_direct = seconds_since(t_direct0);
+        csv.row("3_surface_vs_direct", n_sites, 1, "LSDn", age, "direct",
+                t_direct, 0, 0);
+
+        const auto t_build0 = std::chrono::steady_clock::now();
+        const lsdtt::LsdnTimeAvgSurface s = CP::build_lsdn_time_avg_surface(
+            nc, "Be10", age, lat_lo, lat_hi, lon_lo, lon_hi, n_sites, 0.1, true);
+        const double t_build = seconds_since(t_build0);
+        csv.row("3_surface_vs_direct", n_sites, 1, "LSDn", age, "surface_build",
+                t_build, s.n_nodes, s.n_bytes);
+
+        double acc2 = 0.0;
+        const auto t_eval0 = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < n_sites; ++i)
+            acc2 += CP::lsdn_scaling_from_surface(s, site_lat[i], site_lon[i],
+                                                  site_p[i]);
+        const double t_eval = seconds_since(t_eval0);
+        csv.row("3_surface_vs_direct", n_sites, 1, "LSDn", age, "surface_eval",
+                t_eval, s.n_nodes, s.n_bytes);
+
+        // Crossover: the pixel count at which build + eval overtakes direct.
+        const double per_direct = t_direct / static_cast<double>(n_sites);
+        const double per_eval   = t_eval   / static_cast<double>(n_sites);
+        const double crossover  = (per_direct > per_eval)
+            ? t_build / (per_direct - per_eval) : -1.0;
+        csv.row("3_crossover", n_sites, 1, "LSDn", age, "measured_crossover_px",
+                crossover, s.n_nodes, s.n_bytes);
+        std::cout << "  age " << age << " yr: direct " << t_direct << " s, build "
+                  << t_build << " s (" << s.n_nodes << " nodes, " << s.n_bytes
+                  << " B), eval " << t_eval << " s, crossover ~"
+                  << crossover << " px  [sums " << acc << " / " << acc2 << "]\n";
+    }
+
+    // Case 4 at point level too, so the Phase 8 comparison has an isolated
+    // number free of the raster machinery.
+    {
+        double acc = 0.0;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < n_sites; ++i)
+            acc += cp.stone2000sp_paleomag(site_lat[i], site_p[i], 1.0, 2.0e4, nc);
+        csv.row("4_stone_paleomag_before", n_sites, 1, "Stone", 2.0e4, "direct",
+                seconds_since(t0), 0, 0);
+        std::cout << "  stone2000sp_paleomag baseline sum = " << acc << "\n";
+    }
+
+    check("perf: lsdn_performance.csv written (timings reported, never asserted)",
+          csv.good());
+}
+
 } // namespace
 
 // =============================================================================
@@ -3282,6 +3597,10 @@ int main(int argc, char** argv)
     std::string test_data_dir = ".";
     bool regenerate_sentinel = false;
     bool regenerate_lsdn_sentinel = false;
+    // --performance runs ONLY the Sec3.8 timing sweep and emits
+    // lsdn_performance.csv; it is a separate CTest entry with the "performance"
+    // label, kept out of the default suite because it takes minutes.
+    bool performance_only = false;
     int positional = 0;
     for (int i = 1; i < argc; ++i)
     {
@@ -3290,6 +3609,8 @@ int main(int argc, char** argv)
             regenerate_sentinel = true;
         else if (arg == "--regenerate-lsdn-sentinel-i-have-simons-approval")
             regenerate_lsdn_sentinel = true;
+        else if (arg == "--performance")
+            performance_only = true;
         else if (positional == 0) { out_dir = arg; ++positional; }
         else if (positional == 1) { sentinel_path = arg; ++positional; }
         else if (positional == 2) { lsdn_sentinel_path = arg; ++positional; }
@@ -3305,6 +3626,16 @@ int main(int argc, char** argv)
 
     try
     {
+        if (performance_only)
+        {
+            std::cout << "Sec3.8 LSDn performance sweep (reported, not asserted)\n";
+            perf_lsdn_production(phase4_auto_discovery(), out_dir);
+            std::cout << "\n" << (g_n_checks - g_n_failed) << "/" << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
         smoke_reference_identities();
 
         single_basin_fixture fx = make_single_basin(40, 31);
@@ -3354,6 +3685,7 @@ int main(int argc, char** argv)
         phase7_L4_clamps_and_nodes(crn_nc);
         phase7_L5_degenerate(crn_nc, test_data_dir);
         phase7_L6_invariants(crn_nc, out_dir);
+        phase7_L7_stone_vs_lsdn(crn_nc, fx, test_data_dir, out_dir);
         phase7_L10_surface_equivalence(crn_nc, out_dir);
         phase7_L11_resolution_sweep(crn_nc, out_dir);
         phase7_L1_sentinel(crn_nc, lsdn_sentinel_path, regenerate_lsdn_sentinel);

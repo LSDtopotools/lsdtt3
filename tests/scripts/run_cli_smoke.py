@@ -29,6 +29,22 @@ def parse_args() -> argparse.Namespace:
         help="Required substring in stderr.log",
     )
     parser.add_argument(
+        "--stdout-contains",
+        action="append",
+        default=[],
+        help="Required substring in stdout.log (used to pin run-header reporting)",
+    )
+    parser.add_argument(
+        "--expect-raster-min",
+        action="append",
+        default=[],
+        help=(
+            "Expected minimum band-1 value as rel_path:MIN; the raster must also "
+            "be 100%% valid, so a NaN or nodata pixel fails. "
+            "For example out_PROD.tif:0.0"
+        ),
+    )
+    parser.add_argument(
         "--expect-valid-percent-100",
         action="append",
         default=[],
@@ -103,6 +119,35 @@ def assert_valid_percent_100(raster_path: pathlib.Path) -> None:
         raise AssertionError(
             f"Expected STATISTICS_VALID_PERCENT=100 in {raster_path}, "
             "but it was not found in gdalinfo output."
+        )
+
+
+def assert_raster_min(raster_path: pathlib.Path, minimum: float) -> None:
+    """Band-1 minimum must be >= minimum, and every pixel must be valid.
+
+    gdalinfo -stats computes its statistics over valid pixels only, so the
+    valid-percent check is what makes a NaN or nodata pixel fail rather than
+    quietly drop out of the minimum.
+    """
+    cmd = ["gdalinfo", "-stats", str(raster_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"gdalinfo -stats failed for {raster_path} (exit {result.returncode})."
+        )
+
+    match = re.search(r"STATISTICS_MINIMUM=([-0-9.eE+]+)", result.stdout)
+    if not match:
+        raise AssertionError(f"Could not parse STATISTICS_MINIMUM for {raster_path}.")
+    got = float(match.group(1))
+    if not got >= minimum:
+        raise AssertionError(
+            f"Minimum too low for {raster_path}: expected >= {minimum}, got {got}."
+        )
+    if "STATISTICS_VALID_PERCENT=100" not in result.stdout:
+        raise AssertionError(
+            f"Expected every pixel of {raster_path} to be valid and finite "
+            "(STATISTICS_VALID_PERCENT=100)."
         )
 
 
@@ -273,6 +318,16 @@ def main() -> int:
             print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
             return result.returncode
 
+    for needle in args.stdout_contains:
+        if needle not in result.stdout:
+            print(
+                f"Validation failed: stdout does not contain required text: {needle}",
+                file=sys.stderr,
+            )
+            print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)
+            print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
+            return 5
+
     stderr_text = result.stderr
     for needle in args.stderr_contains:
         if needle not in stderr_text:
@@ -322,6 +377,10 @@ def main() -> int:
                 raise AssertionError(
                     f"Valid percent mismatch for {rel_path}: expected {pct}, got {got}."
                 )
+
+        for spec in args.expect_raster_min:
+            rel_path, min_spec = spec.rsplit(":", 1)
+            assert_raster_min(out_dir / rel_path, float(min_spec))
 
         for spec in args.expect_raster_size:
             rel_path, size_spec = spec.rsplit(":", 1)
