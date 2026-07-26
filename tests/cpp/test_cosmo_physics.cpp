@@ -1786,7 +1786,14 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
         }
         double mean() const { return n ? sum / n : 0.0; }
     };
-    // [0] = EBEL (snow-shielded), [1] = EBELNS (no snow shielding).
+    // [0] = EBEL (topographically shielded), [1] = EBELNS (no topographic
+    // shielding).  CORRECTED 2026-07-26: these were labelled snow/no-snow.  That
+    // was wrong - BESNOW is identically 1.0000 on all 50 basins in the frozen
+    // reference, so it cannot explain the EBEL/EBELNS difference, while
+    // EBELNS/EBEL tracks 1/BETOPO to mean 4e-4 (max 4.5e-3, consistent with EBEL
+    // being published to 3 significant figures).  Matches Codilean & Munack
+    // (2025, GChron 7:113), which describes the pair as with and without
+    // TOPOGRAPHIC shielding.
     band_stats st[2], st_balco[2], st_unshielded[2];
     bool inverted_ok = true, pressure_in_grid = true, density_ok = true;
 
@@ -1811,11 +1818,20 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
             const double e_octopus = e_mmkyr * 1.0e-4 * rho_g_cm3;
 
             // Shielding, matched to what the OCTOPUS field means.  EBELNS is the
-            // no-snow-shielding control and EBEL == EBELNS exactly where no snow
-            // shielding applies, so snow shielding is the only difference between
-            // them; topographic and self shielding apply to both.
-            const double shield = r.betopo * r.beself
-                                  * ((variant == 0) ? r.besnow : 1.0);
+            // no-TOPOGRAPHIC-shielding control, so BETOPO is the only difference
+            // between the two fields; self and snow shielding apply to both.
+            //
+            // FIXED 2026-07-26.  This previously dropped BESNOW for variant 1, on
+            // the belief that NS meant "no snow shielding".  That was wrong twice
+            // over: BESNOW is identically 1.0000 on all 50 basins in the frozen
+            // reference, so dropping it changed nothing at all and the "unshielded"
+            // control silently measured the shielded case.  EBELNS/EBEL tracks
+            // 1/BETOPO to mean 4e-4 (max 4.5e-3, consistent with EBEL being
+            // published to 3 significant figures), and Codilean & Munack (2025,
+            // GChron 7:113) describe the pair as with and without TOPOGRAPHIC
+            // shielding.
+            const double shield = r.beself * r.besnow
+                                  * ((variant == 0) ? r.betopo : 1.0);
 
             // Pass 0 gets a first erosion rate from the modern field; pass 1
             // re-evaluates at t = Gamma_sp / eps, the erosional integration
@@ -1893,19 +1909,19 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
                  "      not the product).  pct diff = 100*(OCTOPUS - lsdtt)/lsdtt, "
                  "sample age = Gamma/eps:\n"
               << std::setprecision(4)
-              << "        EBEL   (snow-shielded)   : min " << st[0].lo << " max "
+              << "        EBEL   (topo-shielded)   : min " << st[0].lo << " max "
               << st[0].hi << " mean " << st[0].mean() << " over " << st[0].n
               << " basins\n"
-              << "        EBELNS (no snow shield)  : min " << st[1].lo << " max "
+              << "        EBELNS (no topo shield)  : min " << st[1].lo << " max "
               << st[1].hi << " mean " << st[1].mean() << " over " << st[1].n
               << " basins\n"
               << "        Balco P0 removed (KERNEL ALONE), directly comparable with "
                  "the Phase 5\n        CRONUS v3 cross-check (+4.13 % mean, Be-10 at "
                  "t = Gamma/eps):\n"
-              << "        EBEL   (snow-shielded)   : min " << st_balco[0].lo
+              << "        EBEL   (topo-shielded)   : min " << st_balco[0].lo
               << " max " << st_balco[0].hi << " mean " << st_balco[0].mean()
               << " over " << st_balco[0].n << " basins\n"
-              << "        EBELNS (no snow shield)  : min " << st_balco[1].lo
+              << "        EBELNS (no topo shield)  : min " << st_balco[1].lo
               << " max " << st_balco[1].hi << " mean " << st_balco[1].mean()
               << " over " << st_balco[1].n << " basins\n"
               << "        sensitivity (lsdtt3 P0, EBEL) with NO shielding applied "
