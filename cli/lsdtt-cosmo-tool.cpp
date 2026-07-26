@@ -66,7 +66,7 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
-static const std::string k_version  = "0.1.0";
+static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-cosmo-tool";
 

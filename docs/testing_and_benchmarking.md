@@ -60,6 +60,7 @@ fixtures.
 | `unit` | — | C++ unit tests |
 | `cosmo` | — | cosmogenic physics vs frozen CRONUS + numerics sentinel |
 | `cosmo_realworld` | network | published-basin runs against frozen summaries |
+| `surface_metrics` | — | surface-metrics validation (slope, curvature, SMAP, MADk2) |
 | `flow` | — | flow routing and depression-handling properties |
 | `fetch` | — | native DEM fetching; offline logic by default |
 | `network` | network | tests that actually download |
@@ -1571,7 +1572,7 @@ while doing less than you asked", which is the failure mode tests exist for.
 ### Running it
 
 ```bash
-ctest -L surface                       # unit tests, ~1 s, no network
+ctest -L surface_metrics               # unit tests, ~1 s, no network
 ctest -R benchmark_surface             # vs TopoToolbox, needs pixi + network
 ctest -R performance_surface_metrics   # full sweep, ~4 min
 ```

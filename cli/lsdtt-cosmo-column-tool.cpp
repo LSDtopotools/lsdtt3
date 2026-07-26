@@ -54,7 +54,7 @@
 #include "../src/cpu/lsdtt_crn_column.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 
-static const std::string k_version  = "0.1.0";
+static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-cosmo-column-tool";
 

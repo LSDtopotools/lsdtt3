@@ -191,6 +191,57 @@ constexpr double tc2_cronus_lsdn_modern = 55.0;
 // the residual is attributed to - not a defect on either side.
 constexpr double lsdn_octopus_point = 20.0;
 constexpr double lsdn_octopus_point_lsdttP0 = 23.0;
+// L13 - PER-PIXEL LSDn vs LUMPED LSDn (lsdn plan Phase 6(ii)), measured-then-
+// frozen 2026-07-26 over the 47 delineation-reliable basins of the three tracked
+// datasets, at the headline sample age t = 5000 yr.  Percent,
+// 100*(per-pixel - lumped)/lumped, on the production SCALING.
+//
+// THESE ARE THE RESULT, NOT AN ERROR TERM.  Per-pixel LSDn is lsdtt3's product;
+// the lumped value is what OCTOPUS/RIVERSAND uses.  The per-pixel number must
+// never be tuned toward the lumped one, toward EBEL, or toward the published
+// bound below, and these bands must never be widened to absorb a surprise: a
+// move here is a move in lsdtt3's product.
+//
+// MEASURED (production scaling, t = 5000 yr, 47 reliable basins):
+//     min -9.2112, max +6.7347, mean -0.8272, MEDIAN -0.5249,
+//     IQR [-1.5897, +0.1405].
+//   inverted to erosion rate through the same machinery: min -8.3439,
+//     max +6.1491, mean -0.7920, median -0.4397, IQR [-1.5737, +0.1237].
+//   age sensitivity is negligible - the median moves -0.5396 (t=0) ->
+//     -0.5249 (5 kyr) -> -0.5315 (20 kyr), i.e. ~0.015 percentage points, which
+//     is the point of matching t on both sides: what is left is the SPATIAL term.
+//
+// JUDGED AGAINST the published bound, Codilean & Munack (2025, GChron 7:113,
+// p. 117): LSDn median -1.0 %, IQR -1.8 to -0.1 % over 290 points.  Ours is
+// median -0.52 %, IQR [-1.59, +0.14] - same sign, same order, and the IQR
+// overlaps theirs almost completely.  So this result does NOT put our kernel
+// under suspicion; it corroborates it independently of L12.
+//
+// BAND RULE, stated once so no bound here is a number picked out of the air:
+// given the FROZEN per-pixel artefact this whole computation is deterministic
+// double arithmetic, so the guards are the measured values with a fixed, stated
+// margin - x1.25 on a one-sided worst-case bound, and x[2, 0.5] on the two-sided
+// median band.  No bound is rounded and none was chosen after seeing a failure.
+constexpr double l13_pixel_vs_lumped_med_lo = -1.049780;   // 2.0 x measured -0.524890
+constexpr double l13_pixel_vs_lumped_med_hi = -0.262445;   // 0.5 x measured -0.524890
+constexpr double l13_pixel_vs_lumped_worst  = 11.513981;   // 1.25 x measured 9.211185
+// ATM_PRESS RECOVERY (the second half of L13): invert our per-pixel STONE basin
+// mean for the pressure that reproduces it at CENTR_LAT, i.e. reproduce CAIRN's
+// own reduction, and compare with OCTOPUS's published ATM_PRESS.  MEASURED over
+// the same 47 reliable basins: min -8.8312, max +13.1465, mean +1.1807, median
+// +0.7343, IQR [-0.1823, +2.1872] hPa - i.e. we recover their scalar to ~0.1 %
+// of a ~900 hPa pressure.  That both validates our reading of their method and
+// bounds the St-calibration caveat: ATM_PRESS is fitted against Stone-Lal yet
+// used inside an LSDn kernel, and a ~1 hPa mis-set pressure is a ~0.1 % scaling
+// effect, far below the spatial term measured above.
+constexpr double l13_atm_press_recovery_hPa = 16.433130;   // 1.25 x measured 13.146504
+// The worst-case bound above is the WEAKEST of the L13 guards: one basin already
+// measures +13.1 hPa, so a uniform ~3 % drift in our basin-mean Stone production
+// only just trips it (verified: -3 % fails at 17.55 hPa, +3 % passes).  The
+// MEDIAN of the recovery residual is far more stable and is therefore guarded
+// too, on the same x[2, 0.5] rule as the pct median.  MEASURED +0.734254 hPa.
+constexpr double l13_atm_press_med_lo = 0.367127;   // 0.5 x measured +0.734254
+constexpr double l13_atm_press_med_hi = 1.468508;   // 2.0 x measured +0.734254
 }
 
 // =============================================================================
@@ -1724,24 +1775,23 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
                                             const std::string& expected_dir,
                                             const std::string& out_dir)
 {
-    if (!nc.lsdn_loaded)
-    {
-        std::cout << "NOTE  L12 skipped: no LSDn grids in the bundled nc\n";
-        check("L12: OCTOPUS point kernel oracle (SKIPPED - LSDn grids not bundled)",
-              true);
-        return;
-    }
+    // L0 already records a hard FAIL when the nc carries no LSDn grids ("every
+    // LSDn test below is meaningless"), so stand down rather than recording a
+    // second verdict on the same fact.
+    if (!nc.lsdn_loaded) return;
 
+    // The frozen reference is a TRACKED file.  A missing or unreadable one is a
+    // broken checkout, not an optional step, so it FAILS -- it must never report
+    // PASS.  This used to be a skip-that-passes, which meant a path change or a
+    // lost artefact turned the whole oracle green while testing nothing.
     const std::string ref_path = expected_dir + "/octopus_lsdn_point_reference.csv";
     std::vector<octopus_point_row> ref;
     if (!load_octopus_point_reference(ref_path, ref))
     {
-        std::cout << "NOTE  L12 skipped: no frozen OCTOPUS point reference at "
-                  << ref_path << "\n"
-                  << "      (harvest once with tests/scripts/harvest_octopus.py "
-                     "--point-reference --freeze)\n";
-        check("L12: OCTOPUS point kernel oracle (SKIPPED - reference not harvested)",
-              true);
+        check("L12: frozen OCTOPUS point reference present and readable", false,
+              "cannot read " + ref_path + " - this file is tracked; regenerate "
+              "deliberately with tests/scripts/harvest_octopus.py "
+              "--point-reference --freeze");
         return;
     }
 
@@ -1956,6 +2006,396 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
           "worst = " + std::to_string(st[0].worst) + " % (n=" +
               std::to_string(st[0].n) + ")");
     check("csv: cosmo_lsdn_point_kernel_oracle.csv written", csv.good());
+}
+
+// =============================================================================
+// L13 - PER-PIXEL LSDn vs LUMPED LSDn (lsdn plan Phase 6 deliverable (ii))
+// =============================================================================
+
+// One row of tests/expected/cosmo/lsdn_pixel_vs_lumped_perpixel.csv, the frozen
+// PER-PIXEL side produced under the networked cosmo_realworld tier by
+// tests/scripts/run_cosmo_lsdn_pixel_vs_lumped.py --freeze.
+struct l13_pixel_row
+{
+    std::string dataset, basin, reliable;
+    long long   n_upslope = 0;
+    double snapped_lat = 0.0, snapped_lon = 0.0, mean_elev_m = 0.0;
+    double s_stone = 0.0;
+    // Per-pixel LSDn basin means at the three recorded sample ages.  Index order
+    // matches k_l13_ages below.
+    double s_lsdn[3] = {0.0, 0.0, 0.0};
+};
+
+// Sample ages at which the per-pixel side was recorded.  MUST match
+// SAMPLE_AGES_YR in run_cosmo_lsdn_pixel_vs_lumped.py: the lumped side is
+// evaluated at exactly these ages so the ratio is always taken with t matched
+// on both sides, and the column names are derived from them.
+constexpr double k_l13_ages[3]     = {0.0, 5000.0, 20000.0};
+constexpr int    k_l13_headline_age = 1;   // 5000 yr - see the header comment
+
+bool load_l13_pixel_reference(const std::string& ref_path,
+                              std::vector<l13_pixel_row>& rows)
+{
+    std::ifstream in(ref_path);
+    if (!in.good()) return false;
+
+    const auto split = [](const std::string& s)
+    {
+        std::vector<std::string> out;
+        std::string field;
+        std::istringstream ls(s);
+        while (std::getline(ls, field, ','))
+        {
+            while (!field.empty() && (field.back() == '\r' || field.back() == '\n'))
+                field.pop_back();
+            out.push_back(field);
+        }
+        return out;
+    };
+
+    std::map<std::string, std::size_t> col;
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty() || line[0] == '#') continue;
+        const auto f = split(line);
+        if (col.empty())
+        {
+            for (std::size_t i = 0; i < f.size(); ++i) col[f[i]] = i;
+            continue;
+        }
+        const auto str = [&](const std::string& name) -> std::string
+        {
+            const auto it = col.find(name);
+            return (it == col.end() || it->second >= f.size())
+                       ? std::string() : f[it->second];
+        };
+        const auto num = [&](const std::string& name) -> double
+        {
+            const std::string v = str(name);
+            return v.empty() ? std::numeric_limits<double>::quiet_NaN()
+                             : std::stod(v);
+        };
+        l13_pixel_row r;
+        r.dataset     = str("dataset");
+        r.basin       = str("basin");
+        r.reliable    = str("delineation_reliable");
+        r.n_upslope   = static_cast<long long>(num("n_upslope_pixels"));
+        r.snapped_lat = num("snapped_latitude");
+        r.snapped_lon = num("snapped_longitude");
+        r.mean_elev_m = num("mean_elev_m");
+        r.s_stone     = num("mean_scaling_stone");
+        for (int i = 0; i < 3; ++i)
+        {
+            std::ostringstream name;
+            name << "mean_scaling_lsdn_t"
+                 << static_cast<long long>(k_l13_ages[i]);
+            r.s_lsdn[i] = num(name.str());
+        }
+        if (!r.basin.empty()) rows.push_back(r);
+    }
+    return !rows.empty();
+}
+
+// Percentile by linear interpolation on the sorted sample (the "R type 7" /
+// numpy default rule), so the reported median and IQR are computed the same way
+// the published bound this is judged against was.
+double l13_percentile(std::vector<double> v, double q)
+{
+    if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
+    std::sort(v.begin(), v.end());
+    const double pos = q * static_cast<double>(v.size() - 1);
+    const std::size_t lo = static_cast<std::size_t>(std::floor(pos));
+    const std::size_t hi = static_cast<std::size_t>(std::ceil(pos));
+    return v[lo] + (pos - static_cast<double>(lo)) * (v[hi] - v[lo]);
+}
+
+// Inverts the Stone-2000 spallation scaling for the atmospheric pressure that
+// reproduces a target basin-mean scaling at a fixed latitude - i.e. exactly the
+// reduction CAIRN performs to obtain OCTOPUS's ATM_PRESS ("the atmospheric
+// pressure is determined through an iterative process that identifies the
+// pressure value best matching the spatially averaged Stone-Lal production
+// rate", Saktura et al. 2025).  stone2000sp is strictly decreasing in pressure,
+// so bisection is unconditionally convergent; the bracket is the LSDn grid's own
+// pressure axis widened to [200, 1100] hPa so a recovered value that lands
+// outside the physical range shows up as a clamp rather than silently.
+// READ-ONLY use of the locked numeric core: nothing here modifies it.
+double l13_recover_pressure(const lsdtt::lsdtt_crn_parameters& cp,
+                            double lat_deg, double target_scaling)
+{
+    double lo = 200.0, hi = 1100.0;
+    if (!(cp.stone2000sp(lat_deg, lo, 1.0) > target_scaling) ||
+        !(cp.stone2000sp(lat_deg, hi, 1.0) < target_scaling))
+        return std::numeric_limits<double>::quiet_NaN();   // outside the bracket
+    for (int i = 0; i < 200; ++i)
+    {
+        const double mid = 0.5 * (lo + hi);
+        if (cp.stone2000sp(lat_deg, mid, 1.0) > target_scaling) lo = mid;
+        else                                                    hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
+// L13 - PER-PIXEL LSDn vs LUMPED LSDn: THE SCIENTIFIC RESULT, not an error term.
+//
+// Three quantities are in play (lsdn plan Sec3.0.1):
+//   (a) the PER-PIXEL LSDn basin mean -- lsdtt3's default and its whole point;
+//   (b) LSDn evaluated ONCE at (CENTR_LAT, ATM_PRESS) -- what OCTOPUS does;
+//   (c) OCTOPUS's published EBEL.
+// L12 measured (b) vs (c) and validated the KERNEL.  L13 measures (a) vs (b).
+// It is REPORTED AND FROZEN AS A RESULT.  The per-pixel number must NEVER be
+// tuned toward the lumped one, toward EBEL, or toward the published bound: if it
+// moves, that is a change in lsdtt3's product and the frozen band must fail.
+//
+// WHY THIS IS CHEAP ENOUGH FOR DEFAULT CI.  The expensive half -- fetching three
+// COP30 DEMs, routing them, and averaging the LSDn production raster over each
+// basin's exact upslope node set -- runs manually under the `cosmo_realworld`
+// tier (run_cosmo_lsdn_pixel_vs_lumped.py) and is FROZEN into
+// tests/expected/cosmo/lsdn_pixel_vs_lumped_perpixel.csv.  This driver reads that
+// artefact, evaluates the LUMPED side in process (one lsdn_scaling call per basin
+// per age), and regression-checks the comparison.  Expensive step manual, cheap
+// check always.
+//
+// TIME AVERAGING IS MATCHED BY CONSTRUCTION.  lsdn_scaling() is time dependent
+// and `sample_age_yr` is one scalar per tool run, so the per-pixel side was
+// recorded at three ages (0, 5000, 20000 yr) and the lumped side is evaluated at
+// exactly the same ones.  The time-averaging factor is therefore common to both
+// and what the ratio isolates is the SPATIAL term, which is what L13 is about.
+// t = Gamma_sp/eps for these basins is ~3-16 kyr, so 5000 yr is the headline and
+// the other two bracket it; the age sensitivity is reported, not asserted.
+//
+// SIGN CONVENTION: pct = 100 * (per-pixel - lumped) / lumped.  Negative means
+// lsdtt3's per-pixel product is LOWER than the lumped value, which is the sign
+// Codilean & Munack (2025, GChron 7:113, p. 117) report for LSDn (median -1.0 %,
+// IQR -1.8 to -0.1 % over 290 points).  That published figure is the bound this
+// result is JUDGED against and is recorded in the tolerance block; it is not
+// something to fit.
+//
+// THE ONE REAL WRINKLE, quantified and NOT corrected: ATM_PRESS is fitted against
+// STONE-LAL production but is used here inside an LSDn kernel, which has a
+// different pressure dependence.  That is an imperfect absorption in a knowable
+// direction, and the second half of this test measures it directly by
+// reproducing OCTOPUS's own reduction: invert our PER-PIXEL STONE basin mean for
+// the pressure that reproduces it at CENTR_LAT and compare with the published
+// ATM_PRESS.  CENTR_LAT itself is NOT a confound -- it is a purely geometric
+// bounding-box centre pixel (LSDBasin.cpp:2949-2950) and carries no production
+// information, because LSDBasin.cpp:5678 sets the latitude OUTSIDE the Newton
+// loop, which solves for pressure only.
+//
+// DELINEATION.  Basins flagged delineation_reliable=no in the frozen artefact are
+// carried in the CSV and reported, but the asserted bands are taken over the
+// reliable subset: an outlet that snapped onto a far larger channel describes a
+// different landscape from OCTOPUS's polygon, so its per-pixel mean is not a
+// per-pixel-vs-lumped measurement at all.
+void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
+                                const std::string& expected_dir,
+                                const std::string& out_dir)
+{
+    // See L12: L0 owns the "no LSDn grids" verdict, so stand down quietly here.
+    if (!nc.lsdn_loaded) return;
+
+    // Both artefacts below are TRACKED files, so a missing one FAILS rather than
+    // reporting a skip-that-passes -- see the note in L12.  The generation step
+    // is expensive and networked, but its OUTPUT is committed, which is the
+    // whole point of the two-step design: the cheap check must always run.
+    const std::string pix_path = expected_dir + "/lsdn_pixel_vs_lumped_perpixel.csv";
+    std::vector<l13_pixel_row> pix;
+    if (!load_l13_pixel_reference(pix_path, pix))
+    {
+        check("L13: frozen per-pixel artefact present and readable", false,
+              "cannot read " + pix_path + " - this file is tracked; regenerate "
+              "deliberately under the cosmo_realworld tier with "
+              "tests/scripts/run_cosmo_lsdn_pixel_vs_lumped.py all --freeze");
+        return;
+    }
+
+    const std::string l13_ref_path =
+        expected_dir + "/octopus_lsdn_point_reference.csv";
+    std::vector<octopus_point_row> ref;
+    if (!load_octopus_point_reference(l13_ref_path, ref))
+    {
+        check("L13: frozen OCTOPUS point reference present and readable", false,
+              "cannot read " + l13_ref_path + " - this file is tracked; see L12");
+        return;
+    }
+    std::map<std::string, octopus_point_row> by_sample;
+    for (const auto& r : ref) by_sample[r.sample] = r;
+
+    lsdtt::lsdtt_crn_parameters cp;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double rho_g_cm3 = 2.650;   // OCTOPUS's own density; see L12
+
+    csv_writer csv(out_dir + "/lsdn_pixel_vs_lumped.csv",
+                   "dataset,basin,delineation_reliable,n_upslope_pixels,t_yr,"
+                   "centr_lat,centr_lon,atm_press_hPa,mean_elev_m,elev_ave_m,"
+                   "s_tot_shielding,scaling_pixel,scaling_lumped,pct_scaling,"
+                   "erate_pixel_gcm2yr,erate_lumped_gcm2yr,pct_erate,"
+                   "mean_scaling_stone,atm_press_recovered_hPa,d_atm_press_hPa,"
+                   "erate_octopus_EBEL_gcm2yr,pct_pixel_vs_EBEL");
+
+    std::vector<double> pct_scal[3], pct_erate[3];   // reliable subset, per age
+    std::vector<double> pct_scal_all[3];             // every joined basin
+    std::vector<double> d_press, d_press_all;
+    int n_joined = 0;
+    bool all_joined = true, lumped_finite = true, inverted_ok = true;
+    bool press_recovered = true;
+
+    for (const auto& p : pix)
+    {
+        const auto it = by_sample.find(p.basin);
+        if (it == by_sample.end())
+        {
+            std::cout << "      L13: " << p.basin
+                      << " has no row in the OCTOPUS point reference\n";
+            all_joined = false;
+            continue;
+        }
+        const octopus_point_row& o = it->second;
+        const bool reliable = (p.reliable == "yes");
+        ++n_joined;
+
+        // --- OCTOPUS's own reduction, reproduced: recover ATM_PRESS from our
+        // PER-PIXEL STONE basin mean at the published CENTR_LAT.
+        const double p_rec  = l13_recover_pressure(cp, o.centr_lat, p.s_stone);
+        const double dp     = p_rec - o.atm_press;
+        if (!std::isfinite(p_rec)) press_recovered = false;
+        else
+        {
+            d_press_all.push_back(dp);
+            if (reliable) d_press.push_back(dp);
+        }
+
+        // Shielding, matched to what EBEL means (topographic x self x snow), as
+        // in L12.  It is applied identically on BOTH sides here, so it cannot
+        // create the per-pixel-vs-lumped difference; it is present only so the
+        // inverted erosion rates are on the same footing as EBEL.
+        const double shield = o.betopo * o.beself * o.besnow;
+        const double e_octopus = (std::isfinite(o.ebel) && o.ebel > 0.0)
+                                     ? o.ebel * 1.0e-4 * rho_g_cm3 : nan;
+
+        for (int a = 0; a < 3; ++a)
+        {
+            const double t_yr  = k_l13_ages[a];
+            const double s_pix = p.s_lsdn[a];
+            const double s_lmp = cp.lsdn_scaling("Be10", o.centr_lat, o.centr_lon,
+                                                 o.atm_press, t_yr, nc);
+            if (!std::isfinite(s_lmp) || !(s_lmp > 0.0)) { lumped_finite = false; continue; }
+            const double pct_s = 100.0 * (s_pix - s_lmp) / s_lmp;
+
+            // Both sides inverted through the SAME machinery so the erosion-rate
+            // comparison is like-for-like with the published bound, which is
+            // stated on denudation rates rather than on production.
+            ref_params pp = ref_params_scaled("BraucherBorchers", "Be10",
+                                              s_pix * shield);
+            ref_params pl = ref_params_scaled("BraucherBorchers", "Be10",
+                                              s_lmp * shield);
+            const double e_pix = ref_invert_erate(pp, o.be10nc);
+            const double e_lmp = ref_invert_erate(pl, o.be10nc);
+            if (!(e_pix > 0.0) || !(e_lmp > 0.0)) { inverted_ok = false; continue; }
+            const double pct_e = 100.0 * (e_pix - e_lmp) / e_lmp;
+
+            pct_scal_all[a].push_back(pct_s);
+            if (reliable)
+            {
+                pct_scal[a].push_back(pct_s);
+                pct_erate[a].push_back(pct_e);
+            }
+
+            csv.row(p.dataset, p.basin, p.reliable, p.n_upslope, t_yr,
+                    o.centr_lat, o.centr_lon, o.atm_press, p.mean_elev_m,
+                    o.elev_ave, shield, s_pix, s_lmp, pct_s, e_pix, e_lmp, pct_e,
+                    p.s_stone, p_rec, dp, e_octopus,
+                    std::isfinite(e_octopus)
+                        ? 100.0 * (e_pix - e_octopus) / e_octopus : nan);
+        }
+    }
+
+    const auto stats = [](const std::vector<double>& v, const char* label)
+    {
+        if (v.empty()) { std::cout << "        " << label << ": (empty)\n"; return; }
+        double lo = 1e30, hi = -1e30, sum = 0.0;
+        for (double x : v) { lo = std::min(lo, x); hi = std::max(hi, x); sum += x; }
+        std::cout << "        " << label << ": n=" << v.size()
+                  << " min " << lo << " max " << hi
+                  << " mean " << sum / static_cast<double>(v.size())
+                  << " median " << l13_percentile(v, 0.50)
+                  << " IQR [" << l13_percentile(v, 0.25) << ", "
+                  << l13_percentile(v, 0.75) << "]\n";
+    };
+
+    std::cout << "      L13 PER-PIXEL LSDn vs LUMPED LSDn -- THE RESULT, not an "
+                 "error term.\n"
+                 "      pct = 100*(per-pixel - lumped at (CENTR_LAT, ATM_PRESS))"
+                 "/lumped, t matched:\n"
+              << std::setprecision(4);
+    for (int a = 0; a < 3; ++a)
+    {
+        std::ostringstream lbl;
+        lbl << "production scaling, t=" << static_cast<long long>(k_l13_ages[a])
+            << " yr  (reliable)";
+        stats(pct_scal[a], lbl.str().c_str());
+    }
+    for (int a = 0; a < 3; ++a)
+    {
+        std::ostringstream lbl;
+        lbl << "erosion rate,       t=" << static_cast<long long>(k_l13_ages[a])
+            << " yr  (reliable)";
+        stats(pct_erate[a], lbl.str().c_str());
+    }
+    stats(pct_scal_all[k_l13_headline_age], "production scaling, t=5000 yr  (ALL, "
+                                            "incl. delineation-unreliable)");
+    std::cout << "      Published bound for comparison -- Codilean & Munack (2025, "
+                 "GChron 7:113, p. 117):\n"
+                 "        LSDn median -1.0 %, IQR -1.8 to -0.1 % over 290 points.\n";
+    stats(d_press, "recovered ATM_PRESS - published ATM_PRESS [hPa] (reliable)");
+    stats(d_press_all, "recovered ATM_PRESS - published ATM_PRESS [hPa] (ALL)");
+    std::cout << std::setprecision(17);
+
+    check("L13: every basin in the frozen per-pixel artefact joins a row of the "
+          "OCTOPUS point reference", all_joined && n_joined > 0,
+          "joined = " + std::to_string(n_joined));
+    check("L13: the lumped LSDn evaluation is finite and positive on every basin "
+          "and age", lumped_finite);
+    check("L13: both the per-pixel and the lumped concentration inverted",
+          inverted_ok);
+    check("L13: ATM_PRESS recovered inside the bracket on every basin "
+          "(OCTOPUS's own Stone-Lal reduction, reproduced)", press_recovered);
+
+    // Measured-then-frozen REGRESSION GUARDS on lsdtt3's own product.  They are
+    // NOT accuracy targets and must never be widened to absorb a surprise: a
+    // move here is a move in the per-pixel LSDn result.
+    const double med = l13_percentile(pct_scal[k_l13_headline_age], 0.50);
+    check("L13: per-pixel-vs-lumped median inside the frozen band (RESULT, not "
+          "an error term; production scaling, t=5000 yr, reliable basins)",
+          !pct_scal[k_l13_headline_age].empty() &&
+              med > tol::l13_pixel_vs_lumped_med_lo &&
+              med < tol::l13_pixel_vs_lumped_med_hi,
+          "median = " + std::to_string(med) + " % (n=" +
+              std::to_string(pct_scal[k_l13_headline_age].size()) + ")");
+
+    double worst = 0.0;
+    for (double x : pct_scal[k_l13_headline_age]) worst = std::max(worst, std::abs(x));
+    check("L13: worst |per-pixel-vs-lumped| inside the frozen band",
+          !pct_scal[k_l13_headline_age].empty() &&
+              worst < tol::l13_pixel_vs_lumped_worst,
+          "worst = " + std::to_string(worst) + " %");
+
+    double worst_dp = 0.0;
+    for (double x : d_press) worst_dp = std::max(worst_dp, std::abs(x));
+    check("L13: our per-pixel STONE basin mean recovers OCTOPUS's published "
+          "ATM_PRESS to within the frozen band (their reduction, reproduced)",
+          !d_press.empty() && worst_dp < tol::l13_atm_press_recovery_hPa,
+          "worst |dP| = " + std::to_string(worst_dp) + " hPa (n=" +
+              std::to_string(d_press.size()) + ")");
+
+    const double med_dp = l13_percentile(d_press, 0.50);
+    check("L13: median recovered-minus-published ATM_PRESS inside its frozen band "
+          "(the tight guard on the recovery; the worst-case one above is weak)",
+          !d_press.empty() && med_dp > tol::l13_atm_press_med_lo &&
+              med_dp < tol::l13_atm_press_med_hi,
+          "median dP = " + std::to_string(med_dp) + " hPa");
+
+    check("csv: lsdn_pixel_vs_lumped.csv written", csv.good());
 }
 
 // The LSDn scaling surface for lsdviztools3 (lsdn plan Sec5, Phase 5): the
@@ -4407,6 +4847,7 @@ int main(int argc, char** argv)
         phase7_L7_stone_vs_lsdn(crn_nc, fx, test_data_dir, out_dir);
         phase7_TC2_cronus_lsdn_comparison(crn_nc, expected_dir, out_dir);
         phase7_L12_octopus_point_kernel_oracle(crn_nc, expected_dir, out_dir);
+        phase7_L13_pixel_vs_lumped(crn_nc, expected_dir, out_dir);
         phase7_lsdn_scaling_surface_csv(crn_nc, out_dir);
         phase7_L10_surface_equivalence(crn_nc, out_dir);
         phase7_L11_resolution_sweep(crn_nc, out_dir);

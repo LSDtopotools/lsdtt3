@@ -137,6 +137,19 @@ when the network/DEM source is unavailable or the sample table is still a
 template, so it never turns CI red. **No DEM is ever committed** — only the small
 manifest, sample table, and frozen summary under `tests/expected/cosmo/published/`.
 
+`cosmo_realworld_lsdn_pixel_vs_lumped` (label `cosmo_realworld`, **not** in the
+default suite) is the **generation** half of the per-pixel-vs-lumped LSDn result.
+It fetches all three published datasets' DEMs keyless, runs `lsdtt-cosmo-tool`
+under `scaling_scheme: lsdn` at three sample ages plus `stone`, and records each
+basin's mean production scaling over the exact upslope node set the inversion
+uses. Those numbers are **frozen** into
+`tests/expected/cosmo/lsdn_pixel_vs_lumped_perpixel.csv`; the cheap comparison
+against the lumped LSDn kernel then runs in the **default** `unit;cosmo` suite
+inside `unit_cosmo_physics`, which emits `lsdn_pixel_vs_lumped.csv` and asserts
+the frozen bands. Expensive step manual, cheap check always. Like its siblings it
+is **check-only** by default and rewrites the tracked artefact only under an
+explicit `--freeze`.
+
 Refreshing the CRONUS reference is a **manual, reviewable** step and is never
 done by CI:
 

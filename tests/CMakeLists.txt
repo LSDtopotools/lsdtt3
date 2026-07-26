@@ -258,7 +258,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
                         --check
             )
             set_tests_properties(benchmark_surface_${surf_case}_${surf_fixture}
-                PROPERTIES LABELS "benchmark;surface" SKIP_RETURN_CODE 77
+                PROPERTIES LABELS "benchmark;surface_metrics" SKIP_RETURN_CODE 77
                            TIMEOUT 1800)
         endforeach()
     endforeach()
@@ -324,7 +324,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
 add_test(NAME unit_surface_metrics
          COMMAND lsdtt-test-surface-metrics
                  ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
-set_tests_properties(unit_surface_metrics PROPERTIES LABELS "unit;surface")
+set_tests_properties(unit_surface_metrics PROPERTIES LABELS "unit;surface_metrics")
 
 add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
 target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
@@ -537,7 +537,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
                     --work-dir "${CMAKE_CURRENT_BINARY_DIR}/surface_benchmark"
         )
         set_tests_properties(performance_surface_metrics
-            PROPERTIES LABELS "performance;surface" SKIP_RETURN_CODE 77
+            PROPERTIES LABELS "performance;surface_metrics" SKIP_RETURN_CODE 77
                        TIMEOUT 3600)
     endif()
     # Per-pixel LSDn production cost (LSDn plan Sec3.8). Four cases: Stone vs
@@ -785,3 +785,28 @@ add_test(NAME cosmo_realworld_production_isolation
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
 set_tests_properties(cosmo_realworld_production_isolation PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+# L13 GENERATION STEP -- the PER-PIXEL side of per-pixel-vs-lumped LSDn (lsdn plan
+# Phase 6 deliverable (ii); cosmo plan §6f row L13). Fetches each of the three
+# tracked datasets' keyless COP30 DEMs and records lsdtt-cosmo-tool's basin-mean
+# production scaling (Stone, and LSDn at three sample ages) over the exact upslope
+# node set the inversion uses.
+#
+# Deliberately a TWO-STEP design: this expensive networked step is frozen into
+# tests/expected/cosmo/lsdn_pixel_vs_lumped_perpixel.csv, and the CHEAP comparison
+# against the lumped LSDn kernel is then regression-checked on every build inside
+# unit_cosmo_physics (default unit;cosmo suite), which is where the assertions and
+# the lsdn_pixel_vs_lumped.csv product live.
+#
+# NEEDS NETWORK; kept OUT of the default suite (label cosmo_realworld). Skips
+# (exit 77) when the DEM source is unreachable. Runs check-only: it compares
+# against the tracked frozen artefact and must NOT rewrite it. Re-freezing is a
+# deliberate act -- run the script with --freeze by hand and review the diff.
+add_test(NAME cosmo_realworld_lsdn_pixel_vs_lumped
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_lsdn_pixel_vs_lumped.py"
+                 all
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+set_tests_properties(cosmo_realworld_lsdn_pixel_vs_lumped PROPERTIES
+    LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 3600)
