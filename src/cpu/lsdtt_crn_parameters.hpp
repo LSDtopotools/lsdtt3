@@ -339,27 +339,33 @@ public:
     // nuclide     : "Be10", "Al26" or "C14".
     // age_yr      : the sample age driving the time average, as in lsdn_scaling.
     // n_pixels    : the number of pixels the surface would serve; used only by
-    //               the cost model below.
+    //               the small-raster guard below.
     // h_step_deg  : horizontal resolution of the surface, in degrees.  ***THE
     //               DEFAULT IS A PLACEHOLDER*** carried over from the plan; it
     //               has NOT yet been chosen by the L11 sensitivity sweep.  Do
     //               not cite it as a validated value.
-    // force_build : build even when the cost model would decline.  Exists so
+    // force_build : build even when the guard below would decline.  Exists so
     //               the equivalence test (L10) can exercise the surface path on
     //               small rasters where the direct path is cheaper - the whole
     //               point of that test is that it must not depend on which path
-    //               the cost model happens to pick.
+    //               the guard happens to pick.
     //
     // Returns valid == false (having allocated nothing) when a surface is not
     // worthwhile, with the decision recorded in .reason:
     //   - the loaded nc has no LSDn data;
     //   - age_yr <= 0                : the static path is already two lookups;
-    //   - n_pixels <= 16 * n_h       : the direct per-pixel loop is cheaper.
-    //                                  The 16 is FITTED to a measured crossover
-    //                                  of 190-522 pixels (2026-07-26), not
-    //                                  derived from operation counts - counting
-    //                                  operations gave n_h * n_p, which is
-    //                                  26-72x too conservative.  Re-measure if
+    //   - n_pixels < 512             : small-raster guard.  DELIBERATELY CRUDE,
+    //                                  not a tuned cost model.  Both paths give
+    //                                  the same answer (L10), so this only ever
+    //                                  affects run time; past the crossover the
+    //                                  surface wins by 490-2180x per pixel, and
+    //                                  below it the whole stake is a few ms.
+    //                                  The measured crossover is not stable
+    //                                  enough to fit (190-522 px and 74-157 px
+    //                                  in two honest runs), and every value in
+    //                                  that range is far below any real basin -
+    //                                  so this is a round number, not a fitted
+    //                                  one, and needs no re-measurement when
     //                                  h_step_deg or the pressure axis changes.
     // The caller then uses lsdn_scaling() per pixel.  Both paths compute the
     // same quantity (test L10), so the choice is purely one of cost.

@@ -2991,7 +2991,7 @@ void phase7_L7_stone_vs_lsdn(const lsdtt::CrnNcData& nc,
 
 // L10 - the precomputed time-averaged surface must compute the SAME quantity as
 // the direct per-pixel loop.  Both paths are invoked EXPLICITLY (force_build):
-// letting the cost model choose would risk testing one path twice.
+// letting the small-raster guard choose would risk testing one path twice.
 void phase7_L10_surface_equivalence(const lsdtt::CrnNcData& nc,
                                     const std::string& out_dir)
 {
@@ -2999,35 +2999,40 @@ void phase7_L10_surface_equivalence(const lsdtt::CrnNcData& nc,
     lsdtt::lsdtt_crn_parameters cp;
     if (!nc.lsdn_loaded) return;
 
-    // The cost model was RECALIBRATED 2026-07-26: the old n_h*n_p >= n_pixels
-    // rule was 26-72x too conservative against a measured crossover of 190-522
-    // pixels, and declined the surface on every validation basin.  The rule is
-    // now n_pixels <= 16 * n_h.  This footprint spans 6 lat x 5 lon = 30 nodes
-    // at h = 0.1 deg, so the threshold sits at 480 pixels; we pin BOTH sides of
-    // it, which is also what proves the two paths are separately reachable.
+    // Path selection is a DELIBERATELY CRUDE small-raster guard (n_pixels < 512),
+    // not a tuned cost model: see build_lsdn_time_avg_surface.  Two earlier rules
+    // lived here - an operation count (n_h*n_p, ~13680 px, which declined the
+    // surface on every validation basin) and a constant fitted to a measured
+    // crossover (16*n_h).  The crossover proved too unstable to fit (190-522 px
+    // and 74-157 px in two honest runs) and every value in that range is far
+    // below any real basin, so the fitted constant was removed 2026-07-26.
+    //
+    // What this test pins is therefore NOT the exact threshold - which is
+    // explicitly allowed to be a round number - but that BOTH OUTCOMES REMAIN
+    // REACHABLE, so the equivalence checks below genuinely exercise two paths.
     const double lat_lo = 44.9, lat_hi = 45.3;
     const double lon_lo = -110.3, lon_hi = -109.9;
     {
-        // Below the threshold: 200 px <= 480, so the direct loop is cheaper.
+        // Small raster: the direct loop is cheaper.
         const lsdtt::LsdnTimeAvgSurface declined =
             CP::build_lsdn_time_avg_surface(nc, "Be10", 2.0e4, lat_lo, lat_hi,
                                             lon_lo, lon_hi, 200u, 0.1, false);
-        check("L10: the cost model declines a surface below the 16*n_h threshold",
+        check("L10: a surface is declined on a small raster",
               !declined.valid
-                  && declined.reason.find("cost model") != std::string::npos,
+                  && declined.reason.find("small-raster guard") != std::string::npos,
               declined.reason);
-        // Above it: a basin-sized raster (40x31 = 1240 px > 480) must now BUILD.
-        // Under the pre-2026-07-26 model this was declined; that was the defect.
+        // Basin-sized raster (40x31 = 1240 px) must BUILD.  The original
+        // operation-count rule declined this; that was the defect.
         const lsdtt::LsdnTimeAvgSurface accepted =
             CP::build_lsdn_time_avg_surface(nc, "Be10", 2.0e4, lat_lo, lat_hi,
                                             lon_lo, lon_hi, 40u * 31u, 0.1, false);
-        check("L10: the cost model ACCEPTS a surface on a basin-sized raster "
-              "(recalibrated model; the old n_h*n_p rule declined this)",
+        check("L10: a surface IS built on a basin-sized raster "
+              "(the original n_h*n_p rule wrongly declined this)",
               accepted.valid, accepted.reason);
         const lsdtt::LsdnTimeAvgSurface forced =
             CP::build_lsdn_time_avg_surface(nc, "Be10", 2.0e4, lat_lo, lat_hi,
                                             lon_lo, lon_hi, 40u * 31u, 0.1, true);
-        check("L10: force_build overrides the cost model (both paths reachable)",
+        check("L10: force_build overrides the guard (both paths reachable)",
               forced.valid, forced.reason);
         // age <= 0 is also declined unless forced, and the forced surface must
         // still reproduce the static branch.

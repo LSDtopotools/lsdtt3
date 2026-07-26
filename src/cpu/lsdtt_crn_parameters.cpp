@@ -1157,33 +1157,35 @@ LsdnTimeAvgSurface lsdtt_crn_parameters::build_lsdn_time_avg_surface(
     const std::size_t n_p   = nc.lsdn_p.size();
     const std::size_t n_h   = n_lat * n_lon;
 
-    // Cost model, CALIBRATED BY MEASUREMENT (2026-07-26), not derived.
+    // Small-raster guard.  DELIBERATELY CRUDE - this is not a tuned cost model,
+    // and it should not become one.
     //
-    // The direct path costs about n_pixels * n_steps * 2 bilinear lookups; the
-    // surface costs about n_h * n_p * n_steps row lerps plus n_pixels trilinear
-    // evaluations.  Counting operations that way suggests a crossover at
-    // n_h * n_p ~ n_pixels, i.e. 13680 pixels for a typical n_h = 36.  That is
-    // WRONG BY 26-72x: the measured crossover is 190-522 pixels.  The operation
-    // count misses that the surface build walks the pressure axis with unit
-    // stride and reuses one Rc per row, so its inner loop runs at a very
-    // different cost per operation than the direct path's strided lookups.
+    // Both paths compute the same quantity (test L10 pins them to ~3e-16 at grid
+    // nodes), so this choice can only ever affect run time, never results.  Past
+    // the crossover the surface is 490-2180x faster per pixel while costing only
+    // 0.5-42 ms to build, so on any raster of real size building it is correct by
+    // an enormous margin.  The only question is what to do on rasters too small to
+    // repay the build, where the entire stake is a few milliseconds either way.
     //
-    // The rule below is fitted to that measurement with margin: build the
-    // surface once n_pixels exceeds 16 * n_h.  With h_step_deg = 0.1 a typical
-    // basin gives n_h ~ 9-36, so the surface now switches on at ~144-576 pixels
-    // instead of ~13680 - which is what makes it available on the 0.07-29 km^2
-    // validation basins rather than only on whole-tile runs.  The n_p factor
-    // drops out of the condition entirely: it is a constant of the grid, and
-    // folding it in is what produced the 26-72x error.
+    // Earlier versions tried to answer that precisely and got it wrong twice:
+    // an operation count gave n_h * n_p (~13680 px), which measurement showed was
+    // 26-72x too conservative; a constant fitted to that measurement gave 16 * n_h.
+    // But the measured crossover is not stable enough to fit - two honest runs put
+    // it at 190-522 px and 74-157 px, differing by site distribution and thread
+    // count.  Since every value in that range is far below any real basin, the
+    // precision was buying nothing and cost a constant needing re-measurement
+    // whenever h_step_deg or the pressure axis moved.
     //
-    // If h_step_deg or the pressure-axis length changes, RE-MEASURE the
-    // crossover; do not re-derive this constant from operation counts.
-    constexpr std::size_t surface_pixels_per_node = 16;
-    if (!force_build && n_pixels <= surface_pixels_per_node * n_h)
+    // So: one flat threshold, chosen as a round number in the middle of the
+    // measured range rather than fitted to it.  Anything in the low hundreds is
+    // within noise of optimal.  Do not "improve" this without a benchmark showing
+    // a difference that matters.
+    constexpr std::size_t min_pixels_for_surface = 512;
+    if (!force_build && n_pixels < min_pixels_for_surface)
     {
-        s.reason = "cost model: n_pixels (" + std::to_string(n_pixels)
-                 + ") <= 16 * n_h (" + std::to_string(surface_pixels_per_node * n_h)
-                 + "): the direct per-pixel loop is cheaper";
+        s.reason = "small-raster guard: n_pixels (" + std::to_string(n_pixels)
+                 + ") < " + std::to_string(min_pixels_for_surface)
+                 + ": the direct per-pixel loop is cheaper";
         return s;
     }
 
