@@ -194,6 +194,13 @@ Full instructions for every platform, including the CMake option reference:
 Tests are driven by CTest. The default suite is self-contained: it needs no
 network, no downloaded data, and no Python packages beyond a plain interpreter.
 
+Short version on Python/pixi:
+
+- Running `lsdtt3` CLIs does **not** need Python.
+- Most tests (smoke, failure, unit, rigorous) do **not** need pixi.
+- Some opt-in benchmark tests do need pixi because their references are Python
+  tools (RichDEM / TopoToolbox and DAGGER adapters).
+
 ```sh
 cmake -S . -B build
 cmake --build build -j
@@ -212,7 +219,7 @@ Tests are grouped by label, so you can run just the part you care about:
 | `flow` | Flow routing and depression handling: properties, and RichDEM comparison |
 | `fetch` | Native DEM fetching (`lsdtt_raster_fetch`); offline logic by default |
 | `performance` | In-process timings of the flow routines (opt-in; reported, not asserted) |
-| `benchmark` | Opt-in comparison against RichDEM on fetched real DEMs |
+| `benchmark` | Opt-in comparison against external references (RichDEM/TopoToolbox flow, DAGGER hydraulic) on fetched real DEMs |
 
 ```sh
 ctest --test-dir build -L smoke --output-on-failure
@@ -223,6 +230,9 @@ ctest --test-dir build -L unit  --output-on-failure
 optional RichDEM install; enable with `-DLSDTT_ENABLE_BENCHMARKS=ON`. When their
 dependencies are missing they report as skipped rather than failed, so an
 optional tool can never turn the build red.
+
+If you enable `LSDTT_ENABLE_BENCHMARKS`, install pixi first so those benchmark
+dependencies are available in the benchmark environment.
 
 **No DEM is committed to this repository.** Tests that need real topography fetch
 it on demand from public keyless sources and cache it under

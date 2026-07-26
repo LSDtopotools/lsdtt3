@@ -76,6 +76,8 @@ osmnx = "*"
 # container.
 python = ">=3.11,<3.14"
 richdem = "*"
+xtensor = ">=0.27.1,<0.28"
+xtensor-python = ">=0.29.0,<0.30"
 # (scipy is in [dependencies], so it is already in this environment too.)
 
 # topotoolbox is not on conda-forge, so it has to come from PyPI. This is the

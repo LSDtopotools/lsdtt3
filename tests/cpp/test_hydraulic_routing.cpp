@@ -5,10 +5,13 @@
 // Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lsdtt_array2d.hpp"
@@ -39,6 +42,123 @@ lsdtt::lsdtt_raster_meta make_meta_3x3()
     meta.no_data_value = -9999.0;
     meta.set_default_synthetic_georeference();
     return meta;
+}
+
+lsdtt::lsdtt_raster_meta make_meta_square(int n_rows, int n_cols, double cell_size)
+{
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell_size;
+    meta.no_data_value = -9999.0;
+    meta.set_default_synthetic_georeference();
+    return meta;
+}
+
+struct hydraulic_fixture
+{
+    lsdtt::lsdtt_flowgraph_cpu flowgraph;
+    lsdtt::lsdtt_array2d_f bed;
+};
+
+hydraulic_fixture make_planar_fixture_7x7()
+{
+    const int n_rows = 7;
+    const int n_cols = 7;
+    const auto meta = make_meta_square(n_rows, n_cols, 10.0);
+
+    lsdtt::lsdtt_array2d_f bed(n_rows, n_cols, 0.0f);
+    lsdtt::lsdtt_array2d_u8 mask(n_rows, n_cols, 1);
+
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const double z = 120.0 - 0.9 * static_cast<double>(row)
+                                   - 0.2 * static_cast<double>(col);
+            bed(row, col) = static_cast<float>(z);
+        }
+    }
+
+    lsdtt::lsdtt_flowgraph_options fg_opts;
+    fg_opts.boundary_conditions = "oooo";
+    fg_opts.method = lsdtt::lsdtt_flowgraph_method::mfd;
+    fg_opts.mfd_exponent = 1.0f;
+    fg_opts.n_threads = 1;
+
+    hydraulic_fixture fx;
+    fx.flowgraph = lsdtt::lsdtt_flowgraph_cpu(bed, mask, meta, fg_opts);
+    fx.bed = bed;
+    return fx;
+}
+
+hydraulic_fixture make_flat_sink_fixture_5x5()
+{
+    const int n_rows = 5;
+    const int n_cols = 5;
+    const auto meta = make_meta_square(n_rows, n_cols, 10.0);
+
+    lsdtt::lsdtt_array2d_f bed(n_rows, n_cols, 50.0f);
+    lsdtt::lsdtt_array2d_u8 mask(n_rows, n_cols, 1);
+
+    lsdtt::lsdtt_flowgraph_options fg_opts;
+    fg_opts.boundary_conditions = "bbbb";
+    fg_opts.method = lsdtt::lsdtt_flowgraph_method::mfd;
+    fg_opts.mfd_exponent = 1.0f;
+    fg_opts.n_threads = 1;
+
+    hydraulic_fixture fx;
+    fx.flowgraph = lsdtt::lsdtt_flowgraph_cpu(bed, mask, meta, fg_opts);
+    fx.bed = bed;
+    return fx;
+}
+
+std::vector<std::int64_t> outlet_flats(const lsdtt::lsdtt_flowgraph_cpu& flowgraph)
+{
+    std::vector<std::int64_t> outlets;
+    const auto& valid = flowgraph.valid_cells();
+
+    for (std::int64_t flat = 0;
+         flat < static_cast<std::int64_t>(valid.size());
+         ++flat)
+    {
+        if (valid[flat] == 0) continue;
+        if (!flowgraph.is_outlet_flat(flat)) continue;
+        outlets.push_back(flat);
+    }
+
+    return outlets;
+}
+
+std::vector<double> make_initial_water_depth(const lsdtt::lsdtt_flowgraph_cpu& flowgraph,
+                                             double base_depth)
+{
+    const auto& valid = flowgraph.valid_cells();
+    std::vector<double> depth(valid.size(), 0.0);
+
+    for (std::int64_t flat = 0;
+         flat < static_cast<std::int64_t>(valid.size());
+         ++flat)
+    {
+        if (valid[flat] == 0) continue;
+        depth[flat] = base_depth + 0.0005 * static_cast<double>(flat % 11);
+    }
+
+    return depth;
+}
+
+lsdtt::lsdtt_hydraulic_options make_options(double rainfall_rate_m_per_s,
+                                            double dt)
+{
+    lsdtt::lsdtt_hydraulic_options options;
+    options.dt = dt;
+    options.mannings_n = 0.033;
+    options.min_slope = 1.0e-8;
+    options.uniform_rainfall_rate = rainfall_rate_m_per_s;
+    options.receiver_width = -1.0;
+    options.max_dh_rate = 1.0e9;
+    options.print_startup_message = false;
+    return options;
 }
 
 lsdtt::lsdtt_flowgraph_cpu make_flowgraph_centre_pit()
@@ -103,11 +223,226 @@ void test_transient_dynamic_dispatch_changes_qin()
           "expected centre qin to differ and decrease under dynamic rerouting");
 }
 
+void test_non_negative_water_depth_all_modes()
+{
+    const hydraulic_fixture fx = make_planar_fixture_7x7();
+
+    const std::vector<lsdtt_hydraulic_run_mode> modes = {
+        lsdtt_hydraulic_run_mode::transient_fixed_graph,
+        lsdtt_hydraulic_run_mode::stationary_fixed_graph,
+        lsdtt_hydraulic_run_mode::transient_dynamic_graph,
+        lsdtt_hydraulic_run_mode::stationary_dynamic_graph
+    };
+
+    bool all_ok = true;
+    double most_negative = 0.0;
+
+    for (lsdtt_hydraulic_run_mode mode : modes)
+    {
+        lsdtt::lsdtt_hydraulic_graph_cpu solver(
+            fx.flowgraph,
+            fx.bed,
+            make_options(5.0e-5, 0.2));
+
+        solver.set_run_mode(mode);
+        solver.set_reroute_every(2);
+        solver.set_water_depth(make_initial_water_depth(fx.flowgraph, 0.01));
+        solver.run_n_steps(30);
+
+        const auto depth = solver.get_water_depth_raster();
+
+        for (std::int64_t flat = 0;
+             flat < static_cast<std::int64_t>(depth.data.size());
+             ++flat)
+        {
+            if (depth.mask[flat] == 0) continue;
+            const double h = static_cast<double>(depth.data[flat]);
+            if (!(std::isfinite(h) && h >= -1.0e-12))
+            {
+                all_ok = false;
+            }
+            if (h < most_negative) most_negative = h;
+        }
+    }
+
+    check("H2 non-negativity across run modes", all_ok,
+          "minimum water depth encountered = " + std::to_string(most_negative));
+}
+
+void test_closed_forcing_volume_non_increase()
+{
+    const hydraulic_fixture fx = make_planar_fixture_7x7();
+
+    lsdtt::lsdtt_hydraulic_graph_cpu solver(
+        fx.flowgraph,
+        fx.bed,
+        make_options(0.0, 0.2));
+
+    solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
+    solver.set_water_depth(make_initial_water_depth(fx.flowgraph, 0.2));
+
+    const double initial_volume = solver.total_water_volume();
+    double previous_volume = initial_volume;
+    bool non_increasing = true;
+    double largest_increase = 0.0;
+
+    for (int i = 0; i < 40; ++i)
+    {
+        solver.run_one_step();
+        const double volume = solver.total_water_volume();
+        const double increase = volume - previous_volume;
+        if (increase > 1.0e-9)
+        {
+            non_increasing = false;
+            if (increase > largest_increase) largest_increase = increase;
+        }
+        previous_volume = volume;
+    }
+
+    check("H3 zero-forcing volume does not increase", non_increasing,
+          "largest per-step volume increase = " + std::to_string(largest_increase) +
+          ", initial volume = " + std::to_string(initial_volume) +
+          ", final volume = " + std::to_string(previous_volume));
+}
+
+void test_rainfall_balance_with_outlet_export()
+{
+    const hydraulic_fixture fx = make_flat_sink_fixture_5x5();
+
+    const double dt = 0.1;
+    const double rainfall_rate = 2.5e-5;
+
+    lsdtt::lsdtt_hydraulic_graph_cpu solver(
+        fx.flowgraph,
+        fx.bed,
+        make_options(rainfall_rate, dt));
+
+    solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
+    solver.reset_water_depth(0.0);
+
+    const auto outlets = outlet_flats(fx.flowgraph);
+    const bool every_cell_is_outlet =
+        static_cast<std::int64_t>(outlets.size()) == fx.flowgraph.n_valid_cells();
+    const double initial_volume = solver.total_water_volume();
+    const double cell_area = fx.flowgraph.meta().cell_size * fx.flowgraph.meta().cell_size;
+    const double total_input_per_step = rainfall_rate * cell_area
+        * static_cast<double>(fx.flowgraph.n_valid_cells());
+
+    double cumulative_export = 0.0;
+    const int n_steps = 60;
+    for (int i = 0; i < n_steps; ++i)
+    {
+        solver.run_one_step();
+        const auto qout = solver.get_qout_raster();
+        for (std::int64_t outlet : outlets)
+        {
+            if (qout.mask[outlet] == 0) continue;
+            cumulative_export += static_cast<double>(qout.data[outlet]) * dt;
+        }
+    }
+
+    const double final_volume = solver.total_water_volume();
+    const double storage_change = final_volume - initial_volume;
+    const double total_input = static_cast<double>(n_steps) * total_input_per_step * dt;
+    const double residual = std::abs(storage_change + cumulative_export - total_input);
+    const double tolerance = std::max(1.0e-8, 2.0e-5 * total_input);
+
+    check("H4 fixture has all cells as outlets", every_cell_is_outlet,
+          "outlet cells = " + std::to_string(outlets.size()) +
+          ", valid cells = " + std::to_string(fx.flowgraph.n_valid_cells()));
+
+    check("H4 rainfall input = storage + outlet export", residual <= tolerance,
+          "residual = " + std::to_string(residual) +
+          ", tolerance = " + std::to_string(tolerance));
+}
+
+void test_determinism_same_inputs_same_outputs()
+{
+    const hydraulic_fixture fx = make_planar_fixture_7x7();
+
+    const auto initial_depth = make_initial_water_depth(fx.flowgraph, 0.05);
+    const std::int64_t centre_flat = 3 * 7 + 3;
+
+    lsdtt::lsdtt_hydraulic_graph_cpu solver_a(
+        fx.flowgraph,
+        fx.bed,
+        make_options(1.5e-5, 0.1));
+    solver_a.set_run_mode(lsdtt_hydraulic_run_mode::transient_dynamic_graph);
+    solver_a.set_reroute_every(3);
+    solver_a.set_water_depth(initial_depth);
+    solver_a.add_point_inflow(centre_flat, 0.03);
+    solver_a.run_n_steps(50);
+
+    lsdtt::lsdtt_hydraulic_graph_cpu solver_b(
+        fx.flowgraph,
+        fx.bed,
+        make_options(1.5e-5, 0.1));
+    solver_b.set_run_mode(lsdtt_hydraulic_run_mode::transient_dynamic_graph);
+    solver_b.set_reroute_every(3);
+    solver_b.set_water_depth(initial_depth);
+    solver_b.add_point_inflow(centre_flat, 0.03);
+    solver_b.run_n_steps(50);
+
+    const auto depth_a = solver_a.get_water_depth_raster();
+    const auto depth_b = solver_b.get_water_depth_raster();
+
+    bool ok = true;
+    double max_abs_diff = 0.0;
+
+    for (std::int64_t flat = 0;
+         flat < static_cast<std::int64_t>(depth_a.data.size());
+         ++flat)
+    {
+        if (depth_a.mask[flat] == 0 || depth_b.mask[flat] == 0) continue;
+        const double d = std::abs(
+            static_cast<double>(depth_a.data[flat]) -
+            static_cast<double>(depth_b.data[flat]));
+        if (d > max_abs_diff) max_abs_diff = d;
+        if (d > 1.0e-12)
+        {
+            ok = false;
+        }
+    }
+
+    check("H5 determinism on repeated run", ok,
+          "max |water_depth_a - water_depth_b| = " + std::to_string(max_abs_diff));
+}
+
+void test_dynamic_mode_sets_dynamic_routing_flag()
+{
+    const hydraulic_fixture fx = make_planar_fixture_7x7();
+
+    lsdtt::lsdtt_hydraulic_graph_cpu fixed_solver(
+        fx.flowgraph,
+        fx.bed,
+        make_options(1.0e-5, 0.1));
+    fixed_solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
+    fixed_solver.run_one_step();
+
+    lsdtt::lsdtt_hydraulic_graph_cpu dynamic_solver(
+        fx.flowgraph,
+        fx.bed,
+        make_options(1.0e-5, 0.1));
+    dynamic_solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_dynamic_graph);
+    dynamic_solver.set_reroute_every(1);
+    dynamic_solver.run_one_step();
+
+    const bool ok = (!fixed_solver.routing_is_dynamic()) && dynamic_solver.routing_is_dynamic();
+    check("H6 mode dispatch toggles dynamic-routing flag", ok,
+          "fixed flag=" + std::to_string(fixed_solver.routing_is_dynamic()) +
+          ", dynamic flag=" + std::to_string(dynamic_solver.routing_is_dynamic()));
+}
+
 } // namespace
 
 int main()
 {
     test_transient_dynamic_dispatch_changes_qin();
+    test_non_negative_water_depth_all_modes();
+    test_closed_forcing_volume_non_increase();
+    test_rainfall_balance_with_outlet_export();
+    test_determinism_same_inputs_same_outputs();
+    test_dynamic_mode_sets_dynamic_routing_flag();
 
     if (g_n_failed == 0)
     {

@@ -264,31 +264,40 @@ if(LSDTT_ENABLE_BENCHMARKS)
     endforeach()
     endif()
 
-    # Hydraulic DAGGER scaffold benchmark (plan Phase 0 wiring).
-    # This harness is currently a metadata/availability scaffold, not a full
-    # parity comparator yet. It is still useful in CTest because it establishes
-    # the opt-in benchmark entry point and the skip contract (77) when DAGGER
-    # is unavailable.
+    # Hydraulic DAGGER parity benchmark (plan Phases 3-4).
+    # In --check mode it enforces mask agreement and pinned parity tolerances.
+    # Prefer launching through pixi's benchmark env when available so GDAL/PROJ
+    # and Python deps match the documented benchmark path.
     set(LSDTT_DAGGER_ROOT_DEFAULT "${CMAKE_SOURCE_DIR}/../DAGGER")
-    set(LSDTT_DAGGER_REF_DEFAULT  "${LSDTT_DAGGER_ROOT_DEFAULT}/README.md")
+    set(LSDTT_DAGGER_REF_DEFAULT
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/dagger_graphflood_reference.py")
 
-    foreach(hyd_fixture tiny_dem.asc)
+    if(LSDTT_PIXI_EXECUTABLE)
+        set(LSDTT_HYDRAULIC_BENCHMARK_LAUNCHER ${LSDTT_BENCHMARK_LAUNCHER})
+    else()
+        set(LSDTT_HYDRAULIC_BENCHMARK_LAUNCHER ${Python3_EXECUTABLE})
+    endif()
+
+    foreach(hyd_fixture tiny_dem.asc alpine_small)
         foreach(hyd_scenario stationary_fixed transient_dynamic)
             add_test(
-                NAME benchmark_hydraulic_dagger_scaffold_${hyd_scenario}_${hyd_fixture}
-                COMMAND ${Python3_EXECUTABLE}
+                NAME benchmark_hydraulic_dagger_${hyd_scenario}_${hyd_fixture}
+                COMMAND ${LSDTT_HYDRAULIC_BENCHMARK_LAUNCHER}
                         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_hydraulic_dagger_benchmark.py"
                         --exe "$<TARGET_FILE:lsdtt-hydraulic-routing>"
+                        --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>"
                         --dagger-root "${LSDTT_DAGGER_ROOT_DEFAULT}"
                         --dagger-ref "${LSDTT_DAGGER_REF_DEFAULT}"
                         --fixture ${hyd_fixture}
                         --scenario ${hyd_scenario}
                         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/hydraulic_benchmark/${hyd_scenario}_${hyd_fixture}"
                         --write-json
+                        --check
             )
             set_tests_properties(
-                benchmark_hydraulic_dagger_scaffold_${hyd_scenario}_${hyd_fixture}
-                PROPERTIES LABELS "benchmark;hydraulic" SKIP_RETURN_CODE 77)
+                benchmark_hydraulic_dagger_${hyd_scenario}_${hyd_fixture}
+                PROPERTIES LABELS "benchmark;hydraulic" SKIP_RETURN_CODE 77
+                           TIMEOUT 1800)
         endforeach()
     endforeach()
 endif()

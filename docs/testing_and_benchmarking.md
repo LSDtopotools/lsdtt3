@@ -143,6 +143,70 @@ pixi run -e benchmark python tests/scripts/run_flow_benchmark.py \
 downgrade numpy in whatever environment it lands in. conda-forge ships 2.4.3
 with numpy-2 builds.
 
+### DAGGER / GraphFlood - hydraulic parity reference
+
+Hydraulic parity runs also go through the same pixi benchmark environment
+(`numpy` + `gdal` compatibility, and activated PROJ/GDAL data paths):
+
+```sh
+pixi run -e benchmark python tests/scripts/run_hydraulic_dagger_benchmark.py \
+    --exe build/lsdtt-hydraulic-routing \
+    --dagger-root ../DAGGER \
+    --dagger-ref tests/scripts/dagger_graphflood_reference.py \
+    --scenario stationary_fixed \
+    --work-dir build/hydraulic_benchmark_stationary \
+    --write-json \
+    --check
+```
+
+The benchmark writes `hydraulic_benchmark_results.csv` and exits 77 (skip)
+when optional DAGGER dependencies are unavailable. In `--check` mode it enforces
+both nodata-mask compatibility and pinned parity tolerances.
+
+Real-terrain parity (fetched fixture in `tests/data/dem_cache/`) uses the same
+harness. Pass `--fetch-exe` so the driver can fetch on demand with
+`lsdtt-fetch-raster`:
+
+```sh
+pixi run -e benchmark python tests/scripts/run_hydraulic_dagger_benchmark.py \
+    --exe build/lsdtt-hydraulic-routing \
+    --fetch-exe build/lsdtt-fetch-raster \
+    --dagger-root ../DAGGER \
+    --dagger-ref tests/scripts/dagger_graphflood_reference.py \
+    --fixture alpine_small \
+    --scenario stationary_fixed \
+    --work-dir build/hydraulic_benchmark/alpine_small_stationary \
+    --write-json \
+    --check
+```
+
+The pinned tolerance set currently covers `tiny_dem.asc` and `alpine_small`.
+
+CTest wiring (`-DLSDTT_ENABLE_BENCHMARKS=ON`) registers
+`benchmark_hydraulic_dagger_*` with the same skip-77 contract.
+
+Hydraulic module test outcomes (2026-07-26):
+
+| Test set | Command | Outcome |
+|---|---|---|
+| unit properties | `ctest --test-dir build -R unit_hydraulic_routing --output-on-failure` | pass |
+| CLI smoke/failure | `ctest --test-dir build -R "smoke_hydraulic_routing|failure_hydraulic_routing_invalid_mode" --output-on-failure` | pass |
+| DAGGER parity (checked) | `ctest --test-dir build -R benchmark_hydraulic_dagger --output-on-failure` | pass (4/4: tiny + alpine, stationary + transient) |
+
+Current checked parity fixtures/scenarios:
+
+| fixture | scenario | result row status |
+|---|---|---|
+| `tiny_dem.asc` | `stationary_fixed`, `transient_dynamic` | `phase4_checked` |
+| `alpine_small` | `stationary_fixed`, `transient_dynamic` | `phase4_checked` |
+
+The latest checked benchmark rows are written under:
+
+- `build/tests/hydraulic_benchmark/stationary_fixed_tiny_dem.asc/hydraulic_benchmark_results.csv`
+- `build/tests/hydraulic_benchmark/transient_dynamic_tiny_dem.asc/hydraulic_benchmark_results.csv`
+- `build/tests/hydraulic_benchmark/stationary_fixed_alpine_small/hydraulic_benchmark_results.csv`
+- `build/tests/hydraulic_benchmark/transient_dynamic_alpine_small/hydraulic_benchmark_results.csv`
+
 ### TopoToolbox — the D8 reference
 
 Because RichDEM cannot be used to check D8 (§5.1), TopoToolbox's Python package
