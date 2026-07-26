@@ -159,6 +159,30 @@ constexpr double tc2_cronus_lsdn = 15.0;
 //     lat 70 deg where Rc ~ 0.  Frozen at 55 % purely as a REGRESSION GUARD on
 //     our own numbers.
 constexpr double tc2_cronus_lsdn_modern = 55.0;
+// L12 - the DEM-free OCTOPUS LSDn POINT kernel oracle (lsdn plan Phase 6(i)),
+// measured-then-frozen 2026-07-26 over the 50 basins of the three tracked
+// datasets.  Percent, (OCTOPUS EBEL - lsdtt)/lsdtt, at the matched sample age
+// t = Gamma_sp/eps.  These are RESULTS and REGRESSION GUARDS on our own kernel,
+// never accuracy targets, and must not be widened to absorb a surprise.
+//   - KERNEL ALONE (Balco's LSDn-calibrated P0 substituted, so the ~2 % SLHL P0
+//     convention of Sec3.2 is excluded): measured min -1.18, max +16.08, mean
+//     +4.34 over 50 basins.  The mean lands essentially on the INDEPENDENT
+//     Phase 5 cross-check of the same kernel against CRONUS v3's own LSDn column
+//     (+4.13 % for Be-10, recorded above) - two different routes, the same
+//     answer, which is the correctness signal for this test.
+//     Band frozen at 20 % on the worst |pct| (measured worst 16.08).
+//   - lsdtt3's OWN P0: measured min +0.84, max +18.47, mean +6.54.  Frozen at
+//     23 % (measured worst 18.47).
+// The per-basin SPREAD is dominated by EROSION RATE, not by position: over these
+// 50 basins the residual correlates with log(eps) at r = +0.54 (and with
+// t = Gamma/eps at r = -0.59) but with centroid latitude at only -0.18, with
+// pressure at -0.07 and with total shielding at -0.20.  dibiase2010 sits at the
+// same latitude as clapp2002 yet has a 3x larger mean residual, and differs from
+// it only in eroding up to 10x faster.  That is the muon-scheme signature
+// (Sec3.6) plus the time-averaging approximation (Sec3.5), which is exactly what
+// the residual is attributed to - not a defect on either side.
+constexpr double lsdn_octopus_point = 20.0;
+constexpr double lsdn_octopus_point_lsdttP0 = 23.0;
 }
 
 // =============================================================================
@@ -1538,6 +1562,358 @@ void phase7_TC2_cronus_lsdn_comparison(const lsdtt::CrnNcData& nc,
           "worst = " + std::to_string(st[0].worst) + " % (n=" +
               std::to_string(st[0].n) + ")");
     check("csv: cronus_comparison_lsdn.csv written", csv.good());
+}
+
+// =============================================================================
+// L12 - the DEM-FREE OCTOPUS LSDn point KERNEL oracle (lsdn plan Phase 6(i))
+// =============================================================================
+
+// One row of the frozen tests/expected/cosmo/octopus_lsdn_point_reference.csv,
+// harvested by tests/scripts/harvest_octopus.py --point-reference.
+struct octopus_point_row
+{
+    std::string sample, dataset, bestnd;
+    double centr_lat = 0.0, atm_press = 0.0, outlet_lon = 0.0;
+    double ebel = 0.0, ebelns = 0.0;
+    double be10nc = 0.0;
+    double betopo = 1.0, beself = 1.0, besnow = 1.0;
+    double ebe_gcmyr = 0.0, ebe_mmkyr = 0.0;
+    double elev_ave = 0.0, area = 0.0;
+};
+
+// Reads the frozen point reference by COLUMN NAME rather than position, so the
+// harvester may add context columns without silently shifting the physics ones.
+// Returns false when the artefact has not been harvested; never touches the
+// network and never writes the file.
+bool load_octopus_point_reference(const std::string& ref_path,
+                                  std::vector<octopus_point_row>& rows)
+{
+    std::ifstream in(ref_path);
+    if (!in.good()) return false;
+
+    // Python's csv module writes CRLF, so the last field of every line - header
+    // included - arrives with a trailing '\r'.  Strip it: leaving it in silently
+    // turned the final column into a name that never matched and a NaN that no
+    // check would have caught.
+    const auto split = [](const std::string& s)
+    {
+        std::vector<std::string> out;
+        std::string field;
+        std::istringstream ls(s);
+        while (std::getline(ls, field, ','))
+        {
+            while (!field.empty() && (field.back() == '\r' || field.back() == '\n'))
+                field.pop_back();
+            out.push_back(field);
+        }
+        return out;
+    };
+
+    std::map<std::string, std::size_t> col;
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty() || line[0] == '#') continue;
+        const auto f = split(line);
+        if (col.empty())                      // first non-comment line = header
+        {
+            for (std::size_t i = 0; i < f.size(); ++i) col[f[i]] = i;
+            continue;
+        }
+        const auto num = [&](const char* name) -> double
+        {
+            const auto it = col.find(name);
+            if (it == col.end() || it->second >= f.size()
+                || f[it->second].empty())
+                return std::numeric_limits<double>::quiet_NaN();
+            return std::stod(f[it->second]);
+        };
+        const auto str = [&](const char* name) -> std::string
+        {
+            const auto it = col.find(name);
+            return (it == col.end() || it->second >= f.size())
+                       ? std::string() : f[it->second];
+        };
+        octopus_point_row r;
+        r.sample     = str("sample");
+        r.dataset    = str("dataset");
+        r.bestnd     = str("BESTND");
+        r.centr_lat  = num("CENTR_LAT");
+        r.atm_press  = num("ATM_PRESS");
+        r.outlet_lon = num("OUTLET_LON");
+        r.ebel       = num("EBEL");
+        r.ebelns     = num("EBELNS");
+        r.be10nc     = num("BE10NC");
+        r.betopo     = num("BETOPO");
+        r.beself     = num("BESELF");
+        r.besnow     = num("BESNOW");
+        r.ebe_gcmyr  = num("EBE_GCMYR");
+        r.ebe_mmkyr  = num("EBE_MMKYR");
+        r.elev_ave   = num("ELEV_AVE");
+        r.area       = num("AREA");
+        if (!r.sample.empty()) rows.push_back(r);
+    }
+    return !rows.empty();
+}
+
+// L12 - OCTOPUS lumped-mode KERNEL oracle (lsdn plan Phase 6 deliverable (i)).
+//
+// THIS VALIDATES THE LSDn SCALING KERNEL, NOT lsdtt3's PRODUCT.  Read the test
+// name and the emitted CSV that way and no other way: nothing here says
+// "lsdtt3 agrees (or disagrees) with OCTOPUS" as a basin-averaged erosion-rate
+// result.  lsdtt3's product is its PER-PIXEL LSDn production; per-pixel versus
+// lumped is a separate, first-class scientific result (L13), and the per-pixel
+// number must never be tuned toward EBEL.
+//
+// Why the comparison is DEM-FREE.  OCTOPUS does not compute LSDn from a DEM at
+// all.  Per Saktura et al. (2025, GChron 7:113), CAIRN implements only the
+// time-independent Stone-Lal scheme; for LSDn each basin is reduced to two
+// scalars -- CENTR_LAT (the basin centroid latitude) and ATM_PRESS (an effective
+// basin-averaged pressure, itself iterated so that it reproduces the spatially
+// averaged STONE-LAL production) -- which are then fed to the Balco et al.
+// (2008) v3 point calculator through RIVERSAND.  EBEL is that point result.  So
+// the matched test is: evaluate lsdn_scaling() at exactly (CENTR_LAT,
+// ATM_PRESS), invert the measured concentration, compare to EBEL.  No DEM, no
+// delineation, no COP30-vs-original confound - the residual isolates the
+// scaling kernel alone, which is what makes this cheap enough for default CI.
+//
+// KNOWN CAVEAT, recorded and NOT corrected here: ATM_PRESS is calibrated against
+// Stone-Lal, so it is strictly the wrong effective pressure for LSDn, which has
+// a different pressure dependence.  That is an OCTOPUS-side systematic to
+// quantify (L13's job), not truth and not a bug on either side.
+//
+// The residual is EXPECTED TO BE NON-ZERO, and is attributed to:
+//   1. Muon scheme - ours is the sum-of-exponentials BraucherBorchers model,
+//      v3's is Balco model-1A (Sec3.6); measured +1.8...+6.65 % for St.
+//   2. P0 convention (Sec3.2) - we keep lsdtt3's BraucherBorchers P0 rather than
+//      Balco's LSDn-calibrated refP_LSDn * LSDn_ref, an ~2 % SLHL offset.  As in
+//      T-C2(LSDn) this is reported BOTH ways, and the "balcoP0" columns are the
+//      ones that judge the kernel alone.
+//   3. Time averaging (Sec3.5) - a single sample age against v3's
+//      exhumation-weighted integral, plus the 2010 "now" assumption.
+//   4. Oracle quantisation - OCTOPUS publishes EBEL to 3 significant figures,
+//      which alone is ~0.5 % of noise on the comparison.
+// The matched sample age is t = Gamma_sp / eps, the erosional integration
+// timescale, exactly as T-C2(LSDn) pass 1 uses, so the two stay comparable.
+void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
+                                            const std::string& expected_dir,
+                                            const std::string& out_dir)
+{
+    if (!nc.lsdn_loaded)
+    {
+        std::cout << "NOTE  L12 skipped: no LSDn grids in the bundled nc\n";
+        check("L12: OCTOPUS point kernel oracle (SKIPPED - LSDn grids not bundled)",
+              true);
+        return;
+    }
+
+    const std::string ref_path = expected_dir + "/octopus_lsdn_point_reference.csv";
+    std::vector<octopus_point_row> ref;
+    if (!load_octopus_point_reference(ref_path, ref))
+    {
+        std::cout << "NOTE  L12 skipped: no frozen OCTOPUS point reference at "
+                  << ref_path << "\n"
+                  << "      (harvest once with tests/scripts/harvest_octopus.py "
+                     "--point-reference --freeze)\n";
+        check("L12: OCTOPUS point kernel oracle (SKIPPED - reference not harvested)",
+              true);
+        return;
+    }
+
+    lsdtt::lsdtt_crn_parameters cp;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    // UNITS.  EBEL/EBELNS are published in mm/kyr; lsdtt3 inverts to an effective
+    // erosion rate in g cm^-2 yr^-1.  1 mm/kyr = 1e-4 cm/yr, so
+    //     eps [g cm^-2 yr^-1] = EBEL [mm/kyr] * 1e-4 * rho [g cm^-3].
+    // rho is NOT assumed: OCTOPUS publishes the same St rate in both units, and
+    // EBE_GCMYR / (EBE_MMKYR * 1e-4) gives 2.6474-2.6521 over these 50 basins
+    // (mean 2.6499), i.e. 2.650 to the precision of the 4-significant-figure
+    // EBE_GCMYR.  The implied density is recomputed per row below and checked,
+    // so a change in OCTOPUS's convention shows up as a failure rather than a
+    // silent unit error.
+    const double rho_g_cm3 = 2.650;
+
+    // Balco's LSDn-calibrated SLHL production, built from our own packed grid -
+    // identical construction to T-C2(LSDn); see the refP_LSDn provenance note
+    // there (v3 make_consts_v3.m lines 261-287, harvested 2026-07-26).
+    const double refP_LSDn_be10 = 0.849;
+    const double P0_balco =
+        refP_LSDn_be10 * lsdtt::lsdtt_crn_parameters::lsdn_grid_value(
+                             nc, "Be10", 0.0, 1013.25, nc.lsdn_sphi[0]);
+
+    csv_writer csv(out_dir + "/cosmo_lsdn_point_kernel_oracle.csv",
+                   "dataset,sample,octopus_field,centr_lat,outlet_lon,"
+                   "atm_press_hPa,elev_ave_m,area_km2,s_tot_shielding,t_yr,"
+                   "lsdn_scaling,erate_lsdtt_gcm2yr,erate_octopus_gcm2yr,pct_diff,"
+                   "erate_lsdtt_balcoP0_gcm2yr,pct_diff_balcoP0,"
+                   "pct_diff_unshielded,rho_implied_g_cm3,"
+                   "octopus_St_mm_kyr,octopus_LSDn_over_St");
+
+    struct band_stats
+    {
+        double lo = 1e30, hi = -1e30, sum = 0.0, worst = 0.0;
+        int n = 0;
+        void add(double pct)
+        {
+            lo = std::min(lo, pct); hi = std::max(hi, pct);
+            sum += pct; worst = std::max(worst, std::abs(pct)); ++n;
+        }
+        double mean() const { return n ? sum / n : 0.0; }
+    };
+    // [0] = EBEL (snow-shielded), [1] = EBELNS (no snow shielding).
+    band_stats st[2], st_balco[2], st_unshielded[2];
+    bool inverted_ok = true, pressure_in_grid = true, density_ok = true;
+
+    const double gamma_sp =
+        ref_params_from_scheme("BraucherBorchers", "Be10").Gamma[0];
+
+    for (const auto& r : ref)
+    {
+        // ATM_PRESS must sit inside the LSDn grid's pressure axis (300:2:1058
+        // hPa) for the comparison to be an interpolation rather than a clamp.
+        if (!(r.atm_press >= 300.0 && r.atm_press <= 1058.0))
+            pressure_in_grid = false;
+        const double rho_implied =
+            (r.ebe_mmkyr > 0.0) ? r.ebe_gcmyr / (r.ebe_mmkyr * 1.0e-4) : nan;
+        if (!(std::abs(rho_implied - rho_g_cm3) < 0.02)) density_ok = false;
+
+        for (int variant = 0; variant < 2; ++variant)
+        {
+            const char*  field   = (variant == 0) ? "EBEL" : "EBELNS";
+            const double e_mmkyr = (variant == 0) ? r.ebel : r.ebelns;
+            if (!std::isfinite(e_mmkyr) || !(e_mmkyr > 0.0)) continue;
+            const double e_octopus = e_mmkyr * 1.0e-4 * rho_g_cm3;
+
+            // Shielding, matched to what the OCTOPUS field means.  EBELNS is the
+            // no-snow-shielding control and EBEL == EBELNS exactly where no snow
+            // shielding applies, so snow shielding is the only difference between
+            // them; topographic and self shielding apply to both.
+            const double shield = r.betopo * r.beself
+                                  * ((variant == 0) ? r.besnow : 1.0);
+
+            // Pass 0 gets a first erosion rate from the modern field; pass 1
+            // re-evaluates at t = Gamma_sp / eps, the erosional integration
+            // timescale the nuclide actually samples.  Only pass 1 is reported.
+            double eps = nan, sf = nan, t_yr = 0.0;
+            double eps_unshielded = nan;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                if (pass == 1)
+                {
+                    if (!(eps > 0.0)) { inverted_ok = false; break; }
+                    t_yr = gamma_sp / eps;
+                }
+                sf = cp.lsdn_scaling("Be10", r.centr_lat, r.outlet_lon,
+                                     r.atm_press, t_yr, nc);
+                ref_params p =
+                    ref_params_scaled("BraucherBorchers", "Be10", sf * shield);
+                eps = ref_invert_erate(p, r.be10nc);
+                if (!(eps > 0.0)) { inverted_ok = false; break; }
+            }
+            if (!(eps > 0.0)) continue;
+
+            const double pct = 100.0 * (e_octopus - eps) / eps;
+            st[variant].add(pct);
+
+            // Kernel alone: re-invert with Balco's LSDn-calibrated P0 in place of
+            // lsdtt3's, so the reported residual excludes the known ~2 % SLHL
+            // offset.  This is the column directly comparable with the Phase 5
+            // CRONUS-v3 cross-check (+4.13 % mean for Be-10 at t = Gamma/eps).
+            double eps_b = nan, pct_b = nan;
+            {
+                ref_params pb =
+                    ref_params_scaled("BraucherBorchers", "Be10", sf * shield);
+                pb.P0 = P0_balco;
+                eps_b = ref_invert_erate(pb, r.be10nc);
+                if (eps_b > 0.0)
+                {
+                    pct_b = 100.0 * (e_octopus - eps_b) / eps_b;
+                    st_balco[variant].add(pct_b);
+                }
+            }
+
+            // Sensitivity column, reported not asserted: the same comparison with
+            // NO shielding applied on our side.  It bounds how much of the
+            // residual could be a mismatch in how OCTOPUS's point calculator was
+            // handed the basin's shielding factors.
+            double pct_u = nan;
+            {
+                ref_params pu =
+                    ref_params_scaled("BraucherBorchers", "Be10", sf);
+                eps_unshielded = ref_invert_erate(pu, r.be10nc);
+                if (eps_unshielded > 0.0)
+                {
+                    pct_u = 100.0 * (e_octopus - eps_unshielded) / eps_unshielded;
+                    st_unshielded[variant].add(pct_u);
+                }
+            }
+
+            // OCTOPUS's own LSDn/St ratio at this basin.  Reported because it is
+            // the cleanest diagnostic available for WHERE the spread comes from:
+            // at fixed (lat, P) the LSDn/St production ratio is fixed, so any
+            // basin-to-basin variation in this column is OCTOPUS-side and tracks
+            // erosion rate (i.e. muon fraction), not our kernel.
+            csv.row(r.dataset, r.sample, field, r.centr_lat, r.outlet_lon,
+                    r.atm_press, r.elev_ave, r.area, shield, t_yr, sf, eps,
+                    e_octopus, pct, eps_b, pct_b, pct_u, rho_implied,
+                    r.ebe_mmkyr,
+                    (r.ebe_mmkyr > 0.0) ? e_mmkyr / r.ebe_mmkyr : nan);
+        }
+    }
+
+    std::cout << "      L12 OCTOPUS LSDn POINT KERNEL oracle (DEM-free; validates "
+                 "the SCALING KERNEL,\n"
+                 "      not the product).  pct diff = 100*(OCTOPUS - lsdtt)/lsdtt, "
+                 "sample age = Gamma/eps:\n"
+              << std::setprecision(4)
+              << "        EBEL   (snow-shielded)   : min " << st[0].lo << " max "
+              << st[0].hi << " mean " << st[0].mean() << " over " << st[0].n
+              << " basins\n"
+              << "        EBELNS (no snow shield)  : min " << st[1].lo << " max "
+              << st[1].hi << " mean " << st[1].mean() << " over " << st[1].n
+              << " basins\n"
+              << "        Balco P0 removed (KERNEL ALONE), directly comparable with "
+                 "the Phase 5\n        CRONUS v3 cross-check (+4.13 % mean, Be-10 at "
+                 "t = Gamma/eps):\n"
+              << "        EBEL   (snow-shielded)   : min " << st_balco[0].lo
+              << " max " << st_balco[0].hi << " mean " << st_balco[0].mean()
+              << " over " << st_balco[0].n << " basins\n"
+              << "        EBELNS (no snow shield)  : min " << st_balco[1].lo
+              << " max " << st_balco[1].hi << " mean " << st_balco[1].mean()
+              << " over " << st_balco[1].n << " basins\n"
+              << "        sensitivity (lsdtt3 P0, EBEL) with NO shielding applied "
+                 "on our side: mean "
+              << st_unshielded[0].mean() << " vs " << st[0].mean()
+              << " shielded - shielding is not what drives the spread\n"
+              << "        CROSS-CHECK: the kernel-alone mean above should sit near "
+                 "the +4.13 % measured\n        by Phase 5 against CRONUS v3's own "
+                 "LSDn column (Be-10, t = Gamma/eps) - the same\n        kernel "
+                 "reached by a different route.\n"
+              << std::setprecision(17);
+
+    check("L12: every OCTOPUS concentration inverted under LSDn", inverted_ok);
+    check("L12: every ATM_PRESS lies inside the LSDn grid pressure axis "
+          "(300-1058 hPa), so the comparison interpolates rather than clamps",
+          pressure_in_grid);
+    check("L12: OCTOPUS's own EBE_GCMYR/EBE_MMKYR pair implies rho = 2.650 g/cm3 "
+          "on every basin (the mm/kyr -> g cm^-2 yr^-1 conversion is not assumed)",
+          density_ok);
+    // The asserted band is the KERNEL-ALONE comparison (Balco P0 substituted)
+    // against EBEL, at the matched sample age.  Measured first, then frozen; it
+    // is a REGRESSION GUARD on our own kernel, never an accuracy target, and it
+    // must not be widened to accommodate a surprise.
+    check("L12: LSDn kernel vs OCTOPUS EBEL point rates within the frozen band "
+          "(KERNEL, not product; Balco P0, sample age = Gamma/eps)",
+          st_balco[0].n > 0 && st_balco[0].worst < tol::lsdn_octopus_point,
+          "worst = " + std::to_string(st_balco[0].worst) + " % (n=" +
+              std::to_string(st_balco[0].n) + ")");
+    check("L12: the same with lsdtt3's own P0 inside its wider regression guard "
+          "(carries the ~2 % SLHL P0-convention offset as well as the kernel)",
+          st[0].n > 0 && st[0].worst < tol::lsdn_octopus_point_lsdttP0,
+          "worst = " + std::to_string(st[0].worst) + " % (n=" +
+              std::to_string(st[0].n) + ")");
+    check("csv: cosmo_lsdn_point_kernel_oracle.csv written", csv.good());
 }
 
 // The LSDn scaling surface for lsdviztools3 (lsdn plan Sec5, Phase 5): the
@@ -3988,6 +4364,7 @@ int main(int argc, char** argv)
         phase7_L6_invariants(crn_nc, out_dir);
         phase7_L7_stone_vs_lsdn(crn_nc, fx, test_data_dir, out_dir);
         phase7_TC2_cronus_lsdn_comparison(crn_nc, expected_dir, out_dir);
+        phase7_L12_octopus_point_kernel_oracle(crn_nc, expected_dir, out_dir);
         phase7_lsdn_scaling_surface_csv(crn_nc, out_dir);
         phase7_L10_surface_equivalence(crn_nc, out_dir);
         phase7_L11_resolution_sweep(crn_nc, out_dir);

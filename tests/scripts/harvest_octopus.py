@@ -90,6 +90,48 @@ WFS_ENDPOINT = "http://geoserver.octopusdata.org/geoserver/wfs"
 BASINS_TYPE = "be10-denude:crn_int_basins"
 OUTLETS_TYPE = "be10-denude:crn_int_outlets"
 
+# --scaling: which OCTOPUS 10Be rate fields populate published_erate_*.
+#   St     -- EBE_*, OCTOPUS's own CAIRN recalculation with time-independent
+#             Stone/Lal. The ONLY scheme CAIRN implements (Saktura et al. 2025,
+#             GChron 7:113); the default, so the tracked St artefacts never move.
+#   LSDn   -- EBEL, the Balco v3 point result at (CENTR_LAT, ATM_PRESS) obtained
+#             through RIVERSAND, WITH snow shielding.
+#   LSDnNS -- EBELNS, the same without snow shielding (EBELNS >= EBEL always, and
+#             == EBEL exactly where no snow shielding applies).
+# EBEL/EBELNS are published in mm/kyr only; there is no EBEL_GCMYR field, so the
+# g cm^-2 yr^-1 column is derived per basin with the density OCTOPUS itself used,
+# read off its own EBE_GCMYR/EBE_MMKYR pair (see octopus_rock_density).
+SCALING_FIELDS = {
+    "St":     {"mmkyr": "EBE_MMKYR", "err": "EBE_ERR",     "gcmyr": "EBE_GCMYR"},
+    "LSDn":   {"mmkyr": "EBEL",      "err": "EBEL_EXT",    "gcmyr": None},
+    "LSDnNS": {"mmkyr": "EBELNS",    "err": "EBELNS_EXT",  "gcmyr": None},
+}
+
+# Fields written by --point-reference (lsdn plan Phase 6 deliverable (i), L12).
+POINT_REFERENCE_FIELDS = [
+    # keys
+    "sample", "dataset", "study_id",
+    # the two scalars OCTOPUS reduces the basin to, and which L12 evaluates at
+    "CENTR_LAT", "ATM_PRESS",
+    # OUTLET_LON is NOT an OCTOPUS basin field: the schema has CENTR_LAT but no
+    # centroid longitude, and lsdn_scaling() needs a longitude because Holocene Rc
+    # is the great-circle distance to a MOVING paleopole. Taken from the basin's
+    # own outlet point (crn_int_outlets, the same source as the samples CSVs);
+    # over basins this small (<= 30 km2) outlet and centroid longitude differ by
+    # far less than the LSDn grid's Rc resolution. Documented approximation.
+    "OUTLET_LON",
+    # the oracle: Balco v3 LSDn point rates (mm/kyr) + internal/external sigma
+    "EBEL", "EBEL_INT", "EBEL_EXT", "EBELNS", "EBELNS_INT", "EBELNS_EXT",
+    # what L12 inverts: the measured concentration (already renormalised, §9b)
+    "BE10NC", "BE10NC_ERR", "BESTND",
+    # shielding: EBEL carries snow, EBELNS does not; both carry topo + self
+    "BETOPO", "BESELF", "BESNOW",
+    # the St pair, which pins the mm/kyr -> g cm^-2 yr^-1 density conversion
+    "EBE_GCMYR", "EBE_MMKYR",
+    # context only, never entering the inversion: residual vs elevation/area
+    "ELEV_AVE", "AREA",
+]
+
 # Sample-table column order -- MUST match the pilot dethier2014_samples.csv so the
 # harness (run_cosmo_validation.py) reads every dataset identically.
 SAMPLE_FIELDS = [
@@ -131,8 +173,31 @@ def polygon_bounds(geom):
     return min(lons), min(lats), max(lons), max(lats)
 
 
+def octopus_rock_density(props: dict):
+    """Rock density (g cm^-3) OCTOPUS used, read off its OWN St rate pair.
+
+    EBEL/EBELNS are published in mm/kyr only.  Rather than hard-code a density to
+    convert them, recover it from the basin's own EBE_GCMYR / EBE_MMKYR, which
+    OCTOPUS publishes as the same rate in both units:
+
+        EBE_GCMYR [g cm^-2 yr^-1] = EBE_MMKYR [mm/kyr] * 1e-4 [cm/yr per mm/kyr]
+                                    * rho [g cm^-3]
+
+    Over the 50 basins in the three tracked samples CSVs this gives 2.6474-2.6521
+    (mean 2.6499), i.e. rho = 2.650 to the precision of the published 4-significant
+    -figure EBE_GCMYR.  Returns None when either field is missing/zero.
+    """
+    try:
+        g, m = float(props["EBE_GCMYR"]), float(props["EBE_MMKYR"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return g / (m * 1.0e-4) if m else None
+
+
 def harvest(args) -> int:
-    print(f"Harvesting OCTOPUS study {args.study} -> dataset '{args.dataset}'")
+    scheme = SCALING_FIELDS[args.scaling]
+    print(f"Harvesting OCTOPUS study {args.study} -> dataset '{args.dataset}' "
+          f"(scaling {args.scaling})")
     basins = wfs_features(BASINS_TYPE, args.study)
     outlets = {f["properties"]["OBSID1"]: f
                for f in wfs_features(OUTLETS_TYPE, args.study)}
@@ -169,6 +234,16 @@ def harvest(args) -> int:
         lon, lat = outlets[oid]["geometry"]["coordinates"][:2]
         if sub and not (sub[0] <= lon <= sub[2] and sub[1] <= lat <= sub[3]):
             continue
+        # Selected rate pair (--scaling).  For LSDn/LSDnNS OCTOPUS publishes only
+        # mm/kyr, so the g cm^-2 yr^-1 column is derived with OCTOPUS's own density.
+        erate_mmkyr = p.get(scheme["mmkyr"], "")
+        erate_err = p.get(scheme["err"], "")
+        if scheme["gcmyr"]:
+            erate_gcmyr = p.get(scheme["gcmyr"], "")
+        else:
+            rho = octopus_rock_density(p)
+            erate_gcmyr = (f"{float(erate_mmkyr) * 1.0e-4 * rho:.6g}"
+                           if rho and erate_mmkyr not in (None, "") else "")
         poly_bounds.append(polygon_bounds(f["geometry"]))
         epsgs.append(int(p["PROJEPSGID"]))
         dbvers.append(p.get("DBVERNO"))
@@ -181,9 +256,9 @@ def harvest(args) -> int:
             "standardisation": p.get("BESTND", ""),
             "snow_shielding": p.get("BESNOW", ""),
             "octopus_topo_shield": p.get("BETOPO", ""),
-            "published_erate_gcm2yr": p.get("EBE_GCMYR", ""),
-            "published_erate_mm_kyr": p.get("EBE_MMKYR", ""),
-            "published_erate_mm_kyr_err": p.get("EBE_ERR", ""),
+            "published_erate_gcm2yr": erate_gcmyr,
+            "published_erate_mm_kyr": erate_mmkyr,
+            "published_erate_mm_kyr_err": erate_err,
             "elevation_ave_m": round(p["ELEV_AVE"]) if p.get("ELEV_AVE") is not None else "",
             "atm_pressure_hpa": p.get("ATM_PRESS", ""),
             "octopus_area_km2": area,
@@ -198,7 +273,12 @@ def harvest(args) -> int:
     rows.sort(key=lambda r: (float(r["elevation_ave_m"] or 0), r["sample_name"]))
 
     db_version = Counter(dbvers).most_common(1)[0][0] or "unknown"
-    calc = f"OCTOPUS_{db_version}_CAIRN_St_Braucher"
+    # The calculator differs BY SCHEME, and saying so matters: EBE_* is OCTOPUS's
+    # own CAIRN run, but EBEL/EBELNS are Balco v3 point evaluations at
+    # (CENTR_LAT, ATM_PRESS) reached through RIVERSAND -- a different code, a
+    # different reduction of the basin, not a CAIRN scheme switch.
+    calc = (f"OCTOPUS_{db_version}_CAIRN_St_Braucher" if args.scaling == "St"
+            else f"OCTOPUS_{db_version}_BalcoV3_{args.scaling}_point_RIVERSAND")
     for r in rows:
         r["published_calculator"] = calc
 
@@ -235,18 +315,33 @@ def harvest(args) -> int:
         f"#   OCTOPUS DBVERNO={db_version}   STUDYID={args.study}   "
         f"harvested {harvested}",
         "#",
-        "# Scaling: EBE_* is OCTOPUS's default Stone/Lal (St) recalculation; run "
-        "lsdtt-",
-        "# cosmo-tool in the matching (St) scheme for a like-for-like compare.",
+        f"# SCALING SCHEME: {args.scaling}. Run lsdtt-cosmo-tool in the matching "
+        f"scheme for a",
+        "# like-for-like compare. St = EBE_* (OCTOPUS's own CAIRN, Stone/Lal -- the "
+        "only",
+        "# scheme CAIRN implements); LSDn = EBEL and LSDnNS = EBELNS, which are "
+        "Balco v3",
+        "# POINT evaluations at (CENTR_LAT, ATM_PRESS) via RIVERSAND, not CAIRN "
+        "runs -- so",
+        "# an LSDn dataset here mixes the kernel residual with a per-pixel/lumped "
+        "difference",
+        "# (see the DEM-free kernel oracle, octopus_lsdn_point_reference.csv).",
         "# Columns: latitude/longitude = OCTOPUS basin OUTLET point "
         "(crn_int_outlets);",
-        "# published_erate_gcm2yr = EBE_GCMYR (the compared field); "
-        "published_erate_mm_kyr",
-        "# = EBE_MMKYR (+/- published_erate_mm_kyr_err = EBE_ERR); "
-        "octopus_topo_shield = BETOPO;",
-        "# snow_shielding = BESNOW; octopus_area_km2 = AREA; "
-        "atm_pressure_hpa = ATM_PRESS.",
+        f"# published_erate_mm_kyr = {scheme['mmkyr']} "
+        f"(+/- published_erate_mm_kyr_err = {scheme['err']});",
+        (f"# published_erate_gcm2yr = {scheme['gcmyr']} (the compared field);"
+         if scheme["gcmyr"] else
+         f"# published_erate_gcm2yr = {scheme['mmkyr']} x 1e-4 x rho (the compared "
+         f"field), rho"),
+        ("" if scheme["gcmyr"] else
+         "# recovered per basin from OCTOPUS's own EBE_GCMYR/EBE_MMKYR pair "
+         "(~2.650 g/cm3);"),
+        "# octopus_topo_shield = BETOPO; snow_shielding = BESNOW; "
+        "octopus_area_km2 = AREA;",
+        "# atm_pressure_hpa = ATM_PRESS.",
     ]
+    header = [h for h in header if h != ""]
     with open(samples_path, "w", newline="") as f:
         for h in header:
             f.write(h + "\n")
@@ -279,6 +374,11 @@ def harvest(args) -> int:
             "calculator": (
                 f"OCTOPUS {db_version} recalculation with CAIRN (Mudd et al. 2016), "
                 "default Stone/Lal 'St' scaling (EBE_* fields)."
+                if args.scaling == "St" else
+                f"OCTOPUS {db_version} {scheme['mmkyr']}: Balco et al. (2008) v3 "
+                "POINT calculator via RIVERSAND, evaluated at the CAIRN-reduced "
+                "(CENTR_LAT, ATM_PRESS) scalars -- NOT a CAIRN scheme (Saktura et "
+                "al. 2025, GChron 7:113)."
             ),
         },
         "octopus_source": {
@@ -302,8 +402,19 @@ def harvest(args) -> int:
             "subset_bbox_deg": args.subset_bbox or "none (whole study, area-filtered)",
             "area_filter_km2": {"min": args.min_area_km2, "max": args.max_area_km2},
             "max_rel_uncertainty": args.max_rel_uncert,
-            "scaling_scheme": ("St (Stone/Lal) -- EBE_MMKYR / EBE_GCMYR. OCTOPUS "
-                               "also stores EBEL/EBELNS (LSDn)."),
+            "scaling_scheme": args.scaling,
+            "scaling_scheme_note": (
+                "St (Stone/Lal) -- EBE_MMKYR / EBE_GCMYR, OCTOPUS's own CAIRN "
+                "recalculation. OCTOPUS also stores EBEL (LSDn, snow-shielded) and "
+                "EBELNS (LSDn, no snow shielding), which are Balco v3 point results."
+                if args.scaling == "St" else
+                f"{args.scaling} -- {scheme['mmkyr']} (+/- {scheme['err']}), a Balco "
+                "v3 POINT evaluation at (CENTR_LAT, ATM_PRESS). g cm^-2 yr^-1 "
+                "derived with OCTOPUS's own EBE_GCMYR/EBE_MMKYR density (~2.650). "
+                "This dataset therefore mixes the LSDn kernel residual with the "
+                "per-pixel/lumped difference and the DEM difference: a monitoring "
+                "band, not an oracle. The oracle is the DEM-free "
+                "octopus_lsdn_point_reference.csv (test L12)."),
         },
         "residual_expectation": {
             "_comment": [
@@ -395,15 +506,240 @@ def harvest(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# SECOND MODE -- --point-reference: the DEM-free L12 kernel oracle
+# --------------------------------------------------------------------------- #
+
+# Relative tolerance for the frozen-artefact regression check. Every harvested
+# quantity is a stored OCTOPUS database field, so a fresh query is bit-identical
+# unless the database itself moves; this absorbs only float formatting.
+POINT_REF_CHECK_REL_TOL = 1e-9
+
+# Compared as strings, not numbers: the AMS standard is a label, and a change in
+# it changes what the concentration MEANS (§9b). It must be reported, not averaged.
+POINT_REF_EXACT_COLS = ["sample", "dataset", "study_id", "BESTND"]
+
+
+def read_frozen_point_reference(path: Path) -> dict:
+    """Read the tracked artefact, skipping its '#' header. Keyed by dataset|sample."""
+    if not path.is_file():
+        return {}
+    with open(path, newline="") as f:
+        lines = [ln for ln in f if not ln.startswith("#")]
+    return {f"{r['dataset']}|{r['sample']}": r
+            for r in csv.DictReader(lines) if r.get("sample")}
+
+
+def check_against_frozen_point_reference(rows: list, out_path: Path) -> int:
+    """Compare a fresh harvest against the tracked artefact WITHOUT modifying it.
+
+    Same discipline as run_cosmo_production_isolation.py: the '# HARVESTED ...'
+    provenance line moves on every run, so rewriting the file by default would
+    dirty a tracked artefact without ever regression-checking its numbers. Only
+    the numbers are compared here; --freeze regenerates deliberately, for review.
+    """
+    frozen = read_frozen_point_reference(out_path)
+    if not frozen:
+        print(f"CHECK: no frozen artefact at {out_path}; run once with --freeze to "
+              "create a reference first.")
+        return 1
+
+    ok = True
+    for r in rows:
+        key = f"{r['dataset']}|{r['sample']}"
+        ref = frozen.get(key)
+        if ref is None:
+            print(f"[CHECK][FAIL] {key}: not in the frozen artefact")
+            ok = False
+            continue
+        for col in POINT_REFERENCE_FIELDS:
+            new_s, ref_s = str(r.get(col, "")), str(ref.get(col, ""))
+            if col in POINT_REF_EXACT_COLS:
+                if new_s != ref_s:
+                    print(f"[CHECK][FAIL] {key}.{col}: new={new_s!r} "
+                          f"frozen={ref_s!r} (must match exactly)")
+                    ok = False
+                continue
+            try:
+                new_v, ref_v = float(new_s), float(ref_s)
+            except ValueError:
+                if new_s != ref_s:
+                    print(f"[CHECK][FAIL] {key}.{col}: non-numeric and differing "
+                          f"(new={new_s!r} frozen={ref_s!r})")
+                    ok = False
+                continue
+            denom = abs(ref_v)
+            rel = abs(new_v - ref_v) / denom if denom else abs(new_v - ref_v)
+            if rel > POINT_REF_CHECK_REL_TOL:
+                print(f"[CHECK][FAIL] {key}.{col}: new={new_v:.9g} "
+                      f"frozen={ref_v:.9g} rel={rel:.3g}")
+                ok = False
+
+    missing = set(frozen) - {f"{r['dataset']}|{r['sample']}" for r in rows}
+    if missing:
+        print(f"[CHECK][FAIL] frozen basins absent from this harvest: "
+              f"{', '.join(sorted(missing))}")
+        ok = False
+
+    print(f"CHECK: {'PASS' if ok else 'FAIL'} (rel tol {POINT_REF_CHECK_REL_TOL:g}, "
+          f"{len(rows)} basins, artefact NOT modified)")
+    if not ok:
+        print("  If the change is intended, re-run with --freeze and review the diff.")
+    return 0 if ok else 1
+
+
+def read_selected_basins(published_dir: Path, dataset: str):
+    """(study_id, [OBSID, ...]) for the basins already selected by a tracked dataset.
+
+    The point reference deliberately reuses the SAME basin selection as the St
+    datasets, so the kernel oracle (L12) and the per-pixel product tier are
+    talking about the same landscapes and the two residuals are comparable.
+    """
+    manifest_path = published_dir / f"{dataset}_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    study = manifest["octopus_source"]["study_id"]
+    samples_path = published_dir / manifest["sample_table"]
+    with open(samples_path, newline="") as f:
+        lines = [ln for ln in f if not ln.startswith("#")]
+    obsids = [r["octopus_obsid"] for r in csv.DictReader(lines)
+              if r.get("octopus_obsid")]
+    return study, obsids
+
+
+def harvest_point_reference(args) -> int:
+    """Harvest CENTR_LAT/ATM_PRESS/EBEL*/EBELNS* for the already-selected basins."""
+    datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
+    pdir = Path(args.published_dir)
+    out_path = Path(args.point_reference_out)
+
+    rows, studies = [], []
+    for dataset in datasets:
+        study, obsids = read_selected_basins(pdir, dataset)
+        studies.append(f"{dataset}={study}")
+        print(f"{dataset}: STUDYID {study}, {len(obsids)} selected basins")
+        by_oid = {f["properties"]["OBSID1"]: f["properties"]
+                  for f in wfs_features(BASINS_TYPE, study)}
+        out_by_oid = {f["properties"]["OBSID1"]: f["geometry"]["coordinates"]
+                      for f in wfs_features(OUTLETS_TYPE, study)}
+        missing = [o for o in obsids if o not in by_oid or o not in out_by_oid]
+        if missing:
+            print(f"ERROR: OBSIDs absent from {study}: {missing}", file=sys.stderr)
+            return 1
+        for oid in obsids:
+            p = by_oid[oid]
+            row = {"sample": oid, "dataset": dataset, "study_id": study,
+                   "OUTLET_LON": f"{out_by_oid[oid][0]:.5f}"}
+            for col in POINT_REFERENCE_FIELDS:
+                if col in row:
+                    continue
+                v = p.get(col)
+                row[col] = "" if v is None else v
+            rows.append(row)
+
+    if not rows:
+        print("ERROR: no basins harvested", file=sys.stderr)
+        return 1
+
+    if not args.freeze:
+        return check_against_frozen_point_reference(rows, out_path)
+
+    harvested = datetime.date.today().isoformat()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="") as f:
+        f.write("# OCTOPUS LSDn POINT reference -- the DEM-free KERNEL oracle for "
+                "test L12.\n")
+        f.write("#\n")
+        f.write("# This file validates the LSDn SCALING KERNEL, not lsdtt3's "
+                "product. OCTOPUS does\n"
+                "# not compute LSDn from a DEM: per Saktura et al. (2025, GChron "
+                "7:113) CAIRN\n"
+                "# implements only time-independent Stone-Lal, and for LSDn it "
+                "reduces each basin\n"
+                "# to two scalars -- CENTR_LAT (centroid latitude) and ATM_PRESS "
+                "(the effective\n"
+                "# basin-averaged pressure, itself iterated to match the spatially "
+                "averaged\n"
+                "# STONE-LAL production) -- and feeds them to the Balco et al. "
+                "(2008) v3 point\n"
+                "# calculator via RIVERSAND. EBEL is that point result. So the "
+                "matched comparison\n"
+                "# is DEM-FREE: evaluate our LSDn kernel at exactly (CENTR_LAT, "
+                "ATM_PRESS), invert,\n"
+                "# compare to EBEL. No DEM, no delineation, no COP30-vs-original "
+                "confound; the\n"
+                "# residual isolates the scaling kernel alone.\n")
+        f.write("#\n")
+        f.write("# CAVEAT, to quantify and NOT to fix here: ATM_PRESS is calibrated "
+                "on Stone-Lal,\n"
+                "# so it is strictly the WRONG effective pressure for LSDn, which "
+                "has a different\n"
+                "# pressure dependence. That is a systematic to measure (test L13, "
+                "per-pixel vs\n"
+                "# lumped), not truth.\n")
+        f.write("#\n")
+        f.write(f"# HARVESTED {harvested} from the OCTOPUS WFS by "
+                f"tests/scripts/harvest_octopus.py --point-reference\n")
+        f.write(f"#   WFS: {WFS_ENDPOINT}\n")
+        f.write(f"#        typeName={BASINS_TYPE}, outputFormat=application/json, "
+                f"srsName=EPSG:4326\n")
+        f.write(f"#        CQL_FILTER STUDYID='...' per dataset: "
+                f"{', '.join(studies)}\n")
+        f.write("#   Basins are exactly those already selected by the tracked "
+                "<dataset>_samples.csv\n#   files, so L12 and the per-pixel tier "
+                "describe the same landscapes.\n")
+        f.write("#\n")
+        f.write("# FIELD NAMES confirmed against the live WFS DescribeFeatureType on "
+                "crn_int_basins\n"
+                "# (2026-07-26); the published field dictionary is incomplete, the "
+                "WFS schema is\n"
+                "# authoritative. EBEL/EBELNS are in mm/kyr (same units as "
+                "EBE_MMKYR); _INT/_EXT\n"
+                "# are Balco v3's internal/external uncertainty pair; NS = NO SNOW "
+                "SHIELDING\n"
+                "# (EBELNS >= EBEL always, == EBEL exactly where no snow shielding "
+                "applies).\n")
+        f.write("# EBE_GCMYR/EBE_MMKYR are carried so the mm/kyr -> g cm^-2 yr^-1 "
+                "conversion uses\n"
+                "# OCTOPUS's OWN density (their ratio gives 2.6474-2.6521, i.e. "
+                "2.650 g/cm3) rather\n"
+                "# than an assumed one. ELEV_AVE and AREA are context only and never "
+                "enter the\n"
+                "# inversion. BESTND is recorded because BE10NC is already "
+                "renormalised (plan §9b).\n")
+        f.write("# OUTLET_LON is the basin OUTLET longitude from crn_int_outlets, "
+                "NOT a basin field:\n"
+                "# OCTOPUS publishes CENTR_LAT with no centroid longitude, and "
+                "lsdn_scaling() needs\n"
+                "# one because Holocene Rc is the great-circle distance to a moving "
+                "paleopole. Over\n"
+                "# basins this small the outlet/centroid longitude difference is "
+                "negligible against\n"
+                "# the grid's Rc resolution -- a documented approximation, not a "
+                "harvested field.\n")
+        w = csv.DictWriter(f, fieldnames=POINT_REFERENCE_FIELDS)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+    print(f"\nFROZE artefact (--freeze): {out_path} ({len(rows)} basins)")
+    print("  This file is tracked. Review the diff before committing: a numeric "
+          "change here is a change in the ORACLE, not bookkeeping.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--study", required=True, help="OCTOPUS STUDYID, e.g. S014")
-    ap.add_argument("--dataset", required=True,
+    ap.add_argument("--study", help="OCTOPUS STUDYID, e.g. S014")
+    ap.add_argument("--dataset",
                     help="dataset name for the tracked files, e.g. clapp2002")
     ap.add_argument("--out", default="tests/expected/cosmo/published",
                     help="output directory for the tracked artefacts")
+    ap.add_argument("--scaling", choices=sorted(SCALING_FIELDS), default="St",
+                    help="which OCTOPUS rate fields populate published_erate_*: "
+                         "St = EBE_* (CAIRN Stone/Lal, the default so the tracked "
+                         "St artefacts never move), LSDn = EBEL, LSDnNS = EBELNS "
+                         "(Balco v3 point results, snow-shielded / not)")
     ap.add_argument("--max-area-km2", type=float, default=30.0)
     ap.add_argument("--min-area-km2", type=float, default=0.0)
     ap.add_argument("--max-rel-uncert", type=float, default=None,
@@ -416,7 +752,35 @@ def main() -> int:
                     help="override the OCTOPUS PROJEPSGID for the DEM warp")
     ap.add_argument("--threshold-px", type=int, default=250)
     ap.add_argument("--snap-radius", type=int, default=20)
+
+    # --- second mode: the DEM-free LSDn point reference (L12 kernel oracle) ---
+    ap.add_argument("--point-reference", action="store_true",
+                    help="harvest CENTR_LAT/ATM_PRESS/EBEL*/EBELNS* for the basins "
+                         "already selected by the tracked <dataset>_samples.csv "
+                         "files, into the frozen L12 kernel oracle")
+    ap.add_argument("--datasets", default="dethier2014,clapp2002,dibiase2010",
+                    help="comma-separated tracked datasets to harvest "
+                         "(--point-reference only)")
+    ap.add_argument("--published-dir", default="tests/expected/cosmo/published",
+                    help="directory holding <dataset>_samples.csv + _manifest.json")
+    ap.add_argument("--point-reference-out",
+                    default="tests/expected/cosmo/octopus_lsdn_point_reference.csv",
+                    help="the frozen point-reference artefact")
+    ap.add_argument("--freeze", action="store_true",
+                    help="REGENERATE the tracked frozen artefact instead of "
+                         "checking against it. Deliberate, reviewed act: the "
+                         "artefact is tracked and a numeric change in it is a "
+                         "change in the oracle. Default is check-only.")
     args = ap.parse_args()
+
+    if args.point_reference:
+        try:
+            return harvest_point_reference(args)
+        except Exception as exc:  # noqa: BLE001
+            print(f"POINT-REFERENCE HARVEST FAILED: {exc}", file=sys.stderr)
+            return 1
+    if not args.study or not args.dataset:
+        ap.error("--study and --dataset are required (unless --point-reference)")
     try:
         return harvest(args)
     except Exception as exc:  # noqa: BLE001
