@@ -52,6 +52,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -138,6 +139,26 @@ constexpr double lsdn_node    = 1e-15;   // L4 grid-node round trip; worst 3.47e
 // max 1.14456; and per pixel on the 40x31 fixture, which is well inside that.
 constexpr double lsdn_stone_ratio_lo = 0.80;  // L7 LSDn/Stone band, low
 constexpr double lsdn_stone_ratio_hi = 1.18;  // L7 LSDn/Stone band, high
+// Phase 5 frozen comparison against the CRONUS v3 LSDn column (measured-then-
+// frozen 2026-07-26; lsdn plan Phase 5).  Percent, (CRONUS - lsdtt)/lsdtt, and
+// positive throughout - CRONUS is higher.  These are RESULTS, not error terms
+// (plan Sec3.6): the residual carries the P0 convention (~2 %), the muon-scheme
+// difference (+1.8...+6.65 % measured for St in Sec9b) and the 2010 "now"
+// assumption, and must never be tuned toward zero.
+//   - MATCHED comparison, sample age = Gamma_sp/eps, the erosional integration
+//     timescale (the like-for-like analogue of v3's exhumation-weighted
+//     integral): measured min +1.40, max +12.27, mean +6.06 over 30 samples;
+//     Be-10 with Balco's LSDn-calibrated P0 substituted, i.e. the scaling
+//     kernel alone, min +0.97, max +10.00, mean +4.13.  Band frozen at 15 %.
+constexpr double tc2_cronus_lsdn = 15.0;
+//   - MODERN-field mode, sample age = 0 (the CLI default).  NOT an accuracy
+//     claim: it evaluates the present-day field against v3's time-integrated
+//     one, so it measures the geomagnetic correction itself.  Measured min
+//     +2.24, max +46.91, mean +16.96; the worst rows are all lat 0-20 deg at
+//     eps = 3e-4 (longest integration time, largest Rc) and the best are at
+//     lat 70 deg where Rc ~ 0.  Frozen at 55 % purely as a REGRESSION GUARD on
+//     our own numbers.
+constexpr double tc2_cronus_lsdn_modern = 55.0;
 }
 
 // =============================================================================
@@ -806,6 +827,26 @@ ref_params ref_params_scaled(const std::string& scheme,
     return p;
 }
 
+// Inverts CAIRN Eq. (12) at the surface: the steady erosion rate that
+// reproduces a measured concentration.  ref_conc_surface is strictly
+// decreasing in eps, so plain bisection is unconditionally convergent and
+// needs no derivative; 200 halvings of [1e-9, 1e2] leave the bracket far
+// below double precision, so nothing of the residual comes from the solver.
+// Returns -1 when the concentration lies outside the bracket.
+double ref_invert_erate(const ref_params& p, double conc)
+{
+    double lo = 1e-9, hi = 1.0e2;             // g cm^-2 yr^-1
+    if (ref_conc_surface(p, lo, 0.0) < conc) return -1.0;   // above saturation
+    if (ref_conc_surface(p, hi, 0.0) > conc) return -1.0;
+    for (int i = 0; i < 200; ++i)
+    {
+        const double mid = 0.5 * (lo + hi);
+        if (ref_conc_surface(p, mid, 0.0) > conc) lo = mid;
+        else                                      hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
 // E7 - analytic reference (double precision, this file) vs the library's
 // particle integrator (compute_ss via calculate_crn_concentration_raster_whole),
 // point and depth-integrated, shielded and unshielded, across an eps sweep.
@@ -1202,26 +1243,15 @@ void phase3_write_cronus_fixture(const std::string& out_dir)
           csv.good());
 }
 
-// T-C2 / T-C4 - comparison against the FROZEN CRONUS v3 reference
-// (tests/expected/cosmo/cronus_v3_reference.csv, fetched once by
-// tests/scripts/fetch_cronus_reference.py).  Skips with a NOTE when the
-// reference has not been fetched yet; never touches the network.
-void phase3_TC2_cronus_comparison(const std::string& expected_dir,
-                                  const std::string& out_dir)
+// Reads the FROZEN CRONUS v3 reference table into a map keyed
+// "name|nuclide|scheme" (schema name,nuclide,scheme,erate_gcm2yr,
+// unc_int_gcm2yr,unc_ext_gcm2yr).  Returns false when the reference has not
+// been fetched; never touches the network, and never writes the file.
+bool load_cronus_reference(const std::string& ref_path,
+                           std::map<std::string, double>& cronus)
 {
-    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
     std::ifstream in(ref_path);
-    if (!in.good())
-    {
-        std::cout << "NOTE  T-C2 skipped: no frozen CRONUS reference at "
-                  << ref_path << "\n"
-                  << "      (fetch once with tests/scripts/fetch_cronus_reference.py)\n";
-        check("T-C2: CRONUS comparison (SKIPPED - reference not fetched)", true);
-        return;
-    }
-
-    // reference rows: name,nuclide,scheme,erate_gcm2yr,erate_mMyr,unc_int_mMyr
-    std::map<std::string, double> cronus;   // key: name|nuclide|scheme
+    if (!in.good()) return false;
     std::string line;
     while (std::getline(in, line))
     {
@@ -1234,6 +1264,26 @@ void phase3_TC2_cronus_comparison(const std::string& expected_dir,
         std::getline(ls, scheme, ',');
         std::getline(ls, field, ',');
         cronus[name + "|" + nuc + "|" + scheme] = std::stod(field);
+    }
+    return true;
+}
+
+// T-C2 / T-C4 - comparison against the FROZEN CRONUS v3 reference
+// (tests/expected/cosmo/cronus_v3_reference.csv, fetched once by
+// tests/scripts/fetch_cronus_reference.py).  Skips with a NOTE when the
+// reference has not been fetched yet; never touches the network.
+void phase3_TC2_cronus_comparison(const std::string& expected_dir,
+                                  const std::string& out_dir)
+{
+    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
+    std::map<std::string, double> cronus;   // key: name|nuclide|scheme
+    if (!load_cronus_reference(ref_path, cronus))
+    {
+        std::cout << "NOTE  T-C2 skipped: no frozen CRONUS reference at "
+                  << ref_path << "\n"
+                  << "      (fetch once with tests/scripts/fetch_cronus_reference.py)\n";
+        check("T-C2: CRONUS comparison (SKIPPED - reference not fetched)", true);
+        return;
     }
 
     const auto samples = make_cronus_fixture_samples();
@@ -1276,6 +1326,252 @@ void phase3_TC2_cronus_comparison(const std::string& expected_dir,
           n_compared > 0 && worst_st < tol::tc2_cronus,
           "worst = " + std::to_string(worst_st) + " % (n=" + std::to_string(n_compared) + ")");
     check("csv: cronus_comparison.csv written", csv.good());
+}
+
+// T-C2(LSDn) - the Phase 5 extension of the T-C2 machinery (lsdn plan Sec5,
+// Phase 5).  Same 15-sample fixture, same FROZEN reference file, but the
+// fixture concentrations are now inverted with lsdtt3's OWN LSDn scaling in
+// the slot Stone occupies, and compared against the 30 LSDn rows already
+// frozen in cronus_v3_reference.csv.  No network, and the reference is only
+// ever read.
+//
+// THIS RESIDUAL IS NOT AN ERROR TERM AND MUST NEVER BE TUNED TOWARD ZERO
+// (lsdn plan Sec3.6, Q2).  Three components are expected by construction:
+//   1. P0 convention - we keep lsdtt3's BraucherBorchers P0 rather than
+//      Balco's LSDn-calibrated refP_LSDn * LSDn_ref (Sec3.2), an ~2 % SLHL
+//      offset.  Reported BOTH ways below, so the scaling kernel is judged on
+//      its own: the "balcoP0" columns re-invert with refP_LSDn * LSDn_ref,
+//      the LSDn_ref taken from our own packed grid rather than a literal.
+//      refP_LSDn is 0.849 for Be-10 quartz and 0.819 for Al-26 quartz, both
+//      harvested from v3 make_consts_v3.m (see the derivation below), so this
+//      attribution now covers BOTH fixture nuclides.
+//   2. Muon scheme - ours is the sum-of-exponentials BraucherBorchers model,
+//      v3's is Balco model-1A (Sec3.6).
+//   3. "Now" is 2010 CE, the records' reference year; lsdtt3 has no
+//      sample_year input yet, so v3's collection-year shift is not applied.
+// Two ages are emitted per sample: t_yr = 0 (the CLI default, "modern") and
+// t_yr = Gamma_sp / eps, the erosional integration timescale actually sampled
+// by the nuclide - the closest single-age analogue of v3's exhumation-weighted
+// integral (Sec3.5's "deliberate divergence, documented and quantified").
+void phase7_TC2_cronus_lsdn_comparison(const lsdtt::CrnNcData& nc,
+                                       const std::string& expected_dir,
+                                       const std::string& out_dir)
+{
+    if (!nc.lsdn_loaded)
+    {
+        std::cout << "NOTE  T-C2(LSDn) skipped: no LSDn grids in the bundled nc\n";
+        check("T-C2(LSDn): comparison (SKIPPED - LSDn grids not bundled)", true);
+        return;
+    }
+
+    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
+    std::map<std::string, double> cronus;   // key: name|nuclide|scheme
+    if (!load_cronus_reference(ref_path, cronus))
+    {
+        std::cout << "NOTE  T-C2(LSDn) skipped: no frozen CRONUS reference at "
+                  << ref_path << "\n";
+        check("T-C2(LSDn): comparison (SKIPPED - reference not fetched)", true);
+        return;
+    }
+
+    lsdtt::lsdtt_crn_parameters cp;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    // Balco's LSDn-calibrated SLHL production, built from OUR OWN packed grid so
+    // it tracks the shipped data rather than a hard-coded literal:
+    //
+    //   P0_balco(nuclide) = refP_LSDn(nuclide) x LSDn_ref(nuclide)
+    //   LSDn_ref          = b(Rc=0, p=1013.25) + S_ref * m(Rc=0, p=1013.25)
+    //
+    // refP_LSDn are DIMENSIONLESS calibration factors, harvested 2026-07-26 from
+    // v3 make_consts_v3.m lines 261-287.  That file assembles 8-element vectors
+    // in the order given by consts.nuclides (line 153):
+    //
+    //   {N3quartz, N3olivine, N3pyroxene, N10quartz, N14quartz, N21quartz,
+    //    N26quartz, N10pyroxene}
+    //
+    // so index 4 = Be-10 quartz and index 7 = Al-26 quartz.  Both are described
+    // there as "calibration from CRONUS primary", dated 20161204:
+    //
+    //   refP_LSDn(4) = 0.849   +/- 5.9 %   Be-10 quartz
+    //   refP_LSDn(7) = 0.819   +/- 8.6 %   Al-26 quartz  (bootstrap)
+    //   refP_LSDn(5) = 0.725   +/- 5.0 %   C-14 quartz   (not used by this fixture)
+    //
+    // These are published calibration DATA, not transcribed GPL source.  The
+    // stated uncertainties are recorded for provenance only; this comparison
+    // uses the central values.
+    const double refP_LSDn_be10 = 0.849;
+    const double refP_LSDn_al26 = 0.819;
+    const double P0_balco[2] = {
+        refP_LSDn_be10 * lsdtt::lsdtt_crn_parameters::lsdn_grid_value(
+                             nc, "Be10", 0.0, 1013.25, nc.lsdn_sphi[0]),
+        refP_LSDn_al26 * lsdtt::lsdtt_crn_parameters::lsdn_grid_value(
+                             nc, "Al26", 0.0, 1013.25, nc.lsdn_sphi[0])};
+
+    csv_writer csv(out_dir + "/cronus_comparison_lsdn.csv",
+                   "name,nuclide,scheme,lat,elev_m,erate_lsdtt_gcm2yr,"
+                   "erate_cronus_gcm2yr,pct_diff,scaling_scheme,t_yr,"
+                   "lsdn_scaling,erate_lsdtt_balcoP0_gcm2yr,pct_diff_balcoP0");
+
+    // Per-age-mode statistics: [0] = modern (t = 0), [1] = t = Gamma/eps.
+    struct band_stats
+    {
+        double lo = 1e30, hi = -1e30, sum = 0.0, worst = 0.0;
+        int n = 0;
+        void add(double pct)
+        {
+            lo = std::min(lo, pct); hi = std::max(hi, pct);
+            sum += pct; worst = std::max(worst, std::abs(pct)); ++n;
+        }
+        double mean() const { return n ? sum / n : 0.0; }
+    };
+    // st_noP0 pools both nuclides; st_noP0_nuc keeps them separate so the Be-10
+    // figure stays directly comparable with the Be-10-only value reported before
+    // the Al-26 refP_LSDn was harvested.
+    band_stats st[2], st_noP0[2], st_noP0_nuc[2][2];
+    bool inverted_ok = true;
+
+    const auto samples = make_cronus_fixture_samples();
+    for (const auto& s : samples)
+    {
+        for (int inuc = 0; inuc < 2; ++inuc)
+        {
+            const char* nuc     = (inuc == 0) ? "Be10"  : "Al26";
+            const char* nuc_ref = (inuc == 0) ? "Be-10" : "Al-26";
+            const double conc   = (inuc == 0) ? s.conc_be10 : s.conc_al26;
+
+            const auto it = cronus.find(std::string(s.name) + "|" + nuc_ref
+                                        + "|LSDn");
+            if (it == cronus.end()) continue;
+
+            // Pass 0: the modern field, exactly what the CLI default does.
+            // Pass 1: re-evaluated at the erosional integration timescale the
+            // nuclide actually samples, tau = Gamma_sp / eps, taken from pass 0.
+            double eps_prev = 0.0;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                double t_yr = 0.0;
+                if (pass == 1)
+                {
+                    if (!(eps_prev > 0.0)) { inverted_ok = false; continue; }
+                    t_yr = ref_params_from_scheme("BraucherBorchers", nuc)
+                               .Gamma[0] / eps_prev;
+                }
+                const double sf = cp.lsdn_scaling(nuc, s.lat, s.lon,
+                                                  s.pressure_hPa, t_yr, nc);
+                ref_params p = ref_params_scaled("BraucherBorchers", nuc, sf);
+                const double eps = ref_invert_erate(p, conc);
+                if (!(eps > 0.0)) { inverted_ok = false; continue; }
+                if (pass == 0) eps_prev = eps;
+
+                const double pct = 100.0 * (it->second - eps) / eps;
+                st[pass].add(pct);
+
+                // Re-invert with Balco's calibrated P0 in place of lsdtt3's, so
+                // the residual reported alongside excludes the known SLHL offset
+                // and judges the scaling kernel on its own.  Available for BOTH
+                // nuclides since the Al-26 refP_LSDn was harvested (2026-07-26).
+                double eps_b = nan, pct_b = nan;
+                {
+                    ref_params pb = p;
+                    pb.P0 = P0_balco[inuc];
+                    eps_b = ref_invert_erate(pb, conc);
+                    if (eps_b > 0.0)
+                    {
+                        pct_b = 100.0 * (it->second - eps_b) / eps_b;
+                        st_noP0[pass].add(pct_b);
+                        st_noP0_nuc[inuc][pass].add(pct_b);
+                    }
+                }
+                csv.row(s.name, nuc_ref, "LSDn", s.lat, s.elev_m, eps,
+                        it->second, pct, "lsdn", t_yr, sf, eps_b, pct_b);
+            }
+        }
+    }
+
+    const double worst = std::max(st[0].worst, st[1].worst);
+    std::cout << "      T-C2(LSDn) vs CRONUS v3 LSDn, pct diff (CRONUS - lsdtt):\n"
+              << std::setprecision(4)
+              << "        t = 0 (modern)     : min " << st[0].lo << " max "
+              << st[0].hi << " mean " << st[0].mean() << " over " << st[0].n
+              << " samples\n"
+              << "        t = Gamma/eps      : min " << st[1].lo << " max "
+              << st[1].hi << " mean " << st[1].mean() << " over " << st[1].n
+              << " samples\n"
+              << "        Balco P0 removed (kernel alone), Be-10 + Al-26:\n"
+              << "        t = 0 (modern)     : min " << st_noP0[0].lo << " max "
+              << st_noP0[0].hi << " mean " << st_noP0[0].mean() << " over "
+              << st_noP0[0].n << " samples\n"
+              << "        t = Gamma/eps      : min " << st_noP0[1].lo << " max "
+              << st_noP0[1].hi << " mean " << st_noP0[1].mean() << " over "
+              << st_noP0[1].n << " samples\n"
+              << "        per nuclide at t = Gamma/eps (refP_LSDn "
+              << refP_LSDn_be10 << " / " << refP_LSDn_al26 << "):\n"
+              << "          Be-10            : min " << st_noP0_nuc[0][1].lo
+              << " max " << st_noP0_nuc[0][1].hi << " mean "
+              << st_noP0_nuc[0][1].mean() << " over " << st_noP0_nuc[0][1].n
+              << " samples\n"
+              << "          Al-26            : min " << st_noP0_nuc[1][1].lo
+              << " max " << st_noP0_nuc[1][1].hi << " mean "
+              << st_noP0_nuc[1][1].mean() << " over " << st_noP0_nuc[1][1].n
+              << " samples\n"
+              << "        worst |pct diff| over both ages = " << worst << " %\n"
+              << std::setprecision(17);
+
+    check("T-C2(LSDn): every fixture concentration inverted under LSDn",
+          inverted_ok);
+    // The asserted band is the MATCHED comparison (pass 1): our sample age is
+    // the erosional integration timescale, which is the like-for-like analogue
+    // of v3's exhumation-weighted integral.  The modern-field mode (pass 0) is
+    // held to its own, deliberately separate, regression guard - it compares a
+    // present-day field evaluation against a time-integrated one, so its
+    // spread IS the geomagnetic correction and reading it as an accuracy
+    // figure would be wrong.
+    check("T-C2(LSDn): vs CRONUS v3 LSDn within the frozen band "
+          "(sample age = Gamma/eps)",
+          st[1].n > 0 && st[1].worst < tol::tc2_cronus_lsdn,
+          "worst = " + std::to_string(st[1].worst) + " % (n=" +
+              std::to_string(st[1].n) + ")");
+    check("T-C2(LSDn): modern-field mode inside its regression guard "
+          "(NOT an accuracy claim - this spread is the geomagnetic correction)",
+          st[0].n > 0 && st[0].worst < tol::tc2_cronus_lsdn_modern,
+          "worst = " + std::to_string(st[0].worst) + " % (n=" +
+              std::to_string(st[0].n) + ")");
+    check("csv: cronus_comparison_lsdn.csv written", csv.good());
+}
+
+// The LSDn scaling surface for lsdviztools3 (lsdn plan Sec5, Phase 5): the
+// dimensionless scaling swept over latitude x pressure x sample age, for all
+// three nuclides.  A plotting product, not an assertion - the only checks are
+// that every value is finite and positive and that the file was written.
+void phase7_lsdn_scaling_surface_csv(const lsdtt::CrnNcData& nc,
+                                     const std::string& out_dir)
+{
+    if (!nc.lsdn_loaded) return;
+    lsdtt::lsdtt_crn_parameters cp;
+
+    csv_writer csv(out_dir + "/lsdn_scaling_surface.csv",
+                   "nuclide,lat,lon,pressure_hPa,t_yr,lsdn_scaling,"
+                   "stone_scaling,ratio_to_stone");
+    bool ok = true;
+    int n = 0;
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+        for (double lat = -90.0; lat <= 90.0001; lat += 5.0)
+            for (double p_hPa = 350.0; p_hPa <= 1050.0001; p_hPa += 50.0)
+            {
+                const double stone = cp.stone2000sp(lat, p_hPa, 1.0);
+                for (double age : {0.0, 1.0e3, 1.0e4, 1.0e5, 1.0e6})
+                {
+                    const double sf =
+                        cp.lsdn_scaling(nuc, lat, 0.0, p_hPa, age, nc);
+                    if (!std::isfinite(sf) || !(sf > 0.0)) ok = false;
+                    csv.row(nuc, lat, 0.0, p_hPa, age, sf, stone, sf / stone);
+                    ++n;
+                }
+            }
+    check("csv: lsdn_scaling_surface.csv finite and positive ("
+              + std::to_string(n) + " rows)",
+          ok && csv.good());
 }
 
 // =============================================================================
@@ -3691,6 +3987,8 @@ int main(int argc, char** argv)
         phase7_L5_degenerate(crn_nc, test_data_dir);
         phase7_L6_invariants(crn_nc, out_dir);
         phase7_L7_stone_vs_lsdn(crn_nc, fx, test_data_dir, out_dir);
+        phase7_TC2_cronus_lsdn_comparison(crn_nc, expected_dir, out_dir);
+        phase7_lsdn_scaling_surface_csv(crn_nc, out_dir);
         phase7_L10_surface_equivalence(crn_nc, out_dir);
         phase7_L11_resolution_sweep(crn_nc, out_dir);
         phase7_L1_sentinel(crn_nc, lsdn_sentinel_path, regenerate_lsdn_sentinel);

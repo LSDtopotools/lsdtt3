@@ -32,6 +32,7 @@ Harvest specifics VERIFIED against the OCTOPUS server (2026-07-24):
 Usage:
   python3 tests/scripts/harvest_octopus.py --study S014 --dataset clapp2002 \
       --out tests/expected/cosmo/published \
+      [--scaling St|LSDn|LSDnNS] \
       [--max-area-km2 30] [--min-area-km2 0] \
       [--subset-bbox W,S,E,N] [--pad-deg 0.02] \
       [--target-epsg 32611] [--threshold-px 250] [--snap-radius 20]
@@ -39,6 +40,40 @@ Usage:
 The written manifest is a SKELETON: hand-edit its ``description`` and any
 narrative caveats before freezing. The numeric fields (bbox, target_epsg,
 octopus_source) are complete and correct as written.
+
+SECOND MODE -- ``--point-reference`` (lsdn plan Phase 6 deliverable (i), test L12)
+---------------------------------------------------------------------------------
+OCTOPUS does **not** compute LSDn from the DEM. Per Saktura et al. (2025, GChron
+7:113) CAIRN reduces each basin to two scalars -- ``CENTR_LAT`` (centroid
+latitude) and ``ATM_PRESS`` (the effective basin-averaged pressure, itself
+iterated to match the spatially averaged **Stone--Lal** production) -- and feeds
+them to the Balco v3 point calculator via RIVERSAND. ``EBEL`` is that point
+result. So a *matched* LSDn comparison is DEM-FREE: evaluate our LSDn kernel at
+exactly (``CENTR_LAT``, ``ATM_PRESS``), invert, compare to ``EBEL``.
+
+``--point-reference`` harvests exactly that, for the basins already selected by
+the tracked ``<dataset>_samples.csv`` files, into the small frozen
+``tests/expected/cosmo/octopus_lsdn_point_reference.csv``:
+
+  python3 tests/scripts/harvest_octopus.py --point-reference \
+      [--datasets dethier2014,clapp2002,dibiase2010] \
+      [--published-dir tests/expected/cosmo/published] \
+      [--point-reference-out tests/expected/cosmo/octopus_lsdn_point_reference.csv] \
+      [--freeze]
+
+FROZEN-ARTEFACT DISCIPLINE: the default is CHECK-ONLY -- a fresh harvest is
+compared against the tracked file and never writes it; the ``# HARVESTED ...``
+provenance line is neither compared nor rewritten. ``--freeze`` regenerates
+deliberately, for review. Same pattern as run_cosmo_production_isolation.py.
+
+FIELD NAMES CONFIRMED 2026-07-26 against the live WFS ``DescribeFeatureType`` on
+``be10-denude:crn_int_basins`` (the published field dictionary is incomplete; the
+WFS schema is authoritative): ``EBEL``, ``EBEL_INT``, ``EBEL_EXT``, ``EBELNS``,
+``EBELNS_INT``, ``EBELNS_EXT`` for 10Be, and ``EALL*`` / ``EALLNS*`` for 26Al.
+``EBEL`` is in **mm/kyr**, the same units as ``EBE_MMKYR`` (median ratio 1.050
+over S169's 46 basins); ``_INT``/``_EXT`` are Balco v3's internal/external
+uncertainty pair. ``EBELNS`` is the **no-snow-shielding** control: ``EBELNS >=
+EBEL`` always, with equality exactly where no snow shielding applies.
 """
 
 import argparse
