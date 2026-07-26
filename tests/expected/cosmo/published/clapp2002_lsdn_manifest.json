@@ -1,0 +1,138 @@
+{
+  "_comment": [
+    "LSDn real-landscape validation manifest -- lsdn plan Phase 6 deliverable (iii),",
+    "the END-TO-END PER-PIXEL tier. Small, TRACKED file; no raster is ever committed.",
+    "",
+    "WHAT THIS MEASURES, AND WHAT IT IS NOT. It compares (a) lsdtt3's PER-PIXEL LSDn",
+    "basin-mean erosion rate against (c) OCTOPUS's published EBEL. That mixes THREE",
+    "independent things: the LSDn scaling-kernel residual (pinned separately by test",
+    "L12, which is DEM-free), the per-pixel-vs-lumped difference (pinned separately",
+    "by test L13, and a scientific RESULT, not an error), and the DEM difference",
+    "(COP30 here vs whatever OCTOPUS used, plus delineation). It is therefore a",
+    "MONITORING BAND, NOT AN ORACLE: attribute it with L12 and L13, do not read it",
+    "as an accuracy figure, and NEVER tune anything to shrink it.",
+    "",
+    "NO DUPLICATED DATA. sample_table points at the St tier's OWN table: every",
+    "quantity lsdtt-cosmo-tool consumes (position, Be10_CONC, uncertainty) is",
+    "identical between the two tiers, so there is exactly one copy of each measured",
+    "concentration in the repository. Only the published TARGET differs, and that is",
+    "supplied by published_erate_override below from the tracked, harvested",
+    "octopus_lsdn_point_reference.csv (EBEL, mm/kyr)."
+  ],
+  "dataset": "clapp2002_lsdn",
+  "description": "LSDn tier of the Clapp et al. (2002) Yuma Wash dataset (arid, low-relief, low-elevation). SAME basins, DEM footprint, run knobs and sample table as 'clapp2002'; scaling_scheme: lsdn and the EBEL published target are the only changes.",
+  "published_reference": {
+    "citation": "Clapp, E.M., Bierman, P.R., Caffee, M. (2002), Geomorphology 45(1-2), 89-104.",
+    "doi": "10.1016/S0169-555X(01)00191-X",
+    "calculator": "OCTOPUS v2.3(4) EBEL = LSDn. NOT a CAIRN recalculation: CAIRN implements only time-independent Stone/Lal (Saktura et al. 2025, GChron 7:113), so OCTOPUS reduces each basin to (CENTR_LAT, ATM_PRESS) and feeds those two scalars to the Balco et al. (2008) v3 point calculator via RIVERSAND. EBEL is that POINT result, not a per-pixel average -- which is precisely why this tier is a monitoring band and the DEM-free L12 test is the kernel oracle."
+  },
+  "octopus_source": {
+    "_comment": [
+      "Regression targets harvested from OCTOPUS, NOT scraped or invented.",
+      "OCTOPUS recalculates with CAIRN = the algorithm lsdtt-cosmo-tool",
+      "implements, so a NEAR-CAIRN oracle (see residual_expectation)."
+    ],
+    "wfs_endpoint": "http://geoserver.octopusdata.org/geoserver/wfs",
+    "typenames": [
+      "be10-denude:crn_int_basins",
+      "be10-denude:crn_int_outlets"
+    ],
+    "cql_filter": "STUDYID='S014'",
+    "cql_note": "Filter with CQL_FILTER, not bbox: the OCTOPUS WFS 2.0.0 bbox parameter throws a ProjectionException.",
+    "output_format": "application/json",
+    "srs": "EPSG:4326",
+    "db_version": "v2.3(4)",
+    "study_id": "S014",
+    "harvested_utc": "2026-07-24",
+    "basins_in_study": 36,
+    "basins_in_subset": 21,
+    "subset_bbox_deg": "none (whole study, area-filtered)",
+    "area_filter_km2": {
+      "min": 0.0,
+      "max": 30.0
+    },
+    "max_rel_uncertainty": 0.5,
+    "scaling_scheme": "LSDn -- EBEL / EBEL_INT / EBEL_EXT (mm/kyr), field names confirmed 2026-07-26 against the live WFS DescribeFeatureType on be10-denude:crn_int_basins. EBELNS is the no-TOPOGRAPHIC-shielding control. lsdtt-cosmo-tool is run with scaling_scheme: lsdn to match."
+  },
+  "residual_expectation": {
+    "_comment": [
+      "MEASURED-THEN-RECORDED, and DECOMPOSED rather than interpreted.",
+      "",
+      "SIGN. This file and the summary use 100*(lsdtt3 - published)/published. L12 and L13",
+      "publish the OPPOSITE sign, 100*(octopus - lsdtt3)/lsdtt3. Convert before combining.",
+      "In THIS convention the components are:",
+      "  (1) kernel, L12 (b vs c), on lsdtt3's own P0 -- which is what the CLI uses:  -6.14 %",
+      "      (L12 prints +6.54 %). With Balco's LSDn-calibrated P0 instead: -4.16 %",
+      "      (L12 prints +4.34 %). The CLI cannot switch P0, so -6.14 % is the term here.",
+      "  (2) per-pixel vs lumped, L13 (a vs b): -0.53 % median, -0.83 % mean, t matched.",
+      "  (3) config, carried from the St tier: ERA40 rather than NCEP -0.64 %, and",
+      "      topographic shielding ignored +0.70 %.",
+      "  => matched-age expectation approximately -6.6 %.",
+      "  (4) TIME -- the term that moves this tier off that expectation. run_params keeps the",
+      "      CLI default sample_age_yr = 0, i.e. the MODERN (2010) geomagnetic field, whereas",
+      "      EBEL is Balco v3 time-averaged over the erosional timescale Gamma/eps (12-38 kyr",
+      "      for these rates, from L12's t_yr column). The Holocene field was STRONGER than",
+      "      today, so the time-averaged production is LOWER: from the frozen L13 artefact,",
+      "      basin-mean LSDn production at t = 0 is +27.5 % above t = 5000 yr and +13.9 % above",
+      "      t = 20000 yr on these same 50 basins. That raises the measured band by roughly",
+      "      +11 points relative to (1)-(3), which is what is seen.",
+      "      MEASURED DIRECTLY on dethier2014, not argued: repeating the identical run at",
+      "      sample_age_yr = 5000 / 15000 / 20000 gives mean -16.1 / -9.3 / -7.0 % on the same",
+      "      12 basins, bracketing the -6.6 % expectation at the ages the nuclide integrates.",
+      "      This is a stated property of the CONFIGURATION, not a defect of the kernel, and",
+      "      it is NOT to be tuned away. Whether the frozen tier should instead carry a",
+      "      matched sample_age_yr is a decision for review, not for a test author."
+    ],
+    "expect_zero": false,
+    "band": "MEASURED 2026-07-26, first accepted run: all 21 basins (all delineation_reliable): min +2.61, max +4.66, mean +3.89, median +3.82 % (sign 100*(lsdtt3 - EBEL)/EBEL).",
+    "attribute_residual_to": "kernel (L12) + per-pixel/lumped (L13) + config + the dominant sample_age_yr=0 vs Gamma/eps time term; a MONITORING BAND, not an accuracy figure."
+  },
+  "dem": {
+    "provider": "Copernicus GLO-30 (keyless)",
+    "dem_source": "cop30_aws",
+    "dem_source_note": "Keyless. lsdtt-fetch-raster retrieves+clips Copernicus GLO-30 from AWS Open Data (cop30_aws) or Microsoft Planetary Computer (planetary_computer) with NO API key.",
+    "pc_collection": "cop-dem-glo-30",
+    "dataset_id": "COP30",
+    "resolution_m": 30,
+    "grid_spacing": 30.0,
+    "resampling_method": "cubic",
+    "target_epsg": 32611,
+    "target_epsg_note": "UTM zone from OCTOPUS PROJEPSGID=32611. The cosmo CLIs require a PROJECTED CRS, so the DEM is warped to UTM at fetch time.",
+    "resolution_choice_note": "COP30 (30 m) vs the DEM in the OCTOPUS/CAIRN recalculation is a DOCUMENTED, attributable validation difference, not a bug.",
+    "size_pixels": 0,
+    "bounding_box": {
+      "_comment": "Union of the 21 selected basins' OCTOPUS polygon bounds, padded 0.02 deg.",
+      "west": -114.6142,
+      "south": 33.045,
+      "east": -114.4317,
+      "north": 33.2991
+    }
+  },
+  "run_params": {
+    "_comment": [
+      "IDENTICAL to the St tier's run_params (same threshold_contributing_pixels and",
+      "snap_search_radius_pixels, so the SAME basins are delineated the SAME way and the",
+      "St and LSDn summaries are directly differenceable), plus scaling_scheme: lsdn.",
+      "run_cosmo_validation.py forwards these verbatim into the parameter file.",
+      "sample_age_yr is deliberately left at the CLI default 0 -- see residual_expectation (4)."
+    ],
+    "threshold_contributing_pixels": 250,
+    "snap_search_radius_pixels": 20,
+    "scaling_scheme": "lsdn"
+  },
+  "sample_table": "clapp2002_samples.csv",
+  "published_erate_override": {
+    "_comment": [
+      "Swap the published comparison target from EBE_* (Stone/Lal) to EBEL (LSDn)",
+      "WITHOUT copying the sample table. The source is the tracked, WFS-harvested",
+      "point reference; a missing file, a missing row, a non-positive rate or an",
+      "unexpected implied density is a HARD FAILURE in the harness, never a skip."
+    ],
+    "file": "../octopus_lsdn_point_reference.csv",
+    "key_column": "sample",
+    "rate_column": "EBEL",
+    "units": "mm_kyr; converted with OCTOPUS's own density EBE_GCMYR/(EBE_MMKYR*1e-4) = 2.650 g/cm3",
+    "calculator": "OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL"
+  },
+  "summary": "clapp2002_lsdn_summary.csv"
+}

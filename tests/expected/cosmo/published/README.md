@@ -111,6 +111,45 @@ from ignored per-pixel topo shielding. Sub-snap-threshold basins are flagged
 `delineation_reliable=no` (`S169WTS036` +71 %, `S169WTS032`, `S055WTS044`) and
 excluded from the band — a delineation limit, not a numeric bug.
 
+## The LSDn tier — `dethier2014_lsdn`, `clapp2002_lsdn`, `dibiase2010_lsdn`
+
+Added **2026-07-26** (LSDn plan Phase 6 deliverable (iii)): the same three landscapes
+run with `scaling_scheme: lsdn` and compared against OCTOPUS's **`EBEL`** (LSDn)
+instead of `EBE_*` (Stone/Lal).
+
+**No data is duplicated.** Each `<name>_lsdn_manifest.json` points `sample_table` at
+its St counterpart's **existing** `<name>_samples.csv` — the positions,
+concentrations and uncertainties lsdtt-cosmo-tool consumes are identical between the
+two tiers, so there is exactly one copy of every measured concentration in the
+repository. Only the published *target* changes, supplied by the manifest's
+`published_erate_override`, which reads `EBEL` (mm/kyr) from the tracked
+`../octopus_lsdn_point_reference.csv` and converts with OCTOPUS's own density
+`EBE_GCMYR/(EBE_MMKYR·1e-4)` = 2.650 g/cm³. A missing override file, a missing row, a
+non-positive rate or an unexpected implied density is a **hard failure** — an absent
+tracked input can never make the comparison report green.
+
+| dataset | basins | frozen band vs `EBEL`, `delineation_reliable` only |
+|---|---|---|
+| **dethier2014_lsdn** | 14 | **+2.47 to +9.41 % (mean +4.51, median +4.28)**; 12 reliable |
+| **clapp2002_lsdn** | 21 | **+2.61 to +4.66 % (mean +3.89, median +3.82)**; all 21 reliable |
+| **dibiase2010_lsdn** | 15 | **+5.82 to +22.85 % (mean +11.45, median +10.14)**; 14 reliable |
+
+**This is a MONITORING BAND, not an oracle.** It mixes the LSDn kernel residual
+(pinned DEM-free by test **L12**), the per-pixel-vs-lumped difference (pinned by
+**L13**, and a scientific *result*, not an error) and the DEM/delineation difference —
+and it runs at the CLI default `sample_age_yr: 0` (modern 2010 field) while `EBEL` is
+Balco v3 time-averaged over Γ/ε ≈ 12–38 kyr. **Mind the sign:** this tier reports
+`(lsdtt3 − published)/published`, L12/L13 report the opposite. On this tier's sign the
+matched-age expectation is ≈ **−6.6 %** (kernel −6.14 % on lsdtt3's own `P0`,
+per-pixel/lumped −0.53 %, ERA40-vs-NCEP −0.64 %, ignored topo shielding +0.70 %), and
+the ~+11-point offset to the frozen numbers is the time term — **measured**, not
+argued: repeating the dethier run at `sample_age_yr` 5000 / 15000 / 20000 gives mean
+−16.1 / −9.3 / −7.0 % on the same 12 basins. Never tune anything to shrink this band.
+
+Independent cross-check: lsdtt3's per-basin LSDn/Stone *erate* ratio reproduces the
+separately frozen scaling ratio (`mean_scaling_lsdn_t0 / mean_scaling_stone` in
+`../lsdn_pixel_vs_lumped_perpixel.csv`) to better than one point on every basin.
+
 **A standardisation double-count (harness bug) was found and fixed 2026-07-24.** The
 earlier bands (`dethier` |Δ|≤9.3 %, `clapp` **+6.6 %**, `dibiase` ~−5 %) and the
 apparent **sign flip** between `clapp` and `dibiase` were an artefact: OCTOPUS's

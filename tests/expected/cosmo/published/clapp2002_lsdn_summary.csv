@@ -1,0 +1,62 @@
+# Clapp et al. (2002) Yuma Wash -- LSDn tier validation SUMMARY (FROZEN).
+#
+# lsdn plan Phase 6 deliverable (iii): the END-TO-END PER-PIXEL LSDn tier.
+# Written by tests/scripts/run_cosmo_validation.py from the manifest
+# clapp2002_lsdn_manifest.json (same bbox, same run knobs and the SAME sample table as
+# the Stone tier's clapp2002; the only changes are scaling_scheme: lsdn and the
+# published target, EBE_* -> EBEL). The CTest entry cosmo_realworld_clapp2002_lsdn
+# reruns it in --check mode and compares the fresh lsdtt3 rates against the rows
+# below; it must NOT rewrite this file.
+#
+# THIS IS A MONITORING BAND, NOT AN ORACLE. pct_diff mixes three independent
+# things -- the LSDn kernel residual (pinned DEM-free by L12), the per-pixel vs
+# lumped difference (pinned by L13, and a RESULT not an error), and the DEM
+# difference (COP30 vs whatever OCTOPUS used, plus delineation) -- plus a fourth,
+# large, deliberate one: this tier runs at the CLI default sample_age_yr = 0
+# (modern 2010 field), while OCTOPUS's EBEL comes from Balco v3 time-averaged
+# over the erosional timescale Gamma/eps. Do NOT read pct_diff as an accuracy
+# figure and do NOT tune anything to shrink it. See the manifest's
+# residual_expectation block for the decomposition.
+#
+# published_erate_* here are EBEL (LSDn), converted from mm/kyr with OCTOPUS's
+# own density EBE_GCMYR/(EBE_MMKYR*1e-4) = 2.650 g/cm3 -- not an assumed one.
+# Rows with delineation_reliable=no are basins smaller than the snap-threshold
+# footprint; their rate reflects mis-delineation, so exclude them from the band.
+#
+# MEASURED BAND: see the FIRST ACCEPTED RUN note appended below the header.
+#
+# FIRST ACCEPTED RUN, frozen 2026-07-26 (keyless COP30 fetch, scaling_scheme lsdn,
+# threshold_contributing_pixels=250, otherwise lsdtt3 defaults: BraucherBorchers
+# muons, ERA40 atmosphere, sample_age_yr 0, no topographic shielding).
+# MEASURED, sign 100*(lsdtt3 - EBEL)/EBEL, on all 21 basins (all delineation_reliable):
+#   min +2.61, max +4.66, mean +3.89, median +3.82 %.
+# The TIGHTEST of the three datasets, as expected for 21 low-relief basins at
+# 230-436 m: little elevation spread, so little spread in the scaling terms.
+#
+# NOTE ON SIGN, so this is not misread: lsdtt3's own LSDn rate here is 2.1 % BELOW
+# its own Stone rate (at 33 N and ~987 hPa the LSDn/St ratio is genuinely < 1), and
+# OCTOPUS's own EBEL/EBE ratio is 0.90 on these basins. The tier still lands ~8
+# points above its Stone counterpart (-4.09 %) because the published target moved,
+# not because our LSDn rate rose. See the manifest's residual_expectation.
+sample_name,nuclide,standardisation,elevation_ave_m,octopus_area_km2,delineation_reliable,lsdtt_erate_gcm2yr,published_erate_gcm2yr,published_erate_mm_kyr,pct_diff,abs_pct_diff,published_calculator,dem_source,resolution_m,run_date_utc,git_sha
+S014WTS020,Be-10,KNSTD,230,4.59,yes,0.0072783692,0.0069665298,26.3,4.476,4.476,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS021,Be-10,KNSTD,230,4.59,yes,0.0071531185,0.0068627786,25.9,4.231,4.231,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS022,Be-10,KNSTD,230,4.59,yes,0.0064298787,0.006143554,23.2,4.661,4.661,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS017,Be-10,KNSTD,248,3.54,yes,0.0073708717,0.0071057873,26.8,3.731,3.731,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS018,Be-10,KNSTD,248,3.54,yes,0.0067763201,0.0065408925,24.7,3.599,3.599,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS019,Be-10,KNSTD,248,3.54,yes,0.0072441362,0.0069930185,26.4,3.591,3.591,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS027,Be-10,KNSTD,251,28.75,yes,0.0076958649,0.0073930029,27.9,4.097,4.097,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS011,Be-10,KNSTD,255,0.48,yes,0.0063426447,0.0060712883,22.9,4.47,4.47,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS012,Be-10,KNSTD,255,0.48,yes,0.0063911068,0.0061239766,23.1,4.362,4.362,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS013,Be-10,KNSTD,255,0.48,yes,0.0066975412,0.0064125047,24.2,4.445,4.445,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS029,Be-10,KNSTD,255,7.23,yes,0.010787023,0.010390253,39.2,3.819,3.819,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS014,Be-10,KNSTD,257,2.18,yes,0.0065078128,0.0062579168,23.6,3.993,3.993,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS015,Be-10,KNSTD,257,2.18,yes,0.0055543382,0.0053499777,20.2,3.82,3.82,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS016,Be-10,KNSTD,257,2.18,yes,0.0048938373,0.0047401013,17.9,3.243,3.243,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS009,Be-10,KNSTD,268,0.97,yes,0.0058768831,0.0056705485,21.4,3.639,3.639,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS010,Be-10,KNSTD,268,0.97,yes,0.0051833232,0.0050050669,18.9,3.562,3.562,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS031,Be-10,KNSTD,305,29.1,yes,0.0057907009,0.0056432811,21.3,2.612,2.612,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS032,Be-10,KNSTD,307,3.65,yes,0.0047066448,0.0045545455,17.2,3.34,3.34,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS034,Be-10,KNSTD,307,3.82,yes,0.0060114409,0.0058013245,21.9,3.622,3.622,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS035,Be-10,KNSTD,379,15.22,yes,0.0058461162,0.0056224507,21.2,3.978,3.978,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d
+S014WTS036,Be-10,KNSTD,436,22.38,yes,0.0046444564,0.0044475983,16.8,4.426,4.426,OCTOPUS_v2.3_RIVERSAND_Balco_v3_LSDn_EBEL,Copernicus GLO-30 (keyless):COP30,30,2026-07-26T19:48:31Z,bd15d2d

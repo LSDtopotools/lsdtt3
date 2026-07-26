@@ -122,6 +122,90 @@ def read_sample_table(path: Path) -> list:
     return rows
 
 
+def read_csv_with_comments(path: Path) -> list:
+    """Read a tracked CSV whose provenance header is '#' comment lines."""
+    with open(path, newline="") as f:
+        lines = [ln for ln in f if not ln.lstrip().startswith("#")]
+    return list(csv.DictReader(lines))
+
+
+def apply_published_erate_override(samples: list, manifest: dict,
+                                   published_dir: Path) -> list:
+    """Optionally REPLACE the published target with a different OCTOPUS field.
+
+    WHY THIS EXISTS -- so the `<dataset>_lsdn` datasets do NOT duplicate the
+    sample tables. Everything lsdtt-cosmo-tool consumes (position, Be10_CONC,
+    uncertainty) is IDENTICAL between the St and the LSDn tier: the ONLY thing
+    that changes is which OCTOPUS rate we compare against (`EBE_*` = Stone/Lal
+    vs `EBEL` = LSDn). Copying 50 basins of concentrations into a second set of
+    tables would put two copies of the same measurements in the repository, free
+    to drift apart -- a maintenance hazard with no upside. Instead the `_lsdn`
+    manifests REFERENCE the existing `<dataset>_samples.csv` and name an
+    override here, so there is exactly one copy of every measured concentration.
+
+    The override source is a TRACKED file (tests/expected/cosmo/
+    octopus_lsdn_point_reference.csv, harvested by harvest_octopus.py
+    --point-reference), so a missing file, a missing row, or a non-positive rate
+    is a HARD FAILURE, never a skip and never a silent pass -- an absent input
+    must not be able to make a comparison report green.
+
+    UNITS. `EBEL` is published in mm/kyr. The mm/kyr -> g cm^-2 yr^-1 conversion
+    uses OCTOPUS's OWN density, recovered per row as EBE_GCMYR / (EBE_MMKYR *
+    1e-4) rather than assumed, exactly as the L12 C++ driver does; the implied
+    density is checked against 2.650 g/cm3 so a change in their convention fails
+    loudly instead of silently rescaling every rate.
+    """
+    ov = manifest.get("published_erate_override")
+    if not ov:
+        return samples
+    for key in ("file", "rate_column", "key_column", "calculator"):
+        if key not in ov:
+            raise ValueError(
+                f"published_erate_override in the '{manifest['dataset']}' manifest "
+                f"is missing required key '{key}'")
+    src = (published_dir / ov["file"]).resolve()
+    if not src.is_file():
+        raise ValueError(
+            f"published_erate_override source not found: {src}. This is a TRACKED "
+            f"artefact -- a missing one is a broken checkout, not an optional "
+            f"step, so it FAILS rather than skipping (regenerate deliberately "
+            f"with tests/scripts/harvest_octopus.py --point-reference --freeze).")
+    ref = {}
+    for row in read_csv_with_comments(src):
+        ref[row[ov["key_column"]]] = row
+    rate_col = ov["rate_column"]
+    out = []
+    for s in samples:
+        name = s["sample_name"]
+        r = ref.get(name)
+        if r is None:
+            raise ValueError(
+                f"published_erate_override: sample '{name}' has no row in {src}; "
+                f"refusing to compare against a target that does not exist.")
+        try:
+            mm_kyr = float(r[rate_col])
+            rho = float(r["EBE_GCMYR"]) / (float(r["EBE_MMKYR"]) * 1.0e-4)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"published_erate_override: cannot read {rate_col}/EBE_GCMYR/"
+                f"EBE_MMKYR for '{name}' in {src}: {exc}")
+        if not (mm_kyr > 0.0):
+            raise ValueError(
+                f"published_erate_override: non-positive {rate_col} for '{name}' "
+                f"in {src} ({mm_kyr}) -- no usable comparison target.")
+        if abs(rho - 2.650) > 0.02:
+            raise ValueError(
+                f"published_erate_override: implied OCTOPUS density for '{name}' "
+                f"is {rho:.4f} g/cm3, not 2.650 -- their unit convention has "
+                f"changed; stop rather than silently rescale.")
+        t = dict(s)
+        t["published_erate_mm_kyr"] = f"{mm_kyr:.6g}"
+        t["published_erate_gcm2yr"] = f"{mm_kyr * 1.0e-4 * rho:.10g}"
+        t["published_calculator"] = ov["calculator"]
+        out.append(t)
+    return out
+
+
 def manifest_has_unresolved_todo(manifest: dict) -> bool:
     """True if any manifest value still carries the TODO sentinel."""
     def walk(v):
@@ -407,6 +491,9 @@ def validate_one(dataset: str, args) -> int:
         )
     sample_table = published_dir / manifest["sample_table"]
     samples = read_sample_table(sample_table)  # raises on TODO template
+    # The `_lsdn` datasets REFERENCE the St datasets' sample tables (one copy of
+    # every concentration) and swap only the published target, EBE_* -> EBEL.
+    samples = apply_published_erate_override(samples, manifest, published_dir)
     summary_path = published_dir / manifest["summary"]
 
     workdir = Path(tempfile.mkdtemp(prefix=f"cosmo_val_{dataset}_"))
@@ -533,6 +620,91 @@ def self_test() -> int:
             rejected = True
     check("sample table: a TODO template is refused (no fabricated comparison)",
           rejected)
+
+    # 5c. The `_lsdn` tier (lsdn plan Phase 6 deliverable (iii)) must SHARE the St
+    #     tier's sample tables rather than duplicate 50 basins of concentrations,
+    #     must reuse the same bbox + run knobs, and must differ ONLY by
+    #     scaling_scheme: lsdn and the published-target override. Two copies of the
+    #     same measurements drifting apart is the failure mode this guards.
+    lsdn_pairs = [("dethier2014", "dethier2014_lsdn"),
+                  ("clapp2002", "clapp2002_lsdn"),
+                  ("dibiase2010", "dibiase2010_lsdn")]
+    for base, lsdn in lsdn_pairs:
+        try:
+            mb = load_manifest(base, published_dir)
+            ml = load_manifest(lsdn, published_dir)
+        except Exception as exc:  # noqa: BLE001
+            check(f"lsdn tier: {lsdn} manifest loads", False)
+            print(f"       {exc}")
+            continue
+        strip = lambda d: {k: v for k, v in (d or {}).items() if k != "_comment"}
+        check(f"lsdn tier: {lsdn} shares {base}'s sample table (no duplicate data)",
+              ml["sample_table"] == mb["sample_table"])
+        check(f"lsdn tier: {lsdn} reuses {base}'s bounding box",
+              strip(ml["dem"]["bounding_box"]) == strip(mb["dem"]["bounding_box"]))
+        rp_b, rp_l = strip(mb.get("run_params")), strip(ml.get("run_params"))
+        check(f"lsdn tier: {lsdn} run_params = {base}'s + scaling_scheme lsdn",
+              rp_l.pop("scaling_scheme", None) == "lsdn" and rp_l == rp_b)
+        check(f"lsdn tier: {lsdn} has its own summary, not {base}'s",
+              ml["summary"] != mb["summary"])
+        check(f"lsdn tier: {lsdn} has no duplicated sample table on disk",
+              not (published_dir / f"{lsdn}_samples.csv").exists())
+
+    # 5d. The published-target override: it must actually swap EBE_* for EBEL, and
+    #     a missing/incomplete source must FAIL LOUDLY -- an absent tracked input
+    #     may never be the reason a comparison reports green.
+    try:
+        ml = load_manifest("dethier2014_lsdn", published_dir)
+        base_samples = read_sample_table(
+            published_dir / ml["sample_table"])
+        ov_samples = apply_published_erate_override(base_samples, ml, published_dir)
+        swapped = (len(ov_samples) == len(base_samples)
+                   and all(o["published_erate_gcm2yr"]
+                           != b["published_erate_gcm2yr"]
+                           for o, b in zip(ov_samples, base_samples))
+                   and all("LSDn" in o["published_calculator"]
+                           for o in ov_samples))
+        # and the arithmetic itself: EBEL [mm/kyr] * 1e-4 * OCTOPUS's own density
+        ref = {r["sample"]: r for r in read_csv_with_comments(
+            (published_dir / ml["published_erate_override"]["file"]).resolve())}
+        # Relative, not absolute: the stored value is written to 10
+        # significant figures, which is the only difference allowed here.
+        def _exact(o):
+            r = ref[o["sample_name"]]
+            want = (float(r["EBEL"]) * 1.0e-4
+                    * (float(r["EBE_GCMYR"]) / (float(r["EBE_MMKYR"]) * 1.0e-4)))
+            return abs(float(o["published_erate_gcm2yr"]) - want) <= 1.0e-9 * want
+
+        arith = all(_exact(o) for o in ov_samples)
+    except Exception as exc:  # noqa: BLE001
+        swapped = arith = False
+        print(f"       override error: {exc}")
+    check("lsdn tier: override swaps the published target to EBEL (LSDn)", swapped)
+    check("lsdn tier: override converts EBEL mm/kyr with OCTOPUS's own density",
+          arith)
+
+    for label, bad, exp in [
+        ("a missing override source FAILS (never a silent pass)",
+         {"dataset": "x", "published_erate_override": {
+             "file": "no_such_file.csv", "rate_column": "EBEL",
+             "key_column": "sample", "calculator": "X"}}, ValueError),
+        ("an override with no row for a sample FAILS",
+         {"dataset": "x", "published_erate_override": {
+             "file": "../octopus_lsdn_point_reference.csv", "rate_column": "EBEL",
+             "key_column": "sample", "calculator": "X"}}, ValueError),
+    ]:
+        raised = False
+        try:
+            apply_published_erate_override(
+                [{"sample_name": "NOT-A-REAL-BASIN"}], bad, published_dir)
+        except exp:
+            raised = True
+        check(f"lsdn tier: {label}", raised)
+
+    check("lsdn tier: no override key leaves the samples untouched",
+          apply_published_erate_override(
+              [{"sample_name": "A", "published_erate_gcm2yr": "1"}],
+              {"dataset": "x"}, published_dir)[0]["published_erate_gcm2yr"] == "1")
 
     # 6. Summary append round-trips against a COPY of the tracked summary (which
     #    now holds a frozen accepted run), adding EXACTLY one row and leaving the

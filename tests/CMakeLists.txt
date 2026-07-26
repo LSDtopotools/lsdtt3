@@ -767,6 +767,46 @@ add_test(NAME cosmo_realworld_dibiase2010
 set_tests_properties(cosmo_realworld_dibiase2010 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
+# LSDn tier of the same three datasets (lsdn plan Phase 6 deliverable (iii)): the
+# END-TO-END PER-PIXEL LSDn run, (a) per-pixel LSDn basin mean vs (c) OCTOPUS EBEL.
+# Each <name>_lsdn manifest REUSES its St counterpart's bbox, run knobs and SAMPLE
+# TABLE -- there is exactly one copy of every measured concentration in the repo --
+# and changes only scaling_scheme (lsdn) and the published target (EBE_* -> EBEL,
+# via published_erate_override reading the tracked octopus_lsdn_point_reference.csv).
+# The frozen band is a MONITORING BAND, NOT AN ORACLE: it mixes the kernel residual
+# (pinned DEM-free by L12), the per-pixel-vs-lumped difference (pinned by L13, and a
+# result rather than an error) and the DEM/delineation difference, and it runs at the
+# CLI default sample_age_yr = 0 while EBEL is time-averaged over Gamma/eps. Attribute
+# it with L12/L13 (see each summary header); never tune anything to shrink it.
+# Same --check regression mode, same skip-77 / out-of-CI wiring as the St tier: these
+# compare the fresh lsdtt3 rates against the frozen rows and must NOT rewrite them.
+add_test(NAME cosmo_realworld_dethier2014_lsdn
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
+                 dethier2014_lsdn --check
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+set_tests_properties(cosmo_realworld_dethier2014_lsdn PROPERTIES
+    LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+add_test(NAME cosmo_realworld_clapp2002_lsdn
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
+                 clapp2002_lsdn --check
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+set_tests_properties(cosmo_realworld_clapp2002_lsdn PROPERTIES
+    LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+add_test(NAME cosmo_realworld_dibiase2010_lsdn
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
+                 dibiase2010_lsdn --check
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+set_tests_properties(cosmo_realworld_dibiase2010_lsdn PROPERTIES
+    LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
 # §6e production-vs-BEPROD isolation (decisive test for the ~+4% Dethier residual).
 # At fixed concentration inferred erosion is proportional to basin-mean production;
 # this fetches the keyless COP30 DEM, runs lsdtt-cosmo-tool MATCHED to OCTOPUS

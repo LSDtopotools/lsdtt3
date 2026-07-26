@@ -126,10 +126,20 @@ struct LsdnTimeAvgSurface
     // so either convention works at call time.  May legitimately hold a single
     // node for a kernel with no longitude dependence (Stone paleomag).
     std::vector<double> lon_ax;
-    std::vector<double> p_ax;               // copy of nc.lsdn_p (380 native nodes)
-    // n_lat*n_lon*n_p time-averaged RAW values (NOT SLHL-normalised), indexed
-    // ((ilat*n_lon) + ilon)*n_p + ip.
+    // LSDn: copy of nc.lsdn_p (380 native nodes).  EMPTY for the Stone-paleomag
+    // flavour, which has no pressure axis at all - see avg_modern below.
+    std::vector<double> p_ax;
+    // LSDn: n_lat*n_lon*n_p time-averaged RAW values (NOT SLHL-normalised),
+    // indexed ((ilat*n_lon) + ilon)*n_p + ip.
+    // Stone paleomag: n_lat * stone_paleomag_basis_n time-averaged Stone-table
+    // interpolation weights, indexed ilat*stone_paleomag_basis_n + j.
     std::vector<double> avg;
+    // STONE-PALEOMAG FLAVOUR ONLY (empty for LSDn).  The modern (record step 0)
+    // counterpart of avg, same layout.  It exists so that the correction's
+    // numerator AND denominator are both drawn from this one object at the same
+    // latitude - which is what makes the constant-VDM ratio cancel identically
+    // (test L14b / G1) rather than only approximately.
+    std::vector<double> avg_modern;
     double              ref      = 0.0;     // SLHL denominator for this nuclide
     bool                valid    = false;   // false => caller uses the direct path
     // Why the surface was or was not built; for the run header.
@@ -233,8 +243,130 @@ public:
     // total Stone factor accordingly.  Returns stone2000sp(lat,P,Fsp) if
     // nc.loaded == false or age_yr <= 0.
     // age_yr: sample exposure age in years (positive, years before present).
+    //
+    // EVALUATED THROUGH THE PRECOMPUTED SURFACE (see
+    // build_stone_paleomag_surface below), on the same global latitude lattice
+    // the raster path uses, so this function and calculate_production_raster
+    // return the same number at the same site.  The direct per-timestep
+    // definition remains permanently available as
+    // stone_paleomag_correction_direct() and is the oracle the surface is
+    // tested against (L14).
     double stone2000sp_paleomag(double lat_deg, double P_mbar, double Fsp,
                                 double age_yr, const CrnNcData& nc) const;
+
+    // ---- Stone paleomagnetic correction: definition, surface, evaluator -----
+    //
+    // The correction is sf_avg(lat,P) / sf_modern(lat,P), where sf_avg is the
+    // trapezoidal time average of stone_factor_at_rc(Rc_c*vdm(t)*cos^4(lat), P)
+    // over the Muscheler record truncated at age_yr, and sf_modern is the same
+    // quantity at record step 0.  Multiplying the time-independent Stone factor
+    // by it gives stone2000sp_paleomag.
+    //
+    // WHY A SURFACE.  Called per pixel the direct form costs 108 evaluations of
+    // stone_factor_at_rc, each of which rebuilds and sorts an 18-point table on
+    // five freshly heap-allocated vectors.  Everything in that loop except
+    // cos^4(lat) and the pressure is common to every pixel, so it is hoisted to
+    // a coarse LATITUDE lattice built once per run.
+    //
+    // WHY THE PRESSURE STAYS EXACT (the analogue of the LSDn surface's native
+    // 380 pressure nodes, LsdnTimeAvgSurface above).  stone_factor_at_rc is
+    // interp1d over a table whose BREAKPOINTS Rc_j are independent of P (they
+    // are 14.3*cos^4(ilat_k), 0, and 16...25 GV) and whose VALUES S_j(P) depend
+    // on P alone.  So
+    //
+    //     stone_factor_at_rc(Rc, P) = sum_j beta_j(Rc) * S_j(P)
+    //
+    // exactly, with P-independent weights beta.  Time-averaging is linear, so
+    // averaging beta and applying S(P) afterwards is algebraically the same
+    // number as averaging the factors themselves.  The surface therefore stores
+    // the AVERAGED WEIGHTS, and pressure is applied per pixel at full accuracy.
+    // The ONLY approximation in the object is the latitude interpolation, which
+    // is what test L11 measures.
+    static constexpr int stone_paleomag_basis_n = 18;
+
+    // Shipped latitude resolution of the Stone-paleomag surface, CHOSEN BY
+    // MEASUREMENT (L11 sweep, 2026-07-26), not assumed.  Measured max/RMS
+    // relative deviation from the direct definition over off-node latitudes
+    // 0-70 deg, pressures 500-1013 hPa and ages 2e4/5e4 yr:
+    //
+    //     h (deg)   max rel     rms rel
+    //     1.0       1.21e-03    4.37e-04
+    //     0.1       2.87e-06    7.41e-07
+    //     0.025     4.25e-07    8.20e-08
+    //     0.01      7.89e-08    1.52e-08     <-- shipped
+    //
+    // 0.01 deg is chosen because 7.6e-8 is at the precision of the float32
+    // production raster this feeds (float32 eps 1.19e-7, half-ulp 5.96e-8), so
+    // the surface is indistinguishable from the direct path in the actual
+    // output; and because the Stone surface has NO pressure axis, so its build
+    // is n_lat * n_record_steps and stays negligible even at this step.  That
+    // is why it can afford to be 10x finer than the LSDn surface's 0.1 deg,
+    // whose build carries a factor of 380 pressure nodes.
+    //
+    // Convergence is deliberately NOT assumed to be second order: the
+    // correction is C0 but not C1 in latitude, because each record step drags
+    // Rc_i(lat) across the Stone table's fixed breakpoints, so the error curve
+    // has first-order plateaus (measured ratios per halving as low as 1.71).
+    static constexpr double stone_paleomag_h_step_deg = 0.01;
+
+    // THE DEFINITION.  Direct per-timestep trapezoidal average, no surface, no
+    // interpolation in latitude - exactly the arithmetic this function has
+    // always used.  Kept public and permanent: it is the oracle the surface is
+    // measured against (L11/L14), and "the surface is faster" is never a reason
+    // to delete it.  Returns 1.0 (not an error) for every degenerate case in
+    // which the correction is not defined: nc not loaded, no record, age <= 0,
+    // fewer than two record points within the age, or zero time span.
+    static double stone_paleomag_correction_direct(double lat_deg, double P_mbar,
+                                                   double age_yr,
+                                                   const CrnNcData& nc);
+
+    // Stone-paleomag flavour of the time-averaged surface.  Same struct, same
+    // ownership and lifetime rules as the LSDn surface: built ONCE per raster
+    // call before the OpenMP region, thereafter read-only and safe to share by
+    // const& across threads; evaluation allocates nothing.
+    //
+    // The axis is |latitude| (Rc depends on cos^4(lat) only, so the surface is
+    // symmetric about the equator and its lon_ax degenerates to a single node);
+    // bounds that straddle the equator are widened to include 0.  Nodes are
+    // snapped outward to multiples of h_step_deg, so node positions depend on
+    // the step alone and not on the raster's exact extent - which is what lets
+    // the scalar stone2000sp_paleomag() and the raster path agree.
+    //
+    // n_pixels is accepted for symmetry with build_lsdn_time_avg_surface but
+    // gates nothing: with no pressure axis the build costs n_lat * n_steps -
+    // about the work of two pixels - so there is no raster too small to repay
+    // it, and no cost model to get wrong.
+    //
+    // Returns valid == false (having allocated nothing) with the decision in
+    // .reason when the correction is not defined at all (the same degenerate
+    // cases stone_paleomag_correction_direct returns 1.0 for).
+    static LsdnTimeAvgSurface build_stone_paleomag_surface(
+        const CrnNcData& nc, double age_yr,
+        double lat_min_deg, double lat_max_deg,
+        std::size_t n_pixels = 0,
+        double h_step_deg = stone_paleomag_h_step_deg,
+        bool force_build = false);
+
+    // The paleomagnetic correction at one site from a prebuilt surface: linear
+    // in |latitude| on the averaged and modern weight vectors, then the exact
+    // pressure basis applied to both and the ratio taken.  Equal to
+    // stone_paleomag_correction_direct() at a latitude node (to rounding) and
+    // to within the L11 interpolation error between nodes.
+    //
+    // Pure arithmetic on const data - no allocation, no locking, no static
+    // state - so it is safe inside an OpenMP parallel-for.  Queries outside the
+    // surface's latitude extent are clamped to it.
+    // Throws std::runtime_error if the surface is not valid; that is a caller
+    // bug (validity belongs outside the parallel region).
+    static double stone_paleomag_correction_from_surface(
+        const LsdnTimeAvgSurface& surface, double lat_deg, double P_mbar);
+
+    // The full surface-backed Stone factor: the time-independent Stone (2000)
+    // factor times the correction above.  This is what the raster path calls.
+    static double stone_paleomag_from_surface(const LsdnTimeAvgSurface& surface,
+                                              double lat_deg, double P_mbar,
+                                              double Fsp,
+                                              const lsdtt_crn_parameters& params);
 
     //  LSDn scaling (Lifton, Sato & Dunai 2014)
     // Dimensionless production-rate scaling factor, normalised so that it is

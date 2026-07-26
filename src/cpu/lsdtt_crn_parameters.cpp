@@ -715,17 +715,49 @@ double lsdtt_crn_parameters::stone_factor_at_rc(double Rc_GV, double P_mbar)
     return interp1d(Rc_s, sf_s, Rc_GV);
 }
 
-// 
+//
 // stone2000sp_paleomag
 // Stone 2000 scaling with time-integrated paleomagnetic correction via the
 // Muscheler VDM record.  Follows Rc_correctedStoneFactors() / PR_processes.py.
-// 
+//
+// Evaluated through the precomputed Stone-paleomag surface (built at the bottom
+// of this file), on the same global latitude lattice the raster path uses, so a
+// single-site call and a pixel at that site return the same number.  The direct
+// per-timestep definition is stone_paleomag_correction_direct() immediately
+// below and remains the reference the surface is tested against.
+//
 double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
                                                    double Fsp, double age_yr,
                                                    const CrnNcData& nc) const
 {
+    const double base = stone2000sp(lat_deg, P_mbar, Fsp);
     if (!nc.loaded || nc.muscheler_time.empty() || age_yr <= 0.0)
-        return stone2000sp(lat_deg, P_mbar, Fsp);
+        return base;
+
+    // A single site spans no latitude, so the lattice snap gives one node when
+    // the site sits on one and two when it does not - never more.
+    const LsdnTimeAvgSurface s = build_stone_paleomag_surface(
+        nc, age_yr, lat_deg, lat_deg, 1u, stone_paleomag_h_step_deg, true);
+    if (!s.valid)
+        return base;
+
+    return base * stone_paleomag_correction_from_surface(s, lat_deg, P_mbar);
+}
+
+//
+// stone_paleomag_correction_direct
+// THE DEFINITION of the paleomagnetic correction: the trapezoidal time average
+// of the Stone spallation factor over the Muscheler VDM record, divided by its
+// modern (record step 0) value.  Arithmetic unchanged from the pre-surface
+// implementation - this function IS that implementation, lifted out so it stays
+// callable as the surface's oracle (tests L11 / L14).  Returns 1.0 for every
+// degenerate case in which the correction is not defined.
+//
+double lsdtt_crn_parameters::stone_paleomag_correction_direct(
+    double lat_deg, double P_mbar, double age_yr, const CrnNcData& nc)
+{
+    if (!nc.loaded || nc.muscheler_time.empty() || age_yr <= 0.0)
+        return 1.0;
 
     const double lat_rad = std::fabs(lat_deg) * kPi / 180.0;
     const double cos4lat = std::pow(std::cos(lat_rad), 4.0);
@@ -743,7 +775,7 @@ double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
         if (nc.muscheler_time[i] <= age_yr) n_use = i + 1; else break;
     }
     if (n_use < 2)
-        return stone2000sp(lat_deg, P_mbar, Fsp);
+        return 1.0;
 
     // Build Stone spallation factor at each time step
     std::vector<double> sf_t(n_use);
@@ -760,19 +792,19 @@ double lsdtt_crn_parameters::stone2000sp_paleomag(double lat_deg, double P_mbar,
     }
     double t_span = nc.muscheler_time[n_use-1] - nc.muscheler_time[0];
     if (t_span <= 0.0)
-        return stone2000sp(lat_deg, P_mbar, Fsp);
+        return 1.0;
     double sf_avg = integral / t_span;
 
     // Modern spallation factor (VDM at t ~= 0, i.e. index 0)
     double Rc_modern = Rc_c * static_cast<double>(nc.muscheler_vdm[0]) * cos4lat;
     double sf_modern = stone_factor_at_rc(Rc_modern, P_mbar);
     if (sf_modern <= 0.0)
-        return stone2000sp(lat_deg, P_mbar, Fsp);
+        return 1.0;
 
-    // Scale the total Stone factor by the paleomagnetic correction ratio
-    // (correction applies to the spallation component only; muon term unchanged)
-    double correction = sf_avg / sf_modern;
-    return stone2000sp(lat_deg, P_mbar, Fsp) * correction;
+    // The correction applies to the spallation component only; the muon term is
+    // unchanged, and the caller multiplies the time-independent Stone factor by
+    // this ratio.
+    return sf_avg / sf_modern;
 }
 
 // =============================================================================
@@ -1425,6 +1457,304 @@ double lsdtt_crn_parameters::lsdn_scaling_from_surface(
     const double c1 = c10 + tlon * (c11 - c10);
 
     return (c0 + tlat * (c1 - c0)) / surface.ref;
+}
+
+// =============================================================================
+//  The Stone-paleomag time-averaged surface
+//
+//  Same object, same ownership and lifetime rules as the LSDn surface above;
+//  what differs is the kernel being averaged (stone_factor_at_rc over the
+//  Muscheler record, rather than the LSDn b/m grids over the Pavon record) and
+//  the fact that the Stone Rc depends on cos^4(lat) only, so the horizontal
+//  axis is |latitude| alone.
+//
+//  As with the LSDn surface, everything below computes exactly the quantity the
+//  direct definition (stone_paleomag_correction_direct) defines - only the
+//  order of operations changes.  The direct form averages the FACTORS; this
+//  averages the interpolation WEIGHTS and applies the pressure-dependent table
+//  afterwards.  stone_factor_at_rc is interp1d over a table whose breakpoints
+//  are independent of P and whose values depend on P alone, so it equals
+//  sum_j beta_j(Rc) * S_j(P) exactly, and time-averaging (a linear operator)
+//  commutes with the sum.  The pressure is therefore EXACT, not interpolated;
+//  the only approximation in the object is in latitude, which is what L11
+//  measures.
+// =============================================================================
+
+namespace {
+
+// The 18 Rc breakpoints of the Stone table, ascending.  These are exactly the
+// values stone_factor_at_rc() builds and sorts on every call, and they do not
+// depend on pressure:
+//   [0]      Rc = 0, the extension that makes the polar plateau flat;
+//   [1..7]   14.3 * cos^4(lat) for lat = 60, 50, 40, 30, 20, 10, 0 deg;
+//   [8..17]  the integer log-log extension points 16...25 GV.
+inline void stone_basis_rc(double Rc[18])
+{
+    static const double ilat[7] = { 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0 };
+    Rc[0] = 0.0;
+    for (int k = 0; k < 7; ++k)
+        Rc[1 + k] = 14.3 * std::pow(std::cos(ilat[6 - k] * kPi / 180.0), 4.0);
+    for (int e = 0; e < 10; ++e)
+        Rc[8 + e] = static_cast<double>(16 + e);
+}
+
+// The 18 Stone table VALUES at one pressure, in the same ascending-Rc order.
+// Every expression here is character-for-character the one in
+// stone_factor_at_rc(); the only difference is that this writes into a caller-
+// supplied array instead of building and sorting five heap vectors, which is
+// what makes it cheap enough to call once per pixel.
+inline void stone_basis_sf(double P, double S[18])
+{
+    static const double ilat[7] = { 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0 };
+    static const double sa[7] = { 31.8518, 34.3699, 40.3153, 42.0983, 56.7733, 69.0720, 71.8733 };
+    static const double sb[7] = { 250.3193, 258.4759, 308.9894, 512.6857, 649.1343, 832.4566, 863.1927 };
+    static const double sc[7] = { -0.083393,-0.089807,-0.106248,-0.120551,-0.160859,-0.199252,-0.207069 };
+    static const double sd[7] = { 7.4260e-5,7.9457e-5,9.4508e-5,1.1752e-4,1.5463e-4,1.9391e-4,2.0127e-4 };
+    static const double se[7] = { -2.2397e-8,-2.3697e-8,-2.8234e-8,-3.8809e-8,-5.0330e-8,-6.3653e-8,-6.6043e-8 };
+
+    const double P2 = P * P, P3 = P2 * P;
+    const double eP = std::exp(-P / 150.0);
+
+    double i_sf[7];
+    for (int k = 0; k < 7; ++k)
+        i_sf[k] = sa[k] + sb[k] * eP + sc[k] * P + sd[k] * P2 + se[k] * P3;
+
+    S[0] = i_sf[6];                        // Rc = 0 carries the 60 deg value
+    for (int k = 0; k < 7; ++k) S[1 + k] = i_sf[6 - k];
+
+    // Log-log extension to 25 GV, fitted to the lat 0/10/20 points exactly as
+    // stone_factor_at_rc does.
+    const double i_Rc0 = 14.3 * std::pow(std::cos(ilat[0] * kPi / 180.0), 4.0);
+    const double i_Rc2 = 14.3 * std::pow(std::cos(ilat[2] * kPi / 180.0), 4.0);
+    const double slope = (std::log(i_sf[0]) - std::log(i_sf[2]))
+                       / (std::log(i_Rc0)   - std::log(i_Rc2));
+    for (int rc_ext = 16; rc_ext <= 25; ++rc_ext)
+        S[8 + rc_ext - 16] = std::exp(std::log(i_sf[0])
+                                      + slope * (std::log(rc_ext) - std::log(i_Rc0)));
+}
+
+// The interp1d weights on that table: at most two are non-zero.  Mirrors
+// lsdtt_crn_parameters::interp1d(), including its clamping at both ends and its
+// first-bracket-wins scan, so that sum_j beta_j * S_j reproduces
+// stone_factor_at_rc(Rc, P) to rounding.
+inline void stone_basis_weights(double Rc_GV, const double Rc[18], double beta[18])
+{
+    for (int j = 0; j < 18; ++j) beta[j] = 0.0;
+
+    if (Rc_GV <= Rc[0])  { beta[0]  = 1.0; return; }
+    if (Rc_GV >= Rc[17]) { beta[17] = 1.0; return; }
+    for (int k = 0; k < 17; ++k)
+    {
+        if (Rc_GV >= Rc[k] && Rc_GV <= Rc[k + 1])
+        {
+            const double t = (Rc_GV - Rc[k]) / (Rc[k + 1] - Rc[k]);
+            beta[k]     = 1.0 - t;
+            beta[k + 1] = t;
+            return;
+        }
+    }
+    beta[17] = 1.0;
+}
+
+} // anonymous namespace
+
+//
+// build_stone_paleomag_surface
+//
+LsdnTimeAvgSurface lsdtt_crn_parameters::build_stone_paleomag_surface(
+    const CrnNcData& nc, double age_yr,
+    double lat_min_deg, double lat_max_deg,
+    std::size_t n_pixels, double h_step_deg, bool force_build)
+{
+    (void)force_build;   // no cost model to override: see the header note
+
+    LsdnTimeAvgSurface s;
+    s.nuclide = "Stone";
+    s.age_yr  = age_yr;
+
+    if (!nc.loaded || nc.muscheler_time.empty() || nc.muscheler_vdm.empty())
+    {
+        s.reason = "no Muscheler VDM record in the loaded crn_parameters.nc";
+        return s;
+    }
+    if (age_yr <= 0.0)
+    {
+        s.reason = "age_yr <= 0: there is no paleomagnetic correction to average";
+        return s;
+    }
+
+    // ---- Pixel-independent record scan, hoisted out of the per-pixel path ---
+    // (this and the two hoists below are the whole point of the object: they
+    // depend only on age_yr and the record, never on the site).
+    const int n = static_cast<int>(nc.muscheler_time.size());
+    int n_use = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        if (nc.muscheler_time[i] <= age_yr) n_use = i + 1; else break;
+    }
+    if (n_use < 2)
+    {
+        s.reason = "fewer than two Muscheler record points within age_yr";
+        return s;
+    }
+    if (static_cast<int>(nc.muscheler_vdm.size()) < n_use)
+    {
+        s.reason = "Muscheler VDM record is shorter than its time axis";
+        return s;
+    }
+    const double t_span = nc.muscheler_time[n_use - 1] - nc.muscheler_time[0];
+    if (!(t_span > 0.0))
+    {
+        s.reason = "zero total duration in the Muscheler time average";
+        return s;
+    }
+
+    const auto t_start = std::chrono::steady_clock::now();
+
+    // Rc_c * vdm[i] depends only on the record, so it is formed once here
+    // rather than per pixel; only the * cos^4(lat) is site dependent.
+    static const double Rc_c = (4e-7 * 3e8 * 1e22) / (16e9 * 6.3712e6 * 6.3712e6);
+    std::vector<double> rc_vdm(static_cast<std::size_t>(n_use));
+    for (int i = 0; i < n_use; ++i)
+        rc_vdm[static_cast<std::size_t>(i)] =
+            Rc_c * static_cast<double>(nc.muscheler_vdm[i]);
+
+    // ---- The |latitude| axis ----------------------------------------------
+    // Rc goes as cos^4(lat), so the surface is symmetric about the equator and
+    // is built in |lat|; bounds that straddle the equator are widened to 0.
+    double lo, hi;
+    {
+        const double a0 = std::fabs(lat_min_deg), a1 = std::fabs(lat_max_deg);
+        const bool straddles = (lat_min_deg <= 0.0 && lat_max_deg >= 0.0)
+                            || (lat_max_deg <= 0.0 && lat_min_deg >= 0.0);
+        lo = straddles ? 0.0 : std::min(a0, a1);
+        hi = std::max(a0, a1);
+    }
+    if (!(h_step_deg > 0.0)) h_step_deg = stone_paleomag_h_step_deg;
+
+    // A single site that happens to sit exactly on a lattice node needs one
+    // node, not two: the second would carry a weight of exactly zero.  This is
+    // a pure saving - the interpolation returns the identical value either way.
+    const double snapped = std::floor(lo / h_step_deg) * h_step_deg;
+    if (lo == hi && snapped == lo)
+        s.lat_ax.assign(1, lo);
+    else
+        s.lat_ax = make_regular_axis(lo, hi, h_step_deg);
+
+    const std::size_t n_lat = s.lat_ax.size();
+    const std::size_t nb    = static_cast<std::size_t>(stone_paleomag_basis_n);
+
+    s.lon_ax.assign(1, 0.0);   // degenerate: no longitude dependence at all
+    s.p_ax.clear();            // no pressure axis: the pressure basis is exact
+    s.avg.assign(n_lat * nb, 0.0);
+    s.avg_modern.assign(n_lat * nb, 0.0);
+    s.ref = 1.0;               // the correction is already a ratio
+
+    double Rc_bp[18];
+    stone_basis_rc(Rc_bp);
+
+    const long long n_lat_ll = static_cast<long long>(n_lat);
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (long long il = 0; il < n_lat_ll; ++il)
+    {
+        const std::size_t ilat = static_cast<std::size_t>(il);
+        const double lat_rad = s.lat_ax[ilat] * kPi / 180.0;
+        const double cos4lat = std::pow(std::cos(lat_rad), 4.0);
+
+        double* A = &s.avg[ilat * nb];
+        double* M = &s.avg_modern[ilat * nb];
+
+        // The per-pixel std::vector<double> sf_t(n_use) of the old code is gone:
+        // two fixed-size buffers roll through the record.
+        double beta_prev[18], beta_cur[18];
+        stone_basis_weights(rc_vdm[0] * cos4lat, Rc_bp, beta_prev);
+        for (std::size_t j = 0; j < nb; ++j) M[j] = beta_prev[j];
+
+        // Same trapezoidal accumulation as the direct definition, with the
+        // scalar factor replaced by its weight vector.
+        for (int i = 1; i < n_use; ++i)
+        {
+            stone_basis_weights(rc_vdm[static_cast<std::size_t>(i)] * cos4lat,
+                                Rc_bp, beta_cur);
+            const double dt = nc.muscheler_time[static_cast<std::size_t>(i)]
+                            - nc.muscheler_time[static_cast<std::size_t>(i - 1)];
+            for (std::size_t j = 0; j < nb; ++j)
+                A[j] += 0.5 * (beta_cur[j] + beta_prev[j]) * dt;
+            for (std::size_t j = 0; j < nb; ++j) beta_prev[j] = beta_cur[j];
+        }
+        for (std::size_t j = 0; j < nb; ++j) A[j] /= t_span;
+    }
+
+    s.n_nodes = s.avg.size();
+    s.n_bytes = (s.avg.size() + s.avg_modern.size()
+                 + s.lat_ax.size() + s.lon_ax.size()) * sizeof(double);
+    s.build_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
+    s.valid  = true;
+    s.reason = "built: " + std::to_string(n_lat) + " |lat| nodes x "
+             + std::to_string(stone_paleomag_basis_n) + " basis weights over "
+             + std::to_string(n_use) + " Muscheler record steps (exact in p) for "
+             + std::to_string(n_pixels) + " pixels";
+    return s;
+}
+
+//
+// stone_paleomag_correction_from_surface
+// Linear in |latitude| on both weight vectors, then the exact pressure basis
+// applied to each and the ratio taken.  Numerator and denominator travel the
+// identical code path through the identical object, which is what makes the
+// constant-VDM correction cancel to rounding (G1 / L14b).
+//
+double lsdtt_crn_parameters::stone_paleomag_correction_from_surface(
+    const LsdnTimeAvgSurface& surface, double lat_deg, double P_mbar)
+{
+    if (!surface.valid)
+        throw std::runtime_error(
+            "stone_paleomag_correction_from_surface: the surface is not valid ("
+            + surface.reason + ") - the caller must check surface.valid outside "
+            "the parallel region and use stone_paleomag_correction_direct() "
+            "instead");
+
+    const std::size_t nb = static_cast<std::size_t>(stone_paleomag_basis_n);
+
+    double S[18];
+    stone_basis_sf(P_mbar, S);
+
+    int    ilat = 0;
+    double tlat = 0.0;
+    regular_axis_weight(surface.lat_ax, std::fabs(lat_deg), ilat, tlat);
+
+    const std::size_t base = static_cast<std::size_t>(ilat) * nb;
+    const std::size_t d    = (surface.lat_ax.size() > 1) ? nb : 0u;
+
+    double num = 0.0, den = 0.0;
+    for (std::size_t j = 0; j < nb; ++j)
+    {
+        const double a0 = surface.avg[base + j];
+        const double a1 = surface.avg[base + d + j];
+        const double m0 = surface.avg_modern[base + j];
+        const double m1 = surface.avg_modern[base + d + j];
+        num += (a0 + tlat * (a1 - a0)) * S[j];
+        den += (m0 + tlat * (m1 - m0)) * S[j];
+    }
+
+    // A non-positive modern factor is not physical; the direct definition falls
+    // back to no correction there and so does this.
+    if (!(den > 0.0)) return 1.0;
+    return num / den;
+}
+
+//
+// stone_paleomag_from_surface
+//
+double lsdtt_crn_parameters::stone_paleomag_from_surface(
+    const LsdnTimeAvgSurface& surface, double lat_deg, double P_mbar,
+    double Fsp, const lsdtt_crn_parameters& params)
+{
+    return params.stone2000sp(lat_deg, P_mbar, Fsp)
+         * stone_paleomag_correction_from_surface(surface, lat_deg, P_mbar);
 }
 
 } // namespace lsdtt

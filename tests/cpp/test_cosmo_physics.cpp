@@ -36,6 +36,7 @@
 //                           [lsdn_sentinel_csv_path] [test_data_dir]
 //                           [--regenerate-sentinel-i-have-simons-approval]
 //                           [--regenerate-lsdn-sentinel-i-have-simons-approval]
+//                           [--regenerate-g4-goldens-i-have-simons-approval]
 //   output_dir (default ".") receives the plottable CSVs (plan Sec7).
 //   sentinel_csv_path (default tests/expected/cosmo/numerics_sentinel.csv
 //   relative to the CTest invocation) holds the Sec3b pinned values.
@@ -119,6 +120,28 @@ constexpr double tc2_cronus   = 10.0;    // T-C2 vs CRONUS v3 St, percent; worst
 constexpr double g1_static    = 1e-12;   // G1 constant-VDM correction is exactly 1
 constexpr double g4_golden    = 1e-9;    // G4 paleomag goldens; deterministic double core
 constexpr double g6c_band     = 25.0;    // 6c(A) equatorial ON-OFF |delta|, percent
+// Phase 8 Stone-paleomag surface (lsdn plan Sec3.9 / Sec7.4; L14).  The first
+// bound below was WRITTEN DOWN BEFORE THE CODE RAN
+// (docs/plan_docs/phase8_g4_prediction.md, 2026-07-26) and is the re-freeze
+// gate: putting stone2000sp_paleomag on the surface was predicted to move the
+// six G4 goldens only by the re-association of a 108-term sum, i.e. a few ulp,
+// because the surface's pressure dependence is exact and all six golden
+// latitudes land exactly on lattice nodes.  Measured worst 1.05e-15 (three of
+// the six are bit-identical; the largest is at 70 deg, where the surface is
+// the MORE exact of the two - it returns a correction of exactly 1) - so the
+// authorised re-freeze proved UNNECESSARY and the goldens were left alone.
+// This is deliberately ~1e6 times tighter than g4_golden: it catches a moved
+// golden long before the 1e-9 assertion would.
+constexpr double g4_refreeze_pred = 5e-15;
+// L14: Stone surface vs the direct definition AT a latitude node.  Same class
+// of quantity as lsdn_surface_node - only summation order differs.  Measured
+// worst 1.78e-15.
+constexpr double stone_surface_node = 1e-14;
+// L14/L11: Stone surface vs direct BETWEEN nodes at the shipped
+// h = 0.01 deg.  This is the latitude interpolation error, and it is chosen
+// (see lsdtt_crn_parameters.hpp) to sit at float32 precision so it cannot be
+// seen in the production raster.  Measured worst 7.89e-08.
+constexpr double stone_surface_h    = 2e-7;
 // Phase 7 LSDn (measured-then-frozen 2026-07-25; see lsdn_implementation_plan
 // Sec5).  Every bound below carries the value measured at first run.
 constexpr double lsdn_v3_grid = 5e-7;    // L2 vs frozen v3 grids (float32 pack); worst 9.79e-8
@@ -2945,8 +2968,20 @@ void phase5_G2_invariants()
 // OUR time-integrated Stone factor at a few (lat, pressure, age) triplets;
 // measured 2026-07-23 against data/crn_parameters.nc and frozen at tol::g4_golden.
 // They are NOT a CRONUS comparison (different VDM record - plan Sec6c).
+//
+// WHICH PATH THESE RUN THROUGH (lsdn plan Sec7.4).  Since Phase 8,
+// stone2000sp_paleomag() evaluates on the precomputed latitude surface, so
+// these six goldens pin THE PATH THE RASTER TOOL USES, not a reference path
+// nothing calls.  L14c additionally pins them against the direct definition.
+//
+// RE-FREEZING THESE IS GATED, exactly like the numerics sentinel: pass
+// --regenerate-g4-goldens-i-have-simons-approval and the driver writes
+// g4_paleomag_refreeze.csv (old value, new value, relative shift per triplet)
+// for review INSTEAD of asserting.  It never passes silently and never rewrites
+// the values itself - the array below is edited by hand, after sign-off.
 void phase5_G4_golden_trajectories(const lsdtt::CrnNcData& nc_real,
-                                   const std::string& out_dir)
+                                   const std::string& out_dir,
+                                   bool regenerate)
 {
     if (!nc_real.loaded)
     {
@@ -2955,6 +2990,10 @@ void phase5_G4_golden_trajectories(const lsdtt::CrnNcData& nc_real,
     }
     lsdtt::lsdtt_crn_parameters cp;
     struct golden { double lat, P, age, expected; };
+    // Frozen 2026-07-23.  REVIEWED AND RETAINED UNCHANGED at Phase 8
+    // (2026-07-26): the surface was expected to move them and did not, because
+    // its pressure dependence is exact and all six latitudes land on lattice
+    // nodes.  Measured shift reported in the phase report; see L14d.
     const golden g[] = {
         {0.0,  1013.25, 20000.0, 0.60474384759202182},
         {0.0,  700.0,   20000.0, 4.738527144189737},
@@ -2965,19 +3004,56 @@ void phase5_G4_golden_trajectories(const lsdtt::CrnNcData& nc_real,
     };
     csv_writer csv(out_dir + "/geomag_scaling.csv",
                    "lat,pressure_hPa,t_yr,sf_paleomag,sf_modern,ratio,source");
-    bool ok = true;
+    csv_writer ref(out_dir + "/g4_paleomag_refreeze.csv",
+                   "lat,pressure_hPa,age_yr,old_frozen,new_measured,rel_shift,"
+                   "predicted_bound,within_prediction");
+    bool ok = true, within_pred = true;
+    double worst = 0.0;
     std::string bad;
     for (const golden& x : g)
     {
         const double got = cp.stone2000sp_paleomag(x.lat, x.P, 1.0, x.age, nc_real);
         const double off = cp.stone2000sp(x.lat, x.P, 1.0);
+        const double shift = (got - x.expected) / x.expected;
         csv.row(x.lat, x.P, x.age, got, off, got / off, "lsdtt_knudsen");
+        ref.row(x.lat, x.P, x.age, x.expected, got, shift, tol::g4_refreeze_pred,
+                std::abs(shift) <= tol::g4_refreeze_pred ? 1 : 0);
+        worst = std::max(worst, std::abs(shift));
+        if (std::abs(shift) > tol::g4_refreeze_pred) within_pred = false;
         if (!approx_rel(got, x.expected, tol::g4_golden))
         { ok = false; bad = "lat=" + std::to_string(x.lat) + " age="
                             + std::to_string(x.age) + ": " + diff_str(got, x.expected); }
     }
-    check("G4: paleomag goldens match frozen Knudsen trajectory (1e-9)", ok, bad);
+
+    if (regenerate)
+    {
+        std::cout
+            << "\n**********************************************************\n"
+            << "* G4 PALEOMAG GOLDENS regenerated for review.             *\n"
+            << "* Old value / new value / relative shift per triplet are  *\n"
+            << "* in g4_paleomag_refreeze.csv.  The values in this file   *\n"
+            << "* are NOT edited automatically: transcribe them by hand    *\n"
+            << "* only after Simon Mudd has signed the artefact off.       *\n"
+            << "**********************************************************\n\n";
+        check("G4: goldens regenerated (review required before commit)", true);
+    }
+    else
+    {
+        check("G4: paleomag goldens match frozen Knudsen trajectory (1e-9)",
+              ok, bad);
+    }
+    // L14d.  The shift the Phase 8 surface was PREDICTED to cause, asserted
+    // separately and ~10^6 times tighter than tol::g4_golden.  This is the
+    // "predict, then measure" gate: a change that moved a golden by even 1e-13
+    // would pass the 1e-9 assertion above but must not pass silently.
+    check("L14d: G4 goldens within the predicted Phase 8 shift "
+          "(<= tol::g4_refreeze_pred)", within_pred,
+          "worst |rel shift| = " + std::to_string(worst));
+    std::cout << "      L14d worst G4 |relative shift| vs the 2026-07-23 "
+              << "goldens = " << worst << " (predicted <= "
+              << tol::g4_refreeze_pred << ")\n";
     check("csv: geomag_scaling.csv written", csv.good());
+    check("csv: g4_paleomag_refreeze.csv written", ref.good());
 }
 
 // Sec6c(A) - equatorial geomag ON/OFF at the LSDTT-1 fixture (lat 0, 250 m),
@@ -4404,8 +4480,381 @@ void phase7_L11_resolution_sweep(const lsdtt::CrnNcData& nc,
           err[3] <= tol::lsdn_surface_h, std::to_string(err[3]));
     std::cout << "      L11 measured worst convergence ratio per halving = "
               << worst_ratio << "; h = 0.1 deg gives " << err[3] << "\n"
-              << "      L11 NOTE: the Stone-paleomag half of this sweep is "
-                 "blocked on Phase 8, so h_step_deg = 0.1 stays a placeholder.\n";
+              << "      L11 LSDn: h_step_deg = 0.1 deg is the SHIPPED value, "
+                 "chosen here (build cost carries a factor of 380 pressure "
+                 "nodes, so a finer step is not affordable).\n";
+}
+
+// L11, Stone-paleomag half (Phase 8).  Same question, different kernel: how
+// coarse may the latitude axis be?  The answer is different because the Stone
+// surface has NO pressure axis, so its build costs n_lat * n_record_steps and
+// a much finer step is affordable.
+//
+// It appends kernel = "stone" rows to the same lsdn_surface_resolution_sweep.csv
+// that the LSDn half writes, so the two kernels can be read side by side.
+//
+// NO CONVERGENCE-RATE ASSERTION HERE, deliberately, and this is not an
+// oversight: the correction is C0 but NOT C1 in latitude, because each of the
+// 108 record steps drags Rc_i(lat) across the Stone table's fixed breakpoints.
+// Near a kink linear interpolation is first-order, so the error curve has
+// plateaus (measured ratios per halving as low as 1.26) and the LSDn half's
+// "at least 2.5x per halving" test would be simply wrong for this kernel.
+void phase8_L11_stone_resolution_sweep(const lsdtt::CrnNcData& nc,
+                                       const std::string& out_dir)
+{
+    using CP = lsdtt::lsdtt_crn_parameters;
+    if (!nc.loaded || nc.muscheler_time.empty())
+    {
+        check("L11(stone): the Muscheler record is present", false,
+              "no record - the sweep cannot run and must not report a pass");
+        return;
+    }
+
+    // Off-node at EVERY swept step (never a multiple of 0.005), and spanning
+    // the full latitude range where the correction has any structure.
+    const double lats[]  = {0.0371, 10.37137, 20.629137, 30.413317,
+                            45.827137, 60.371737, 70.629137};
+    const double press[] = {1013.25, 900.0, 812.7, 700.0, 631.3, 500.0};
+    const double ages[]  = {2.0e4, 5.0e4};
+    const double steps[] = {1.0, 0.5, 0.25, 0.1, 0.05, 0.025, 0.01};
+
+    csv_writer csv(out_dir + "/stone_paleomag_resolution_sweep.csv",
+                   "kernel,age_yr,h_step_deg,n_lat,n_nodes,build_seconds,"
+                   "max_rel_dev,rms_rel_dev");
+
+    bool built_all = true;
+    double err_at_shipped = -1.0;
+    for (double h : steps)
+    {
+        double worst = 0.0, sum_sq = 0.0;
+        std::size_t n = 0, n_lat_max = 0, n_nodes_max = 0;
+        double build_s = 0.0;
+        for (double age : ages)
+            for (double lat : lats)
+            {
+                const lsdtt::LsdnTimeAvgSurface s =
+                    CP::build_stone_paleomag_surface(nc, age, lat - 0.5, lat + 0.5,
+                                                     4096u, h, true);
+                if (!s.valid) { built_all = false; continue; }
+                n_lat_max   = std::max(n_lat_max, s.lat_ax.size());
+                n_nodes_max = std::max(n_nodes_max, s.n_nodes);
+                build_s    += s.build_seconds;
+                for (double P : press)
+                {
+                    const double a = CP::stone_paleomag_correction_from_surface(s, lat, P);
+                    const double b = CP::stone_paleomag_correction_direct(lat, P, age, nc);
+                    const double rel = std::abs(a - b) / std::abs(b);
+                    worst = std::max(worst, rel);
+                    sum_sq += rel * rel;
+                    ++n;
+                }
+            }
+        const double rms = n ? std::sqrt(sum_sq / n) : 0.0;
+        csv.row("stone", 0.0, h, n_lat_max, n_nodes_max, build_s, worst, rms);
+        std::cout << "      L11(stone) h = " << h << " deg: max rel dev "
+                  << worst << ", rms " << rms << " (" << n_lat_max
+                  << " lat nodes over a 1 deg window)\n";
+        if (h == CP::stone_paleomag_h_step_deg) err_at_shipped = worst;
+    }
+
+    check("L11(stone): a surface builds at every swept resolution", built_all);
+    check("csv: stone_paleomag_resolution_sweep.csv written", csv.good());
+    // The shipped step must deliver what the header claims for it.
+    check("L11(stone): shipped h = 0.01 deg is within tol::stone_surface_h",
+          err_at_shipped >= 0.0 && err_at_shipped <= tol::stone_surface_h,
+          std::to_string(err_at_shipped));
+    // ...and the justification for choosing it: below float32 precision, so the
+    // approximation cannot be seen in the float production raster it feeds.
+    check("L11(stone): shipped step's error is below float32 eps (1.19e-7), "
+          "so the surface is invisible in the production raster",
+          err_at_shipped >= 0.0
+              && err_at_shipped <= static_cast<double>(
+                     std::numeric_limits<float>::epsilon()),
+          std::to_string(err_at_shipped));
+}
+
+// =============================================================================
+// L14 - Stone paleomag on the precomputed surface (lsdn plan Phase 8 / Sec3.9)
+// =============================================================================
+//
+// Phase 8 moved stone2000sp_paleomag() off its per-pixel time loop and onto a
+// latitude surface.  That surface stores time-averaged Stone-table
+// INTERPOLATION WEIGHTS rather than time-averaged factors, which makes its
+// pressure dependence exact; the only approximation it carries is in latitude.
+//
+// L14a  the Stone numerics sentinel is byte-identical (sha256), asserted here
+//       explicitly and not merely inherited from L9 - this is the phase most
+//       likely to move it by accident.  The LSDn sentinel too.
+// L14b  the constant-VDM correction is still exactly 1, with BOTH the average
+//       and the modern reference drawn from the same surface (Sec3.9 req 4),
+//       including at latitudes where the interpolation is genuinely active.
+// L14c  surface == direct definition: at a node to rounding, between nodes to
+//       the L11 bound.
+// L14d  the six G4 goldens move no further than was predicted before the run
+//       (asserted in phase5_G4_golden_trajectories, next to the goldens).
+// L14e  G2's physics invariants survive the implementation change untouched.
+// L14f  the scalar function and the raster path give the same number - the
+//       property that lets the goldens pin the path the tool actually uses.
+
+// ---- A compact, self-contained SHA-256 (FIPS 180-4) ------------------------
+// Used only to pin the frozen sentinel files byte-for-byte.  No dependency, no
+// platform tool: the hash has to be checkable on every machine the suite runs
+// on, including Windows, or the guarantee is not a guarantee.
+std::string sha256_of_file(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.good()) return "";
+    std::string data((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+
+    static const std::uint32_t K[64] = {
+        0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,
+        0x923f82a4u,0xab1c5ed5u,0xd807aa98u,0x12835b01u,0x243185beu,0x550c7dc3u,
+        0x72be5d74u,0x80deb1feu,0x9bdc06a7u,0xc19bf174u,0xe49b69c1u,0xefbe4786u,
+        0x0fc19dc6u,0x240ca1ccu,0x2de92c6fu,0x4a7484aau,0x5cb0a9dcu,0x76f988dau,
+        0x983e5152u,0xa831c66du,0xb00327c8u,0xbf597fc7u,0xc6e00bf3u,0xd5a79147u,
+        0x06ca6351u,0x14292967u,0x27b70a85u,0x2e1b2138u,0x4d2c6dfcu,0x53380d13u,
+        0x650a7354u,0x766a0abbu,0x81c2c92eu,0x92722c85u,0xa2bfe8a1u,0xa81a664bu,
+        0xc24b8b70u,0xc76c51a3u,0xd192e819u,0xd6990624u,0xf40e3585u,0x106aa070u,
+        0x19a4c116u,0x1e376c08u,0x2748774cu,0x34b0bcb5u,0x391c0cb3u,0x4ed8aa4au,
+        0x5b9cca4fu,0x682e6ff3u,0x748f82eeu,0x78a5636fu,0x84c87814u,0x8cc70208u,
+        0x90befffau,0xa4506cebu,0xbef9a3f7u,0xc67178f2u };
+    std::uint32_t h[8] = { 0x6a09e667u,0xbb67ae85u,0x3c6ef372u,0xa54ff53au,
+                           0x510e527fu,0x9b05688cu,0x1f83d9abu,0x5be0cd19u };
+
+    const std::uint64_t bitlen = static_cast<std::uint64_t>(data.size()) * 8ull;
+    data.push_back(static_cast<char>(0x80));
+    while (data.size() % 64 != 56) data.push_back('\0');
+    for (int i = 7; i >= 0; --i)
+        data.push_back(static_cast<char>((bitlen >> (i * 8)) & 0xffu));
+
+    auto rotr = [](std::uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
+    for (std::size_t off = 0; off < data.size(); off += 64)
+    {
+        std::uint32_t w[64];
+        for (int i = 0; i < 16; ++i)
+            w[i] = (static_cast<std::uint32_t>(
+                        static_cast<unsigned char>(data[off + i * 4    ])) << 24)
+                 | (static_cast<std::uint32_t>(
+                        static_cast<unsigned char>(data[off + i * 4 + 1])) << 16)
+                 | (static_cast<std::uint32_t>(
+                        static_cast<unsigned char>(data[off + i * 4 + 2])) <<  8)
+                 |  static_cast<std::uint32_t>(
+                        static_cast<unsigned char>(data[off + i * 4 + 3]));
+        for (int i = 16; i < 64; ++i)
+        {
+            const std::uint32_t s0 = rotr(w[i-15],7) ^ rotr(w[i-15],18) ^ (w[i-15] >> 3);
+            const std::uint32_t s1 = rotr(w[i-2],17) ^ rotr(w[i-2],19) ^ (w[i-2] >> 10);
+            w[i] = w[i-16] + s0 + w[i-7] + s1;
+        }
+        std::uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+        for (int i = 0; i < 64; ++i)
+        {
+            const std::uint32_t S1 = rotr(e,6) ^ rotr(e,11) ^ rotr(e,25);
+            const std::uint32_t ch = (e & f) ^ ((~e) & g);
+            const std::uint32_t t1 = hh + S1 + ch + K[i] + w[i];
+            const std::uint32_t S0 = rotr(a,2) ^ rotr(a,13) ^ rotr(a,22);
+            const std::uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
+            const std::uint32_t t2 = S0 + mj;
+            hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+        }
+        h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+    }
+    std::ostringstream os;
+    os << std::hex << std::setfill('0');
+    for (int i = 0; i < 8; ++i) os << std::setw(8) << h[i];
+    return os.str();
+}
+
+void phase8_L14_stone_paleomag_surface(const lsdtt::CrnNcData& nc_real,
+                                       const std::string& sentinel_path,
+                                       const std::string& lsdn_sentinel_path,
+                                       const std::string& out_dir)
+{
+    using CP = lsdtt::lsdtt_crn_parameters;
+    lsdtt::lsdtt_crn_parameters cp;
+
+    // ---- L14a: the frozen sentinels, byte for byte -------------------------
+    // These hashes are the ones recorded in the lsdn plan Sec3.9 requirement 3
+    // and Sec5.4.  If either moves, STOP: it means something outside the Stone
+    // paleomag path was touched.  NEVER regenerate a sentinel to clear this.
+    {
+        const std::string want_stone =
+            "c1272061958bf66d44a7a1bea6ff8a519ee7bdda09e2db602f4b9323cc085736";
+        const std::string want_lsdn =
+            "2e2fc2f4a89d02e9af20da949002050168aa82fbba654be5719eb0745862cc2d";
+        const std::string got_stone = sha256_of_file(sentinel_path);
+        const std::string got_lsdn  = sha256_of_file(lsdn_sentinel_path);
+        // A missing file must FAIL, never quietly pass (the L12/L13 lesson):
+        // these are tracked artefacts and are always present in a checkout.
+        check("L14a: numerics_sentinel.csv sha256 unchanged (Phase 8 must not "
+              "move it)", got_stone == want_stone,
+              got_stone.empty() ? "file not readable: " + sentinel_path
+                                : "got " + got_stone);
+        check("L14a: numerics_sentinel_lsdn.csv sha256 unchanged",
+              got_lsdn == want_lsdn,
+              got_lsdn.empty() ? "file not readable: " + lsdn_sentinel_path
+                               : "got " + got_lsdn);
+    }
+
+    // ---- L14b: constant VDM -> correction exactly 1, through the surface ---
+    // Sec3.9 requirement 4.  The point is that numerator and denominator are
+    // drawn from the SAME surface object at the same latitude, so the ratio
+    // cancels by construction.  Latitudes are deliberately chosen both ON and
+    // OFF the lattice: off-node the latitude interpolation is active on both
+    // vectors at once, which is exactly where a naive implementation (modern
+    // reference taken from a direct call) would stop cancelling.
+    {
+        const lsdtt::CrnNcData nc = make_constant_vdm_nc(7.5);
+        bool ok = true;
+        double worst = 0.0;
+        std::string bad;
+        for (double lat : {0.0, 12.3456, 30.0, 45.83717, 60.0, 70.629137})
+            for (double P : {1013.25, 861.3, 700.0, 512.7})
+                for (double age : {1000.0, 20000.0, 49000.0})
+                {
+                    const lsdtt::LsdnTimeAvgSurface s =
+                        CP::build_stone_paleomag_surface(nc, age, lat, lat);
+                    if (!s.valid)
+                    { ok = false; bad = "surface not built: " + s.reason; continue; }
+                    const double corr =
+                        CP::stone_paleomag_correction_from_surface(s, lat, P);
+                    worst = std::max(worst, std::abs(corr - 1.0));
+                    if (!approx_rel(corr, 1.0, tol::g1_static))
+                    { ok = false; bad = diff_str(corr, 1.0); }
+                }
+        check("L14b: constant-VDM correction == 1 through the surface "
+              "(tol::g1_static, both terms from the same object)", ok, bad);
+        std::cout << "      L14b worst |correction - 1| = " << worst << "\n";
+    }
+
+    if (!nc_real.loaded)
+    {
+        check("L14c-f: (SKIPPED - real nc not loaded)", false,
+              "the real crn_parameters.nc is required; a missing input is not "
+              "a pass");
+        return;
+    }
+
+    // ---- L14c: surface == direct definition --------------------------------
+    // At a node only the summation order differs (the direct form averages the
+    // factors, the surface averages the interpolation weights), so the two must
+    // agree to rounding.  A larger disagreement AT A NODE means the builder and
+    // the direct loop disagree about the record or the table - a defect, never
+    // a tolerance.  Between nodes the difference is the latitude interpolation
+    // error, bounded by L11.
+    {
+        csv_writer csv(out_dir + "/stone_paleomag_surface_vs_direct.csv",
+                       "lat_deg,pressure_hPa,age_yr,on_node,direct,surface,"
+                       "rel_dev");
+        const double on_node[]  = {0.0, 30.0, 45.83, 60.0, 70.0};
+        const double off_node[] = {0.0371, 10.37137, 20.629137, 30.413317,
+                                   45.827137, 60.371737, 70.629137};
+        const double press[]    = {1013.25, 1007.0, 900.0, 812.7, 700.0, 631.3, 500.0};
+        double worst_node = 0.0, worst_between = 0.0, sum_sq = 0.0;
+        std::size_t n_between = 0;
+        for (double age : {2.0e4, 5.0e4})
+        {
+            for (double lat : on_node)
+                for (double P : press)
+                {
+                    const lsdtt::LsdnTimeAvgSurface s =
+                        CP::build_stone_paleomag_surface(nc_real, age, lat, lat);
+                    const double a = CP::stone_paleomag_correction_from_surface(s, lat, P);
+                    const double b = CP::stone_paleomag_correction_direct(lat, P, age, nc_real);
+                    const double rel = std::abs(a - b) / std::abs(b);
+                    csv.row(lat, P, age, 1, b, a, rel);
+                    worst_node = std::max(worst_node, rel);
+                }
+            for (double lat : off_node)
+                for (double P : press)
+                {
+                    const lsdtt::LsdnTimeAvgSurface s =
+                        CP::build_stone_paleomag_surface(nc_real, age, lat - 0.5,
+                                                         lat + 0.5, 4096u);
+                    const double a = CP::stone_paleomag_correction_from_surface(s, lat, P);
+                    const double b = CP::stone_paleomag_correction_direct(lat, P, age, nc_real);
+                    const double rel = std::abs(a - b) / std::abs(b);
+                    csv.row(lat, P, age, 0, b, a, rel);
+                    worst_between = std::max(worst_between, rel);
+                    sum_sq += rel * rel;
+                    ++n_between;
+                }
+        }
+        check("L14c: Stone surface == direct definition AT a latitude node "
+              "(tol::stone_surface_node)",
+              worst_node <= tol::stone_surface_node, std::to_string(worst_node));
+        check("L14c: Stone surface vs direct BETWEEN nodes within "
+              "tol::stone_surface_h at the shipped step",
+              worst_between <= tol::stone_surface_h, std::to_string(worst_between));
+        check("csv: stone_paleomag_surface_vs_direct.csv written", csv.good());
+        std::cout << "      L14c measured Stone surface-vs-direct: node "
+                  << worst_node << ", between nodes max " << worst_between
+                  << " rms " << (n_between ? std::sqrt(sum_sq / n_between) : 0.0)
+                  << " (h = " << CP::stone_paleomag_h_step_deg << " deg)\n";
+    }
+
+    // ---- L14e: G2's physics invariants, restated against the surface -------
+    // These are physics, not goldens: an implementation change must not move
+    // them at all.  phase5_G2_invariants already drives them through
+    // stone2000sp_paleomag (which IS the surface path since Phase 8); the extra
+    // check here is the one G2a only bounds loosely - at 70 deg every cutoff
+    // rigidity in the record lies on the table's flat polar segment, so the
+    // correction is not merely small, it is EXACTLY 1.
+    {
+        const lsdtt::LsdnTimeAvgSurface s =
+            CP::build_stone_paleomag_surface(nc_real, 2.0e4, 70.0, 70.0);
+        const double corr = CP::stone_paleomag_correction_from_surface(s, 70.0, 1007.0);
+        check("L14e: 70 deg correction is exactly 1 on the surface "
+              "(polar plateau, G2a in its sharp form)", corr == 1.0,
+              diff_str(corr, 1.0));
+
+        // Equatorial sign and monotonicity, through the surface, on synthetic
+        // records - the same invariants G2b/G2c assert.
+        double prev = -1.0;
+        bool mono = true, sign_ok = true;
+        for (double past : {8.0, 6.0, 4.0, 2.0})
+        {
+            const lsdtt::CrnNcData nc = make_two_level_vdm_nc(8.0, past);
+            const lsdtt::LsdnTimeAvgSurface ss =
+                CP::build_stone_paleomag_surface(nc, 3.0e4, 0.0, 0.0);
+            const double c = CP::stone_paleomag_correction_from_surface(ss, 0.0, 1013.25);
+            if (past < 8.0 && !(c > 1.0)) sign_ok = false;
+            if (prev > 0.0 && c < prev) mono = false;
+            prev = c;
+        }
+        check("L14e: equatorial correction > 1 for low past field, and monotone "
+              "in past-field depth, through the surface", sign_ok && mono);
+    }
+
+    // ---- L14f: the scalar call and the raster path agree -------------------
+    // stone2000sp_paleomag() snaps to the SAME global lattice a raster-sized
+    // surface uses, so a single-site call and a pixel at that site must give
+    // the same number.  Without this the G4 goldens would pin one path while
+    // the tool ran another.
+    {
+        const double age = 2.0e4;
+        const lsdtt::LsdnTimeAvgSurface big =
+            CP::build_stone_paleomag_surface(nc_real, age, 44.0, 46.0, 262144u);
+        bool ok = big.valid;
+        double worst = 0.0;
+        for (double lat : {44.0, 44.317, 45.0, 45.6291, 46.0})
+            for (double P : {1013.25, 823.7})
+            {
+                const double a = CP::stone_paleomag_from_surface(big, lat, P, 1.0, cp);
+                const double b = cp.stone2000sp_paleomag(lat, P, 1.0, age, nc_real);
+                worst = std::max(worst, std::abs(a - b) / std::abs(b));
+            }
+        check("L14f: scalar stone2000sp_paleomag == raster surface evaluation "
+              "at the same site (same global lattice)",
+              ok && worst <= tol::stone_surface_node, std::to_string(worst));
+        std::cout << "      L14f worst scalar-vs-raster-surface deviation = "
+                  << worst << "\n";
+        std::cout << "      L14 surface for a 2 deg raster: "
+                  << big.lat_ax.size() << " latitude nodes, " << big.n_nodes
+                  << " stored doubles, " << big.n_bytes << " B, built in "
+                  << big.build_seconds << " s\n";
+    }
 }
 
 // =============================================================================
@@ -4660,13 +5109,16 @@ void perf_lsdn_production(const lsdtt::CrnNcData& nc, const std::string& out_dir
                 csv.row(age == 0.0 ? "1_scheme" : "2_age", n_px, threads, "LSDn",
                         age, "cost_model", seconds_since(t0), 0, 0);
             }
-            // Case 4 baseline: Stone time-varying, the path Phase 8 will change.
+            // Case 4: Stone time-varying through calculate_production_raster.
+            // Since Phase 8 this is the SURFACE path; the pre-Phase-8 "direct"
+            // baseline for the same cases is in the report and in the
+            // 4_stone_paleomag point-level rows below.
             {
                 const auto t0 = std::chrono::steady_clock::now();
                 (void)lsdtt::calculate_production_raster(big.dem, nc, 2.0e4,
                                                          lsdtt::AtmSource::Auto);
-                csv.row("4_stone_paleomag_before", n_px, threads, "Stone", 2.0e4,
-                        "direct", seconds_since(t0), 0, 0);
+                csv.row("4_stone_paleomag", n_px, threads, "Stone", 2.0e4,
+                        "raster_surface", seconds_since(t0), 0, 0);
             }
         }
     }
@@ -4730,15 +5182,55 @@ void perf_lsdn_production(const lsdtt::CrnNcData& nc, const std::string& out_dir
     }
 
     // Case 4 at point level too, so the Phase 8 comparison has an isolated
-    // number free of the raster machinery.
+    // number free of the raster machinery.  Three paths, all computing the same
+    // quantity (asserted in L14c, not here):
+    //   direct        the pre-Phase-8 definition, still callable;
+    //   scalar_api    stone2000sp_paleomag(), which since Phase 8 snaps a
+    //                 one- or two-node surface per call;
+    //   surface       build once for the whole site set, then evaluate - the
+    //                 path calculate_production_raster actually takes.
     {
+        const double age = 2.0e4;
         double acc = 0.0;
         const auto t0 = std::chrono::steady_clock::now();
         for (std::size_t i = 0; i < n_sites; ++i)
-            acc += cp.stone2000sp_paleomag(site_lat[i], site_p[i], 1.0, 2.0e4, nc);
-        csv.row("4_stone_paleomag_before", n_sites, 1, "Stone", 2.0e4, "direct",
+            acc += cp.stone2000sp(site_lat[i], site_p[i], 1.0)
+                 * CP::stone_paleomag_correction_direct(site_lat[i], site_p[i],
+                                                        age, nc);
+        csv.row("4_stone_paleomag", n_sites, 1, "Stone", age, "direct",
                 seconds_since(t0), 0, 0);
-        std::cout << "  stone2000sp_paleomag baseline sum = " << acc << "\n";
+
+        double acc1 = 0.0;
+        const auto t1 = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < n_sites; ++i)
+            acc1 += cp.stone2000sp_paleomag(site_lat[i], site_p[i], 1.0, age, nc);
+        csv.row("4_stone_paleomag", n_sites, 1, "Stone", age, "scalar_api",
+                seconds_since(t1), 0, 0);
+
+        double lat_lo2 = site_lat[0], lat_hi2 = site_lat[0];
+        for (std::size_t i = 1; i < n_sites; ++i)
+        {
+            lat_lo2 = std::min(lat_lo2, site_lat[i]);
+            lat_hi2 = std::max(lat_hi2, site_lat[i]);
+        }
+        const auto t2 = std::chrono::steady_clock::now();
+        const lsdtt::LsdnTimeAvgSurface ss =
+            CP::build_stone_paleomag_surface(nc, age, lat_lo2, lat_hi2, n_sites);
+        const double t_build_stone = seconds_since(t2);
+        csv.row("4_stone_paleomag", n_sites, 1, "Stone", age, "surface_build",
+                t_build_stone, ss.n_nodes, ss.n_bytes);
+
+        double acc2 = 0.0;
+        const auto t3 = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < n_sites; ++i)
+            acc2 += CP::stone_paleomag_from_surface(ss, site_lat[i], site_p[i],
+                                                    1.0, cp);
+        csv.row("4_stone_paleomag", n_sites, 1, "Stone", age, "surface_eval",
+                seconds_since(t3), ss.n_nodes, ss.n_bytes);
+        std::cout << "  stone paleomag point-level sums " << acc << " / " << acc1
+                  << " / " << acc2 << "; surface " << ss.lat_ax.size()
+                  << " lat nodes, " << ss.n_bytes << " B, build "
+                  << t_build_stone << " s\n";
     }
 
     check("perf: lsdn_performance.csv written (timings reported, never asserted)",
@@ -4756,6 +5248,10 @@ int main(int argc, char** argv)
     std::string test_data_dir = ".";
     bool regenerate_sentinel = false;
     bool regenerate_lsdn_sentinel = false;
+    // The Phase 8 G4 re-freeze gate (lsdn plan Sec3.9 req 1 / Sec3b S4): it
+    // emits the old/new/shift artefact for review INSTEAD of asserting, and
+    // never edits the goldens itself.
+    bool regenerate_g4 = false;
     // --performance runs ONLY the Sec3.8 timing sweep and emits
     // lsdn_performance.csv; it is a separate CTest entry with the "performance"
     // label, kept out of the default suite because it takes minutes.
@@ -4768,6 +5264,8 @@ int main(int argc, char** argv)
             regenerate_sentinel = true;
         else if (arg == "--regenerate-lsdn-sentinel-i-have-simons-approval")
             regenerate_lsdn_sentinel = true;
+        else if (arg == "--regenerate-g4-goldens-i-have-simons-approval")
+            regenerate_g4 = true;
         else if (arg == "--performance")
             performance_only = true;
         else if (positional == 0) { out_dir = arg; ++positional; }
@@ -4834,7 +5332,7 @@ int main(int argc, char** argv)
         // Phase 5: geomagnetic / time-varying production (G1-G4 + Sec6c(A)).
         phase5_G1_static_limits(crn_nc);
         phase5_G2_invariants();
-        phase5_G4_golden_trajectories(crn_nc, out_dir);
+        phase5_G4_golden_trajectories(crn_nc, out_dir, regenerate_g4);
         phase5_G6c_equator_on_off(crn_nc, expected_dir, out_dir);
 
         // Phase 7: LSDn scaling (L0-L6, L10, L11).
@@ -4851,6 +5349,9 @@ int main(int argc, char** argv)
         phase7_lsdn_scaling_surface_csv(crn_nc, out_dir);
         phase7_L10_surface_equivalence(crn_nc, out_dir);
         phase7_L11_resolution_sweep(crn_nc, out_dir);
+        phase8_L11_stone_resolution_sweep(crn_nc, out_dir);
+        phase8_L14_stone_paleomag_surface(crn_nc, sentinel_path,
+                                          lsdn_sentinel_path, out_dir);
         phase7_L1_sentinel(crn_nc, lsdn_sentinel_path, regenerate_lsdn_sentinel);
 
         phase1_sentinel(fx, flow, sentinel_path, regenerate_sentinel);

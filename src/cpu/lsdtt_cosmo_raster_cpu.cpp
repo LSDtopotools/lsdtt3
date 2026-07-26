@@ -336,10 +336,42 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
     }
     const bool use_lsdn_surface = use_lsdn && lsdn_surface.valid;
 
+    // ---- Stone paleomag set-up, likewise outside the parallel region --------
+    // Called per pixel, stone2000sp_paleomag costs one evaluation of
+    // stone_factor_at_rc per record step (108 of them at 20 ka), each of which
+    // rebuilds and sorts an 18-point table. Everything in that loop except
+    // cos^4(lat) and the pressure is common to every pixel, so it is hoisted
+    // into a latitude surface built once here. The pressure stays exact - the
+    // surface stores averaged interpolation weights, not averaged factors.
+    LsdnTimeAvgSurface stone_surface;
+    if (use_paleomag && !use_lsdn)
+    {
+        double lat_lo = ys[0], lat_hi = ys[0];
+        for (int k = 1; k < n_valid; ++k)
+        {
+            lat_lo = std::min(lat_lo, ys[k]); lat_hi = std::max(lat_hi, ys[k]);
+        }
+        const double pad_deg = meta.cell_size / 111320.0;   // ~1 cell, in degrees
+        stone_surface = lsdtt_crn_parameters::build_stone_paleomag_surface(
+            nc, age_yr, lat_lo - pad_deg, lat_hi + pad_deg,
+            static_cast<std::size_t>(n_valid));
+
+        std::cout << "  Stone paleomagnetic correction";
+        if (stone_surface.valid)
+            std::cout << ": time-averaged surface built, "
+                      << stone_surface.lat_ax.size() << " latitude nodes, "
+                      << (stone_surface.n_bytes / 1024.0) << " kB, "
+                      << stone_surface.build_seconds << " s\n";
+        else
+            std::cout << ": direct per-pixel path (" << stone_surface.reason << ")\n";
+    }
+    const bool use_stone_surface = use_paleomag && !use_lsdn && stone_surface.valid;
+
 #pragma omp parallel for schedule(static) default(none) \
     shared(n_valid, valid_r, valid_c, xs, ys, data, prod_data, prod_mask, \
            ref_params, meta, nc, age_yr, atm_mode, use_paleomag, \
-           use_lsdn, use_lsdn_surface, lsdn_surface, nuclide)
+           use_lsdn, use_lsdn_surface, lsdn_surface, nuclide, \
+           use_stone_surface, stone_surface)
     for (int k = 0; k < n_valid; ++k)
     {
         int r = valid_r[k], c = valid_c[k];
@@ -362,6 +394,9 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                 ? lsdtt_crn_parameters::lsdn_scaling_from_surface(lsdn_surface,
                                                                   lat, lon, pressure)
                 : ref_params.lsdn_scaling(nuclide, lat, lon, pressure, age_yr, nc);
+        else if (use_stone_surface)
+            scaling = lsdtt_crn_parameters::stone_paleomag_from_surface(
+                stone_surface, lat, pressure, 1.0, ref_params);
         else
             scaling = use_paleomag
                 ? ref_params.stone2000sp_paleomag(lat, pressure, 1.0, age_yr, nc)
