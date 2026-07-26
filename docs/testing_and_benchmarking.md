@@ -59,11 +59,12 @@ fixtures.
 | `failure` | — | bad parameters are rejected with the expected message |
 | `unit` | — | C++ unit tests |
 | `cosmo` | — | cosmogenic physics vs frozen CRONUS + numerics sentinel |
+| `cosmo_realworld` | network | published-basin runs against frozen summaries |
 | `flow` | — | flow routing and depression-handling properties |
 | `fetch` | — | native DEM fetching; offline logic by default |
 | `network` | network | tests that actually download |
 | `benchmark` | network + RichDEM/TopoToolbox | comparison against external references on real DEMs |
-| `performance` | — | in-process timings of the flow routines |
+| `performance` | — | in-process timings, reported and never asserted |
 
 ```sh
 cmake -S . -B build && cmake --build build -j
@@ -74,7 +75,7 @@ ctest --test-dir build -L flow --output-on-failure
 ```
 
 Opt-in tiers, each behind its own CMake option so enabling one does not drag in
-the others:
+the others. **All three default to `OFF`**:
 
 ```sh
 cmake -S . -B build \
@@ -82,6 +83,43 @@ cmake -S . -B build \
   -DLSDTT_ENABLE_BENCHMARKS=ON \      # RichDEM comparisons (needs pixi)
   -DLSDTT_ENABLE_PERF_TESTS=ON        # performance timings
 ```
+
+### Keep the timing tiers in a separate build directory
+
+The opt-in tiers are slow by design — they exist to measure, not to check. Turn
+them on in the build directory you develop in and every routine `ctest` run pays
+for them: on a typical workstation the offline suite is **~14 s**, the same suite
+with `-DLSDTT_ENABLE_BENCHMARKS=ON -DLSDTT_ENABLE_PERF_TESTS=ON` is **~17
+minutes**, almost all of it the six `benchmark_surface_*` timings.
+
+So use two build directories, and never enable the options in the first:
+
+```sh
+cmake -S . -B build && cmake --build build -j            # develop here: fast
+ctest --test-dir build --output-on-failure               # ~14 s
+
+cmake -S . -B build-perf \                               # measure here
+  -DCMAKE_BUILD_TYPE=Release \
+  -DLSDTT_ENABLE_PERF_TESTS=ON -DLSDTT_ENABLE_BENCHMARKS=ON
+cmake --build build-perf -j
+```
+
+This is better than filtering at run time: the benchmark targets are not even
+compiled in `build/`.
+
+If you have inherited a build directory with the options already on — check with
+`grep '^LSDTT_ENABLE' build/CMakeCache.txt` — you can either reconfigure it with
+`-DLSDTT_ENABLE_BENCHMARKS=OFF -DLSDTT_ENABLE_PERF_TESTS=OFF`, or exclude the
+slow tiers **by label** for one run:
+
+```sh
+ctest --test-dir build -LE "benchmark|performance|cosmo_realworld|network"
+```
+
+Exclude by label (`-LE`), not by test-name regex (`-E`). Labels are assigned
+deliberately; names drift — `perf_cosmo_lsdn_production` is labelled
+`performance` but is not named `performance_*`, so a name-based filter silently
+runs it.
 
 ---
 
@@ -415,14 +453,67 @@ Timed **in-process**: raster already in memory, nothing written to disk, best of
 3, every row carrying a git SHA so results are comparable across commits.
 Reported, never asserted.
 
-```sh
-cmake -S . -B build -DLSDTT_ENABLE_PERF_TESTS=ON
-ctest --test-dir build -L performance
+### Running the performance suite on your own machine
 
-# or directly, including a real raster
-build/tests/lsdtt-test-flow-performance out_dir --full \
-    --raster tests/data/dem_cache/alpine_small.tif
+Use a **separate, Release** build directory (§2) so the timing tiers never slow
+down routine testing:
+
+```sh
+cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DLSDTT_ENABLE_PERF_TESTS=ON
+cmake --build build-perf -j
+ctest --test-dir build-perf -L performance --output-on-failure
 ```
+
+`-DCMAKE_BUILD_TYPE=Release` is not optional for timing work: a Debug or
+unspecified build measures the compiler's inlining decisions, not the algorithms.
+
+That gives two tests, both of which write CSV into `build-perf/tests/perf_output/`:
+
+| Test | Emits | Covers |
+|---|---|---|
+| `performance_flow_routines` | `flow_performance.csv` | fill, breach, D8/D-inf/MFD build + accumulate |
+| `perf_cosmo_lsdn_production` | `lsdn_performance.csv` | Stone vs LSDn per-pixel production; LSDn at 0 / 20 ka / 1 Ma; time-averaged surface vs direct loop |
+
+A third, `performance_surface_metrics`, additionally needs
+`-DLSDTT_ENABLE_BENCHMARKS=ON`, pixi and a fetched fixture; it skips with code
+77 when any of those is missing.
+
+Every row carries a git SHA, so results are comparable across commits and you
+can keep a server's CSVs as a time series.
+
+**Run the drivers directly** for more control than CTest gives — this is the
+useful mode on a server, because `--full` and a real raster are where the
+interesting numbers are:
+
+```sh
+# flow routines: --quick is what CTest runs; --full sweeps more sizes
+build-perf/tests/lsdtt-test-flow-performance out_dir --full \
+    --raster tests/data/dem_cache/alpine_small.tif
+
+# per-pixel cosmogenic production
+build-perf/tests/lsdtt-test-cosmo-physics out_dir --performance
+```
+
+Both take the output directory as their first positional argument and create it
+if needed.
+
+#### On a shared server
+
+- **Pin the threads.** `OMP_NUM_THREADS=8 ctest --test-dir build-perf -L performance`.
+  Left unset, OpenMP takes every core it can see, so a busy node produces numbers
+  that are not comparable with anything. Note §6's finding that thread scaling is
+  limited and accumulation is *slower* with more threads — more threads is not
+  automatically faster here.
+- **Run CTest serially** (no `-j`) for the `performance` label. Parallel test
+  execution and in-process timing measure each other.
+- **Nothing is asserted.** These tests are reported, never asserted — they can
+  only fail by not running, so a loaded runner cannot turn the suite red. Correctness
+  claims live in the `unit` tier: that the LSDn time-averaged surface and the direct
+  per-pixel loop agree, for instance, is asserted by L10 in `unit_cosmo_physics`,
+  not by the timing test.
+- Timings are **not** committed. Compare against the numbers recorded in this
+  document, and treat a large divergence as a question about the machine before
+  it is a question about the code.
 
 ### Do not read performance from the CLI timings
 

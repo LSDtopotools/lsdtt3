@@ -234,6 +234,35 @@ optional tool can never turn the build red.
 If you enable `LSDTT_ENABLE_BENCHMARKS`, install pixi first so those benchmark
 dependencies are available in the benchmark environment.
 
+### Timing lsdtt3 on your own machine
+
+The timing tiers are slow by design — they exist to measure, not to check — so
+keep them in a **separate Release build** and leave `build/` fast:
+
+```sh
+cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DLSDTT_ENABLE_PERF_TESTS=ON
+cmake --build build-perf -j
+OMP_NUM_THREADS=8 ctest --test-dir build-perf -L performance --output-on-failure
+```
+
+Results land as CSV in `build-perf/tests/perf_output/` (`flow_performance.csv`,
+`lsdn_performance.csv`), each row carrying a git SHA so runs are comparable
+across commits. Or drive them directly, which is the useful mode on a server:
+
+```sh
+build-perf/tests/lsdtt-test-flow-performance out_dir --full \
+    --raster tests/data/dem_cache/alpine_small.tif
+```
+
+Three things matter for numbers you can trust: build `Release` (otherwise you
+are timing the compiler), pin `OMP_NUM_THREADS` (otherwise a busy node is
+unrepeatable), and don't pass `-j` to CTest for this label (parallel tests and
+in-process timing measure each other). These tests are reported, never asserted,
+so a loaded machine cannot turn the suite red.
+
+Full methodology, the reference numbers to compare against, and the
+thread-scaling caveats are in `docs/testing_and_benchmarking.md` §6.
+
 **No DEM is committed to this repository.** Tests that need real topography fetch
 it on demand from public keyless sources and cache it under
 `tests/data/dem_cache/` (gitignored), using `lsdtt-fetch-raster` itself.

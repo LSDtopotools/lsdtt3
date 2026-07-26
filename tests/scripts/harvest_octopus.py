@@ -51,6 +51,21 @@ them to the Balco v3 point calculator via RIVERSAND. ``EBEL`` is that point
 result. So a *matched* LSDn comparison is DEM-FREE: evaluate our LSDn kernel at
 exactly (``CENTR_LAT``, ``ATM_PRESS``), invert, compare to ``EBEL``.
 
+One longitude is needed too (Holocene Rc is a distance to a MOVING paleopole),
+and OCTOPUS publishes none. ``CENTR_LON`` in the frozen artefact is therefore
+DERIVED BY US -- the area-weighted shoelace centroid of OCTOPUS's own published
+basin polygon -- and is not a harvested field. The same computation's latitude is
+written as ``CENTR_LAT_DERIVED``, and it does NOT reproduce the published
+``CENTR_LAT`` (max 0.00863 deg, RMS 0.00200 deg over the 50 tracked basins; on
+``S055WTS044`` the published 34.3838 lies outside the polygon's own latitude span
+[34.37989, 34.38226], which no geometric centroid can do). The geometry is not at
+fault -- those rings reproduce the published ``AREA`` to 9.2e-5 relative on
+``S014WTS036`` -- so the leading, UNCONFIRMED hypothesis is that ``CENTR_LAT`` is
+an *effective* latitude iterated against spatially averaged Stone--Lal
+production, exactly as ``ATM_PRESS`` is. A separate research task is settling
+that; ``CENTR_LAT_DERIVED`` is recorded so the discrepancy is frozen, and is
+never asserted against ``CENTR_LAT`` anywhere.
+
 ``--point-reference`` harvests exactly that, for the basins already selected by
 the tracked ``<dataset>_samples.csv`` files, into the small frozen
 ``tests/expected/cosmo/octopus_lsdn_point_reference.csv``:
@@ -72,8 +87,20 @@ WFS schema is authoritative): ``EBEL``, ``EBEL_INT``, ``EBEL_EXT``, ``EBELNS``,
 ``EBELNS_INT``, ``EBELNS_EXT`` for 10Be, and ``EALL*`` / ``EALLNS*`` for 26Al.
 ``EBEL`` is in **mm/kyr**, the same units as ``EBE_MMKYR`` (median ratio 1.050
 over S169's 46 basins); ``_INT``/``_EXT`` are Balco v3's internal/external
-uncertainty pair. ``EBELNS`` is the **no-snow-shielding** control: ``EBELNS >=
-EBEL`` always, with equality exactly where no snow shielding applies.
+uncertainty pair. ``EBELNS`` is the **no-TOPOGRAPHIC-shielding** control:
+``EBELNS >= EBEL`` always.
+
+NS = NO TOPOGRAPHIC SHIELDING -- CORRECTED 2026-07-26. An earlier revision of
+this file said "no snow shielding", inferred from ``EBELNS == EBEL`` on some
+basins. That inference was wrong, and the data refute it: ``BESNOW`` is
+identically 1.0000 on all 50 harvested basins, so it cannot explain any
+difference at all. What the ratio actually tracks is topographic shielding --
+``EBELNS/EBEL`` vs ``1/BETOPO`` agree to mean 4e-4 (max 4.5e-3, consistent with
+EBEL being published to 3 significant figures) over the 50 basins. This also
+matches Codilean & Munack (2025, GChron 7:113), which describes the pair as with
+and without **topographic** shielding. The basins where ``EBELNS == EBEL`` are
+simply those whose ``BETOPO >= 0.996``, where the difference falls below the
+published precision.
 """
 
 import argparse
@@ -95,9 +122,11 @@ OUTLETS_TYPE = "be10-denude:crn_int_outlets"
 #             Stone/Lal. The ONLY scheme CAIRN implements (Saktura et al. 2025,
 #             GChron 7:113); the default, so the tracked St artefacts never move.
 #   LSDn   -- EBEL, the Balco v3 point result at (CENTR_LAT, ATM_PRESS) obtained
-#             through RIVERSAND, WITH snow shielding.
-#   LSDnNS -- EBELNS, the same without snow shielding (EBELNS >= EBEL always, and
-#             == EBEL exactly where no snow shielding applies).
+#             through RIVERSAND, WITH topographic shielding.
+#   LSDnNS -- EBELNS, the same WITHOUT topographic shielding. EBELNS >= EBEL
+#             always, and EBELNS/EBEL tracks 1/BETOPO to mean 4e-4 over the 50
+#             harvested basins. NOT snow shielding -- see the module docstring;
+#             BESNOW is identically 1.0000 across every basin harvested here.
 # EBEL/EBELNS are published in mm/kyr only; there is no EBEL_GCMYR field, so the
 # g cm^-2 yr^-1 column is derived per basin with the density OCTOPUS itself used,
 # read off its own EBE_GCMYR/EBE_MMKYR pair (see octopus_rock_density).
@@ -111,20 +140,47 @@ SCALING_FIELDS = {
 POINT_REFERENCE_FIELDS = [
     # keys
     "sample", "dataset", "study_id",
-    # the two scalars OCTOPUS reduces the basin to, and which L12 evaluates at
+    # the two PUBLISHED scalars OCTOPUS reduces the basin to, and which L12
+    # evaluates at
     "CENTR_LAT", "ATM_PRESS",
-    # OUTLET_LON is NOT an OCTOPUS basin field: the schema has CENTR_LAT but no
+    # CENTR_LON is NOT an OCTOPUS field. The schema publishes CENTR_LAT with no
     # centroid longitude, and lsdn_scaling() needs a longitude because Holocene Rc
-    # is the great-circle distance to a MOVING paleopole. Taken from the basin's
-    # own outlet point (crn_int_outlets, the same source as the samples CSVs);
-    # over basins this small (<= 30 km2) outlet and centroid longitude differ by
-    # far less than the LSDn grid's Rc resolution. Documented approximation.
+    # is the great-circle distance to a MOVING paleopole. So we DERIVE one here:
+    # the area-weighted shoelace centroid of OCTOPUS's own basin polygon from
+    # crn_int_basins (exterior rings positive, interior rings subtracted,
+    # MultiPolygon parts area-weighted). Derived by us, clearly labelled, never
+    # presented as harvested.
+    "CENTR_LON",
+    # CENTR_LAT_DERIVED is the latitude that falls out of the SAME computation.
+    # It is RECORDED, NOT CHECKED, and it DOES NOT REPRODUCE the published
+    # CENTR_LAT: over these 50 basins CENTR_LAT_DERIVED - CENTR_LAT reaches
+    # 0.00863 deg with an RMS of 0.00200 deg, and on S055WTS044 the published
+    # CENTR_LAT (34.3838) lies OUTSIDE the polygon's own latitude range
+    # [34.37989, 34.38226] - a geometric centroid cannot do that, so the two
+    # quantities are not the same quantity. Nothing anywhere asserts that they
+    # agree; the column exists so the discrepancy is frozen and regresses.
+    # The geometry itself is demonstrably right: the same rings reproduce the
+    # published AREA to 9.2e-5 relative on S014WTS036 (22.3779 km2 computed vs
+    # 22.38 published), and to better than 8e-4 on every basin large enough that
+    # AREA's own 0.01 km2 quantisation does not dominate.
+    # LEADING HYPOTHESIS, UNCONFIRMED: CENTR_LAT is an EFFECTIVE latitude,
+    # iterated against the spatially averaged Stone-Lal production exactly as
+    # ATM_PRESS is (Saktura et al. 2025, GChron 7:113, describes ATM_PRESS that
+    # way), rather than a geometric centroid. A separate research task is running
+    # to settle it; until it does, this stays a recorded discrepancy.
+    "CENTR_LAT_DERIVED",
+    # OUTLET_LON, the basin outlet longitude from crn_int_outlets, is kept as a
+    # DIAGNOSTIC: it was the longitude L12 used before CENTR_LON existed, and
+    # CENTR_LON - OUTLET_LON (max 0.0329 deg, RMS 0.0129 deg over these 50
+    # basins) is the size of that former approximation.
     "OUTLET_LON",
     # the oracle: Balco v3 LSDn point rates (mm/kyr) + internal/external sigma
     "EBEL", "EBEL_INT", "EBEL_EXT", "EBELNS", "EBELNS_INT", "EBELNS_EXT",
     # what L12 inverts: the measured concentration (already renormalised, §9b)
     "BE10NC", "BE10NC_ERR", "BESTND",
-    # shielding: EBEL carries snow, EBELNS does not; both carry topo + self
+    # shielding: EBEL carries TOPOGRAPHIC shielding, EBELNS does not (corrected
+    # 2026-07-26 -- see the module docstring; BESNOW is 1.0000 on every basin
+    # here, so it explains nothing, while EBELNS/EBEL tracks 1/BETOPO to 4e-4)
     "BETOPO", "BESELF", "BESNOW",
     # the St pair, which pins the mm/kyr -> g cm^-2 yr^-1 density conversion
     "EBE_GCMYR", "EBE_MMKYR",
@@ -171,6 +227,68 @@ def polygon_bounds(geom):
     lons = [c[0] for c in _iter_coords(geom)]
     lats = [c[1] for c in _iter_coords(geom)]
     return min(lons), min(lats), max(lons), max(lats)
+
+
+def _ring_shoelace(ring):
+    """(2*signed area, 6*Cx*signed area, 6*Cy*signed area) for one closed ring.
+
+    Plain planar shoelace in (lon, lat) degrees.  Over basins of a few tens of
+    km2 the degree-space distortion shifts the centroid by orders of magnitude
+    less than the LSDn grid's Rc resolution, so no projection is warranted; the
+    sign convention (CCW positive) is what lets interior rings subtract
+    themselves automatically.
+    """
+    a2 = cx6 = cy6 = 0.0
+    for (x0, y0), (x1, y1) in zip(ring, ring[1:]):
+        cross = x0 * y1 - x1 * y0
+        a2 += cross
+        cx6 += (x0 + x1) * cross
+        cy6 += (y0 + y1) * cross
+    return a2, cx6, cy6
+
+
+def polygon_centroid(geom):
+    """Area-weighted geometric centroid (lon, lat) of a GeoJSON Polygon/MultiPolygon.
+
+    Exterior rings contribute positively and interior rings (holes) subtract,
+    which the signed shoelace does on its own provided the rings carry GeoJSON's
+    winding; MultiPolygon parts combine by signed area, so the result is the
+    centroid of the whole basin rather than of its largest part.  Degenerate
+    (zero-area) geometries fall back to the mean vertex position.
+
+    This is DERIVED BY US from OCTOPUS's own published basin polygon.  It is not
+    a published OCTOPUS field, and it does NOT reproduce their published
+    CENTR_LAT -- see the POINT_REFERENCE_FIELDS comment for the measured
+    discrepancy and the leading hypothesis.
+    """
+    a2 = cx6 = cy6 = 0.0
+    for poly in _iter_rings(geom):
+        for ring in poly:
+            if len(ring) < 4:
+                continue
+            r = ring if ring[0] == ring[-1] else list(ring) + [ring[0]]
+            da2, dcx6, dcy6 = _ring_shoelace(r)
+            a2 += da2
+            cx6 += dcx6
+            cy6 += dcy6
+    if a2 == 0.0:
+        pts = list(_iter_coords(geom))
+        if not pts:
+            return None, None
+        return (sum(p[0] for p in pts) / len(pts),
+                sum(p[1] for p in pts) / len(pts))
+    return cx6 / (3.0 * a2), cy6 / (3.0 * a2)
+
+
+def _iter_rings(geom):
+    """Yield each polygon as a list of rings, for Polygon and MultiPolygon alike."""
+    coords = geom.get("coordinates", [])
+    gtype = geom.get("type", "")
+    if gtype == "Polygon":
+        yield coords
+    elif gtype == "MultiPolygon":
+        for poly in coords:
+            yield poly
 
 
 def octopus_rock_density(props: dict):
@@ -405,8 +523,9 @@ def harvest(args) -> int:
             "scaling_scheme": args.scaling,
             "scaling_scheme_note": (
                 "St (Stone/Lal) -- EBE_MMKYR / EBE_GCMYR, OCTOPUS's own CAIRN "
-                "recalculation. OCTOPUS also stores EBEL (LSDn, snow-shielded) and "
-                "EBELNS (LSDn, no snow shielding), which are Balco v3 point results."
+                "recalculation. OCTOPUS also stores EBEL (LSDn, topographically "
+                "shielded) and EBELNS (LSDn, no topographic shielding), which are "
+                "Balco v3 point results."
                 if args.scaling == "St" else
                 f"{args.scaling} -- {scheme['mmkyr']} (+/- {scheme['err']}), a Balco "
                 "v3 POINT evaluation at (CENTR_LAT, ATM_PRESS). g cm^-2 yr^-1 "
@@ -617,7 +736,9 @@ def harvest_point_reference(args) -> int:
         study, obsids = read_selected_basins(pdir, dataset)
         studies.append(f"{dataset}={study}")
         print(f"{dataset}: STUDYID {study}, {len(obsids)} selected basins")
-        by_oid = {f["properties"]["OBSID1"]: f["properties"]
+        # The basin GEOMETRY is kept, not just the properties: CENTR_LON and
+        # CENTR_LAT_DERIVED are computed from the polygon itself.
+        by_oid = {f["properties"]["OBSID1"]: f
                   for f in wfs_features(BASINS_TYPE, study)}
         out_by_oid = {f["properties"]["OBSID1"]: f["geometry"]["coordinates"]
                       for f in wfs_features(OUTLETS_TYPE, study)}
@@ -626,8 +747,14 @@ def harvest_point_reference(args) -> int:
             print(f"ERROR: OBSIDs absent from {study}: {missing}", file=sys.stderr)
             return 1
         for oid in obsids:
-            p = by_oid[oid]
+            p = by_oid[oid]["properties"]
+            c_lon, c_lat = polygon_centroid(by_oid[oid]["geometry"])
+            if c_lon is None:
+                print(f"ERROR: degenerate basin polygon for {oid}", file=sys.stderr)
+                return 1
             row = {"sample": oid, "dataset": dataset, "study_id": study,
+                   "CENTR_LON": f"{c_lon:.5f}",
+                   "CENTR_LAT_DERIVED": f"{c_lat:.5f}",
                    "OUTLET_LON": f"{out_by_oid[oid][0]:.5f}"}
             for col in POINT_REFERENCE_FIELDS:
                 if col in row:
@@ -694,10 +821,16 @@ def harvest_point_reference(args) -> int:
                 "WFS schema is\n"
                 "# authoritative. EBEL/EBELNS are in mm/kyr (same units as "
                 "EBE_MMKYR); _INT/_EXT\n"
-                "# are Balco v3's internal/external uncertainty pair; NS = NO SNOW "
-                "SHIELDING\n"
-                "# (EBELNS >= EBEL always, == EBEL exactly where no snow shielding "
-                "applies).\n")
+                "# are Balco v3's internal/external uncertainty pair; NS = NO "
+                "TOPOGRAPHIC SHIELDING\n"
+                "# (EBELNS >= EBEL always; EBELNS/EBEL tracks 1/BETOPO to mean 4e-4, "
+                "max 4.5e-3).\n"
+                "# CORRECTED 2026-07-26: an earlier revision said 'no SNOW shielding'. "
+                "BESNOW is\n"
+                "# identically 1.0000 on all 50 basins here, so it explains nothing; "
+                "the rows where\n"
+                "# EBELNS == EBEL are those with BETOPO >= 0.996, below EBEL's "
+                "3-sig-fig precision.\n")
         f.write("# EBE_GCMYR/EBE_MMKYR are carried so the mm/kyr -> g cm^-2 yr^-1 "
                 "conversion uses\n"
                 "# OCTOPUS's OWN density (their ratio gives 2.6474-2.6521, i.e. "
@@ -706,16 +839,55 @@ def harvest_point_reference(args) -> int:
                 "enter the\n"
                 "# inversion. BESTND is recorded because BE10NC is already "
                 "renormalised (plan §9b).\n")
+        f.write("#\n")
+        f.write("# CENTR_LON IS DERIVED BY US, NOT A PUBLISHED OCTOPUS FIELD. "
+                "OCTOPUS publishes\n"
+                "# CENTR_LAT with no centroid longitude, and lsdn_scaling() needs a "
+                "longitude because\n"
+                "# Holocene Rc is the great-circle distance to a MOVING paleopole. "
+                "CENTR_LON is the\n"
+                "# area-weighted shoelace centroid longitude of OCTOPUS's OWN basin "
+                "polygon from\n"
+                "# crn_int_basins (exterior rings positive, interior rings "
+                "subtracted, MultiPolygon\n"
+                "# parts area-weighted). CENTR_LAT_DERIVED is the latitude from the "
+                "same computation.\n")
+        f.write("#\n")
+        f.write("# RECORDED DISCREPANCY -- CENTR_LAT_DERIVED does NOT reproduce the "
+                "published\n"
+                "# CENTR_LAT, and nothing in this repository asserts that it does. "
+                "Over these\n"
+                "# basins CENTR_LAT_DERIVED - CENTR_LAT reaches 0.00863 deg with an "
+                "RMS of\n"
+                "# 0.00200 deg, and on S055WTS044 the published CENTR_LAT (34.3838) "
+                "lies OUTSIDE\n"
+                "# the polygon's own latitude range [34.37989, 34.38226] -- which a "
+                "geometric\n"
+                "# centroid cannot do. The geometry is nevertheless demonstrably "
+                "correct: the same\n"
+                "# rings reproduce the published AREA to 9.2e-5 relative on "
+                "S014WTS036 (22.3779 km2\n"
+                "# computed vs 22.38 published), and to better than 8e-4 on every "
+                "basin large enough\n"
+                "# that AREA's own 0.01 km2 quantisation does not dominate. The "
+                "LEADING HYPOTHESIS,\n"
+                "# UNCONFIRMED, is that CENTR_LAT is an EFFECTIVE latitude iterated "
+                "against the\n"
+                "# spatially averaged Stone-Lal production in the same way ATM_PRESS "
+                "is, rather than\n"
+                "# a geometric centroid; a separate research task is running to "
+                "settle it. Until it\n"
+                "# does, CENTR_LAT_DERIVED is a frozen RECORD of the discrepancy, "
+                "not a check that\n"
+                "# passed. L12 evaluates at the PUBLISHED CENTR_LAT and the derived "
+                "CENTR_LON.\n")
+        f.write("#\n")
         f.write("# OUTLET_LON is the basin OUTLET longitude from crn_int_outlets, "
-                "NOT a basin field:\n"
-                "# OCTOPUS publishes CENTR_LAT with no centroid longitude, and "
-                "lsdn_scaling() needs\n"
-                "# one because Holocene Rc is the great-circle distance to a moving "
-                "paleopole. Over\n"
-                "# basins this small the outlet/centroid longitude difference is "
-                "negligible against\n"
-                "# the grid's Rc resolution -- a documented approximation, not a "
-                "harvested field.\n")
+                "kept as a DIAGNOSTIC:\n"
+                "# it was the longitude L12 used before CENTR_LON existed, and "
+                "CENTR_LON - OUTLET_LON\n"
+                "# (max 0.0329 deg, RMS 0.0129 deg here) is the size of that former "
+                "approximation.\n")
         w = csv.DictWriter(f, fieldnames=POINT_REFERENCE_FIELDS)
         w.writeheader()
         for r in rows:
@@ -739,7 +911,8 @@ def main() -> int:
                     help="which OCTOPUS rate fields populate published_erate_*: "
                          "St = EBE_* (CAIRN Stone/Lal, the default so the tracked "
                          "St artefacts never move), LSDn = EBEL, LSDnNS = EBELNS "
-                         "(Balco v3 point results, snow-shielded / not)")
+                         "(Balco v3 point results, with / without topographic "
+                         "shielding)")
     ap.add_argument("--max-area-km2", type=float, default=30.0)
     ap.add_argument("--min-area-km2", type=float, default=0.0)
     ap.add_argument("--max-rel-uncert", type=float, default=None,

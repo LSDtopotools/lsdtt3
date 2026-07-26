@@ -165,14 +165,22 @@ constexpr double tc2_cronus_lsdn_modern = 55.0;
 // t = Gamma_sp/eps.  These are RESULTS and REGRESSION GUARDS on our own kernel,
 // never accuracy targets, and must not be widened to absorb a surprise.
 //   - KERNEL ALONE (Balco's LSDn-calibrated P0 substituted, so the ~2 % SLHL P0
-//     convention of Sec3.2 is excluded): measured min -1.18, max +16.08, mean
-//     +4.34 over 50 basins.  The mean lands essentially on the INDEPENDENT
+//     convention of Sec3.2 is excluded): measured min -1.177, max +16.078, mean
+//     +4.338 over 50 basins.  The mean lands essentially on the INDEPENDENT
 //     Phase 5 cross-check of the same kernel against CRONUS v3's own LSDn column
 //     (+4.13 % for Be-10, recorded above) - two different routes, the same
 //     answer, which is the correctness signal for this test.
 //     Band frozen at 20 % on the worst |pct| (measured worst 16.08).
-//   - lsdtt3's OWN P0: measured min +0.84, max +18.47, mean +6.54.  Frozen at
+//   - lsdtt3's OWN P0: measured min +0.843, max +18.467, mean +6.539.  Frozen at
 //     23 % (measured worst 18.47).
+//   RE-MEASURED 2026-07-26 after the evaluation longitude moved from the basin
+//   OUTLET longitude to the polygon-centroid CENTR_LON.  The residual did NOT
+//   move: kernel-alone mean +4.33776 -> +4.33762 %, worst +16.0763 -> +16.0779 %,
+//   i.e. ~1e-4 percentage points.  That is the EXPECTED result and part of the
+//   evidence, not a null finding - longitude enters lsdn_scaling() only through
+//   the Holocene moving-paleopole cutoff rigidity, and a 0.03 deg shift in
+//   longitude cannot register there.  A large move would have been a bug.  The
+//   bands are therefore unchanged.
 // The per-basin SPREAD is dominated by EROSION RATE, not by position: over these
 // 50 basins the residual correlates with log(eps) at r = +0.54 (and with
 // t = Gamma/eps at r = -0.59) but with centroid latitude at only -0.18, with
@@ -1573,7 +1581,11 @@ void phase7_TC2_cronus_lsdn_comparison(const lsdtt::CrnNcData& nc,
 struct octopus_point_row
 {
     std::string sample, dataset, bestnd;
-    double centr_lat = 0.0, atm_press = 0.0, outlet_lon = 0.0;
+    // centr_lon is DERIVED by the harvester from OCTOPUS's own basin polygon
+    // (area-weighted shoelace centroid), because OCTOPUS publishes CENTR_LAT
+    // with no centroid longitude and lsdn_scaling() needs one.  outlet_lon is
+    // carried as the diagnostic the longitude used to be.
+    double centr_lat = 0.0, centr_lon = 0.0, atm_press = 0.0, outlet_lon = 0.0;
     double ebel = 0.0, ebelns = 0.0;
     double be10nc = 0.0;
     double betopo = 1.0, beself = 1.0, besnow = 1.0;
@@ -1639,6 +1651,7 @@ bool load_octopus_point_reference(const std::string& ref_path,
         r.dataset    = str("dataset");
         r.bestnd     = str("BESTND");
         r.centr_lat  = num("CENTR_LAT");
+        r.centr_lon  = num("CENTR_LON");
         r.atm_press  = num("ATM_PRESS");
         r.outlet_lon = num("OUTLET_LON");
         r.ebel       = num("EBEL");
@@ -1676,6 +1689,18 @@ bool load_octopus_point_reference(const std::string& ref_path,
 // ATM_PRESS), invert the measured concentration, compare to EBEL.  No DEM, no
 // delineation, no COP30-vs-original confound - the residual isolates the
 // scaling kernel alone, which is what makes this cheap enough for default CI.
+//
+// THE LONGITUDE IS DERIVED, NOT HARVESTED.  OCTOPUS publishes CENTR_LAT and no
+// centroid longitude, yet lsdn_scaling() needs one because Holocene Rc is the
+// great-circle distance to a MOVING paleopole.  CENTR_LON in the frozen artefact
+// is the area-weighted shoelace centroid longitude of OCTOPUS's own basin
+// polygon, computed by tests/scripts/harvest_octopus.py.  The same computation's
+// latitude is frozen alongside as CENTR_LAT_DERIVED and it does NOT reproduce
+// the published CENTR_LAT (max 0.00863 deg, RMS 0.00200 deg; on S055WTS044 the
+// published value lies outside the polygon's own latitude range).  That is a
+// RECORDED DISCREPANCY, not a check: nothing here asserts the two agree, this
+// test evaluates at the PUBLISHED CENTR_LAT, and the harvester's header carries
+// the evidence and the (unconfirmed) effective-latitude hypothesis.
 //
 // KNOWN CAVEAT, recorded and NOT corrected here: ATM_PRESS is calibrated against
 // Stone-Lal, so it is strictly the wrong effective pressure for LSDn, which has
@@ -1743,7 +1768,7 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
                              nc, "Be10", 0.0, 1013.25, nc.lsdn_sphi[0]);
 
     csv_writer csv(out_dir + "/cosmo_lsdn_point_kernel_oracle.csv",
-                   "dataset,sample,octopus_field,centr_lat,outlet_lon,"
+                   "dataset,sample,octopus_field,centr_lat,centr_lon,outlet_lon,"
                    "atm_press_hPa,elev_ave_m,area_km2,s_tot_shielding,t_yr,"
                    "lsdn_scaling,erate_lsdtt_gcm2yr,erate_octopus_gcm2yr,pct_diff,"
                    "erate_lsdtt_balcoP0_gcm2yr,pct_diff_balcoP0,"
@@ -1804,7 +1829,7 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
                     if (!(eps > 0.0)) { inverted_ok = false; break; }
                     t_yr = gamma_sp / eps;
                 }
-                sf = cp.lsdn_scaling("Be10", r.centr_lat, r.outlet_lon,
+                sf = cp.lsdn_scaling("Be10", r.centr_lat, r.centr_lon,
                                      r.atm_press, t_yr, nc);
                 ref_params p =
                     ref_params_scaled("BraucherBorchers", "Be10", sf * shield);
@@ -1854,7 +1879,8 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
             // at fixed (lat, P) the LSDn/St production ratio is fixed, so any
             // basin-to-basin variation in this column is OCTOPUS-side and tracks
             // erosion rate (i.e. muon fraction), not our kernel.
-            csv.row(r.dataset, r.sample, field, r.centr_lat, r.outlet_lon,
+            csv.row(r.dataset, r.sample, field, r.centr_lat, r.centr_lon,
+                    r.outlet_lon,
                     r.atm_press, r.elev_ave, r.area, shield, t_yr, sf, eps,
                     e_octopus, pct, eps_b, pct_b, pct_u, rho_implied,
                     r.ebe_mmkyr,
