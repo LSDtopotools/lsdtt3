@@ -642,9 +642,21 @@ def self_test() -> int:
               ml["sample_table"] == mb["sample_table"])
         check(f"lsdn tier: {lsdn} reuses {base}'s bounding box",
               strip(ml["dem"]["bounding_box"]) == strip(mb["dem"]["bounding_box"]))
+        # The LSDn tier must differ from its St counterpart ONLY by the two knobs
+        # below, so the two summaries stay directly differenceable. Kept as an
+        # EXACT set comparison rather than a subset check: a third, undocumented
+        # divergence would silently make the tiers incomparable, which is exactly
+        # the failure this is here to catch.
+        #   scaling_scheme: lsdn      -- the scheme under test
+        #   self_consistent_age: true -- added 2026-07-27 so the tier is AGE-MATCHED
+        #                                to EBEL (t = Gamma_sp/eps, the convention
+        #                                EBEL was computed under). Before this the
+        #                                tier ran at sample_age_yr 0, and that
+        #                                mismatch was the band's largest term.
         rp_b, rp_l = strip(mb.get("run_params")), strip(ml.get("run_params"))
-        check(f"lsdn tier: {lsdn} run_params = {base}'s + scaling_scheme lsdn",
-              rp_l.pop("scaling_scheme", None) == "lsdn" and rp_l == rp_b)
+        expected_extra = {"scaling_scheme": "lsdn", "self_consistent_age": True}
+        check(f"lsdn tier: {lsdn} run_params = {base}'s + {expected_extra}",
+              rp_l == {**rp_b, **expected_extra})
         check(f"lsdn tier: {lsdn} has its own summary, not {base}'s",
               ml["summary"] != mb["summary"])
         check(f"lsdn tier: {lsdn} has no duplicated sample table on disk",

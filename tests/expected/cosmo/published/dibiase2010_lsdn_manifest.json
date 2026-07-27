@@ -114,11 +114,24 @@
       "snap_search_radius_pixels, so the SAME basins are delineated the SAME way and the",
       "St and LSDn summaries are directly differenceable), plus scaling_scheme: lsdn.",
       "run_cosmo_validation.py forwards these verbatim into the parameter file.",
-      "sample_age_yr is deliberately left at the CLI default 0 -- see residual_expectation (4)."
+      "",
+      "self_consistent_age: true (added 2026-07-27, Simon's decision) makes this tier",
+      "AGE-MATCHED to EBEL. The tool now solves the sample age and the erosion rate",
+      "together at t = Gamma_sp/eps, which is the CRONUScalc / Balco v3 convention EBEL",
+      "was computed under. Previously this ran at the CLI default sample_age_yr = 0",
+      "(modern field), and that mismatch alone was ~+11 points of the band -- its",
+      "largest single term. sample_age_yr is left at 0 as the ITERATION'S STARTING",
+      "GUESS, not as the reported age; the converged age is written per sample to",
+      "self_consistent_t_yr in the tool's output CSV.",
+      "",
+      "This does NOT turn the band into an oracle. Removing the age term leaves the",
+      "kernel residual, the per-pixel-vs-lumped term and the DEM/delineation",
+      "difference, all still mixed -- see residual_expectation. NEVER tune to shrink it."
     ],
     "threshold_contributing_pixels": 250,
     "snap_search_radius_pixels": 20,
-    "scaling_scheme": "lsdn"
+    "scaling_scheme": "lsdn",
+    "self_consistent_age": true
   },
   "sample_table": "dibiase2010_samples.csv",
   "published_erate_override": {

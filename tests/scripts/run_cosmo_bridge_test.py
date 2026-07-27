@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Forward -> inverse CLI bridge, plus knob coverage (cosmo CLI test plan Phase 4).
+
+THE POINT OF THIS TEST. Every other cosmo test drives the LIBRARY. This one
+drives the two CLIs against each other: lsdtt-cosmo-prediction forward-models a
+concentration for a KNOWN erosion rate, writes the points CSV it advertises as
+ingestible, and lsdtt-cosmo-tool inverts that CSV back to an erosion rate. The
+imposed rate must come back. That closes a loop no library test can close,
+because the failure modes here are plumbing -- a column renamed on one side, a
+knob that reaches the forward model but not the inverse, a shielding term
+applied twice -- and every one of them produces perfectly plausible numbers.
+
+The knob cases exist for exactly that reason. Each one changes a parameter on
+BOTH sides; if a knob is honoured asymmetrically the round trip stops closing
+even though neither CLI errors. A case that passes only because a knob is
+ignored on both sides would be worthless, so the knobs are chosen to MOVE the
+concentration substantially (verified: see --report), and a self-test asserts
+that they do.
+
+Not a physics test: it asserts self-consistency of the pair, so it cannot
+validate the physics itself. The sentinel, the CRONUS comparison and the
+real-landscape tiers do that.
+
+Exit codes: 0 pass, 1 fail, 77 skip (missing executables).
+"""
+
+import argparse
+import csv
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+EXIT_OK, EXIT_FAIL, EXIT_SKIP = 0, 1, 77
+
+# The bridge closes to a few 1e-4 relative. The floor is not the inversion
+# solver (it converges to ~1e-3 on the concentration, which maps to far less on
+# the rate) but the fact that the forward model hands over the accumulated
+# concentration through a FLOAT32 raster: 55120.117188 above, ~7 significant
+# digits. Measured worst case at first run was 6.2e-4; frozen at 5e-3, the
+# house ~8x convention, so ordinary float32 noise cannot make this flap.
+RECOVERY_REL_TOL = 5.0e-3
+
+# A knob must actually change the forward concentration, or the case it guards
+# proves nothing. Measured smallest real effect at first run was ~1.9 % (the
+# Braucher muon scheme); frozen an order of magnitude below that.
+KNOB_EFFECT_MIN_REL = 2.0e-3
+
+
+def q(v):
+    """Render a Python value as the lsdtt param parser expects it."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v)
+
+
+def run_cli(exe, workdir, param_name, label):
+    proc = subprocess.run([str(exe), str(workdir), param_name],
+                          cwd=str(workdir), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"{label} failed (exit {proc.returncode})\n"
+            f"--- stdout ---\n{proc.stdout[-3000:]}\n"
+            f"--- stderr ---\n{proc.stderr[-3000:]}")
+    return proc
+
+
+def forward(pred_exe, workdir, data_dir, erate, knobs, tag):
+    """Forward-model the accumulated concentration; return (conc, csv_path)."""
+    base = f"fwd_{tag}"
+    lines = [
+        f"read_path: {data_dir}",
+        "read_fname: tiny_dem.asc",
+        f"write_path: {workdir}",
+        f"write_fname: {base}",
+        "calculate_crn_concentration_raster: true",
+        "calculate_accumulated_crn_concentration: true",
+        f"effective_erosion_rate: {erate}",
+        "sample_points_filename: cosmo_tiny_points.csv",
+        "threshold_contributing_pixels: 2",
+        "snap_search_radius_pixels: 3",
+    ]
+    lines += [f"{k}: {q(v)}" for k, v in knobs.items()]
+    param = workdir / f"{base}.param"
+    param.write_text("\n".join(lines) + "\n")
+    run_cli(pred_exe, workdir, param.name, f"forward[{tag}]")
+
+    out = workdir / f"{base}_sampled_crn_conc.csv"
+    if not out.is_file():
+        raise RuntimeError(f"forward[{tag}] wrote no points CSV: {out}")
+    rows = list(csv.DictReader(out.open(newline="")))
+    if len(rows) != 1:
+        raise RuntimeError(f"forward[{tag}] sampled {len(rows)} points, expected 1")
+    conc_col = next(c for c in rows[0] if c.endswith("_CONC"))
+    return float(rows[0][conc_col]), out
+
+
+def inverse(tool_exe, workdir, data_dir, points_csv, knobs, tag):
+    """Invert the forward CSV; return the full result row."""
+    base = f"inv_{tag}"
+    lines = [
+        f"read_path: {data_dir}",
+        "read_fname: tiny_dem.asc",
+        f"write_path: {workdir}",
+        f"write_fname: {base}",
+        f"points_filename: {points_csv}",
+        "threshold_contributing_pixels: 2",
+        "snap_search_radius_pixels: 3",
+    ]
+    lines += [f"{k}: {q(v)}" for k, v in knobs.items()]
+    param = workdir / f"{base}.param"
+    param.write_text("\n".join(lines) + "\n")
+    run_cli(tool_exe, workdir, param.name, f"inverse[{tag}]")
+
+    out = workdir / f"{base}_CN_ERATE.csv"
+    if not out.is_file():
+        raise RuntimeError(f"inverse[{tag}] wrote no result CSV: {out}")
+    rows = list(csv.DictReader(out.open(newline="")))
+    if len(rows) != 1:
+        raise RuntimeError(f"inverse[{tag}] returned {len(rows)} rows, expected 1")
+    return rows[0]
+
+
+# --------------------------------------------------------------------------- #
+# Cases.  Each is (tag, erate, shared_knobs) applied to BOTH CLIs.
+# --------------------------------------------------------------------------- #
+CASES = [
+    ("baseline",      0.01,   {}),
+    # Rate sweep: slow samples are muon-heavy, fast ones spallation-dominated,
+    # so this exercises different parts of the same forward model.
+    ("slow",          0.0005, {}),
+    ("fast",          0.05,   {}),
+    # Nuclide: different P0, F, decay constant and standardisation map.
+    ("nuclide_Al26",  0.01,   {"nuclide": "Al26"}),
+    ("nuclide_C14",   0.01,   {"nuclide": "C14"}),
+    # Muon scheme: changes F and Gamma, which is where an asymmetric knob shows.
+    ("muon_Braucher", 0.01,   {"muon_scheme": "Braucher"}),
+    ("muon_Granger",  0.01,   {"muon_scheme": "Granger"}),
+    ("muon_Schaller", 0.01,   {"muon_scheme": "Schaller"}),
+    ("muon_newCRONUS", 0.01,  {"muon_scheme": "newCRONUS"}),
+    # Production scaling, both schemes, and LSDn with a time-averaged field.
+    ("scaling_lsdn",  0.01,   {"scaling_scheme": "lsdn"}),
+    ("lsdn_aged",     0.01,   {"scaling_scheme": "lsdn", "sample_age_yr": 20000}),
+    ("stone_aged",    0.01,   {"sample_age_yr": 20000}),
+    # Shielding, one term at a time then together -- a term applied on one side
+    # only, or twice, breaks the round trip while both CLIs still succeed.
+    ("shield_topo",   0.01,   {"topo_shield_value": 0.8}),
+    ("shield_snow",   0.01,   {"snow_shield_eff_thickness": 20.0}),
+    ("shield_self",   0.01,   {"self_shield_eff_thickness": 15.0}),
+    ("shield_all",    0.01,   {"topo_shield_value": 0.8,
+                               "snow_shield_eff_thickness": 20.0,
+                               "self_shield_eff_thickness": 15.0}),
+]
+
+# NOT COVERED, deliberately: `atmosphere`. lsdtt-cosmo-tool declares it
+# (ERA40/NCEP/standard); lsdtt-cosmo-prediction DOES NOT, so it always
+# forward-models under its default. There is no way to impose a matching
+# atmosphere on both sides, and a "round trip" that set it on one side only
+# would silently be measuring atmospheric sensitivity while claiming to measure
+# closure -- it closed to 0.38 % on this near-sea-level fixture, which looks
+# like a pass and means nothing. Left uncovered and reported rather than
+# faked. Adding `atmosphere` to lsdtt-cosmo-prediction would close the gap; it
+# is outside this phase's knob list (nuclide, scheme, density, shielding,
+# standardisation, +/-1 sigma).
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--pred-exe", default=os.environ.get("LSDTT_COSMO_PREDICTION"))
+    ap.add_argument("--tool-exe", default=os.environ.get("LSDTT_COSMO_TOOL"))
+    ap.add_argument("--data-dir", type=pathlib.Path,
+                    default=pathlib.Path(__file__).resolve().parents[1] / "data")
+    ap.add_argument("--keep", action="store_true",
+                    help="keep the working directory for debugging")
+    ap.add_argument("--report", action="store_true",
+                    help="print the forward concentration of every case")
+    args = ap.parse_args()
+
+    if not args.pred_exe or not args.tool_exe:
+        print("SKIP: set --pred-exe/--tool-exe (or LSDTT_COSMO_PREDICTION / "
+              "LSDTT_COSMO_TOOL); nothing to bridge.")
+        return EXIT_SKIP
+    pred_exe, tool_exe = pathlib.Path(args.pred_exe), pathlib.Path(args.tool_exe)
+    for e in (pred_exe, tool_exe):
+        if not e.is_file():
+            print(f"SKIP: executable not found: {e}")
+            return EXIT_SKIP
+    for f in ("tiny_dem.asc", "cosmo_tiny_points.csv"):
+        if not (args.data_dir / f).is_file():
+            print(f"FAIL: fixture missing: {args.data_dir / f}")
+            return EXIT_FAIL
+
+    workdir = pathlib.Path(tempfile.mkdtemp(prefix="cosmo_bridge_"))
+    n_pass = n_fail = 0
+    concs = {}
+    try:
+        # The fixture points CSV lives beside the DEM; the forward CLI resolves
+        # it against read_path, so nothing is copied.
+        for tag, erate, knobs in CASES:
+            try:
+                conc, points_csv = forward(pred_exe, workdir, args.data_dir,
+                                           erate, knobs, tag)
+                row = inverse(tool_exe, workdir, args.data_dir, points_csv,
+                              knobs, tag)
+                got = float(row["apparent_eff_e_g_cm2_yr"])
+                rel = abs(got - erate) / erate
+                ok = rel <= RECOVERY_REL_TOL
+            except Exception as exc:                       # noqa: BLE001
+                print(f"[FAIL] {tag}: {exc}")
+                n_fail += 1
+                continue
+            concs[tag] = conc
+            print(f"[{'PASS' if ok else 'FAIL'}] {tag}: imposed {erate:g} "
+                  f"recovered {got:.6g} rel={rel:.3g} (conc {conc:.6g})")
+            n_pass, n_fail = (n_pass + 1, n_fail) if ok else (n_pass, n_fail + 1)
+
+        # ---- the knobs must MATTER, or the cases above prove nothing --------
+        base = concs.get("baseline")
+        if base is None:
+            print("[FAIL] knob-effect check: baseline concentration missing")
+            n_fail += 1
+        else:
+            for tag in ("nuclide_Al26", "muon_Braucher", "scaling_lsdn",
+                        "shield_topo", "shield_snow", "shield_self",
+                        "lsdn_aged", "stone_aged", "slow", "fast"):
+                if tag not in concs:
+                    continue
+                rel = abs(concs[tag] - base) / base
+                ok = rel >= KNOB_EFFECT_MIN_REL
+                print(f"[{'PASS' if ok else 'FAIL'}] knob-effect {tag}: "
+                      f"moved the forward concentration by {rel:.3%} "
+                      f"(need >= {KNOB_EFFECT_MIN_REL:.1%})")
+                n_pass, n_fail = (n_pass + 1, n_fail) if ok else (n_pass, n_fail + 1)
+
+        # ---- density is a pure unit conversion, so assert the identity ------
+        for rho in (2650.0, 2000.0):
+            tag = f"density_{int(rho)}"
+            try:
+                conc, points_csv = forward(pred_exe, workdir, args.data_dir,
+                                           0.01, {}, tag)
+                row = inverse(tool_exe, workdir, args.data_dir, points_csv,
+                              {"rock_density_kg_m3": rho}, tag)
+                eff = float(row["apparent_eff_e_g_cm2_yr"])
+                mmkyr = float(row["apparent_e_mm_yr"])
+                expect = eff * 1.0e7 / rho
+                rel = abs(mmkyr - expect) / expect
+                ok = rel <= 1.0e-6      # a printed-precision check, not physics
+                print(f"[{'PASS' if ok else 'FAIL'}] {tag}: mm/kyr {mmkyr:.6g} "
+                      f"vs eff*1e7/rho {expect:.6g} rel={rel:.3g}")
+                n_pass, n_fail = (n_pass + 1, n_fail) if ok else (n_pass, n_fail + 1)
+            except Exception as exc:                       # noqa: BLE001
+                print(f"[FAIL] {tag}: {exc}")
+                n_fail += 1
+
+        # ---- standardisation: a non-unity factor must be undone -------------
+        # KNSTD -> 07KNSTD is 0.9042. Feed conc/0.9042 labelled KNSTD; the tool
+        # multiplies by the factor, recovering the true concentration and hence
+        # the imposed rate. If the factor were ignored, or applied the wrong
+        # way, the rate would be off by ~10 % -- far outside RECOVERY_REL_TOL.
+        try:
+            factor, erate = 0.9042, 0.01
+            conc, _ = forward(pred_exe, workdir, args.data_dir, erate, {}, "std")
+            std_csv = workdir / "std_points.csv"
+            with std_csv.open("w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["sample_name", "latitude", "longitude",
+                            "Be10_CONC", "Be10_standardisation"])
+                src = list(csv.DictReader(
+                    (workdir / "fwd_std_sampled_crn_conc.csv").open(newline="")))[0]
+                w.writerow([src["sample_name"], src["latitude"], src["longitude"],
+                            conc / factor, "KNSTD"])
+            row = inverse(tool_exe, workdir, args.data_dir, std_csv,
+                          {"standardisation_column_name": "Be10_standardisation"},
+                          "std")
+            got = float(row["apparent_eff_e_g_cm2_yr"])
+            rel = abs(got - erate) / erate
+            ok = rel <= RECOVERY_REL_TOL
+            print(f"[{'PASS' if ok else 'FAIL'}] standardisation KNSTD: "
+                  f"imposed {erate:g} recovered {got:.6g} rel={rel:.3g}")
+            n_pass, n_fail = (n_pass + 1, n_fail) if ok else (n_pass, n_fail + 1)
+        except Exception as exc:                           # noqa: BLE001
+            print(f"[FAIL] standardisation: {exc}")
+            n_fail += 1
+
+        # ---- +/-1 sigma bounds must BRACKET and be correctly ordered --------
+        # More nuclide means slower erosion, so the +sigma rate is the LOWER
+        # one. Getting this backwards is a classic sign error that no
+        # single-value test can see.
+        try:
+            erate = 0.01
+            conc, _ = forward(pred_exe, workdir, args.data_dir, erate, {}, "sig")
+            sig_csv = workdir / "sig_points.csv"
+            with sig_csv.open("w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["sample_name", "latitude", "longitude",
+                            "Be10_CONC", "Be10_uncertainty"])
+                src = list(csv.DictReader(
+                    (workdir / "fwd_sig_sampled_crn_conc.csv").open(newline="")))[0]
+                w.writerow([src["sample_name"], src["latitude"], src["longitude"],
+                            conc, conc * 0.05])
+            row = inverse(tool_exe, workdir, args.data_dir, sig_csv, {}, "sig")
+            e_mid = float(row["apparent_eff_e_g_cm2_yr"])
+            e_lo_conc = float(row["apparent_eff_e_minus_g_cm2_yr"])   # conc - sigma
+            e_hi_conc = float(row["apparent_eff_e_plus_g_cm2_yr"])    # conc + sigma
+            ok = e_hi_conc < e_mid < e_lo_conc
+            print(f"[{'PASS' if ok else 'FAIL'}] +/-1sigma bracketing: "
+                  f"conc+sigma {e_hi_conc:.6g} < mid {e_mid:.6g} < "
+                  f"conc-sigma {e_lo_conc:.6g}")
+            n_pass, n_fail = (n_pass + 1, n_fail) if ok else (n_pass, n_fail + 1)
+        except Exception as exc:                           # noqa: BLE001
+            print(f"[FAIL] +/-1sigma: {exc}")
+            n_fail += 1
+
+        if args.report:
+            print("\nForward concentrations (atoms/g):")
+            for tag, c in concs.items():
+                print(f"  {tag:18s} {c:.8g}")
+    finally:
+        if args.keep:
+            print(f"kept working directory: {workdir}")
+        else:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    total = n_pass + n_fail
+    print(f"\n{n_pass}/{total} bridge checks passed")
+    return EXIT_OK if n_fail == 0 else EXIT_FAIL
+
+
+if __name__ == "__main__":
+    sys.exit(main())

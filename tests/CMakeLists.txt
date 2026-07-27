@@ -708,6 +708,28 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(failure_cosmo_tool_bad_self_consistent_tol
     PROPERTIES LABELS "failure;cli;cosmo")
 
+# The forward -> inverse CLI BRIDGE (cosmo CLI test plan Phase 4), plus knob
+# coverage. lsdtt-cosmo-prediction forward-models a concentration for a known
+# erosion rate and writes the points CSV it advertises as ingestible;
+# lsdtt-cosmo-tool inverts that CSV; the imposed rate must come back. This is
+# the only test that drives the two CLIs against each other, so it is the only
+# one that can catch plumbing faults -- a column renamed on one side, a knob
+# honoured asymmetrically, a shielding term applied twice -- all of which
+# produce plausible numbers and pass every single-CLI test.
+#
+# Offline and fast (a 5x5 fixture DEM), so it runs in the default suite.
+# Verified to fail on perturbation: ignoring the standardisation factor, swapping
+# the +/-1 sigma bounds, and dropping topographic shielding on the inverse side
+# each turn it red.
+add_test(NAME rigorous_cosmo_cli_bridge
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_bridge_test.py"
+                 --pred-exe "$<TARGET_FILE:lsdtt-cosmo-prediction>"
+                 --tool-exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
+                 --data-dir "${LSDTT_TEST_DATA_DIR}")
+set_tests_properties(rigorous_cosmo_cli_bridge PROPERTIES
+    LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
+
 # An unknown scheme is FATAL, and the message names both allowed values.
 add_lsdtt_cli_smoke_test(
     failure_cosmo_tool_bad_scaling_scheme

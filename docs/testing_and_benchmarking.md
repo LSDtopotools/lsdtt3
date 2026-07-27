@@ -1128,25 +1128,32 @@ Stone but is being consumed by an LSDn kernel — the effect is roughly a fifth 
 the spatial term, not a competitor to it.
 
 **End-to-end, (a) vs (c) — the monitoring band.** Three OCTOPUS-derived datasets,
-sign `100·(lsdtt3 − EBEL)/EBEL`, delineation-unreliable basins excluded:
+sign `100·(lsdtt3 − EBEL)/EBEL`, delineation-unreliable basins excluded. The tier
+is **age-matched** — it runs with `self_consistent_age`, so both sides integrate
+over the same erosional timescale:
 
 | dataset | n | median | mean | min | max |
 |---|---|---|---|---|---|
-| Clapp 2002 (Yuma Wash) | 21 | +3.82 | +3.89 | +2.61 | +4.66 |
-| Dethier 2014 (Front Range) | 12 | +4.28 | +4.51 | +2.47 | +9.41 |
-| DiBiase 2010 (San Gabriel) | 14 | +10.14 | +11.45 | +5.82 | +22.85 |
+| Clapp 2002 (Yuma Wash) | 21 | −4.59 | −4.78 | −8.27 | −3.57 |
+| Dethier 2014 (Front Range) | 12 | −5.85 | −5.85 | −8.08 | −3.71 |
+| DiBiase 2010 (San Gabriel) | 14 | −8.23 | −8.76 | −21.22 | −2.65 |
 
 **These are bands to watch, not accuracy figures, and nothing may be tuned to
-shrink them.** Each mixes the kernel residual, the per-pixel-versus-lumped term,
-the DEM and delineation difference, and — largest of all — a deliberate age
-mismatch: the tier runs at the CLI default `sample_age_yr = 0` (modern field),
-while the published `EBEL` is time-averaged over the erosional timescale Γ/ε.
-That last term alone is worth roughly +11 points. Expressed consistently in the
-real-landscape sign and on lsdtt3's own `P0`, the age-matched decomposition is
+shrink them.** Each still mixes the kernel residual, the per-pixel-versus-lumped
+term, and the DEM and delineation difference.
+
+The age matching is worth recording, because it is a prediction that was tested.
+The tier originally ran at the CLI default `sample_age_yr = 0` (modern field)
+while the published `EBEL` is time-averaged over Γ/ε, and it measured **+3.82 /
++4.28 / +10.14 %** — positive. Expressed in the real-landscape sign and on
+lsdtt3's own `P0`, the age-matched decomposition was predicted, in advance, as
 kernel −6.14, per-pixel-versus-lumped −0.53, ERA40-rather-than-NCEP atmosphere
-−0.64, topographic shielding +0.70, giving ≈ **−6.6 %** — which is why reading
-the raw +4 to +10 % as "accuracy" would be doubly wrong, in magnitude and in
-sign.
+−0.64, topographic shielding +0.70 ⇒ ≈ **−6.6 %**. Re-running age-matched flipped
+the sign and landed on it, for two of the three datasets; DiBiase sits wider, as
+it does in every other comparison, because those basins erode up to 10× faster
+and the spread tracks erosion rate — the muon-fraction signature. Reading the
+original +4 to +10 % as "accuracy" would have been wrong in both magnitude and
+sign, and the corrected figure is still not an accuracy number.
 
 Two basins remain excluded as mis-delineated rather than wrong: `S169WTS036`
 (0.07 km²) and `S055WTS044` (0.08 km²), both below the snap-threshold footprint.
@@ -1177,6 +1184,35 @@ perturbation before being kept:
 A non-positive tolerance or a zero iteration cap is fatal up front, because either
 would let the loop exit on its first comparison and report a "converged" age that
 is nothing of the kind.
+
+#### The CLI bridge: forward against inverse
+
+Everything above drives the library. `rigorous_cosmo_cli_bridge` drives the two
+CLIs against **each other**: `lsdtt-cosmo-prediction` forward-models a
+concentration for a known erosion rate and writes the points CSV it advertises as
+ingestible; `lsdtt-cosmo-tool` inverts that CSV; the imposed rate must come back.
+
+This is the only test that can catch *plumbing* faults — a column renamed on one
+side, a knob honoured asymmetrically, a shielding term applied twice. Every one
+of those produces perfectly plausible numbers and passes all single-CLI tests.
+Seventeen round-trip cases apply the same knob to both sides (rate sweep, three
+nuclides, five muon schemes, both scaling schemes, aged and unaged, four
+shielding combinations), plus checks on the density unit-conversion identity, the
+standardisation factor, and ±1σ bracketing (more nuclide means slower erosion, so
+the +σ rate must be the *lower* one — a sign error no single-value test can see).
+
+Worst recovery error is **6.2e-4 relative**. The floor is not the inversion
+solver but the **float32** accumulated-concentration raster the forward model
+hands over, at ~7 significant digits.
+
+Two design points keep it honest. A knob-effect self-check asserts every knob
+actually *moves* the forward concentration (measured 2.2 % to 628 %), so no case
+can pass merely because its knob is ignored on both sides. And `atmosphere` is
+**deliberately not covered**: `lsdtt-cosmo-tool` declares it but
+`lsdtt-cosmo-prediction` does not, so no matching atmosphere can be imposed on
+both sides. Setting it on one side only closed to 0.38 % on this near-sea-level
+fixture — which looks like a pass and establishes nothing. The gap is recorded
+rather than papered over.
 
 #### Where the expensive parts run
 
