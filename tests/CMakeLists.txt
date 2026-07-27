@@ -773,6 +773,24 @@ set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
     LABELS "smoke;cli;cosmo"
     PASS_REGULAR_EXPRESSION "sample_age_yr")
 
+# Functional coverage for lsdtt-cosmo-column-tool, which until 2026-07-27 had
+# only the -h test below. It is the natural place to compare lsdtt3 against
+# POINT calculators (CRONUS v3, CRONUScalc): no DEM, no flow routing, no basin
+# averaging, so nothing can mask a scaling or muon discrepancy.
+#
+# The checks are LIMIT IDENTITIES of the column model, needing no external
+# reference: step_change at t=0 must equal steady state at the old rate and at
+# t->inf the new rate; a constant-rate full_transient must relax to steady
+# state; monotonicity in depth and rate; production_scaling exactly linear in P0
+# while total_shielding is not (Vermeesch redistribution); C-14 relaxing faster
+# than Be-10. Verified to fail on perturbation.
+add_test(NAME rigorous_cosmo_column_tool
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_column_test.py"
+                 --exe "$<TARGET_FILE:lsdtt-cosmo-column-tool>")
+set_tests_properties(rigorous_cosmo_column_tool PROPERTIES
+    LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 600)
+
 add_test(NAME smoke_cosmo_column_tool_help COMMAND lsdtt-cosmo-column-tool -h)
 set_tests_properties(smoke_cosmo_column_tool_help PROPERTIES
     LABELS "smoke;cli;cosmo"

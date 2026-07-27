@@ -272,4 +272,78 @@ CrnColumnSample lsdtt_crn_column::step_change(double d_eff,
     return out;
 }
 
+//
+// ADDITIVE overloads taking shielding separately (2026-07-27). See the header
+// for why: shielding must go through the Vermeesch redistribution, not a flat
+// P0 multiply, to match the raster pipeline. The two functions above are
+// unchanged and remain the single-factor form.
+lsdtt_crn_parameters
+lsdtt_crn_column::make_params_shielded(double production_scaling,
+                                        double total_shielding,
+                                        const std::string& muon_scheme) const
+{
+    lsdtt_crn_parameters p = make_params(production_scaling, muon_scheme);
+    // Guarded exactly as the caller that this consolidates did, so
+    // total_shielding == 1.0 leaves the parameter object bit-identical to the
+    // single-factor path. scale_F_values is a Newton solve; running it for a
+    // shielding of exactly 1 would be a no-op in exact arithmetic but not
+    // necessarily bit-for-bit, so the guard is load-bearing, not an
+    // optimisation.
+    if (total_shielding < 1.0)
+    {
+        p.scale_F_values(total_shielding, "Be10");
+        p.scale_F_values(total_shielding, "Al26");
+        p.scale_F_values(total_shielding, "C14");
+    }
+    return p;
+}
+
+CrnColumnSample lsdtt_crn_column::steady_state(double d_eff,
+                                                double eff_erate,
+                                                double production_scaling,
+                                                double total_shielding,
+                                                const std::string& muon_scheme) const
+{
+    lsdtt_crn_parameters params =
+        make_params_shielded(production_scaling, total_shielding, muon_scheme);
+    lsdtt_crn_particle part(d_eff);
+    part.init_ss_all(eff_erate, params);
+
+    CrnColumnSample out;
+    out.depth_m         = d_eff / (rock_density_ * 0.1);
+    out.effective_depth = d_eff;
+    out.conc_10Be       = part.get_conc_10Be();
+    out.conc_26Al       = part.get_conc_26Al();
+    out.conc_14C        = part.get_conc_14C();
+    return out;
+}
+
+CrnColumnSample lsdtt_crn_column::step_change(double d_eff,
+                                               double eff_erate_old,
+                                               double eff_erate_new,
+                                               double t_step,
+                                               double production_scaling,
+                                               double total_shielding,
+                                               const std::string& muon_scheme) const
+{
+    lsdtt_crn_parameters params =
+        make_params_shielded(production_scaling, total_shielding, muon_scheme);
+
+    // Identical evolution to the single-factor overload: only the parameter
+    // object differs. Kept as a separate body rather than delegating, because
+    // the existing overload takes the combined factor and must not change.
+    double d_start = d_eff + eff_erate_new * t_step;
+    lsdtt_crn_particle part(d_start);
+    part.init_ss_all(eff_erate_old, params);
+    part.update_conc(t_step, eff_erate_new, params);
+
+    CrnColumnSample out;
+    out.depth_m         = d_eff / (rock_density_ * 0.1);
+    out.effective_depth = d_eff;
+    out.conc_10Be       = part.get_conc_10Be();
+    out.conc_26Al       = part.get_conc_26Al();
+    out.conc_14C        = part.get_conc_14C();
+    return out;
+}
+
 } // namespace lsdtt

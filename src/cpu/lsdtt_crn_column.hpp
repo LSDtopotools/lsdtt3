@@ -103,6 +103,41 @@ public:
                                 double production_scaling,
                                 const std::string& muon_scheme) const;
 
+    //  Point modes with SHIELDING HANDLED SEPARATELY
+    // ADDITIVE overloads (2026-07-27). The overloads above take a single
+    // scaling factor and apply all of it through apply_production_scaling, i.e.
+    // a flat P0 multiply. That is right for a SITE PRODUCTION SCALING (it may
+    // exceed 1 at altitude) but WRONG for SHIELDING, which the rest of lsdtt3
+    // -- calculate_crn_concentration_raster and every validated comparison --
+    // puts through the Vermeesch virtual-attenuation redistribution in
+    // scale_F_values, attenuating spallation and the muon pathways unequally.
+    //
+    // Passing production_scaling * total_shielding to the single-factor form
+    // therefore gives a DIFFERENT answer from the raster pipeline, and made
+    // lsdtt-cosmo-column-tool's two point modes disagree by 11.4 % at a
+    // shielding of 0.5 -- in a case (t = 0) where a limit identity says they
+    // must agree exactly.
+    //
+    // These overloads take the two separately and apply each by its own
+    // mechanism. total_shielding == 1.0 reproduces the single-factor overloads
+    // bit-for-bit, so this is purely additive: nothing that calls the existing
+    // signatures can move, and the numerics sentinels are unaffected.
+    //
+    // total_shielding: topographic x snow x self, dimensionless, <= 1.
+    CrnColumnSample steady_state(double effective_depth_g_cm2,
+                                 double eff_erate_g_cm2_yr,
+                                 double production_scaling,
+                                 double total_shielding,
+                                 const std::string& muon_scheme) const;
+
+    CrnColumnSample step_change(double effective_depth_g_cm2,
+                                double eff_erate_old_g_cm2_yr,
+                                double eff_erate_new_g_cm2_yr,
+                                double time_since_step_yr,
+                                double production_scaling,
+                                double total_shielding,
+                                const std::string& muon_scheme) const;
+
     //  Accessors 
     double rock_density() const { return rock_density_; }
     const std::vector<double>& time_vec()    const { return time_vec_; }
@@ -118,6 +153,11 @@ private:
     void check_erosion_time_series() const;
     lsdtt_crn_parameters make_params(double production_scaling,
                                      const std::string& muon_scheme) const;
+    // make_params plus the Vermeesch shielding redistribution. Guarded so that
+    // total_shielding == 1.0 returns make_params' object bit-for-bit.
+    lsdtt_crn_parameters make_params_shielded(double production_scaling,
+                                              double total_shielding,
+                                              const std::string& muon_scheme) const;
     double to_eff(double depth_m) const { return depth_m * rock_density_ * 0.1; }
 };
 

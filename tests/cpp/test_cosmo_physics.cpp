@@ -62,6 +62,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_crn_parameters.hpp"
+#include "lsdtt_crn_column.hpp"
 #include "lsdtt_cosmo_raster_cpu.hpp"
 #include "lsdtt_exe_path.hpp"
 
@@ -2832,6 +2833,638 @@ lsdtt::CrnNcData make_two_level_vdm_nc(double modern_vdm, double past_vdm,
 }
 
 // G1 - static-field / degenerate limits.
+// =============================================================================
+// X1-X3 -- COLUMN <-> RASTER EQUIVALENCE, and multi-isotope transient response.
+//
+// WHY THIS EXISTS. The stated aim for lsdtt-cosmo-prediction is to model several
+// isotopes responding together to a change in erosion rate, PER PIXEL. That only
+// works if the 1-D column model and the raster step-change kernel are the same
+// physics driven two ways: whatever is prototyped or inverted in a column has to
+// reproduce, number for number, what the raster produces at the corresponding
+// pixel. Nothing tested that. The two paths are separate implementations
+// (lsdtt_crn_column::step_change vs calculate_crn_concentration_raster_step_change)
+// and had already drifted apart once, in how they apply shielding.
+//
+// The raster is the REFERENCE here, not the column: it is what the numerics
+// sentinel pins (conc_step rows), and its convention -- folding production
+// scaling and shielding together through scale_F_values, including S_tot > 1 via
+// the Vermeesch negative-effective-depth branch -- is the one validated against
+// the CRONUS v3 calculator at altitude. A disagreement is a column defect.
+//
+// These are EQUIVALENCE and BEHAVIOUR tests, not accuracy tests. Absolute
+// correctness is the sentinel's job.
+void phaseX_column_raster_equivalence(const single_basin_fixture& fx)
+{
+    const std::size_t idx = static_cast<std::size_t>(fx.outlet_node);
+    const lsdtt::lsdtt_raster_cpu topo1 = make_uniform_raster(fx, 1.0f);
+    lsdtt::lsdtt_crn_column col(2650.0);
+
+    // The raster stores float32, so equivalence can only be asserted to float
+    // precision (~1.2e-7 relative). Frozen at 5e-6, comfortably above the
+    // float32 floor and ~10^4 below any real physics difference. Measured worst
+    // case at first run is reported below.
+    const double eq_tol = 5.0e-6;
+    double worst_ss = 0.0, worst_step = 0.0;
+
+    // ---- X1: steady state, column vs raster, over shielding and nuclide ----
+    // production_scaling is deliberately held at 1.0 here and swept through the
+    // TOPOGRAPHIC SHIELDING raster instead, because that is the term both paths
+    // agree on. The production-scaling term is covered separately by X2, which
+    // is where they part company.
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+    {
+        for (double S : {1.0, 0.85, 0.5})
+        {
+            for (double eps : {0.0005, 0.01, 0.05})
+            {
+                const lsdtt::lsdtt_raster_cpu prod =
+                    make_uniform_raster(fx, static_cast<float>(S));
+                const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
+                const double c_ras =
+                    lsdtt::calculate_crn_concentration_raster_whole(
+                        nuc, "BraucherBorchers",
+                        make_uniform_raster(fx, static_cast<float>(eps)),
+                        prod, topo1, zero, zero).get_data()[idx];
+
+                const lsdtt::CrnColumnSample s =
+                    col.steady_state(0.0, eps, 1.0, S, "BraucherBorchers");
+                const double c_col = (std::string(nuc) == "Be10") ? s.conc_10Be
+                                   : (std::string(nuc) == "Al26") ? s.conc_26Al
+                                                                  : s.conc_14C;
+                worst_ss = std::max(worst_ss, std::fabs(c_col - c_ras) / c_ras);
+            }
+        }
+    }
+    check("X1: column steady_state == raster whole-raster SS, all nuclides, "
+          "shielding 1.0/0.85/0.5 (float32 tolerance)",
+          worst_ss < eq_tol, "worst rel " + std::to_string(worst_ss));
+    std::cout << "      X1 worst column-vs-raster SS rel diff = " << worst_ss << "\n";
+
+    // ---- X2: THE PRODUCTION-SCALING CONVENTION -----------------------------
+    // The raster folds production scaling into scale_F_values along with
+    // shielding; the column's single-factor path multiplies P0 flat. They are
+    // NOT the same operation, and this pins the size of the gap so it cannot
+    // change unnoticed while the question of which convention is right is open.
+    // Measured 2026-07-27: -14.87 % at scaling 0.5, +5.39 % at 1.4.
+    // THIS IS A RECORDED DISAGREEMENT, NOT AN ENDORSEMENT -- see the findings
+    // log. When the column is switched to the raster convention this check
+    // must be replaced by an equality assertion, not merely re-frozen.
+    {
+        const double eps = 0.01;
+        for (double P : {0.5, 1.4})
+        {
+            const lsdtt::lsdtt_raster_cpu prod =
+                make_uniform_raster(fx, static_cast<float>(P));
+            const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
+            const double c_ras =
+                lsdtt::calculate_crn_concentration_raster_whole(
+                    "Be10", "BraucherBorchers",
+                    make_uniform_raster(fx, static_cast<float>(eps)),
+                    prod, topo1, zero, zero).get_data()[idx];
+            // Column, production scaling through the flat-P0 route.
+            const double c_col =
+                col.steady_state(0.0, eps, P, 1.0, "BraucherBorchers").conc_10Be;
+            const double pct = 100.0 * (c_col - c_ras) / c_ras;
+            const double expect = (P == 0.5) ? -14.8734 : 5.3912;
+            check("X2: column-vs-raster production-scaling gap at S_tot=" +
+                      std::to_string(P) + " is UNCHANGED (open defect, pinned)",
+                  std::fabs(pct - expect) < 0.01,
+                  "measured " + std::to_string(pct) + " %, pinned " +
+                      std::to_string(expect) + " %");
+            std::cout << "      X2 production-scaling gap at S_tot=" << P
+                      << ": column " << c_col << " vs raster " << c_ras
+                      << " (" << pct << " %)\n";
+        }
+        // And the column agrees with the raster when the SAME factor is routed
+        // through shielding instead -- which is the proof that the gap is a
+        // convention difference, not an arithmetic error somewhere.
+        //
+        // ONLY for factors <= 1. make_params_shielded guards scale_F_values
+        // with `total_shielding < 1.0`, so a factor above 1 is silently not
+        // applied at all: measured, the column returns the UNSCALED 79198.2
+        // where the raster returns 105205.6. That guard is defensible for
+        // shielding (which cannot exceed 1) but it is precisely why the column
+        // cannot currently express altitude enhancement the way the raster
+        // does, and it is part of what the open X2 defect must resolve.
+        for (double P : {0.5, 0.85})
+        {
+            const lsdtt::lsdtt_raster_cpu prod =
+                make_uniform_raster(fx, static_cast<float>(P));
+            const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
+            const double c_ras =
+                lsdtt::calculate_crn_concentration_raster_whole(
+                    "Be10", "BraucherBorchers",
+                    make_uniform_raster(fx, static_cast<float>(eps)),
+                    prod, topo1, zero, zero).get_data()[idx];
+            const double c_col =
+                col.steady_state(0.0, eps, 1.0, P, "BraucherBorchers").conc_10Be;
+            check("X2: routing the SAME factor through shielding reproduces the "
+                  "raster exactly at S_tot=" + std::to_string(P),
+                  std::fabs(c_col - c_ras) / c_ras < eq_tol,
+                  diff_str(c_col, c_ras));
+        }
+    }
+
+    // ---- X3: STEP CHANGE, column vs raster ---------------------------------
+    // The headline for the pixel-based multi-isotope work: the transient kernel
+    // must match across the whole (nuclide, time, shielding, rate-pair) space,
+    // not just at one point. Note the raster treats t <= 0 as "no change"
+    // (returns SS at eps_new) whereas the column evaluates the step at t = 0
+    // (SS at eps_old), so t = 0 is deliberately excluded -- that documented
+    // difference is asserted by E2 and must not be silently equated here.
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+    {
+        for (double S : {1.0, 0.7})
+        {
+            for (double t : {100.0, 5000.0, 50000.0, 1.0e6})
+            {
+                const double eo = 0.005, en = 0.05;
+                const lsdtt::lsdtt_raster_cpu prod =
+                    make_uniform_raster(fx, static_cast<float>(S));
+                const double c_ras =
+                    lsdtt::calculate_crn_concentration_raster_step_change(
+                        nuc, "BraucherBorchers",
+                        make_uniform_raster(fx, static_cast<float>(t)),
+                        prod, topo1, eo, en).get_data()[idx];
+
+                const lsdtt::CrnColumnSample s =
+                    col.step_change(0.0, eo, en, t, 1.0, S, "BraucherBorchers");
+                const double c_col = (std::string(nuc) == "Be10") ? s.conc_10Be
+                                   : (std::string(nuc) == "Al26") ? s.conc_26Al
+                                                                  : s.conc_14C;
+                worst_step = std::max(worst_step, std::fabs(c_col - c_ras) / c_ras);
+            }
+        }
+    }
+    check("X3: column step_change == raster step-change kernel, 3 nuclides x "
+          "4 times x shielding 1.0/0.7 (float32 tolerance)",
+          worst_step < eq_tol, "worst rel " + std::to_string(worst_step));
+    std::cout << "      X3 worst column-vs-raster step-change rel diff = "
+              << worst_step << "\n";
+}
+
+// =============================================================================
+// X4 -- MULTI-ISOTOPE TRANSIENT RESPONSE.
+//
+// The reason to run several isotopes through a step change at all is that the
+// RATIOS carry the signal: Al-26/Be-10 and C-14/Be-10 evolve at different rates
+// because the half-lives differ by orders of magnitude, so a pair dates the
+// perturbation in a way one nuclide alone cannot. Nothing tested ratio
+// behaviour, which means a nuclide silently sharing another's decay constant or
+// production would have gone unnoticed -- each concentration would still look
+// individually plausible.
+//
+// Everything below is an ORDERING or a LIMIT, so no value needs freezing.
+void phaseX_multi_isotope_transient(const single_basin_fixture& fx)
+{
+    const std::size_t idx = static_cast<std::size_t>(fx.outlet_node);
+    const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+    const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, 1.0f);
+    const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
+    const double eo = 0.002, en = 0.02;      // a 10x speed-up
+
+    auto ss = [&](const char* nuc, double eps) {
+        return lsdtt::calculate_crn_concentration_raster_whole(
+                   nuc, "BraucherBorchers",
+                   make_uniform_raster(fx, static_cast<float>(eps)),
+                   prod, topo, zero, zero).get_data()[idx];
+    };
+    auto st = [&](const char* nuc, double t) {
+        return lsdtt::calculate_crn_concentration_raster_step_change(
+                   nuc, "BraucherBorchers",
+                   make_uniform_raster(fx, static_cast<float>(t)),
+                   prod, topo, eo, en).get_data()[idx];
+    };
+
+    // Fraction of the way from the old steady state to the new one.
+    auto frac = [&](const char* nuc, double t) {
+        const double a = ss(nuc, eo), b = ss(nuc, en);
+        return (st(nuc, t) - a) / (b - a);
+    };
+
+    // 1. Every isotope must relax monotonically, and stay inside its endpoints.
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+    {
+        double prev = -1.0;
+        bool mono = true, bounded = true;
+        for (double t : {50.0, 500.0, 5000.0, 50000.0, 500000.0})
+        {
+            const double f = frac(nuc, t);
+            if (f < prev - 1e-9) mono = false;
+            if (f < -1e-6 || f > 1.0 + 1e-6) bounded = false;
+            prev = f;
+        }
+        check(std::string("X4: ") + nuc +
+                  " relaxes monotonically toward the new steady state", mono);
+        check(std::string("X4: ") + nuc +
+                  " stays within its old and new steady states", bounded);
+    }
+
+    // 2. Relaxation speed must be ordered by half-life: C-14 (5.7 kyr) first,
+    //    then Al-26 (0.7 Myr), then Be-10 (1.39 Myr). This is the ordering the
+    //    whole multi-isotope method rests on. Asserted at a time where all
+    //    three are partly relaxed, so it is a real ordering and not two
+    //    saturated values compared with a third.
+    const double t_probe = 8000.0;
+    const double f_c14 = frac("C14", t_probe);
+    const double f_al  = frac("Al26", t_probe);
+    const double f_be  = frac("Be10", t_probe);
+    // MEASURED, and it corrected a naive expectation. C-14 is far ahead of both
+    // others (0.850 vs ~0.55), as its 5.7 kyr half-life demands. But Al-26 does
+    // NOT lead Be-10 despite the shorter half-life: measured 0.5508 vs 0.5620.
+    // That is not a defect. At eps_new = 0.02 g/cm2/yr the erosional timescale
+    // Gamma_sp/eps is 8000 yr, orders of magnitude shorter than either 0.7 or
+    // 1.39 Myr half-life, so EROSION sets the relaxation for both and decay is
+    // a small correction; what little separates them comes from their differing
+    // muon partitioning, not from lambda. Asserting a half-life ordering for
+    // the Al/Be pair here would be asserting something the physics does not say.
+    check("X4: C14 relaxes far ahead of BOTH Be10 and Al26 (its half-life is "
+          "comparable to the erosional timescale; theirs are not)",
+          f_c14 > f_al + 0.1 && f_c14 > f_be + 0.1,
+          "C14 " + std::to_string(f_c14) + ", Al26 " + std::to_string(f_al) +
+              ", Be10 " + std::to_string(f_be));
+    check("X4: Al26 and Be10 relax together to within 5 % (erosion-dominated, "
+          "so NOT ordered by half-life -- measured 0.5508 vs 0.5620)",
+          std::fabs(f_al - f_be) < 0.05,
+          "Al26 " + std::to_string(f_al) + ", Be10 " + std::to_string(f_be));
+    check("X4: all three are genuinely mid-transient at the probe time "
+          "(so the ordering is not an artefact of saturation)",
+          f_c14 < 0.999 && f_be > 1e-4,
+          "C14 " + std::to_string(f_c14) + ", Be10 " + std::to_string(f_be));
+    std::cout << "      X4 relaxed fraction at t=" << t_probe << " yr: C14 "
+              << f_c14 << ", Al26 " << f_al << ", Be10 " << f_be << "\n";
+
+    // 3. The RATIOS must move, and must start and end on the steady-state
+    //    ratios. A nuclide accidentally sharing another's decay constant or
+    //    production would leave the ratio flat while each concentration still
+    //    looked individually reasonable -- which is exactly the failure a
+    //    single-nuclide test cannot see.
+    auto ratio_at = [&](const char* a, const char* b, double t) {
+        return st(a, t) / st(b, t);
+    };
+    const double r_old = ss("Al26", eo) / ss("Be10", eo);
+    const double r_new = ss("Al26", en) / ss("Be10", en);
+    check("X4: the Al26/Be10 steady-state ratio differs between the two rates "
+          "(the signal exists at all)",
+          std::fabs(r_new - r_old) / r_old > 1e-3,
+          "old " + std::to_string(r_old) + " new " + std::to_string(r_new));
+    check("X4: Al26/Be10 -> the new steady-state ratio at long time",
+          approx_rel(ratio_at("Al26", "Be10", 5.0e7), r_new, 1e-4),
+          diff_str(ratio_at("Al26", "Be10", 5.0e7), r_new));
+
+    const double rc_old = ss("C14", eo) / ss("Be10", eo);
+    const double rc_new = ss("C14", en) / ss("Be10", en);
+    check("X4: C14/Be10 -> the new steady-state ratio at long time",
+          approx_rel(ratio_at("C14", "Be10", 5.0e7), rc_new, 1e-4),
+          diff_str(ratio_at("C14", "Be10", 5.0e7), rc_new));
+    // THE DATABLE SIGNAL, stated in the direction the physics actually goes.
+    // I first asserted an overshoot; measured, there is none, and the reasoning
+    // was backwards. Erosion SPEEDS UP here, so every concentration falls.
+    // C-14 reaches its new low value quickly while Be-10 is still draining down
+    // from the old high one, so the ratio C14/Be10 is SUPPRESSED relative to
+    // its final value and approaches it FROM BELOW: measured 0.332 -> 0.452 at
+    // 8 kyr -> 1.831. What makes the pair datable is precisely this lag -- at
+    // t_probe C-14 is 85 % relaxed while the ratio has covered only ~8 % of its
+    // range -- not an excursion past the endpoint.
+    const double r_mid = ratio_at("C14", "Be10", t_probe);
+    check("X4: C14/Be10 approaches its final ratio FROM BELOW (erosion "
+          "increased, so C-14 drains first and suppresses the ratio)",
+          r_mid > rc_old && r_mid < rc_new,
+          "old " + std::to_string(rc_old) + " mid " + std::to_string(r_mid) +
+              " new " + std::to_string(rc_new));
+    check("X4: the ratio LAGS C-14's own relaxation -- that lag is the datable "
+          "signal a single nuclide cannot provide",
+          (r_mid - rc_old) / (rc_new - rc_old) < 0.5 * f_c14,
+          "ratio " + std::to_string((r_mid - rc_old) / (rc_new - rc_old)) +
+              " of the way vs C-14 " + std::to_string(f_c14));
+    std::cout << "      X4 C14/Be10: old " << rc_old << ", mid "
+              << ratio_at("C14", "Be10", t_probe) << ", new " << rc_new << "\n";
+}
+
+// =============================================================================
+// T1-T7 -- run_transient: the arbitrary-erosion-history column.
+//
+// This is the path a pixel-based multi-isotope prediction would drive for
+// anything more complicated than a single step, and it had NO numeric coverage:
+// only a check that it relaxes to steady state.
+//
+// It is NOT given a frozen reference file of its own, deliberately. T1 shows
+// that a two-row history reproduces step_change EXACTLY -- same particle, same
+// starting depth, same single update_conc call -- and step_change is already
+// pinned at full double precision by the sentinel's conc_step rows. That makes
+// run_transient TRANSITIVELY pinned by an artefact that already exists, which
+// is a stronger guarantee than a second frozen file: a new file would only pin
+// run_transient against its own past, whereas this pins it against the kernel
+// the raster tools use. The remaining tests are composition and bookkeeping
+// identities, which no frozen file could express at all.
+void phaseX_run_transient()
+{
+    lsdtt::lsdtt_crn_column col(2650.0);
+    const double rho = 2650.0;
+    // m/yr <-> g/cm2/yr for this density: eff = rate_m_yr * rho * 0.1
+    auto to_eff = [&](double r_m_yr) { return r_m_yr * rho * 0.1; };
+    auto to_m   = [&](double eff)    { return eff / (rho * 0.1); };
+
+    auto nuc_of = [](const lsdtt::CrnColumnSample& s, int i) {
+        return i == 0 ? s.conc_10Be : i == 1 ? s.conc_26Al : s.conc_14C;
+    };
+    const char* nuc_name[3] = {"Be10", "Al26", "C14"};
+
+    // ---- T1: a two-row history IS a step change ---------------------------
+    // Rows are (time_yr_BP, rate_m_yr, removal_m), ascending in time, last row
+    // time = -9999 carrying the long-term background rate. With exactly two
+    // rows the evolution loop degenerates to the single update_conc call that
+    // step_change makes, from the same starting depth, so this must agree to
+    // the rounding floor -- not merely "closely".
+    double worst_t1 = 0.0;
+    for (double eps_old : {0.002, 0.02})
+    {
+        for (double eps_new : {0.005, 0.05})
+        {
+            for (double t : {500.0, 10000.0, 200000.0})
+            {
+                for (double depth_m : {0.0, 0.5, 2.0})
+                {
+                    col.set_erosion_time_series(
+                        {t, -9999.0},
+                        {to_m(eps_new), to_m(eps_old)},
+                        {0.0, 0.0});
+                    const std::vector<lsdtt::CrnColumnSample> prof =
+                        col.run_transient({depth_m}, 1.0, "BraucherBorchers");
+                    const lsdtt::CrnColumnSample sc =
+                        col.step_change(to_eff(depth_m), eps_old, eps_new, t,
+                                        1.0, "BraucherBorchers");
+                    for (int i = 0; i < 3; ++i)
+                        worst_t1 = std::max(worst_t1,
+                            std::fabs(nuc_of(prof[0], i) - nuc_of(sc, i))
+                                / nuc_of(sc, i));
+                }
+            }
+        }
+    }
+    check("T1: a two-row erosion history reproduces step_change exactly "
+          "(3 nuclides x 2 rates x 2 rates x 3 times x 3 depths)",
+          worst_t1 < 1.0e-12, "worst rel " + std::to_string(worst_t1));
+    std::cout << "      T1 worst run_transient-vs-step_change rel diff = "
+              << worst_t1 << "\n";
+
+    // ---- T2: a constant history is steady state ---------------------------
+    // The background row and the active row carry the same rate, so nothing
+    // ever changes and every sampled depth must sit exactly on its steady
+    // state. Catches a mis-signed depth bookkeeping term that T1 could hide by
+    // making the same error on both sides.
+    {
+        const double eps = 0.01;
+        col.set_erosion_time_series({500000.0, -9999.0},
+                                    {to_m(eps), to_m(eps)}, {0.0, 0.0});
+        const std::vector<double> depths = {0.0, 0.25, 1.0, 3.0};
+        const std::vector<lsdtt::CrnColumnSample> prof =
+            col.run_transient(depths, 1.0, "BraucherBorchers");
+        double worst = 0.0;
+        for (std::size_t s = 0; s < depths.size(); ++s)
+        {
+            const lsdtt::CrnColumnSample ss = col.steady_state(
+                to_eff(depths[s]), eps, 1.0, "BraucherBorchers");
+            for (int i = 0; i < 3; ++i)
+                worst = std::max(worst,
+                    std::fabs(nuc_of(prof[s], i) - nuc_of(ss, i))
+                        / nuc_of(ss, i));
+        }
+        check("T2: a constant-rate history reproduces steady state at every "
+              "sampled depth", worst < 1.0e-9,
+              "worst rel " + std::to_string(worst));
+    }
+
+    // ---- T3: subdividing a phase changes nothing --------------------------
+    // Splitting one constant-rate phase into N equal sub-steps must give the
+    // identical answer: the analytic solution composes, and the depth
+    // bookkeeping (update_conc from d0, then remove_mass) must compose with it.
+    // This is the check that would catch an off-by-one in the step loop or a
+    // depth decrement applied at the wrong point -- neither of which shows up
+    // in a single-step comparison.
+    {
+        const double eps_old = 0.002, eps_new = 0.02, T = 40000.0;
+        col.set_erosion_time_series({T, -9999.0},
+                                    {to_m(eps_new), to_m(eps_old)}, {0.0, 0.0});
+        const lsdtt::CrnColumnSample one =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+
+        double worst = 0.0;
+        for (int n : {2, 5, 20})
+        {
+            // ASCENDING in yr BP: index 0 is the MOST RECENT step. The loop
+            // takes dt = time[ts] - time[ts-1] and dt = time[0] for the last
+            // row, so any other ordering yields negative dt. Getting this
+            // backwards is easy and silent -- see T8.
+            std::vector<double> tv, rv, mv;
+            for (int k = 1; k <= n; ++k)
+            {
+                tv.push_back(T * k / n);
+                rv.push_back(to_m(eps_new));
+                mv.push_back(0.0);
+            }
+            tv.push_back(-9999.0); rv.push_back(to_m(eps_old)); mv.push_back(0.0);
+            col.set_erosion_time_series(tv, rv, mv);
+            const lsdtt::CrnColumnSample many =
+                col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+            for (int i = 0; i < 3; ++i)
+                worst = std::max(worst,
+                    std::fabs(nuc_of(many, i) - nuc_of(one, i))
+                        / nuc_of(one, i));
+        }
+        check("T3: subdividing a constant phase into 2/5/20 sub-steps leaves "
+              "the result unchanged", worst < 1.0e-9,
+              "worst rel " + std::to_string(worst));
+        std::cout << "      T3 worst subdivision rel diff = " << worst << "\n";
+    }
+
+    // ---- T4: an instantaneous removal is a depth shift ---------------------
+    // A rate == 0 row means "strip R metres instantly". With no time elapsing
+    // around it, stripping R metres and sampling the surface must equal
+    // sampling R metres down in the same column without the removal. That is
+    // what "instantaneous" has to mean, and nothing else tested the
+    // remove_mass branch of the loop at all.
+    {
+        const double eps = 0.005, T = 100000.0, R = 1.5;
+        // With removal: background, then a long phase, then strip R at the end.
+        col.set_erosion_time_series({0.0, T, -9999.0},
+                                    {0.0, to_m(eps), to_m(eps)},
+                                    {R, 0.0, 0.0});
+        const lsdtt::CrnColumnSample with_removal =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+        // Without: same history, sample R metres deeper.
+        col.set_erosion_time_series({T, -9999.0},
+                                    {to_m(eps), to_m(eps)}, {0.0, 0.0});
+        const lsdtt::CrnColumnSample deeper =
+            col.run_transient({R}, 1.0, "BraucherBorchers")[0];
+        double worst = 0.0;
+        for (int i = 0; i < 3; ++i)
+            worst = std::max(worst,
+                std::fabs(nuc_of(with_removal, i) - nuc_of(deeper, i))
+                    / nuc_of(deeper, i));
+        check("T4: a row-0 removal of R m equals sampling R m deeper in the "
+              "unstripped column (the calculate_depth_change path)",
+              worst < 1.0e-9, "worst rel " + std::to_string(worst));
+        // And it must actually move the answer, or T4 is vacuous.
+        const lsdtt::CrnColumnSample surface =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+        check("T4: the removal is a real removal (surface differs from stripped)",
+              std::fabs(with_removal.conc_10Be - surface.conc_10Be)
+                  / surface.conc_10Be > 0.1,
+              diff_str(with_removal.conc_10Be, surface.conc_10Be));
+    }
+
+    // ---- T4b: the loop's remove_mass branch, which T4 does NOT reach -------
+    // A removal at row 0 is consumed by calculate_depth_change; the evolution
+    // loop's `rate == 0 -> remove_mass` branch only runs for INTERIOR rows, and
+    // nothing exercised it (verified: deleting that branch left T4 passing).
+    // The identity has to DISCRIMINATE ON TIMING, which is the one thing only
+    // the loop branch can get right. A composition check (R1 then R2 equals
+    // R1+R2) does not: calculate_depth_change sums the removals whatever the
+    // loop does, so that check passes even with the branch deleted -- verified,
+    // and the reason this test is written the way it is.
+    //
+    // The same total removal placed EARLY versus LATE in the record must give
+    // different answers, because the particle then spends different durations
+    // at different depths. If the branch is skipped, only the total reaches the
+    // calculation and the two become identical.
+    {
+        const double eps = 0.005, D = 20000.0, T = 80000.0, R = 1.5;
+        // Removal LATE (at D, i.e. D yr BP).
+        col.set_erosion_time_series(
+            {D,          D,   D + T,      -9999.0},
+            {to_m(eps),  0.0, to_m(eps),  to_m(eps)},
+            {0.0,        R,   0.0,        0.0});
+        const lsdtt::CrnColumnSample late =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+        // Removal EARLY (at D+T), same total erosion and the same removal.
+        col.set_erosion_time_series(
+            {D,          D + T,      D + T, -9999.0},
+            {to_m(eps),  to_m(eps),  0.0,   to_m(eps)},
+            {0.0,        0.0,        R,     0.0});
+        const lsdtt::CrnColumnSample early =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+        check("T4b: the SAME removal early vs late in the record gives "
+              "different answers (only the loop's remove_mass branch can "
+              "distinguish them; depth_change alone cannot)",
+              std::fabs(late.conc_10Be - early.conc_10Be) / early.conc_10Be > 0.02,
+              diff_str(late.conc_10Be, early.conc_10Be));
+        // And an interior removal must move the answer against no removal.
+        col.set_erosion_time_series(
+            {D,          D + T,      -9999.0},
+            {to_m(eps),  to_m(eps),  to_m(eps)},
+            {0.0,        0.0,        0.0});
+        const lsdtt::CrnColumnSample none =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+        check("T4b: the interior removal materially changes the result",
+              std::fabs(late.conc_10Be - none.conc_10Be) / none.conc_10Be > 0.1,
+              diff_str(late.conc_10Be, none.conc_10Be));
+    }
+
+    // ---- T5: initial concentrations are honoured ---------------------------
+    // The overload exists so a pre-existing inventory (inherited nuclides,
+    // a prior exposure) can be imposed instead of the steady-state
+    // initialisation. If it were ignored, every result would still look
+    // physically reasonable -- which is why this needs asserting explicitly.
+    {
+        const double eps = 0.01, T = 2000.0;   // short, so memory survives
+        col.set_erosion_time_series({T, -9999.0},
+                                    {to_m(eps), to_m(eps)}, {0.0, 0.0});
+        const lsdtt::CrnColumnSample dflt =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers")[0];
+        const lsdtt::CrnColumnSample zero =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers", 0.0, 0.0, 0.0)[0];
+        const lsdtt::CrnColumnSample big =
+            col.run_transient({0.0}, 1.0, "BraucherBorchers",
+                              1.0e7, 1.0e7, 1.0e7)[0];
+        check("T5: initial_conc = 0 gives less than the steady-state start",
+              zero.conc_10Be < dflt.conc_10Be, diff_str(zero.conc_10Be, dflt.conc_10Be));
+        check("T5: a large initial inventory survives a short history",
+              big.conc_10Be > dflt.conc_10Be * 10.0,
+              diff_str(big.conc_10Be, dflt.conc_10Be));
+        // With initial 0 and a short record, what accumulates is bounded above
+        // by the steady-state value -- production has not had time to fill it.
+        check("T5: from zero, a short record cannot exceed steady state",
+              zero.conc_10Be < dflt.conc_10Be && zero.conc_10Be > 0.0);
+    }
+
+    // ---- T6: depth ordering, and T7: the depth-change bookkeeping ----------
+    {
+        const double eps = 0.01, T = 50000.0;
+        col.set_erosion_time_series({T, -9999.0},
+                                    {to_m(eps), to_m(eps)}, {0.0, 0.0});
+        const std::vector<double> depths = {0.0, 0.5, 1.5, 4.0};
+        const std::vector<lsdtt::CrnColumnSample> prof =
+            col.run_transient(depths, 1.0, "BraucherBorchers");
+        bool mono = true, depth_ok = true;
+        for (std::size_t s = 1; s < depths.size(); ++s)
+            if (!(prof[s].conc_10Be < prof[s-1].conc_10Be)) mono = false;
+        // The reported effective depth must be the SAMPLING depth: the particle
+        // starts deeper by the record's total erosion and is brought back up by
+        // the remove_mass calls, so a mismatch means the bookkeeping does not
+        // close.
+        for (std::size_t s = 0; s < depths.size(); ++s)
+            if (std::fabs(prof[s].effective_depth - to_eff(depths[s])) > 1e-6)
+                depth_ok = false;
+        check("T6: concentration falls monotonically with sampling depth", mono);
+        check("T7: the particle returns to its sampling depth (record erosion "
+              "and remove_mass cancel exactly)", depth_ok);
+        check("T7: calculate_depth_change equals the record's total erosion",
+              std::fabs(col.calculate_depth_change() - to_m(eps) * T)
+                  < 1e-9 * to_m(eps) * T,
+              diff_str(col.calculate_depth_change(), to_m(eps) * T));
+    }
+
+    // ---- T8: OPEN GAP -- a time-reversed history is accepted silently ------
+    // check_erosion_time_series validates the -9999 sentinel row, the
+    // rate/removal exclusivity and the removal timing, but NOT that time_vec_
+    // is ordered. Index 0 must be the most recent step, because the loop takes
+    // dt = time[ts] - time[ts-1]; a reversed record therefore feeds NEGATIVE
+    // dt into update_conc and produces a confidently wrong answer with no
+    // error, no warning and no NaN.
+    //
+    // This is pinned rather than asserted-away because fixing it means adding
+    // a throw to a locked file, which changes behaviour for anyone with a
+    // reversed record today. Found by writing T3 with the rows the wrong way
+    // round: it ran, and disagreed with the correct ordering by 3.06 relative.
+    // If this check ever starts FAILING, the validator has been tightened --
+    // which is the desired outcome; replace it with a throws-on-reversal test.
+    {
+        const double eps_old = 0.002, eps_new = 0.02, T = 40000.0;
+        const int n = 5;
+        std::vector<double> fwd_t, rev_t, rv, mv;
+        for (int k = 1; k <= n; ++k) { fwd_t.push_back(T * k / n);
+                                       rv.push_back(to_m(eps_new));
+                                       mv.push_back(0.0); }
+        for (int k = n; k >= 1; --k)   rev_t.push_back(T * k / n);
+        fwd_t.push_back(-9999.0); rev_t.push_back(-9999.0);
+        rv.push_back(to_m(eps_old)); mv.push_back(0.0);
+
+        col.set_erosion_time_series(fwd_t, rv, mv);
+        const double c_fwd = col.run_transient({0.0}, 1.0,
+                                               "BraucherBorchers")[0].conc_10Be;
+        bool threw = false;
+        double c_rev = 0.0;
+        try {
+            col.set_erosion_time_series(rev_t, rv, mv);
+            c_rev = col.run_transient({0.0}, 1.0,
+                                      "BraucherBorchers")[0].conc_10Be;
+        } catch (const std::exception&) { threw = true; }
+
+        check("T8: a time-REVERSED erosion history is still accepted without "
+              "error (OPEN GAP -- the validator does not check ordering)",
+              !threw, "it threw, which means the validator was tightened");
+        check("T8: and the reversed record gives a materially different answer "
+              "(so the silence is not harmless)",
+              !threw && std::fabs(c_rev - c_fwd) / c_fwd > 0.5,
+              "forward " + std::to_string(c_fwd) + " reversed " +
+                  std::to_string(c_rev));
+        std::cout << "      T8 forward " << c_fwd << " vs time-reversed "
+                  << c_rev << " (rel "
+                  << std::fabs(c_rev - c_fwd) / c_fwd << ")\n";
+    }
+}
+
 void phase5_G1_static_limits(const lsdtt::CrnNcData& nc_real)
 {
     lsdtt::lsdtt_crn_parameters cp;
@@ -5307,6 +5940,9 @@ int main(int argc, char** argv)
         phase1_standardisation_pins();
         phase1_E1_depth_integration_limits();
         phase1_E2_step_change_library(fx);
+        phaseX_column_raster_equivalence(fx);
+        phaseX_multi_isotope_transient(fx);
+        phaseX_run_transient();
         phase1_E3_exponential_identity();
         phase1_E4_lambda_v_solve();
         phase1_E5_linearity_and_limits();

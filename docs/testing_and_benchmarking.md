@@ -1211,8 +1211,138 @@ can pass merely because its knob is ignored on both sides. And `atmosphere` is
 **deliberately not covered**: `lsdtt-cosmo-tool` declares it but
 `lsdtt-cosmo-prediction` does not, so no matching atmosphere can be imposed on
 both sides. Setting it on one side only closed to 0.38 % on this near-sea-level
-fixture — which looks like a pass and establishes nothing. The gap is recorded
-rather than papered over.
+fixture — which looks like a pass and established nothing. `atmosphere` was
+added to `lsdtt-cosmo-prediction` on 2026-07-27 and all three settings are now
+covered on both sides. An unknown atmosphere name is now **fatal** in both CLIs
+rather than silently falling back to ERA40: since the atmosphere sets the
+pressure at every pixel, a typo used to bias every rate in a run while looking
+entirely normal. The documented ERA40/NCEP → standard fallback for *absent
+grids* is unchanged — that is a data condition, not a typo.
+
+#### Column and raster must be the same physics
+
+The goal for `lsdtt-cosmo-prediction` is to model several isotopes responding
+together to a change in erosion rate, **per pixel**. That only works if the 1-D
+column model and the raster step-change kernel are the same physics driven two
+ways — otherwise nothing prototyped or inverted in a column transfers to the
+grid. They are separate implementations, so it has to be measured, not assumed.
+
+Tests X1 and X3 drive both paths over three nuclides, four times, two shielding
+values and rates spanning two orders of magnitude. Worst relative difference:
+**5.96e-08** for steady state, **5.78e-08** for the step change — the float32
+floor of the raster's own storage, i.e. exact agreement. The step is compared
+away from `t = 0`, because the raster documents `t <= 0` as "no change" while the
+column evaluates the step there; equating them would erase a real documented
+difference that another test asserts.
+
+**One convention still differs, and it is pinned rather than assumed away.** The
+raster folds production scaling and shielding *together* through the Vermeesch
+redistribution — including the `S_tot > 1` branch that reproduces CRONUS v3 at
+altitude — whereas the column applies production scaling as a flat `P0` multiply.
+Measured, that is −14.9 % at a scaling of 0.5 and +5.4 % at 1.4. Routing the same
+factor through the column's *shielding* argument instead reproduces the raster
+exactly, which is what identifies it as a convention difference rather than an
+arithmetic error. The gap is pinned at its measured values so it cannot drift
+while the question is open; the raster is the reference, since it is what the
+numerics sentinel pins and what the altitude validation exercises.
+
+#### Arbitrary erosion histories
+
+`run_transient` is the path a pixel prediction would drive for anything beyond a
+single step: a column of particles carried through a user-supplied erosion
+history, with instantaneous removal events and optional inherited inventories.
+
+It is **not** given a frozen reference file of its own. A two-row history
+reproduces `step_change` to **1.09e-15** — the evolution loop degenerates to the
+single call `step_change` makes, from the same starting depth — and `step_change`
+is already pinned at full double precision by the numerics sentinel. So
+`run_transient` is pinned transitively, against the kernel the raster tools use,
+rather than merely against its own past. A second frozen file would have been the
+weaker guarantee.
+
+The rest are identities no frozen file could express. Subdividing a constant
+phase into 2, 5 or 20 sub-steps must change nothing (measured 2.01e-16) — that is
+what catches an off-by-one in the step loop or a depth decrement applied at the
+wrong point. A constant history must reproduce steady state at every sampled
+depth. The particle must return to exactly its sampling depth, so the record's
+erosion and the mass-removal bookkeeping cancel. Removals are covered twice,
+because they take two different code paths depending on whether they sit at the
+most recent row or inside the record.
+
+**One robustness gap is pinned open.** The history validator checks the
+background-row sentinel, rate/removal exclusivity and removal timing, but not
+that the record is *ordered in time*. Index 0 must be the most recent step; a
+reversed record feeds negative timesteps into the solver and returns a
+confidently wrong number — 72 357 against 178 467, 147 % apart — with no error,
+no warning and no NaN. It is pinned as an open gap rather than fixed, because the
+fix is a hard failure in locked code that would reject records some users may
+hold today.
+
+#### Multi-isotope transients, and two expectations the data corrected
+
+Isotope *ratios* are where a transient signal lives — a nuclide silently sharing
+another's decay constant would leave every individual concentration looking
+plausible. Test X4 asserts monotone relaxation and endpoint bounding for all
+three nuclides, both steady-state ratio limits, and the ratio's transient
+behaviour.
+
+Writing it corrected two plausible-sounding expectations, both worth recording
+because they are easy to repeat:
+
+- **Relaxation is not ordered by half-life.** Measured at 8 kyr after a tenfold
+  erosion increase: C-14 0.850 of the way, Al-26 0.551, Be-10 0.562 — Al-26
+  *trails* Be-10 despite the shorter half-life. At ε = 0.02 g cm⁻² yr⁻¹ the
+  erosional timescale Γ_sp/ε is 8000 yr, orders of magnitude shorter than either
+  0.7 or 1.39 Myr half-life, so erosion sets the relaxation for both and decay is
+  only a small correction; what separates them is muon partitioning. C-14 leads
+  because its 5.7 kyr half-life is the only one comparable to the erosional
+  timescale.
+- **The C-14/Be-10 ratio does not overshoot its final value.** Erosion increased,
+  so every concentration falls; C-14 reaches its new low value first while Be-10
+  is still draining from the old high one, so the ratio is *suppressed* and
+  approaches its endpoint from below (0.332 → 0.452 at 8 kyr → 1.831). The
+  datable signal is precisely that lag — C-14 is 85 % relaxed while the ratio has
+  covered about 8 % of its range — not an excursion past the endpoint.
+
+#### The column tool
+
+`lsdtt-cosmo-column-tool` is the 1-D case: one column, no DEM, no flow routing,
+no basin averaging. That makes it the natural place to compare lsdtt3 against
+point calculators such as CRONUS v3 and CRONUScalc, because nothing in the
+pipeline can mask a scaling or muon discrepancy.
+
+`rigorous_cosmo_column_tool` covers it with limit identities that need no
+external reference — cases where the physics forces the answer, so a wrong one
+is unambiguous. A step change evaluated at t = 0 must equal steady state at the
+*old* rate, and at t → ∞ the *new* rate. A constant-rate transient run must
+relax to the steady state the first mode computes: two independent code paths
+meeting at the same number, measured to 1e-8. Concentration must fall
+monotonically with depth and with erosion rate. C-14 must re-equilibrate faster
+than Be-10 after a step change — the reason C-14 is interesting at all.
+
+Two checks pin *which mechanism each knob uses*, not merely that it does
+something: `production_scaling` must be exactly linear in `P0`, while
+`total_shielding` must **not** be, because it goes through the Vermeesch
+virtual-attenuation redistribution that attenuates the pathways unequally. A
+silent swap of the two therefore fails, even though both would still move the
+answer.
+
+**A defect this found, and how it had hidden.** The two point modes originally
+applied `total_shielding` by different mechanisms — `steady_state` through the
+Vermeesch redistribution, `step_change` as a flat `P0` scale — so they disagreed
+by 11.4 % at a shielding of 0.5, in a case where the limit identity says they
+must agree exactly. It survived because the identity was only ever checked at a
+shielding of 1, where the two mechanisms coincide. A test that exercises an
+invariant at a single point often cannot see the fault it was written for.
+
+Fixed by giving `lsdtt_crn_column` **additive** overloads that take the site
+production scaling and the shielding separately and apply each by its own
+mechanism; the existing single-factor signatures are untouched, so no other
+caller can move, and both numerics sentinels stayed bit-identical. The CLI now
+calls the library in both modes rather than one of them rebuilding the parameter
+object inline — which is how the two drifted apart to begin with. The identity is
+now asserted across four `(shielding, scaling)` combinations including a scaling
+above 1, so the altitude-enhancement branch is covered too.
 
 #### Where the expensive parts run
 

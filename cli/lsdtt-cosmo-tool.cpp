@@ -411,11 +411,22 @@ int main(int argc, char* argv[])
     }
     // Resolve the atmosphere model. ERA40/NCEP fall back to standard if their
     // grids are absent. Default "ERA40" preserves the historical behaviour.
+    // An UNKNOWN name is FATAL, as for scaling_scheme below. It used to fall
+    // back to ERA40, which meant a typo ("era40", "NCEP2") silently produced a
+    // different atmosphere than asked for -- and since the atmosphere sets the
+    // pressure at every pixel, that biases every rate in the run while looking
+    // entirely normal. The documented ERA40/NCEP -> standard fallback for ABSENT
+    // GRIDS is unaffected; that is a data condition, not a typo.
     std::string atm_name = sf["atmosphere"];
     lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
     if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
     else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
-    else                             atm_source = lsdtt::AtmSource::ERA40;
+    else if (atm_name != "ERA40")
+    {
+        std::cerr << "FATAL: unknown atmosphere \"" << atm_name
+                  << "\". Allowed values: ERA40, NCEP, standard.\n";
+        return 1;
+    }
 
     // Resolve the production scaling scheme. Unlike the atmosphere selector,
     // this NEVER falls back: an unknown value, an LSDn run with no LSDn grids,

@@ -227,6 +227,18 @@ int main(int argc, char* argv[])
         "1e2-1e7 yr records) but an assumption, not an exact treatment.",
         "Production raster", "param", "write_production_raster"};
 
+    string_default_map["atmosphere"] = "ERA40";
+    help_map["atmosphere"] = {"string","ERA40",
+        "Atmosphere model: ERA40 (default), NCEP, or standard.",
+        "ERA40 = Balco/Lifton ERA40 climatology + latitude-dependent lapse (the lsdtt3 "
+        "default). NCEP = Balco NCEPatm_2, the atmosphere CAIRN/OCTOPUS use; requires "
+        "the NCEP grids in crn_parameters.nc. standard = SLHL barometric formula, no "
+        "climatology. ERA40/NCEP fall back to standard if the required grids are "
+        "absent. MATCH THIS TO lsdtt-cosmo-tool when using the two together: the "
+        "atmosphere sets the pressure at every pixel, so forward-modelling under one "
+        "and inverting under another silently biases the recovered erosion rate.",
+        "Production raster", "param", "write_production_raster"};
+
     // --- Topographic shielding ---
     string_default_map["topographic_shielding_raster_prefix"] = "NULL";
     help_map["topographic_shielding_raster_prefix"] = {"string","NULL",
@@ -514,10 +526,33 @@ int main(int argc, char* argv[])
             return 1;
         }
         double age_yr = static_cast<double>(ff["sample_age_yr"]);
+
+        // Resolve the atmosphere model, same wording and same fallbacks as
+        // lsdtt-cosmo-tool so the pair can be driven consistently. ERA40 is the
+        // default and resolves exactly as the previous AtmSource::Auto did
+        // (Auto => ERA40 when the nc is loaded, standard otherwise), so this is
+        // additive: an existing parameter file gets the behaviour it had.
+        const std::string atm_name = sf["atmosphere"];
+        lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
+        if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
+        else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
+        else if (atm_name != "ERA40")
+        {
+            std::cerr << "FATAL: unknown atmosphere \"" << atm_name
+                      << "\". Allowed values: ERA40, NCEP, standard.\n";
+            return 1;
+        }
+        const bool nc_ncep = crn_nc.ncep_loaded;
+        const std::string atm_report =
+            (atm_source == lsdtt::AtmSource::NCEP && nc_ncep)          ? "NCEP"
+          : (atm_source == lsdtt::AtmSource::ERA40 && crn_nc.loaded)   ? "ERA40"
+                                                                       : "standard";
+        std::cout << "  Atmosphere: " << atm_report << "\n";
+
         try
         {
             prod_raster = lsdtt::calculate_production_raster(
-                dem, crn_nc, age_yr, lsdtt::AtmSource::Auto, scaling_scheme, nuclide);
+                dem, crn_nc, age_yr, atm_source, scaling_scheme, nuclide);
         }
         catch (const std::exception& e)
         {

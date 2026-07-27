@@ -89,6 +89,20 @@ static void write_csv(const std::string& path,
           << s.conc_10Be << "," << s.conc_26Al << "," << s.conc_14C << "\n";
 }
 
+// Write the single-row result of a POINT mode (steady_state, step_change) using
+// the same schema as the full_transient profile, so all three modes produce a
+// machine-readable output with identical columns. Without this the point modes
+// were stdout-only, which made the tool unusable as a comparison harness
+// against CRONUS v3 / CRONUScalc -- you cannot diff numbers you have to scrape.
+static void write_point_result(lsdtt::lsdtt_param_parser& pp,
+                               const std::string& output_file,
+                               const lsdtt::CrnColumnSample& s)
+{
+    const std::string path = pp.get_write_path() + output_file;
+    write_csv(path, std::vector<lsdtt::CrnColumnSample>{s});
+    std::cout << "Written : " << path << "  (1 sample)\n";
+}
+
 // ===========================================================================
 int main(int argc, char* argv[])
 {
@@ -219,7 +233,11 @@ int main(int argc, char* argv[])
     //  Output 
     string_default_map["output_file"] = "crn_column.csv";
     help_map["output_file"] = {"string","crn_column.csv",
-        "Output CSV filename for column profile (full_transient mode).","",
+        "Output CSV filename for the results.",
+        "All three modes write it, with the same columns "
+        "(depth_m, effective_depth_g_cm2, C_10Be, C_26Al, C_14C): the two point "
+        "modes write a single row, full_transient writes one row per sample. "
+        "Written relative to write_path.",
         "-", "param", "use_initial_concentration"};
 
     //  Parse 
@@ -292,27 +310,22 @@ int main(int argc, char* argv[])
         double d_eff  = static_cast<double>(ff["effective_depth_g_cm2"]);
         double erate  = static_cast<double>(ff["effective_erosion_rate_g_cm2_yr"]);
 
-        // Apply shielding on top of the production scaling
-        lsdtt::lsdtt_crn_parameters params;
-        params.reset_scaling(muon_scheme);
-        if (production_scaling != 1.0)
-            params.apply_production_scaling(production_scaling);
-        if (total_shielding < 1.0)
-        {
-            params.scale_F_values(total_shielding, "Be10");
-            params.scale_F_values(total_shielding, "Al26");
-            params.scale_F_values(total_shielding, "C14");
-        }
-
-        lsdtt::lsdtt_crn_particle part(d_eff);
-        part.init_ss_all(erate, params);
+        // production_scaling and total_shielding go to the library SEPARATELY,
+        // because they are applied by different mechanisms: a flat P0 multiply
+        // for the site scaling, the Vermeesch redistribution for shielding.
+        // This used to build the parameter object inline here, which is how the
+        // step_change branch below came to disagree with it.
+        lsdtt::CrnColumnSample s = col.steady_state(
+            d_eff, erate, production_scaling, total_shielding, muon_scheme);
 
         std::cout << "=== Steady-state result ===\n"
                   << "Effective depth  : " << d_eff  << " g/cm2\n"
                   << "Erosion rate     : " << erate  << " g/cm2/yr\n"
-                  << "C_10Be : " << part.get_conc_10Be() << " atoms/g\n"
-                  << "C_26Al : " << part.get_conc_26Al() << " atoms/g\n"
-                  << "C_14C  : " << part.get_conc_14C()  << " atoms/g\n";
+                  << "C_10Be : " << s.conc_10Be << " atoms/g\n"
+                  << "C_26Al : " << s.conc_26Al << " atoms/g\n"
+                  << "C_14C  : " << s.conc_14C  << " atoms/g\n";
+
+        write_point_result(pp, sf["output_file"], s);
     }
 
     // ===========================================================================
@@ -323,9 +336,14 @@ int main(int argc, char* argv[])
         double erate_new  = static_cast<double>(ff["effective_erosion_rate_g_cm2_yr"]);
         double t_step     = static_cast<double>(ff["time_since_step_yr"]);
 
+        // Was: production_scaling * total_shielding as ONE factor, which put
+        // shielding through the flat P0 multiply and made this mode disagree
+        // with steady_state by 11.4 % at a shielding of 0.5 -- in a case (t = 0)
+        // where the two must agree exactly. Now separate, matching steady_state
+        // and the raster pipeline.
         lsdtt::CrnColumnSample result =
             col.step_change(d_eff, erate_old, erate_new, t_step,
-                            production_scaling * total_shielding, muon_scheme);
+                            production_scaling, total_shielding, muon_scheme);
 
         std::cout << "=== Step-change result ===\n"
                   << "Effective depth  : " << d_eff     << " g/cm2\n"
@@ -335,6 +353,8 @@ int main(int argc, char* argv[])
                   << "C_10Be : " << result.conc_10Be << " atoms/g\n"
                   << "C_26Al : " << result.conc_26Al << " atoms/g\n"
                   << "C_14C  : " << result.conc_14C  << " atoms/g\n";
+
+        write_point_result(pp, sf["output_file"], result);
     }
 
     // ===========================================================================
@@ -385,8 +405,12 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        std::string out_file = pp.get_full_write_path() +
-                               sf["output_file"];
+        // get_write_path() (the DIRECTORY), not get_full_write_path() (the
+        // directory PLUS the write_fname stem). output_file is a filename, so
+        // gluing it to the stem produced things like "myruncrn_column.csv".
+        // Invisible whenever write_fname happened to be empty, which is why it
+        // survived this long.
+        std::string out_file = pp.get_write_path() + sf["output_file"];
         write_csv(out_file, profile);
         std::cout << "Written : " << out_file << "  (" << profile.size() << " samples)\n";
     }
