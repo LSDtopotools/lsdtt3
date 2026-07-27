@@ -46,6 +46,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -165,6 +166,45 @@ int main(int argc, char* argv[])
         "lsdtt3 has no sample-collection-year input yet, so no (collection year - 2010) "
         "shift is applied. That offset is at most ~16 yr against records of 1e2-1e7 yr "
         "and is therefore negligible, but it IS an assumption, not an exact treatment.",
+        "Atmosphere and palaeomagnetic correction", "param", ""};
+
+    bool_default_map["self_consistent_age"] = false;
+    help_map["self_consistent_age"] = {"bool","false",
+        "Iterate the sample age to the erosional integration timescale t = Gamma_sp/epsilon "
+        "instead of holding it at sample_age_yr. This is the CRONUScalc / Balco v3 "
+        "convention, and it is what published LSDn rates are computed with.",
+        "The nuclide inventory in an eroding column is accumulated over roughly one "
+        "attenuation length of erosion, tau = Gamma_sp/epsilon (Gamma_sp = 160 g/cm2 in "
+        "every muon scheme lsdtt3 ships), so the geomagnetic field the sample actually "
+        "integrated is the field over that window, not the modern field. But tau depends "
+        "on epsilon, which is the unknown, so the two are solved together: invert at "
+        "sample_age_yr, form t = Gamma_sp/epsilon, rebuild production, re-invert, repeat "
+        "until epsilon stops moving. Off by default, because it changes the meaning of "
+        "the reported rate and because it costs one production-raster rebuild per "
+        "iteration PER SAMPLE (the age, hence the whole raster, differs sample to "
+        "sample). Typically converges in 2-4 iterations. With scaling_scheme=lsdn on a "
+        "large DEM this is the dominant cost of a run. Matters most where the field "
+        "departed furthest from modern, i.e. at low latitude and for slowly eroding "
+        "samples with long tau; at 20 ka the effect on the inverted rate runs to ~10 %. "
+        "sample_age_yr is then only the starting guess (0 = start from the modern field).",
+        "Atmosphere and palaeomagnetic correction", "param", ""};
+
+    float_default_map["self_consistent_age_tol"] = 1.0e-3f;
+    help_map["self_consistent_age_tol"] = {"float","0.001",
+        "Relative convergence tolerance on the erosion rate for self_consistent_age.",
+        "Iteration stops when |eps_new - eps_old|/eps_new falls below this. The default "
+        "1e-3 is well inside the inversion solver's own convergence tolerance (~1e-3 "
+        "round-trip), so tightening it buys precision the forward model cannot deliver. "
+        "Ignored unless self_consistent_age: true.",
+        "Atmosphere and palaeomagnetic correction", "param", ""};
+
+    int_default_map["self_consistent_age_max_iter"] = 10;
+    help_map["self_consistent_age_max_iter"] = {"int","10",
+        "Maximum self_consistent_age iterations before giving up on a sample.",
+        "A sample that has not converged by this many iterations is reported with a "
+        "warning naming the sample and the last two erosion rates, and its LAST iterate "
+        "is written out -- it is never silently accepted as converged. Ignored unless "
+        "self_consistent_age: true.",
         "Atmosphere and palaeomagnetic correction", "param", ""};
 
     string_default_map["atmosphere"] = "ERA40";
@@ -334,6 +374,25 @@ int main(int argc, char* argv[])
     const int    threshold_pixels = ifs["threshold_contributing_pixels"];
     const int    snap_radius      = ifs["snap_search_radius_pixels"];
 
+    const bool   self_consistent_age = bf["self_consistent_age"];
+    const double sc_age_tol      = static_cast<double>(ff["self_consistent_age_tol"]);
+    const int    sc_age_max_iter = ifs["self_consistent_age_max_iter"];
+    if (self_consistent_age)
+    {
+        if (!(sc_age_tol > 0.0))
+        {
+            std::cerr << "FATAL: self_consistent_age_tol must be > 0 (got "
+                      << sc_age_tol << ").\n";
+            return 1;
+        }
+        if (sc_age_max_iter < 1)
+        {
+            std::cerr << "FATAL: self_consistent_age_max_iter must be >= 1 (got "
+                      << sc_age_max_iter << ").\n";
+            return 1;
+        }
+    }
+
     const std::string points_path = pp.add_read_path_if_needed(sf["points_filename"]);
     const std::string write_base  = pp.get_full_write_path();
     // If the user does not give a path, fall back to the crn_parameters.nc bundled
@@ -393,6 +452,20 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Iterating the age is meaningless without a geomagnetic record to evaluate
+    // it against: every iterate would rebuild an identical production raster and
+    // "converge" in one step, reporting a self-consistent age that changed
+    // nothing. Fail rather than let that pass as a result.
+    if (self_consistent_age && !crn_nc.loaded)
+    {
+        std::cerr << "FATAL: self_consistent_age: true requires the geomagnetic "
+                     "record in crn_parameters.nc, which did not load. Without it "
+                     "the sample age has no effect, so the iteration would report "
+                     "a converged age that changed nothing. Set crn_nc_file, or "
+                     "set self_consistent_age: false.\n";
+        return 1;
+    }
+
     const bool use_ncep      = (atm_source == lsdtt::AtmSource::NCEP) && crn_nc.ncep_loaded;
     const bool use_era40     = (atm_source == lsdtt::AtmSource::ERA40) && crn_nc.loaded;
     const bool use_paleomag  = crn_nc.loaded && (sample_age_yr > 0.0);
@@ -414,7 +487,11 @@ int main(int argc, char* argv[])
               << "Scaling scheme: " << (use_lsdn ? "LSDn" : "Stone") << "\n"
               << "Rock density  : " << rock_density_kg_m3 << " kg/m3\n"
               << "Atmosphere    : " << atm_report << "\n"
-              << "Palaeomag     : " << paleomag_report << "\n"
+              << "Palaeomag     : " << paleomag_report
+              << (self_consistent_age
+                      ? "  [self-consistent: t = Gamma_sp/eps per sample, "
+                        "sample_age_yr is only the starting guess]" : "")
+              << "\n"
               << "Points file   : " << points_path << "\n"
               << "Conc column   : " << concentration_col_name << "\n\n";
 
@@ -657,6 +734,11 @@ int main(int argc, char* argv[])
                 << ",apparent_eff_e_plus_g_cm2_yr"
                 << ",apparent_e_plus_mm_yr";
     }
+    // The converged age is a per-sample result, so it belongs in the output next
+    // to the rate it produced; n_iter and converged make a non-converged sample
+    // visible in the CSV rather than only in the console warning.
+    if (self_consistent_age)
+        csv_out << ",self_consistent_t_yr,self_consistent_n_iter,self_consistent_converged";
     csv_out << "\n";
 
     // Optional diagnostic CSV: basin-mean production scaling + mean elevation over
@@ -679,6 +761,14 @@ int main(int argc, char* argv[])
 
     const double e_scale = 1.0e7 / rock_density_kg_m3;  // g/cm2/yr -> mm/kyr
     lsdtt::lsdtt_crn_parameters crn_params;
+
+    // Spallation attenuation length for the selected muon scheme, read from the
+    // parameter object rather than hardcoded. It sets the erosional integration
+    // timescale tau = Gamma_sp/eps that self_consistent_age iterates on. It is
+    // 160 g/cm2 in every scheme lsdtt3 ships, but reading it means a scheme that
+    // ever changed it would be followed rather than silently ignored.
+    crn_params.reset_scaling(muon_scheme);
+    const double gamma_sp = crn_params.get_Gamma(0);
 
     lsdtt::lsdtt_square_snap_options snap_opts;
     snap_opts.contributing_pixels_threshold = static_cast<std::uint64_t>(threshold_pixels);
@@ -779,12 +869,95 @@ int main(int argc, char* argv[])
         }
         std::cout << "  Concentration  : " << conc << " atoms/g\n";
 
-        // Central erosion rate inversion
+        // Central erosion rate inversion.
+        //
+        // Without self_consistent_age this is one inversion against the shared
+        // production raster built at sample_age_yr.  With it, the age and the
+        // erosion rate are solved together: the nuclide inventory integrates over
+        // tau = Gamma_sp/eps, so the correct geomagnetic window depends on the
+        // very rate being sought.  Each iterate needs its OWN production raster,
+        // because the age -- and therefore the field average at every pixel --
+        // differs sample to sample.  That is why this is opt-in.
         double predicted_conc = 0.0;
+        double sc_t_yr = sample_age_yr;
+        int    sc_iter = 0;
+        bool   sc_converged = true;
+
+        // Only bound to the shared raster when not iterating; the loop below
+        // rebinds it to each iterate's own raster.
+        const lsdtt::lsdtt_raster_cpu* prod_for_inversion = &prod_raster;
+        lsdtt::lsdtt_raster_cpu sc_prod_raster;
+
         double erate = lsdtt::calculate_eff_erate_from_conc(
             conc, nuclide, muon_scheme,
-            prod_raster, topo_shield_raster, snow_shield_raster, self_shield_raster,
-            flow, outlet_node, predicted_conc);
+            *prod_for_inversion, topo_shield_raster, snow_shield_raster,
+            self_shield_raster, flow, outlet_node, predicted_conc);
+
+        if (self_consistent_age)
+        {
+            sc_converged = false;
+            for (sc_iter = 1; sc_iter <= sc_age_max_iter; ++sc_iter)
+            {
+                if (!(erate > 0.0))
+                {
+                    // A non-positive rate gives no timescale to iterate on. Stop
+                    // and report rather than dividing by it.
+                    std::cerr << "Warning: sample "
+                              << (has_sample_name
+                                      ? get_col_str(sample_col_name, csv_row)
+                                      : std::to_string(csv_row + 1))
+                              << " inverted to a non-positive erosion rate ("
+                              << erate << " g/cm2/yr); self_consistent_age cannot "
+                              << "form t = Gamma_sp/eps, so the age is left at "
+                              << sc_t_yr << " yr.\n";
+                    break;
+                }
+
+                const double erate_prev = erate;
+                sc_t_yr = gamma_sp / erate_prev;
+
+                try
+                {
+                    sc_prod_raster = lsdtt::calculate_production_raster(
+                        filled_dem, crn_nc, sc_t_yr, atm_source, scaling_scheme,
+                        nuclide);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: production raster failed during "
+                                 "self_consistent_age iteration at t = "
+                              << sc_t_yr << " yr: " << e.what() << "\n";
+                    return 1;
+                }
+                prod_for_inversion = &sc_prod_raster;
+
+                erate = lsdtt::calculate_eff_erate_from_conc(
+                    conc, nuclide, muon_scheme,
+                    *prod_for_inversion, topo_shield_raster, snow_shield_raster,
+                    self_shield_raster, flow, outlet_node, predicted_conc);
+
+                const double rel = (erate > 0.0)
+                    ? std::fabs(erate - erate_prev) / erate
+                    : std::numeric_limits<double>::infinity();
+                std::cout << "  self-consistent iter " << sc_iter
+                          << ": t = " << sc_t_yr << " yr, erate = " << erate
+                          << " g/cm2/yr (rel change " << rel << ")\n";
+                if (rel < sc_age_tol) { sc_converged = true; break; }
+            }
+            if (sc_iter > sc_age_max_iter) sc_iter = sc_age_max_iter;
+
+            if (!sc_converged)
+                std::cerr << "Warning: sample "
+                          << (has_sample_name
+                                  ? get_col_str(sample_col_name, csv_row)
+                                  : std::to_string(csv_row + 1))
+                          << " did not converge in " << sc_age_max_iter
+                          << " self_consistent_age iterations (tolerance "
+                          << sc_age_tol << "); the LAST iterate is reported, at "
+                          << "t = " << sc_t_yr << " yr, erate = " << erate
+                          << " g/cm2/yr. Treat it as unconverged, not as a "
+                          << "result.\n";
+        }
 
         std::cout << "  Erosion rate   : " << erate << " g/cm2/yr = "
                   << erate * e_scale << " mm/kyr\n";
@@ -817,26 +990,37 @@ int main(int argc, char* argv[])
             double pred_minus = 0.0;
             double erate_minus = lsdtt::calculate_eff_erate_from_conc(
                 conc_minus, nuclide, muon_scheme,
-                prod_raster, topo_shield_raster, snow_shield_raster, self_shield_raster,
-                flow, outlet_node, pred_minus);
+                *prod_for_inversion, topo_shield_raster, snow_shield_raster,
+                self_shield_raster, flow, outlet_node, pred_minus);
 
             double conc_plus = conc + uncert;
             double pred_plus = 0.0;
             double erate_plus = lsdtt::calculate_eff_erate_from_conc(
                 conc_plus, nuclide, muon_scheme,
-                prod_raster, topo_shield_raster, snow_shield_raster, self_shield_raster,
-                flow, outlet_node, pred_plus);
+                *prod_for_inversion, topo_shield_raster, snow_shield_raster,
+                self_shield_raster, flow, outlet_node, pred_plus);
 
             csv_out << "," << conc_minus << "," << pred_minus << ","
                     << erate_minus << "," << erate_minus * e_scale
                     << "," << conc_plus  << "," << pred_plus  << ","
                     << erate_plus  << "," << erate_plus  * e_scale;
 
+            // NOTE: the +/- bounds are inverted against the CENTRAL sample's
+            // converged production raster, not against one re-converged at each
+            // bound's own timescale. That matches how the reference calculators
+            // propagate concentration uncertainty (scaling held fixed), and it
+            // keeps the bounds an uncertainty on the concentration rather than a
+            // second, coupled solve. The difference is second order: the bounds
+            // shift tau by the same relative amount as the rate.
             std::cout << "  Uncertainty    : " << uncert << " atoms/g\n"
                       << "  Erate range    : ["
                       << erate_minus * e_scale << ", "
                       << erate_plus  * e_scale << "] mm/kyr\n";
         }
+
+        if (self_consistent_age)
+            csv_out << "," << sc_t_yr << "," << sc_iter << ","
+                    << (sc_converged ? 1 : 0);
 
         csv_out << "\n";
         ++n_processed;

@@ -473,7 +473,7 @@ That gives two tests, both of which write CSV into `build-perf/tests/perf_output
 | Test | Emits | Covers |
 |---|---|---|
 | `performance_flow_routines` | `flow_performance.csv` | fill, breach, D8/D-inf/MFD build + accumulate |
-| `perf_cosmo_lsdn_production` | `lsdn_performance.csv` | Stone vs LSDn per-pixel production; LSDn at 0 / 20 ka / 1 Ma; time-averaged surface vs direct loop |
+| `perf_cosmo_lsdn_production` | `lsdn_performance.csv` | Stone vs LSDn per-pixel production; LSDn at 0 / 20 ka / 1 Ma; time-averaged surface vs direct loop, with the measured crossover pixel count; time-varying Stone (`stone2000sp_paleomag`) direct vs scalar-API vs surface |
 
 A third, `performance_surface_metrics`, additionally needs
 `-DLSDTT_ENABLE_BENCHMARKS=ON`, pixi and a fetched fixture; it skips with code
@@ -515,6 +515,46 @@ if needed.
 - Timings are **not** committed. Compare against the numbers recorded in this
   document, and treat a large divergence as a question about the machine before
   it is a question about the code.
+
+### Time-varying scaling on a precomputed surface (2026-07-27)
+
+Both time-varying production paths — LSDn, and Stone with the palaeomagnetic
+correction — walk a geomagnetic record (108 steps for the Muscheler/Knudsen
+record, ~1800 for the 1 Ma LSDn case) at *every pixel*. That per-pixel record
+walk is the entire cost, and it is the same walk at every pixel bar the
+latitude, so both now precompute a time-averaged surface once per raster and
+interpolate it per pixel.
+
+For the Stone palaeomagnetic path the surface is built on **latitude nodes only,
+with an exact pressure dependence**: the underlying interpolation table has
+pressure-independent breakpoints, so the factor separates exactly into
+`Σ_j β_j(Rc)·S_j(P)` and only the latitude axis is ever approximated. The
+shipped latitude step of 0.01° puts the horizontal error at ~8e-8 relative —
+below a float32 half-ulp, so it is invisible in the output raster. Correctness
+is asserted in the `unit` tier (surface versus the direct definition, at and
+between nodes; scalar API versus raster surface), not here.
+
+Measured with `lsdtt-test-cosmo-physics --performance`, medians of 5 repeats on
+an 8-core WSL2 laptop. Point level, 4000 sites, single-threaded, 20 ka:
+
+| path | median | vs direct |
+|---|---|---|
+| direct per-site record walk | 220.3 ms | 1× |
+| scalar API (surface snapped per call) | 123.6 ms | ~1.8× |
+| surface built once, then evaluated | **1.75 ms** | **≈ 126×** |
+
+At raster level, 10⁶ px of time-varying Stone at 20 ka costs **0.937 s**
+single-threaded and **0.435 s** at 8 threads — only ~1.40× / ~1.30× a *static*
+Stone raster of the same size (0.671 s / 0.335 s). The surface itself is
+negligible: 41 latitude nodes and 12 kB for the 4000-site extent, built in
+2e-05 s. For LSDn the same pairing gives a measured crossover of ~130 px at
+20 ka and ~170 px at 1 Ma, which is why the cost model builds a surface for
+anything larger than a very small window.
+
+One caveat, stated because it limits the claim: the pre-surface *raster* path no
+longer exists, so a like-for-like raster before/after cannot be measured. The
+126× above is a point-level measurement; scaling it to 10⁶ px would suggest
+~59×, but that is an extrapolation, not a measurement.
 
 ### Do not read performance from the CLI timings
 
@@ -748,7 +788,7 @@ impossible to alter their numerical behaviour unnoticed.
 
 | Safeguard | What it does |
 |---|---|
-| **Sentinel pinning suite** | A matrix of exact concentration/ε values — every (nuclide × scheme) at several (ε, d, d_s, d_t, t, ε_old/ε_new, S_tot) points, covering CAIRN Eq. (14), knickpoint Eqs. (7)–(8), the Λ_v solve and the inversion — frozen to full double precision (17 significant digits) in `tests/expected/cosmo/numerics_sentinel.csv` and compared at 1e-12 relative tolerance. Deliberately stricter than physical accuracy requires: its job is to trip on *any* change — refactor, algebraic rearrangement, compiler flag, parameter tweak. |
+| **Sentinel pinning suite** | A matrix of exact concentration/ε values — every (nuclide × scheme) at several (ε, d, d_s, d_t, t, ε_old/ε_new, S_tot) points, covering CAIRN Eq. (14), knickpoint Eqs. (7)–(8), the Λ_v solve and the inversion — frozen to full double precision (17 significant digits) in `tests/expected/cosmo/numerics_sentinel.csv` and compared at 1e-12 relative tolerance. Deliberately stricter than physical accuracy requires: its job is to trip on *any* change — refactor, algebraic rearrangement, compiler flag, parameter tweak. **LSDn has a second, separate sentinel** (`numerics_sentinel_lsdn.csv`, §7.9) covering its own data path; keeping the two apart means a change to one cannot be masked by the other. Both are additionally pinned by sha256. |
 | **Exact parameter pins** | F, Γ, P0 and λ for every muon scheme asserted with exact `==` equality on the doubles, not a tolerance. A changed constant is a deliberate act and must fail loudly. |
 | **Loud, attributed failure** | A sentinel or parameter-pin failure prints an unmissable block naming what the values encode, instructing that the sentinel must not be regenerated, and that any change requires review and sign-off by Simon Mudd. The same text lives in the sentinel CSV header and at the top of the driver. |
 | **Gated regeneration** | The sentinel records its generating commit and date. There is no regenerate-on-failure convenience path; regeneration sits behind a separate, deliberately awkward flag (`--regenerate-sentinel-i-have-simons-approval`) so it cannot be run absent-mindedly and is unambiguous in a diff. |
@@ -997,6 +1037,156 @@ documentation figures.
 | `analytic_vs_integrator.csv` | the full E7 comparison grid with relative differences |
 | `cronus_fixture_samples.csv` | the 15-sample comparison fixture (inputs) |
 | `cronus_comparison.csv` | per-sample ε from lsdtt vs CRONUS St/Lm/LSDn with percent differences |
+| `lsdn_vs_stone.csv` | LSDn against Stone across the fixture grid |
+| `lsdn_scaling_surface.csv` | the LSDn scaling factor over the (lat, p) fixture grid |
+| `lsdn_surface_vs_direct.csv` | time-averaged surface against the direct per-pixel loop |
+| `lsdn_surface_resolution_sweep.csv` | surface-vs-direct error against latitude step |
+| `stone_paleomag_surface_vs_direct.csv`, `stone_paleomag_resolution_sweep.csv` | the same pair for the Stone palaeomagnetic path |
+| `g4_paleomag_refreeze.csv` | per-triplet old/new/shift for the six geomagnetic goldens — written every run, as a report; the driver never edits the goldens |
+| `lsdn_pixel_vs_lumped.csv` | per-basin per-pixel LSDn against LSDn evaluated once at the basin's published centre |
+
+### 7.9 LSDn production scaling, and what "validated" means for it
+
+LSDn (Lifton–Sato–Dunai 2014) is the nuclide-specific, spectrum-based
+alternative to Lal/Stone. lsdtt3 computes it **per pixel by default**: each pixel
+gets its own latitude, longitude and pressure, and when a sample age is supplied
+the geomagnetic record is time-averaged over the exposure window. That default is
+the point of the implementation, and it is also what makes validation awkward —
+almost every published LSDn rate was produced by evaluating the scaling **once**
+at a single lumped position for the whole basin, so a naive comparison conflates
+"is our kernel right?" with "does per-pixel differ from lumped?".
+
+The suite therefore keeps those two questions apart, and a third one too. For a
+given basin there are three quantities:
+
+- **(a) the per-pixel LSDn basin mean — this is the product**, what the tool
+  actually returns;
+- **(b) LSDn evaluated once** at the basin's published centre latitude and
+  pressure — what OCTOPUS and RIVERSAND do;
+- **(c) the published LSDn rate** itself.
+
+Comparing **(b) against (c) validates the scaling kernel** and needs no DEM at
+all. Comparing **(a) against (b) is a scientific result, not an error term** — it
+is the size of the per-pixel correction. Comparing **(a) against (c) is a
+monitoring band and nothing more**, because it mixes both of the above with DEM
+and delineation differences.
+
+#### Sign conventions — read the emitting test before combining any two numbers
+
+The cosmo comparisons publish percent differences in **two opposite
+conventions**, and figures from one must never be added to figures from the
+other:
+
+| comparison | expression | so a positive number means |
+|---|---|---|
+| kernel oracle, (b) vs (c) | `100·(reference − lsdtt3)/lsdtt3` | the **reference** is higher |
+| per-pixel vs lumped, (a) vs (b) | `100·(per_pixel − lumped)/lumped` | per-pixel is higher |
+| real-landscape tiers, (a) vs (c) | `100·(lsdtt3 − published)/published` | **lsdtt3** is higher |
+
+This is not hypothetical bookkeeping. During development a residual band was
+predicted by subtracting a per-pixel figure from a kernel figure, which silently
+mixed the first two rows and produced a number with the wrong sign. Before
+combining or quoting any two of these, read the actual expression in the test
+that emits it — do not infer it from the sign, from a column name, or from a
+summary table. When quoting one, say which direction it runs.
+
+#### The sentinel
+
+LSDn has its own full-double-precision sentinel,
+`tests/expected/cosmo/numerics_sentinel_lsdn.csv`, alongside the pre-existing
+`numerics_sentinel.csv`. Both are pinned by sha256 in the driver and neither may
+be regenerated without explicit sign-off (§7.1). They are deliberately separate:
+the LSDn grids are a different data path, and keeping them apart means a change
+to one lights up without being masked by the other.
+
+#### Measured
+
+**Kernel, (b) vs (c), DEM-free, 50 OCTOPUS basins.** Mean **+4.34 %** (min −1.18,
+max +16.08) using Balco's `P0`; **+6.54 %** on lsdtt3's own `P0`. Independently,
+a direct comparison against CRONUS v3 gives **+4.13 %** — two routes to the same
+few-percent kernel offset, which is the cross-check that matters. The spread
+tracks erosion rate (r = +0.54 against log ε) rather than position (latitude
+r = −0.18), which is the signature of a muon-scheme difference; that is offered
+as an attribution, not asserted as a test.
+
+**Per-pixel versus lumped, (a) vs (b) — the scientific result.** Over 47
+delineation-reliable basins at 5 kyr: **median −0.525 %**, IQR
+[−1.590, +0.141], mean −0.827, min −9.211, max +6.735. Inverted to erosion rate,
+median −0.440 %. This sits squarely on the independent published estimate of the
+same quantity — Codilean & Munack (2025, *Geochronology* 7:113, p. 117) report an
+LSDn median of −1.0 % with IQR −1.8 to −0.1 % over 290 points: same sign, same
+order of magnitude, overlapping IQRs. Age sensitivity is negligible (median
+−0.540 / −0.525 / −0.532 % at 0 / 5 k / 20 kyr), because the age is matched on
+both sides by construction and what remains is purely the spatial term.
+
+A second result falls out of the same machinery: inverting our per-pixel **Stone**
+basin mean for the pressure that would reproduce it at the published centre
+recovers OCTOPUS's own published pressure to a median of **+0.73 hPa** (IQR
+−0.18 to +2.19). That is ~0.1 % of a ~900 hPa pressure. It confirms our reading
+of their reduction, and bounds the caveat that their pressure was fitted under
+Stone but is being consumed by an LSDn kernel — the effect is roughly a fifth of
+the spatial term, not a competitor to it.
+
+**End-to-end, (a) vs (c) — the monitoring band.** Three OCTOPUS-derived datasets,
+sign `100·(lsdtt3 − EBEL)/EBEL`, delineation-unreliable basins excluded:
+
+| dataset | n | median | mean | min | max |
+|---|---|---|---|---|---|
+| Clapp 2002 (Yuma Wash) | 21 | +3.82 | +3.89 | +2.61 | +4.66 |
+| Dethier 2014 (Front Range) | 12 | +4.28 | +4.51 | +2.47 | +9.41 |
+| DiBiase 2010 (San Gabriel) | 14 | +10.14 | +11.45 | +5.82 | +22.85 |
+
+**These are bands to watch, not accuracy figures, and nothing may be tuned to
+shrink them.** Each mixes the kernel residual, the per-pixel-versus-lumped term,
+the DEM and delineation difference, and — largest of all — a deliberate age
+mismatch: the tier runs at the CLI default `sample_age_yr = 0` (modern field),
+while the published `EBEL` is time-averaged over the erosional timescale Γ/ε.
+That last term alone is worth roughly +11 points. Expressed consistently in the
+real-landscape sign and on lsdtt3's own `P0`, the age-matched decomposition is
+kernel −6.14, per-pixel-versus-lumped −0.53, ERA40-rather-than-NCEP atmosphere
+−0.64, topographic shielding +0.70, giving ≈ **−6.6 %** — which is why reading
+the raw +4 to +10 % as "accuracy" would be doubly wrong, in magnitude and in
+sign.
+
+Two basins remain excluded as mis-delineated rather than wrong: `S169WTS036`
+(0.07 km²) and `S055WTS044` (0.08 km²), both below the snap-threshold footprint.
+`S055WTS044` is not fully explained even by that rule and is worth raising with
+the OCTOPUS maintainers.
+
+#### Closing the age loop
+
+The age mismatch above is not a defect but it is avoidable, and `lsdtt-cosmo-tool`
+can now avoid it. `self_consistent_age: true` solves the age and the erosion rate
+together — invert, form `t = Γ_sp/ε`, rebuild production, re-invert, repeat — which
+is the CRONUScalc / Balco v3 convention that published LSDn rates are computed
+under. It is off by default, because it changes what the reported rate means and
+because it costs a production-raster rebuild per iteration **per sample**.
+
+Three CLI tests cover it, and each was verified to fail on a deliberate
+perturbation before being kept:
+
+- the iteration really iterates — asserted by requiring a *second* pass in the
+  output, so a loop that degenerated to the fixed-age path cannot pass; forcing a
+  single pass fails it;
+- non-convergence is **reported, not absorbed** — a capped run must emit the
+  warning and write `self_consistent_converged = 0`; making the flag optimistic
+  fails it;
+- the diagnostic columns are present in the CSV, so the converged age is a
+  recorded per-sample result rather than console narration; dropping them fails it.
+
+A non-positive tolerance or a zero iteration cap is fatal up front, because either
+would let the loop exit on its first comparison and report a "converged" age that
+is nothing of the kind.
+
+#### Where the expensive parts run
+
+The per-pixel side of (a) needs real DEMs, so it follows the §7.7 pattern: a
+`cosmo_realworld` script fetches keyless COP30, runs 50 basins, and freezes the
+per-basin means into a small tracked CSV; the default `unit` suite then does the
+cheap comparison against that frozen artefact. The frozen artefacts are
+**check-only by default** and regenerate only under an explicit `--freeze`. A
+missing artefact **fails** — it never reports a skip, because the files are
+tracked and their absence means a broken checkout, not an optional step.
 
 ---
 

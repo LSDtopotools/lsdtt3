@@ -97,7 +97,28 @@ def parse_args() -> argparse.Namespace:
             "Expected SHA256 as rel_path:HEX, for example out.csv:abcd..."
         ),
     )
+    parser.add_argument(
+        "--expect-file-contains",
+        action="append",
+        default=[],
+        help=(
+            "Substring an output file must contain, as rel_path:SUBSTRING, "
+            "for example out.csv:self_consistent_t_yr. Splits on the FIRST "
+            "colon, so the substring may itself contain colons."
+        ),
+    )
     return parser.parse_args()
+
+
+def assert_file_contains(file_path: pathlib.Path, needle: str) -> None:
+    if not file_path.is_file():
+        raise AssertionError(f"Expected file {file_path} does not exist")
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    if needle not in text:
+        raise AssertionError(
+            f"Expected {file_path} to contain {needle!r}, but it does not. "
+            f"First line was: {text.splitlines()[0] if text else '(empty)'!r}"
+        )
 
 
 def assert_valid_percent_100(raster_path: pathlib.Path) -> None:
@@ -398,6 +419,10 @@ def main() -> int:
         for spec in args.expect_sha256:
             rel_path, hash_hex = spec.rsplit(":", 1)
             assert_sha256(out_dir / rel_path, hash_hex)
+
+        for spec in args.expect_file_contains:
+            rel_path, needle = spec.split(":", 1)
+            assert_file_contains(out_dir / rel_path, needle)
     except Exception as exc:
         print(f"Validation check failed: {exc}", file=sys.stderr)
         print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)

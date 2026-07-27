@@ -1,0 +1,11 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: cosmo_sca
+
+points_filename: cosmo_tiny_points.csv
+nuclide: Be10
+scaling_scheme: lsdn
+threshold_contributing_pixels: 2
+snap_search_radius_pixels: 3
+self_consistent_age: true

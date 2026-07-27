@@ -655,6 +655,59 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_cosmo_tool_lsdn
     PROPERTIES LABELS "smoke;cli;cosmo")
 
+# self_consistent_age: the sample age and the erosion rate are solved together,
+# t = Gamma_sp/eps.  The assertions are chosen so the test cannot pass if the
+# iteration silently degenerates into the fixed-age path:
+#   - "self-consistent iter 2" proves it went round MORE THAN ONCE.  A one-shot
+#     loop, or one that converged on the first comparison, would not print it.
+#   - the CSV must carry the three diagnostic columns, so the converged age is
+#     recorded per sample rather than only narrated on stdout.
+# Verified to fail on perturbation: forcing the loop to a single pass drops the
+# "iter 2" line, and dropping the CSV columns fails the file-contains checks.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_tool_self_consistent_age
+    lsdtt-cosmo-tool
+    cosmo_tool_self_consistent_age.param.in
+    cosmo_sca_CN_ERATE.csv
+    --stdout-contains "self-consistent iter 1"
+    --stdout-contains "self-consistent iter 2"
+    --stdout-contains "self-consistent: t = Gamma_sp/eps per sample"
+    --expect-file-contains "cosmo_sca_CN_ERATE.csv:self_consistent_t_yr"
+    --expect-file-contains "cosmo_sca_CN_ERATE.csv:self_consistent_n_iter"
+    --expect-file-contains "cosmo_sca_CN_ERATE.csv:self_consistent_converged"
+)
+set_tests_properties(smoke_cosmo_tool_self_consistent_age
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
+# A sample that runs out of iterations must be REPORTED, not quietly accepted.
+# max_iter 1 cannot converge from the modern field (the first step moves the rate
+# ~7 %), so this pins the warning text and the converged=0 flag in the CSV.  The
+# run still SUCCEEDS -- non-convergence is a caveat on a number, not a failure.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_tool_self_consistent_no_converge
+    lsdtt-cosmo-tool
+    cosmo_tool_self_consistent_no_converge.param.in
+    cosmo_sca_nc_CN_ERATE.csv
+    --stderr-contains "did not converge in 1 self_consistent_age iterations"
+    --stderr-contains "Treat it as unconverged, not as a result"
+    --expect-file-contains "cosmo_sca_nc_CN_ERATE.csv:,1,0"
+)
+set_tests_properties(smoke_cosmo_tool_self_consistent_no_converge
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
+# A non-positive tolerance would make the loop exit on its first comparison and
+# report a "converged" age that is nothing of the kind, so it is FATAL up front.
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_tool_bad_self_consistent_tol
+    lsdtt-cosmo-tool
+    cosmo_tool_bad_self_consistent_tol.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "self_consistent_age_tol must be > 0"
+)
+set_tests_properties(failure_cosmo_tool_bad_self_consistent_tol
+    PROPERTIES LABELS "failure;cli;cosmo")
+
 # An unknown scheme is FATAL, and the message names both allowed values.
 add_lsdtt_cli_smoke_test(
     failure_cosmo_tool_bad_scaling_scheme

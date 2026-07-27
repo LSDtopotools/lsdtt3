@@ -56,6 +56,7 @@ The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
 | `nuclide` | string | `Be10` | Nuclide used for erosion rate inversion. Options: `Be10`, `Al26`, `C14`. |
 | `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. |
 | `rock_density_kg_m3` | float | `2650` | Rock bulk density (kg/m³). Used to convert effective erosion rate (g/cm²/yr) to mm/kyr. |
+| `scaling_scheme` | string | `stone` | Production-rate scaling. `stone` = Stone (2000)/Lal, the default and the CAIRN/OCTOPUS scheme. `lsdn` = Lifton, Sato & Dunai (2014) nuclide-specific scaling, interpolated from the LSDn2015 grids; needs the LSDn grids in `crn_parameters.nc` and supports `Be10`, `Al26`, `C14` only. Both are evaluated **per pixel**, including when `sample_age_yr > 0`. `muon_scheme` is unaffected. |
 
 ---
 
@@ -64,7 +65,39 @@ The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `crn_nc_file` | string | `` | Path to `crn_parameters.nc` (ERA40 grids + Muscheler VDM record), for the ERA40 atmosphere and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically relative to the executable); if that is missing too, the standard (SLHL) atmosphere is used with no correction. |
-| `sample_age_yr` | float | `0` | Sample exposure age (yr BP). Used for palaeomagnetic correction. Set > 0 to apply time-integrated Muscheler VDM correction. Requires `crn_nc_file`. |
+| `sample_age_yr` | float | `0` | Sample exposure age (yr BP). Drives the time-integrated production correction; what it selects depends on `scaling_scheme`. Under `stone` it is the Muscheler VDM palaeomagnetic correction; under `lsdn` it is the duration-weighted average of LSDn production over the Pavón-Carrasco record, so it is longitude-dependent as well as latitude-dependent. `0` = modern field, no correction. Requires the record in `crn_parameters.nc`. "Now" is taken as 2010, the reference year of the packed record. |
+| `atmosphere` | string | `ERA40` | `ERA40` (Balco/Lifton climatology + latitude-dependent lapse, the lsdtt3 default), `NCEP` (the atmosphere CAIRN/OCTOPUS use; needs the NCEP grids), or `standard` (SLHL barometric formula). `ERA40`/`NCEP` fall back to `standard` if their grids are absent. |
+| `self_consistent_age` | bool | `false` | Solve the sample age and the erosion rate **together**, iterating to the erosional integration timescale `t = Γ_sp/ε` rather than holding the age at `sample_age_yr`. This is the CRONUScalc / Balco v3 convention, and it is how most published LSDn rates were computed — see below. |
+| `self_consistent_age_tol` | float | `0.001` | Relative convergence tolerance on ε for the iteration. The default sits just inside the inversion solver's own round-trip tolerance, so tightening it buys precision the forward model cannot deliver. |
+| `self_consistent_age_max_iter` | int | `10` | Iteration cap. A sample that has not converged is reported with a warning and flagged `self_consistent_converged = 0` in the output CSV; its last iterate is written, never silently accepted. |
+
+### Self-consistent age
+
+A sample's nuclide inventory accumulates over roughly one attenuation length of
+erosion, `τ = Γ_sp/ε` (Γ_sp = 160 g/cm² in every muon scheme lsdtt3 ships). The
+geomagnetic field it actually integrated is therefore the field over *that*
+window — but τ depends on ε, the very thing being solved for. With
+`self_consistent_age: true` the tool closes the loop: invert at `sample_age_yr`,
+form `t = Γ_sp/ε`, rebuild production, re-invert, repeat until ε stops moving.
+`sample_age_yr` becomes only the starting guess (`0` = start from the modern
+field). Typically 2–4 iterations.
+
+It is **off by default** for two reasons. It changes the meaning of the reported
+rate, so it should be a deliberate choice; and it costs one production-raster
+rebuild per iteration **per sample** — the age, and hence the whole raster,
+differs sample to sample. With `scaling_scheme: lsdn` on a large DEM this
+dominates the run time.
+
+Turn it on when comparing against published LSDn or CRONUScalc rates, which are
+computed this way. The effect is largest where the past field departed furthest
+from modern — low latitudes, and slowly eroding samples with long τ. On the
+bundled tiny fixture the converged rate sits ~9 % above the modern-field rate.
+
+Three extra columns appear in the output CSV: `self_consistent_t_yr` (the
+converged age), `self_consistent_n_iter`, and `self_consistent_converged` (1/0).
+Uncertainty bounds are inverted against the *central* sample's converged
+production raster, matching how the reference calculators propagate
+concentration uncertainty with scaling held fixed.
 
 ---
 
