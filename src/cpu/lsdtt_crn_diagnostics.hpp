@@ -78,23 +78,43 @@ double crn_steady_state_ratio(const std::string& nuclide_num,
 struct CrnBurialResult
 {
     CrnSolveStatus status;
+    std::string nuclide_fast;
+    std::string nuclide_slow;
     double erate_preburial_g_cm2_yr; // steady erosion rate before burial
     double burial_age_yr;            // duration of shielded burial; 0 if none
-    double ratio_measured;           // N26 / N10 as supplied
+    double ratio_measured;           // N_fast / N_slow as supplied
     double ratio_ss_at_solution;     // the steady-state ratio at the solved rate
     bool   burial_required;          // measured ratio sits below the SS line
-    double apparent_erate_no_burial; // rate from N10 alone, ignoring burial --
-                                     // the number a single-nuclide study reports
+    double apparent_erate_no_burial; // rate from the slow nuclide alone, ignoring
+                                     // burial -- the number a single-nuclide
+                                     // study reports
 };
 
-// Solves for (pre-burial erosion rate, burial duration) from an Al-26 / Be-10
+// Solves for (pre-burial erosion rate, burial duration) from a two-nuclide
 // pair, assuming: steady erosion to a surface sample, then instantaneous burial
 // deep enough that production stops, then no further exposure.
 //
 // The burial time is eliminated analytically -- from the ratio equation
-// t = ln(R_ss(eps)/R_meas) / (lambda_26 - lambda_10) -- which reduces the
+// t = ln(R_ss(eps)/R_meas) / (lambda_fast - lambda_slow) -- which reduces the
 // nominally two-dimensional problem to a ONE-dimensional monotone root find in
 // eps. That is why this is robust where a 2-D Newton solve would not be.
+//
+// nuclide_fast should be the shorter-lived member (larger lambda), so
+// lambda_fast > lambda_slow and burial lowers N_fast/N_slow below the
+// steady-state line. If lambdas are equal, the pair cannot date burial.
+CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
+                                            const std::string& nuclide_slow,
+                                            double conc_fast_atoms_g,
+                                            double conc_slow_atoms_g,
+                                            double total_shielding,
+                                            const std::string& muon_scheme);
+
+// Legacy Al-26 / Be-10 convenience wrapper.
+// Equivalent to crn_burial_diagnostics_pair("Al26", "Be10", ...)
+// and retained for compatibility with existing callers/tests.
+//
+// Solves for (pre-burial erosion rate, burial duration) from an Al-26 / Be-10
+// pair.
 //
 // If the measured ratio sits ON or ABOVE the steady-state line, no burial is
 // required: burial_required is false, burial_age_yr is 0, and the pre-burial

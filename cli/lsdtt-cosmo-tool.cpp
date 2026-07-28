@@ -242,6 +242,30 @@ int main(int argc, char* argv[])
         "Defaults to <nuclide>_uncertainty. If absent, uncertainty bounds are skipped.",
         "Sample points", "param", ""};
 
+    bool_default_map["propagate_production_uncertainty"] = false;
+    help_map["propagate_production_uncertainty"] = {"bool","false",
+        "If true, add a production-calibration term to external erosion-rate uncertainty.",
+        "Added in quadrature with concentration-derived uncertainty using production_rel_sigma.",
+        "Sample points", "switch", ""};
+
+    float_default_map["production_rel_sigma"] = 0.0f;
+    help_map["production_rel_sigma"] = {"float","0",
+        "Relative 1-sigma production uncertainty (dimensionless, e.g. 0.05 for 5%).",
+        "Used only when propagate_production_uncertainty is true.",
+        "Sample points", "param", ""};
+
+    bool_default_map["propagate_decay_uncertainty"] = false;
+    help_map["propagate_decay_uncertainty"] = {"bool","false",
+        "If true, add a decay-constant term to external erosion-rate uncertainty.",
+        "Added in quadrature with concentration-derived uncertainty using decay_rel_sigma.",
+        "Sample points", "switch", ""};
+
+    float_default_map["decay_rel_sigma"] = 0.0f;
+    help_map["decay_rel_sigma"] = {"float","0",
+        "Relative 1-sigma decay uncertainty term (dimensionless).",
+        "Used only when propagate_decay_uncertainty is true.",
+        "Sample points", "param", ""};
+
     string_default_map["standardisation_column_name"] = "standardisation";
     help_map["standardisation_column_name"] = {"string","standardisation",
         "Column name for the AMS standardisation name.",
@@ -375,8 +399,25 @@ int main(int argc, char* argv[])
     const int    snap_radius      = ifs["snap_search_radius_pixels"];
 
     const bool   self_consistent_age = bf["self_consistent_age"];
+    const bool   propagate_prod_unc  = bf["propagate_production_uncertainty"];
+    const bool   propagate_decay_unc = bf["propagate_decay_uncertainty"];
     const double sc_age_tol      = static_cast<double>(ff["self_consistent_age_tol"]);
     const int    sc_age_max_iter = ifs["self_consistent_age_max_iter"];
+    const double production_rel_sigma = static_cast<double>(ff["production_rel_sigma"]);
+    const double decay_rel_sigma      = static_cast<double>(ff["decay_rel_sigma"]);
+
+    if (propagate_prod_unc && production_rel_sigma < 0.0)
+    {
+        std::cerr << "FATAL: production_rel_sigma must be >= 0 (got "
+                  << production_rel_sigma << ").\n";
+        return 1;
+    }
+    if (propagate_decay_unc && decay_rel_sigma < 0.0)
+    {
+        std::cerr << "FATAL: decay_rel_sigma must be >= 0 (got "
+                  << decay_rel_sigma << ").\n";
+        return 1;
+    }
     if (self_consistent_age)
     {
         if (!(sc_age_tol > 0.0))
@@ -743,7 +784,11 @@ int main(int argc, char* argv[])
                 << ",concentration_plus_" << nuclide
                 << ",predicted_conc_plus_" << nuclide
                 << ",apparent_eff_e_plus_g_cm2_yr"
-                << ",apparent_e_plus_mm_yr";
+                << ",apparent_e_plus_mm_yr"
+                << ",apparent_eff_e_unc_int_g_cm2_yr"
+                << ",apparent_e_unc_int_mm_yr"
+                << ",apparent_eff_e_unc_ext_g_cm2_yr"
+                << ",apparent_e_unc_ext_mm_yr";
     }
     // The converged age is a per-sample result, so it belongs in the output next
     // to the rate it produced; n_iter and converged make a non-converged sample
@@ -1011,10 +1056,22 @@ int main(int argc, char* argv[])
                 *prod_for_inversion, topo_shield_raster, snow_shield_raster,
                 self_shield_raster, flow, outlet_node, pred_plus);
 
+            const double unc_int_g_cm2_yr = 0.5 * std::fabs(erate_plus - erate_minus);
+            const double unc_prod_g_cm2_yr =
+                propagate_prod_unc ? std::fabs(erate) * production_rel_sigma : 0.0;
+            const double unc_decay_g_cm2_yr =
+                propagate_decay_unc ? std::fabs(erate) * decay_rel_sigma : 0.0;
+            const double unc_ext_g_cm2_yr = std::sqrt(
+                unc_int_g_cm2_yr * unc_int_g_cm2_yr +
+                unc_prod_g_cm2_yr * unc_prod_g_cm2_yr +
+                unc_decay_g_cm2_yr * unc_decay_g_cm2_yr);
+
             csv_out << "," << conc_minus << "," << pred_minus << ","
                     << erate_minus << "," << erate_minus * e_scale
                     << "," << conc_plus  << "," << pred_plus  << ","
-                    << erate_plus  << "," << erate_plus  * e_scale;
+                    << erate_plus  << "," << erate_plus  * e_scale
+                    << "," << unc_int_g_cm2_yr << "," << unc_int_g_cm2_yr * e_scale
+                    << "," << unc_ext_g_cm2_yr << "," << unc_ext_g_cm2_yr * e_scale;
 
             // NOTE: the +/- bounds are inverted against the CENTRAL sample's
             // converged production raster, not against one re-converged at each
@@ -1024,6 +1081,10 @@ int main(int argc, char* argv[])
             // second, coupled solve. The difference is second order: the bounds
             // shift tau by the same relative amount as the rate.
             std::cout << "  Uncertainty    : " << uncert << " atoms/g\n"
+                      << "  Erate unc int  : " << unc_int_g_cm2_yr * e_scale
+                      << " mm/kyr\n"
+                      << "  Erate unc ext  : " << unc_ext_g_cm2_yr * e_scale
+                      << " mm/kyr\n"
                       << "  Erate range    : ["
                       << erate_minus * e_scale << ", "
                       << erate_plus  * e_scale << "] mm/kyr\n";

@@ -1346,8 +1346,15 @@ and the CLI says so when the mode runs.
 One nuclide gives one number, so it resolves one unknown — an apparent erosion
 rate, assuming steady erosion and no burial. A *pair* with different half-lives
 gives two numbers and can resolve two unknowns. `lsdtt_crn_diagnostics` provides
-the two cases that matter: burial/inheritance from Al-26 + Be-10, and
+the two cases that matter: burial/inheritance from a fast/slow pair, and
 (erosion rate, time since change) from a step-change pair.
+
+These diagnostics are now exposed on `lsdtt-cosmo-column-tool` in both single
+and batch forms (`burial_pair`, `step_pair`, `burial_pair_batch`,
+`step_pair_batch`). Pair choice is generic: users can choose fast/slow members
+from `Be10`, `Al26`, `C14`. Solver status is surfaced explicitly as
+`status`/`status_code`; non-identifiable outcomes (`not unique`, `no solution`)
+are first-class outputs, never silent drops.
 
 These **invert** the forward models the rest of the suite pins, so the decisive
 test is a **round trip** — forward-model at known inputs, invert, require the
@@ -1380,6 +1387,15 @@ makes a Be-10-only analysis report a rate **69.5 % too fast**, because burial
 removes nuclides that a steady-erosion model can only explain by faster erosion.
 The direction of that bias is pinned, so the diagnostic cannot be wired up
 backwards.
+
+Pair modes also report uncertainty summaries from concentration-corner re-solves
+(`fast ± σ_fast`, `slow ± σ_slow`): lower/upper bounds (`*_lo_*`, `*_hi_*`),
+an internal uncertainty (`*_unc_int_*`, half-range), and an external
+uncertainty (`*_unc_ext_*`, internal plus optional production/decay terms in
+quadrature). The number of converged corners used is reported (`*_unc_n_valid`)
+so a partially non-convergent corner set is visible rather than hidden. The
+`unc_int`/`unc_ext` naming matches the CRONUS internal/external convention used
+throughout this test regime.
 
 #### Multi-isotope transients, and two expectations the data corrected
 

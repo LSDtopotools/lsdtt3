@@ -136,29 +136,41 @@ double crn_steady_state_ratio(const std::string& nuclide_num,
 }
 
 //
-CrnBurialResult crn_burial_diagnostics(double conc_26Al_atoms_g,
-                                       double conc_10Be_atoms_g,
-                                       double total_shielding,
-                                       const std::string& muon_scheme)
+CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
+                                            const std::string& nuclide_slow,
+                                            double conc_fast_atoms_g,
+                                            double conc_slow_atoms_g,
+                                            double total_shielding,
+                                            const std::string& muon_scheme)
 {
     CrnBurialResult out{};
     out.status = CrnSolveStatus::NoSolution;
-    out.ratio_measured = (conc_10Be_atoms_g > 0.0)
-        ? conc_26Al_atoms_g / conc_10Be_atoms_g : 0.0;
+    out.nuclide_fast = nuclide_fast;
+    out.nuclide_slow = nuclide_slow;
+    out.ratio_measured = (conc_slow_atoms_g > 0.0)
+        ? conc_fast_atoms_g / conc_slow_atoms_g : 0.0;
 
-    if (!(conc_10Be_atoms_g > 0.0) || !(conc_26Al_atoms_g > 0.0))
+    if (!(conc_slow_atoms_g > 0.0) || !(conc_fast_atoms_g > 0.0))
         return out;
 
     const lsdtt_crn_parameters params = scaled_params(total_shielding, muon_scheme);
-    const double lam10 = params.get_lambda_10Be();
-    const double lam26 = params.get_lambda_26Al();
-    const double dlam  = lam26 - lam10;          // > 0: Al-26 decays faster
+    const NuclideView v_fast = view_of(nuclide_fast, params);
+    const NuclideView v_slow = view_of(nuclide_slow, params);
+    const double lam_fast = v_fast.lambda;
+    const double lam_slow = v_slow.lambda;
+    const double dlam  = lam_fast - lam_slow;      // should be > 0 for burial solve
+    if (!(dlam > 0.0))
+    {
+        out.status = CrnSolveStatus::NoSolution;
+        return out;
+    }
 
-    // The single-nuclide answer, for comparison: what a Be-10-only study reports.
+    // The single-nuclide answer, for comparison: what a slow-nuclide-only study
+    // reports.
     double eps_apparent = 0.0;
     const bool app_ok = bisect_decreasing(
-        [&](double e) { return crn_steady_state_conc("Be10", e, params); },
-        conc_10Be_atoms_g, eps_apparent);
+        [&](double e) { return crn_steady_state_conc(nuclide_slow, e, params); },
+        conc_slow_atoms_g, eps_apparent);
     out.apparent_erate_no_burial = app_ok ? eps_apparent : 0.0;
 
     // Is burial required at all? Compare the measured ratio with the
@@ -166,7 +178,7 @@ CrnBurialResult crn_burial_diagnostics(double conc_26Al_atoms_g,
     if (app_ok)
     {
         out.ratio_ss_at_solution =
-            crn_steady_state_ratio("Al26", "Be10", eps_apparent, params);
+            crn_steady_state_ratio(nuclide_fast, nuclide_slow, eps_apparent, params);
         if (out.ratio_measured >= out.ratio_ss_at_solution)
         {
             // On or above the steady-state line: a simple steady-erosion history
@@ -187,10 +199,10 @@ CrnBurialResult crn_burial_diagnostics(double conc_26Al_atoms_g,
     // The right-hand side decreases monotonically in eps (both factors do), so a
     // single bracketed bisection resolves it.
     auto predicted_N10 = [&](double e) {
-        const double r_ss = crn_steady_state_ratio("Al26", "Be10", e, params);
+        const double r_ss = crn_steady_state_ratio(nuclide_fast, nuclide_slow, e, params);
         if (!(r_ss > out.ratio_measured)) return 0.0;   // no burial time exists
         const double t = std::log(r_ss / out.ratio_measured) / dlam;
-        return crn_steady_state_conc("Be10", e, params) * std::exp(-lam10 * t);
+        return crn_steady_state_conc(nuclide_slow, e, params) * std::exp(-lam_slow * t);
     };
 
     // The search must start where a burial time EXISTS. R_ss rises with erosion
@@ -206,7 +218,8 @@ CrnBurialResult crn_burial_diagnostics(double conc_26Al_atoms_g,
     double e_min = k_erate_lo;
     {
         double lo = k_erate_lo, hi = k_erate_hi;
-        if (crn_steady_state_ratio("Al26", "Be10", hi, params) <= out.ratio_measured)
+        if (crn_steady_state_ratio(nuclide_fast, nuclide_slow, hi, params)
+              <= out.ratio_measured)
         {
             // Even the fastest erosion cannot produce a ratio above the measured
             // one: the pair is off the model surface entirely.
@@ -216,14 +229,14 @@ CrnBurialResult crn_burial_diagnostics(double conc_26Al_atoms_g,
         for (int i = 0; i < k_bisect_iters; ++i)
         {
             const double mid = 0.5 * (lo + hi);
-            if (crn_steady_state_ratio("Al26", "Be10", mid, params)
+            if (crn_steady_state_ratio(nuclide_fast, nuclide_slow, mid, params)
                     <= out.ratio_measured) lo = mid; else hi = mid;
         }
         e_min = hi;   // smallest rate admitting a positive burial time
     }
 
     double eps = 0.0;
-    if (!bisect_decreasing_in(predicted_N10, conc_10Be_atoms_g, e_min,
+    if (!bisect_decreasing_in(predicted_N10, conc_slow_atoms_g, e_min,
                               k_erate_hi, eps))
     {
         // The pair lies off the model surface entirely: no (eps, t) reproduces
@@ -232,12 +245,24 @@ CrnBurialResult crn_burial_diagnostics(double conc_26Al_atoms_g,
         return out;
     }
 
-    const double r_ss = crn_steady_state_ratio("Al26", "Be10", eps, params);
+    const double r_ss = crn_steady_state_ratio(nuclide_fast, nuclide_slow, eps, params);
     out.erate_preburial_g_cm2_yr = eps;
     out.ratio_ss_at_solution     = r_ss;
     out.burial_age_yr            = std::log(r_ss / out.ratio_measured) / dlam;
     out.status                   = CrnSolveStatus::Converged;
     return out;
+}
+
+CrnBurialResult crn_burial_diagnostics(double conc_26Al_atoms_g,
+                                       double conc_10Be_atoms_g,
+                                       double total_shielding,
+                                       const std::string& muon_scheme)
+{
+    return crn_burial_diagnostics_pair("Al26", "Be10",
+                                       conc_26Al_atoms_g,
+                                       conc_10Be_atoms_g,
+                                       total_shielding,
+                                       muon_scheme);
 }
 
 //
