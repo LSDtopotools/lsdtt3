@@ -173,6 +173,30 @@ The concentration raster to accumulate is selected in priority order:
 
 ---
 
+## lsdviztools3 interface notes
+
+`lsdtt-cosmo-prediction` is the forward side used by lsdtt3 comparison
+workflows (including point sweeps) that are then plotted by `lsdviztools3`.
+
+- For point/sweep workflows, sampled concentrations are emitted as
+  `<write_fname>_sampled_crn_conc.csv` and paired with inverse runs from
+  `lsdtt-cosmo-tool`.
+- The Phase-M2 sweep script
+  `tests/scripts/run_cosmo_single_point_scaling_scan.py` writes
+  `single_point_scan_comparison.csv`.
+- `lsdviztools3` command for sweep comparison figures:
+
+```
+lsdviz3-cosmo-compare \
+  --scan-csv tests/expected/cosmo/generated/single_point_scan_comparison.csv \
+  --outdir demo_output/cosmo
+```
+
+Optional `--sample-csv` can be used to include a sample-level residual figure in
+the same run.
+
+---
+
 ## Example parameter files
 
 ### Steady-state concentration map

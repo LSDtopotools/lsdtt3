@@ -156,6 +156,33 @@ The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns inc
 
 ---
 
+## lsdviztools3 interface notes
+
+`lsdviztools3` can plot comparison figures from the standard cosmogenic CSV
+workflows that include `lsdtt-cosmo-tool` outputs.
+
+- Basin/sample comparison tiers (`run_cosmo_validation.py`,
+  `run_cosmo_riversand_comparison.py`) produce summary CSVs under
+  `tests/expected/cosmo/published/` such as:
+  - `<dataset>_summary.csv`
+  - `<dataset>_lsdn_summary.csv`
+  - `<dataset>_riversand_summary.csv`
+- `lsdviztools3` command:
+
+```
+lsdviz3-cosmo-published \
+  --published-dir tests/expected/cosmo/published \
+  --datasets dethier2014,clapp2002,dibiase2010 \
+  --mode auto \
+  --outdir demo_output/cosmo
+```
+
+For sweep-style lsdtt3-vs-reference figures, see the single-point scan script
+`tests/scripts/run_cosmo_single_point_scaling_scan.py` and
+`lsdviz3-cosmo-compare`.
+
+---
+
 ## Example parameter file
 
 ```
