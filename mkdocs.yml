@@ -58,6 +58,7 @@ nav:
     - Flow routing and drainage:
       - Drainage analysis: cli_reference/cli_reference_lsdtt_drainage_analysis.md
       - Channel extraction: cli_reference/cli_reference_lsdtt_channel_extraction.md
+      - Water line repair: cli_reference/cli_reference_lsdtt_water_line_repair.md
       - Stream burning: cli_reference/cli_reference_lsdtt_stream_burning.md
       - Valley centreline: cli_reference/cli_reference_lsdtt_valley_centreline.md
       - Basin extraction: cli_reference/cli_reference_lsdtt_basin_extraction.md
