@@ -730,6 +730,35 @@ add_test(NAME rigorous_cosmo_cli_bridge
 set_tests_properties(rigorous_cosmo_cli_bridge PROPERTIES
     LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
 
+# Multi-isotope step change: Be-10, Al-26 and C-14 through ONE scenario, plus
+# the two ratio rasters. The isotope RATIOS are what carry a transient signal,
+# and a ratio is only meaningful if both members saw an identical scenario --
+# hence one particle evolution per pixel, not three separate runs.
+#
+# Bitwise equality of each nuclide against the single-nuclide kernel is asserted
+# in the unit tier (M1); this pins the CLI plumbing: all five rasters appear,
+# every pixel valid, and the ratio rasters carry positive, physically sane
+# values. Verified to fail on perturbation.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_multi_isotope
+    lsdtt-cosmo-prediction
+    cosmo_prediction_multi_isotope.param.in
+    mi_Be10_step_crn_conc.tif
+    --expect mi_Al26_step_crn_conc.tif
+    --expect mi_C14_step_crn_conc.tif
+    --expect mi_R2610_step.tif
+    --expect mi_R1410_step.tif
+    --expect-valid-percent-100 mi_R2610_step.tif
+    --expect-valid-percent-100 mi_R1410_step.tif
+    --expect-raster-min mi_R2610_step.tif:1.0
+    --expect-raster-min mi_R1410_step.tif:0.01
+    --stdout-contains "multi-isotope step-change rasters (Be10, Al26, C14)"
+    --stdout-contains "Al26/Be10 ratio raster"
+    --stdout-contains "C14/Be10 ratio raster"
+)
+set_tests_properties(smoke_cosmo_prediction_multi_isotope
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
 # An unknown scheme is FATAL, and the message names both allowed values.
 add_lsdtt_cli_smoke_test(
     failure_cosmo_tool_bad_scaling_scheme

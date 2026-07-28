@@ -1282,6 +1282,33 @@ The check earns its keep immediately: it caught a mis-ordered fixture inside thi
 very test suite, which had been passing only because its erosion rate was
 constant, so the negative timesteps cancelled.
 
+#### The multi-isotope step-change raster
+
+`lsdtt-cosmo-prediction`'s `calculate_multi_isotope_step_change` carries Be-10,
+Al-26 and C-14 through the *same* step change at every pixel and writes the two
+isotope-ratio rasters alongside the three concentrations.
+
+It is not a wrapper around three runs. All three come from **one particle
+evolution per pixel**, with the three F arrays scaled independently — which
+matters for correctness, not just cost: a ratio is only meaningful if both
+members saw an identical scenario, and computing them together makes that true by
+construction rather than by careful parameter matching. The cost is close to a
+single-nuclide run.
+
+The load-bearing test is **bitwise equality**: each nuclide from the multi kernel
+must equal the single-nuclide kernel exactly — not to a tolerance — across four
+shielding values, five times and three nuclides. Anything less would mean a
+second implementation of the same physics, which is precisely the situation that
+produced the column-versus-raster convention bugs. The remaining checks confirm
+the three really are one scenario (the ratios evolve, and C-14's moves further
+over the same window), that all three masks agree so a ratio can never divide a
+valid pixel by a nodata one, and that the documented `t <= 0` branch still
+returns steady state at the new rate.
+
+Ratios are formed at the output layer rather than in the library, so the nodata
+policy for a zero denominator lives with the writer; pixels with zero Be-10 are
+reported and written as nodata rather than silently producing infinities.
+
 #### Multi-isotope transients, and two expectations the data corrected
 
 Isotope *ratios* are where a transient signal lives — a nuclide silently sharing

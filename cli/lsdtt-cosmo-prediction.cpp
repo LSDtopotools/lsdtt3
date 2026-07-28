@@ -180,6 +180,23 @@ int main(int argc, char* argv[])
         "Requires: time_since_change raster, step_change_eff_erate_old/new, production raster, topo shielding.",
         "Prediction modes", "switch", ""};
 
+    bool_default_map["calculate_multi_isotope_step_change"] = false;
+    help_map["calculate_multi_isotope_step_change"] = {"bool","false",
+        "Carry Be-10, Al-26 and C-14 through the SAME step change at every pixel, "
+        "and write the two isotope-ratio rasters.",
+        "The isotope RATIOS are what carry a transient signal: the half-lives differ "
+        "by orders of magnitude (C-14 5.7 kyr, Al-26 0.7 Myr, Be-10 1.39 Myr), so a "
+        "pair dates the perturbation in a way one nuclide alone cannot. A ratio is "
+        "only meaningful if both members saw an identical scenario, so all three are "
+        "computed from ONE particle evolution per pixel -- same shielding, same rates, "
+        "same elapsed time -- rather than from three separate runs. Each nuclide is "
+        "bitwise identical to what calculate_step_change_crn_concentration_raster "
+        "returns for the same inputs, and costs little more than a single-nuclide run. "
+        "Uses the same inputs as that mode: time_since_change raster, "
+        "step_change_eff_erate_old/new, production raster, topographic shielding. "
+        "The nuclide parameter is ignored here -- all three are always produced.",
+        "Prediction modes", "switch", ""};
+
     bool_default_map["calculate_accumulated_crn_concentration"] = false;
     help_map["calculate_accumulated_crn_concentration"] = {"bool","false",
         "Accumulate CRN concentration downstream using D8 flow routing.",
@@ -381,6 +398,14 @@ int main(int argc, char* argv[])
         "Output: write_fname + _<nuclide>_step_crn_conc.tif",
         "Output write toggles", "switch", ""};
 
+    bool_default_map["write_isotope_ratio_rasters"] = true;
+    help_map["write_isotope_ratio_rasters"] = {"bool","true",
+        "Write the Al26/Be10 and C14/Be10 ratio rasters.",
+        "Output: write_fname + _R2610_step.tif and _R1410_step.tif. Requires "
+        "calculate_multi_isotope_step_change: true. The three concentration rasters "
+        "are written by write_step_change_concentration_raster, one per nuclide.",
+        "Output write toggles", "switch", "calculate_multi_isotope_step_change"};
+
     bool_default_map["write_accumulated_crn_raster"] = true;
     help_map["write_accumulated_crn_raster"] = {"bool","true",
         "Write the accumulated CRN concentration raster.",
@@ -456,15 +481,29 @@ int main(int argc, char* argv[])
     const bool do_ss_conc   = bf["calculate_crn_concentration_raster"];
     const bool do_step_conc = bf["calculate_step_change_crn_concentration_raster"];
     const bool do_accum     = bf["calculate_accumulated_crn_concentration"];
+    const bool do_multi     = bf["calculate_multi_isotope_step_change"];
     const bool do_sample    = (sf["sample_points_filename"] != "NULL");
 
-    if (!do_ss_conc && !do_step_conc && !do_accum)
+    if (!do_ss_conc && !do_step_conc && !do_accum && !do_multi)
     {
         std::cout << "No prediction mode activated.  Set one of:\n"
                   << "  calculate_crn_concentration_raster: true\n"
                   << "  calculate_step_change_crn_concentration_raster: true\n"
+                  << "  calculate_multi_isotope_step_change: true\n"
                   << "  calculate_accumulated_crn_concentration: true\n";
         return 0;
+    }
+
+    // The multi-isotope mode supersedes the single-nuclide step change: it
+    // produces that nuclide's raster bit-for-bit, plus the other two and the
+    // ratios. Running both would compute the same thing twice and write the
+    // same file twice, so say so rather than doing it silently.
+    if (do_multi && do_step_conc)
+    {
+        std::cout << "Note: calculate_multi_isotope_step_change already produces "
+                     "the single-nuclide step-change raster (bit-for-bit), so "
+                     "calculate_step_change_crn_concentration_raster is redundant "
+                     "here and is skipped.\n";
     }
 
     if (do_sample && !do_accum)
@@ -629,7 +668,98 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu step_conc_raster;
     bool have_step_conc_raster = false;
 
-    if (do_step_conc)
+    // -------------------------------------------------------------------------
+    // Multi-isotope step change: Be-10, Al-26 and C-14 through ONE scenario.
+    // -------------------------------------------------------------------------
+    if (do_multi)
+    {
+        const double eff_erate_old =
+            static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
+        const double eff_erate_new =
+            static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);
+
+        lsdtt::lsdtt_raster_cpu time_since_change = load_or_constant(
+            "time_since_change_raster_prefix", ff["time_since_change_yr"]);
+
+        std::cout << "Computing multi-isotope step-change rasters "
+                     "(Be10, Al26, C14)...\n"
+                  << "  eff_erate_old = " << eff_erate_old << " g/cm2/yr"
+                  << "  eff_erate_new = " << eff_erate_new << " g/cm2/yr\n";
+
+        lsdtt::MultiNuclideRasters multi;
+        try
+        {
+            multi = lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                muon_scheme, time_since_change, prod_raster, topo_shield,
+                eff_erate_old, eff_erate_new);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: multi-isotope step change failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+        std::cout << "  Done.\n";
+
+        if (bf["write_step_change_concentration_raster"])
+        {
+            const std::pair<const char*, const lsdtt::lsdtt_raster_cpu*> outs[3] = {
+                {"Be10", &multi.Be10}, {"Al26", &multi.Al26}, {"C14", &multi.C14}};
+            for (const auto& o : outs)
+            {
+                const std::string out_path =
+                    write_base + "_" + o.first + "_step_crn_conc.tif";
+                std::cout << "Writing " << o.first
+                          << " step-change concentration raster: "
+                          << out_path << "\n";
+                loader.write_full(o.second->get_data(), o.second->get_meta(),
+                                  out_path, out_fmt);
+            }
+        }
+
+        if (bf["write_isotope_ratio_rasters"])
+        {
+            // Ratios are formed here rather than in the library so the nodata
+            // policy lives at the output layer. The three masks are identical
+            // by construction (asserted by test M3), so the only guard needed
+            // is against a zero denominator.
+            const auto& meta   = multi.Be10.get_meta();
+            const auto& be_d   = multi.Be10.get_data_array();
+            const auto& be_m   = multi.Be10.get_mask_array();
+            const float ndv    = static_cast<float>(meta.no_data_value);
+
+            auto make_ratio = [&](const lsdtt::lsdtt_raster_cpu& num,
+                                  const std::string& suffix,
+                                  const std::string& label)
+            {
+                const auto& n_d = num.get_data_array();
+                lsdtt::lsdtt_array2d<float>   r_d(meta.n_rows, meta.n_cols, ndv);
+                lsdtt::lsdtt_array2d<uint8_t> r_m(meta.n_rows, meta.n_cols, 0);
+                std::int64_t n_zero = 0;
+                for (int r = 0; r < meta.n_rows; ++r)
+                    for (int c = 0; c < meta.n_cols; ++c)
+                    {
+                        if (!be_m(r, c)) continue;
+                        if (be_d(r, c) == 0.0f) { ++n_zero; continue; }
+                        r_d(r, c) = n_d(r, c) / be_d(r, c);
+                        r_m(r, c) = 1;
+                    }
+                if (n_zero > 0)
+                    std::cout << "  Warning: " << n_zero << " pixel(s) had zero "
+                              << "Be-10 and are nodata in " << label << ".\n";
+                const lsdtt::lsdtt_raster_cpu ratio(std::move(r_d), std::move(r_m),
+                                                    meta);
+                const std::string out_path = write_base + suffix;
+                std::cout << "Writing " << label << " ratio raster: "
+                          << out_path << "\n";
+                loader.write_full(ratio.get_data(), meta, out_path, out_fmt);
+            };
+            make_ratio(multi.Al26, "_R2610_step.tif", "Al26/Be10");
+            make_ratio(multi.C14,  "_R1410_step.tif", "C14/Be10");
+        }
+    }
+
+    if (do_step_conc && !do_multi)
     {
         double eff_erate_old = static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
         double eff_erate_new = static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);

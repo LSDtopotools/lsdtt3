@@ -685,7 +685,103 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
-// 
+//
+// Multi-isotope step change: all three nuclides, one particle evolution.
+// The per-pixel logic is deliberately IDENTICAL to the single-nuclide function
+// above -- same guards, same d_start, same t_step <= 0 branch -- so the two
+// cannot drift. The only differences are that all three F arrays are scaled and
+// all three concentrations are read out.
+MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& time_since_change,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  eff_erate_old_g_cm2_yr,
+    double                  eff_erate_new_g_cm2_yr)
+{
+    const auto& meta = prod_raster.get_meta();
+    int nr = meta.n_rows, nc = meta.n_cols;
+    int n_total = nr * nc;
+    float ndv = static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   be_data(nr, nc, ndv), al_data(nr, nc, ndv),
+                           c14_data(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> be_mask(nr, nc, 0), al_mask(nr, nc, 0),
+                           c14_mask(nr, nc, 0);
+
+    const auto& p_data  = prod_raster.get_data_array();
+    const auto& p_mask  = prod_raster.get_mask_array();
+    const auto& ts_data = topo_shield.get_data_array();
+    const auto& ts_mask = topo_shield.get_mask_array();
+    const auto& t_data  = time_since_change.get_data_array();
+    const auto& t_mask  = time_since_change.get_mask_array();
+
+#pragma omp parallel default(none) \
+    shared(nr, nc, n_total, p_data, p_mask, ts_data, ts_mask, t_data, t_mask, \
+           be_data, be_mask, al_data, al_mask, c14_data, c14_mask, muon_scheme, \
+           eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr)
+    {
+        lsdtt_crn_parameters params;
+        lsdtt_crn_particle   particle;
+
+#pragma omp for schedule(static)
+        for (int k = 0; k < n_total; ++k)
+        {
+            int row = k / nc;
+            int col = k % nc;
+
+            if (!p_mask(row, col) || !ts_mask(row, col) || !t_mask(row, col))
+                continue;
+
+            double total_shielding = static_cast<double>(p_data(row, col)) *
+                                     static_cast<double>(ts_data(row, col));
+            double t_step = static_cast<double>(t_data(row, col));
+
+            params.reset_scaling(muon_scheme);
+            // All three, on the same object: scale_F_values touches only the
+            // named nuclide's F array, so the three are independent and each
+            // matches what a single-nuclide call would have produced.
+            params.scale_F_values(total_shielding, "Be10");
+            params.scale_F_values(total_shielding, "Al26");
+            params.scale_F_values(total_shielding, "C14");
+
+            if (t_step > 0.0)
+            {
+                double d_start = eff_erate_new_g_cm2_yr * t_step;
+                particle.set_effective_depth(d_start);
+                particle.set_conc_10Be(0.0);
+                particle.set_conc_26Al(0.0);
+                particle.set_conc_14C(0.0);
+                particle.update_10Be_ss(eff_erate_old_g_cm2_yr, params, d_start, d_start);
+                particle.update_26Al_ss(eff_erate_old_g_cm2_yr, params, d_start, d_start);
+                particle.update_14C_ss (eff_erate_old_g_cm2_yr, params, d_start, d_start);
+                // ONE evolution, shared by all three -- this is what makes the
+                // three concentrations the same scenario by construction.
+                particle.update_conc(t_step, eff_erate_new_g_cm2_yr, params);
+            }
+            else
+            {
+                // No step change at this pixel: SS at the new rate, surface.
+                particle.update_10Be_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                particle.update_26Al_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                particle.update_14C_ss (eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+            }
+
+            be_data(row, col)  = static_cast<float>(particle.get_conc_10Be());
+            al_data(row, col)  = static_cast<float>(particle.get_conc_26Al());
+            c14_data(row, col) = static_cast<float>(particle.get_conc_14C());
+            be_mask(row, col) = al_mask(row, col) = c14_mask(row, col) = 1;
+        }
+    }
+
+    MultiNuclideRasters out{
+        lsdtt_raster_cpu(std::move(be_data),  std::move(be_mask),  meta),
+        lsdtt_raster_cpu(std::move(al_data),  std::move(al_mask),  meta),
+        lsdtt_raster_cpu(std::move(c14_data), std::move(c14_mask), meta)};
+    return out;
+}
+
+//
 lsdtt_raster_cpu calculate_accumulated_crn_raster(
     const lsdtt_raster_cpu& conc_raster,
     const lsdtt_raster_cpu& erosion_raster,

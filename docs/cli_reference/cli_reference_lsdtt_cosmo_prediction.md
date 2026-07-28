@@ -36,6 +36,8 @@ At least one prediction mode must be activated; the program exits with a message
 | 4. Erosion raster | Raster or uniform scalar |
 | 5. Steady-state concentrations | `calculate_crn_concentration_raster` |
 | 6. Step-change concentrations | `calculate_step_change_crn_concentration_raster` |
+| `calculate_multi_isotope_step_change` | bool | `false` | Carry Be-10, Al-26 and C-14 through the **same** step change at every pixel, and write the two isotope-ratio rasters. See below. |
+| `write_isotope_ratio_rasters` | bool | `true` | Write `_R2610_step.tif` (Al26/Be10) and `_R1410_step.tif` (C14/Be10). Needs `calculate_multi_isotope_step_change`. |
 | 7. Accumulated concentrations | `calculate_accumulated_crn_concentration` |
 
 ---
@@ -228,3 +230,32 @@ boundary_conditions:     oooo
 Stone, J.O. (2000). Air pressure and cosmogenic isotope production. *Journal of Geophysical Research*, 105(B10), 23753–23759.
 
 Braucher, R., et al. (2011). Production rates of cosmogenic radionuclides at the atmosphere–land surface interface. *Earth and Planetary Science Letters*, 304(3–4), 417–428.
+
+
+### Multi-isotope step change
+
+Isotope **ratios** carry the transient signal. The half-lives differ by orders of
+magnitude — C-14 5.7 kyr, Al-26 0.7 Myr, Be-10 1.39 Myr — so after a change in
+erosion rate the three re-equilibrate at different speeds, and the pair dates the
+perturbation in a way one nuclide alone cannot.
+
+A ratio is only meaningful if both members saw an identical scenario, so
+`calculate_multi_isotope_step_change` computes all three from **one particle
+evolution per pixel** — same shielding, same rates, same elapsed time — rather
+than from three separate runs. Each nuclide is bitwise identical to what
+`calculate_step_change_crn_concentration_raster` returns for the same inputs, and
+the whole thing costs little more than a single-nuclide run.
+
+Inputs are the same as the single-nuclide step change: `time_since_change_yr` (or
+a raster), `step_change_eff_erate_old_g_cm2_yr`, `step_change_eff_erate_new_g_cm2_yr`,
+the production raster and topographic shielding. The `nuclide` parameter is
+ignored — all three are always produced.
+
+Outputs: `_Be10_step_crn_conc.tif`, `_Al26_step_crn_conc.tif`,
+`_C14_step_crn_conc.tif`, plus `_R2610_step.tif` and `_R1410_step.tif`. Pixels
+with zero Be-10 are written as nodata in the ratio rasters and the count is
+reported.
+
+Note that after an erosion-rate *increase* all concentrations fall, C-14 reaches
+its new value first, and the C14/Be10 ratio is therefore **suppressed** and
+approaches its endpoint from below — it does not overshoot.

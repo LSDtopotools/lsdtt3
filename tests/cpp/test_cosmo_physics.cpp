@@ -3127,6 +3127,135 @@ void phaseX_multi_isotope_transient(const single_basin_fixture& fx)
 }
 
 // =============================================================================
+// M1-M3 -- the multi-isotope step-change raster.
+//
+// The point of computing three nuclides together is that the RATIOS carry the
+// transient signal, and a ratio is only meaningful if both members saw an
+// identical scenario. So the tests are about EQUIVALENCE and CONSISTENCY, not
+// about new physics: the physics is the same kernel, already pinned.
+//
+// M1 is the load-bearing one. If each nuclide did not reproduce the
+// single-nuclide function bit-for-bit, the multi path would be a second
+// implementation of the same physics -- exactly the situation that produced the
+// column-vs-raster convention bugs.
+void phaseX_multi_isotope_raster(const single_basin_fixture& fx)
+{
+    const std::size_t idx = static_cast<std::size_t>(fx.outlet_node);
+    const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, 1.0f);
+    const double eo = 0.002, en = 0.02;
+
+    // ---- M1: every nuclide matches the single-nuclide kernel EXACTLY -------
+    // float32 rasters on both sides, same code path, so this must be bitwise
+    // equal -- asserted at 0, not at a tolerance.
+    {
+        bool all_exact = true;
+        std::string bad;
+        for (double S : {1.0, 0.85, 0.5, 1.3})
+        {
+            for (double t : {0.0, 100.0, 5000.0, 50000.0, 1.0e6})
+            {
+                const lsdtt::lsdtt_raster_cpu prod =
+                    make_uniform_raster(fx, static_cast<float>(S));
+                const lsdtt::lsdtt_raster_cpu tsc =
+                    make_uniform_raster(fx, static_cast<float>(t));
+                const lsdtt::MultiNuclideRasters m =
+                    lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                        "BraucherBorchers", tsc, prod, topo, eo, en);
+                const char* names[3] = {"Be10", "Al26", "C14"};
+                const lsdtt::lsdtt_raster_cpu* got[3] = {&m.Be10, &m.Al26, &m.C14};
+                for (int i = 0; i < 3; ++i)
+                {
+                    const double single =
+                        lsdtt::calculate_crn_concentration_raster_step_change(
+                            names[i], "BraucherBorchers", tsc, prod, topo,
+                            eo, en).get_data()[idx];
+                    const double multi = got[i]->get_data()[idx];
+                    if (multi != single)
+                    {
+                        all_exact = false;
+                        if (bad.empty())
+                            bad = std::string(names[i]) + " at S=" +
+                                  std::to_string(S) + " t=" + std::to_string(t) +
+                                  ": " + std::to_string(multi) + " vs " +
+                                  std::to_string(single);
+                    }
+                }
+            }
+        }
+        check("M1: every nuclide of the multi-isotope kernel is BITWISE equal "
+              "to the single-nuclide kernel (4 shielding x 5 times x 3 nuclides)",
+              all_exact, bad);
+    }
+
+    // ---- M2: the three really are one scenario -----------------------------
+    // A ratio is only meaningful if both members saw the same evolution. The
+    // check that they did: the ratios reproduce the ratio of two independent
+    // single-nuclide runs, and they MOVE with time (a ratio that never moves
+    // would satisfy the equality above while carrying no signal at all).
+    {
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        auto ratio_multi = [&](double t) {
+            const lsdtt::lsdtt_raster_cpu tsc =
+                make_uniform_raster(fx, static_cast<float>(t));
+            const lsdtt::MultiNuclideRasters m =
+                lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                    "BraucherBorchers", tsc, prod, topo, eo, en);
+            return std::make_pair(
+                static_cast<double>(m.Al26.get_data()[idx]) / m.Be10.get_data()[idx],
+                static_cast<double>(m.C14.get_data()[idx])  / m.Be10.get_data()[idx]);
+        };
+        const auto r_early = ratio_multi(2000.0);
+        const auto r_late  = ratio_multi(500000.0);
+        check("M2: the Al26/Be10 ratio evolves with time since the step",
+              std::fabs(r_late.first - r_early.first) / r_early.first > 1e-3,
+              std::to_string(r_early.first) + " -> " + std::to_string(r_late.first));
+        check("M2: the C14/Be10 ratio evolves with time since the step",
+              std::fabs(r_late.second - r_early.second) / r_early.second > 1e-3,
+              std::to_string(r_early.second) + " -> " + std::to_string(r_late.second));
+        // C-14 is the fast one, so its ratio must move further over the same
+        // window -- the ordering the whole multi-isotope method rests on.
+        const double move_al  = std::fabs(r_late.first  - r_early.first)  / r_early.first;
+        const double move_c14 = std::fabs(r_late.second - r_early.second) / r_early.second;
+        check("M2: the C14/Be10 ratio moves further than Al26/Be10 over the "
+              "same window (C-14 is the fast nuclide)",
+              move_c14 > move_al,
+              "C14 " + std::to_string(move_c14) + " vs Al26 " + std::to_string(move_al));
+    }
+
+    // ---- M3: nodata and the t <= 0 branch propagate consistently -----------
+    // All three outputs must agree about WHICH pixels are valid; a ratio raster
+    // built from disagreeing masks would silently divide valid by nodata.
+    {
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        const lsdtt::lsdtt_raster_cpu tsc  = make_uniform_raster(fx, 0.0f);
+        const lsdtt::MultiNuclideRasters m =
+            lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                "BraucherBorchers", tsc, prod, topo, eo, en);
+        const auto& mb = m.Be10.get_mask_array();
+        const auto& ma = m.Al26.get_mask_array();
+        const auto& mc = m.C14.get_mask_array();
+        bool masks_agree = true;
+        for (int r = 0; r < fx.dem.get_meta().n_rows && masks_agree; ++r)
+            for (int c = 0; c < fx.dem.get_meta().n_cols; ++c)
+                if (mb(r, c) != ma(r, c) || mb(r, c) != mc(r, c))
+                { masks_agree = false; break; }
+        check("M3: all three nuclide masks agree, so a ratio raster can never "
+              "divide a valid pixel by a nodata one", masks_agree);
+        // t = 0 is the documented "no change" branch: SS at the NEW rate.
+        const double ss_be =
+            lsdtt::calculate_crn_concentration_raster_whole(
+                "Be10", "BraucherBorchers",
+                make_uniform_raster(fx, static_cast<float>(en)),
+                prod, topo, make_uniform_raster(fx, 0.0f),
+                make_uniform_raster(fx, 0.0f)).get_data()[idx];
+        check("M3: at t = 0 the multi kernel returns SS at the NEW rate, "
+              "matching the documented single-nuclide behaviour",
+              approx_rel(m.Be10.get_data()[idx], ss_be, 1e-6),
+              diff_str(m.Be10.get_data()[idx], ss_be));
+    }
+}
+
+// =============================================================================
 // T1-T7 -- run_transient: the arbitrary-erosion-history column.
 //
 // This is the path a pixel-based multi-isotope prediction would drive for
@@ -5946,6 +6075,7 @@ int main(int argc, char** argv)
         phaseX_column_raster_equivalence(fx);
         phaseX_multi_isotope_transient(fx);
         phaseX_run_transient();
+        phaseX_multi_isotope_raster(fx);
         phase1_E3_exponential_identity();
         phase1_E4_lambda_v_solve();
         phase1_E5_linearity_and_limits();

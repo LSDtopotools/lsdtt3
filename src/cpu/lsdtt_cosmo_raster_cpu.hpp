@@ -172,6 +172,37 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
 //
 // eff_erate_old_g_cm2_yr / eff_erate_new_g_cm2_yr : uniform scalar erosion rates
 // time_since_change : raster of years since the step change occurred (0 = no change)
+//  Multi-isotope step change (whole raster)
+// The three nuclides carried through the SAME step change, per pixel, in one
+// pass. This is the quantity a multi-isotope study actually wants: the isotope
+// RATIOS carry the transient signal, because the half-lives differ by orders of
+// magnitude, and a ratio is only meaningful if both members saw an identical
+// scenario -- same shielding, same rates, same elapsed time, same pixel.
+//
+// Not a convenience wrapper around three calls. One particle is evolved once
+// per pixel with all three F arrays scaled, so the three concentrations are the
+// same evolution read three ways, and the cost is close to a single-nuclide run
+// rather than triple. Each nuclide is asserted equal to what the single-nuclide
+// function returns for the same inputs.
+//
+// Ratios are deliberately NOT returned: they are a pure per-pixel division the
+// caller can do, and returning them here would invent a nodata policy for
+// zero denominators that belongs at the output layer.
+struct MultiNuclideRasters
+{
+    lsdtt_raster_cpu Be10;
+    lsdtt_raster_cpu Al26;
+    lsdtt_raster_cpu C14;
+};
+
+MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& time_since_change,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  eff_erate_old_g_cm2_yr,
+    double                  eff_erate_new_g_cm2_yr);
+
 lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     const std::string&      nuclide,
     const std::string&      muon_scheme,
