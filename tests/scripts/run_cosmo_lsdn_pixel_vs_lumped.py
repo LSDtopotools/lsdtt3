@@ -81,6 +81,7 @@ DATASETS = ["dethier2014", "clapp2002", "dibiase2010"]
 # Sample ages at which the per-pixel LSDn basin mean is recorded.  See the SAMPLE
 # AGE note in the module docstring; 5000 is the headline, 0 and 20000 bracket it.
 SAMPLE_AGES_YR = [0, 5000, 20000]
+NUCLIDES = ["Be10", "Al26", "C14"]
 
 ARTEFACT_NAME = "lsdn_pixel_vs_lumped_perpixel.csv"
 
@@ -93,22 +94,48 @@ def expected_cosmo_dir() -> Path:
 # Run the tool once per (scheme, age) and read back the basin-production CSV
 # --------------------------------------------------------------------------- #
 def run_tool(exe: Path, dem_path: Path, points_csv: Path, workdir: Path,
-             manifest: dict, scheme: str, age_yr: int) -> dict:
+             manifest: dict, scheme: str, age_yr: int, nuclide: str) -> dict:
     """One lsdtt-cosmo-tool run; returns {sample_name: basin-prod row}.
 
     Only `write_basin_production_csv` is switched on -- the production RASTER is
     not needed and writing it would cost time and disk for nothing.
     """
-    write_base = f"l13_{scheme}_{age_yr}"
+    write_base = f"l13_{scheme}_{nuclide}_{age_yr}"
     param = workdir / f"{write_base}.param"
     run_params = manifest.get("run_params") or {}
+    points_for_run = points_csv
+    if nuclide != "Be10":
+        # The tracked validation sample tables are Be10-based. For this L13
+        # generation step we need Al26/C14 production scalings too; those do not
+        # depend on the measured concentrations, but the CLI requires a nuclide-
+        # specific concentration column to parse points. Build a run-local copy
+        # by duplicating Be10 concentrations into the requested nuclide columns.
+        points_for_run = workdir / f"points_{nuclide}.csv"
+        with open(points_csv, newline="") as f_in, open(points_for_run, "w", newline="") as f_out:
+            rows = list(csv.DictReader(f_in))
+            fields = [
+                "sample_name", "latitude", "longitude",
+                f"{nuclide}_CONC", f"{nuclide}_uncertainty", "standardisation",
+            ]
+            w = csv.DictWriter(f_out, fieldnames=fields)
+            w.writeheader()
+            for r in rows:
+                w.writerow({
+                    "sample_name": r.get("sample_name", ""),
+                    "latitude": r.get("latitude", ""),
+                    "longitude": r.get("longitude", ""),
+                    f"{nuclide}_CONC": r.get("Be10_CONC", ""),
+                    f"{nuclide}_uncertainty": r.get("Be10_uncertainty", ""),
+                    "standardisation": "KNSTD",
+                })
+
     lines = [
         f"read_path: {workdir}",
         f"read_fname: {dem_path.name}",
         f"write_path: {workdir}",
         f"write_fname: {write_base}",
-        "nuclide: Be10",
-        f"points_filename: {points_csv.name}",
+        f"nuclide: {nuclide}",
+        f"points_filename: {points_for_run.name}",
         # --- matched to OCTOPUS, identical to the §6e isolation run ---
         "muon_scheme: Braucher",
         "atmosphere: NCEP",
@@ -142,10 +169,15 @@ def rows_for_dataset(dataset: str, args) -> list:
         points_csv = rcv.write_crn_input(samples, workdir)
 
         stone = run_tool(Path(args.exe), dem_path, points_csv, workdir,
-                         manifest, "stone", 0)
-        lsdn = {age: run_tool(Path(args.exe), dem_path, points_csv, workdir,
-                              manifest, "lsdn", age)
-                for age in SAMPLE_AGES_YR}
+                         manifest, "stone", 0, "Be10")
+        lsdn = {
+            nuc: {
+                age: run_tool(Path(args.exe), dem_path, points_csv, workdir,
+                              manifest, "lsdn", age, nuc)
+                for age in SAMPLE_AGES_YR
+            }
+            for nuc in NUCLIDES
+        }
     finally:
         if args.keep:
             print(f"--keep set: leaving {workdir}")
@@ -187,32 +219,36 @@ def rows_for_dataset(dataset: str, args) -> list:
             "mean_scaling_stone": f"{float(st['mean_prod_scaling']):.8f}",
         }
         ok = True
-        for age in SAMPLE_AGES_YR:
-            r = lsdn[age].get(name)
-            if r is None:
-                ok = False
+        for nuc in NUCLIDES:
+            for age in SAMPLE_AGES_YR:
+                r = lsdn[nuc][age].get(name)
+                if r is None:
+                    ok = False
+                    break
+                row[f"mean_scaling_lsdn_{nuc}_t{age}"] = f"{float(r['mean_prod_scaling']):.8f}"
+                # The upslope set must not depend on nuclide, scaling scheme or
+                # sample age -- only the production values do.
+                if r["n_upslope_pixels"] != st["n_upslope_pixels"]:
+                    print(f"[{dataset}] FAIL: {name} upslope pixel count changed with "
+                          f"nuclide/scheme/age ({st['n_upslope_pixels']} stone vs "
+                          f"{r['n_upslope_pixels']} lsdn {nuc} t={age})")
+                    ok = False
+            if not ok:
                 break
-            row[f"mean_scaling_lsdn_t{age}"] = f"{float(r['mean_prod_scaling']):.8f}"
-            # The upslope set must not depend on the scaling scheme or the age --
-            # only the production values do.  If it ever does, the comparison is
-            # not per-pixel-vs-lumped any more and the test must say so.
-            if r["n_upslope_pixels"] != st["n_upslope_pixels"]:
-                print(f"[{dataset}] FAIL: {name} upslope pixel count changed with "
-                      f"scheme/age ({st['n_upslope_pixels']} stone vs "
-                      f"{r['n_upslope_pixels']} lsdn t={age})")
-                ok = False
         if ok:
             rows.append(row)
             print(f"  [{name}] n={row['n_upslope_pixels']} "
                   f"S_stone={row['mean_scaling_stone']} "
-                  f"S_lsdn(5k)={row['mean_scaling_lsdn_t5000']}")
+                  f"S_lsdn_Be10(5k)={row['mean_scaling_lsdn_Be10_t5000']} "
+                  f"S_lsdn_Al26(5k)={row['mean_scaling_lsdn_Al26_t5000']} "
+                  f"S_lsdn_C14(5k)={row['mean_scaling_lsdn_C14_t5000']}")
     return rows
 
 
 FIELDS = (["dataset", "basin", "delineation_reliable", "n_upslope_pixels",
            "snapped_latitude", "snapped_longitude", "mean_elev_m",
            "mean_scaling_stone"]
-          + [f"mean_scaling_lsdn_t{a}" for a in SAMPLE_AGES_YR])
+          + [f"mean_scaling_lsdn_{n}_t{a}" for n in NUCLIDES for a in SAMPLE_AGES_YR])
 
 # Relative tolerance for the frozen-artefact regression check.  These quantities are
 # deterministic given the same DEM and executable; the tolerance absorbs COP30
@@ -220,7 +256,7 @@ FIELDS = (["dataset", "basin", "delineation_reliable", "n_upslope_pixels",
 # as run_cosmo_production_isolation.py's ISOLATION_CHECK_REL_TOL.
 CHECK_REL_TOL = 1e-3
 CHECK_COLS = ["mean_elev_m", "mean_scaling_stone"] + \
-             [f"mean_scaling_lsdn_t{a}" for a in SAMPLE_AGES_YR]
+             [f"mean_scaling_lsdn_{n}_t{a}" for n in NUCLIDES for a in SAMPLE_AGES_YR]
 CHECK_EXACT_COLS = ["n_upslope_pixels"]
 
 

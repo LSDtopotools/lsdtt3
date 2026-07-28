@@ -368,6 +368,10 @@ def main():
             "effective_erosion_rate_old_g_cm2_yr": E_OLD,
             "conc_fast_sigma_atoms_g": 0.02 * step_true["C_14C"],
             "conc_slow_sigma_atoms_g": 0.02 * step_true["C_10Be"],
+            "propagate_production_uncertainty": "true",
+            "production_rel_sigma": 0.05,
+            "propagate_decay_uncertainty": "true",
+            "decay_rel_sigma": 0.02,
         }, "step_pair_unc", numeric=False)[0]
         check("step_pair writes erate/time uncertainty fields",
               "erate_new_unc_int_g_cm2_yr" in p_unc
@@ -378,6 +382,11 @@ def main():
               and float(p_unc["time_since_change_unc_int_yr"]) > 0.0,
               "e=" + p_unc["erate_new_unc_int_g_cm2_yr"]
               + " t=" + p_unc["time_since_change_unc_int_yr"])
+        check("step_pair external uncertainty exceeds internal when model terms are enabled",
+              float(p_unc["erate_new_unc_ext_g_cm2_yr"])
+              > float(p_unc["erate_new_unc_int_g_cm2_yr"]),
+              "int=" + p_unc["erate_new_unc_int_g_cm2_yr"]
+              + " ext=" + p_unc["erate_new_unc_ext_g_cm2_yr"])
 
         # --- 9. non-identifiable pairs are reported as status, not hidden -----
         # Al26/Be10 cannot uniquely date this short transient; status must be

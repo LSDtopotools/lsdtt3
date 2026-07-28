@@ -759,6 +759,27 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_cosmo_prediction_multi_isotope
     PROPERTIES LABELS "smoke;cli;cosmo")
 
+# Multi-isotope step change under LSDn scaling: smoke that the prediction CLI
+# reaches the LSDn path and writes the same 3 nuclide + 2 ratio rasters.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_multi_isotope_lsdn
+    lsdtt-cosmo-prediction
+    cosmo_prediction_multi_isotope_lsdn.param.in
+    mi_lsdn_Be10_step_crn_conc.tif
+    --expect mi_lsdn_Al26_step_crn_conc.tif
+    --expect mi_lsdn_C14_step_crn_conc.tif
+    --expect mi_lsdn_R2610_step.tif
+    --expect mi_lsdn_R1410_step.tif
+    --expect-valid-percent-100 mi_lsdn_R2610_step.tif
+    --expect-valid-percent-100 mi_lsdn_R1410_step.tif
+    --expect-raster-min mi_lsdn_R2610_step.tif:1.0
+    --expect-raster-min mi_lsdn_R1410_step.tif:0.01
+    --stdout-contains "Scaling scheme: LSDn"
+    --stdout-contains "LSDn scaling (Be10)"
+)
+set_tests_properties(smoke_cosmo_prediction_multi_isotope_lsdn
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
 # Multi-isotope ARBITRARY erosion history: the general case of the step-change
 # mode. Bitwise equality with the step-change kernel for a two-row history is
 # asserted in the unit tier (H1); this pins the CLI plumbing -- the history file

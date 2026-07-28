@@ -2864,9 +2864,11 @@ struct l13_pixel_row
     long long   n_upslope = 0;
     double snapped_lat = 0.0, snapped_lon = 0.0, mean_elev_m = 0.0;
     double s_stone = 0.0;
-    // Per-pixel LSDn basin means at the three recorded sample ages.  Index order
-    // matches k_l13_ages below.
-    double s_lsdn[3] = {0.0, 0.0, 0.0};
+    // Per-pixel LSDn basin means at the three recorded sample ages for each
+    // nuclide. Index order matches k_l13_nuclides x k_l13_ages below.
+    double s_lsdn[3][3] = {{0.0, 0.0, 0.0},
+                           {0.0, 0.0, 0.0},
+                           {0.0, 0.0, 0.0}};
 };
 
 // Sample ages at which the per-pixel side was recorded.  MUST match
@@ -2875,6 +2877,7 @@ struct l13_pixel_row
 // on both sides, and the column names are derived from them.
 constexpr double k_l13_ages[3]     = {0.0, 5000.0, 20000.0};
 constexpr int    k_l13_headline_age = 1;   // 5000 yr - see the header comment
+constexpr const char* k_l13_nuclides[3] = {"Be10", "Al26", "C14"};
 
 bool load_l13_pixel_reference(const std::string& ref_path,
                               std::vector<l13_pixel_row>& rows)
@@ -2928,12 +2931,24 @@ bool load_l13_pixel_reference(const std::string& ref_path,
         r.snapped_lon = num("snapped_longitude");
         r.mean_elev_m = num("mean_elev_m");
         r.s_stone     = num("mean_scaling_stone");
-        for (int i = 0; i < 3; ++i)
+        for (int n = 0; n < 3; ++n)
         {
-            std::ostringstream name;
-            name << "mean_scaling_lsdn_t"
-                 << static_cast<long long>(k_l13_ages[i]);
-            r.s_lsdn[i] = num(name.str());
+            for (int i = 0; i < 3; ++i)
+            {
+                std::ostringstream name;
+                name << "mean_scaling_lsdn_" << k_l13_nuclides[n]
+                     << "_t" << static_cast<long long>(k_l13_ages[i]);
+                r.s_lsdn[n][i] = num(name.str());
+                if (n == 0 && !std::isfinite(r.s_lsdn[n][i]))
+                {
+                    // Backward compatibility: older frozen artefacts carry
+                    // Be10 as mean_scaling_lsdn_t<age>.
+                    std::ostringstream legacy;
+                    legacy << "mean_scaling_lsdn_t"
+                           << static_cast<long long>(k_l13_ages[i]);
+                    r.s_lsdn[n][i] = num(legacy.str());
+                }
+            }
         }
         if (!r.basin.empty()) rows.push_back(r);
     }
@@ -3069,15 +3084,17 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
     const double rho_g_cm3 = 2.650;   // OCTOPUS's own density; see L12
 
     csv_writer csv(out_dir + "/lsdn_pixel_vs_lumped.csv",
-                   "dataset,basin,delineation_reliable,n_upslope_pixels,t_yr,"
+                   "dataset,basin,nuclide,delineation_reliable,n_upslope_pixels,t_yr,"
                    "centr_lat,centr_lon,atm_press_hPa,mean_elev_m,elev_ave_m,"
                    "s_tot_shielding,scaling_pixel,scaling_lumped,pct_scaling,"
                    "erate_pixel_gcm2yr,erate_lumped_gcm2yr,pct_erate,"
                    "mean_scaling_stone,atm_press_recovered_hPa,d_atm_press_hPa,"
                    "erate_octopus_EBEL_gcm2yr,pct_pixel_vs_EBEL");
 
-    std::vector<double> pct_scal[3], pct_erate[3];   // reliable subset, per age
-    std::vector<double> pct_scal_all[3];             // every joined basin
+    std::vector<double> pct_scal[3][3];       // [nuclide][age], reliable subset
+    std::vector<double> pct_scal_all[3][3];   // [nuclide][age], all joined
+    std::vector<double> pct_erate[3];         // Be10 only, reliable subset
+    std::vector<double> pct_erate_all[3];     // Be10 only, all joined
     std::vector<double> d_press, d_press_all;
     int n_joined = 0;
     bool all_joined = true, lumped_finite = true, inverted_ok = true;
@@ -3119,37 +3136,52 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
         for (int a = 0; a < 3; ++a)
         {
             const double t_yr  = k_l13_ages[a];
-            const double s_pix = p.s_lsdn[a];
-            const double s_lmp = cp.lsdn_scaling("Be10", o.centr_lat, o.centr_lon,
-                                                 o.atm_press, t_yr, nc);
-            if (!std::isfinite(s_lmp) || !(s_lmp > 0.0)) { lumped_finite = false; continue; }
-            const double pct_s = 100.0 * (s_pix - s_lmp) / s_lmp;
-
-            // Both sides inverted through the SAME machinery so the erosion-rate
-            // comparison is like-for-like with the published bound, which is
-            // stated on denudation rates rather than on production.
-            ref_params pp = ref_params_scaled("BraucherBorchers", "Be10",
-                                              s_pix * shield);
-            ref_params pl = ref_params_scaled("BraucherBorchers", "Be10",
-                                              s_lmp * shield);
-            const double e_pix = ref_invert_erate(pp, o.be10nc);
-            const double e_lmp = ref_invert_erate(pl, o.be10nc);
-            if (!(e_pix > 0.0) || !(e_lmp > 0.0)) { inverted_ok = false; continue; }
-            const double pct_e = 100.0 * (e_pix - e_lmp) / e_lmp;
-
-            pct_scal_all[a].push_back(pct_s);
-            if (reliable)
+            for (int n = 0; n < 3; ++n)
             {
-                pct_scal[a].push_back(pct_s);
-                pct_erate[a].push_back(pct_e);
-            }
+                const std::string nuc = k_l13_nuclides[n];
+                const double s_pix = p.s_lsdn[n][a];
+                const double s_lmp = cp.lsdn_scaling(nuc, o.centr_lat, o.centr_lon,
+                                                     o.atm_press, t_yr, nc);
+                if (!std::isfinite(s_lmp) || !(s_lmp > 0.0))
+                {
+                    lumped_finite = false;
+                    continue;
+                }
+                const double pct_s = 100.0 * (s_pix - s_lmp) / s_lmp;
 
-            csv.row(p.dataset, p.basin, p.reliable, p.n_upslope, t_yr,
-                    o.centr_lat, o.centr_lon, o.atm_press, p.mean_elev_m,
-                    o.elev_ave, shield, s_pix, s_lmp, pct_s, e_pix, e_lmp, pct_e,
-                    p.s_stone, p_rec, dp, e_octopus,
-                    std::isfinite(e_octopus)
-                        ? 100.0 * (e_pix - e_octopus) / e_octopus : nan);
+                pct_scal_all[n][a].push_back(pct_s);
+                if (reliable) pct_scal[n][a].push_back(pct_s);
+
+                double e_pix = nan, e_lmp = nan, pct_e = nan, e_ref = nan, pct_ref = nan;
+                if (n == 0)
+                {
+                    // Both sides inverted through the SAME machinery so the
+                    // erosion-rate comparison is like-for-like with the published
+                    // Be-10 denudation bound.
+                    ref_params pp = ref_params_scaled("BraucherBorchers", "Be10",
+                                                      s_pix * shield);
+                    ref_params pl = ref_params_scaled("BraucherBorchers", "Be10",
+                                                      s_lmp * shield);
+                    e_pix = ref_invert_erate(pp, o.be10nc);
+                    e_lmp = ref_invert_erate(pl, o.be10nc);
+                    if (!(e_pix > 0.0) || !(e_lmp > 0.0))
+                    {
+                        inverted_ok = false;
+                        continue;
+                    }
+                    pct_e = 100.0 * (e_pix - e_lmp) / e_lmp;
+                    pct_erate_all[a].push_back(pct_e);
+                    if (reliable) pct_erate[a].push_back(pct_e);
+                    e_ref = e_octopus;
+                    pct_ref = std::isfinite(e_ref)
+                                  ? 100.0 * (e_pix - e_ref) / e_ref : nan;
+                }
+
+                csv.row(p.dataset, p.basin, nuc, p.reliable, p.n_upslope, t_yr,
+                        o.centr_lat, o.centr_lon, o.atm_press, p.mean_elev_m,
+                        o.elev_ave, shield, s_pix, s_lmp, pct_s, e_pix, e_lmp, pct_e,
+                        p.s_stone, p_rec, dp, e_ref, pct_ref);
+            }
         }
     }
 
@@ -3171,12 +3203,16 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
                  "      pct = 100*(per-pixel - lumped at (CENTR_LAT, ATM_PRESS))"
                  "/lumped, t matched:\n"
               << std::setprecision(4);
-    for (int a = 0; a < 3; ++a)
+    for (int n = 0; n < 3; ++n)
     {
-        std::ostringstream lbl;
-        lbl << "production scaling, t=" << static_cast<long long>(k_l13_ages[a])
-            << " yr  (reliable)";
-        stats(pct_scal[a], lbl.str().c_str());
+        for (int a = 0; a < 3; ++a)
+        {
+            std::ostringstream lbl;
+            lbl << "production scaling " << k_l13_nuclides[n] << ", t="
+                << static_cast<long long>(k_l13_ages[a])
+                << " yr  (reliable)";
+            stats(pct_scal[n][a], lbl.str().c_str());
+        }
     }
     for (int a = 0; a < 3; ++a)
     {
@@ -3185,8 +3221,13 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
             << " yr  (reliable)";
         stats(pct_erate[a], lbl.str().c_str());
     }
-    stats(pct_scal_all[k_l13_headline_age], "production scaling, t=5000 yr  (ALL, "
-                                            "incl. delineation-unreliable)");
+    for (int n = 0; n < 3; ++n)
+    {
+        std::ostringstream lbl;
+        lbl << "production scaling " << k_l13_nuclides[n]
+            << ", t=5000 yr  (ALL, incl. delineation-unreliable)";
+        stats(pct_scal_all[n][k_l13_headline_age], lbl.str().c_str());
+    }
     std::cout << "      Published bound for comparison -- Codilean & Munack (2025, "
                  "GChron 7:113, p. 117):\n"
                  "        LSDn median -1.0 %, IQR -1.8 to -0.1 % over 290 points.\n";
@@ -3207,21 +3248,29 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
     // Measured-then-frozen REGRESSION GUARDS on lsdtt3's own product.  They are
     // NOT accuracy targets and must never be widened to absorb a surprise: a
     // move here is a move in the per-pixel LSDn result.
-    const double med = l13_percentile(pct_scal[k_l13_headline_age], 0.50);
+    const double med = l13_percentile(pct_scal[0][k_l13_headline_age], 0.50);
     check("L13: per-pixel-vs-lumped median inside the frozen band (RESULT, not "
           "an error term; production scaling, t=5000 yr, reliable basins)",
-          !pct_scal[k_l13_headline_age].empty() &&
+          !pct_scal[0][k_l13_headline_age].empty() &&
               med > tol::l13_pixel_vs_lumped_med_lo &&
               med < tol::l13_pixel_vs_lumped_med_hi,
           "median = " + std::to_string(med) + " % (n=" +
-              std::to_string(pct_scal[k_l13_headline_age].size()) + ")");
+              std::to_string(pct_scal[0][k_l13_headline_age].size()) + ")");
 
     double worst = 0.0;
-    for (double x : pct_scal[k_l13_headline_age]) worst = std::max(worst, std::abs(x));
+    for (double x : pct_scal[0][k_l13_headline_age]) worst = std::max(worst, std::abs(x));
     check("L13: worst |per-pixel-vs-lumped| inside the frozen band",
-          !pct_scal[k_l13_headline_age].empty() &&
+          !pct_scal[0][k_l13_headline_age].empty() &&
               worst < tol::l13_pixel_vs_lumped_worst,
           "worst = " + std::to_string(worst) + " %");
+
+    for (int n = 1; n < 3; ++n)
+    {
+        check(std::string("L13: ") + k_l13_nuclides[n]
+              + " per-pixel-vs-lumped scaling computed on reliable basins",
+              !pct_scal[n][k_l13_headline_age].empty(),
+              "n=" + std::to_string(pct_scal[n][k_l13_headline_age].size()));
+    }
 
     double worst_dp = 0.0;
     for (double x : d_press) worst_dp = std::max(worst_dp, std::abs(x));
@@ -4538,8 +4587,6 @@ void phaseX_run_transient()
     auto nuc_of = [](const lsdtt::CrnColumnSample& s, int i) {
         return i == 0 ? s.conc_10Be : i == 1 ? s.conc_26Al : s.conc_14C;
     };
-    const char* nuc_name[3] = {"Be10", "Al26", "C14"};
-
     // ---- T1: a two-row history IS a step change ---------------------------
     // Rows are (time_yr_BP, rate_m_yr, removal_m), ascending in time, last row
     // time = -9999 carrying the long-term background rate. With exactly two
@@ -5471,8 +5518,9 @@ void phase7_L0_pins(const lsdtt::CrnNcData& nc)
 // L2 - exact reproduction of the v3 grids (the strongest oracle).
 //
 // tests/expected/cosmo/lsdn_grid_reference.csv is frozen, generated offline by
-//   pixi run python python_helpers/extract_lsdn_reference.py \
-//       --out-dir <scratch> --emit-reference tests/expected/cosmo/lsdn_grid_reference.csv
+// running:
+//   pixi run python python_helpers/extract_lsdn_reference.py --out-dir <scratch>
+//     --emit-reference tests/expected/cosmo/lsdn_grid_reference.csv
 // directly from the FLOAT64 v3 .mat grids with scipy's RegularGridInterpolator
 // (the same 4-point formula MATLAB interp2 linear uses).  lsdtt3 evaluates the
 // FLOAT32 grids packed into crn_parameters.nc, so the residual is the float32
