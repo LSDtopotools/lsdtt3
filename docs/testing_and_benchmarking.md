@@ -1096,6 +1096,31 @@ stored in the repository or tracked in version control.** The rule that follows:
   LSDTopoTools GitHub data repositories, not in the paper tables; the manifests
   point there.
 
+#### 7.7.1 riversand cross-check (manual, not in CI)
+
+The Phase 5 riversand harness lives at
+`tests/scripts/run_cosmo_riversand_comparison.py` and follows the same
+download -> run -> delete discipline. In default mode it runs riversand directly
+from the harness (with `lsdtt-basin-extraction`), then compares against the
+tracked frozen summary `<dataset>_riversand_summary.csv`.
+
+```bash
+# check against frozen summary (default mode)
+python3 tests/scripts/run_cosmo_riversand_comparison.py dethier2014 \
+    --exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-cosmo-tool \
+    --fetch-exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-fetch-raster \
+    --samples S169WTS035
+
+# freeze/update the tracked summary
+python3 tests/scripts/run_cosmo_riversand_comparison.py dethier2014 \
+    --exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-cosmo-tool \
+    --fetch-exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-fetch-raster \
+    --samples S169WTS035 --freeze
+```
+
+You can still bypass built-in execution with `--riversand-csv` (out-of-band
+results) or `--riversand-cmd` (external invocation template).
+
 ### 7.8 Plottable outputs
 
 Every cosmo test family writes tidy long-format CSVs into the test output
@@ -1113,6 +1138,11 @@ documentation figures.
 | `analytic_vs_integrator.csv` | the full E7 comparison grid with relative differences |
 | `cronus_fixture_samples.csv` | the 15-sample comparison fixture (inputs) |
 | `cronus_comparison.csv` | per-sample ε from lsdtt vs CRONUS St/Lm/LSDn with percent differences |
+| `cronus_comparison_lsdn.csv` | Phase 7/5 LSDn-column comparison vs frozen CRONUS reference at `t=0` and `t=Gamma/eps` |
+| `cronus_comparison_geomag_full.csv` | Phase 5 G3 full-inversion comparison vs CRONUS `Lm`/`LSDn` with explicit `solve_status` |
+| `geomag_on_off_LSDTT1.csv` | equatorial (`LSDTT-1`) geomag ON/OFF delta sweep for §6c(A) |
+| `geomag_era40_fixture_validation.csv` | real-atmosphere ERA40 pressure/scaling deltas vs standard atmosphere over the 15-point fixture |
+| `geomag_scaling.csv` | six frozen Knudsen-record G4 trajectory triplets (plus modern ratio context) |
 | `lsdn_vs_stone.csv` | LSDn against Stone across the fixture grid |
 | `lsdn_scaling_surface.csv` | the LSDn scaling factor over the (lat, p) fixture grid |
 | `lsdn_surface_vs_direct.csv` | time-averaged surface against the direct per-pixel loop |
@@ -1120,6 +1150,11 @@ documentation figures.
 | `stone_paleomag_surface_vs_direct.csv`, `stone_paleomag_resolution_sweep.csv` | the same pair for the Stone palaeomagnetic path |
 | `g4_paleomag_refreeze.csv` | per-triplet old/new/shift for the six geomagnetic goldens — written every run, as a report; the driver never edits the goldens |
 | `lsdn_pixel_vs_lumped.csv` | per-basin per-pixel LSDn against LSDn evaluated once at the basin's published centre |
+
+Tracked/frozen realworld artefacts (under `tests/expected/cosmo/published/`) also
+include riversand summaries, e.g.
+`dethier2014_riversand_summary.csv` from
+`tests/scripts/run_cosmo_riversand_comparison.py`.
 
 ### 7.9 LSDn production scaling, and what "validated" means for it
 
@@ -1542,7 +1577,8 @@ above 1, so the altitude-enhancement branch is covered too.
 #### Where the expensive parts run
 
 The per-pixel side of (a) needs real DEMs, so it follows the §7.7 pattern: a
-`cosmo_realworld` script fetches keyless COP30, runs 50 basins, and freezes the
+`cosmo_realworld` script (`run_cosmo_validation.py` / `run_cosmo_lsdn_pixel_vs_lumped.py`)
+fetches keyless COP30, runs 50 basins, and freezes the
 per-basin means into a small tracked CSV; the default `unit` suite then does the
 cheap comparison against that frozen artefact. The frozen artefacts are
 **check-only by default** and regenerate only under an explicit `--freeze`. A

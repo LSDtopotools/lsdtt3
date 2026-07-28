@@ -891,6 +891,14 @@ add_test(NAME unit_cosmo_validation_harness
                  --self-test)
 set_tests_properties(unit_cosmo_validation_harness PROPERTIES LABELS "unit;cosmo")
 
+# Riversand-comparison harness self-test (Phase 5 carried-forward item §6c(B)).
+# OFFLINE scaffold check only: manifest/sample preflight + cleanup-trap contract.
+add_test(NAME unit_cosmo_riversand_harness
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_riversand_comparison.py"
+                 --self-test)
+set_tests_properties(unit_cosmo_riversand_harness PROPERTIES LABELS "unit;cosmo")
+
 # Real download -> run -> delete for the pilot dataset, in --check (regression)
 # mode: it reproduces the fresh inverted rates and compares them to the FROZEN
 # tracked summary without modifying it. NEEDS NETWORK and time; deliberately kept

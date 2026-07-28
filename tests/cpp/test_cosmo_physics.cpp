@@ -292,6 +292,42 @@ constexpr double muon_run_e_bb_worst_pct = 15.0;
 constexpr double muon_run_e_vv_worst_pct = 4.0e9;
 constexpr double muon_run_e_bs_worst_pct = 30.0;
 constexpr double muon_run_e_fit_worst_pct = 30.0;
+// Phase 5 G3 full inversion comparison versus frozen CRONUS Lm/LSDn rows
+// (measured 2026-07-28 from cronus_comparison_geomag_full.csv). Report-first
+// harness upgraded to regression guards per scheme/mode using the same rule as
+// other result-style bands in this file: 1.25x measured worst |pct|.
+//   Lm,   t=0          : worst 678.9000 -> guard 848.6250
+//   Lm,   t=Gamma/eps  : worst 100.0000 -> guard 125.0000
+//   LSDn, t=0          : worst 100.0000 -> guard 125.0000
+//   LSDn, t=Gamma/eps  : worst 100.0000 -> guard 125.0000
+constexpr double g3_lm_modern_worst_pct       = 848.625;
+constexpr double g3_lm_matched_worst_pct      = 125.0;
+constexpr double g3_lsdn_modern_worst_pct     = 125.0;
+constexpr double g3_lsdn_matched_worst_pct    = 125.0;
+// Phase 5 G3 per-nuclide guards (measured 2026-07-28; 1.25x worst |pct| per
+// scheme/mode/nuclide on solved rows in cronus_comparison_geomag_full.csv).
+constexpr double g3_lm_modern_be10_worst_pct  = 56.5125;
+constexpr double g3_lm_modern_al26_worst_pct  = 57.99583333333338;
+constexpr double g3_lm_modern_c14_worst_pct   = 848.625;
+constexpr double g3_lm_matched_be10_worst_pct = 19.7317758009002;
+constexpr double g3_lm_matched_al26_worst_pct = 14.626567338750895;
+constexpr double g3_lm_matched_c14_worst_pct  = 125.0;
+constexpr double g3_lsdn_modern_be10_worst_pct  = 49.37886572704771;
+constexpr double g3_lsdn_modern_al26_worst_pct  = 58.63816000443964;
+constexpr double g3_lsdn_modern_c14_worst_pct   = 125.0;
+constexpr double g3_lsdn_matched_be10_worst_pct = 15.339537163675486;
+constexpr double g3_lsdn_matched_al26_worst_pct = 14.482995458890587;
+constexpr double g3_lsdn_matched_c14_worst_pct  = 125.0;
+// Phase 5 real-atmosphere ERA40 fixture validation (measured 2026-07-28 on
+// geomag_era40_fixture_validation.csv, 15 fixture points). Measured values:
+//   max|dP| = 12.287954 hPa
+//   max|dP/Pstd| = 0.0175283
+//   Stone ratio(ERA40/std) = 0.925836 .. 1.088822
+// Frozen guards use a 1.25x margin on these measured extrema.
+constexpr double g4_real_max_abs_dp_hpa    = 15.359943;
+constexpr double g4_real_max_abs_rel_p     = 0.0219105;
+constexpr double g4_real_stone_ratio_lo    = 0.907295;
+constexpr double g4_real_stone_ratio_hi    = 1.111027;
 }
 
 // =============================================================================
@@ -5032,6 +5068,263 @@ void phase5_G2_invariants()
     }
 }
 
+// G3 (start) - full inversion comparison versus frozen CRONUS v3 Lm/LSDn rows.
+//
+// This extends the earlier production-level context checks into an inversion-level
+// comparison for both geomagnetic schemes. It is deliberately report-first while
+// the measured bands are being established: we assert successful, finite
+// inversion and coverage of both schemes in both age modes, and emit a plottable
+// CSV for freezing review.
+void phase5_G3_full_inversion_vs_cronus(const lsdtt::CrnNcData& nc_real,
+                                        const std::string& expected_dir,
+                                        const std::string& out_dir)
+{
+    if (!nc_real.loaded)
+    {
+        check("G3: full inversion vs CRONUS Lm/LSDn (SKIPPED - real nc not loaded)",
+              true);
+        return;
+    }
+
+    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
+    std::map<std::string, double> cronus;   // key: name|nuclide|scheme
+    if (!load_cronus_reference(ref_path, cronus))
+    {
+        std::cout << "NOTE  G3 skipped: no frozen CRONUS reference at "
+                  << ref_path << "\n";
+        check("G3: full inversion vs CRONUS Lm/LSDn (SKIPPED - reference not fetched)",
+              true);
+        return;
+    }
+
+    lsdtt::lsdtt_crn_parameters cp;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto samples = make_cronus_fixture_samples();
+    csv_writer csv(out_dir + "/cronus_comparison_geomag_full.csv",
+                   "name,nuclide,scheme,lat,elev_m,t_mode,t_yr,scaling,"
+                   "erate_lsdtt_gcm2yr,erate_cronus_gcm2yr,pct_diff,solve_status");
+
+    struct band_stats
+    {
+        double lo = 1e30, hi = -1e30, sum = 0.0, worst = 0.0;
+        int n = 0;
+        void add(double pct)
+        {
+            lo = std::min(lo, pct);
+            hi = std::max(hi, pct);
+            sum += pct;
+            worst = std::max(worst, std::abs(pct));
+            ++n;
+        }
+        double mean() const { return n ? sum / static_cast<double>(n) : 0.0; }
+    };
+    struct solve_counts
+    {
+        int ok = 0;
+        int no_solution = 0;
+    };
+
+    band_stats st_modern_lm, st_modern_lsdn, st_matched_lm, st_matched_lsdn;
+    std::map<std::string, band_stats> by_key;
+    std::map<std::string, solve_counts> counts_by_key;
+    int n_inversion_fail = 0;
+
+    const auto make_key = [](const char* scheme, const char* mode,
+                             const std::string& nuc_ref) -> std::string
+    {
+        return std::string(scheme) + "|" + mode + "|" + nuc_ref;
+    };
+    const auto guard_for = [](const char* scheme, const char* mode,
+                              const std::string& nuc_ref) -> double
+    {
+        const bool lm = std::string(scheme) == "Lm";
+        const bool modern = std::string(mode) == "modern";
+        if (lm && modern)
+        {
+            if (nuc_ref == "Be-10") return tol::g3_lm_modern_be10_worst_pct;
+            if (nuc_ref == "Al-26") return tol::g3_lm_modern_al26_worst_pct;
+            return tol::g3_lm_modern_c14_worst_pct;
+        }
+        if (lm && !modern)
+        {
+            if (nuc_ref == "Be-10") return tol::g3_lm_matched_be10_worst_pct;
+            if (nuc_ref == "Al-26") return tol::g3_lm_matched_al26_worst_pct;
+            return tol::g3_lm_matched_c14_worst_pct;
+        }
+        if (!lm && modern)
+        {
+            if (nuc_ref == "Be-10") return tol::g3_lsdn_modern_be10_worst_pct;
+            if (nuc_ref == "Al-26") return tol::g3_lsdn_modern_al26_worst_pct;
+            return tol::g3_lsdn_modern_c14_worst_pct;
+        }
+        if (nuc_ref == "Be-10") return tol::g3_lsdn_matched_be10_worst_pct;
+        if (nuc_ref == "Al-26") return tol::g3_lsdn_matched_al26_worst_pct;
+        return tol::g3_lsdn_matched_c14_worst_pct;
+    };
+
+    for (const auto& s : samples)
+    {
+        for (const std::pair<std::string, std::string>& nuc_case : {
+                 std::make_pair(std::string("Be10"), std::string("Be-10")),
+                 std::make_pair(std::string("Al26"), std::string("Al-26")),
+                 std::make_pair(std::string("C14"),  std::string("C-14"))})
+        {
+            const std::string nuc = nuc_case.first;
+            const std::string nuc_ref = nuc_case.second;
+            const double conc = (nuc == "Be10") ? s.conc_be10
+                               : (nuc == "Al26") ? s.conc_al26 : s.conc_c14;
+
+            for (const char* scheme : {"Lm", "LSDn"})
+            {
+                const auto it = cronus.find(s.name + "|" + nuc_ref + "|" + scheme);
+                if (it == cronus.end()) continue;
+
+                auto scaling_for = [&](double t_yr) -> double
+                {
+                    if (std::string(scheme) == "LSDn")
+                    {
+                        return cp.lsdn_scaling(nuc, s.lat, s.lon,
+                                               s.pressure_hPa, t_yr, nc_real);
+                    }
+                    return cp.stone2000sp_paleomag(s.lat, s.pressure_hPa, 1.0,
+                                                   t_yr, nc_real);
+                };
+
+                // pass 0: modern-field default (t=0)
+                const double sf0 = scaling_for(0.0);
+                ref_params p0 = ref_params_scaled("BraucherBorchers", nuc, sf0);
+                const double eps0 = ref_invert_erate(p0, conc);
+                if (!(eps0 > 0.0))
+                {
+                    counts_by_key[make_key(scheme, "modern", nuc_ref)].no_solution++;
+                    csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                            "modern", 0.0, sf0, nan, it->second, nan,
+                            "no_solution");
+                    counts_by_key[make_key(scheme, "matched", nuc_ref)].no_solution++;
+                    csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                            "matched", nan, nan, nan, it->second, nan,
+                            "no_solution");
+                    ++n_inversion_fail;
+                    continue;
+                }
+                const double pct0 = 100.0 * (it->second - eps0) / eps0;
+                if (std::string(scheme) == "Lm") st_modern_lm.add(pct0);
+                else                              st_modern_lsdn.add(pct0);
+                by_key[make_key(scheme, "modern", nuc_ref)].add(pct0);
+                counts_by_key[make_key(scheme, "modern", nuc_ref)].ok++;
+                csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                        "modern", 0.0, sf0, eps0, it->second, pct0,
+                        "ok");
+
+                // pass 1: matched age (t = Gamma_sp / eps0)
+                const double t_yr = p0.Gamma[0] / eps0;
+                const double sf1 = scaling_for(t_yr);
+                ref_params p1 = ref_params_scaled("BraucherBorchers", nuc, sf1);
+                const double eps1 = ref_invert_erate(p1, conc);
+                if (!(eps1 > 0.0))
+                {
+                    counts_by_key[make_key(scheme, "matched", nuc_ref)].no_solution++;
+                    csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                            "matched", t_yr, sf1, nan, it->second, nan,
+                            "no_solution");
+                    ++n_inversion_fail;
+                    continue;
+                }
+                const double pct1 = 100.0 * (it->second - eps1) / eps1;
+                if (std::string(scheme) == "Lm") st_matched_lm.add(pct1);
+                else                              st_matched_lsdn.add(pct1);
+                by_key[make_key(scheme, "matched", nuc_ref)].add(pct1);
+                counts_by_key[make_key(scheme, "matched", nuc_ref)].ok++;
+                csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                        "matched", t_yr, sf1, eps1, it->second, pct1,
+                        "ok");
+            }
+        }
+    }
+
+    const auto print_stats = [](const char* label, const band_stats& s)
+    {
+        std::cout << "        " << label << ": min " << s.lo << " max " << s.hi
+                  << " mean " << s.mean() << " worst|pct| " << s.worst
+                  << " over " << s.n << " rows\n";
+    };
+    std::cout << "      G3 full inversion vs CRONUS (pct diff = (CRONUS - lsdtt)/lsdtt):\n"
+              << std::setprecision(4);
+    print_stats("Lm, t=0", st_modern_lm);
+    print_stats("LSDn, t=0", st_modern_lsdn);
+    print_stats("Lm, t=Gamma/eps", st_matched_lm);
+    print_stats("LSDn, t=Gamma/eps", st_matched_lsdn);
+    std::cout << std::setprecision(17);
+
+    std::cout << "      G3 inversion no-solution rows (excluded from stats): "
+              << n_inversion_fail << "\n";
+    check("G3: Lm full inversion compared at t=0 and t=Gamma/eps",
+          st_modern_lm.n > 0 && st_matched_lm.n > 0,
+          "n_modern=" + std::to_string(st_modern_lm.n)
+              + " n_matched=" + std::to_string(st_matched_lm.n));
+    check("G3: LSDn full inversion compared at t=0 and t=Gamma/eps",
+          st_modern_lsdn.n > 0 && st_matched_lsdn.n > 0,
+          "n_modern=" + std::to_string(st_modern_lsdn.n)
+              + " n_matched=" + std::to_string(st_matched_lsdn.n));
+    check("G3: Lm modern-field inversion vs CRONUS within frozen guard",
+          st_modern_lm.n > 0
+              && st_modern_lm.worst < tol::g3_lm_modern_worst_pct,
+          "worst|pct|=" + std::to_string(st_modern_lm.worst)
+              + " (n=" + std::to_string(st_modern_lm.n) + ")");
+    check("G3: Lm matched-age inversion vs CRONUS within frozen guard",
+          st_matched_lm.n > 0
+              && st_matched_lm.worst < tol::g3_lm_matched_worst_pct,
+          "worst|pct|=" + std::to_string(st_matched_lm.worst)
+              + " (n=" + std::to_string(st_matched_lm.n) + ")");
+    check("G3: LSDn modern-field inversion vs CRONUS within frozen guard",
+          st_modern_lsdn.n > 0
+              && st_modern_lsdn.worst < tol::g3_lsdn_modern_worst_pct,
+          "worst|pct|=" + std::to_string(st_modern_lsdn.worst)
+              + " (n=" + std::to_string(st_modern_lsdn.n) + ")");
+    check("G3: LSDn matched-age inversion vs CRONUS within frozen guard",
+          st_matched_lsdn.n > 0
+              && st_matched_lsdn.worst < tol::g3_lsdn_matched_worst_pct,
+          "worst|pct|=" + std::to_string(st_matched_lsdn.worst)
+              + " (n=" + std::to_string(st_matched_lsdn.n) + ")");
+
+    for (const char* scheme : {"Lm", "LSDn"})
+    {
+        for (const char* mode : {"modern", "matched"})
+        {
+            for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
+            {
+                const std::string key = make_key(scheme, mode, nuc_ref);
+                const auto it_stat = by_key.find(key);
+                const auto it_cnt = counts_by_key.find(key);
+                const int n_ok = (it_cnt == counts_by_key.end()) ? 0 : it_cnt->second.ok;
+                const int n_no = (it_cnt == counts_by_key.end()) ? 0 : it_cnt->second.no_solution;
+                std::cout << "      G3 " << scheme << " " << mode << " " << nuc_ref
+                          << ": ok=" << n_ok << " no_solution=" << n_no;
+                if (it_stat != by_key.end())
+                    std::cout << " worst|pct|=" << it_stat->second.worst;
+                std::cout << "\n";
+
+                check(std::string("G3: ") + scheme + " " + mode + " " + nuc_ref
+                          + " has solved rows",
+                      it_stat != by_key.end() && it_stat->second.n > 0,
+                      "ok=" + std::to_string(n_ok) +
+                          " no_solution=" + std::to_string(n_no));
+
+                if (it_stat != by_key.end() && it_stat->second.n > 0)
+                {
+                    const double guard = guard_for(scheme, mode, nuc_ref);
+                    check(std::string("G3: ") + scheme + " " + mode + " " + nuc_ref
+                              + " within per-nuclide frozen guard",
+                          it_stat->second.worst < guard,
+                          "worst|pct|=" + std::to_string(it_stat->second.worst)
+                              + " guard=" + std::to_string(guard));
+                }
+            }
+        }
+    }
+    check("csv: cronus_comparison_geomag_full.csv written", csv.good());
+}
+
 // G4 - golden trajectories against the committed Knudsen VDM record.  These pin
 // OUR time-integrated Stone factor at a few (lat, pressure, age) triplets;
 // measured 2026-07-23 against data/crn_parameters.nc and frozen at tol::g4_golden.
@@ -5136,8 +5429,8 @@ void phase5_G4_golden_trajectories(const lsdtt::CrnNcData& nc_real,
 // match ours - CRONUS uses a different (Pavon-family) VDM record, so absolute
 // agreement is not expected and is NOT asserted (plan Sec6c).
 void phase5_G6c_equator_on_off(const lsdtt::CrnNcData& nc_real,
-                               const std::string& expected_dir,
-                               const std::string& out_dir)
+                                const std::string& expected_dir,
+                                const std::string& out_dir)
 {
     if (!nc_real.loaded)
     {
@@ -5201,6 +5494,97 @@ void phase5_G6c_equator_on_off(const lsdtt::CrnNcData& nc_real,
                   << std::setprecision(17);
     }
     check("csv: geomag_on_off_LSDTT1.csv written", csv.good());
+}
+
+// Phase 5 carry-forward item: real-atmosphere ERA40 validation beyond the
+// synthetic uniform-grid check. Uses the 15-sample fixture as a compact
+// latitude/elevation sweep, reports ERA40-vs-standard pressure and resulting
+// Stone scaling ratios, and asserts core physical behaviour.
+void phase5_G4_real_atmosphere_validation(const lsdtt::CrnNcData& nc_real,
+                                          const std::string& out_dir)
+{
+    if (!nc_real.loaded)
+    {
+        check("G4(real): ERA40 fixture validation (SKIPPED - real nc not loaded)",
+              true);
+        return;
+    }
+
+    lsdtt::lsdtt_crn_parameters cp;
+    const auto samples = make_cronus_fixture_samples();
+    csv_writer csv(out_dir + "/geomag_era40_fixture_validation.csv",
+                   "name,lat,lon,elev_m,pressure_standard_hPa,pressure_era40_hPa,"
+                   "dP_hPa,rel_pressure,stone_standard,stone_era40,ratio_stone");
+
+    bool finite_ok = true;
+    bool mono_ok = true;
+    double max_abs_dp = 0.0;
+    double max_abs_relp = 0.0;
+    double ratio_lo = 1e30, ratio_hi = -1e30, ratio_sum = 0.0;
+    int n = 0;
+
+    // One monotonicity tracker per fixture latitude (all three elevations at lon=0).
+    std::map<double, std::pair<double, double>> per_lat_last; // lat -> (last_elev,last_p)
+
+    for (const auto& s : samples)
+    {
+        const double p_std =
+            lsdtt::lsdtt_crn_parameters::atmospheric_pressure_standard(s.elev_m);
+        const double p_era =
+            lsdtt::lsdtt_crn_parameters::atmospheric_pressure_era40(
+                s.lat, s.lon, s.elev_m, nc_real);
+        const double dP = p_era - p_std;
+        const double relp = dP / p_std;
+
+        const double st_std = cp.stone2000sp(s.lat, p_std, 1.0);
+        const double st_era = cp.stone2000sp(s.lat, p_era, 1.0);
+        const double ratio = st_era / st_std;
+
+        if (!std::isfinite(p_era) || !(p_era > 0.0)
+            || !std::isfinite(ratio) || !(ratio > 0.0))
+            finite_ok = false;
+
+        auto it = per_lat_last.find(s.lat);
+        if (it != per_lat_last.end())
+        {
+            const double prev_e = it->second.first;
+            const double prev_p = it->second.second;
+            if (s.elev_m > prev_e && !(p_era < prev_p)) mono_ok = false;
+        }
+        per_lat_last[s.lat] = std::make_pair(s.elev_m, p_era);
+
+        max_abs_dp = std::max(max_abs_dp, std::abs(dP));
+        max_abs_relp = std::max(max_abs_relp, std::abs(relp));
+        ratio_lo = std::min(ratio_lo, ratio);
+        ratio_hi = std::max(ratio_hi, ratio);
+        ratio_sum += ratio;
+        ++n;
+
+        csv.row(s.name, s.lat, s.lon, s.elev_m, p_std, p_era,
+                dP, relp, st_std, st_era, ratio);
+    }
+
+    const double ratio_mean = (n > 0) ? ratio_sum / static_cast<double>(n) : 0.0;
+    std::cout << "      G4(real) ERA40 fixture validation: n=" << n
+              << " max|dP|=" << max_abs_dp << " hPa"
+              << " max|dP/Pstd|=" << max_abs_relp
+              << " Stone ratio range=" << ratio_lo << ".." << ratio_hi
+              << " mean=" << ratio_mean << "\n";
+
+    check("G4(real): ERA40 pressure/scaling finite and positive across fixture",
+          finite_ok && n == static_cast<int>(samples.size()));
+    check("G4(real): ERA40 pressure decreases with elevation at each fixture latitude",
+          mono_ok);
+    check("G4(real): ERA40-vs-standard pressure stays within frozen guard",
+          n > 0 && max_abs_dp < tol::g4_real_max_abs_dp_hpa
+              && max_abs_relp < tol::g4_real_max_abs_rel_p,
+          "max|dP|=" + std::to_string(max_abs_dp)
+              + " max|rel|=" + std::to_string(max_abs_relp));
+    check("G4(real): Stone scaling ratio(ERA40/std) stays within frozen guard",
+          n > 0 && ratio_lo > tol::g4_real_stone_ratio_lo
+              && ratio_hi < tol::g4_real_stone_ratio_hi,
+          "range=" + std::to_string(ratio_lo) + ".." + std::to_string(ratio_hi));
+    check("csv: geomag_era40_fixture_validation.csv written", csv.good());
 }
 
 // =============================================================================
@@ -7409,6 +7793,8 @@ int main(int argc, char** argv)
         // Phase 5: geomagnetic / time-varying production (G1-G4 + Sec6c(A)).
         phase5_G1_static_limits(crn_nc);
         phase5_G2_invariants();
+        phase5_G3_full_inversion_vs_cronus(crn_nc, expected_dir, out_dir);
+        phase5_G4_real_atmosphere_validation(crn_nc, out_dir);
         phase5_G4_golden_trajectories(crn_nc, out_dir, regenerate_g4);
         phase5_G6c_equator_on_off(crn_nc, expected_dir, out_dir);
 

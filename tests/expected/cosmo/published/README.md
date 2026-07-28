@@ -28,6 +28,10 @@ For each dataset `<name>`:
   (`--check`) is itself a cheap tracked regression check; it only needs
   regenerating when the code or the manifest changes (a reviewable event, like
   the CRONUS reference).
+- `<name>_riversand_summary.csv` — the **frozen** riversand cross-check summary
+  for the same dataset/sample subset, containing lsdtt vs riversand rates and
+  percent differences. This is produced by
+  `run_cosmo_riversand_comparison.py --freeze`.
 
 ## What NEVER lives here (large)
 
@@ -63,6 +67,32 @@ python3 tests/scripts/run_cosmo_validation.py dethier2014 --check \
 
 # offline harness self-test (cleanup trap + schema guards; in the default suite):
 python3 tests/scripts/run_cosmo_validation.py --self-test
+```
+
+### riversand cross-check harness (Phase 5 / §6c(B), not in CI)
+
+```
+# offline harness self-test:
+python3 tests/scripts/run_cosmo_riversand_comparison.py --self-test
+
+# built-in riversand mode (default): runs riversand + lsdtt-basin-extraction,
+# then checks against the frozen <dataset>_riversand_summary.csv
+python3 tests/scripts/run_cosmo_riversand_comparison.py dethier2014 \
+    --exe build/lsdtt-cosmo-tool --fetch-exe build/lsdtt-fetch-raster \
+    --samples S169WTS035
+
+# check/freeze using out-of-band riversand output CSV:
+python3 tests/scripts/run_cosmo_riversand_comparison.py dethier2014 \
+    --exe build/lsdtt-cosmo-tool --fetch-exe build/lsdtt-fetch-raster \
+    --samples S169WTS035 \
+    --riversand-csv /path/to/riversand_output.csv \
+    --riversand-key-col sample_name --riversand-rate-col riversand_erate_gcm2yr
+
+# or run riversand from the harness (command template with placeholders):
+python3 tests/scripts/run_cosmo_riversand_comparison.py dethier2014 \
+    --exe build/lsdtt-cosmo-tool --fetch-exe build/lsdtt-fetch-raster \
+    --samples S169WTS035 \
+    --riversand-cmd "python3 /path/to/run_riversand.py --dem {dem} --points {points} --out {outcsv}"
 ```
 
 ## Adding a dataset (fully data-driven, no code edits)
