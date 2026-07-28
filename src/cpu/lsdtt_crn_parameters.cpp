@@ -211,6 +211,58 @@ void lsdtt_crn_parameters::set_new_cronus_parameters()
 }
 
 // 
+void lsdtt_crn_parameters::set_balco_cronus_v3_parameters(double P_mbar)
+{
+    // Balco CRONUS v3 constants (get_ages_v3.m / make_consts_v3.m, 2024).
+    // This setter mirrors v3's single-exponential muon approximation directly:
+    // P_mu = Pmu0 * exp((1013.25 - p)/L_mu_atm),
+    // N_mu = P_mu / (lambda + epsilon / Lambda_mu(p)),
+    // Lambda_mu(p) = 1 / (0.01036 - 9.697e-6 * p).
+
+    // Decay constants: v3 values.
+    lambda_10Be_ = std::log(2.0) / 1.387e6;
+    lambda_26Al_ = 9.83e-7;
+    lambda_14C_  = std::log(2.0) / 5730.0;
+    lambda_36Cl_ = 230e-8;   // v3 does not define 36Cl; keep Braucher value.
+
+    // v3 SLHL spallation and muon surface production rates (atoms g^-1 yr^-1).
+    const double be10_sp = 4.086;
+    const double be10_mu = 0.07345;
+    const double al26_sp = 28.535;
+    const double al26_mu = 0.67644;
+    const double c14_sp  = 12.1;
+    const double c14_mu  = 3.06690;
+
+    P0_10Be_ = be10_sp + be10_mu;
+    P0_26Al_ = al26_sp + al26_mu;
+    P0_14C_  = c14_sp  + c14_mu;
+    P0_36Cl_ = 58.95;  // v3 has no 36Cl constants; keep Braucher value.
+
+    // v3's Lambda_mu expression has a singularity at ~1068 hPa.
+    // Clamp to a safe ceiling so Gamma_[1] stays finite and positive.
+    const double P_safe = std::min(P_mbar, 1050.0);
+    Gamma_[0] = 160.0;
+    Gamma_[1] = 1.0 / (0.01036 - 9.697e-6 * P_safe);
+    Gamma_[2] = 1.0;
+    Gamma_[3] = 1.0;
+
+    F_10Be_[0] = be10_sp / P0_10Be_;
+    F_10Be_[1] = be10_mu / P0_10Be_;
+    F_10Be_[2] = 0.0;
+    F_10Be_[3] = 0.0;
+
+    F_26Al_[0] = al26_sp / P0_26Al_;
+    F_26Al_[1] = al26_mu / P0_26Al_;
+    F_26Al_[2] = 0.0;
+    F_26Al_[3] = 0.0;
+
+    F_14C_[0]  = c14_sp / P0_14C_;
+    F_14C_[1]  = c14_mu / P0_14C_;
+    F_14C_[2]  = 0.0;
+    F_14C_[3]  = 0.0;
+}
+
+// 
 void lsdtt_crn_parameters::reset_scaling(const std::string& muon_scheme)
 {
     if      (muon_scheme == "Braucher")          set_braucher_parameters();
@@ -218,6 +270,7 @@ void lsdtt_crn_parameters::reset_scaling(const std::string& muon_scheme)
     else if (muon_scheme == "Granger")           set_granger_parameters();
     else if (muon_scheme == "Schaller")          set_schaller_parameters();
     else if (muon_scheme == "newCRONUS")         set_new_cronus_parameters();
+    else if (muon_scheme == "balcoCRONUSv3")     set_balco_cronus_v3_parameters();
     else
     {
         std::cout << "lsdtt_crn_parameters: unknown muon scheme \"" << muon_scheme

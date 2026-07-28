@@ -162,7 +162,8 @@ struct LsdnTimeAvgSurface
 //
 // Supported nuclides: Be10, Al26, C14
 // Supported muon schemes: "Braucher", "BraucherBorchers" (default),
-//                         "Granger", "Schaller", "newCRONUS"
+//                         "Granger", "Schaller", "newCRONUS",
+//                         "balcoCRONUSv3"
 // 
 class lsdtt_crn_parameters
 {
@@ -175,9 +176,11 @@ public:
     void set_granger_parameters();
     void set_schaller_parameters();
     void set_new_cronus_parameters();
+    void set_balco_cronus_v3_parameters(double P_mbar = 1013.25);
 
     // Selects scheme by name (case-sensitive: "Braucher", "BraucherBorchers",
-    // "Granger", "Schaller", "newCRONUS").  Falls back to BraucherBorchers.
+    // "Granger", "Schaller", "newCRONUS", "balcoCRONUSv3").
+    // Falls back to BraucherBorchers.
     void reset_scaling(const std::string& muon_scheme);
 
     //  Shielding / production scaling (Vermeesch 2007 virtual attenuation)

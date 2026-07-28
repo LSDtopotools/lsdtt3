@@ -268,6 +268,20 @@ constexpr double l13_atm_press_recovery_hPa = 16.433130;   // 1.25 x measured 13
 // too, on the same x[2, 0.5] rule as the pct median.  MEASURED +0.734254 hPa.
 constexpr double l13_atm_press_med_lo = 0.367127;   // 0.5 x measured +0.734254
 constexpr double l13_atm_press_med_hi = 1.468508;   // 2.0 x measured +0.734254
+// Muon-scheme isolation (measured-then-frozen 2026-07-28; muon plan M2d).
+// Percent residuals are 100*(model - reference)/reference over
+// p={700, 850, 1013.25} hPa x 200 log-spaced erosion rates in [1e-5, 1e-1].
+// These are regression guards on deterministic arithmetic, not accuracy claims.
+// Measured worst |pct| at first freeze:
+//   run B (v3 one-exp vs tabulated 1A):     81.7409
+//   run A (BraucherBorchers vs tabulated):  74.2028
+//   run A (newCRONUS vs tabulated):         78.9303
+constexpr double muon_run_b_worst_pct      = 85.0;
+constexpr double muon_run_a_bb_worst_pct   = 80.0;
+constexpr double muon_run_a_new_worst_pct  = 85.0;
+// run C identity (balco setter + Balco site split vs one-exp model):
+// measured worst |rel| = 5.03931e-16.
+constexpr double muon_run_c_identity_rel   = 1e-12;
 }
 
 // =============================================================================
@@ -1375,6 +1389,414 @@ bool load_cronus_reference(const std::string& ref_path,
         cronus[name + "|" + nuc + "|" + scheme] = std::stod(field);
     }
     return true;
+}
+
+struct balco_nmu_reference
+{
+    std::vector<double> p_hpa_axis;
+    std::vector<double> log10_erate_axis;
+    std::map<std::string, std::vector<double>> grid;   // iy*np + ix
+    std::string nmu_version;
+    std::size_t row_count = 0;
+};
+
+std::vector<std::string> split_csv_line(const std::string& line)
+{
+    std::vector<std::string> out;
+    std::string field;
+    std::istringstream ls(line);
+    while (std::getline(ls, field, ','))
+    {
+        while (!field.empty() && (field.back() == '\r' || field.back() == '\n'))
+            field.pop_back();
+        out.push_back(field);
+    }
+    return out;
+}
+
+bool parse_axis_comment(const std::string& line,
+                        const std::string& tag,
+                        std::vector<double>& out)
+{
+    const std::string prefix = "# " + tag + ":";
+    if (line.rfind(prefix, 0) != 0) return false;
+    std::string rest = line.substr(prefix.size());
+    while (!rest.empty() && rest.front() == ' ') rest.erase(rest.begin());
+    if (rest.empty()) return true;
+    const auto f = split_csv_line(rest);
+    for (const auto& s : f) out.push_back(std::stod(s));
+    return true;
+}
+
+bool load_balco_nmu_reference(const std::string& ref_path,
+                              balco_nmu_reference& ref)
+{
+    std::ifstream in(ref_path);
+    if (!in.good()) return false;
+
+    struct row_t { std::string nuclide; double p = 0.0, loge = 0.0, nmu = 0.0; };
+    std::vector<row_t> rows;
+
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty()) continue;
+        if (line[0] == '#')
+        {
+            parse_axis_comment(line, "p_hPa_axis_csv", ref.p_hpa_axis);
+            parse_axis_comment(line, "log10_erate_axis_csv", ref.log10_erate_axis);
+            const std::string vprefix = "# Nmu.version:";
+            if (line.rfind(vprefix, 0) == 0)
+            {
+                ref.nmu_version = line.substr(vprefix.size());
+                while (!ref.nmu_version.empty() && ref.nmu_version.front() == ' ')
+                    ref.nmu_version.erase(ref.nmu_version.begin());
+            }
+            continue;
+        }
+        if (line.rfind("nuclide,", 0) == 0) continue;
+        const auto f = split_csv_line(line);
+        if (f.size() != 4) continue;
+        row_t r;
+        r.nuclide = f[0];
+        r.p       = std::stod(f[1]);
+        r.loge    = std::stod(f[2]);
+        r.nmu     = std::stod(f[3]);
+        rows.push_back(r);
+    }
+
+    if (rows.empty()) return false;
+    if (ref.p_hpa_axis.size() < 2 || ref.log10_erate_axis.size() < 2) return false;
+
+    const std::size_t np = ref.p_hpa_axis.size();
+    const std::size_t ne = ref.log10_erate_axis.size();
+    const double p0 = ref.p_hpa_axis.front();
+    const double l0 = ref.log10_erate_axis.front();
+    const double dp = (ref.p_hpa_axis.back() - p0) / static_cast<double>(np - 1);
+    const double dl = (ref.log10_erate_axis.back() - l0) / static_cast<double>(ne - 1);
+    if (!(dp > 0.0) || !(dl > 0.0)) return false;
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+        ref.grid[nuc] = std::vector<double>(np * ne, nan);
+
+    for (const auto& r : rows)
+    {
+        auto it = ref.grid.find(r.nuclide);
+        if (it == ref.grid.end()) continue;
+        const long long ix = static_cast<long long>(std::llround((r.p - p0) / dp));
+        const long long iy = static_cast<long long>(std::llround((r.loge - l0) / dl));
+        if (ix < 0 || iy < 0 || ix >= static_cast<long long>(np)
+            || iy >= static_cast<long long>(ne))
+            return false;
+        const std::size_t idx = static_cast<std::size_t>(iy) * np
+                              + static_cast<std::size_t>(ix);
+        it->second[idx] = r.nmu;
+        ++ref.row_count;
+    }
+
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+    {
+        const auto it = ref.grid.find(nuc);
+        if (it == ref.grid.end()) return false;
+        for (double v : it->second)
+            if (!std::isfinite(v)) return false;
+    }
+    return true;
+}
+
+double bilinear_regular(const std::vector<double>& x_ax,
+                        const std::vector<double>& y_ax,
+                        const std::vector<double>& grid,
+                        double x, double y)
+{
+    const std::size_t nx = x_ax.size();
+    const std::size_t ny = y_ax.size();
+    const double x0 = x_ax.front();
+    const double y0 = y_ax.front();
+    const double dx = (x_ax.back() - x0) / static_cast<double>(nx - 1);
+    const double dy = (y_ax.back() - y0) / static_cast<double>(ny - 1);
+
+    auto frac = [](double a0, double step, std::size_t n, double v,
+                   std::size_t& i, double& f)
+    {
+        double t = (v - a0) / step;
+        if (t < 0.0) t = 0.0;
+        const double tmax = static_cast<double>(n - 1);
+        if (t > tmax) t = tmax;
+        i = std::min(static_cast<std::size_t>(std::floor(t)), n - 2);
+        f = t - static_cast<double>(i);
+    };
+
+    std::size_t ix = 0, iy = 0;
+    double fx = 0.0, fy = 0.0;
+    frac(x0, dx, nx, x, ix, fx);
+    frac(y0, dy, ny, y, iy, fy);
+
+    const auto at = [&](std::size_t jy, std::size_t jx) -> double
+    {
+        return grid[jy * nx + jx];
+    };
+    const double g00 = at(iy, ix);
+    const double g01 = at(iy, ix + 1);
+    const double g10 = at(iy + 1, ix);
+    const double g11 = at(iy + 1, ix + 1);
+    return (1.0 - fy) * ((1.0 - fx) * g00 + fx * g01)
+         + fy * ((1.0 - fx) * g10 + fx * g11);
+}
+
+double balco_nmu_tab(const balco_nmu_reference& ref,
+                     const std::string& nuclide,
+                     double p_hpa, double eps)
+{
+    const auto it = ref.grid.find(nuclide);
+    if (it == ref.grid.end()) return std::numeric_limits<double>::quiet_NaN();
+    return bilinear_regular(ref.p_hpa_axis,
+                            ref.log10_erate_axis,
+                            it->second,
+                            p_hpa,
+                            std::log10(eps));
+}
+
+double balco_nmu_exp(const std::string& nuclide, double p_hpa, double eps)
+{
+    double lambda = 0.0, Pmu0 = 0.0, L_mu_atm = 1.0;
+    if (nuclide == "Al26")
+    {
+        lambda = 9.83e-7;
+        Pmu0   = 0.67644;
+        L_mu_atm = 288.0;
+    }
+    else if (nuclide == "C14")
+    {
+        lambda = std::log(2.0) / 5730.0;
+        Pmu0   = 3.06690;
+        L_mu_atm = 267.8;
+    }
+    else
+    {
+        lambda = std::log(2.0) / 1.387e6;
+        Pmu0   = 0.07345;
+        L_mu_atm = 299.2;
+    }
+    const double P_mu = Pmu0 * std::exp((1013.25 - p_hpa) / L_mu_atm);
+    const double Lambda_mu = 1.0 / (0.01036 - 9.697e-6 * p_hpa);
+    return P_mu / (lambda + eps / Lambda_mu);
+}
+
+double lsdtt_nmu_from_scheme(const std::string& scheme,
+                             const std::string& nuclide,
+                             double eps)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+    cp.reset_scaling(scheme);
+
+    if (nuclide == "Al26")
+    {
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += cp.get_F_26Al(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_26Al());
+        return cp.get_P0_26Al() * sum;
+    }
+    if (nuclide == "C14")
+    {
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += cp.get_F_14C(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_14C());
+        return cp.get_P0_14C() * sum;
+    }
+
+    double sum = 0.0;
+    for (int j = 1; j < 4; ++j)
+        sum += cp.get_F_10Be(j) * cp.get_Gamma(j)
+             / (eps + cp.get_Gamma(j) * cp.get_lambda_10Be());
+    return cp.get_P0_10Be() * sum;
+}
+
+double lsdtt_nmu_balco_v3(const std::string& nuclide, double p_hpa, double eps)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+    cp.set_balco_cronus_v3_parameters(p_hpa);
+
+    const auto muon_scale = [&](double L_mu_atm)
+    {
+        return std::exp((1013.25 - p_hpa) / L_mu_atm);
+    };
+
+    if (nuclide == "Al26")
+    {
+        const double S1 = muon_scale(288.0);
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += (j == 1 ? S1 : 1.0) * cp.get_F_26Al(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_26Al());
+        return cp.get_P0_26Al() * sum;
+    }
+    if (nuclide == "C14")
+    {
+        const double S1 = muon_scale(267.8);
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += (j == 1 ? S1 : 1.0) * cp.get_F_14C(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_14C());
+        return cp.get_P0_14C() * sum;
+    }
+
+    const double S1 = muon_scale(299.2);
+    double sum = 0.0;
+    for (int j = 1; j < 4; ++j)
+        sum += (j == 1 ? S1 : 1.0) * cp.get_F_10Be(j) * cp.get_Gamma(j)
+             / (eps + cp.get_Gamma(j) * cp.get_lambda_10Be());
+    return cp.get_P0_10Be() * sum;
+}
+
+struct rel_stats
+{
+    double lo = 1e300;
+    double hi = -1e300;
+    double sum = 0.0;
+    double sum_sq = 0.0;
+    double worst_abs = 0.0;
+    int n = 0;
+
+    void add(double rel)
+    {
+        lo = std::min(lo, rel);
+        hi = std::max(hi, rel);
+        sum += rel;
+        sum_sq += rel * rel;
+        worst_abs = std::max(worst_abs, std::abs(rel));
+        ++n;
+    }
+
+    double mean() const { return n > 0 ? sum / static_cast<double>(n) : 0.0; }
+    double rms()  const
+    {
+        return n > 0 ? std::sqrt(sum_sq / static_cast<double>(n)) : 0.0;
+    }
+};
+
+void phase2_muon_inventory_comparison(const std::string& expected_dir,
+                                      const std::string& out_dir)
+{
+    const std::string ref_path = expected_dir + "/balco_v3_nmu_reference.csv";
+    balco_nmu_reference ref;
+    if (!load_balco_nmu_reference(ref_path, ref))
+    {
+        check("M2: Balco v3 Nmu reference present and readable", false,
+              "cannot read " + ref_path);
+        return;
+    }
+
+    const bool axis_ok =
+        ref.p_hpa_axis.size() == 20
+        && ref.log10_erate_axis.size() == 28
+        && approx_rel(ref.p_hpa_axis.front(), 450.0, 1e-12)
+        && approx_rel(ref.p_hpa_axis.back(), 1020.0, 1e-12)
+        && approx_rel(ref.log10_erate_axis.front(), -5.5686362358410122, 1e-12)
+        && approx_rel(ref.log10_erate_axis.back(), 0.43136376415898736, 1e-12)
+        && ref.row_count == 3u * 20u * 28u;
+    check("M2: Balco v3 Nmu fixture axes and row count", axis_ok,
+          "version=" + ref.nmu_version + ", rows=" + std::to_string(ref.row_count));
+
+    const std::vector<double> pressures = {700.0, 850.0, 1013.25};
+    const int n_eps = 200;
+    const double loge_min = -5.0;
+    const double loge_max = -1.0;
+
+    std::map<std::string, rel_stats> run_b, run_a_bb, run_a_new, run_c;
+
+    csv_writer csv(out_dir + "/muon_inventory_comparison.csv",
+                   "run,scheme,nuclide,p_hPa,epsilon_g_cm2_yr,log10_epsilon,"
+                   "n_model_atoms_g,n_reference_atoms_g,rel_diff");
+
+    for (const char* nuclide : {"Be10", "Al26", "C14"})
+    {
+        for (double p_hpa : pressures)
+        {
+            for (int i = 0; i < n_eps; ++i)
+            {
+                const double f = static_cast<double>(i)
+                               / static_cast<double>(n_eps - 1);
+                const double loge = loge_min + f * (loge_max - loge_min);
+                const double eps = std::pow(10.0, loge);
+
+                const double n_tab = balco_nmu_tab(ref, nuclide, p_hpa, eps);
+                const double n_exp = balco_nmu_exp(nuclide, p_hpa, eps);
+                const double n_bb  = lsdtt_nmu_from_scheme("BraucherBorchers", nuclide, eps);
+                const double n_new = lsdtt_nmu_from_scheme("newCRONUS", nuclide, eps);
+                const double n_bal = lsdtt_nmu_balco_v3(nuclide, p_hpa, eps);
+
+                const double rel_b = (n_exp - n_tab) / n_tab;
+                const double rel_a_bb = (n_bb - n_tab) / n_tab;
+                const double rel_a_new = (n_new - n_tab) / n_tab;
+                const double rel_c = (n_bal - n_exp) / n_exp;
+
+                run_b[nuclide].add(rel_b);
+                run_a_bb[nuclide].add(rel_a_bb);
+                run_a_new[nuclide].add(rel_a_new);
+                run_c[nuclide].add(rel_c);
+
+                csv.row("B", "balco_v3_1A", nuclide, p_hpa, eps, loge,
+                        n_exp, n_tab, rel_b);
+                csv.row("A", "BraucherBorchers", nuclide, p_hpa, eps, loge,
+                        n_bb, n_tab, rel_a_bb);
+                csv.row("A", "newCRONUS", nuclide, p_hpa, eps, loge,
+                        n_new, n_tab, rel_a_new);
+                csv.row("C", "balcoCRONUSv3", nuclide, p_hpa, eps, loge,
+                        n_bal, n_exp, rel_c);
+            }
+        }
+    }
+
+    auto print_stats = [](const std::string& label,
+                          const std::map<std::string, rel_stats>& m)
+    {
+        std::cout << "      " << label << " (rel diff model-ref):\n"
+                  << std::setprecision(6);
+        for (const char* nuclide : {"Be10", "Al26", "C14"})
+        {
+            const auto it = m.find(nuclide);
+            if (it == m.end()) continue;
+            const rel_stats& s = it->second;
+            std::cout << "        " << nuclide
+                      << "  min " << s.lo << "  max " << s.hi
+                      << "  mean " << s.mean() << "  rms " << s.rms()
+                      << "  worst|rel| " << s.worst_abs
+                      << "  n=" << s.n << "\n";
+        }
+        std::cout << std::setprecision(17);
+    };
+
+    print_stats("M3 run B: N_exp vs N_tab", run_b);
+    print_stats("M4 run A: N_lsd vs N_tab (BraucherBorchers)", run_a_bb);
+    print_stats("M4 run A: N_lsd vs N_tab (newCRONUS)", run_a_new);
+    print_stats("M5 run C: N_lsd(balco setter) vs N_exp", run_c);
+
+    double worst_b = 0.0, worst_a_bb = 0.0, worst_a_new = 0.0, worst_c = 0.0;
+    for (const char* nuclide : {"Be10", "Al26", "C14"})
+    {
+        worst_b = std::max(worst_b, run_b[nuclide].worst_abs);
+        worst_a_bb = std::max(worst_a_bb, run_a_bb[nuclide].worst_abs);
+        worst_a_new = std::max(worst_a_new, run_a_new[nuclide].worst_abs);
+        worst_c = std::max(worst_c, run_c[nuclide].worst_abs);
+    }
+
+    check("M3: run B within frozen band (v3 one-exp vs tabulated 1A)",
+          100.0 * worst_b < tol::muon_run_b_worst_pct,
+          "worst|pct|=" + std::to_string(100.0 * worst_b));
+    check("M4: run A BraucherBorchers within frozen band (lsdtt vs tabulated 1A)",
+          100.0 * worst_a_bb < tol::muon_run_a_bb_worst_pct,
+          "worst|pct|=" + std::to_string(100.0 * worst_a_bb));
+    check("M4: run A newCRONUS within frozen band (lsdtt vs tabulated 1A)",
+          100.0 * worst_a_new < tol::muon_run_a_new_worst_pct,
+          "worst|pct|=" + std::to_string(100.0 * worst_a_new));
+    check("M5: run C identity (balco setter vs one-exp model)",
+          worst_c < tol::muon_run_c_identity_rel,
+          "worst|rel|=" + std::to_string(worst_c));
+    check("csv: muon_inventory_comparison.csv written", csv.good());
 }
 
 // T-C2 / T-C4 - comparison against the FROZEN CRONUS v3 reference
@@ -6531,6 +6953,7 @@ int main(int argc, char** argv)
         const auto slash = sentinel_path.find_last_of("/\\");
         if (slash != std::string::npos)
             expected_dir = sentinel_path.substr(0, slash);
+        phase2_muon_inventory_comparison(expected_dir, out_dir);
         phase3_TC3_stone_pins();
         phase3_TC1_site_curve(out_dir);
         phase3_write_cronus_fixture(out_dir);
