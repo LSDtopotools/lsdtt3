@@ -908,6 +908,48 @@ Stone (2000) pins — tight, near-exact) and **T-C4** (newCRONUS mode vs
 CRONUScalc/v3, expected < 2–5 %; folded into the T-C2 machinery and enabled by
 adding a newCRONUS concentration column to the fixture).
 
+#### Muon-scheme isolation decomposition (M7, 2026-07-28)
+
+The Phase-3 harness `phase8_muon_isolation_comparison()` adds the end-to-end
+decomposition requested in `muon_scheme_isolation_plan.md`: same 15-sample
+fixture, age-matched inversion (`t = Γ_sp/ε`), compared against the frozen
+CRONUS v3 **St** and **LSDn** columns, and emitted as
+`muon_isolation_comparison.csv`.
+
+Reported sign is `100*(CRONUS - lsdtt)/lsdtt`.
+
+The CSV now carries explicit solve diagnostics per row:
+`solve_status`, `hit_lower_bound`, `hit_upper_bound`, `eps0_gcm2yr`.
+That makes bracket-limited rows machine-identifiable instead of inferring them
+from huge percentages.
+
+| variant | nuclide | min % | max % | mean % | n |
+|---|---:|---:|---:|---:|---:|
+| `bb_vermeesch` | Be-10 | +1.82 | +12.27 | +5.032 | 30 |
+| `bb_vermeesch` | Al-26 | -1.827 | +11.59 | +3.056 | 30 |
+| `balco_v3_vermeesch` | Be-10 | -0.110 | +3.57e9 | +3.02e8 | 30 |
+| `balco_v3_vermeesch` | Al-26 | -1.051 | +3.48e9 | +2.95e8 | 30 |
+| `balco_v3_balco_site` | Be-10 | +1.009 | +20.94 | +6.745 | 30 |
+| `balco_v3_balco_site` | Al-26 | +0.514 | +22.74 | +7.150 | 30 |
+
+The `balco_v3_vermeesch` blow-up is a real measured behaviour, not a formatting
+error: in several high-elevation/high-erosion rows the inversion collapses to the
+lower bisection bracket (`ε = 1e-9`), giving order-`1e9` percent residuals. That
+is exactly the decomposition signal: with Balco's constants but Vermeesch-style
+pathway redistribution, the site-scaling term (D) dominates and can make the
+point inversion physically unusable. Switching only the site rule to Balco's
+split (`balco_v3_balco_site`) removes the collapse and brings residuals back to
+order-10 %. This is why the decomposition records all three variants side by
+side, rather than tuning one toward zero.
+
+On the first tightened run (2026-07-28), `balco_v3_vermeesch` has **16**
+`bound_limited_low` rows (all at 3000 m sites), and all other rows are interior
+`ok`; `no_solution` rows are zero.
+
+For review diffs, `tests/scripts/summarize_muon_isolation.py` reads
+`muon_isolation_comparison.csv` and prints stable per-variant/per-nuclide counts
+plus all-row and interior-only min/max/mean summaries.
+
 ### 7.5 Geomagnetic correction — no published benchmark
 
 The Muscheler-VDM + ERA40 machinery (`crn_nc_file` + `sample_age_yr`) is
