@@ -291,6 +291,7 @@ constexpr double muon_run_c_identity_rel   = 1e-12;
 constexpr double muon_run_e_bb_worst_pct = 15.0;
 constexpr double muon_run_e_vv_worst_pct = 4.0e9;
 constexpr double muon_run_e_bs_worst_pct = 30.0;
+constexpr double muon_run_e_fit_worst_pct = 30.0;
 }
 
 // =============================================================================
@@ -1319,7 +1320,7 @@ struct cronus_fixture_sample
     std::string name;
     double lat, lon, elev_m, pressure_hPa, stone_factor;
     double erate_gcm2yr;
-    double conc_be10, conc_al26;
+    double conc_be10, conc_al26, conc_c14;
 };
 
 std::vector<cronus_fixture_sample> make_cronus_fixture_samples()
@@ -1350,8 +1351,11 @@ std::vector<cronus_fixture_sample> make_cronus_fixture_samples()
                 ref_params_scaled("BraucherBorchers", "Be10", s.stone_factor);
             const ref_params p26 =
                 ref_params_scaled("BraucherBorchers", "Al26", s.stone_factor);
+            const ref_params p14 =
+                ref_params_scaled("BraucherBorchers", "C14", s.stone_factor);
             s.conc_be10 = ref_conc_surface(p10, s.erate_gcm2yr, 0.0);
             s.conc_al26 = ref_conc_surface(p26, s.erate_gcm2yr, 0.0);
+            s.conc_c14  = ref_conc_surface(p14, s.erate_gcm2yr, 0.0);
             out.push_back(s);
             ++k;
         }
@@ -1364,11 +1368,13 @@ void phase3_write_cronus_fixture(const std::string& out_dir)
     const auto samples = make_cronus_fixture_samples();
     csv_writer csv(out_dir + "/cronus_fixture_samples.csv",
                    "name,lat,lon,elev_m,pressure_hPa,stone_factor,"
-                   "erate_gcm2yr,conc_Be10_07KNSTD,conc_Al26_KNSTD");
+                   "erate_gcm2yr,conc_Be10_07KNSTD,conc_Al26_KNSTD,"
+                   "conc_C14_C14STD");
     for (const auto& s : samples)
     {
         csv.row(s.name, s.lat, s.lon, s.elev_m, s.pressure_hPa,
-                s.stone_factor, s.erate_gcm2yr, s.conc_be10, s.conc_al26);
+                s.stone_factor, s.erate_gcm2yr,
+                s.conc_be10, s.conc_al26, s.conc_c14);
     }
     check("T-C2: cronus_fixture_samples.csv written ("
               + std::to_string(samples.size()) + " samples)",
@@ -2490,6 +2496,7 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
     csv_writer csv(out_dir + "/muon_isolation_comparison.csv",
                    "name,nuclide,scheme,lat,elev_m,t_yr,"
                    "erate_lsdtt,erate_cronus,pct_diff,variant,"
+                   "variant_description,"
                    "solve_status,hit_lower_bound,hit_upper_bound,eps0_gcm2yr");
 
     struct band_stats
@@ -2598,21 +2605,48 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
 
     for (const auto& s : samples)
     {
-        for (int inuc = 0; inuc < 2; ++inuc)
+        for (const std::pair<std::string, std::string>& nuc_case : {
+                 std::make_pair(std::string("Be10"), std::string("Be-10")),
+                 std::make_pair(std::string("Al26"), std::string("Al-26")),
+                 std::make_pair(std::string("C14"),  std::string("C-14"))})
         {
-            const std::string nuc = (inuc == 0) ? "Be10" : "Al26";
-            const std::string nuc_ref = (inuc == 0) ? "Be-10" : "Al-26";
-            const double conc = (inuc == 0) ? s.conc_be10 : s.conc_al26;
+            const std::string nuc = nuc_case.first;
+            const std::string nuc_ref = nuc_case.second;
+
+            double conc = nan;
+            if (nuc == "Be10") conc = s.conc_be10;
+            else if (nuc == "Al26") conc = s.conc_al26;
+            else conc = s.conc_c14;
 
             for (const char* scheme : {"St", "LSDn"})
             {
+                bool has_cronus_ref = false;
+                double erate_cronus = nan;
                 const auto it = cronus.find(s.name + "|" + nuc_ref + "|" + scheme);
-                if (it == cronus.end()) continue;
+                if (it != cronus.end())
+                {
+                    has_cronus_ref = true;
+                    erate_cronus = it->second;
+                }
+                else if (nuc_ref != "C-14")
+                {
+                    continue;
+                }
 
                 for (const char* variant : {"bb_vermeesch",
                                             "balco_v3_vermeesch",
-                                            "balco_v3_balco_site"})
+                                            "balco_v3_balco_site",
+                                            "balco_1A_fit_balco_site"})
                 {
+                    const std::string variant_desc =
+                        (std::string(variant) == "bb_vermeesch")
+                            ? "BraucherBorchers + Vermeesch redistribution"
+                        : (std::string(variant) == "balco_v3_vermeesch")
+                            ? "Balco v3 setter + Vermeesch redistribution"
+                        : (std::string(variant) == "balco_v3_balco_site")
+                            ? "Balco v3 setter + Balco split site scaling"
+                            : "Balco 1A fit setter + Balco split site scaling";
+
                     auto spall_scaling = [&](double t_yr) -> double
                     {
                         if (std::string(scheme) == "LSDn")
@@ -2635,7 +2669,10 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
                             return extract_params(cp, nuc);
                         }
 
-                        cp.set_balco_cronus_v3_parameters(s.pressure_hPa);
+                        if (std::string(variant) == "balco_1A_fit_balco_site")
+                            cp.set_balco_1A_fit_parameters();
+                        else
+                            cp.set_balco_cronus_v3_parameters(s.pressure_hPa);
                         ref_params p = extract_params(cp, nuc);
 
                         if (std::string(variant) == "balco_v3_vermeesch")
@@ -2678,15 +2715,16 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
                     else if (st.tag == "bound_limited_high") ++cnt.high;
                     else ++cnt.no_solution;
 
-                    if (st.valid)
+                    if (st.valid && has_cronus_ref)
                     {
-                        pct = 100.0 * (it->second - eps) / eps;
+                        pct = 100.0 * (erate_cronus - eps) / eps;
                         by_key_all[key].add(pct);
                         if (st.interior) by_key_interior[key].add(pct);
                     }
 
                     csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
-                            t_yr, eps, it->second, pct, variant,
+                            t_yr, eps, erate_cronus, pct, variant,
+                            variant_desc,
                             st.tag, st.hit_low, st.hit_high, eps0);
                 }
             }
@@ -2695,34 +2733,45 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
 
     const auto print_variant = [&](const std::string& variant)
     {
-        for (const char* nuc_ref : {"Be-10", "Al-26"})
+        for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
         {
             const std::string key = variant + "|" + nuc_ref;
-            const auto it = by_key_all.find(key);
-            if (it == by_key_all.end()) continue;
-            const band_stats& st = it->second;
             const solve_counts c = counts_by_key[key];
-            std::cout << "      M7 " << variant << " " << nuc_ref
-                      << ": min " << std::setprecision(4) << st.lo
-                      << " max " << st.hi
-                      << " mean " << st.mean()
-                      << " over " << st.n << " solved rows"
-                      << " [ok=" << c.ok
-                      << ", lo=" << c.low
-                      << ", hi=" << c.high
-                      << ", none=" << c.no_solution << "]\n"
-                      << std::setprecision(17);
-
-            const auto iti = by_key_interior.find(key);
-            if (iti != by_key_interior.end())
+            const auto it = by_key_all.find(key);
+            if (it != by_key_all.end())
             {
-                const band_stats& si = iti->second;
-                std::cout << "        interior-only: min "
-                          << std::setprecision(4) << si.lo
-                          << " max " << si.hi
-                          << " mean " << si.mean()
-                          << " over " << si.n << " rows\n"
+                const band_stats& st = it->second;
+                std::cout << "      M7 " << variant << " " << nuc_ref
+                          << ": min " << std::setprecision(4) << st.lo
+                          << " max " << st.hi
+                          << " mean " << st.mean()
+                          << " over " << st.n << " solved rows"
+                          << " [ok=" << c.ok
+                          << ", lo=" << c.low
+                          << ", hi=" << c.high
+                          << ", none=" << c.no_solution << "]\n"
                           << std::setprecision(17);
+
+                const auto iti = by_key_interior.find(key);
+                if (iti != by_key_interior.end())
+                {
+                    const band_stats& si = iti->second;
+                    std::cout << "        interior-only: min "
+                              << std::setprecision(4) << si.lo
+                              << " max " << si.hi
+                              << " mean " << si.mean()
+                              << " over " << si.n << " rows\n"
+                              << std::setprecision(17);
+                }
+            }
+            else if (c.total() > 0)
+            {
+                std::cout << "      M7 " << variant << " " << nuc_ref
+                          << ": no CRONUS comparator in frozen reference"
+                          << " [ok=" << c.ok
+                          << ", lo=" << c.low
+                          << ", hi=" << c.high
+                          << ", none=" << c.no_solution << "]\n";
             }
         }
     };
@@ -2730,25 +2779,53 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
     print_variant("bb_vermeesch");
     print_variant("balco_v3_vermeesch");
     print_variant("balco_v3_balco_site");
+    print_variant("balco_1A_fit_balco_site");
 
-    double worst_bb = 0.0, worst_vv = 0.0, worst_bs = 0.0;
+    double worst_bb = 0.0, worst_vv = 0.0, worst_bs = 0.0, worst_fit = 0.0;
     int vv_bound_low = 0;
     int n_no_solution = 0;
-    for (const char* nuc_ref : {"Be-10", "Al-26"})
+    for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
     {
         const std::string key_bb = std::string("bb_vermeesch|") + nuc_ref;
         const std::string key_vv = std::string("balco_v3_vermeesch|") + nuc_ref;
         const std::string key_bs = std::string("balco_v3_balco_site|") + nuc_ref;
-        worst_bb = std::max(worst_bb,
-                            by_key_all[key_bb].worst);
-        worst_vv = std::max(worst_vv,
-                            by_key_all[key_vv].worst);
-        worst_bs = std::max(worst_bs,
-                            by_key_all[key_bs].worst);
-        vv_bound_low += counts_by_key[key_vv].low;
-        n_no_solution += counts_by_key[key_bb].no_solution
-                      + counts_by_key[key_vv].no_solution
-                      + counts_by_key[key_bs].no_solution;
+        const std::string key_fit = std::string("balco_1A_fit_balco_site|") + nuc_ref;
+        if (nuc_ref != std::string("C-14"))
+        {
+            worst_bb = std::max(worst_bb,
+                                by_key_all[key_bb].worst);
+            worst_vv = std::max(worst_vv,
+                                by_key_all[key_vv].worst);
+            worst_bs = std::max(worst_bs,
+                                by_key_all[key_bs].worst);
+            worst_fit = std::max(worst_fit,
+                                 by_key_all[key_fit].worst);
+            vv_bound_low += counts_by_key[key_vv].low;
+        }
+        if (nuc_ref != std::string("C-14"))
+        {
+            n_no_solution += counts_by_key[key_bb].no_solution
+                          + counts_by_key[key_vv].no_solution
+                          + counts_by_key[key_bs].no_solution
+                          + counts_by_key[key_fit].no_solution;
+        }
+    }
+
+    const int expected_rows_per_nuclide = static_cast<int>(samples.size()) * 2;
+    for (const char* variant : {"bb_vermeesch",
+                                "balco_v3_vermeesch",
+                                "balco_v3_balco_site",
+                                "balco_1A_fit_balco_site"})
+    {
+        const std::string key_c14 = std::string(variant) + "|C-14";
+        const solve_counts c14 = counts_by_key[key_c14];
+        check(std::string("M7: C-14 coverage rows recorded for ") + variant,
+              c14.total() == expected_rows_per_nuclide,
+              "rows=" + std::to_string(c14.total())
+              + " expected=" + std::to_string(expected_rows_per_nuclide));
+        check(std::string("M7: C-14 has at least one interior solve for ") + variant,
+              c14.ok > 0,
+              "ok rows=" + std::to_string(c14.ok));
     }
 
     check("M7: every row either solved or explicitly classified in CSV status",
@@ -2764,6 +2841,9 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
     check("M7: balco_v3_balco_site inside wide regression guard",
           worst_bs < tol::muon_run_e_bs_worst_pct,
           "worst|pct|=" + std::to_string(worst_bs));
+    check("M7: balco_1A_fit_balco_site inside wide regression guard",
+          worst_fit < tol::muon_run_e_fit_worst_pct,
+          "worst|pct|=" + std::to_string(worst_fit));
     check("M7: balco_v3_vermeesch exposes bound-limited-low rows "
           "(term D dominates under Vermeesch redistribution)",
           vv_bound_low > 0,

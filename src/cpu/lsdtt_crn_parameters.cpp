@@ -263,6 +263,62 @@ void lsdtt_crn_parameters::set_balco_cronus_v3_parameters(double P_mbar)
 }
 
 // 
+void lsdtt_crn_parameters::set_balco_1A_fit_parameters()
+{
+    // Three-exponential fit to Balco v3 tabulated model-1A muon inventory.
+    // Fit script/report: python_helpers/fit_balco_1A_exponentials.py,
+    // tests/expected/cosmo/balco_1A_exp_fit_report.csv (2026-07-28).
+    // Fitted shared muon terms (all nuclides):
+    //   muon split ratio to Gamma[1] = 0.90416523765093271
+    //   Gamma[1] = 1560.6559641830763 g cm^-2
+    //   Gamma[2] = 17133.604883282504 g cm^-2
+    // with Gamma[3]=1.0 and F[3]=0.0.  Site scaling split (Stone/LSDn on
+    // spallation, exp((1013.25-p)/L_mu_atm) on muons) is applied by callers.
+
+    lambda_10Be_ = std::log(2.0) / 1.387e6;
+    lambda_26Al_ = 9.83e-7;
+    lambda_14C_  = std::log(2.0) / 5730.0;
+    lambda_36Cl_ = 230e-8;   // v3 does not define 36Cl; keep Braucher value.
+
+    const double be10_sp = 4.086;
+    const double be10_mu = 0.07345;
+    const double al26_sp = 28.535;
+    const double al26_mu = 0.67644;
+    const double c14_sp  = 12.1;
+    const double c14_mu  = 3.06690;
+
+    P0_10Be_ = be10_sp + be10_mu;
+    P0_26Al_ = al26_sp + al26_mu;
+    P0_14C_  = c14_sp  + c14_mu;
+    P0_36Cl_ = 58.95;
+
+    Gamma_[0] = 160.0;
+    Gamma_[1] = 1560.6559641830763;
+    Gamma_[2] = 17133.604883282504;
+    Gamma_[3] = 1.0;
+
+    const double mu_split = 0.90416523765093271;
+
+    const double be10_fmu = be10_mu / P0_10Be_;
+    F_10Be_[0] = be10_sp / P0_10Be_;
+    F_10Be_[1] = be10_fmu * mu_split;
+    F_10Be_[2] = be10_fmu * (1.0 - mu_split);
+    F_10Be_[3] = 0.0;
+
+    const double al26_fmu = al26_mu / P0_26Al_;
+    F_26Al_[0] = al26_sp / P0_26Al_;
+    F_26Al_[1] = al26_fmu * mu_split;
+    F_26Al_[2] = al26_fmu * (1.0 - mu_split);
+    F_26Al_[3] = 0.0;
+
+    const double c14_fmu = c14_mu / P0_14C_;
+    F_14C_[0] = c14_sp / P0_14C_;
+    F_14C_[1] = c14_fmu * mu_split;
+    F_14C_[2] = c14_fmu * (1.0 - mu_split);
+    F_14C_[3] = 0.0;
+}
+
+// 
 void lsdtt_crn_parameters::reset_scaling(const std::string& muon_scheme)
 {
     if      (muon_scheme == "Braucher")          set_braucher_parameters();

@@ -177,6 +177,7 @@ public:
     void set_schaller_parameters();
     void set_new_cronus_parameters();
     void set_balco_cronus_v3_parameters(double P_mbar = 1013.25);
+    void set_balco_1A_fit_parameters();
 
     // Selects scheme by name (case-sensitive: "Braucher", "BraucherBorchers",
     // "Granger", "Schaller", "newCRONUS", "balcoCRONUSv3").

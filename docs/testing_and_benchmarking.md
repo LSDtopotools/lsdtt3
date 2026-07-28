@@ -923,14 +923,34 @@ The CSV now carries explicit solve diagnostics per row:
 That makes bracket-limited rows machine-identifiable instead of inferring them
 from huge percentages.
 
+Nuclide coverage is now Be-10, Al-26, and C-14. The frozen
+`cronus_v3_reference.csv` now includes C-14 rows (fetched 2026-07-28), so the
+percent-difference table includes all three nuclides.
+
+Variant naming in this table/CSV:
+
+- `bb_vermeesch` = **BraucherBorchers** constants (`bb`) + Vermeesch pathway
+  redistribution (`scale_F_values`).
+- `balco_v3_vermeesch` = Balco-v3 setter constants + Vermeesch redistribution.
+- `balco_v3_balco_site` = Balco-v3 setter constants + Balco split site rule
+  (`S[0]=Stone/LSDn`, `S[1]=exp((1013.25-p)/L_mu_atm)`).
+- `balco_1A_fit_balco_site` = fitted-1A setter constants + Balco split site
+  rule.
+
 | variant | nuclide | min % | max % | mean % | n |
 |---|---:|---:|---:|---:|---:|
 | `bb_vermeesch` | Be-10 | +1.82 | +12.27 | +5.032 | 30 |
 | `bb_vermeesch` | Al-26 | -1.827 | +11.59 | +3.056 | 30 |
+| `bb_vermeesch` | C-14 | -100 | +831.13 | -15.166 | 30 |
 | `balco_v3_vermeesch` | Be-10 | -0.110 | +3.57e9 | +3.02e8 | 30 |
 | `balco_v3_vermeesch` | Al-26 | -1.051 | +3.48e9 | +2.95e8 | 30 |
+| `balco_v3_vermeesch` | C-14 | -100 | +2.45e9 | +2.47e8 | 30 |
 | `balco_v3_balco_site` | Be-10 | +1.009 | +20.94 | +6.745 | 30 |
 | `balco_v3_balco_site` | Al-26 | +0.514 | +22.74 | +7.150 | 30 |
+| `balco_v3_balco_site` | C-14 | -41.39 | +9.239 | -7.231 | 30 |
+| `balco_1A_fit_balco_site` | Be-10 | -2.316 | +5.226 | +0.695 | 30 |
+| `balco_1A_fit_balco_site` | Al-26 | -3.858 | +7.606 | +1.056 | 30 |
+| `balco_1A_fit_balco_site` | C-14 | -42.65 | +25.37 | -5.302 | 30 |
 
 The `balco_v3_vermeesch` blow-up is a real measured behaviour, not a formatting
 error: in several high-elevation/high-erosion rows the inversion collapses to the
@@ -939,16 +959,30 @@ is exactly the decomposition signal: with Balco's constants but Vermeesch-style
 pathway redistribution, the site-scaling term (D) dominates and can make the
 point inversion physically unusable. Switching only the site rule to Balco's
 split (`balco_v3_balco_site`) removes the collapse and brings residuals back to
-order-10 %. This is why the decomposition records all three variants side by
-side, rather than tuning one toward zero.
+order-10 %. This is why the decomposition records the three baseline variants
+(and now the optional fitted fourth variant) side by side, rather than tuning
+one toward zero.
 
 On the first tightened run (2026-07-28), `balco_v3_vermeesch` has **16**
-`bound_limited_low` rows (all at 3000 m sites), and all other rows are interior
-`ok`; `no_solution` rows are zero.
+`bound_limited_low` rows in the Be-10/Al-26 decomposition (all at 3000 m sites),
+and no Be-10/Al-26 `no_solution` rows. C-14 adds expected saturation-driven
+`no_solution`/`-100 %` rows where CRONUS reports zero erosion under some scheme
+combinations.
 
 For review diffs, `tests/scripts/summarize_muon_isolation.py` reads
 `muon_isolation_comparison.csv` and prints stable per-variant/per-nuclide counts
 plus all-row and interior-only min/max/mean summaries.
+
+Phase-4 optional fit status (2026-07-28):
+
+- Fit report frozen at `tests/expected/cosmo/balco_1A_exp_fit_report.csv`
+  (`r=0.90416523765093271`, `Gamma1=1560.6559641830763`,
+  `Gamma2=17133.604883282504`).
+- The fitted variant is accepted under the plan gate because its run-E worst case
+  (`+7.606 %`) is below run-B worst (`81.7409 %`).
+- Wide regression guards now include
+  `muon_run_e_bb_worst_pct=15.0`, `muon_run_e_vv_worst_pct=4.0e9`,
+  `muon_run_e_bs_worst_pct=30.0`, `muon_run_e_fit_worst_pct=30.0`.
 
 ### 7.5 Geomagnetic correction — no published benchmark
 
