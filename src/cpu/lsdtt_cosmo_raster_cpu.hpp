@@ -195,6 +195,34 @@ struct MultiNuclideRasters
     lsdtt_raster_cpu C14;
 };
 
+//  Multi-isotope ARBITRARY erosion history (whole raster)
+// The three nuclides carried through a user-supplied erosion history at every
+// pixel -- the general case of which the step-change kernel below is the
+// two-row special case. The history is uniform in time across the raster; what
+// varies per pixel is the production scaling and shielding.
+//
+// The history walk itself is NOT reimplemented here: each pixel calls
+// lsdtt_crn_column::run_transient, which is the same code the column tool
+// drives and is pinned against step_change by test T1. A raster kernel with its
+// own copy of the walk would be a second implementation of the same physics,
+// which is the failure mode this codebase has already been bitten by twice.
+//
+// column must already carry the erosion history (set_erosion_time_series or
+// read_erosion_time_series). Its rock density is used for the depth conversion.
+// sampling_depth_m is the depth below the CURRENT surface to report, normally 0.
+//
+// COST: every pixel walks the whole history, so this is O(n_pixels x n_steps)
+// and is far more expensive than the step-change kernel. That is inherent, not
+// an implementation shortcoming -- an arbitrary history has no closed form.
+class lsdtt_crn_column;   // fwd decl; defined in lsdtt_crn_column.hpp
+
+MultiNuclideRasters calculate_crn_concentration_raster_transient_multi(
+    const std::string&      muon_scheme,
+    const lsdtt_crn_column& column,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  sampling_depth_m = 0.0);
+
 MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
     const std::string&      muon_scheme,
     const lsdtt_raster_cpu& time_since_change,

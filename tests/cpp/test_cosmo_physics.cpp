@@ -63,6 +63,8 @@
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_crn_parameters.hpp"
 #include "lsdtt_crn_column.hpp"
+#include "lsdtt_crn_diagnostics.hpp"
+#include "lsdtt_crn_particle.hpp"
 #include "lsdtt_cosmo_raster_cpu.hpp"
 #include "lsdtt_exe_path.hpp"
 
@@ -3127,6 +3129,443 @@ void phaseX_multi_isotope_transient(const single_basin_fixture& fx)
 }
 
 // =============================================================================
+// H1-H4 -- multi-isotope ARBITRARY erosion history, per pixel.
+//
+// The general case of which the step-change kernel is the two-row special case.
+// H1 is the load-bearing test and exploits exactly that: a two-row history must
+// reproduce the multi-isotope STEP-CHANGE raster, which is itself bitwise-pinned
+// against the single-nuclide kernel (M1), which the sentinel pins. So this new
+// path inherits the existing pinning rather than needing a frozen file of its
+// own -- the same argument used for run_transient at the column level (T1).
+void phaseX_transient_raster_multi(const single_basin_fixture& fx)
+{
+    const std::size_t idx = static_cast<std::size_t>(fx.outlet_node);
+    const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, 1.0f);
+    const double rho = 2650.0;
+    auto to_m = [&](double eff) { return eff / (rho * 0.1); };
+
+    // ---- H1: a two-row history == the step-change raster -------------------
+    {
+        double worst = 0.0;
+        std::string bad;
+        for (double S : {1.0, 0.7})
+        {
+            for (double t : {2000.0, 20000.0, 200000.0})
+            {
+                const double eo = 0.002, en = 0.02;
+                lsdtt::lsdtt_crn_column col(rho);
+                col.set_erosion_time_series({t, -9999.0},
+                                            {to_m(en), to_m(eo)}, {0.0, 0.0});
+                const lsdtt::lsdtt_raster_cpu prod =
+                    make_uniform_raster(fx, static_cast<float>(S));
+                const lsdtt::MultiNuclideRasters h =
+                    lsdtt::calculate_crn_concentration_raster_transient_multi(
+                        "BraucherBorchers", col, prod, topo, 0.0);
+                const lsdtt::MultiNuclideRasters sref =
+                    lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                        "BraucherBorchers",
+                        make_uniform_raster(fx, static_cast<float>(t)),
+                        prod, topo, eo, en);
+                const lsdtt::lsdtt_raster_cpu* got[3] = {&h.Be10, &h.Al26, &h.C14};
+                const lsdtt::lsdtt_raster_cpu* ref[3] = {&sref.Be10, &sref.Al26,
+                                                         &sref.C14};
+                const char* nm[3] = {"Be10", "Al26", "C14"};
+                for (int i = 0; i < 3; ++i)
+                {
+                    const double a = got[i]->get_data()[idx];
+                    const double b = ref[i]->get_data()[idx];
+                    const double r = std::fabs(a - b) / b;
+                    if (r > worst) { worst = r;
+                        bad = std::string(nm[i]) + " S=" + std::to_string(S) +
+                              " t=" + std::to_string(t) + ": " +
+                              std::to_string(a) + " vs " + std::to_string(b); }
+                }
+            }
+        }
+        // float32 raster storage on both sides, so equality is to the float
+        // floor rather than exact: the two paths reach it by different
+        // arithmetic orders (a history walk versus a single closed-form step).
+        check("H1: a two-row history reproduces the multi-isotope step-change "
+              "raster (3 nuclides x 2 shielding x 3 times)",
+              worst < 5.0e-6, "worst rel " + std::to_string(worst) + "  " + bad);
+        std::cout << "      H1 worst transient-vs-step-change rel diff = "
+                  << worst << "\n";
+    }
+
+    // ---- H2: the raster agrees with the column at the same pixel -----------
+    // The raster kernel delegates the walk to the column, so this pins the
+    // per-pixel shielding plumbing rather than the physics.
+    {
+        lsdtt::lsdtt_crn_column col(rho);
+        col.set_erosion_time_series({5000.0, 40000.0, -9999.0},
+                                    {to_m(0.03), to_m(0.01), to_m(0.002)},
+                                    {0.0, 0.0, 0.0});
+        double worst = 0.0;
+        for (double S : {1.0, 0.6, 1.25})
+        {
+            const lsdtt::lsdtt_raster_cpu prod =
+                make_uniform_raster(fx, static_cast<float>(S));
+            const lsdtt::MultiNuclideRasters h =
+                lsdtt::calculate_crn_concentration_raster_transient_multi(
+                    "BraucherBorchers", col, prod, topo, 0.0);
+            const lsdtt::CrnColumnSample c =
+                col.run_transient({0.0}, S, 1.0, "BraucherBorchers")[0];
+            worst = std::max(worst,
+                std::fabs(h.Be10.get_data()[idx] - c.conc_10Be) / c.conc_10Be);
+            worst = std::max(worst,
+                std::fabs(h.Al26.get_data()[idx] - c.conc_26Al) / c.conc_26Al);
+            worst = std::max(worst,
+                std::fabs(h.C14.get_data()[idx]  - c.conc_14C)  / c.conc_14C);
+        }
+        check("H2: the transient raster matches the column at the same pixel, "
+              "including S_tot > 1", worst < 5.0e-6,
+              "worst rel " + std::to_string(worst));
+    }
+
+    // ---- H3: a multi-phase history is not equivalent to any single step ----
+    // Otherwise H1 would be the whole story and this kernel would be pointless.
+    {
+        lsdtt::lsdtt_crn_column multi(rho), single(rho);
+        multi.set_erosion_time_series({3000.0, 30000.0, -9999.0},
+                                      {to_m(0.05), to_m(0.001), to_m(0.002)},
+                                      {0.0, 0.0, 0.0});
+        single.set_erosion_time_series({30000.0, -9999.0},
+                                       {to_m(0.05), to_m(0.002)}, {0.0, 0.0});
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        const double a = lsdtt::calculate_crn_concentration_raster_transient_multi(
+            "BraucherBorchers", multi, prod, topo, 0.0).Be10.get_data()[idx];
+        const double b = lsdtt::calculate_crn_concentration_raster_transient_multi(
+            "BraucherBorchers", single, prod, topo, 0.0).Be10.get_data()[idx];
+        check("H3: a three-phase history differs from a single-step one, so "
+              "the general kernel is doing something the step kernel cannot",
+              std::fabs(a - b) / b > 0.05, diff_str(a, b));
+    }
+
+    // ---- H4: masks agree, and a malformed history fails LOUDLY -------------
+    {
+        lsdtt::lsdtt_crn_column col(rho);
+        col.set_erosion_time_series({10000.0, -9999.0},
+                                    {to_m(0.01), to_m(0.002)}, {0.0, 0.0});
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        const lsdtt::MultiNuclideRasters h =
+            lsdtt::calculate_crn_concentration_raster_transient_multi(
+                "BraucherBorchers", col, prod, topo, 0.0);
+        const auto& mb = h.Be10.get_mask_array();
+        const auto& ma = h.Al26.get_mask_array();
+        const auto& mc = h.C14.get_mask_array();
+        bool agree = true;
+        for (int r = 0; r < fx.dem.get_meta().n_rows && agree; ++r)
+            for (int c = 0; c < fx.dem.get_meta().n_cols; ++c)
+                if (mb(r, c) != ma(r, c) || mb(r, c) != mc(r, c))
+                { agree = false; break; }
+        check("H4: all three nuclide masks agree, so ratios are always well "
+              "defined where any nuclide is", agree);
+
+        // An empty history must throw from OUTSIDE the parallel region -- an
+        // exception escaping an OpenMP loop is undefined behaviour, so the
+        // kernel validates once up front. Without that, this would either
+        // terminate or silently produce garbage.
+        lsdtt::lsdtt_crn_column empty(rho);
+        bool threw = false;
+        try {
+            (void)lsdtt::calculate_crn_concentration_raster_transient_multi(
+                "BraucherBorchers", empty, prod, topo, 0.0);
+        } catch (const std::exception&) { threw = true; }
+        check("H4: an unset erosion history throws cleanly before the parallel "
+              "region rather than inside it", threw);
+    }
+}
+
+// =============================================================================
+// B1-B4 / P1-P4 -- two-nuclide diagnostics: burial, and step-change inversion.
+//
+// These INVERT the forward models the rest of the suite pins, so the decisive
+// test for both is a ROUND TRIP: forward-model at known inputs, invert, and
+// require the inputs back. That is far stronger than pinning outputs, because a
+// frozen value only proves the answer has not changed, whereas a round trip
+// proves the inverse actually inverts THIS forward model -- and it is the same
+// discipline as the CLI bridge test.
+//
+// Both solvers return a status, and "not identifiable" is a legitimate answer:
+// a nuclide pair outside its resolvable window genuinely cannot separate the
+// two unknowns. Tests below assert that those cases are REPORTED, not fitted.
+void phaseX_burial_diagnostics()
+{
+    const char* scheme = "BraucherBorchers";
+
+    // ---- B1: round trip -- construct a buried sample, recover its history ---
+    // Build the sample the way nature would: steady erosion at a known rate,
+    // then shielded burial for a known time (production off, decay only). The
+    // solver must return both numbers.
+    double worst_e = 0.0, worst_t = 0.0;
+    bool all_conv = true;
+    std::string bad;
+    for (double S : {1.0, 0.7})
+    {
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10");
+        p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        for (double eps : {0.0005, 0.005, 0.05})
+        {
+            for (double t_b : {5.0e4, 5.0e5, 2.0e6})
+            {
+                const double n10 = lsdtt::crn_steady_state_conc("Be10", eps, p)
+                                 * std::exp(-p.get_lambda_10Be() * t_b);
+                const double n26 = lsdtt::crn_steady_state_conc("Al26", eps, p)
+                                 * std::exp(-p.get_lambda_26Al() * t_b);
+                const lsdtt::CrnBurialResult r =
+                    lsdtt::crn_burial_diagnostics(n26, n10, S, scheme);
+                if (r.status != lsdtt::CrnSolveStatus::Converged)
+                {
+                    all_conv = false;
+                    if (bad.empty()) bad = std::string("status ") +
+                        lsdtt::to_string(r.status) + " at eps=" +
+                        std::to_string(eps) + " t_b=" + std::to_string(t_b);
+                    continue;
+                }
+                worst_e = std::max(worst_e,
+                    std::fabs(r.erate_preburial_g_cm2_yr - eps) / eps);
+                worst_t = std::max(worst_t,
+                    std::fabs(r.burial_age_yr - t_b) / t_b);
+            }
+        }
+    }
+    check("B1: burial round trip converges for every case "
+          "(2 shielding x 3 rates x 3 burial ages)", all_conv, bad);
+    check("B1: the pre-burial erosion rate is recovered", worst_e < 1.0e-6,
+          "worst rel " + std::to_string(worst_e));
+    check("B1: the burial age is recovered", worst_t < 1.0e-6,
+          "worst rel " + std::to_string(worst_t));
+    std::cout << "      B1 worst burial round-trip error: erate " << worst_e
+              << ", age " << worst_t << "\n";
+
+    // ---- B2: an unburied sample must NOT be told it was buried -------------
+    // A surface sample in steady erosion sits ON the steady-state line. The
+    // solver must report burial_required = false and an age of exactly 0,
+    // rather than fitting a small spurious burial to ratio noise.
+    {
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(1.0, "Be10"); p.scale_F_values(1.0, "Al26");
+        p.scale_F_values(1.0, "C14");
+        bool none_flagged = true, rates_ok = true;
+        for (double eps : {0.001, 0.01, 0.1})
+        {
+            const lsdtt::CrnBurialResult r = lsdtt::crn_burial_diagnostics(
+                lsdtt::crn_steady_state_conc("Al26", eps, p),
+                lsdtt::crn_steady_state_conc("Be10", eps, p), 1.0, scheme);
+            if (r.burial_required || r.burial_age_yr != 0.0) none_flagged = false;
+            if (std::fabs(r.erate_preburial_g_cm2_yr - eps) / eps > 1e-6)
+                rates_ok = false;
+        }
+        check("B2: a steadily eroding surface sample is NOT flagged as buried",
+              none_flagged);
+        check("B2: and its erosion rate is still recovered", rates_ok);
+    }
+
+    // ---- B3: burial biases the single-nuclide answer, and by how much ------
+    // The reason burial diagnostics matter: a Be-10-only study on a buried
+    // sample reports an erosion rate that is too FAST, because burial removed
+    // nuclides that the model can only explain by faster erosion. Pinning the
+    // direction stops the diagnostic being wired up backwards.
+    {
+        const double eps = 0.005, t_b = 1.0e6, S = 1.0;
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        const double n10 = lsdtt::crn_steady_state_conc("Be10", eps, p)
+                         * std::exp(-p.get_lambda_10Be() * t_b);
+        const double n26 = lsdtt::crn_steady_state_conc("Al26", eps, p)
+                         * std::exp(-p.get_lambda_26Al() * t_b);
+        const lsdtt::CrnBurialResult r =
+            lsdtt::crn_burial_diagnostics(n26, n10, S, scheme);
+        check("B3: ignoring burial OVERESTIMATES the erosion rate",
+              r.apparent_erate_no_burial > r.erate_preburial_g_cm2_yr,
+              "apparent " + std::to_string(r.apparent_erate_no_burial) +
+                  " vs true " + std::to_string(r.erate_preburial_g_cm2_yr));
+        check("B3: the measured ratio sits BELOW the steady-state line",
+              r.ratio_measured < r.ratio_ss_at_solution,
+              std::to_string(r.ratio_measured) + " vs " +
+                  std::to_string(r.ratio_ss_at_solution));
+        std::cout << "      B3 burial of " << t_b << " yr at eps=" << eps
+                  << ": single-nuclide reports "
+                  << r.apparent_erate_no_burial << " ("
+                  << 100.0 * (r.apparent_erate_no_burial - eps) / eps
+                  << " % too fast)\n";
+    }
+
+    // ---- B4: an impossible pair is REPORTED, not fitted ---------------------
+    {
+        const lsdtt::CrnBurialResult r =
+            lsdtt::crn_burial_diagnostics(1.0e12, 1.0, 1.0, scheme);
+        check("B4: a physically unreachable pair returns NoSolution, not a "
+              "nearest fit",
+              r.status == lsdtt::CrnSolveStatus::NoSolution ||
+              r.status == lsdtt::CrnSolveStatus::NotUnique,
+              lsdtt::to_string(r.status));
+        const lsdtt::CrnBurialResult z =
+            lsdtt::crn_burial_diagnostics(0.0, 0.0, 1.0, scheme);
+        check("B4: zero concentrations return NoSolution rather than dividing "
+              "by zero", z.status == lsdtt::CrnSolveStatus::NoSolution);
+    }
+}
+
+void phaseX_step_pair_inversion()
+{
+    const char* scheme = "BraucherBorchers";
+    const double eo = 0.002;
+
+    // ---- P1: round trip against the SAME kernel the predictor uses ---------
+    // Forward-model a C-14 / Be-10 pair at a known (rate, time), invert, and
+    // require both back. The forward model here is the raster step-change
+    // kernel itself, so this pins that the inverse inverts the thing actually
+    // being predicted -- not a re-derivation of it.
+    {
+        double worst_e = 0.0, worst_t = 0.0;
+        int n_conv = 0, n_total = 0;
+        std::string bad;
+        for (double S : {1.0, 0.8})
+        {
+            lsdtt::lsdtt_crn_parameters p;
+            p.reset_scaling(scheme);
+            p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+            p.scale_F_values(S, "C14");
+            for (double en : {0.01, 0.05})
+            {
+                for (double t : {2000.0, 8000.0, 30000.0})
+                {
+                    ++n_total;
+                    const double d_start = en * t;
+                    lsdtt::lsdtt_crn_particle part(d_start);
+                    part.set_conc_10Be(0.0); part.set_conc_26Al(0.0);
+                    part.set_conc_14C(0.0);
+                    part.update_10Be_ss(eo, p, d_start, d_start);
+                    part.update_14C_ss (eo, p, d_start, d_start);
+                    part.update_conc(t, en, p);
+
+                    const lsdtt::CrnStepPairResult r =
+                        lsdtt::crn_invert_step_change_pair(
+                            "C14", "Be10", part.get_conc_14C(),
+                            part.get_conc_10Be(), eo, S, scheme);
+                    if (r.status != lsdtt::CrnSolveStatus::Converged)
+                    {
+                        if (bad.empty()) bad = std::string("status ") +
+                            lsdtt::to_string(r.status) + " at en=" +
+                            std::to_string(en) + " t=" + std::to_string(t) +
+                            " (brackets " + std::to_string(r.n_brackets) + ")";
+                        continue;
+                    }
+                    ++n_conv;
+                    worst_e = std::max(worst_e,
+                        std::fabs(r.erate_new_g_cm2_yr - en) / en);
+                    worst_t = std::max(worst_t,
+                        std::fabs(r.time_since_change_yr - t) / t);
+                }
+            }
+        }
+        check("P1: the C14/Be10 step-change pair round trip converges on every "
+              "case", n_conv == n_total,
+              std::to_string(n_conv) + "/" + std::to_string(n_total) + "  " + bad);
+        check("P1: the new erosion rate is recovered", worst_e < 1.0e-3,
+              "worst rel " + std::to_string(worst_e));
+        check("P1: the time since the change is recovered", worst_t < 1.0e-3,
+              "worst rel " + std::to_string(worst_t));
+        std::cout << "      P1 worst step-pair round-trip error: erate "
+                  << worst_e << ", time " << worst_t << "\n";
+    }
+
+    // ---- P2: the solution reproduces BOTH measurements ----------------------
+    // A (rate, time) pair that matched only one nuclide would still look like a
+    // converged answer, so check the forward model at the solution.
+    {
+        const double en = 0.02, t = 6000.0, S = 1.0;
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        const double d_start = en * t;
+        lsdtt::lsdtt_crn_particle part(d_start);
+        part.set_conc_10Be(0.0); part.set_conc_26Al(0.0); part.set_conc_14C(0.0);
+        part.update_10Be_ss(eo, p, d_start, d_start);
+        part.update_14C_ss (eo, p, d_start, d_start);
+        part.update_conc(t, en, p);
+        const double n14 = part.get_conc_14C(), n10 = part.get_conc_10Be();
+        const lsdtt::CrnStepPairResult r = lsdtt::crn_invert_step_change_pair(
+            "C14", "Be10", n14, n10, eo, S, scheme);
+        check("P2: the solution reproduces the fast nuclide",
+              r.status == lsdtt::CrnSolveStatus::Converged &&
+              approx_rel(r.conc_fast_predicted, n14, 1e-4),
+              diff_str(r.conc_fast_predicted, n14));
+        check("P2: the solution reproduces the slow nuclide",
+              r.status == lsdtt::CrnSolveStatus::Converged &&
+              approx_rel(r.conc_slow_predicted, n10, 1e-4),
+              diff_str(r.conc_slow_predicted, n10));
+        check("P2: exactly one root was bracketed", r.n_brackets == 1,
+              std::to_string(r.n_brackets));
+    }
+
+    // ---- P3: an unreachable pair is REPORTED ------------------------------
+    {
+        const lsdtt::CrnStepPairResult r = lsdtt::crn_invert_step_change_pair(
+            "C14", "Be10", 1.0e12, 1.0, eo, 1.0, scheme);
+        check("P3: an unreachable pair returns a non-converged status rather "
+              "than a fitted answer",
+              r.status != lsdtt::CrnSolveStatus::Converged,
+              lsdtt::to_string(r.status));
+    }
+
+    // ---- P4: C-14 is what carries the timing ------------------------------
+    // The pair only resolves time because the two nuclides re-equilibrate at
+    // different speeds. Swapping in Al-26 -- whose half-life is far longer than
+    // the transient being dated -- should be markedly less informative. This is
+    // reported, not asserted as a hard bound, because "less informative" is a
+    // property of the site, not a property of the code.
+    {
+        const double en = 0.02, t = 6000.0, S = 1.0;
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        const double d_start = en * t;
+        lsdtt::lsdtt_crn_particle part(d_start);
+        part.set_conc_10Be(0.0); part.set_conc_26Al(0.0); part.set_conc_14C(0.0);
+        part.update_10Be_ss(eo, p, d_start, d_start);
+        part.update_26Al_ss(eo, p, d_start, d_start);
+        part.update_conc(t, en, p);
+        const lsdtt::CrnStepPairResult r = lsdtt::crn_invert_step_change_pair(
+            "Al26", "Be10", part.get_conc_26Al(), part.get_conc_10Be(),
+            eo, S, scheme);
+        std::cout << "      P4 Al26/Be10 on the same 6 kyr transient: "
+                  << lsdtt::to_string(r.status) << ", brackets " << r.n_brackets;
+        if (r.status == lsdtt::CrnSolveStatus::Converged)
+            std::cout << ", t = " << r.time_since_change_yr << " yr (true "
+                      << t << ")";
+        std::cout << "\n";
+        // MEASURED: exactly 2 brackets, so this is a structural identifiability
+        // failure, not scan noise. Al-26's 0.7 Myr half-life makes it nearly
+        // insensitive to a 6 kyr transient, so its residual is almost flat in
+        // time and crosses zero twice inside the search window.
+        //
+        // Asserted as "must NOT report Converged", which is the property that
+        // matters and the one that actually pins the uniqueness check: with
+        // that check disabled the solver converges on t = 6000 -- the TRUE
+        // value -- so a weaker assertion passes while the safeguard is gone.
+        // Being right by luck is not the same as being identifiable, and the
+        // solver must not present a coin flip as a measurement.
+        check("P4: an Al26/Be10 pair cannot date a 6 kyr transient, and the "
+              "solver REPORTS that rather than returning one of two roots",
+              r.status == lsdtt::CrnSolveStatus::NotUnique,
+              std::string(lsdtt::to_string(r.status)) + ", brackets " +
+                  std::to_string(r.n_brackets));
+        check("P4: and it found more than one root, which is why", r.n_brackets > 1,
+              std::to_string(r.n_brackets));
+    }
+}
+
+// =============================================================================
 // M1-M3 -- the multi-isotope step-change raster.
 //
 // The point of computing three nuclides together is that the RATIOS carry the
@@ -6076,6 +6515,9 @@ int main(int argc, char** argv)
         phaseX_multi_isotope_transient(fx);
         phaseX_run_transient();
         phaseX_multi_isotope_raster(fx);
+        phaseX_transient_raster_multi(fx);
+        phaseX_burial_diagnostics();
+        phaseX_step_pair_inversion();
         phase1_E3_exponential_identity();
         phase1_E4_lambda_v_solve();
         phase1_E5_linearity_and_limits();

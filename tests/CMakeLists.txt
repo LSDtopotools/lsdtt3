@@ -759,6 +759,27 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_cosmo_prediction_multi_isotope
     PROPERTIES LABELS "smoke;cli;cosmo")
 
+# Multi-isotope ARBITRARY erosion history: the general case of the step-change
+# mode. Bitwise equality with the step-change kernel for a two-row history is
+# asserted in the unit tier (H1); this pins the CLI plumbing -- the history file
+# is read and validated, all five rasters appear, and the ratios are sane.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_multi_transient
+    lsdtt-cosmo-prediction
+    cosmo_prediction_multi_transient.param.in
+    tr_Be10_step_crn_conc.tif
+    --expect tr_Al26_step_crn_conc.tif
+    --expect tr_C14_step_crn_conc.tif
+    --expect tr_R2610_step.tif
+    --expect tr_R1410_step.tif
+    --expect-valid-percent-100 tr_R2610_step.tif
+    --expect-raster-min tr_R2610_step.tif:1.0
+    --stdout-contains "multi-isotope TRANSIENT rasters (Be10, Al26, C14)"
+    --stdout-contains "every pixel walks the whole history"
+)
+set_tests_properties(smoke_cosmo_prediction_multi_transient
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
 # An unknown scheme is FATAL, and the message names both allowed values.
 add_lsdtt_cli_smoke_test(
     failure_cosmo_tool_bad_scaling_scheme

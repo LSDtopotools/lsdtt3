@@ -1309,6 +1309,78 @@ Ratios are formed at the output layer rather than in the library, so the nodata
 policy for a zero denominator lives with the writer; pixels with zero Be-10 are
 reported and written as nodata rather than silently producing infinities.
 
+#### Arbitrary erosion histories, per pixel
+
+`calculate_multi_isotope_transient` is the general case of which the step-change
+mode is the two-row special case: the three nuclides carried through a
+user-supplied erosion history at every pixel, with the history uniform in time
+and the production scaling and shielding varying per pixel.
+
+The history walk is **not** reimplemented in the raster kernel — each pixel calls
+`lsdtt_crn_column::run_transient`, the same code the column tool drives. A raster
+kernel with its own copy of the walk would be a second implementation of the same
+physics, which is the failure mode this codebase has already been bitten by
+twice.
+
+The load-bearing test exploits the special-case relationship: a two-row history
+must reproduce the multi-isotope step-change raster, which is itself
+bitwise-pinned against the single-nuclide kernel, which the sentinel pins.
+Measured agreement is **bitwise zero** across three nuclides, two shielding
+values and three times — so this path inherits the existing pinning rather than
+needing a frozen file of its own. A separate check confirms a three-phase history
+gives a materially different answer from any single step, without which the
+general kernel would be doing nothing the step kernel could not.
+
+The history is validated **once, before** the parallel region, for two reasons: an
+exception escaping an OpenMP loop is undefined behaviour, and a malformed history
+should fail immediately rather than after most of a long raster has been
+computed. A time-reversed history is rejected at the CLI boundary with the
+message naming the ordering rule.
+
+Cost is `O(pixels × history rows)` and therefore much higher than the
+step-change kernel. That is inherent — an arbitrary history has no closed form —
+and the CLI says so when the mode runs.
+
+#### Two-nuclide diagnostics: burial, and inverting a ratio pair
+
+One nuclide gives one number, so it resolves one unknown — an apparent erosion
+rate, assuming steady erosion and no burial. A *pair* with different half-lives
+gives two numbers and can resolve two unknowns. `lsdtt_crn_diagnostics` provides
+the two cases that matter: burial/inheritance from Al-26 + Be-10, and
+(erosion rate, time since change) from a step-change pair.
+
+These **invert** the forward models the rest of the suite pins, so the decisive
+test is a **round trip** — forward-model at known inputs, invert, require the
+inputs back. That is much stronger than freezing outputs: a frozen value only
+proves the answer has not changed, whereas a round trip proves the inverse
+actually inverts *this* forward model. Measured worst errors: **5.2e-16** on the
+pre-burial erosion rate, **9.3e-15** on the burial age, **6.4e-15** on the new
+erosion rate and **1.0e-14** on the time since change.
+
+Both solvers avoid a two-dimensional Newton iteration, which would be fragile
+here. Burial reduces to **one** dimension because the burial time can be
+eliminated analytically from the ratio equation. The step-change pair is
+genuinely two-dimensional but is solved as *nested* one-dimensional problems: for
+a trial time, the slow nuclide is inverted for the rate that reproduces it
+(monotone, bracketed), leaving the fast nuclide's residual a function of time
+alone.
+
+**Non-identifiability is reported, not fitted.** The time axis is scanned to find
+sign changes *before* bisecting, so more than one root is detected rather than
+hidden. This matters: an Al-26/Be-10 pair cannot date a 6 kyr transient — Al-26's
+0.7 Myr half-life makes it nearly insensitive on that timescale, and its residual
+crosses zero twice — so the solver returns "not unique". Disabling that safeguard
+makes it converge on *the true answer*, 6000 yr, which is exactly why the test
+asserts the status rather than the value: being right by luck is not the same as
+being identifiable, and a solver must not present a coin flip as a measurement.
+
+The burial diagnostic also reports what a single-nuclide study would have
+concluded. Ignoring 1 Myr of burial on a sample eroding at 0.005 g cm⁻² yr⁻¹
+makes a Be-10-only analysis report a rate **69.5 % too fast**, because burial
+removes nuclides that a steady-erosion model can only explain by faster erosion.
+The direction of that bias is pinned, so the diagnostic cannot be wired up
+backwards.
+
 #### Multi-isotope transients, and two expectations the data corrected
 
 Isotope *ratios* are where a transient signal lives — a nuclide silently sharing

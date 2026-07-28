@@ -37,6 +37,9 @@ At least one prediction mode must be activated; the program exits with a message
 | 5. Steady-state concentrations | `calculate_crn_concentration_raster` |
 | 6. Step-change concentrations | `calculate_step_change_crn_concentration_raster` |
 | `calculate_multi_isotope_step_change` | bool | `false` | Carry Be-10, Al-26 and C-14 through the **same** step change at every pixel, and write the two isotope-ratio rasters. See below. |
+| `calculate_multi_isotope_transient` | bool | `false` | The same three nuclides through an **arbitrary erosion history** from `transient_history_file`. The general case of the step-change mode. See below. |
+| `transient_history_file` | string | `NULL` | CSV erosion history: `time,rate,removal` (yr BP, m/yr, m). Rows run most-recent-first; the last row must be `time = -9999` carrying the background rate. Unordered records are rejected. |
+| `transient_rock_density_kg_m3` | float | `2650` | Density used to convert the history's metre-based rates and removals into effective depths. |
 | `write_isotope_ratio_rasters` | bool | `true` | Write `_R2610_step.tif` (Al26/Be10) and `_R1410_step.tif` (C14/Be10). Needs `calculate_multi_isotope_step_change`. |
 | 7. Accumulated concentrations | `calculate_accumulated_crn_concentration` |
 
@@ -259,3 +262,33 @@ reported.
 Note that after an erosion-rate *increase* all concentrations fall, C-14 reaches
 its new value first, and the C14/Be10 ratio is therefore **suppressed** and
 approaches its endpoint from below — it does not overshoot.
+
+
+### Multi-isotope transient (arbitrary history)
+
+`calculate_multi_isotope_transient` generalises the step-change mode: instead of
+one change in erosion rate, every pixel follows the history in
+`transient_history_file`. A two-row history reproduces the step-change mode
+**bitwise**, so this is a strict generalisation rather than a parallel
+implementation — the per-pixel walk is the same code the column tool uses.
+
+History file format — three columns, `time,rate,removal`:
+
+```
+time,rate,removal
+3000,0.00113,0        <- most recent phase: 0.00113 m/yr for the last 3 kyr
+30000,0.0000377,0     <- before that, 0.0000377 m/yr back to 30 kyr
+-9999,0.0000755,0     <- long-term background rate (required last row)
+```
+
+Rows run from the **most recent** (index 0) to the oldest, and the final row must
+carry `time = -9999` with the long-term background rate that initialises the
+column. A row with `rate = 0` and a non-zero `removal` is an instantaneous
+stripping event in metres, and must repeat the time of the row before it.
+
+**An unordered history is rejected**, not silently accepted: reversed rows would
+produce negative timesteps and a confidently wrong answer.
+
+Outputs are the same five rasters as the step-change mode. Cost is
+`O(pixels × history rows)`, so this is substantially slower — inherent, since an
+arbitrary history has no closed form.

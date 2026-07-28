@@ -342,6 +342,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_cross_sections_cpu.cpp
     src/cpu/lsdtt_crn_parameters.cpp
     src/cpu/lsdtt_crn_column.cpp
+    src/cpu/lsdtt_crn_diagnostics.cpp
     src/cpu/lsdtt_cosmo_raster_cpu.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
     src/cpu/lsdtt_vector_ops_cpu.cpp

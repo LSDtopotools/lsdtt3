@@ -20,6 +20,7 @@
 // =============================================================================
 #include "lsdtt_cosmo_raster_cpu.hpp"
 #include "lsdtt_crn_particle.hpp"
+#include "lsdtt_crn_column.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
 #include <ogr_spatialref.h>
@@ -683,6 +684,74 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     }
 
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+//
+// Multi-isotope arbitrary erosion history. Delegates the per-pixel walk to
+// lsdtt_crn_column::run_transient so there is exactly one implementation of it.
+MultiNuclideRasters calculate_crn_concentration_raster_transient_multi(
+    const std::string&      muon_scheme,
+    const lsdtt_crn_column& column,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  sampling_depth_m)
+{
+    const auto& meta = prod_raster.get_meta();
+    int nr = meta.n_rows, nc = meta.n_cols;
+    int n_total = nr * nc;
+    float ndv = static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   be_data(nr, nc, ndv), al_data(nr, nc, ndv),
+                           c14_data(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> be_mask(nr, nc, 0), al_mask(nr, nc, 0),
+                           c14_mask(nr, nc, 0);
+
+    const auto& p_data  = prod_raster.get_data_array();
+    const auto& p_mask  = prod_raster.get_mask_array();
+    const auto& ts_data = topo_shield.get_data_array();
+    const auto& ts_mask = topo_shield.get_mask_array();
+
+    // Validate the history ONCE, outside the parallel region: run_transient
+    // throws on a malformed record, and an exception must not escape an OpenMP
+    // region. This also means a bad history fails immediately rather than after
+    // most of a long raster has been computed.
+    const std::vector<double> depths{sampling_depth_m};
+    (void)column.run_transient(depths, 1.0, 1.0, muon_scheme);
+
+#pragma omp parallel default(none) \
+    shared(nr, nc, n_total, p_data, p_mask, ts_data, ts_mask, \
+           be_data, be_mask, al_data, al_mask, c14_data, c14_mask, \
+           muon_scheme, column, depths)
+    {
+#pragma omp for schedule(static)
+        for (int k = 0; k < n_total; ++k)
+        {
+            int row = k / nc;
+            int col = k % nc;
+
+            if (!p_mask(row, col) || !ts_mask(row, col))
+                continue;
+
+            const double s_tot = static_cast<double>(p_data(row, col)) *
+                                 static_cast<double>(ts_data(row, col));
+
+            // The shielded overload: one factor through scale_F_values, the
+            // convention the whole pipeline shares.
+            const std::vector<CrnColumnSample> prof =
+                column.run_transient(depths, s_tot, 1.0, muon_scheme);
+
+            be_data(row, col)  = static_cast<float>(prof[0].conc_10Be);
+            al_data(row, col)  = static_cast<float>(prof[0].conc_26Al);
+            c14_data(row, col) = static_cast<float>(prof[0].conc_14C);
+            be_mask(row, col) = al_mask(row, col) = c14_mask(row, col) = 1;
+        }
+    }
+
+    MultiNuclideRasters out{
+        lsdtt_raster_cpu(std::move(be_data),  std::move(be_mask),  meta),
+        lsdtt_raster_cpu(std::move(al_data),  std::move(al_mask),  meta),
+        lsdtt_raster_cpu(std::move(c14_data), std::move(c14_mask), meta)};
+    return out;
 }
 
 //
