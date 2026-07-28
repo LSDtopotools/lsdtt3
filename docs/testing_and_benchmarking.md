@@ -1235,16 +1235,16 @@ away from `t = 0`, because the raster documents `t <= 0` as "no change" while th
 column evaluates the step there; equating them would erase a real documented
 difference that another test asserts.
 
-**One convention still differs, and it is pinned rather than assumed away.** The
+**They also share one production-scaling convention, as of 2026-07-28.** The
 raster folds production scaling and shielding *together* through the Vermeesch
 redistribution — including the `S_tot > 1` branch that reproduces CRONUS v3 at
-altitude — whereas the column applies production scaling as a flat `P0` multiply.
-Measured, that is −14.9 % at a scaling of 0.5 and +5.4 % at 1.4. Routing the same
-factor through the column's *shielding* argument instead reproduces the raster
-exactly, which is what identifies it as a convention difference rather than an
-arithmetic error. The gap is pinned at its measured values so it cannot drift
-while the question is open; the raster is the reference, since it is what the
-numerics sentinel pins and what the altitude validation exercises.
+altitude — and the column now does the same. It previously applied production
+scaling as a flat `P0` multiply, which put it −14.9 % out at a scaling of 0.5 and
++5.4 % at 1.4, and a guard meant factors above 1 were silently ignored, so the
+column could not express altitude enhancement at all. Both are gone: one factor,
+one mechanism, verified equal to the raster's own values. The test asserts the
+sharp form — production scaling and shielding are **interchangeable**, because
+only their product reaches the physics.
 
 #### Arbitrary erosion histories
 
@@ -1269,14 +1269,18 @@ erosion and the mass-removal bookkeeping cancel. Removals are covered twice,
 because they take two different code paths depending on whether they sit at the
 most recent row or inside the record.
 
-**One robustness gap is pinned open.** The history validator checks the
-background-row sentinel, rate/removal exclusivity and removal timing, but not
-that the record is *ordered in time*. Index 0 must be the most recent step; a
-reversed record feeds negative timesteps into the solver and returns a
-confidently wrong number — 72 357 against 178 467, 147 % apart — with no error,
-no warning and no NaN. It is pinned as an open gap rather than fixed, because the
-fix is a hard failure in locked code that would reject records some users may
-hold today.
+**Unordered records are rejected, as of 2026-07-28.** The history validator
+originally checked the background-row sentinel, rate/removal exclusivity and
+removal timing, but not that the record was *ordered in time*. Index 0 must be
+the most recent step; a reversed record fed negative timesteps into the solver
+and returned a confidently wrong number — 72 357 against 178 467, 147 % apart —
+with no error, no warning and no NaN. It now throws, with a message naming the
+rule and how to fix the file. This deliberately rejects records that previously
+ran, because what they returned was meaningless.
+
+The check earns its keep immediately: it caught a mis-ordered fixture inside this
+very test suite, which had been passing only because its erosion rate was
+constant, so the negative timesteps cancelled.
 
 #### Multi-isotope transients, and two expectations the data corrected
 

@@ -2901,17 +2901,19 @@ void phaseX_column_raster_equivalence(const single_basin_fixture& fx)
     std::cout << "      X1 worst column-vs-raster SS rel diff = " << worst_ss << "\n";
 
     // ---- X2: THE PRODUCTION-SCALING CONVENTION -----------------------------
-    // The raster folds production scaling into scale_F_values along with
-    // shielding; the column's single-factor path multiplies P0 flat. They are
-    // NOT the same operation, and this pins the size of the gap so it cannot
-    // change unnoticed while the question of which convention is right is open.
-    // Measured 2026-07-27: -14.87 % at scaling 0.5, +5.39 % at 1.4.
-    // THIS IS A RECORDED DISAGREEMENT, NOT AN ENDORSEMENT -- see the findings
-    // log. When the column is switched to the raster convention this check
-    // must be replaced by an equality assertion, not merely re-frozen.
+    // FIXED 2026-07-28. The raster forms S_tot = production_scaling x shielding
+    // and puts the PRODUCT through scale_F_values (the Vermeesch
+    // redistribution, including the S_tot > 1 negative-effective-depth branch
+    // validated against CRONUS v3 at altitude). The column now does the same.
+    //
+    // Until then the column applied production scaling as a flat P0 multiply
+    // and disagreed by -14.87 % at S_tot = 0.5 and +5.39 % at 1.4. These are
+    // now EQUALITY assertions, not a re-frozen gap -- the distinction matters:
+    // re-freezing would have recorded the disagreement as acceptable.
     {
         const double eps = 0.01;
-        for (double P : {0.5, 1.4})
+        double worst_p = 0.0;
+        for (double P : {0.5, 0.85, 1.0, 1.4})
         {
             const lsdtt::lsdtt_raster_cpu prod =
                 make_uniform_raster(fx, static_cast<float>(P));
@@ -2921,48 +2923,31 @@ void phaseX_column_raster_equivalence(const single_basin_fixture& fx)
                     "Be10", "BraucherBorchers",
                     make_uniform_raster(fx, static_cast<float>(eps)),
                     prod, topo1, zero, zero).get_data()[idx];
-            // Column, production scaling through the flat-P0 route.
             const double c_col =
                 col.steady_state(0.0, eps, P, 1.0, "BraucherBorchers").conc_10Be;
-            const double pct = 100.0 * (c_col - c_ras) / c_ras;
-            const double expect = (P == 0.5) ? -14.8734 : 5.3912;
-            check("X2: column-vs-raster production-scaling gap at S_tot=" +
-                      std::to_string(P) + " is UNCHANGED (open defect, pinned)",
-                  std::fabs(pct - expect) < 0.01,
-                  "measured " + std::to_string(pct) + " %, pinned " +
-                      std::to_string(expect) + " %");
-            std::cout << "      X2 production-scaling gap at S_tot=" << P
-                      << ": column " << c_col << " vs raster " << c_ras
-                      << " (" << pct << " %)\n";
+            worst_p = std::max(worst_p, std::fabs(c_col - c_ras) / c_ras);
         }
-        // And the column agrees with the raster when the SAME factor is routed
-        // through shielding instead -- which is the proof that the gap is a
-        // convention difference, not an arithmetic error somewhere.
-        //
-        // ONLY for factors <= 1. make_params_shielded guards scale_F_values
-        // with `total_shielding < 1.0`, so a factor above 1 is silently not
-        // applied at all: measured, the column returns the UNSCALED 79198.2
-        // where the raster returns 105205.6. That guard is defensible for
-        // shielding (which cannot exceed 1) but it is precisely why the column
-        // cannot currently express altitude enhancement the way the raster
-        // does, and it is part of what the open X2 defect must resolve.
-        for (double P : {0.5, 0.85})
+        check("X2: column PRODUCTION SCALING now matches the raster, including "
+              "S_tot > 1 (altitude enhancement)",
+              worst_p < eq_tol, "worst rel " + std::to_string(worst_p));
+        std::cout << "      X2 worst production-scaling rel diff = " << worst_p
+                  << "\n";
+
+        // The sharp statement of "one convention": production scaling and
+        // shielding are now INTERCHANGEABLE, because only their product is
+        // used. If either were routed differently this fails immediately.
+        double worst_swap = 0.0;
+        for (double x : {0.5, 0.85, 1.4})
         {
-            const lsdtt::lsdtt_raster_cpu prod =
-                make_uniform_raster(fx, static_cast<float>(P));
-            const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
-            const double c_ras =
-                lsdtt::calculate_crn_concentration_raster_whole(
-                    "Be10", "BraucherBorchers",
-                    make_uniform_raster(fx, static_cast<float>(eps)),
-                    prod, topo1, zero, zero).get_data()[idx];
-            const double c_col =
-                col.steady_state(0.0, eps, 1.0, P, "BraucherBorchers").conc_10Be;
-            check("X2: routing the SAME factor through shielding reproduces the "
-                  "raster exactly at S_tot=" + std::to_string(P),
-                  std::fabs(c_col - c_ras) / c_ras < eq_tol,
-                  diff_str(c_col, c_ras));
+            const double a =
+                col.steady_state(0.0, eps, x, 1.0, "BraucherBorchers").conc_10Be;
+            const double b =
+                col.steady_state(0.0, eps, 1.0, x, "BraucherBorchers").conc_10Be;
+            worst_swap = std::max(worst_swap, std::fabs(a - b) / b);
         }
+        check("X2: production_scaling and total_shielding are interchangeable "
+              "(only their product reaches the physics)",
+              worst_swap < 1.0e-12, "worst rel " + std::to_string(worst_swap));
     }
 
     // ---- X3: STEP CHANGE, column vs raster ---------------------------------
@@ -3415,20 +3400,13 @@ void phaseX_run_transient()
               diff_str(col.calculate_depth_change(), to_m(eps) * T));
     }
 
-    // ---- T8: OPEN GAP -- a time-reversed history is accepted silently ------
-    // check_erosion_time_series validates the -9999 sentinel row, the
-    // rate/removal exclusivity and the removal timing, but NOT that time_vec_
-    // is ordered. Index 0 must be the most recent step, because the loop takes
-    // dt = time[ts] - time[ts-1]; a reversed record therefore feeds NEGATIVE
-    // dt into update_conc and produces a confidently wrong answer with no
-    // error, no warning and no NaN.
-    //
-    // This is pinned rather than asserted-away because fixing it means adding
-    // a throw to a locked file, which changes behaviour for anyone with a
-    // reversed record today. Found by writing T3 with the rows the wrong way
-    // round: it ran, and disagreed with the correct ordering by 3.06 relative.
-    // If this check ever starts FAILING, the validator has been tightened --
-    // which is the desired outcome; replace it with a throws-on-reversal test.
+    // ---- T8: an unordered erosion history is REJECTED ----------------------
+    // Was an open gap until 2026-07-28: check_erosion_time_series validated the
+    // -9999 sentinel row, rate/removal exclusivity and removal timing, but NOT
+    // ordering. Index 0 must be the most recent row, because the loop takes
+    // dt = time[ts] - time[ts-1]; a reversed record fed NEGATIVE dt into
+    // update_conc and returned 72357 against a correct 178467 -- no error, no
+    // warning, no NaN. Silence was the whole problem, so it is now a throw.
     {
         const double eps_old = 0.002, eps_new = 0.02, T = 40000.0;
         const int n = 5;
@@ -3440,28 +3418,53 @@ void phaseX_run_transient()
         fwd_t.push_back(-9999.0); rev_t.push_back(-9999.0);
         rv.push_back(to_m(eps_old)); mv.push_back(0.0);
 
-        col.set_erosion_time_series(fwd_t, rv, mv);
-        const double c_fwd = col.run_transient({0.0}, 1.0,
-                                               "BraucherBorchers")[0].conc_10Be;
+        // The correctly ordered record must still be accepted and unchanged.
+        bool fwd_ok = true;
+        double c_fwd = 0.0;
+        try {
+            col.set_erosion_time_series(fwd_t, rv, mv);
+            c_fwd = col.run_transient({0.0}, 1.0,
+                                      "BraucherBorchers")[0].conc_10Be;
+        } catch (const std::exception&) { fwd_ok = false; }
+        check("T8: a correctly ordered history is still accepted", fwd_ok);
+        check("T8: and its value is unchanged by the new validation",
+              fwd_ok && approx_rel(c_fwd, 72357.254252, 1e-6),
+              std::to_string(c_fwd));
+
+        // The reversed one must now FAIL, and say why.
         bool threw = false;
-        double c_rev = 0.0;
+        std::string what;
         try {
             col.set_erosion_time_series(rev_t, rv, mv);
-            c_rev = col.run_transient({0.0}, 1.0,
-                                      "BraucherBorchers")[0].conc_10Be;
-        } catch (const std::exception&) { threw = true; }
+        } catch (const std::exception& e) { threw = true; what = e.what(); }
+        check("T8: a time-REVERSED history is REJECTED", threw);
+        check("T8: and the message names the ordering rule",
+              threw && what.find("MOST RECENT") != std::string::npos,
+              what.substr(0, 90));
 
-        check("T8: a time-REVERSED erosion history is still accepted without "
-              "error (OPEN GAP -- the validator does not check ordering)",
-              !threw, "it threw, which means the validator was tightened");
-        check("T8: and the reversed record gives a materially different answer "
-              "(so the silence is not harmless)",
-              !threw && std::fabs(c_rev - c_fwd) / c_fwd > 0.5,
-              "forward " + std::to_string(c_fwd) + " reversed " +
-                  std::to_string(c_rev));
-        std::cout << "      T8 forward " << c_fwd << " vs time-reversed "
-                  << c_rev << " (rel "
-                  << std::fabs(c_rev - c_fwd) / c_fwd << ")\n";
+        // A zero-length step that is not a removal is also rejected: it would
+        // contribute nothing while looking like a real phase.
+        bool threw_dup = false;
+        try {
+            col.set_erosion_time_series({100.0, 100.0, -9999.0},
+                                        {to_m(eps_new), to_m(eps_new),
+                                         to_m(eps_old)},
+                                        {0.0, 0.0, 0.0});
+        } catch (const std::exception&) { threw_dup = true; }
+        check("T8: a duplicated time that is NOT a removal is rejected",
+              threw_dup);
+
+        // But a legitimate removal sharing the preceding row's time is fine --
+        // the new rule must not break the records T4b relies on.
+        bool removal_ok = true;
+        try {
+            col.set_erosion_time_series({100.0, 100.0, 500.0, -9999.0},
+                                        {to_m(eps_new), 0.0, to_m(eps_new),
+                                         to_m(eps_old)},
+                                        {0.0, 1.0, 0.0, 0.0});
+        } catch (const std::exception&) { removal_ok = false; }
+        check("T8: a removal row sharing the preceding time is still legal",
+              removal_ok);
     }
 }
 

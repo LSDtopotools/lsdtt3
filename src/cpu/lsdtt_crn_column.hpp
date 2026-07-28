@@ -138,6 +138,19 @@ public:
                                 double total_shielding,
                                 const std::string& muon_scheme) const;
 
+    // run_transient on the raster convention too, so an arbitrary erosion
+    // history can drive a pixel prediction and agree with the raster kernel.
+    // The single-factor overload above is unchanged and still applies its
+    // argument as a flat P0 multiply.
+    std::vector<CrnColumnSample>
+    run_transient(const std::vector<double>& sampling_depths_m,
+                  double production_scaling,
+                  double total_shielding,
+                  const std::string& muon_scheme,
+                  double initial_10Be = -1.0,
+                  double initial_26Al = -1.0,
+                  double initial_14C  = -1.0) const;
+
     //  Accessors 
     double rock_density() const { return rock_density_; }
     const std::vector<double>& time_vec()    const { return time_vec_; }
@@ -158,6 +171,14 @@ private:
     lsdtt_crn_parameters make_params_shielded(double production_scaling,
                                               double total_shielding,
                                               const std::string& muon_scheme) const;
+    // Shared body of the two run_transient overloads; they differ only in the
+    // parameter object, so the evolution lives in exactly one place.
+    std::vector<CrnColumnSample>
+    run_transient_impl(const std::vector<double>& sampling_depths_m,
+                       const lsdtt_crn_parameters& params,
+                       double initial_10Be,
+                       double initial_26Al,
+                       double initial_14C) const;
     double to_eff(double depth_m) const { return depth_m * rock_density_ * 0.1; }
 };
 

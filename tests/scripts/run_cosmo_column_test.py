@@ -16,9 +16,10 @@ wrong answer is unambiguous:
   * a full_transient run at a CONSTANT rate must relax to steady state at that
     rate;
   * concentration must fall monotonically with depth, and with erosion rate;
-  * production_scaling must be exactly linear in P0, while total_shielding must
-    NOT be -- it goes through the Vermeesch redistribution, which attenuates the
-    pathways unequally, so a silent swap of the two mechanisms fails;
+  * production_scaling and total_shielding must be INTERCHANGEABLE, because as
+    of 2026-07-28 both go through the Vermeesch redistribution as a single
+    product, matching the raster pipeline; and neither may be a flat P0 multiply,
+    since the redistribution attenuates the pathways unequally;
   * C-14 must re-equilibrate far faster than Be-10 after a step change (the
     short half-life is the whole reason C-14 is interesting).
 
@@ -204,21 +205,25 @@ def main():
         # Both must still MOVE the answer, or the knob is not wired up.
         a = ss(E_NEW, scaling=1.0, shield=0.5, tag="prod_shield")
         b = ss(E_NEW, scaling=0.5, shield=1.0, tag="prod_scaled")
-        check("shielding uses the Vermeesch redistribution, not a flat P0 scale",
-              rel(a["C_10Be"], b["C_10Be"]) > 0.05,
-              f"S=0.5 {a['C_10Be']:.6g} vs scaling=0.5 {b['C_10Be']:.6g}")
+        check("production_scaling and total_shielding are INTERCHANGEABLE "
+              "(one convention: only their product reaches the physics)",
+              rel(a["C_10Be"], b["C_10Be"]) < 1e-9,
+              f"S=0.5 {a['C_10Be']:.10g} vs scaling=0.5 {b['C_10Be']:.10g}")
         check("halving the production scaling is NOT a no-op",
               rel(b["C_10Be"], base["C_10Be"]) > 0.1,
               f"{b['C_10Be']:.6g} vs {base['C_10Be']:.6g}")
         check("halving the shielding is NOT a no-op",
               rel(a["C_10Be"], base["C_10Be"]) > 0.1,
               f"{a['C_10Be']:.6g} vs {base['C_10Be']:.6g}")
-        # A flat P0 scale is exactly linear; the Vermeesch route is not. This
-        # pins WHICH mechanism each knob uses, so a silent swap of the two
-        # would fail even though both still "move the answer".
-        check("production_scaling is exactly linear in P0",
-              rel(b["C_10Be"], 0.5 * base["C_10Be"]) < 1e-9,
-              f"{b['C_10Be']:.10g} vs {0.5 * base['C_10Be']:.10g}")
+        # Both knobs go through the Vermeesch virtual-attenuation
+        # redistribution, which attenuates spallation and the muon pathways
+        # UNEQUALLY -- so halving either must NOT halve the concentration. A
+        # flat P0 multiply would be exactly linear, and that is precisely the
+        # convention removed on 2026-07-28 to match the raster pipeline.
+        check("halving the scaling is NOT a flat P0 multiply "
+              "(Vermeesch redistribution, so not exactly linear)",
+              rel(b["C_10Be"], 0.5 * base["C_10Be"]) > 0.05,
+              f"{b['C_10Be']:.10g} vs a flat half {0.5 * base['C_10Be']:.10g}")
 
         # --- 6. full_transient at a constant rate relaxes to steady state ---
         # Drives the third mode, its history-file reader, and the multi-sample
@@ -227,11 +232,13 @@ def main():
         # meeting at the same number.
         hist = workdir / "const_history.csv"
         density, erate_m_yr = 2650.0, E_NEW / (2650.0 * 0.1)
-        # The reader requires a FINAL row with time = -9999, carrying the
-        # long-term background rate that initialises the column.
+        # Rows run from the MOST RECENT (index 0) to the oldest, with a final
+        # row at time = -9999 carrying the long-term background rate. This was
+        # originally written 2000000/0/-9999, i.e. reversed; it ran and produced
+        # negative timesteps, and only passed because the rate was constant. The
+        # validator rejects that ordering as of 2026-07-28.
         hist.write_text("time,rate,removal\n"
                         + f"2000000,{erate_m_yr},0\n"
-                        + f"0,{erate_m_yr},0\n"
                         + f"-9999,{erate_m_yr},0\n")
         prof = run(exe, workdir, {
             "column_mode": "full_transient",
