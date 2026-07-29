@@ -661,6 +661,96 @@ void phase1_parameter_pins()
     }
 }
 
+void phase1_balco_cronus_v3_pressure_helpers()
+{
+    const double pressures[] = {600.0, 800.0, 1013.25};
+    const double expected_lambda_mu[] = {
+        220.17702232595008,
+        384.2606824469722,
+        1870.8557621655923,
+    };
+
+    bool lambda_ok = true;
+    std::string lambda_bad;
+    for (int i = 0; i < 3; ++i)
+    {
+        const double got = lsdtt::lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(
+            pressures[i]);
+        if (!approx_rel(got, expected_lambda_mu[i], 1e-12))
+        {
+            lambda_ok = false;
+            lambda_bad = "p=" + std::to_string(pressures[i]) + " "
+                       + diff_str(got, expected_lambda_mu[i]);
+        }
+    }
+    check("pin: balcoCRONUSv3PD Lambda_mu(p) identity at fixed pressures",
+          lambda_ok, lambda_bad);
+
+    struct mu_pin
+    {
+        const char* nuclide;
+        double p_mu_slhl;
+        double l_mu_atm;
+        double expected[3];
+    };
+    const mu_pin mu_pins[] = {
+        {"Be10", 0.07345, 299.2, {0.29230215881385374, 0.1498056608626094, 0.07345}},
+        {"Al26", 0.67644, 288.0, {2.8405119676699053, 1.4184147315936166, 0.67644}},
+        {"C14", 3.06690, 267.8, {14.3506678378417, 6.800325582400872, 3.0669}},
+    };
+
+    bool pmu_ok = true;
+    std::string pmu_bad;
+    for (const mu_pin& pin : mu_pins)
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            const double got =
+                lsdtt::lsdtt_crn_parameters::balco_cronus_v3_muon_surface_production(
+                    pressures[i], pin.p_mu_slhl, pin.l_mu_atm);
+            if (!approx_rel(got, pin.expected[i], 1e-12))
+            {
+                pmu_ok = false;
+                pmu_bad = std::string(pin.nuclide) + " p="
+                       + std::to_string(pressures[i]) + " "
+                       + diff_str(got, pin.expected[i]);
+            }
+        }
+    }
+    check("pin: balcoCRONUSv3PD P_mu,0(p) identity at fixed pressures",
+          pmu_ok, pmu_bad);
+
+    bool guard_ok = true;
+    try
+    {
+        (void)lsdtt::lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(1200.0);
+        guard_ok = false;
+    }
+    catch (const std::out_of_range&)
+    {
+    }
+    catch (...)
+    {
+        guard_ok = false;
+    }
+
+    try
+    {
+        (void)lsdtt::lsdtt_crn_parameters::balco_cronus_v3_muon_surface_production(
+            std::numeric_limits<double>::quiet_NaN(), 0.07345, 299.2);
+        guard_ok = false;
+    }
+    catch (const std::invalid_argument&)
+    {
+    }
+    catch (...)
+    {
+        guard_ok = false;
+    }
+
+    check("pin: balcoCRONUSv3PD helper guards reject invalid pressures", guard_ok);
+}
+
 // E9: AMS standardisation factors - exact pins against the CRONUS conversion
 // table (make_al_be_consts / riversand params).  Be10 reference standard is
 // 07KNSTD; Al26 reference is KNSTD.
@@ -7757,6 +7847,7 @@ int main(int argc, char** argv)
         smoke_library_pipeline(fx, flow, out_dir);
 
         phase1_parameter_pins();
+        phase1_balco_cronus_v3_pressure_helpers();
         phase1_standardisation_pins();
         phase1_E1_depth_integration_limits();
         phase1_E2_step_change_library(fx);

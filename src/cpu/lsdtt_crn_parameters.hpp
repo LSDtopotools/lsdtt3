@@ -163,7 +163,7 @@ struct LsdnTimeAvgSurface
 // Supported nuclides: Be10, Al26, C14
 // Supported muon schemes: "Braucher", "BraucherBorchers" (default),
 //                         "Granger", "Schaller", "newCRONUS",
-//                         "balcoCRONUSv3"
+//                         "balcoCRONUSv3", "balcoCRONUSv3PD"
 // 
 class lsdtt_crn_parameters
 {
@@ -179,9 +179,22 @@ public:
     void set_balco_cronus_v3_parameters(double P_mbar = 1013.25);
     void set_balco_1A_fit_parameters();
 
+    // Balco (2017) / CRONUS v3 pressure-dependent muon helpers.
+    // pressure_mbar is site pressure in hPa (mbar).
+    static double balco_cronus_v3_lambda_mu_eff(double pressure_mbar);
+    static double balco_cronus_v3_muon_surface_production(
+        double pressure_mbar,
+        double p_mu_slhl,
+        double l_mu_atm_mbar);
+
+    // Muon-scheme helpers.
+    static bool is_valid_muon_scheme(const std::string& muon_scheme);
+    static std::string allowed_muon_schemes_csv();
+
     // Selects scheme by name (case-sensitive: "Braucher", "BraucherBorchers",
-    // "Granger", "Schaller", "newCRONUS", "balcoCRONUSv3").
-    // Falls back to BraucherBorchers.
+    // "Granger", "Schaller", "newCRONUS", "balcoCRONUSv3",
+    // "balcoCRONUSv3PD").
+    // Throws std::invalid_argument on unknown scheme names.
     void reset_scaling(const std::string& muon_scheme);
 
     //  Shielding / production scaling (Vermeesch 2007 virtual attenuation)

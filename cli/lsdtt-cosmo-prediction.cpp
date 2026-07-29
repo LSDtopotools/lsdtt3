@@ -153,7 +153,7 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.","",
+        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD.","",
         "Nuclide and muon scheme", "param", ""};
 
     string_default_map["scaling_scheme"] = "stone";
@@ -483,6 +483,14 @@ int main(int argc, char* argv[])
 
     const std::string nuclide     = sf["nuclide"];
     const std::string muon_scheme = sf["muon_scheme"];
+    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
+    {
+        std::cerr << "FATAL: unknown muon_scheme \"" << muon_scheme
+                  << "\". Allowed values: "
+                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
+                  << ".\n";
+        return 1;
+    }
     const std::string write_base  = pp.get_full_write_path();
 
     // Production scaling scheme. Never falls back: an unknown value is FATAL,
@@ -563,6 +571,35 @@ int main(int argc, char* argv[])
               << dem.get_meta().n_cols << " cols.\n";
 
     // -------------------------------------------------------------------------
+    // Atmosphere + optional CRN netcdf data (shared by production and pressure)
+    // -------------------------------------------------------------------------
+    lsdtt::CrnNcData crn_nc;
+    const std::string nc_path = sf["crn_nc_file"].empty()
+        ? lsdtt::default_crn_nc_path()
+        : pp.add_read_path_if_needed(sf["crn_nc_file"]);
+    if (!nc_path.empty())
+    {
+        std::cout << "  Loading CRN NC data: " << nc_path << "\n";
+        crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
+    }
+
+    const std::string atm_name = sf["atmosphere"];
+    lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
+    if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
+    else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
+    else if (atm_name != "ERA40")
+    {
+        std::cerr << "FATAL: unknown atmosphere \"" << atm_name
+                  << "\". Allowed values: ERA40, NCEP, standard.\n";
+        return 1;
+    }
+    const bool nc_ncep = crn_nc.ncep_loaded;
+    const std::string atm_report =
+        (atm_source == lsdtt::AtmSource::NCEP && nc_ncep)          ? "NCEP"
+      : (atm_source == lsdtt::AtmSource::ERA40 && crn_nc.loaded)   ? "ERA40"
+                                                                    : "standard";
+
+    // -------------------------------------------------------------------------
     // Production raster
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu prod_raster;
@@ -579,17 +616,6 @@ int main(int argc, char* argv[])
     {
         std::cout << "Computing " << (use_lsdn ? "LSDn" : "Stone 2000")
                   << " production raster...\n";
-        lsdtt::CrnNcData crn_nc;
-        // Fall back to the bundled crn_parameters.nc (relative to this executable)
-        // when the user gives no path. Empty => standard atmosphere.
-        const std::string nc_path = sf["crn_nc_file"].empty()
-            ? lsdtt::default_crn_nc_path()
-            : pp.add_read_path_if_needed(sf["crn_nc_file"]);
-        if (!nc_path.empty())
-        {
-            std::cout << "  Loading CRN NC data: " << nc_path << "\n";
-            crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
-        }
         if (use_lsdn && !crn_nc.lsdn_loaded)
         {
             std::cerr << "FATAL: scaling_scheme: lsdn requires the LSDn scaling grids in "
@@ -601,27 +627,6 @@ int main(int argc, char* argv[])
             return 1;
         }
         double age_yr = static_cast<double>(ff["sample_age_yr"]);
-
-        // Resolve the atmosphere model, same wording and same fallbacks as
-        // lsdtt-cosmo-tool so the pair can be driven consistently. ERA40 is the
-        // default and resolves exactly as the previous AtmSource::Auto did
-        // (Auto => ERA40 when the nc is loaded, standard otherwise), so this is
-        // additive: an existing parameter file gets the behaviour it had.
-        const std::string atm_name = sf["atmosphere"];
-        lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
-        if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
-        else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
-        else if (atm_name != "ERA40")
-        {
-            std::cerr << "FATAL: unknown atmosphere \"" << atm_name
-                      << "\". Allowed values: ERA40, NCEP, standard.\n";
-            return 1;
-        }
-        const bool nc_ncep = crn_nc.ncep_loaded;
-        const std::string atm_report =
-            (atm_source == lsdtt::AtmSource::NCEP && nc_ncep)          ? "NCEP"
-          : (atm_source == lsdtt::AtmSource::ERA40 && crn_nc.loaded)   ? "ERA40"
-                                                                       : "standard";
         std::cout << "  Atmosphere: " << atm_report << "\n";
 
         try
@@ -680,13 +685,33 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu conc_raster;
     bool have_conc_raster = false;
+    lsdtt::lsdtt_raster_cpu pressure_raster;
+    const lsdtt::lsdtt_raster_cpu* pressure_ptr = nullptr;
 
     if (do_ss_conc)
     {
+        if (muon_scheme == "balcoCRONUSv3PD")
+        {
+            std::cout << "Computing pressure raster for balcoCRONUSv3PD ("
+                      << atm_report << " atmosphere)...\n";
+            try
+            {
+                pressure_raster = lsdtt::calculate_pressure_raster(dem, crn_nc, atm_source);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: pressure raster failed: " << e.what() << "\n";
+                return 1;
+            }
+            pressure_ptr = &pressure_raster;
+            std::cout << "  Pressure raster computed.\n";
+        }
+
         std::cout << "Computing steady-state CRN concentration raster (" << nuclide << ")...\n";
         conc_raster = lsdtt::calculate_crn_concentration_raster_whole(
             nuclide, muon_scheme,
-            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield);
+            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield,
+            pressure_ptr);
         have_conc_raster = true;
         std::cout << "  Done.\n";
 

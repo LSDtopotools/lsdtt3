@@ -121,8 +121,8 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production parameter scheme.",
-        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
+        "Muon production parameter scheme (BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD).",
+        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD.",
         "CRN physics", "param", ""};
 
     string_default_map["scaling_scheme"] = "stone";
@@ -380,6 +380,14 @@ int main(int argc, char* argv[])
     // Derive defaults that depend on other parameters
     const std::string nuclide     = sf["nuclide"];
     const std::string muon_scheme = sf["muon_scheme"];
+    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
+    {
+        std::cerr << "FATAL: unknown muon_scheme \"" << muon_scheme
+                  << "\". Allowed values: "
+                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
+                  << ".\n";
+        return 1;
+    }
     const double rock_density_kg_m3 = static_cast<double>(ff["rock_density_kg_m3"]);
 
     std::string concentration_col_name = sf["concentration_column_name"];
@@ -621,6 +629,25 @@ int main(int argc, char* argv[])
     {
         std::cerr << "FATAL: production raster failed: " << e.what() << "\n";
         return 1;
+    }
+
+    lsdtt::lsdtt_raster_cpu pressure_raster;
+    const lsdtt::lsdtt_raster_cpu* pressure_for_inversion = nullptr;
+    if (muon_scheme == "balcoCRONUSv3PD")
+    {
+        std::cout << "Calculating pressure raster for balcoCRONUSv3PD"
+                  << " (" << atm_report << " atmosphere)...\n";
+        try
+        {
+            pressure_raster = lsdtt::calculate_pressure_raster(
+                filled_dem, crn_nc, atm_source);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: pressure raster failed: " << e.what() << "\n";
+            return 1;
+        }
+        pressure_for_inversion = &pressure_raster;
     }
 
     if (bf["write_production_raster"])
@@ -947,7 +974,8 @@ int main(int argc, char* argv[])
         double erate = lsdtt::calculate_eff_erate_from_conc(
             conc, nuclide, muon_scheme,
             *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-            self_shield_raster, flow, outlet_node, predicted_conc);
+            self_shield_raster, pressure_for_inversion,
+            flow, outlet_node, predicted_conc);
 
         if (self_consistent_age)
         {
@@ -990,7 +1018,8 @@ int main(int argc, char* argv[])
                 erate = lsdtt::calculate_eff_erate_from_conc(
                     conc, nuclide, muon_scheme,
                     *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-                    self_shield_raster, flow, outlet_node, predicted_conc);
+                    self_shield_raster, pressure_for_inversion,
+                    flow, outlet_node, predicted_conc);
 
                 const double rel = (erate > 0.0)
                     ? std::fabs(erate - erate_prev) / erate
@@ -1047,14 +1076,16 @@ int main(int argc, char* argv[])
             double erate_minus = lsdtt::calculate_eff_erate_from_conc(
                 conc_minus, nuclide, muon_scheme,
                 *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-                self_shield_raster, flow, outlet_node, pred_minus);
+                self_shield_raster, pressure_for_inversion,
+                flow, outlet_node, pred_minus);
 
             double conc_plus = conc + uncert;
             double pred_plus = 0.0;
             double erate_plus = lsdtt::calculate_eff_erate_from_conc(
                 conc_plus, nuclide, muon_scheme,
                 *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-                self_shield_raster, flow, outlet_node, pred_plus);
+                self_shield_raster, pressure_for_inversion,
+                flow, outlet_node, pred_plus);
 
             const double unc_int_g_cm2_yr = 0.5 * std::fabs(erate_plus - erate_minus);
             const double unc_prod_g_cm2_yr =

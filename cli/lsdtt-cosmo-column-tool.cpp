@@ -449,8 +449,8 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production parameter scheme.",
-        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
+        "Muon production parameter scheme (BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD).",
+        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD.",
         "-", "param", "use_initial_concentration"};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;
@@ -695,6 +695,14 @@ int main(int argc, char* argv[])
     const std::string mode       = sf["column_mode"];
     const std::string nuclide    = sf["nuclide"];
     const std::string muon_scheme = sf["muon_scheme"];
+    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
+    {
+        std::cerr << "FATAL: unknown muon_scheme \"" << muon_scheme
+                  << "\". Allowed values: "
+                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
+                  << ".\n";
+        return 1;
+    }
     const double density         = static_cast<double>(ff["rock_density_kg_m3"]);
     const bool propagate_prod_unc  = bf["propagate_production_uncertainty"];
     const bool propagate_decay_unc = bf["propagate_decay_uncertainty"];
