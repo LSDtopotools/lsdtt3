@@ -152,7 +152,16 @@ Sample points are snapped to the nearest channel pixel meeting the contributing-
 |---|---|---|---|
 | `write_production_raster` | bool | `false` | `<write_fname>_PROD.tif` — Stone 2000 production scaling raster. |
 
-The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns include latitude, longitude, measured concentration, predicted concentration, effective erosion rate (g/cm²/yr), and erosion rate (mm/kyr). Uncertainty bound columns are added when an uncertainty column is present in the input.
+The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns include:
+
+- sample metadata (`sample_name` when present, `nuclide`),
+- snapped outlet location (`latitude`, `longitude`),
+- basin comparison metadata (`effective_pressure_hpa`, `centroid_latitude_deg`),
+- measured + predicted concentration,
+- effective erosion rate (`apparent_eff_e_g_cm2_yr`),
+- erosion rate in mm/kyr (`*_mm_kyr`).
+
+For backward compatibility, duplicated legacy `*_mm_yr` aliases are still written and carry the same **mm/kyr** numeric values. Uncertainty-bound columns are added when an uncertainty column is present in the input.
 
 ---
 
@@ -180,6 +189,23 @@ lsdviz3-cosmo-published \
 For sweep-style lsdtt3-vs-reference figures, see the single-point scan script
 `tests/scripts/run_cosmo_single_point_scaling_scan.py` and
 `lsdviz3-cosmo-compare`.
+
+For **sample-set** comparison against CRONUS v3 (separate from synthetic point
+scan), use:
+
+```
+python3 tests/scripts/compare_cosmo_tool_vs_cronus_v3.py \
+  --cosmo-csv <write_path>/<write_fname>_CN_ERATE.csv \
+  --points-csv <input_points.csv> \
+  --uncertainty-col <sigma_column> \
+  --standardisation-col <standardisation_column> \
+  --scheme St \
+  --out-csv <write_path>/<write_fname>_CRONUS_COMPARE.csv
+```
+
+This builds a CRONUS v3 batch request from each sample's nuclide,
+concentration, basin-effective pressure, and basin-centroid latitude, then
+writes per-sample lsdtt3-vs-CRONUS erosion-rate residuals.
 
 ---
 

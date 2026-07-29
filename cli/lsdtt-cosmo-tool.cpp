@@ -797,24 +797,30 @@ int main(int argc, char* argv[])
 
     if (has_sample_name)
         csv_out << "sample_name,";
-    csv_out << "latitude,longitude,"
+    csv_out << "nuclide,latitude,longitude,"
+            << "effective_pressure_hpa,centroid_latitude_deg,"
             << "concentration_" << nuclide << ","
             << "predicted_conc_" << nuclide << ","
             << "apparent_eff_e_g_cm2_yr,"
+            << "apparent_e_mm_kyr,"
             << "apparent_e_mm_yr";
     if (has_uncertainty)
     {
         csv_out << ",concentration_minus_" << nuclide
                 << ",predicted_conc_minus_" << nuclide
                 << ",apparent_eff_e_minus_g_cm2_yr"
+                << ",apparent_e_minus_mm_kyr"
                 << ",apparent_e_minus_mm_yr"
                 << ",concentration_plus_" << nuclide
                 << ",predicted_conc_plus_" << nuclide
                 << ",apparent_eff_e_plus_g_cm2_yr"
+                << ",apparent_e_plus_mm_kyr"
                 << ",apparent_e_plus_mm_yr"
                 << ",apparent_eff_e_unc_int_g_cm2_yr"
+                << ",apparent_e_unc_int_mm_kyr"
                 << ",apparent_e_unc_int_mm_yr"
                 << ",apparent_eff_e_unc_ext_g_cm2_yr"
+                << ",apparent_e_unc_ext_mm_kyr"
                 << ",apparent_e_unc_ext_mm_yr";
     }
     // The converged age is a per-sample result, so it belongs in the output next
@@ -889,12 +895,60 @@ int main(int argc, char* argv[])
         }
 
         std::int64_t outlet_node = snapped.snapped_flat;
+        lsdtt::lsdtt_flat_index_slice up = flow.upslope_nodes(outlet_node);
 
         // Convert snapped position to WGS84 lat/lon for output
         lsdtt::lsdtt_lonlat ll = lsdtt::cell_center_to_lonlat(
             meta, snapped.snapped_row, snapped.snapped_col);
         double out_lat = ll.latitude;
         double out_lon = ll.longitude;
+        double basin_centroid_lat_deg = std::numeric_limits<double>::quiet_NaN();
+        double eff_pressure_hpa = std::numeric_limits<double>::quiet_NaN();
+
+        {
+            const int nc_cols = meta.n_cols;
+            double sum_lat = 0.0;
+            std::int64_t n_lat = 0;
+            double sum_p = 0.0;
+            std::int64_t n_p = 0;
+
+            const auto* p_data = pressure_for_inversion
+                ? &pressure_for_inversion->get_data_array()
+                : nullptr;
+            const auto* p_mask = pressure_for_inversion
+                ? &pressure_for_inversion->get_mask_array()
+                : nullptr;
+
+            for (std::size_t kk = 0; kk < up.size(); ++kk)
+            {
+                std::int64_t f = up[kk];
+                int rr = static_cast<int>(f / nc_cols);
+                int cc = static_cast<int>(f % nc_cols);
+
+                lsdtt::lsdtt_lonlat pll = lsdtt::cell_center_to_lonlat(meta, rr, cc);
+                sum_lat += pll.latitude;
+                ++n_lat;
+
+                if (p_data != nullptr && p_mask != nullptr && (*p_mask)(rr, cc))
+                {
+                    sum_p += static_cast<double>((*p_data)(rr, cc));
+                    ++n_p;
+                }
+            }
+
+            if (n_lat > 0) basin_centroid_lat_deg = sum_lat / static_cast<double>(n_lat);
+            if (n_p > 0)   eff_pressure_hpa = sum_p / static_cast<double>(n_p);
+        }
+
+        // Fallbacks if the per-basin aggregates were unavailable.
+        if (!std::isfinite(basin_centroid_lat_deg)) basin_centroid_lat_deg = out_lat;
+        if (!std::isfinite(eff_pressure_hpa) && pressure_for_inversion != nullptr)
+        {
+            const auto& p_data = pressure_for_inversion->get_data_array();
+            const auto& p_mask = pressure_for_inversion->get_mask_array();
+            if (p_mask(snapped.snapped_row, snapped.snapped_col))
+                eff_pressure_hpa = static_cast<double>(p_data(snapped.snapped_row, snapped.snapped_col));
+        }
 
         std::cout << "\n--- Sample " << (csv_row + 1)
                   << (has_sample_name ? ("  " + get_col_str(sample_col_name, csv_row)) : "")
@@ -914,7 +968,6 @@ int main(int argc, char* argv[])
             const auto& ps_mask = prod_raster.get_mask_array();
             const auto& dz_data = dem.get_data_array();
             const auto& dz_mask = dem.get_mask_array();
-            lsdtt::lsdtt_flat_index_slice up = flow.upslope_nodes(outlet_node);
             double sum_scal = 0.0, sum_elev = 0.0;
             std::int64_t n_pix = 0;
             for (std::size_t kk = 0; kk < up.size(); ++kk)
@@ -1049,9 +1102,12 @@ int main(int argc, char* argv[])
 
         if (has_sample_name)
             csv_out << get_col_str(sample_col_name, csv_row) << ",";
-        csv_out << out_lat << "," << out_lon << ","
+        csv_out << nuclide << ","
+                << out_lat << "," << out_lon << ","
+                << eff_pressure_hpa << "," << basin_centroid_lat_deg << ","
                 << conc << "," << predicted_conc << ","
-                << erate << "," << erate * e_scale;
+                << erate << "," << erate * e_scale
+                << "," << erate * e_scale;
 
         // Uncertainty bounds
         if (has_uncertainty)
@@ -1099,10 +1155,14 @@ int main(int argc, char* argv[])
 
             csv_out << "," << conc_minus << "," << pred_minus << ","
                     << erate_minus << "," << erate_minus * e_scale
+                    << "," << erate_minus * e_scale
                     << "," << conc_plus  << "," << pred_plus  << ","
                     << erate_plus  << "," << erate_plus  * e_scale
+                    << "," << erate_plus  * e_scale
                     << "," << unc_int_g_cm2_yr << "," << unc_int_g_cm2_yr * e_scale
-                    << "," << unc_ext_g_cm2_yr << "," << unc_ext_g_cm2_yr * e_scale;
+                    << "," << unc_int_g_cm2_yr * e_scale
+                    << "," << unc_ext_g_cm2_yr << "," << unc_ext_g_cm2_yr * e_scale
+                    << "," << unc_ext_g_cm2_yr * e_scale;
 
             // NOTE: the +/- bounds are inverted against the CENTRAL sample's
             // converged production raster, not against one re-converged at each
