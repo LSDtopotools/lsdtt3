@@ -41,6 +41,43 @@ write_fname: ortler
 bounds_fname: my_study_area.gpkg
 ```
 
+### By outlet points (auto bounds, grouping, final verification)
+
+```text
+write_path: /home/me/mydata
+write_fname: sulawasi
+
+bounds_mode: outlets
+outlet_points_fname: sulawasi_outlets.csv
+
+# defaults are keyless-first
+dem_source: cop30_aws
+
+# optional: ask for OpenTopography but fall back keylessly if auth fails
+allow_auth_fallback_to_keyless: true
+auth_fallback_source: cop30_aws
+
+# split distant/large basin groups into multiple DEMs
+auto_split_disconnected_basins: true
+split_cluster_gap_km: 25
+max_final_dem_area_km2: 2500
+
+# final-resolution bounded recheck
+verify_final_resolution_basins: true
+final_basin_edge_buffer_pixels: 3
+final_basin_nodata_buffer_pixels: 1
+final_verify_expand_factor: 1.25
+final_verify_max_iters: 3
+```
+
+Smoke-test profile (network): keep bounds tiny and force two groups with
+`max_basins_per_dem: 1`. Validate these outputs:
+
+- `<write_fname>_group_0001_DEM.tif`
+- `<write_fname>_group_0002_DEM.tif`
+- `<write_fname>_dem_groups.csv`
+- `<write_fname>_outlet_bounds_status.csv`
+
 Then run it and carry straight on into an analysis:
 
 ```sh
@@ -55,6 +92,13 @@ lsdtt-raster-preprocessing . preprocess.param   # fill, hillshade, ...
 One GeoTIFF named `<write_fname>_DEM.tif` in `write_path`, plus the usual
 `<write_fname>_README.csv` / `.html` parameter documentation every lsdtt3 CLI
 writes.
+
+When `bounds_mode: outlets`, output is grouped:
+
+- `<write_fname>_group_0001_DEM.tif`, `<write_fname>_group_0002_DEM.tif`, ...
+- `<write_fname>_outlet_bounds_status.csv`
+- `<write_fname>_dem_groups.csv` (manifest with `source_used`, verification pass,
+  verification iterations, and minimum edge/nodata margins)
 
 The raster is:
 
@@ -79,7 +123,19 @@ directly to any other lsdtt3 tool with `enforce_projection: false`.
 | `north` | string | — | Northern edge, WGS84 decimal degrees |
 
 All four are required if you use coordinates. A missing edge is an error rather
-than a silent zero — a zeroed edge would quietly fetch the Gulf of Guinea.
+than a silent zero - a zeroed edge would quietly fetch the Gulf of Guinea.
+
+`bounds_mode` controls how area selection works:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `bounds_mode` | string | `manual` | `manual` (existing behavior), `vector` (require `bounds_fname`), or `outlets` (auto-discover from outlet points). |
+
+Rules:
+
+- `bounds_mode: manual` -> use either explicit bbox or `bounds_fname`
+- `bounds_mode: vector` -> `bounds_fname` required; explicit bbox forbidden
+- `bounds_mode: outlets` -> `outlet_points_fname` required; explicit bbox and `bounds_fname` forbidden
 
 They are declared as strings, not floats, deliberately: the parameter parser
 carries `float`, which quantises to about 1e-7 degrees, and that is metres on
@@ -112,6 +168,46 @@ polygons and points, and other geometry types.
 
 Setting `bounds_fname` **and** any of `west`/`south`/`east`/`north` is an error.
 Silently preferring one would leave you unsure which area you actually got.
+
+### Outlet-based bounds discovery
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `outlet_points_fname` | string | *(empty)* | Outlet point file for `bounds_mode: outlets` (CSV/FGB/GPKG). |
+| `outlet_points_path` | string | *(empty)* | Optional directory for `outlet_points_fname`; falls back to `read_path`. |
+| `prefetch_initial_radius_km` | float | `15` | Initial radius for first-guess outlet bounds. |
+| `prefetch_expand_factor` | float | `1.8` | Expansion factor when retrying bounds. Must be >1. |
+| `prefetch_max_iters` | int | `6` | Max first-guess expansion iterations. |
+| `prefetch_edge_buffer_pixels` | int | `3` | Coarse-stage edge buffer target. |
+
+The tool writes per-outlet status to `<write_fname>_outlet_bounds_status.csv`.
+
+### Group splitting and manifests (`bounds_mode: outlets`)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `auto_split_disconnected_basins` | bool | `true` | Split distant basin groups into separate DEMs. |
+| `split_cluster_gap_km` | float | `25` | Distance threshold for clustering outlets/basins. |
+| `max_final_dem_area_km2` | float | `2500` | Maximum approximate area per final DEM group. |
+| `split_overlap_km` | float | `2` | Overlap buffer applied around each group bbox. |
+| `max_basins_per_dem` | int | `0` | Optional cap per group (`0` = unlimited). |
+
+Manifest output `<write_fname>_dem_groups.csv` records one row per final group
+including requested/used source, bbox, area, and final verification metrics.
+
+### Final-resolution basin safety verification
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `verify_final_resolution_basins` | bool | `true` | Re-delineate/verify on the final-resolution DEM before accepting output. |
+| `final_basin_edge_buffer_pixels` | int | `3` | Required margin between any selected basin pixel and raster edge. |
+| `final_basin_nodata_buffer_pixels` | int | `1` | Required margin between any selected basin pixel and nodata. |
+| `final_verify_expand_factor` | float | `1.25` | Bbox growth factor for failed verification retries. |
+| `final_verify_max_iters` | int | `3` | Max verification refetch retries per group. |
+
+Verification is basin-pixel-wide (not outlet-only): if any basin pixel violates
+edge/nodata buffers, that group is refetched with expanded bounds until pass or
+retry cap.
 
 ### Source
 
@@ -358,6 +454,13 @@ box outside the source's coverage. The message names the tiles it looked for.
 
 **`FATAL: no area given`**
 Set the four edges, or `bounds_fname`.
+
+**`FATAL: bounds_mode=outlets requires outlet_points_fname`**
+Set an outlet file when using outlet-based discovery.
+
+**`FATAL: group <id> failed final-resolution verification ...`**
+Final DEM did not meet edge/nodata basin-pixel buffers within retry cap.
+Increase initial radius or verification retries, or reduce strictness carefully.
 
 **`FATAL: give either bounds_fname or west/south/east/north, not both`**
 Exactly what it says — remove one.

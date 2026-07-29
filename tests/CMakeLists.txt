@@ -389,6 +389,78 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "FATAL: unknown dem_source"
 )
 
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_bounds_mode
+    lsdtt-fetch-raster
+    fetch_raster_bad_bounds_mode.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: bounds_mode must be one of"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_outlets_missing_file
+    lsdtt-fetch-raster
+    fetch_raster_outlets_missing_file.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: bounds_mode=outlets requires outlet_points_fname"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_outlets_conflict_area
+    lsdtt-fetch-raster
+    fetch_raster_outlets_conflict_area.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: bounds_mode=outlets forbids west/south/east/north and bounds_fname"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_prefetch_source
+    lsdtt-fetch-raster
+    fetch_raster_bad_prefetch_source.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: unknown prefetch_source"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_auth_fallback_source
+    lsdtt-fetch-raster
+    fetch_raster_bad_auth_fallback_source.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: auth_fallback_source must be keyless"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_outlets_missing_dataset
+    lsdtt-fetch-raster
+    fetch_raster_outlets_not_implemented.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: could not open outlet points CSV"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_ot_missing_key_strict
+    lsdtt-fetch-raster
+    fetch_raster_ot_missing_key_strict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: no credential found"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_ot_missing_key_fallback
+    lsdtt-fetch-raster
+    fetch_raster_ot_missing_key_fallback.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: lsdtt::fetch_dem: west must be less than east"
+)
+
 # -h must work without a parameter file, and without touching the network.
 add_test(NAME smoke_fetch_raster_help
          COMMAND lsdtt-fetch-raster -h)
@@ -497,6 +569,19 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
         --expect-raster-size ortler_test_DEM.tif:128x128
     )
     set_tests_properties(network_fetch_raster_cli PROPERTIES LABELS "network;cli;fetch")
+
+    add_lsdtt_cli_smoke_test(
+        network_fetch_raster_outlets_cli
+        lsdtt-fetch-raster
+        fetch_raster_outlets_network.param.in
+        outlets_net_group_0001_DEM.tif
+        --expect outlets_net_group_0002_DEM.tif
+        --expect outlets_net_dem_groups.csv
+        --expect outlets_net_outlet_bounds_status.csv
+        --expect-file-contains "outlets_net_dem_groups.csv:group_id"
+        --expect-file-contains "outlets_net_dem_groups.csv:group_0002_DEM.tif"
+    )
+    set_tests_properties(network_fetch_raster_outlets_cli PROPERTIES LABELS "network;cli;fetch")
 endif()
 
 # Flow-routing performance (docs/testing_and_benchmarking.md).
@@ -583,6 +668,14 @@ target_include_directories(lsdtt-test-raster-fetch PRIVATE ${CMAKE_SOURCE_DIR}/s
 add_test(NAME unit_raster_fetch
          COMMAND lsdtt-test-raster-fetch --offline --data-dir=${CMAKE_CURRENT_SOURCE_DIR}/data/bounds)
 set_tests_properties(unit_raster_fetch PROPERTIES LABELS "unit;fetch")
+
+add_executable(lsdtt-test-dem-grouping cpp/test_dem_grouping.cpp)
+target_link_libraries(lsdtt-test-dem-grouping PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-dem-grouping PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+
+add_test(NAME unit_dem_grouping
+         COMMAND lsdtt-test-dem-grouping)
+set_tests_properties(unit_dem_grouping PROPERTIES LABELS "unit;fetch")
 
 # The network half actually downloads. Off by default; skips (77) rather than
 # failing when the source is unreachable.

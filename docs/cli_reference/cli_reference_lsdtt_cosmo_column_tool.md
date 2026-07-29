@@ -42,7 +42,7 @@ key: value
 |---|---|---|---|
 | `column_mode` | string | `steady_state` | Simulation mode. Options: `steady_state`, `step_change`, `full_transient`, `burial_pair`, `step_pair`, `burial_pair_batch`, `step_pair_batch`. |
 | `nuclide` | string | `Be10` | Nuclide for output labelling. All three nuclides are always computed. Options: `Be10`, `Al26`, `C14`. |
-| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`, `balcoCRONUSv3PD` (pressure-dependent Balco/CRONUS-v3 style; scan alias: `cronusv3pd`). |
 | `rock_density_kg_m3` | float | `2650` | Rock density (kg/m³). Used to convert depth to effective depth. |
 
 ---

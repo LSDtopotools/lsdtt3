@@ -1,0 +1,24 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: outlets_net
+
+bounds_mode: outlets
+outlet_points_fname: __READ_PATH__/bounds/outlets_ortler_pair.csv
+
+dem_source: cop30_aws
+prefetch_source: cop30_aws
+
+prefetch_initial_radius_km: 1.2
+prefetch_expand_factor: 1.6
+prefetch_max_iters: 3
+
+auto_split_disconnected_basins: true
+split_cluster_gap_km: 100
+max_basins_per_dem: 1
+split_overlap_km: 0.5
+
+verify_final_resolution_basins: false
+
+target_epsg: 32632
+grid_spacing: 30.0
+size_pixels: 64
