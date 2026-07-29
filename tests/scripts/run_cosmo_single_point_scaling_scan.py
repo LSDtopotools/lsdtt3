@@ -103,6 +103,8 @@ COMPARISON_FIELDS = [
     "conc_sigma_atoms_g",
     "erate_lsdtt3_gcm2yr",
     "erate_cronus_v3_gcm2yr",
+    "cronus_v3_status",
+    "cronus_v3_zero_erate_flag",
     "pct_diff_vs_cronus_v3",
     "pct_diff_lsdtt3_minus_reference",
     "sample_age_yr",
@@ -637,6 +639,13 @@ def generate_rows(
     for rid, lr in by_id_lsdtt.items():
         e_lsdtt = float(lr["erate_est_gcm2yr"])
         e_cv3 = cronus_refs.get(rid)
+        zero_reference = e_cv3 is not None and e_cv3 == 0.0
+        if e_cv3 is None:
+            cronus_v3_status = "missing_reference"
+        elif zero_reference:
+            cronus_v3_status = "zero_reference_erate"
+        else:
+            cronus_v3_status = "ok"
 
         if e_cv3 is not None:
             cronus_rows.append({**lr, "source": "cronus_v3", "erate_est_gcm2yr": f"{e_cv3:.10g}"})
@@ -659,6 +668,8 @@ def generate_rows(
                 "conc_sigma_atoms_g": lr["conc_sigma_atoms_g"],
                 "erate_lsdtt3_gcm2yr": lr["erate_est_gcm2yr"],
                 "erate_cronus_v3_gcm2yr": "" if e_cv3 is None else f"{e_cv3:.10g}",
+                "cronus_v3_status": cronus_v3_status,
+                "cronus_v3_zero_erate_flag": "" if e_cv3 is None else ("1" if zero_reference else "0"),
                 "pct_diff_vs_cronus_v3": "" if math.isnan(d_cv3) else f"{d_cv3:.8g}",
                 "pct_diff_lsdtt3_minus_reference": "" if math.isnan(d_mix) else f"{d_mix:.8g}",
                 "sample_age_yr": lr["sample_age_yr"],
