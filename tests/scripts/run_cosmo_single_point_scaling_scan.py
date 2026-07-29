@@ -3,7 +3,7 @@
 
 Generates point-scan datasets across latitude/elevation/erosion-rate space for
 Be10/Al26/C14, runs lsdtt3 forward->inverse at each point, and optionally joins
-CRONUS v3 plus optional cronuscalc references.
+CRONUS v3 references.
 
 This script is data-workflow infrastructure for:
   docs/plan_docs/cosmo_visualisation_scaling_plan.md
@@ -12,7 +12,7 @@ Notes:
   - Uses synthetic 3x3 ASCII DEMs centred at each scan point.
   - lsdtt3 concentration comes from lsdtt-cosmo-prediction sampled points CSV.
   - lsdtt3 erosion inversion comes from lsdtt-cosmo-tool.
-  - CRONUS v3 is optional (network POST); cronuscalc is optional via CSV ingest.
+  - CRONUS v3 is optional (network POST).
 """
 
 from __future__ import annotations
@@ -49,7 +49,6 @@ MUON_TO_LSDTT = {
 FILE_INPUTS = "single_point_scan_inputs.csv"
 FILE_LSDTT = "single_point_scan_predictions_lsdtt3.csv"
 FILE_CRONUS = "single_point_scan_reference_cronus_v3.csv"
-FILE_CRONUSCALC = "single_point_scan_reference_cronuscalc.csv"
 FILE_COMPARISON = "single_point_scan_comparison.csv"
 
 DEFAULT_CRONUS_ENDPOINTS = [
@@ -104,9 +103,7 @@ COMPARISON_FIELDS = [
     "conc_sigma_atoms_g",
     "erate_lsdtt3_gcm2yr",
     "erate_cronus_v3_gcm2yr",
-    "erate_cronuscalc_gcm2yr",
     "pct_diff_vs_cronus_v3",
-    "pct_diff_vs_cronuscalc",
     "pct_diff_lsdtt3_minus_reference",
     "sample_age_yr",
     "atmosphere_source",
@@ -537,20 +534,6 @@ def fetch_cronus_v3(obs_rows: list[dict], endpoints: list[str], raw_xml_cache: P
     return refs
 
 
-def load_cronuscalc_csv(path: Path) -> dict[str, float]:
-    rows = read_csv(path)
-    out: dict[str, float] = {}
-    for r in rows:
-        rid = r.get("run_id", "").strip()
-        if not rid:
-            continue
-        val = r.get("erate_est_gcm2yr", "").strip()
-        if not val:
-            continue
-        out[rid] = float(val)
-    return out
-
-
 def pct_diff(a: float, b: float) -> float:
     return 100.0 * (a - b) / b if b != 0.0 else float("nan")
 
@@ -566,8 +549,7 @@ def generate_rows(
     with_cronus_v3: bool,
     cronus_endpoints: list[str],
     cronus_raw_xml_cache: Path | None,
-    cronuscalc_map: dict[str, float] | None,
-) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sha = git_sha()
 
@@ -649,31 +631,18 @@ def generate_rows(
         cronus_refs = fetch_cronus_v3(obs_rows_for_cronus, cronus_endpoints, cronus_raw_xml_cache)
 
     cronus_rows: list[dict] = []
-    cronuscalc_rows: list[dict] = []
     comparison_rows: list[dict] = []
     by_id_lsdtt = {r["run_id"]: r for r in lsdtt_rows}
-    cronuscalc_map = cronuscalc_map or {}
 
     for rid, lr in by_id_lsdtt.items():
         e_lsdtt = float(lr["erate_est_gcm2yr"])
         e_cv3 = cronus_refs.get(rid)
-        e_cc = cronuscalc_map.get(rid)
 
         if e_cv3 is not None:
             cronus_rows.append({**lr, "source": "cronus_v3", "erate_est_gcm2yr": f"{e_cv3:.10g}"})
-        if e_cc is not None:
-            cronuscalc_rows.append({**lr, "source": "cronuscalc", "erate_est_gcm2yr": f"{e_cc:.10g}"})
 
         d_cv3 = pct_diff(e_lsdtt, e_cv3) if e_cv3 is not None else float("nan")
-        d_cc = pct_diff(e_lsdtt, e_cc) if e_cc is not None else float("nan")
-        if not math.isnan(d_cv3) and not math.isnan(d_cc):
-            d_mix = 0.5 * (d_cv3 + d_cc)
-        elif not math.isnan(d_cv3):
-            d_mix = d_cv3
-        elif not math.isnan(d_cc):
-            d_mix = d_cc
-        else:
-            d_mix = float("nan")
+        d_mix = d_cv3
 
         comparison_rows.append(
             {
@@ -690,9 +659,7 @@ def generate_rows(
                 "conc_sigma_atoms_g": lr["conc_sigma_atoms_g"],
                 "erate_lsdtt3_gcm2yr": lr["erate_est_gcm2yr"],
                 "erate_cronus_v3_gcm2yr": "" if e_cv3 is None else f"{e_cv3:.10g}",
-                "erate_cronuscalc_gcm2yr": "" if e_cc is None else f"{e_cc:.10g}",
                 "pct_diff_vs_cronus_v3": "" if math.isnan(d_cv3) else f"{d_cv3:.8g}",
-                "pct_diff_vs_cronuscalc": "" if math.isnan(d_cc) else f"{d_cc:.8g}",
                 "pct_diff_lsdtt3_minus_reference": "" if math.isnan(d_mix) else f"{d_mix:.8g}",
                 "sample_age_yr": lr["sample_age_yr"],
                 "atmosphere_source": lr["atmosphere_source"],
@@ -701,7 +668,7 @@ def generate_rows(
             }
         )
 
-    return inputs, lsdtt_rows, cronus_rows, cronuscalc_rows, comparison_rows
+    return inputs, lsdtt_rows, cronus_rows, comparison_rows
 
 
 def run_self_test() -> int:
@@ -745,9 +712,6 @@ def main() -> int:
                     help="CRONUS endpoint (can repeat); defaults to known mirrors")
     ap.add_argument("--cronus-raw-xml-cache", help="optional path to cache raw CRONUS XML")
 
-    ap.add_argument("--cronuscalc-csv",
-                    help="optional CSV with columns run_id,erate_est_gcm2yr for cronuscalc joins")
-
     ap.add_argument("--outdir", help="directory for generated run CSVs")
     ap.add_argument("--expected-dir", help="tracked expected directory (freeze/check target)")
     ap.add_argument("--freeze", action="store_true", help="write tracked expected CSVs")
@@ -786,15 +750,11 @@ def main() -> int:
     outdir = Path(args.outdir) if args.outdir else expected_dir / "generated"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    cronuscalc_map = None
-    if args.cronuscalc_csv:
-        cronuscalc_map = load_cronuscalc_csv(Path(args.cronuscalc_csv))
-
     endpoints = args.cronus_endpoint or DEFAULT_CRONUS_ENDPOINTS
     raw_cache = Path(args.cronus_raw_xml_cache) if args.cronus_raw_xml_cache else None
 
     try:
-        inputs, lsdtt_rows, cronus_rows, ccalc_rows, comparison_rows = generate_rows(
+        inputs, lsdtt_rows, cronus_rows, comparison_rows = generate_rows(
             points=points,
             scaling_values=scaling_values,
             muon_values=muon_values,
@@ -805,7 +765,6 @@ def main() -> int:
             with_cronus_v3=args.with_cronus_v3,
             cronus_endpoints=endpoints,
             cronus_raw_xml_cache=raw_cache,
-            cronuscalc_map=cronuscalc_map,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"FAIL: generation error: {exc}")
@@ -815,26 +774,22 @@ def main() -> int:
         FILE_INPUTS: outdir / FILE_INPUTS,
         FILE_LSDTT: outdir / FILE_LSDTT,
         FILE_CRONUS: outdir / FILE_CRONUS,
-        FILE_CRONUSCALC: outdir / FILE_CRONUSCALC,
         FILE_COMPARISON: outdir / FILE_COMPARISON,
     }
     write_csv(paths[FILE_INPUTS], INPUT_FIELDS, inputs)
     write_csv(paths[FILE_LSDTT], MODEL_FIELDS, lsdtt_rows)
     write_csv(paths[FILE_CRONUS], MODEL_FIELDS, cronus_rows)
-    write_csv(paths[FILE_CRONUSCALC], MODEL_FIELDS, ccalc_rows)
     write_csv(paths[FILE_COMPARISON], COMPARISON_FIELDS, comparison_rows)
 
     print(f"WROTE: {paths[FILE_INPUTS]}")
     print(f"WROTE: {paths[FILE_LSDTT]}")
     print(f"WROTE: {paths[FILE_CRONUS]}")
-    print(f"WROTE: {paths[FILE_CRONUSCALC]}")
     print(f"WROTE: {paths[FILE_COMPARISON]}")
     print(
         "ROWS: "
         f"points={len(inputs)} "
         f"lsdtt={len(lsdtt_rows)} "
-        f"cronus_v3={len(cronus_rows)} "
-        f"cronuscalc={len(ccalc_rows)}"
+        f"cronus_v3={len(cronus_rows)}"
     )
 
     if args.freeze:
@@ -850,7 +805,6 @@ def main() -> int:
             (FILE_INPUTS, "run_id"),
             (FILE_LSDTT, "run_id"),
             (FILE_CRONUS, "run_id"),
-            (FILE_CRONUSCALC, "run_id"),
             (FILE_COMPARISON, "run_id"),
         ]
         for fname, key in checks:
