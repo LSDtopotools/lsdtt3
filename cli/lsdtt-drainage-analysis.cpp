@@ -41,6 +41,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_raster_reproject.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_connectivity_cpu.hpp"
@@ -285,6 +286,14 @@ int main(int argc, char* argv[])
         "spr_prc, spr_term, source.",
         "Soil Topographic Index (STI)", "switch", ""};
 
+    bool_default_map["sti_resample_to_1m_before_calculation"] = false;
+    help_map["sti_resample_to_1m_before_calculation"] = {"bool","false",
+        "Resample DEM to 1 m (cubic) before all calculations in this run.",
+        "When true, the input raster is GDAL-warped to 1 m spacing using cubic "
+        "resampling before pit filling/flow/STI. Uses lsdtt reproject/warp "
+        "machinery and writes the resampled raster to write_path.",
+        "Soil Topographic Index (STI)", "switch", ""};
+
     bool_default_map["write_sti_95th_percentile_rasters"] = false;
     help_map["write_sti_95th_percentile_rasters"] = {"bool","false",
         "Write STI threshold rasters keeping only the top 5% of values.",
@@ -464,12 +473,19 @@ int main(int argc, char* argv[])
     const bool write_sti = bf["write_sti_raster"];
     const bool write_sti_proxy = bf["write_sti_proxy_raster"];
     const bool write_sti_p95 = bf["write_sti_95th_percentile_rasters"];
+    const bool sti_resample_to_1m = bf["sti_resample_to_1m_before_calculation"];
     const bool need_sti = write_sti || write_sti_proxy;
 
     if (write_sti_p95 && !need_sti)
     {
         std::cout << "WARNING: write_sti_95th_percentile_rasters=true but no base STI output "
                   << "requested. Enable write_sti_raster and/or write_sti_proxy_raster.\n";
+    }
+
+    if (sti_resample_to_1m && !need_sti)
+    {
+        std::cout << "WARNING: sti_resample_to_1m_before_calculation=true but no STI output "
+                  << "requested. Resampling will still be applied to this run.\n";
     }
 
     if (bf["write_twi_raster"] && twi_method != "dinf" && twi_method != "mfd")
@@ -641,7 +657,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
-    const std::string input_path = pp.get_full_read_path();
+    std::string input_path = pp.get_full_read_path();
     std::cout << "\nOpening DEM: " << input_path << "\n";
 
     lsdtt::lsdtt_data_loader loader;
@@ -656,6 +672,51 @@ int main(int argc, char* argv[])
     }
 
     loader.print_raster_info();
+
+    if (sti_resample_to_1m)
+    {
+        std::cout << "\n--- Optional pre-calculation resampling ---\n";
+        std::cout << "Resampling DEM to 1 m using cubic interpolation before analysis.\n";
+        try
+        {
+            lsdtt::lsdtt_reproject_options ropt;
+            ropt.enforce_projection = true;
+            ropt.force_reproject = true;
+            ropt.resampling_method = "cubic";
+            ropt.force_resampling = true;
+            ropt.forced_grid_spacing = 1.0;
+            ropt.grid_spacing = -1.0;
+            ropt.allow_lambert_projection = false;
+            ropt.n_threads = ifs["n_threads"];
+            ropt.warp_mem_mb = 512;
+
+            const lsdtt::lsdtt_reproject_result res = lsdtt::lsdtt_reproject_if_needed(
+                input_path,
+                pp.get_write_path(),
+                pp.get_write_fname() + "_sti_precalc_1m",
+                loader.get_meta(),
+                ropt
+            );
+
+            if (!res.reprojected || res.out_path.empty())
+            {
+                throw std::runtime_error(
+                    "sti_resample_to_1m_before_calculation was requested but no output raster "
+                    "was produced by the reprojection/warp step.");
+            }
+
+            input_path = res.out_path;
+            std::cout << "Using resampled DEM: " << input_path << "\n";
+            loader.open_raster(input_path);
+            loader.print_raster_info();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: 1 m pre-calculation resampling failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
 
     try
     {
