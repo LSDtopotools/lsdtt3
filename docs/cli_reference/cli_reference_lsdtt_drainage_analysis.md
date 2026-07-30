@@ -153,8 +153,12 @@ These outputs match the default STI paths and layer names in this CLI.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `sti_term_mode` | string | `ksd` | Primary STI mode flag. Options: `ksd`, `spr`. |
+| `sti_resample_to_1m_before_calculation` | bool | `false` | If true, GDAL-warps the input DEM to 1 m grid spacing using cubic interpolation before pit filling, flow routing, and STI assembly for this run. The resampled DEM is written to `write_path` and used for all subsequent outputs. The DAERA runoff risk tool resamples their 0.5m resolution topographic data to 1m for sti calculation, see https://doi.org/10.1016/j.jenvman.2024.122110. |
 | `write_sti_intermediate_rasters` | bool | `false` | Write debug rasters (`_sti_twi`, `_sti_series_codes`, `_sti_landuse_codes`, term rasters, valid masks). |
 | `write_sti_95th_percentile_rasters` | bool | `false` | After writing each requested STI raster, compute its 95th percentile over valid pixels and write a companion raster that keeps only pixels `>= P95` (`_sti_p95.tif` and/or `_sti_proxy_p95.tif`); all lower values become nodata. |
+| `write_sti_p95_jenks_rasters` | bool | `false` | Classify each written P95 raster into Jenks natural-break classes and write class rasters (`_sti_p95_jenks5.tif` and/or `_sti_proxy_p95_jenks5.tif` by default, here the number 5 is the default value of `sti_p95_jenks_n_classes`). Requires `write_sti_95th_percentile_rasters: true`. The DEARA runoff risk tool uses these natural breaks classes to translate STI data into a decision support tool that can be iterpreted by stakeholders, see https://doi.org/10.1016/j.jenvman.2024.122110.|
+| `sti_p95_jenks_n_classes` | int | `5` | Requested number of Jenks classes for P95 categorisation. |
+| `sti_p95_jenks_max_histogram_bins` | int | `2048` | Maximum histogram bins used by Jenks fitting (histogram-weighted implementation). |
 | `write_sti_lookup_csv` | bool | `false` | Write `<write_fname>_sti_lookup.csv` with join/debug diagnostics. |
 | `sti_soil_vector_path` | string | `data/scotland_soils/hutton_series_code_min.fgb` | Soil polygon vector path. |
 | `sti_soil_layer_name` | string | `hutton_series_code_min` | Soil layer name. |
