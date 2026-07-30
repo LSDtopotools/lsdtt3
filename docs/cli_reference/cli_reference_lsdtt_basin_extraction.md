@@ -113,6 +113,33 @@ with a clever way for a cli to use the basin manager and appy the statistics
 of choice to it, and writes it to a file as desired by the cli using the
 lsdtt_data_loader.
 
+## Selecting all basins of one stream order
+
+`select_all_basins_of_stream_order` is a basin-selection mode that extracts all
+basins whose associated junction stream order is exactly a user-specified value.
+Use this when you want a complete basin set at one hierarchy level (for example,
+all 3rd-order basins) instead of a stream-order range filter.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `select_all_basins_of_stream_order` | bool | `false` | Enable exact stream-order basin selection. Mutually exclusive with other `select_*` modes. |
+| `selected_stream_order` | int | `-1` | Target stream order. Required and must be `> 0` when `select_all_basins_of_stream_order: true`. |
+
+Example parameter file:
+
+```
+read_path:   /data/nujang/
+write_path:  /data/nujang/
+read_fname:  nujang_COP30_fill.tif
+write_fname: nujang_order3
+raster_is_filled: true
+
+select_all_basins_of_stream_order: true
+selected_stream_order: 3
+
+write_basin_outlines_as_polygon: true
+```
+
 ## Selecting basins that cross a line (e.g. a fault)
 
 `select_basins_from_line_crossings` is a basin-selection mode for studying basin

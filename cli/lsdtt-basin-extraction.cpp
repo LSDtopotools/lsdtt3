@@ -491,6 +491,19 @@ int main(int argc, char* argv[])
         "junction and constructs one lsdtt_junction_basin per junction.",
         "Basin selection", "switch", ""};
 
+    bool_default_map["select_all_basins_of_stream_order"] = false;
+    help_map["select_all_basins_of_stream_order"] = {"bool","false",
+        "Select all basins whose junction stream order equals selected_stream_order.",
+        "This is equivalent to selecting all basins then filtering to one exact "
+        "stream order.",
+        "Basin selection", "switch", ""};
+
+    int_default_map["selected_stream_order"] = -1;
+    help_map["selected_stream_order"] = {"int","-1",
+        "Exact stream order used by select_all_basins_of_stream_order.",
+        "Must be > 0 when select_all_basins_of_stream_order is true.",
+        "Basin selection", "param", ""};
+
     // --- Basin filtering ---
     bool_default_map["filter_basins_by_stream_order"] = false;
     help_map["filter_basins_by_stream_order"] = {"bool", "false",
@@ -732,6 +745,8 @@ int main(int argc, char* argv[])
         bf["select_basins_from_outlets_nested"];
     const bool select_all_basins =
         bf["select_all_basins"];
+    const bool select_all_basins_of_stream_order =
+        bf["select_all_basins_of_stream_order"];
     const bool select_basins_from_line_crossings =
         bf["select_basins_from_line_crossings"];
 
@@ -739,13 +754,22 @@ int main(int argc, char* argv[])
         static_cast<int>(select_basins_from_outlets) +
         static_cast<int>(select_basins_from_outlets_nested) +
         static_cast<int>(select_all_basins) +
+        static_cast<int>(select_all_basins_of_stream_order) +
         static_cast<int>(select_basins_from_line_crossings);
 
     if (n_selection_modes > 1)
     {
         std::cerr << "FATAL: choose only one of: select_basins_from_outlets, "
                   << "select_basins_from_outlets_nested, select_all_basins, "
+                  << "select_all_basins_of_stream_order, "
                   << "select_basins_from_line_crossings.\n";
+        return 1;
+    }
+
+    if (select_all_basins_of_stream_order && ifs["selected_stream_order"] <= 0)
+    {
+        std::cerr << "FATAL: selected_stream_order must be > 0 when "
+                  << "select_all_basins_of_stream_order is true.\n";
         return 1;
     }
 
@@ -832,7 +856,14 @@ int main(int argc, char* argv[])
         }
         else
         {
-            std::cout << "select_all_basins\n";
+            if (select_all_basins_of_stream_order)
+            {
+                std::cout << "select_all_basins_of_stream_order\n";
+            }
+            else
+            {
+                std::cout << "select_all_basins\n";
+            }
         }
     }
 
@@ -1310,6 +1341,16 @@ int main(int argc, char* argv[])
         if (select_all_basins)
         {
             basin_manager.select_all_junction_basins();
+        }
+        else if (select_all_basins_of_stream_order)
+        {
+            basin_manager.select_all_junction_basins();
+            std::cout << "Selecting exact stream order: "
+                      << ifs["selected_stream_order"] << "\n";
+            basin_manager.filter_by_stream_order(
+                ifs["selected_stream_order"],
+                ifs["selected_stream_order"]
+            );
         }
         else if (select_basins_from_line_crossings)
         {

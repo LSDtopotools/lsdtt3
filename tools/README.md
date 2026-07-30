@@ -20,6 +20,10 @@ For script arguments, use the numeric part without `v` (for example `0.2.2`).
 If you are cutting a new release, that value must match
 `project(lsdtt3 VERSION ...)` in `CMakeLists.txt`.
 
+For local Windows packaging, `package_windows_backend.ps1` does **not** validate
+the version string against git tags or `CMakeLists.txt`: it simply writes your
+`-Version` into the zip name, bundle README, and `manifest.json`.
+
 ## Release cheat sheet
 
 > **The scripts never create, move, or push a git tag.** `make_release.sh`
@@ -210,6 +214,32 @@ gh release upload v0.3.0 dist\lsdtt3-backend-win64-qgis-v0.3.0.zip
 `-DLSDTT_OPENMP=OFF` is not optional on MSVC — see the building-from-source note.
 The script also expects vcpkg at `%USERPROFILE%/tools/vcpkg`; override with
 `-VcpkgRoot`.
+
+##### Packaging current code when your tree is dirty
+
+If you just want a backend zip from your **current checkout** (including
+uncommitted changes), use the CMake project version as a base and append a
+local suffix.
+
+Example in PowerShell:
+
+```powershell
+# read project version from CMakeLists.txt: project(lsdtt3 VERSION X.Y.Z ...)
+$base = (Select-String -Path .\CMakeLists.txt -Pattern 'project\(lsdtt3 VERSION ([^ ]+)' ).Matches[0].Groups[1].Value
+
+# choose a local label for a dirty build
+$ver = "$base-local-dirty"
+
+.\tools\package_windows_backend.ps1 -Version $ver
+```
+
+This produces:
+
+- `dist\lsdtt3-backend-win64-qgis-v<version>.zip`
+- `manifest.json` with `backend_version: <version>`
+
+So if `$ver` is `0.2.2-local-dirty`, the artifact is
+`dist\lsdtt3-backend-win64-qgis-v0.2.2-local-dirty.zip`.
 
 #### macOS
 

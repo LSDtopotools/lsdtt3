@@ -38,6 +38,7 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
     SELECTION_MODE = "SELECTION_MODE"
     BASIN_OUTLET_FILE = "BASIN_OUTLET_FILE"
     CROSSING_LINE = "CROSSING_LINE"
+    SELECTED_STREAM_ORDER = "SELECTED_STREAM_ORDER"
     WRITE_BASIN_OUTLINES = "WRITE_BASIN_OUTLINES"
     BASIN_OUTLINES_FORMAT = "BASIN_OUTLINES_FORMAT"
     WRITE_BASIN_OUTLETS = "WRITE_BASIN_OUTLETS"
@@ -96,6 +97,7 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
         "From outlets",
         "From outlets (nested)",
         "From line crossings",
+        "All basins of stream order",
     ]
     SNAPPING_OPTIONS = ["downstream", "expanding_square", "none"]
     VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg"]
@@ -153,6 +155,15 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
                 "Crossing line layer (required for line-crossing mode; same CRS as DEM)",
                 [QgsProcessing.TypeVectorLine],
                 optional=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.SELECTED_STREAM_ORDER,
+                "Selection mode: stream order (used by 'All basins of stream order')",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=3,
             )
         )
         self.addParameter(QgsProcessingParameterBoolean(self.WRITE_BASIN_OUTLINES, "Write basin outlines", True))
@@ -418,6 +429,7 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
                 self.WRITE_SELECTED_OUTLETS_CSV: "write_selected_basin_outlets_csv",
                 self.CROSSING_LINE: "crossing_line_fname",
                 self.CROSSING_MIN_PIXELS: "crossing_minimum_contributing_pixels",
+                self.SELECTED_STREAM_ORDER: "selected_stream_order",
                 self.FILTER_ALL_BUT_LARGEST: "filter_all_but_largest_basin",
                 self.FILTER_BY_STREAM_ORDER: "filter_basins_by_stream_order",
                 self.FILTER_NESTED_BY_ORDER: "filter_nested_by_stream_order",
@@ -444,13 +456,17 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
         selection = self.parameterAsEnum(parameters, self.SELECTION_MODE, context)
         outlet_file = self.parameterAsFile(parameters, self.BASIN_OUTLET_FILE, context)
         crossing_layer = self.parameterAsVectorLayer(parameters, self.CROSSING_LINE, context)
+        selected_stream_order = self.parameterAsInt(parameters, self.SELECTED_STREAM_ORDER, context)
 
         outlet_mode = selection in (1, 2)
         crossing_mode = selection == 3
+        order_mode = selection == 4
         if outlet_mode and not outlet_file:
             raise QgsProcessingException("Basin outlet file is required for outlet-based selection modes.")
         if crossing_mode and crossing_layer is None:
             raise QgsProcessingException("A crossing line layer is required for line-crossing mode.")
+        if order_mode and selected_stream_order <= 0:
+            raise QgsProcessingException("Selected stream order must be > 0 for this selection mode.")
 
         boundary_conditions = self.parameterAsString(parameters, self.BOUNDARY_CONDITIONS, context)
         if len(boundary_conditions) != 4 or any(c not in "onpb" for c in boundary_conditions.lower()):
@@ -498,6 +514,8 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
             "select_basins_from_outlets": selection == 1,
             "select_basins_from_outlets_nested": selection == 2,
             "select_basins_from_line_crossings": crossing_mode,
+            "select_all_basins_of_stream_order": order_mode,
+            "selected_stream_order": selected_stream_order,
             # filters
             "filter_basins_by_stream_order": self.parameterAsBool(
                 parameters, self.FILTER_BY_STREAM_ORDER, context
