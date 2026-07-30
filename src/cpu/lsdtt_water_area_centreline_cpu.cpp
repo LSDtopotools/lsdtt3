@@ -699,8 +699,8 @@ water_centreline_result extract_water_area_centrelines(
             // long axis (min-area-rectangle major axis through the centroid).
             if (centrelines.empty())
             {
-                const std::vector<lsdtt_xy> hull = convex_hull(poly->exterior);
-                const lsdtt_min_area_rect rect = min_area_bounding_rect(hull);
+                const std::vector<lsdtt_xy> fallback_hull = convex_hull(poly->exterior);
+                const lsdtt_min_area_rect rect = min_area_bounding_rect(fallback_hull);
                 const lsdtt_xy c = polygon_centroid(poly->exterior);
                 const double hl = 0.5 * rect.length;
                 const double ct = std::cos(rect.theta_rad);

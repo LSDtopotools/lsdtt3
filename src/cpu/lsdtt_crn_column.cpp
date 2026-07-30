@@ -177,7 +177,6 @@ lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
                                  double initial_14C) const
 {
     int n_steps   = static_cast<int>(time_vec_.size());
-    int n_samples = static_cast<int>(sampling_depths_m.size());
 
     if (n_steps < 2)
         throw std::runtime_error("lsdtt_crn_column::run_transient: erosion time series "

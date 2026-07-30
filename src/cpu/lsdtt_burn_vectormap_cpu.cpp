@@ -517,7 +517,8 @@ std::vector<burn_segment_def> identify_burn_segments(
             const double d1=std::hypot(rr.xy.back().x-up.x,  rr.xy.back().y-up.y);
             if(d1<d0) std::reverse(rr.xy.begin(), rr.xy.end());
         }
-        rr.s_pos = nearest_point_on_polyline(rr.xy.front(), E.xy).segment_index;
+        rr.s_pos = static_cast<int>(
+            nearest_point_on_polyline(rr.xy.front(), E.xy).segment_index);
         by_edge[eid].push_back(std::move(rr));
     }
     for(auto& kv:by_edge)
