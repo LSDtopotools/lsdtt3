@@ -41,6 +41,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_raster_reproject.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_connectivity_cpu.hpp"
@@ -52,6 +53,7 @@
 #include "../src/cpu/lsdtt_sti_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
+#include "../src/utils/lsdtt_natural_breaks.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -144,6 +146,80 @@ static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
             out_data[i] = nodata_f;
             out_mask[i] = 0;
         }
+    }
+
+    return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+// -----------------------------------------------------------------------------
+// classify_jenks_categories
+//
+// Classify valid pixels into Jenks natural-break classes (1..K) and preserve
+// nodata mask. Invalid pixels are set to nodata in the output.
+// -----------------------------------------------------------------------------
+static lsdtt::lsdtt_raster_cpu classify_jenks_categories(
+    const lsdtt::lsdtt_raster_cpu& input,
+    const int                      requested_classes,
+    const int                      max_histogram_bins,
+    lsdtt::lsdtt_jenks_result&     jenks,
+    std::int64_t&                  classified_pixels)
+{
+    const auto& src_data = input.get_data();
+    const auto& src_mask = input.get_mask();
+    const auto& meta = input.get_meta();
+
+    if (src_data.size() != src_mask.size())
+    {
+        throw std::runtime_error("classify_jenks_categories: data/mask size mismatch");
+    }
+
+    std::vector<double> values;
+    values.reserve(src_data.size());
+    for (std::size_t i = 0; i < src_data.size(); ++i)
+    {
+        if (src_mask[i] == 0) continue;
+        const float v = src_data[i];
+        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
+        values.push_back(static_cast<double>(v));
+    }
+
+    lsdtt::lsdtt_jenks_options opts;
+    opts.n_classes = requested_classes;
+    opts.max_histogram_bins = max_histogram_bins;
+    jenks = lsdtt::compute_jenks_breaks(values, opts);
+
+    std::vector<float> out_data = src_data;
+    std::vector<std::uint8_t> out_mask = src_mask;
+    const float nodata_f = static_cast<float>(meta.no_data_value);
+    classified_pixels = 0;
+
+    for (std::size_t i = 0; i < src_data.size(); ++i)
+    {
+        if (src_mask[i] == 0)
+        {
+            out_data[i] = nodata_f;
+            continue;
+        }
+        const float v = src_data[i];
+        if (!std::isfinite(v) || meta.is_nodata(v))
+        {
+            out_data[i] = nodata_f;
+            out_mask[i] = 0;
+            continue;
+        }
+
+        const int cls = lsdtt::classify_jenks_value(
+            static_cast<double>(v),
+            jenks.upper_breaks
+        );
+        if (cls <= 0)
+        {
+            out_data[i] = nodata_f;
+            out_mask[i] = 0;
+            continue;
+        }
+        out_data[i] = static_cast<float>(cls);
+        ++classified_pixels;
     }
 
     return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
@@ -285,6 +361,14 @@ int main(int argc, char* argv[])
         "spr_prc, spr_term, source.",
         "Soil Topographic Index (STI)", "switch", ""};
 
+    bool_default_map["sti_resample_to_1m_before_calculation"] = false;
+    help_map["sti_resample_to_1m_before_calculation"] = {"bool","false",
+        "Resample DEM to 1 m (cubic) before all calculations in this run.",
+        "When true, the input raster is GDAL-warped to 1 m spacing using cubic "
+        "resampling before pit filling/flow/STI. Uses lsdtt reproject/warp "
+        "machinery and writes the resampled raster to write_path.",
+        "Soil Topographic Index (STI)", "switch", ""};
+
     bool_default_map["write_sti_95th_percentile_rasters"] = false;
     help_map["write_sti_95th_percentile_rasters"] = {"bool","false",
         "Write STI threshold rasters keeping only the top 5% of values.",
@@ -293,6 +377,28 @@ int main(int argc, char* argv[])
         "only pixels >= P95 are retained; all others are set to nodata. "
         "Outputs: <write_fname>_sti_p95.tif and/or <write_fname>_sti_proxy_p95.tif.",
         "Soil Topographic Index (STI)", "switch", ""};
+
+    bool_default_map["write_sti_p95_jenks_rasters"] = false;
+    help_map["write_sti_p95_jenks_rasters"] = {"bool","false",
+        "Write Jenks-classified STI category rasters from STI P95 outputs.",
+        "Runs Jenks natural breaks on valid values in each P95 raster and writes "
+        "class rasters with IDs 1..K. Requires write_sti_95th_percentile_rasters=true.",
+        "Soil Topographic Index (STI)", "switch", ""};
+
+    int_default_map["sti_p95_jenks_n_classes"] = 5;
+    help_map["sti_p95_jenks_n_classes"] = {"int","5",
+        "Number of Jenks classes for STI P95 categorisation.",
+        "Used when write_sti_p95_jenks_rasters is true. If there are fewer "
+        "distinct occupied histogram bins than requested classes, the effective "
+        "number of classes is reduced automatically.",
+        "Soil Topographic Index (STI)", "param", "write_sti_p95_jenks_rasters"};
+
+    int_default_map["sti_p95_jenks_max_histogram_bins"] = 2048;
+    help_map["sti_p95_jenks_max_histogram_bins"] = {"int","2048",
+        "Maximum histogram bins used by Jenks fitting on P95 rasters.",
+        "Higher values better preserve fine value structure but increase fit time. "
+        "Used when write_sti_p95_jenks_rasters is true.",
+        "Soil Topographic Index (STI)", "param", "write_sti_p95_jenks_rasters"};
 
     string_default_map["sti_soil_vector_path"] =
         "data/scotland_soils/hutton_series_code_min.fgb";
@@ -464,12 +570,43 @@ int main(int argc, char* argv[])
     const bool write_sti = bf["write_sti_raster"];
     const bool write_sti_proxy = bf["write_sti_proxy_raster"];
     const bool write_sti_p95 = bf["write_sti_95th_percentile_rasters"];
+    const bool write_sti_p95_jenks = bf["write_sti_p95_jenks_rasters"];
+    const bool sti_resample_to_1m = bf["sti_resample_to_1m_before_calculation"];
     const bool need_sti = write_sti || write_sti_proxy;
 
     if (write_sti_p95 && !need_sti)
     {
         std::cout << "WARNING: write_sti_95th_percentile_rasters=true but no base STI output "
                   << "requested. Enable write_sti_raster and/or write_sti_proxy_raster.\n";
+    }
+
+    if (write_sti_p95_jenks && !write_sti_p95)
+    {
+        std::cerr << "FATAL: write_sti_p95_jenks_rasters=true requires "
+                  << "write_sti_95th_percentile_rasters=true.\n";
+        return 1;
+    }
+
+    if (write_sti_p95_jenks)
+    {
+        if (ifs["sti_p95_jenks_n_classes"] <= 1)
+        {
+            std::cerr << "FATAL: sti_p95_jenks_n_classes must be > 1. Got: "
+                      << ifs["sti_p95_jenks_n_classes"] << "\n";
+            return 1;
+        }
+        if (ifs["sti_p95_jenks_max_histogram_bins"] <= 0)
+        {
+            std::cerr << "FATAL: sti_p95_jenks_max_histogram_bins must be > 0. Got: "
+                      << ifs["sti_p95_jenks_max_histogram_bins"] << "\n";
+            return 1;
+        }
+    }
+
+    if (sti_resample_to_1m && !need_sti)
+    {
+        std::cout << "WARNING: sti_resample_to_1m_before_calculation=true but no STI output "
+                  << "requested. Resampling will still be applied to this run.\n";
     }
 
     if (bf["write_twi_raster"] && twi_method != "dinf" && twi_method != "mfd")
@@ -641,7 +778,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
-    const std::string input_path = pp.get_full_read_path();
+    std::string input_path = pp.get_full_read_path();
     std::cout << "\nOpening DEM: " << input_path << "\n";
 
     lsdtt::lsdtt_data_loader loader;
@@ -656,6 +793,51 @@ int main(int argc, char* argv[])
     }
 
     loader.print_raster_info();
+
+    if (sti_resample_to_1m)
+    {
+        std::cout << "\n--- Optional pre-calculation resampling ---\n";
+        std::cout << "Resampling DEM to 1 m using cubic interpolation before analysis.\n";
+        try
+        {
+            lsdtt::lsdtt_reproject_options ropt;
+            ropt.enforce_projection = true;
+            ropt.force_reproject = true;
+            ropt.resampling_method = "cubic";
+            ropt.force_resampling = true;
+            ropt.forced_grid_spacing = 1.0;
+            ropt.grid_spacing = -1.0;
+            ropt.allow_lambert_projection = false;
+            ropt.n_threads = ifs["n_threads"];
+            ropt.warp_mem_mb = 512;
+
+            const lsdtt::lsdtt_reproject_result res = lsdtt::lsdtt_reproject_if_needed(
+                input_path,
+                pp.get_write_path(),
+                pp.get_write_fname() + "_sti_precalc_1m",
+                loader.get_meta(),
+                ropt
+            );
+
+            if (!res.reprojected || res.out_path.empty())
+            {
+                throw std::runtime_error(
+                    "sti_resample_to_1m_before_calculation was requested but no output raster "
+                    "was produced by the reprojection/warp step.");
+            }
+
+            input_path = res.out_path;
+            std::cout << "Using resampled DEM: " << input_path << "\n";
+            loader.open_raster(input_path);
+            loader.print_raster_info();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: 1 m pre-calculation resampling failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
 
     try
     {
@@ -1039,6 +1221,7 @@ int main(int argc, char* argv[])
                   << (write_sti ? "_sti.tif " : "")
                   << (write_sti_proxy ? "_sti_proxy.tif " : "")
                   << (write_sti_p95 ? "(+ _sti_p95.tif / _sti_proxy_p95.tif)" : "")
+                  << (write_sti_p95_jenks ? " (+ Jenks class rasters)" : "")
                   << "\n";
         std::cout << "STI drainage method     : " << sf["sti_drainage_area_method"] << "\n";
         std::cout << "STI slope window radius : " << ff["sti_window_radius"] << " m\n";
@@ -1326,6 +1509,44 @@ int main(int argc, char* argv[])
                     std::cout << "STI ksd p95 threshold value     : " << p95_threshold << "\n";
                     std::cout << "STI ksd p95 retained pixels     : " << kept_pixels
                               << " / " << ksd_result.stats.valid_output_pixels << "\n";
+
+                    if (write_sti_p95_jenks)
+                    {
+                        lsdtt::lsdtt_jenks_result jenks;
+                        std::int64_t classified = 0;
+                        lsdtt::lsdtt_raster_cpu sti_p95_jenks = classify_jenks_categories(
+                            sti_p95,
+                            ifs["sti_p95_jenks_n_classes"],
+                            ifs["sti_p95_jenks_max_histogram_bins"],
+                            jenks,
+                            classified
+                        );
+                        const std::string sti_p95_jenks_file = pp.make_output_path(
+                            "_sti_p95_jenks" + std::to_string(ifs["sti_p95_jenks_n_classes"]),
+                            ".tif"
+                        );
+                        std::cout << "Writing: " << sti_p95_jenks_file << "\n";
+                        loader.write_full(
+                            sti_p95_jenks.get_data(),
+                            sti_p95_jenks.get_meta(),
+                            sti_p95_jenks_file,
+                            out_fmt
+                        );
+
+                        std::cout << "STI ksd Jenks classes requested/effective: "
+                                  << jenks.requested_classes << " / " << jenks.effective_classes << "\n";
+                        std::cout << "STI ksd Jenks classified pixels          : "
+                                  << classified << " / " << kept_pixels << "\n";
+                        std::cout << "STI ksd Jenks GVF                        : "
+                                  << jenks.goodness_of_variance_fit << "\n";
+                        std::cout << "STI ksd Jenks upper breaks               : ";
+                        for (std::size_t bi = 0; bi < jenks.upper_breaks.size(); ++bi)
+                        {
+                            if (bi > 0) std::cout << ", ";
+                            std::cout << jenks.upper_breaks[bi];
+                        }
+                        std::cout << "\n";
+                    }
                 }
                 catch (const std::exception& e)
                 {
@@ -1440,6 +1661,44 @@ int main(int argc, char* argv[])
                     std::cout << "STI proxy p95 threshold value   : " << p95_threshold << "\n";
                     std::cout << "STI proxy p95 retained pixels   : " << kept_pixels
                               << " / " << spr_result.stats.valid_output_pixels << "\n";
+
+                    if (write_sti_p95_jenks)
+                    {
+                        lsdtt::lsdtt_jenks_result jenks;
+                        std::int64_t classified = 0;
+                        lsdtt::lsdtt_raster_cpu sti_proxy_p95_jenks = classify_jenks_categories(
+                            sti_proxy_p95,
+                            ifs["sti_p95_jenks_n_classes"],
+                            ifs["sti_p95_jenks_max_histogram_bins"],
+                            jenks,
+                            classified
+                        );
+                        const std::string sti_proxy_p95_jenks_file = pp.make_output_path(
+                            "_sti_proxy_p95_jenks" + std::to_string(ifs["sti_p95_jenks_n_classes"]),
+                            ".tif"
+                        );
+                        std::cout << "Writing: " << sti_proxy_p95_jenks_file << "\n";
+                        loader.write_full(
+                            sti_proxy_p95_jenks.get_data(),
+                            sti_proxy_p95_jenks.get_meta(),
+                            sti_proxy_p95_jenks_file,
+                            out_fmt
+                        );
+
+                        std::cout << "STI proxy Jenks classes requested/effective: "
+                                  << jenks.requested_classes << " / " << jenks.effective_classes << "\n";
+                        std::cout << "STI proxy Jenks classified pixels          : "
+                                  << classified << " / " << kept_pixels << "\n";
+                        std::cout << "STI proxy Jenks GVF                        : "
+                                  << jenks.goodness_of_variance_fit << "\n";
+                        std::cout << "STI proxy Jenks upper breaks               : ";
+                        for (std::size_t bi = 0; bi < jenks.upper_breaks.size(); ++bi)
+                        {
+                            if (bi > 0) std::cout << ", ";
+                            std::cout << jenks.upper_breaks[bi];
+                        }
+                        std::cout << "\n";
+                    }
                 }
                 catch (const std::exception& e)
                 {
