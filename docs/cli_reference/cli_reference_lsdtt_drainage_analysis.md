@@ -87,6 +87,15 @@ STI reuses the same TWI formulation and then applies a denominator term:
   - `term_spr = ln(1 - spr)` when `sti_spr_transform = ln_1_minus_spr` (default)
   - `term_spr = ln(spr)` when `sti_spr_transform = ln_spr`
 
+Both workflows are designed for Scotland. The required datasets are:
+- The Land Cover Scotland 1988 dataset, which can be downloaded from:
+  https://www.data.gov.uk/dataset/c373c59e-7b4b-4852-ab1d-553324655917/land-cover-scotland-lcs-1988
+- The James Hutton Insitute 1981 National Soil Map at 1:250k scale, which can be downloaded from https://www.hutton.ac.uk/soil-maps/
+
+The national soil map has polygon units, which have soil information in the attribute table. The primary soil series is labelled with a series code `SERCDE1`. There is additional data available (licensed, and needs to be requested) that gives additional information per soil series:
+- `SSKIB_C_MED_KSAT.csv`: gives per soil series code a soil profile with saturated hydraulic conductivity values, in cm/day. There are different values depending on the Land Cover Class (this corresponds to the Land Cover Scotland 1988 dataset). This data is used to evaluate the ksd term in ksd mode.
+- `SERIES_SPR.csv`: gives for each series code a value that represents the percentage of rainfall that is expected to become surface runoff in a given storm event. This data is used to evaluate the term_spr in spr mode.
+
 Spatial workflow for STI:
 
 1. Read DEM.
@@ -94,6 +103,7 @@ Spatial workflow for STI:
 3. Rasterize `SERIES_CODE` and `LAND_USE` onto DEM grid.
 4. Assemble denominator term per pixel using table joins.
 5. Compute and write STI outputs.
+6. Optional: threshold STI outputs to keep only pixels at or above the global P95 value.
 
 Expected vector fields:
 
@@ -107,26 +117,70 @@ Expected CSV fields:
 
 Unit warning (critical): before interpreting absolute STI magnitudes, verify physical units of `COND_0_HYPRES` and horizon depths in your SSKIB tables. Current implementation logs explicit runtime warnings and treats values as proxy/relative if units are unverified.
 
+### Pre-processing of Land Cover and Soil data
+The Land Cover Scotland 1988 dataset and the JHI 1981 National Soil Map come as shapefiles with many attributes, but the STI-routine expects flatgeobufs extracted from these datasets.
+
+If you downloaded the source datasets into:
+
+- `/data/scotland_soils/Hutton_Soils_250K_v1.4`
+- `/data/scotland_soils/SG_LandCoverScotland_1988`
+
+you can build the two STI-ready FlatGeobuf inputs with:
+
+```bash
+# 1) Soil series polygons for STI (`SERIES_CODE` field expected by STI)
+ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI \
+  -nln hutton_series_code_min \
+  /data/scotland_soils/hutton_series_code_min.fgb \
+  /data/scotland_soils/Hutton_Soils_250K_v1.4/qmsoils_UCSS_v1_3.shp \
+  -dialect SQLITE \
+  -sql "SELECT *, CAST(SERCDE1 AS TEXT) AS SERIES_CODE FROM qmsoils_UCSS_v1_3 WHERE SERCDE1 IS NOT NULL"
+
+# 2) Land-use polygons with 3-class STI mapping (`LAND_USE` expected by STI)
+ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI \
+  -nln sg_land_use_min \
+  /data/scotland_soils/sg_land_use_min.fgb \
+  /data/scotland_soils/SG_LandCoverScotland_1988/SG_LandCoverScotland_1988.shp \
+  -dialect SQLITE \
+  -sql "SELECT *, CASE WHEN LCS_LABEL IN ('arable','improved grassland','recently ploughed land') THEN 'CULT' WHEN LCS_LABEL IN ('blanket bog & peatlands','bracken','broadleaved woodland','coarse grassland','coniferous plantation','duneland','heather moor','low scrub','maritime grasslands & heaths','mixed woodland','montane vegetation','open canopy young plantation','salt marsh','smooth grassland','wetland','woodland recently felled') THEN 'SEMI' ELSE 'OTHER' END AS LAND_USE FROM SG_LandCoverScotland_1988"
+```
+
+These outputs match the default STI paths and layer names in this CLI.
+
+
+### Parameters used by both STI modes
+
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_sti_raster` | bool | `false` | Write `<write_fname>_sti.tif` using `ln(Ks*D)` term from horizon integration. |
-| `write_sti_proxy_raster` | bool | `false` | Write `<write_fname>_sti_proxy.tif` using SPR-based denominator term. |
-| `write_sti_intermediate_rasters` | bool | `false` | Write debug rasters (`_sti_series_codes`, `_sti_landuse_codes`, term rasters, valid masks). |
+| `sti_term_mode` | string | `ksd` | Primary STI mode flag. Options: `ksd`, `spr`. |
+| `write_sti_intermediate_rasters` | bool | `false` | Write debug rasters (`_sti_twi`, `_sti_series_codes`, `_sti_landuse_codes`, term rasters, valid masks). |
+| `write_sti_95th_percentile_rasters` | bool | `false` | After writing each requested STI raster, compute its 95th percentile over valid pixels and write a companion raster that keeps only pixels `>= P95` (`_sti_p95.tif` and/or `_sti_proxy_p95.tif`); all lower values become nodata. |
 | `write_sti_lookup_csv` | bool | `false` | Write `<write_fname>_sti_lookup.csv` with join/debug diagnostics. |
 | `sti_soil_vector_path` | string | `data/scotland_soils/hutton_series_code_min.fgb` | Soil polygon vector path. |
 | `sti_soil_layer_name` | string | `hutton_series_code_min` | Soil layer name. |
 | `sti_landuse_vector_path` | string | `data/scotland_soils/sg_land_use_min.fgb` | Land-use polygon vector path. |
 | `sti_landuse_layer_name` | string | `sg_land_use_min` | Land-use layer name. |
-| `sti_ksat_csv_path` | string | `data/scotland_soils/SSKIB_C_MED_KSAT.csv` | Horizon/profile table used for `ln(Ks*D)` term. |
-| `sti_spr_csv_path` | string | `data/scotland_soils/SERIES_SPR.csv` | SPR lookup table by soil series code. |
-| `sti_xlsx_path` | string | `data/scotland_soils/SSKIB_OCT18_V1.2.xlsx` | Optional consistency source (first pass checks file presence). |
 | `sti_drainage_area_method` | string | `Dinf` | Drainage area method used by STI TWI stage. Options: `Dinf`, `MFD`. |
 | `sti_window_radius` | float | `100.0` | Polyfit window radius (m) for STI slope computation. |
+
+### Parameters for `ksd` mode (`sti_term_mode: ksd`)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_sti_raster` | bool | `false` | Write `<write_fname>_sti.tif` using `ln(Ks*D)` term from horizon integration. |
+| `sti_ksat_csv_path` | string | `data/scotland_soils/SSKIB_C_MED_KSAT.csv` | Horizon/profile table used for `ln(Ks*D)` term. |
+| `sti_xlsx_path` | string | `data/scotland_soils/SSKIB_OCT18_V1.2.xlsx` | Optional consistency source (first pass checks file presence). |
 | `sti_depth_cap_cm` | float | `100.0` | Depth cap used when integrating horizons for `Ks*D`. |
 | `sti_min_valid_depth_cm` | float | `30.0` | Minimum integrated depth required to keep a profile. |
-| `sti_term_mode` | string | `ksd` | Primary STI mode flag. Options: `ksd`, `spr`. |
-| `sti_spr_transform` | string | `ln_1_minus_spr` | SPR transform. Options: `ln_1_minus_spr`, `ln_spr`. |
 | `sti_ks_unit_scale_to_m_per_day` | float | `1.0` | Explicit scale factor applied to `COND_0_HYPRES` before horizon integration. |
+
+### Parameters for `spr` mode (`sti_term_mode: spr`)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_sti_proxy_raster` | bool | `false` | Write `<write_fname>_sti_proxy.tif` using SPR-based denominator term. |
+| `sti_spr_csv_path` | string | `data/scotland_soils/SERIES_SPR.csv` | SPR lookup table by soil series code. |
+| `sti_spr_transform` | string | `ln_1_minus_spr` | SPR transform. Options: `ln_1_minus_spr`, `ln_spr`. |
 
 ---
 
@@ -210,6 +264,7 @@ write_output_format: cog
 
 write_sti_raster: true
 write_sti_proxy_raster: true
+write_sti_95th_percentile_rasters: false
 write_sti_intermediate_rasters: false
 write_sti_lookup_csv: true
 

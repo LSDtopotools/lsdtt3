@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -72,6 +73,80 @@ static void print_banner()
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
         << "=========================================================\n\n";
+}
+
+// -----------------------------------------------------------------------------
+// keep_top_percentile_pixels
+//
+// Keep only valid pixels whose value is at or above the requested percentile
+// threshold; all other valid pixels are set to nodata and masked out.
+//
+// Percentile uses nearest-rank selection over valid input pixels.
+// -----------------------------------------------------------------------------
+static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
+    const lsdtt::lsdtt_raster_cpu& input,
+    const double                   percentile,
+    float&                         threshold,
+    std::int64_t&                  retained_pixels)
+{
+    const auto& src_data = input.get_data();
+    const auto& src_mask = input.get_mask();
+    const auto& meta     = input.get_meta();
+
+    if (src_data.size() != src_mask.size())
+    {
+        throw std::runtime_error(
+            "keep_top_percentile_pixels: data/mask size mismatch");
+    }
+
+    std::vector<float> valid_values;
+    valid_values.reserve(src_data.size());
+
+    for (std::size_t i = 0; i < src_data.size(); ++i)
+    {
+        if (src_mask[i] == 0) continue;
+        const float v = src_data[i];
+        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
+        valid_values.push_back(v);
+    }
+
+    std::vector<float> out_data = src_data;
+    std::vector<std::uint8_t> out_mask = src_mask;
+    retained_pixels = 0;
+
+    if (valid_values.empty())
+    {
+        threshold = std::numeric_limits<float>::quiet_NaN();
+        return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+    }
+
+    const double p = std::clamp(percentile, 0.0, 100.0);
+    std::size_t rank = static_cast<std::size_t>(std::ceil((p / 100.0) * valid_values.size()));
+    rank = std::clamp<std::size_t>(rank, 1, valid_values.size());
+    const std::size_t kth = rank - 1;
+
+    std::nth_element(valid_values.begin(), valid_values.begin() + kth, valid_values.end());
+    threshold = valid_values[kth];
+
+    const float nodata_f = static_cast<float>(meta.no_data_value);
+    for (std::size_t i = 0; i < src_data.size(); ++i)
+    {
+        if (src_mask[i] == 0) continue;
+        const float v = src_data[i];
+        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
+
+        if (v >= threshold)
+        {
+            ++retained_pixels;
+        }
+        else
+        {
+            out_data[i] = nodata_f;
+            out_mask[i] = 0;
+        }
+    }
+
+    return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 // =============================================================================
 // main
@@ -208,6 +283,15 @@ int main(int argc, char* argv[])
         "Write per-series/land-use lookup diagnostics CSV.",
         "CSV fields: series_code, land_use, n_profiles, ln_kd_median, "
         "spr_prc, spr_term, source.",
+        "Soil Topographic Index (STI)", "switch", ""};
+
+    bool_default_map["write_sti_95th_percentile_rasters"] = false;
+    help_map["write_sti_95th_percentile_rasters"] = {"bool","false",
+        "Write STI threshold rasters keeping only the top 5% of values.",
+        "After each requested STI output is computed, evaluates the 95th "
+        "percentile over valid pixels and writes a companion raster where "
+        "only pixels >= P95 are retained; all others are set to nodata. "
+        "Outputs: <write_fname>_sti_p95.tif and/or <write_fname>_sti_proxy_p95.tif.",
         "Soil Topographic Index (STI)", "switch", ""};
 
     string_default_map["sti_soil_vector_path"] =
@@ -379,7 +463,14 @@ int main(int argc, char* argv[])
 
     const bool write_sti = bf["write_sti_raster"];
     const bool write_sti_proxy = bf["write_sti_proxy_raster"];
+    const bool write_sti_p95 = bf["write_sti_95th_percentile_rasters"];
     const bool need_sti = write_sti || write_sti_proxy;
+
+    if (write_sti_p95 && !need_sti)
+    {
+        std::cout << "WARNING: write_sti_95th_percentile_rasters=true but no base STI output "
+                  << "requested. Enable write_sti_raster and/or write_sti_proxy_raster.\n";
+    }
 
     if (bf["write_twi_raster"] && twi_method != "dinf" && twi_method != "mfd")
     {
@@ -946,7 +1037,9 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Soil Topographic Index (STI) ---\n";
         std::cout << "Requested outputs       : "
                   << (write_sti ? "_sti.tif " : "")
-                  << (write_sti_proxy ? "_sti_proxy.tif" : "") << "\n";
+                  << (write_sti_proxy ? "_sti_proxy.tif " : "")
+                  << (write_sti_p95 ? "(+ _sti_p95.tif / _sti_proxy_p95.tif)" : "")
+                  << "\n";
         std::cout << "STI drainage method     : " << sf["sti_drainage_area_method"] << "\n";
         std::cout << "STI slope window radius : " << ff["sti_window_radius"] << " m\n";
         std::cout << "STI term mode           : " << sf["sti_term_mode"] << "\n";
@@ -1147,6 +1240,25 @@ int main(int argc, char* argv[])
             spr_transform = lsdtt::sti_spr_transform::ln_spr;
         }
 
+        if (bf["write_sti_intermediate_rasters"])
+        {
+            try
+            {
+                loader.write_full(
+                    sti_twi.get_data(),
+                    sti_twi.get_meta(),
+                    pp.make_output_path("_sti_twi", ".tif"),
+                    out_fmt
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing STI TWI intermediate raster failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+
         std::unordered_map<std::string, std::string> lookup_sources;
 
         if (write_sti)
@@ -1194,6 +1306,33 @@ int main(int argc, char* argv[])
                       << " / " << ksd_result.stats.valid_twi_pixels << "\n";
             std::cout << "STI ksd missing lookup pixels   : " << ksd_result.stats.missing_lookup_pixels << "\n";
             std::cout << "STI ksd fallback pixels         : " << ksd_result.stats.fallback_pixels << "\n";
+
+            if (write_sti_p95)
+            {
+                try
+                {
+                    float p95_threshold = std::numeric_limits<float>::quiet_NaN();
+                    std::int64_t kept_pixels = 0;
+                    lsdtt::lsdtt_raster_cpu sti_p95 = keep_top_percentile_pixels(
+                        ksd_result.sti_raster, 95.0, p95_threshold, kept_pixels);
+                    const std::string sti_p95_file = pp.make_output_path("_sti_p95", ".tif");
+                    std::cout << "Writing: " << sti_p95_file << "\n";
+                    loader.write_full(
+                        sti_p95.get_data(),
+                        sti_p95.get_meta(),
+                        sti_p95_file,
+                        out_fmt
+                    );
+                    std::cout << "STI ksd p95 threshold value     : " << p95_threshold << "\n";
+                    std::cout << "STI ksd p95 retained pixels     : " << kept_pixels
+                              << " / " << ksd_result.stats.valid_output_pixels << "\n";
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing STI p95 raster failed: " << e.what() << "\n";
+                    return 1;
+                }
+            }
 
             lookup_sources.insert(ksd_result.source_by_series_landuse.begin(),
                                   ksd_result.source_by_series_landuse.end());
@@ -1281,6 +1420,33 @@ int main(int argc, char* argv[])
                       << " / " << spr_result.stats.valid_twi_pixels << "\n";
             std::cout << "STI proxy missing lookup pixels : " << spr_result.stats.missing_lookup_pixels << "\n";
             std::cout << "STI proxy clamped pixels        : " << spr_result.stats.clamped_pixels << "\n";
+
+            if (write_sti_p95)
+            {
+                try
+                {
+                    float p95_threshold = std::numeric_limits<float>::quiet_NaN();
+                    std::int64_t kept_pixels = 0;
+                    lsdtt::lsdtt_raster_cpu sti_proxy_p95 = keep_top_percentile_pixels(
+                        spr_result.sti_raster, 95.0, p95_threshold, kept_pixels);
+                    const std::string sti_proxy_p95_file = pp.make_output_path("_sti_proxy_p95", ".tif");
+                    std::cout << "Writing: " << sti_proxy_p95_file << "\n";
+                    loader.write_full(
+                        sti_proxy_p95.get_data(),
+                        sti_proxy_p95.get_meta(),
+                        sti_proxy_p95_file,
+                        out_fmt
+                    );
+                    std::cout << "STI proxy p95 threshold value   : " << p95_threshold << "\n";
+                    std::cout << "STI proxy p95 retained pixels   : " << kept_pixels
+                              << " / " << spr_result.stats.valid_output_pixels << "\n";
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing STI proxy p95 raster failed: " << e.what() << "\n";
+                    return 1;
+                }
+            }
 
             lookup_sources.insert(spr_result.source_by_series_landuse.begin(),
                                   spr_result.source_by_series_landuse.end());
