@@ -1,0 +1,11 @@
+read_path: __READ_PATH__
+read_fname: tiny30_dem.tif
+write_path: __WRITE_PATH__
+write_fname: tiny_divide_bad_cluster_mode
+
+basin_outlet_file: divide_migration_outlets_clusters.csv
+outlet_cluster_field: cluster_id
+outlet_cluster_mode: integer
+
+source_pixels_threshold: 1
+basin_outlet_snapping_method: none
