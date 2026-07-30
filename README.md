@@ -400,7 +400,7 @@ We also provide various python helpers (in `python_helpers/`) for simple visuali
 
 | Script | Purpose |
 |---|---|
-| `download_dem_tiles.py` | Download DEMs from Planetary Computer (keyless), OpenTopography, a WCS endpoint, or Copernicus Data Space |
+| `download_dem_tiles.py` | Download DEMs from Planetary Computer (keyless), OpenTopography, a WCS endpoint, or Copernicus Data Space. Note that we also have a command line interface, `lsdtt-fetch-rasters` that also does this. |
 | `tif_to_png.py` | Convert a GeoTIFF to a PNG for quick inspection |
 | `osm_download_features.py`, `osm_water_download.py` | Download OpenStreetMap features / water layers |
 | `download_gem_faults.py` | Download the GEM active-fault database |

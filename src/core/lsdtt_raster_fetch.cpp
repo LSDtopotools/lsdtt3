@@ -772,7 +772,7 @@ std::string dem_source_name(lsdtt_dem_source source)
 const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
 {
     static const std::vector<lsdtt_ot_dataset> catalogue = {
-        {"COP30", "Copernicus GLO-30", "30 m", "global",
+        {"COP30", "Copernicus GLO-30", "1 arc-second (~30 m)", "Float32", "global",
          "TanDEM-X derived DSM with edited water bodies and coastlines. The "
          "best general-purpose global 30 m surface; the same data the keyless "
          "cop30_aws source serves.",
@@ -781,7 +781,7 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "https://doi.org/10.5069/G9028PQB",
          450000.0},
 
-        {"COP90", "Copernicus GLO-90", "90 m", "global",
+        {"COP90", "Copernicus GLO-90", "3 arc-second (~90 m)", "Float32", "global",
          "The 90 m Copernicus DSM. Use it when the area is too large for the "
          "30 m request limit.",
          "European Space Agency (2024). Copernicus Global Digital Elevation "
@@ -789,7 +789,7 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "https://doi.org/10.5069/G9028PQB",
          4050000.0},
 
-        {"SRTMGL1", "SRTM GL1", "30 m", "60 N to 56 S",
+        {"SRTMGL1", "SRTM GL1", "1 arc-second (~30 m)", "Int16", "60 N to 56 S",
          "NASA Shuttle Radar Topography Mission, 1 arc-second, EGM96 heights. "
          "The long-standing comparison baseline in the literature.",
          "NASA Shuttle Radar Topography Mission (SRTM) (2013). Shuttle Radar "
@@ -797,7 +797,7 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "https://doi.org/10.5069/G9445JDF",
          450000.0},
 
-        {"SRTMGL1_E", "SRTM GL1 Ellipsoidal", "30 m", "60 N to 56 S",
+        {"SRTMGL1_E", "SRTM GL1 Ellipsoidal", "1 arc-second (~30 m)", "Float32", "60 N to 56 S",
          "SRTM GL1 with heights referenced to the WGS84 ellipsoid rather than "
          "EGM96. Use it when co-registering with GNSS or lidar point clouds.",
          "NASA Shuttle Radar Topography Mission (SRTM) (2013). Shuttle Radar "
@@ -805,21 +805,21 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "https://doi.org/10.5069/G9445JDF",
          450000.0},
 
-        {"SRTMGL3", "SRTM GL3", "90 m", "60 N to 56 S",
+        {"SRTMGL3", "SRTM GL3", "3 arc-second (~90 m)", "Int16", "60 N to 56 S",
          "SRTM at 3 arc-seconds. Larger request limit than GL1.",
          "NASA Shuttle Radar Topography Mission (SRTM) (2013). Shuttle Radar "
          "Topography Mission (SRTM) Global. Distributed by OpenTopography. "
          "https://doi.org/10.5069/G9445JDF",
          4050000.0},
 
-        {"NASADEM", "NASADEM", "30 m", "60 N to 56 S",
+        {"NASADEM", "NASADEM", "1 arc-second (~30 m)", "Int16", "60 N to 56 S",
          "SRTM reprocessed with improved geolocation and void filling from ASTER "
          "GDEM and ICESat. Generally preferable to raw SRTMGL1.",
          "NASA JPL (2021). NASADEM Merged DEM Global 1 arc second V001. "
          "Distributed by OpenTopography. https://doi.org/10.5069/G93T9FD9",
          450000.0},
 
-        {"AW3D30", "ALOS World 3D", "30 m", "global",
+        {"AW3D30", "ALOS World 3D", "1 arc-second (~30 m)", "Int16", "global",
          "JAXA optical-stereo DSM (PRISM). An independent global 30 m surface, "
          "useful as a cross-check on the radar products.",
          "Japan Aerospace Exploration Agency (2021). ALOS World 3D 30 meter "
@@ -827,14 +827,14 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "https://doi.org/10.5069/G94M92HB",
          450000.0},
 
-        {"AW3D30_E", "ALOS World 3D Ellipsoidal", "30 m", "global",
+        {"AW3D30_E", "ALOS World 3D Ellipsoidal", "1 arc-second (~30 m)", "Float32", "global",
          "AW3D30 with ellipsoidal rather than geoid heights.",
          "Japan Aerospace Exploration Agency (2021). ALOS World 3D 30 meter "
          "DEM. V3.2, Jan 2021. Distributed by OpenTopography. "
          "https://doi.org/10.5069/G94M92HB",
          450000.0},
 
-        {"GEDTM30", "Global Ensemble DTM", "30 m", "global",
+        {"GEDTM30", "Global Ensemble DTM", "1 arc-second (~30 m)", "Float32", "global",
          "Machine-learning ensemble bare-earth DTM. A terrain model rather than "
          "a surface model, so vegetation and buildings are removed.",
          "Ho, Y.-F., & Hengl, T. (2025). Global ensemble digital terrain model "
@@ -842,7 +842,7 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "https://doi.org/10.5069/G9BV7DT1",
          450000.0},
 
-        {"EU_DTM", "Continental Europe DTM", "30 m", "Europe",
+        {"EU_DTM", "Continental Europe DTM", "30 m", "Float32", "Europe",
          "Bare-earth DTM for continental Europe, built from national lidar and "
          "photogrammetric surveys.",
          "Hengl, T., Leal Parente, L., Krizan, J., and Bonannella, C. (2022). "
@@ -850,7 +850,7 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "OpenTopography. https://doi.org/10.5069/G99021ZF",
          450000.0},
 
-        {"ANADEM", "ANADEM", "30 m", "South America",
+        {"ANADEM", "ANADEM", "~30 m", "Float32", "South America",
          "Bare-earth DTM for South America, with vegetation bias removed from "
          "Copernicus GLO-30.",
          "Agencia Nacional de Aguas e Saneamento Basico (2025). ANADEM: A "
@@ -858,21 +858,21 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "OpenTopography. https://doi.org/10.5069/G9736P4G",
          450000.0},
 
-        {"CA_MRDEM_DTM", "Canada MRDEM (terrain)", "30 m", "Canada",
+        {"CA_MRDEM_DTM", "Canada MRDEM (terrain)", "30 m", "Float32", "Canada",
          "Natural Resources Canada medium-resolution bare-earth model.",
          "Natural Resources Canada (2025). Medium Resolution Digital Elevation "
          "Model of Canada. Distributed by OpenTopography. "
          "https://doi.org/10.5069/G9N8780J",
          450000.0},
 
-        {"CA_MRDEM_DSM", "Canada MRDEM (surface)", "30 m", "Canada",
+        {"CA_MRDEM_DSM", "Canada MRDEM (surface)", "30 m", "Float32", "Canada",
          "The surface-model companion to CA_MRDEM_DTM.",
          "Natural Resources Canada (2025). Medium Resolution Digital Elevation "
          "Model of Canada. Distributed by OpenTopography. "
          "https://doi.org/10.5069/G9N8780J",
          450000.0},
 
-        {"SRTM15Plus", "SRTM15+ V2.1", "500 m", "global, land and sea",
+        {"SRTM15Plus", "SRTM15+ V2.1", "15 arc-second (~500 m)", "Float32", "global, land and sea",
          "Merged topography and bathymetry at 15 arc-seconds. Use it when the "
          "domain has to continue offshore.",
          "Tozer, B., Sandwell, D. T., Smith, W. H. F., Olson, C., Beale, J. R., "
@@ -881,23 +881,23 @@ const std::vector<lsdtt_ot_dataset>& ot_dataset_catalogue()
          "https://doi.org/10.5069/G92R3PT9",
          125000000.0},
 
-        {"GEBCOIceTopo", "GEBCO 2023 (ice surface)", "500 m",
-         "global, land and sea",
+        {"GEBCOIceTopo", "GEBCO 2023 (ice surface)", "15 arc-second (~500 m)",
+         "Int16", "global, land and sea",
          "GEBCO global bathymetry and topography, with the ice-sheet surface as "
          "the elevation over Greenland and Antarctica.",
          "GEBCO Compilation Group (2023). GEBCO 2023 Grid. Distributed by "
          "OpenTopography. https://doi.org/10.5069/G9D21VTT",
          125000000.0},
 
-        {"GEBCOSubIceTopo", "GEBCO 2023 (bed under ice)", "500 m",
-         "global, land and sea",
+        {"GEBCOSubIceTopo", "GEBCO 2023 (bed under ice)", "15 arc-second (~500 m)",
+         "Int16", "global, land and sea",
          "As GEBCOIceTopo, but the ice sheets are replaced by the underlying "
          "bed topography.",
          "GEBCO Compilation Group (2023). GEBCO 2023 Grid. Distributed by "
          "OpenTopography. https://doi.org/10.5069/G9D21VTT",
          125000000.0},
 
-        {"GEDI_L3", "GEDI L3 gridded metrics", "1000 m", "52 N to 52 S",
+        {"GEDI_L3", "GEDI L3 gridded metrics", "1000 m nominal", "Float32", "52 N to 52 S",
          "Gridded GEDI lidar land-surface metrics. A canopy and elevation "
          "metrics product, not a DEM for flow routing.",
          "Dubayah, R. O., Luthcke, S. B., Sabaka, T. J., Nicholas, J. B., "

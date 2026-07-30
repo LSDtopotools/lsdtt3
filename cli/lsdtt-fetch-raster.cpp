@@ -61,15 +61,17 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_dem_grouping.hpp"
 #include "../src/core/lsdtt_outlet_bounds_discovery.hpp"
+#include "../src/core/lsdtt_coastal_mask.hpp"
 #include "../src/core/lsdtt_raster_fetch.hpp"
 #include "../src/core/lsdtt_secret.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
+#include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
-static const std::string k_version   = "0.1.0";
+static const std::string k_version   = "0.2.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-fetch-raster";
 
@@ -110,6 +112,7 @@ static void print_ot_catalogue()
         std::cout << "  " << d.demtype << "\n"
                   << "      " << d.name << " -- " << d.resolution
                   << ", " << d.coverage << "\n"
+                  << "      Band type: " << d.gdal_type << "\n"
                   << "      " << d.description << "\n"
                   << "      Cite: " << d.citation << "\n\n";
     }
@@ -262,8 +265,8 @@ int main(int argc, char* argv[])
     help_map["ot_dem_type"] = {"string","COP30",
         "OpenTopography dataset identifier (only used when dem_source is opentopography).",
         "One of: " + lsdtt::ot_dataset_demtype_list() + ". "
-        "Run -h ot_dem_type for a table giving the resolution, coverage and "
-        "purpose of each, or see "
+        "Run -h ot_dem_type for a table giving data type, grid spacing, "
+        "coverage and purpose, or see "
         "https://portal.opentopography.org/apidocs/#/Public/getGlobalDem. "
         "Anything else is rejected before the request is sent. "
         "Every one of these datasets carries a citation requirement; the "
@@ -289,11 +292,91 @@ int main(int argc, char* argv[])
         "Used for the low-resolution basin-discovery stage.",
         "Output grid", "param", ""};
 
-    float_default_map["prefetch_initial_radius_km"] = 15.0f;
-    help_map["prefetch_initial_radius_km"] = {"float","15.0",
+    float_default_map["prefetch_initial_radius_km"] = 100.0f;
+    help_map["prefetch_initial_radius_km"] = {"float","100.0",
         "Initial prefetch radius around each outlet (km).",
         "Expanded iteratively when discovered basins touch edges.",
         "Bounding box", "param", ""};
+
+    bool_default_map["basin_nested_enable"] = true;
+    help_map["basin_nested_enable"] = {"bool","true",
+        "Enable staged outlet-mode nested fetching.",
+        "When true, outlet mode follows the staged coarse->90 m->30 m "
+        "workflow (subject to basin_nested_stop_level).",
+        "Bounding box", "param", ""};
+
+    string_default_map["basin_nested_stop_level"] = "30m";
+    help_map["basin_nested_stop_level"] = {"string","30m",
+        "Where outlet-mode nested fetching stops.",
+        "One of: coarse, 90m, 30m.",
+        "Bounding box", "param", ""};
+
+    string_default_map["coarse_prefetch_demtype"] = "GEBCOIceTopo";
+    help_map["coarse_prefetch_demtype"] = {"string","GEBCOIceTopo",
+        "OpenTopography demtype used for coarse nested prefetch.",
+        "Used in outlet mode when prefetch_source is opentopography and "
+        "credentials are available.",
+        "Source", "param", ""};
+
+    string_default_map["coastal_mask_mode"] = "clip_bbox_edges";
+    help_map["coastal_mask_mode"] = {"string","clip_bbox_edges",
+        "How outlet mode applies land/coast masking before fetch.",
+        "One of: off, clip_bbox_edges.",
+        "Bounding box", "param", ""};
+
+    string_default_map["coastal_mask_dataset"] = "natural_earth_110m_land";
+    help_map["coastal_mask_dataset"] = {"string","natural_earth_110m_land",
+        "Default built-in/managed land-mask dataset identifier.",
+        "Used when coastal_mask_fname is empty.",
+        "Bounding box", "param", ""};
+
+    bool_default_map["coastal_mask_auto_download"] = false;
+    help_map["coastal_mask_auto_download"] = {"bool","false",
+        "Auto-download default Natural Earth land mask when missing.",
+        "Only applies to coastal_mask_dataset=natural_earth_110m_land; writes to read_path/coastal_masks/.",
+        "Bounding box", "param", ""};
+
+    string_default_map["coastal_mask_fname"] = "";
+    help_map["coastal_mask_fname"] = {"string","",
+        "Optional land-mask vector file overriding coastal_mask_dataset.",
+        "Expected polygonal land areas in WGS84-compatible coordinates.",
+        "Bounding box", "param", ""};
+
+    string_default_map["coastal_mask_path"] = "";
+    help_map["coastal_mask_path"] = {"string","",
+        "Optional directory for coastal_mask_fname.",
+        "If empty, read_path is used. Ignored for absolute paths.",
+        "Bounding box", "param", ""};
+
+    string_default_map["coastal_mask_layer"] = "";
+    help_map["coastal_mask_layer"] = {"string","",
+        "Layer name inside coastal_mask_fname.",
+        "If empty, the first layer is used.",
+        "Bounding box", "param", ""};
+
+    float_default_map["coastal_mask_edge_buffer_km"] = 2.0f;
+    help_map["coastal_mask_edge_buffer_km"] = {"float","2.0",
+        "Safety margin added after coastal bbox edge contraction (km).",
+        "Must be >= 0.",
+        "Bounding box", "param", ""};
+
+    bool_default_map["discard_intermediate_rasters"] = true;
+    help_map["discard_intermediate_rasters"] = {"bool","true",
+        "Delete temporary intermediate rasters from nested outlet stages.",
+        "Final outputs and manifests are retained.",
+        "Output grid", "param", ""};
+
+    bool_default_map["write_basin_outlines_fgb"] = true;
+    help_map["write_basin_outlines_fgb"] = {"bool","true",
+        "Write basin outlines as FlatGeobuf outputs in outlet mode.",
+        "Applies to retained stages/final outputs.",
+        "Output grid", "param", ""};
+
+    bool_default_map["write_fetch_extents_manifest"] = true;
+    help_map["write_fetch_extents_manifest"] = {"bool","true",
+        "Write manifest of exact fetch extents used in outlet mode.",
+        "Includes stage/source/spacing and any bbox contractions.",
+        "Output grid", "param", ""};
 
     float_default_map["prefetch_expand_factor"] = 1.8f;
     help_map["prefetch_expand_factor"] = {"float","1.8",
@@ -311,6 +394,42 @@ int main(int argc, char* argv[])
     help_map["prefetch_edge_buffer_pixels"] = {"int","3",
         "Minimum coarse-stage basin margin from raster edge (pixels).",
         "Must be >= 0.",
+        "Bounding box", "param", ""};
+
+    string_default_map["basin_outlet_snapping_method"] = "downstream";
+    help_map["basin_outlet_snapping_method"] = {"string","downstream",
+        "Snapping method for outlet-mode basin delineation.",
+        "One of: none, expanding_square, downstream.",
+        "Bounding box", "param", ""};
+
+    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
+        "Contributing-pixel threshold used for outlet snapping.",
+        "Higher values snap outlets onto better-defined channels.",
+        "Bounding box", "param", ""};
+
+    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+        "Minimum expanding-square snapping radius in pixels.",
+        "Used when basin_outlet_snapping_method=expanding_square.",
+        "Bounding box", "param", ""};
+
+    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+        "Maximum expanding-square snapping radius in pixels.",
+        "Used when basin_outlet_snapping_method=expanding_square.",
+        "Bounding box", "param", ""};
+
+    int_default_map["tight_basin_bbox_buffer_pixels"] = 3;
+    help_map["tight_basin_bbox_buffer_pixels"] = {"int","3",
+        "Pixel buffer around delineated basin for tight refetch bounds.",
+        "A value of 3 gives a 7x7 fetch for a 1-pixel basin.",
+        "Bounding box", "param", ""};
+
+    bool_default_map["tight_basin_bbox_refetch"] = true;
+    help_map["tight_basin_bbox_refetch"] = {"bool","true",
+        "Refetch group DEMs using tight basin bounds after delineation.",
+        "Applied in bounds_mode=outlets.",
         "Bounding box", "param", ""};
 
     bool_default_map["allow_auth_fallback_to_keyless"] = true;
@@ -605,6 +724,61 @@ int main(int argc, char* argv[])
 
     if (!require_positive("prefetch_grid_spacing", ff["prefetch_grid_spacing"])) return 1;
     if (!require_positive("prefetch_initial_radius_km", ff["prefetch_initial_radius_km"])) return 1;
+    if (!require_nonnegative("coastal_mask_edge_buffer_km", ff["coastal_mask_edge_buffer_km"])) return 1;
+
+    {
+        const std::string stop_level = to_lower_copy(sf["basin_nested_stop_level"]);
+        if (stop_level != "coarse" && stop_level != "90m" && stop_level != "30m")
+        {
+            std::cerr << "FATAL: basin_nested_stop_level must be one of: coarse, 90m, 30m.\n";
+            return 1;
+        }
+    }
+
+    {
+        const std::string mask_mode = to_lower_copy(sf["coastal_mask_mode"]);
+        if (mask_mode != "off" && mask_mode != "clip_bbox_edges")
+        {
+            std::cerr << "FATAL: coastal_mask_mode must be one of: off, clip_bbox_edges.\n";
+            return 1;
+        }
+    }
+
+    {
+        const std::string snap_method = to_lower_copy(sf["basin_outlet_snapping_method"]);
+        if (snap_method != "none" &&
+            snap_method != "expanding_square" &&
+            snap_method != "downstream")
+        {
+            std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
+                      << "none, expanding_square, downstream.\n";
+            return 1;
+        }
+    }
+
+    if (ifs["basin_outlet_contributing_pixels_threshold"] <= 0)
+    {
+        std::cerr << "FATAL: basin_outlet_contributing_pixels_threshold must be > 0.\n";
+        return 1;
+    }
+    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    {
+        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels must be >= 0.\n";
+        return 1;
+    }
+    if (ifs["basin_outlet_max_search_radius_pixels"] <
+        ifs["basin_outlet_min_search_radius_pixels"])
+    {
+        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
+                  << "basin_outlet_min_search_radius_pixels.\n";
+        return 1;
+    }
+    if (ifs["tight_basin_bbox_buffer_pixels"] < 0)
+    {
+        std::cerr << "FATAL: tight_basin_bbox_buffer_pixels must be >= 0.\n";
+        return 1;
+    }
+
     if (ff["prefetch_expand_factor"] <= 1.0f)
     {
         std::cerr << "FATAL: prefetch_expand_factor must be > 1.0.\n";
@@ -669,7 +843,6 @@ int main(int argc, char* argv[])
     if (!parse_source_or_fail(sf["dem_source"], "dem_source", parsed_source)) return 1;
     if (!parse_source_or_fail(sf["prefetch_source"], "prefetch_source", parsed_prefetch_source)) return 1;
     if (!parse_source_or_fail(sf["auth_fallback_source"], "auth_fallback_source", parsed_fallback_source)) return 1;
-    (void)parsed_prefetch_source;
 
     if (parsed_fallback_source == lsdtt::lsdtt_dem_source::opentopography)
     {
@@ -682,6 +855,10 @@ int main(int argc, char* argv[])
     {
         std::cerr << "WARNING: allow_auth_fallback_to_keyless=false, so auth_fallback_source is ignored.\n";
     }
+
+    const bool allow_auth_fallback_to_keyless =
+        bf["allow_auth_fallback_to_keyless"];
+    const lsdtt::lsdtt_dem_source auth_fallback_source = parsed_fallback_source;
 
     // Accepting both would mean silently picking a winner. Refuse instead, so
     // the user is never left wondering which area was actually fetched.
@@ -789,9 +966,115 @@ int main(int argc, char* argv[])
 
     lsdtt::lsdtt_outlet_bounds_discovery_result outlet_discovery_result;
     bool have_outlet_discovery = false;
+    lsdtt::lsdtt_coastal_mask_resolution outlet_coastal_mask_resolution;
+    bool have_outlet_coastal_mask = false;
+    lsdtt::lsdtt_dem_source outlet_prefetch_source_selected = parsed_prefetch_source;
+    lsdtt::lsdtt_dem_source outlet_prefetch_source_requested = parsed_prefetch_source;
+    bool have_outlet_prefetch_plan = false;
 
     if (bounds_mode == "outlets")
     {
+        lsdtt::lsdtt_dem_source selected_prefetch_source = parsed_prefetch_source;
+        bool prefetch_ot_key_ready = false;
+        std::string prefetch_ot_key_source;
+
+        if (bf["basin_nested_enable"] &&
+            parsed_prefetch_source == lsdtt::lsdtt_dem_source::opentopography)
+        {
+            lsdtt::lsdtt_secret_request prefetch_key_request;
+            prefetch_key_request.env_var = "OT_API_KEY";
+            prefetch_key_request.file_env_var = "OT_API_KEY_FILE";
+            prefetch_key_request.prompt = "OpenTopography API key (input hidden): ";
+            // Step 4 plumbing only: do not prompt yet before coarse-stage fetch
+            // execution is wired in.
+            prefetch_key_request.allow_prompt = false;
+
+            const lsdtt::lsdtt_secret_result prefetch_secret =
+                lsdtt::resolve_secret(prefetch_key_request);
+            if (prefetch_secret.found)
+            {
+                prefetch_ot_key_ready = true;
+                prefetch_ot_key_source = prefetch_secret.source;
+                if (!prefetch_secret.warning.empty())
+                {
+                    std::cerr << "WARNING: " << prefetch_secret.warning << "\n";
+                }
+            }
+            else if (allow_auth_fallback_to_keyless)
+            {
+                selected_prefetch_source = auth_fallback_source;
+                std::cerr << "WARNING: coarse prefetch requested opentopography but no "
+                             "credential was resolved; falling back to "
+                          << lsdtt::dem_source_name(selected_prefetch_source)
+                          << ". Reason: " << prefetch_secret.message << "\n";
+            }
+            else
+            {
+                std::cerr << "WARNING: coarse prefetch requested opentopography but no "
+                             "credential was resolved and fallback is disabled. "
+                             "Nested coarse prefetch may fail when Step 4 fetch "
+                             "execution is enabled. Reason: "
+                          << prefetch_secret.message << "\n";
+            }
+        }
+
+        if (bf["basin_nested_enable"])
+        {
+            have_outlet_prefetch_plan = true;
+            outlet_prefetch_source_selected = selected_prefetch_source;
+            outlet_prefetch_source_requested = parsed_prefetch_source;
+
+            std::cout << "--- Nested prefetch plan (Step 4 plumbing) ---\n"
+                      << "Requested source : "
+                      << lsdtt::dem_source_name(parsed_prefetch_source) << "\n"
+                      << "Selected source  : "
+                      << lsdtt::dem_source_name(selected_prefetch_source) << "\n"
+                      << "Coarse demtype   : " << sf["coarse_prefetch_demtype"] << "\n";
+            if (prefetch_ot_key_ready)
+            {
+                std::cout << "OT key source    : " << prefetch_ot_key_source << "\n";
+            }
+            std::cout << "\n";
+        }
+
+        const std::string coastal_mask_mode = to_lower_copy(sf["coastal_mask_mode"]);
+        if (coastal_mask_mode == "clip_bbox_edges")
+        {
+            lsdtt::lsdtt_coastal_mask_request mask_request;
+            mask_request.mode       = sf["coastal_mask_mode"];
+            mask_request.dataset    = sf["coastal_mask_dataset"];
+            mask_request.allow_dataset_download =
+                bf["coastal_mask_auto_download"];
+            mask_request.mask_fname = sf["coastal_mask_fname"];
+            mask_request.mask_path  = sf["coastal_mask_path"];
+            mask_request.mask_layer = sf["coastal_mask_layer"];
+            mask_request.read_path  = pp.get_read_path();
+
+            outlet_coastal_mask_resolution =
+                lsdtt::resolve_coastal_land_mask(mask_request);
+            have_outlet_coastal_mask = true;
+
+            if (!outlet_coastal_mask_resolution.warning.empty())
+            {
+                std::cerr << "WARNING: " << outlet_coastal_mask_resolution.warning << "\n";
+            }
+
+            if (outlet_coastal_mask_resolution.available)
+            {
+                std::cout << "--- Coastal mask resolution ---\n"
+                          << "Mode       : " << sf["coastal_mask_mode"] << "\n"
+                          << "Dataset    : " << sf["coastal_mask_dataset"] << "\n"
+                          << "Mask file  : " << outlet_coastal_mask_resolution.path << "\n"
+                          << "Mask layer : " << outlet_coastal_mask_resolution.layer_name << "\n\n";
+            }
+            else
+            {
+                std::cerr << "WARNING: coastal pre-download clipping unavailable: "
+                          << outlet_coastal_mask_resolution.message << "\n"
+                          << "         Falling back to radius-only first-pass bounds.\n";
+            }
+        }
+
         std::string outlet_file = sf["outlet_points_fname"];
         if (!std::filesystem::path(outlet_file).is_absolute())
         {
@@ -819,12 +1102,87 @@ int main(int argc, char* argv[])
         discovery_options.expand_factor = static_cast<double>(ff["prefetch_expand_factor"]);
         discovery_options.max_iters = ifs["prefetch_max_iters"];
 
-        const lsdtt::lsdtt_outlet_bounds_discovery_result discovery =
+        lsdtt::lsdtt_outlet_bounds_discovery_result discovery =
             lsdtt::discover_outlet_bounds(outlet_points, discovery_options);
         if (!discovery.ok)
         {
             std::cerr << "FATAL: " << discovery.message << "\n";
             return 1;
+        }
+
+        if (have_outlet_coastal_mask && outlet_coastal_mask_resolution.available)
+        {
+            int n_clipped = 0;
+            int n_ok = 0;
+
+            double merged_w = std::numeric_limits<double>::infinity();
+            double merged_s = std::numeric_limits<double>::infinity();
+            double merged_e = -std::numeric_limits<double>::infinity();
+            double merged_n = -std::numeric_limits<double>::infinity();
+
+            for (lsdtt::lsdtt_outlet_bounds_record& rec : discovery.records)
+            {
+                if (rec.status != "ok") continue;
+
+                lsdtt::lsdtt_wgs84_bbox rec_bbox;
+                rec_bbox.west = rec.west;
+                rec_bbox.south = rec.south;
+                rec_bbox.east = rec.east;
+                rec_bbox.north = rec.north;
+
+                const lsdtt::lsdtt_coastal_bbox_clip_result clip =
+                    lsdtt::clip_bbox_edges_to_land(
+                        outlet_coastal_mask_resolution.path,
+                        outlet_coastal_mask_resolution.layer_name,
+                        rec_bbox,
+                        rec.longitude,
+                        rec.latitude,
+                        static_cast<double>(ff["coastal_mask_edge_buffer_km"]));
+
+                if (!clip.warning.empty())
+                {
+                    std::cerr << "WARNING: outlet " << rec.point_id
+                              << ": " << clip.warning << "\n";
+                }
+
+                if (clip.ok)
+                {
+                    if (clip.clipped)
+                    {
+                        ++n_clipped;
+                        rec.west = clip.bbox.west;
+                        rec.south = clip.bbox.south;
+                        rec.east = clip.bbox.east;
+                        rec.north = clip.bbox.north;
+                    }
+                    rec.message += " | coastal_clip: " + clip.message;
+                }
+                else
+                {
+                    rec.message += " | coastal_clip_failed: " + clip.message;
+                }
+
+                ++n_ok;
+                merged_w = std::min(merged_w, rec.west);
+                merged_s = std::min(merged_s, rec.south);
+                merged_e = std::max(merged_e, rec.east);
+                merged_n = std::max(merged_n, rec.north);
+            }
+
+            if (n_ok > 0)
+            {
+                discovery.merged_west = merged_w;
+                discovery.merged_south = merged_s;
+                discovery.merged_east = merged_e;
+                discovery.merged_north = merged_n;
+
+                std::cout << "--- Coastal bbox clipping ---\n"
+                          << "Outlets clipped: " << n_clipped << " / " << n_ok << "\n"
+                          << "Merged bbox    : " << discovery.merged_west << ", "
+                          << discovery.merged_south << " to "
+                          << discovery.merged_east << ", "
+                          << discovery.merged_north << "\n\n";
+            }
         }
 
         const std::string status_csv = pp.make_output_path("_outlet_bounds_status.csv");
@@ -851,10 +1209,6 @@ int main(int argc, char* argv[])
                   << "NOTE: E1 uses radius-based first guesses; DEM-routed basin checks "
                      "arrive in E2+.\n\n";
     }
-
-    const bool allow_auth_fallback_to_keyless =
-        bf["allow_auth_fallback_to_keyless"];
-    const lsdtt::lsdtt_dem_source auth_fallback_source = parsed_fallback_source;
 
     auto is_opentopography_auth_failure = [&](const std::string& message) -> bool
     {
@@ -981,6 +1335,11 @@ int main(int argc, char* argv[])
         bool ok = false;
         double min_edge_margin_px = 0.0;
         double min_nodata_margin_px = 0.0;
+        bool tight_bbox_valid = false;
+        double tight_west = 0.0;
+        double tight_south = 0.0;
+        double tight_east = 0.0;
+        double tight_north = 0.0;
         std::string message;
     };
 
@@ -1045,12 +1404,38 @@ int main(int argc, char* argv[])
             out.message = "could not create EPSG:4326->DEM transform for verification";
             return out;
         }
+        OGRCoordinateTransformation* tx_to_wgs84 =
+            OGRCreateCoordinateTransformation(&dst_srs, &src_srs);
+        if (tx_to_wgs84 == nullptr)
+        {
+            OCTDestroyCoordinateTransformation(tx);
+            out.message = "could not create DEM->EPSG:4326 transform for tight basin bounds";
+            return out;
+        }
 
         const int n_cols = meta.n_cols;
         const int n_rows = meta.n_rows;
 
+        const std::string snap_method = to_lower_copy(sf["basin_outlet_snapping_method"]);
+        lsdtt::lsdtt_square_snap_options square_snap_options;
+        square_snap_options.contributing_pixels_threshold =
+            static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
+        square_snap_options.min_search_radius_pixels =
+            ifs["basin_outlet_min_search_radius_pixels"];
+        square_snap_options.max_search_radius_pixels =
+            ifs["basin_outlet_max_search_radius_pixels"];
+
+        lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
+        downstream_snap_options.contributing_pixels_threshold =
+            static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
+
         bool all_ok = true;
         std::string fail_message;
+        bool has_basin_pixels = false;
+        int basin_r_min = n_rows;
+        int basin_r_max = -1;
+        int basin_c_min = n_cols;
+        int basin_c_max = -1;
 
         for (std::size_t rec_idx : group.record_indices)
         {
@@ -1085,31 +1470,56 @@ int main(int argc, char* argv[])
                 break;
             }
 
-            lsdtt::lsdtt_square_snap_options snap_options;
-            snap_options.contributing_pixels_threshold = 1;
-            snap_options.min_search_radius_pixels = 0;
-            snap_options.max_search_radius_pixels =
-                std::max(8, std::max(required_edge_buffer_px,
-                                     required_nodata_buffer_px) + 4);
-
-            const lsdtt::lsdtt_snap_result snap =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                    flow, row, col, snap_options);
-
-            if (snap.status != lsdtt::lsdtt_snap_status::success)
+            std::int64_t snapped_flat = -1;
+            if (snap_method == "none")
             {
-                all_ok = false;
-                fail_message = "could not snap outlet to valid flow cell on final DEM";
-                break;
+                snapped_flat = flow.flat_index(row, col);
+                if (!flow.is_valid_cell(snapped_flat))
+                {
+                    all_ok = false;
+                    fail_message = "outlet pixel is invalid on final DEM";
+                    break;
+                }
+            }
+            else if (snap_method == "expanding_square")
+            {
+                const lsdtt::lsdtt_snap_result snap =
+                    lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
+                        flow, row, col, square_snap_options);
+                if (snap.status != lsdtt::lsdtt_snap_status::success)
+                {
+                    all_ok = false;
+                    fail_message = "could not snap outlet to channel cell (expanding_square)";
+                    break;
+                }
+                snapped_flat = snap.snapped_flat;
+            }
+            else
+            {
+                const lsdtt::lsdtt_snap_result snap =
+                    lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
+                        flow, row, col, downstream_snap_options);
+                if (snap.status != lsdtt::lsdtt_snap_status::success)
+                {
+                    all_ok = false;
+                    fail_message = "could not snap outlet to channel cell (downstream)";
+                    break;
+                }
+                snapped_flat = snap.snapped_flat;
             }
 
             const lsdtt::lsdtt_flat_index_slice basin_pixels =
-                flow.upslope_nodes(snap.snapped_flat);
+                flow.upslope_nodes(snapped_flat);
 
             for (std::int64_t flat : basin_pixels)
             {
                 const int br = flow.row_from_flat_unchecked(flat);
                 const int bc = flow.col_from_flat_unchecked(flat);
+                has_basin_pixels = true;
+                basin_r_min = std::min(basin_r_min, br);
+                basin_r_max = std::max(basin_r_max, br);
+                basin_c_min = std::min(basin_c_min, bc);
+                basin_c_max = std::max(basin_c_max, bc);
 
                 const int edge_margin = std::min(
                     std::min(br, n_rows - 1 - br),
@@ -1168,7 +1578,38 @@ int main(int argc, char* argv[])
             }
         }
 
+        if (has_basin_pixels)
+        {
+            const int tight_buffer_px = ifs["tight_basin_bbox_buffer_pixels"];
+            const int r0 = std::max(0, basin_r_min - tight_buffer_px);
+            const int r1 = std::min(n_rows - 1, basin_r_max + tight_buffer_px);
+            const int c0 = std::max(0, basin_c_min - tight_buffer_px);
+            const int c1 = std::min(n_cols - 1, basin_c_max + tight_buffer_px);
+
+            const double x_min = meta.x_min + static_cast<double>(c0) * meta.cell_size;
+            const double x_max = meta.x_min + static_cast<double>(c1 + 1) * meta.cell_size;
+            const double y_max = meta.y_max() - static_cast<double>(r0) * meta.cell_size;
+            const double y_min = meta.y_max() - static_cast<double>(r1 + 1) * meta.cell_size;
+
+            double x[4] = {x_min, x_min, x_max, x_max};
+            double y[4] = {y_min, y_max, y_min, y_max};
+            if (tx_to_wgs84->Transform(4, x, y))
+            {
+                out.tight_west = std::min(std::min(x[0], x[1]), std::min(x[2], x[3]));
+                out.tight_east = std::max(std::max(x[0], x[1]), std::max(x[2], x[3]));
+                out.tight_south = std::min(std::min(y[0], y[1]), std::min(y[2], y[3]));
+                out.tight_north = std::max(std::max(y[0], y[1]), std::max(y[2], y[3]));
+                out.tight_west = std::max(-180.0, std::min(180.0, out.tight_west));
+                out.tight_east = std::max(-180.0, std::min(180.0, out.tight_east));
+                out.tight_south = std::max(-90.0, std::min(90.0, out.tight_south));
+                out.tight_north = std::max(-90.0, std::min(90.0, out.tight_north));
+                out.tight_bbox_valid =
+                    out.tight_west < out.tight_east && out.tight_south < out.tight_north;
+            }
+        }
+
         OCTDestroyCoordinateTransformation(tx);
+        OCTDestroyCoordinateTransformation(tx_to_wgs84);
 
         if (out.min_edge_margin_px == std::numeric_limits<double>::infinity())
         {
@@ -1201,12 +1642,366 @@ int main(int argc, char* argv[])
         if (north > 90.0) north = 90.0;
     };
 
+    auto sanitize_csv_field = [&](std::string s) -> std::string
+    {
+        std::replace(s.begin(), s.end(), ',', ';');
+        std::replace(s.begin(), s.end(), '\n', ' ');
+        std::replace(s.begin(), s.end(), '\r', ' ');
+        return s;
+    };
+
+    auto write_group_basin_outlines_fgb =
+        [&](const std::string& dem_path,
+            const lsdtt::lsdtt_dem_group& group,
+            const std::string& out_fgb_path,
+            const std::string& stage_label,
+            std::string& error_message) -> bool
+    {
+        try
+        {
+            lsdtt::lsdtt_data_loader loader;
+            loader.open_raster(dem_path);
+            lsdtt::lsdtt_raster_cpu dem(loader);
+
+            const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
+            const lsdtt::lsdtt_array2d_u8& mask = dem.get_mask_array();
+
+            lsdtt::lsdtt_flowinfo_options flow_options;
+            flow_options.boundary_conditions = "oooo";
+            flow_options.interior_nodata_is_outlet = true;
+            flow_options.allow_pits_as_outlets = true;
+
+            lsdtt::lsdtt_flowinfo flow;
+            flow.create(dem.get_data_array(), mask, meta, flow_options);
+
+            OGRSpatialReference src_srs;
+            src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            src_srs.importFromEPSG(4326);
+
+            OGRSpatialReference dst_srs;
+            dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            if (meta.crs_wkt.empty() ||
+                dst_srs.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE)
+            {
+                error_message = "could not parse DEM projection for basin outlines";
+                return false;
+            }
+
+            std::unique_ptr<OGRCoordinateTransformation,
+                            decltype(&OCTDestroyCoordinateTransformation)> tx(
+                OGRCreateCoordinateTransformation(&src_srs, &dst_srs),
+                &OCTDestroyCoordinateTransformation);
+            if (tx == nullptr)
+            {
+                error_message = "could not create EPSG:4326->DEM transform for basin outlines";
+                return false;
+            }
+
+            struct basin_outline_feature
+            {
+                std::vector<lsdtt::lsdtt_xy> exterior;
+                std::int64_t group_id = 0;
+                std::int64_t point_id = 0;
+            };
+            std::vector<basin_outline_feature> features;
+
+            for (std::size_t rec_idx : group.record_indices)
+            {
+                const auto& rec = outlet_discovery_result.records[rec_idx];
+
+                double x = rec.longitude;
+                double y = rec.latitude;
+                if (!tx->Transform(1, &x, &y)) continue;
+
+                int col = -1;
+                int row = -1;
+                try
+                {
+                    col = lsdtt::col_from_x(meta, x);
+                    row = lsdtt::row_from_y(meta, y);
+                }
+                catch (const std::exception&)
+                {
+                    continue;
+                }
+
+                if (row < 0 || row >= meta.n_rows || col < 0 || col >= meta.n_cols)
+                {
+                    continue;
+                }
+
+                const std::string snap_method =
+                    to_lower_copy(sf["basin_outlet_snapping_method"]);
+
+                lsdtt::lsdtt_square_snap_options square_snap_options;
+                square_snap_options.contributing_pixels_threshold =
+                    static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
+                square_snap_options.min_search_radius_pixels =
+                    ifs["basin_outlet_min_search_radius_pixels"];
+                square_snap_options.max_search_radius_pixels =
+                    ifs["basin_outlet_max_search_radius_pixels"];
+
+                lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
+                downstream_snap_options.contributing_pixels_threshold =
+                    static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
+
+                std::int64_t snapped_flat = -1;
+                if (snap_method == "none")
+                {
+                    snapped_flat = flow.flat_index(row, col);
+                    if (!flow.is_valid_cell(snapped_flat)) continue;
+                }
+                else if (snap_method == "expanding_square")
+                {
+                    const lsdtt::lsdtt_snap_result snap =
+                        lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
+                            flow, row, col, square_snap_options);
+                    if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
+                    snapped_flat = snap.snapped_flat;
+                }
+                else
+                {
+                    const lsdtt::lsdtt_snap_result snap =
+                        lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
+                            flow, row, col, downstream_snap_options);
+                    if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
+                    snapped_flat = snap.snapped_flat;
+                }
+
+                lsdtt::lsdtt_basin_cpu basin(snapped_flat, flow);
+                lsdtt::lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
+                const lsdtt::lsdtt_vector_record poly_record =
+                    outline.get_outline_as_polygon_record(static_cast<std::int32_t>(rec.point_id));
+                if (std::holds_alternative<std::monostate>(poly_record.geometry)) continue;
+
+                const lsdtt::lsdtt_polygon_geom poly =
+                    std::get<lsdtt::lsdtt_polygon_geom>(poly_record.geometry);
+                if (poly.exterior.size() < 4) continue;
+
+                basin_outline_feature feat;
+                feat.exterior = poly.exterior;
+                feat.group_id = static_cast<std::int64_t>(group.group_id);
+                feat.point_id = static_cast<std::int64_t>(rec.point_id);
+                features.push_back(std::move(feat));
+            }
+
+            lsdtt::lsdtt_vector_schema schema;
+            schema.field_names = {"group_id", "point_id", "stage"};
+            schema.field_types = {
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::string_type
+            };
+
+            lsdtt::lsdtt_data_loader out_loader;
+            out_loader.begin_vector_write(
+                out_fgb_path,
+                "basin_outlines",
+                schema,
+                meta.crs_wkt,
+                lsdtt::vector_output_format::flatgeobuf,
+                false
+            );
+
+            for (const basin_outline_feature& feat : features)
+            {
+                out_loader.write_polygon(
+                    feat.exterior,
+                    {
+                        feat.group_id,
+                        feat.point_id,
+                        stage_label
+                    }
+                );
+            }
+            out_loader.finish_vector_write();
+            return true;
+        }
+        catch (const std::exception& e)
+        {
+            error_message = e.what();
+            return false;
+        }
+    };
+
     if (bounds_mode == "outlets")
     {
         if (!have_outlet_discovery)
         {
             std::cerr << "FATAL: internal error: outlet discovery result missing.\n";
             return 1;
+        }
+
+        if (options.size_px > 0)
+        {
+            std::cerr << "WARNING: size_pixels is ignored in bounds_mode=outlets; "
+                      << "using basin-derived fetch extents instead.\n";
+            options.size_px = 0;
+        }
+
+        bool coarse_prefetch_ok = false;
+        const std::string nested_stop_level = to_lower_copy(sf["basin_nested_stop_level"]);
+        const bool nested_enabled = bf["basin_nested_enable"];
+        const bool run_90m_stage = nested_enabled &&
+                                   (nested_stop_level == "90m" || nested_stop_level == "30m");
+        const bool stop_after_90m = nested_enabled && (nested_stop_level == "90m");
+
+        std::ofstream fetch_extents_manifest;
+        const bool write_fetch_extents_manifest = bf["write_fetch_extents_manifest"];
+        std::string fetch_extents_manifest_path;
+        if (write_fetch_extents_manifest)
+        {
+            fetch_extents_manifest_path = pp.make_output_path("_fetch_extents_manifest.csv");
+            fetch_extents_manifest.open(fetch_extents_manifest_path);
+            if (!fetch_extents_manifest)
+            {
+                std::cerr << "FATAL: could not write fetch extents manifest: "
+                          << fetch_extents_manifest_path << "\n";
+                return 1;
+            }
+            fetch_extents_manifest
+                << "stage,attempt,group_id,output_path,source_requested,source_used,"
+                   "grid_spacing_m,west,south,east,north,area_km2,status,message\n";
+        }
+
+        auto append_fetch_extent_row =
+            [&](const std::string& stage,
+                int attempt,
+                int group_id,
+                const std::string& output_path,
+                const lsdtt::lsdtt_fetch_options& requested_opts,
+                const lsdtt::lsdtt_fetch_options& used_opts,
+                const std::string& status,
+                const std::string& message)
+        {
+            if (!write_fetch_extents_manifest) return;
+            fetch_extents_manifest
+                << stage << ','
+                << attempt << ','
+                << group_id << ','
+                << output_path << ','
+                << lsdtt::dem_source_name(requested_opts.source) << ','
+                << lsdtt::dem_source_name(used_opts.source) << ','
+                << used_opts.grid_spacing << ','
+                << used_opts.west << ',' << used_opts.south << ','
+                << used_opts.east << ',' << used_opts.north << ','
+                << lsdtt::approximate_bbox_area_km2(
+                       used_opts.west, used_opts.south,
+                       used_opts.east, used_opts.north)
+                << ','
+                << status << ','
+                << sanitize_csv_field(message) << '\n';
+        };
+
+        if (nested_enabled && have_outlet_prefetch_plan)
+        {
+            lsdtt::lsdtt_fetch_options coarse_options = options;
+            coarse_options.source = outlet_prefetch_source_selected;
+            coarse_options.grid_spacing = static_cast<double>(ff["prefetch_grid_spacing"]);
+            coarse_options.size_px = 0;
+            coarse_options.west = outlet_discovery_result.merged_west;
+            coarse_options.south = outlet_discovery_result.merged_south;
+            coarse_options.east = outlet_discovery_result.merged_east;
+            coarse_options.north = outlet_discovery_result.merged_north;
+            if (coarse_options.source == lsdtt::lsdtt_dem_source::opentopography)
+            {
+                coarse_options.ot_dem_type = sf["coarse_prefetch_demtype"];
+            }
+
+            const std::string coarse_out_path = pp.make_output_path("_coarse_prefetch_DEM.tif");
+
+            std::cout << "--- Coarse prefetch fetch (Step 4) ---\n"
+                      << "Requested source : "
+                      << lsdtt::dem_source_name(outlet_prefetch_source_requested) << "\n"
+                      << "Selected source  : "
+                      << lsdtt::dem_source_name(coarse_options.source) << "\n"
+                      << "Bounding box     : " << coarse_options.west << ", "
+                      << coarse_options.south << " to "
+                      << coarse_options.east << ", "
+                      << coarse_options.north << "\n"
+                      << "Grid spacing (m) : " << coarse_options.grid_spacing << "\n"
+                      << "Writing          : " << coarse_out_path << "\n\n";
+
+            lsdtt::lsdtt_fetch_options coarse_used_options;
+            lsdtt::lsdtt_fetch_result coarse_result;
+            std::string coarse_safe_message;
+            if (fetch_with_auth_fallback(coarse_options,
+                                         coarse_out_path,
+                                         "coarse_prefetch",
+                                         coarse_used_options,
+                                         coarse_result,
+                                         coarse_safe_message))
+            {
+                if (coarse_result.ok)
+                {
+                    coarse_prefetch_ok = true;
+                    append_fetch_extent_row("coarse_prefetch",
+                                            1,
+                                            -1,
+                                            coarse_out_path,
+                                            coarse_options,
+                                            coarse_used_options,
+                                            "ok",
+                                            coarse_safe_message);
+                    print_fetch_success(coarse_used_options, coarse_result);
+
+                    if (nested_stop_level != "coarse" &&
+                        bf["discard_intermediate_rasters"])
+                    {
+                        std::error_code ec;
+                        if (std::filesystem::remove(coarse_out_path, ec))
+                        {
+                            std::cout << "Discarded intermediate coarse raster: "
+                                      << coarse_out_path << "\n\n";
+                        }
+                        else if (ec)
+                        {
+                            std::cerr << "WARNING: could not remove intermediate coarse raster '"
+                                      << coarse_out_path << "': " << ec.message() << "\n";
+                        }
+                    }
+                }
+                else
+                {
+                    append_fetch_extent_row("coarse_prefetch",
+                                            1,
+                                            -1,
+                                            coarse_out_path,
+                                            coarse_options,
+                                            coarse_used_options,
+                                            "failed",
+                                            coarse_safe_message);
+                    std::cerr << "WARNING: coarse prefetch fetch failed: "
+                              << coarse_safe_message << "\n"
+                              << "         Continuing with radius-derived outlet bounds.\n\n";
+                }
+            }
+            else
+            {
+                append_fetch_extent_row("coarse_prefetch",
+                                        1,
+                                        -1,
+                                        coarse_out_path,
+                                        coarse_options,
+                                        coarse_options,
+                                        "failed",
+                                        "credential resolution failed");
+                std::cerr << "WARNING: coarse prefetch credential resolution failed; "
+                          << "continuing with radius-derived outlet bounds.\n\n";
+            }
+
+            if (nested_stop_level == "coarse" && coarse_prefetch_ok)
+            {
+                std::cout << "Stop level 'coarse' reached; skipping 90 m / 30 m stages.\n";
+                pp.print_help(
+                    help_map,
+                    pp.get_write_fname() + "_README",
+                    k_version,
+                    k_citation
+                );
+                pp.print_parameters();
+                return 0;
+            }
         }
 
         lsdtt::lsdtt_dem_grouping_options grouping_options;
@@ -1244,7 +2039,20 @@ int main(int argc, char* argv[])
 
         std::cout << "--- DEM grouping (E3) ---\n"
                   << "Groups      : " << groups.size() << "\n"
-                  << "Manifest CSV: " << manifest_path << "\n\n";
+                  << "Manifest CSV: " << manifest_path << "\n";
+        if (write_fetch_extents_manifest)
+        {
+            std::cout << "Fetch extents: " << fetch_extents_manifest_path << "\n";
+        }
+        std::cout << "\n";
+
+        if (nested_enabled)
+        {
+            std::cout << "--- Nested refinement controller (Step 5) ---\n"
+                      << "Stop level      : " << nested_stop_level << "\n"
+                      << "Run 90 m stage  : " << (run_90m_stage ? "yes" : "no") << "\n"
+                      << "Run final stage : " << (stop_after_90m ? "no" : "yes") << "\n\n";
+        }
 
         for (const lsdtt::lsdtt_dem_group& group : groups)
         {
@@ -1253,11 +2061,23 @@ int main(int argc, char* argv[])
                    << group.group_id << "_DEM.tif";
             const std::string group_out_path = pp.make_output_path(suffix.str());
 
+            std::ostringstream stage90_suffix;
+            stage90_suffix << "_group_" << std::setw(4) << std::setfill('0')
+                           << group.group_id << "_90m_DEM.tif";
+            const std::string group_90m_out_path = pp.make_output_path(stage90_suffix.str());
+
+            std::ostringstream outlines_suffix;
+            outlines_suffix << "_group_" << std::setw(4) << std::setfill('0')
+                            << group.group_id << "_basin_outlines.fgb";
+            const std::string group_outlines_path = pp.make_output_path(outlines_suffix.str());
+
             lsdtt::lsdtt_fetch_options group_options = options;
             group_options.west = group.west;
             group_options.south = group.south;
             group_options.east = group.east;
             group_options.north = group.north;
+            const bool allow_tight_refetch =
+                bf["tight_basin_bbox_refetch"] && (group_options.size_px <= 0);
 
             const bool do_verify = bf["verify_final_resolution_basins"];
             const int edge_buffer_px = ifs["final_basin_edge_buffer_pixels"];
@@ -1265,14 +2085,188 @@ int main(int argc, char* argv[])
             const double verify_expand_factor = static_cast<double>(ff["final_verify_expand_factor"]);
             const int verify_max_iters = ifs["final_verify_max_iters"];
 
+            if (run_90m_stage)
+            {
+                lsdtt::lsdtt_fetch_options stage90_options = group_options;
+                stage90_options.grid_spacing = 90.0;
+
+                const std::string stage90_path = stop_after_90m
+                    ? group_out_path
+                    : group_90m_out_path;
+
+                std::cout << "--- Fetching group " << group.group_id
+                          << " (90 m stage) ---\n"
+                          << "Source      : " << lsdtt::dem_source_name(stage90_options.source) << "\n"
+                          << "Bounding box: " << stage90_options.west << ", " << stage90_options.south
+                          << " to " << stage90_options.east << ", " << stage90_options.north << "\n"
+                          << "Writing     : " << stage90_path << "\n\n";
+
+                lsdtt::lsdtt_fetch_options stage90_used_options;
+                lsdtt::lsdtt_fetch_result stage90_result;
+                std::string stage90_safe_message;
+                if (!fetch_with_auth_fallback(stage90_options,
+                                              stage90_path,
+                                              "stage90_fetch",
+                                              stage90_used_options,
+                                              stage90_result,
+                                              stage90_safe_message))
+                {
+                    append_fetch_extent_row("group_90m",
+                                            1,
+                                            group.group_id,
+                                            stage90_path,
+                                            stage90_options,
+                                            stage90_options,
+                                            "failed",
+                                            "credential resolution failed");
+                    manifest << group.group_id << ','
+                             << stage90_path << ','
+                             << lsdtt::dem_source_name(stage90_options.source) << ','
+                             << lsdtt::dem_source_name(stage90_options.source) << ','
+                             << group.record_indices.size() << ','
+                             << stage90_options.west << ',' << stage90_options.south << ','
+                             << stage90_options.east << ',' << stage90_options.north << ','
+                             << lsdtt::approximate_bbox_area_km2(
+                                    stage90_options.west, stage90_options.south,
+                                    stage90_options.east, stage90_options.north)
+                             << ",0,0,-1,-1,failed,credential resolution failed at 90m stage\n";
+                    return 1;
+                }
+                if (stage90_result.skipped)
+                {
+                    append_fetch_extent_row("group_90m",
+                                            1,
+                                            group.group_id,
+                                            stage90_path,
+                                            stage90_options,
+                                            stage90_used_options,
+                                            "failed",
+                                            stage90_safe_message);
+                    manifest << group.group_id << ','
+                             << stage90_path << ','
+                             << lsdtt::dem_source_name(stage90_options.source) << ','
+                             << lsdtt::dem_source_name(stage90_used_options.source) << ','
+                             << group.record_indices.size() << ','
+                             << stage90_options.west << ',' << stage90_options.south << ','
+                             << stage90_options.east << ',' << stage90_options.north << ','
+                             << lsdtt::approximate_bbox_area_km2(
+                                    stage90_options.west, stage90_options.south,
+                                    stage90_options.east, stage90_options.north)
+                             << ",0,0,-1,-1,failed," << stage90_safe_message << '\n';
+                    std::cerr << "COULD NOT FETCH (90 m stage): " << stage90_safe_message << "\n";
+                    return 1;
+                }
+                if (!stage90_result.ok)
+                {
+                    append_fetch_extent_row("group_90m",
+                                            1,
+                                            group.group_id,
+                                            stage90_path,
+                                            stage90_options,
+                                            stage90_used_options,
+                                            "failed",
+                                            stage90_safe_message);
+                    manifest << group.group_id << ','
+                             << stage90_path << ','
+                             << lsdtt::dem_source_name(stage90_options.source) << ','
+                             << lsdtt::dem_source_name(stage90_used_options.source) << ','
+                             << group.record_indices.size() << ','
+                             << stage90_options.west << ',' << stage90_options.south << ','
+                             << stage90_options.east << ',' << stage90_options.north << ','
+                             << lsdtt::approximate_bbox_area_km2(
+                                    stage90_options.west, stage90_options.south,
+                                    stage90_options.east, stage90_options.north)
+                             << ",0,0,-1,-1,failed," << stage90_safe_message << '\n';
+                    std::cerr << "FATAL: " << stage90_safe_message << "\n";
+                    return 1;
+                }
+
+                append_fetch_extent_row("group_90m",
+                                        1,
+                                        group.group_id,
+                                        stage90_path,
+                                        stage90_options,
+                                        stage90_used_options,
+                                        "ok",
+                                        "90m fetch complete");
+
+                print_fetch_success(stage90_used_options, stage90_result);
+
+                if (allow_tight_refetch)
+                {
+                    const group_verify_result stage90_characterization =
+                        verify_group_dem(stage90_path,
+                                         group,
+                                         edge_buffer_px,
+                                         nodata_buffer_px);
+                    if (stage90_characterization.tight_bbox_valid)
+                    {
+                        group_options.west = stage90_characterization.tight_west;
+                        group_options.south = stage90_characterization.tight_south;
+                        group_options.east = stage90_characterization.tight_east;
+                        group_options.north = stage90_characterization.tight_north;
+                        std::cout << "Tight basin bounds from 90 m stage: "
+                                  << group_options.west << ", " << group_options.south
+                                  << " to " << group_options.east << ", "
+                                  << group_options.north << "\n\n";
+                    }
+                    else
+                    {
+                        std::cerr << "WARNING: could not derive tight basin bounds from 90 m stage for group "
+                                  << group.group_id << "; using group bbox. "
+                                  << stage90_characterization.message << "\n";
+                    }
+                }
+
+                if (stop_after_90m)
+                {
+                    if (bf["write_basin_outlines_fgb"])
+                    {
+                        std::string outlines_error;
+                        if (write_group_basin_outlines_fgb(stage90_path,
+                                                           group,
+                                                           group_outlines_path,
+                                                           "90m",
+                                                           outlines_error))
+                        {
+                            std::cout << "Wrote basin outlines: "
+                                      << group_outlines_path << "\n";
+                        }
+                        else
+                        {
+                            std::cerr << "WARNING: could not write basin outlines for group "
+                                      << group.group_id << " at 90m stage: "
+                                      << outlines_error << "\n";
+                        }
+                    }
+
+                    manifest << group.group_id << ','
+                             << group_out_path << ','
+                             << lsdtt::dem_source_name(options.source) << ','
+                             << lsdtt::dem_source_name(stage90_used_options.source) << ','
+                             << group.record_indices.size() << ','
+                             << stage90_options.west << ',' << stage90_options.south << ','
+                             << stage90_options.east << ',' << stage90_options.north << ','
+                             << lsdtt::approximate_bbox_area_km2(
+                                    stage90_options.west, stage90_options.south,
+                                    stage90_options.east, stage90_options.north)
+                             << ",1,1,-1,-1,ok,stopped at 90m stage\n";
+                    continue;
+                }
+            }
+
             int verify_iters = 0;
             group_verify_result verify_result;
             bool fetch_success = false;
+            bool tight_refetch_done = false;
             std::string safe_message;
             lsdtt::lsdtt_fetch_options used_options;
             lsdtt::lsdtt_fetch_result result;
+            const bool request_tight_refetch = allow_tight_refetch;
+            const int max_attempts = std::max((do_verify ? verify_max_iters : 1),
+                                              request_tight_refetch ? 2 : 1);
 
-            for (int attempt = 1; attempt <= (do_verify ? verify_max_iters : 1); ++attempt)
+            for (int attempt = 1; attempt <= max_attempts; ++attempt)
             {
                 std::cout << "--- Fetching group " << group.group_id
                           << " (attempt " << attempt << ") ---\n"
@@ -1288,6 +2282,14 @@ int main(int argc, char* argv[])
                                               result,
                                               safe_message))
                 {
+                    append_fetch_extent_row("group_final",
+                                            attempt,
+                                            group.group_id,
+                                            group_out_path,
+                                            group_options,
+                                            group_options,
+                                            "failed",
+                                            "credential resolution failed");
                     manifest << group.group_id << ','
                              << group_out_path << ','
                              << lsdtt::dem_source_name(group_options.source) << ','
@@ -1304,6 +2306,14 @@ int main(int argc, char* argv[])
 
                 if (result.skipped)
                 {
+                    append_fetch_extent_row("group_final",
+                                            attempt,
+                                            group.group_id,
+                                            group_out_path,
+                                            group_options,
+                                            used_options,
+                                            "failed",
+                                            safe_message);
                     manifest << group.group_id << ','
                              << group_out_path << ','
                              << lsdtt::dem_source_name(group_options.source) << ','
@@ -1324,6 +2334,14 @@ int main(int argc, char* argv[])
                 }
                 if (!result.ok)
                 {
+                    append_fetch_extent_row("group_final",
+                                            attempt,
+                                            group.group_id,
+                                            group_out_path,
+                                            group_options,
+                                            used_options,
+                                            "failed",
+                                            safe_message);
                     manifest << group.group_id << ','
                              << group_out_path << ','
                              << lsdtt::dem_source_name(group_options.source) << ','
@@ -1342,26 +2360,57 @@ int main(int argc, char* argv[])
 
                 fetch_success = true;
                 verify_iters = attempt;
-
-                if (!do_verify)
-                {
-                    verify_result.ok = true;
-                    verify_result.min_edge_margin_px = -1.0;
-                    verify_result.min_nodata_margin_px = -1.0;
-                    verify_result.message = "verification disabled";
-                    break;
-                }
+                append_fetch_extent_row("group_final",
+                                        attempt,
+                                        group.group_id,
+                                        group_out_path,
+                                        group_options,
+                                        used_options,
+                                        "ok",
+                                        "final-stage fetch complete");
 
                 verify_result = verify_group_dem(group_out_path,
                                                  group,
                                                  edge_buffer_px,
                                                  nodata_buffer_px);
+
+                if (!do_verify)
+                {
+                    verify_result.ok = true;
+                    verify_result.message = "verification disabled";
+                }
+
+                if (request_tight_refetch &&
+                    verify_result.tight_bbox_valid &&
+                    !tight_refetch_done)
+                {
+                    const double current_area = lsdtt::approximate_bbox_area_km2(
+                        group_options.west, group_options.south,
+                        group_options.east, group_options.north);
+                    const double tight_area = lsdtt::approximate_bbox_area_km2(
+                        verify_result.tight_west, verify_result.tight_south,
+                        verify_result.tight_east, verify_result.tight_north);
+                    if (tight_area < current_area * 0.98)
+                    {
+                        std::cout << "Refetching group " << group.group_id
+                                  << " with tight basin bounds ("
+                                  << current_area << " -> " << tight_area
+                                  << " km^2).\n";
+                        group_options.west = verify_result.tight_west;
+                        group_options.south = verify_result.tight_south;
+                        group_options.east = verify_result.tight_east;
+                        group_options.north = verify_result.tight_north;
+                        tight_refetch_done = true;
+                        continue;
+                    }
+                }
+
                 if (verify_result.ok)
                 {
                     break;
                 }
 
-                if (attempt < verify_max_iters)
+                if (do_verify && attempt < max_attempts)
                 {
                     std::cerr << "WARNING: group " << group.group_id
                               << " verification failed (" << verify_result.message
@@ -1414,6 +2463,41 @@ int main(int argc, char* argv[])
                      << "ok," << verify_result.message << '\n';
 
             print_fetch_success(used_options, result);
+
+            if (bf["write_basin_outlines_fgb"])
+            {
+                std::string outlines_error;
+                if (write_group_basin_outlines_fgb(group_out_path,
+                                                   group,
+                                                   group_outlines_path,
+                                                   "final",
+                                                   outlines_error))
+                {
+                    std::cout << "Wrote basin outlines: "
+                              << group_outlines_path << "\n";
+                }
+                else
+                {
+                    std::cerr << "WARNING: could not write basin outlines for group "
+                              << group.group_id << " at final stage: "
+                              << outlines_error << "\n";
+                }
+            }
+
+            if (nested_enabled && run_90m_stage && bf["discard_intermediate_rasters"])
+            {
+                std::error_code ec;
+                if (std::filesystem::remove(group_90m_out_path, ec))
+                {
+                    std::cout << "Discarded intermediate 90 m raster: "
+                              << group_90m_out_path << "\n";
+                }
+                else if (ec)
+                {
+                    std::cerr << "WARNING: could not remove intermediate 90 m raster '"
+                              << group_90m_out_path << "': " << ec.message() << "\n";
+                }
+            }
         }
     }
     else

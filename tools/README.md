@@ -4,6 +4,22 @@ This directory contains utility scripts for building and packaging
 redistributable backend bundles. This readme also contains a cheat sheet for
 spinning up a new `lsdtt3` release.
 
+## Finding the latest version number
+
+From the repository root, use one of:
+
+```bash
+# latest tag available in your local checkout
+git describe --tags --abbrev=0
+
+# latest published GitHub release (requires gh auth)
+gh release list --limit 1
+```
+
+For script arguments, use the numeric part without `v` (for example `0.2.2`).
+If you are cutting a new release, that value must match
+`project(lsdtt3 VERSION ...)` in `CMakeLists.txt`.
+
 ## Release cheat sheet
 
 > **The scripts never create, move, or push a git tag.** `make_release.sh`

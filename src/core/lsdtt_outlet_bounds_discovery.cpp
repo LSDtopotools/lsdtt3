@@ -230,7 +230,7 @@ load_outlet_points_wgs84(const std::string& input_path,
     }
 
     OGRCoordinateTransformation* tx = nullptr;
-    OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
     if (layer_srs)
     {
         src_srs = *layer_srs;

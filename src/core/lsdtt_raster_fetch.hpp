@@ -96,7 +96,8 @@ struct lsdtt_ot_dataset
 {
     std::string demtype;      // value passed as demtype=, e.g. "COP30"
     std::string name;         // human-readable dataset name
-    std::string resolution;   // nominal grid spacing, e.g. "30 m"
+    std::string resolution;   // nominal grid spacing, e.g. "1 arc-second (~30 m)"
+    std::string gdal_type;    // source band type in GTiff responses, e.g. "Int16"
     std::string coverage;     // "global", "South America", ...
     std::string description;  // one line: what it is and when to reach for it
     std::string citation;     // full citation including DOI

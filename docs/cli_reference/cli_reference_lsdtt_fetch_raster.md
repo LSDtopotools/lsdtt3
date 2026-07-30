@@ -173,14 +173,188 @@ Silently preferring one would leave you unsure which area you actually got.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `outlet_points_fname` | string | *(empty)* | Outlet point file for `bounds_mode: outlets` (CSV/FGB/GPKG). |
+| `outlet_points_fname` | string | *(empty)* | Outlet point file for `bounds_mode: outlets` (CSV/FGB/GPKG/SHP and other GDAL vector point formats). |
 | `outlet_points_path` | string | *(empty)* | Optional directory for `outlet_points_fname`; falls back to `read_path`. |
-| `prefetch_initial_radius_km` | float | `15` | Initial radius for first-guess outlet bounds. |
+| `prefetch_source` | string | `cop30_aws` | Source used for coarse first-guess basin discovery (`cop30_aws`, `planetary_computer`, or `opentopography`). |
+| `prefetch_grid_spacing` | float | `90` | Grid spacing (m) used in coarse prefetch routing. |
+| `prefetch_initial_radius_km` | float | `100` | Initial radius for first-guess outlet bounds. |
 | `prefetch_expand_factor` | float | `1.8` | Expansion factor when retrying bounds. Must be >1. |
 | `prefetch_max_iters` | int | `6` | Max first-guess expansion iterations. |
 | `prefetch_edge_buffer_pixels` | int | `3` | Coarse-stage edge buffer target. |
+| `basin_outlet_snapping_method` | string | `downstream` | Outlet snapping for basin delineation: `none`, `expanding_square`, or `downstream`. |
+| `basin_outlet_contributing_pixels_threshold` | int | `1000` | Minimum contributing-pixel threshold used during outlet snapping. |
+| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` snapping. |
+| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` snapping. |
+| `tight_basin_bbox_refetch` | bool | `true` | After basin delineation, refetch final group DEMs using tight basin bounds. |
+| `tight_basin_bbox_buffer_pixels` | int | `3` | Pixel buffer around basin envelope when forming tight refetch bounds. |
+| `basin_nested_enable` | bool | `true` | Enable staged outlet-mode nested fetching pipeline. |
+| `basin_nested_stop_level` | string | `30m` | Stop level for staged pipeline: `coarse`, `90m`, or `30m`. |
+| `coarse_prefetch_demtype` | string | `GEBCOIceTopo` | OT demtype for the coarse prefetch stage when OT prefetch is active. |
+| `coastal_mask_mode` | string | `clip_bbox_edges` | `off` or `clip_bbox_edges` pre-download coastal bbox contraction. |
+| `coastal_mask_dataset` | string | `natural_earth_110m_land` | Default managed land-mask dataset id (used when no file override is set). |
+| `coastal_mask_auto_download` | bool | `false` | If default mask is missing, download Natural Earth `ne_110m_land.zip` into `read_path/coastal_masks/`. |
+| `coastal_mask_fname` | string | *(empty)* | Optional land-mask polygon file override. |
+| `coastal_mask_path` | string | *(empty)* | Optional directory for `coastal_mask_fname`; falls back to `read_path`. |
+| `coastal_mask_layer` | string | *(empty)* | Optional layer name for `coastal_mask_fname`; first layer if empty. |
+| `coastal_mask_edge_buffer_km` | float | `2` | Safety margin after coastal edge contraction. Must be >=0. |
+| `discard_intermediate_rasters` | bool | `true` | Remove temporary intermediate rasters from staged outlet-mode runs. |
+| `write_basin_outlines_fgb` | bool | `true` | Write basin outlines as FlatGeobuf in outlet mode. |
+| `write_fetch_extents_manifest` | bool | `true` | Write manifest of exact fetch extents used per stage/group. |
 
 The tool writes per-outlet status to `<write_fname>_outlet_bounds_status.csv`.
+
+When `coastal_mask_mode: clip_bbox_edges`, the tool attempts to contract each
+outlet's radius-first bbox against land polygons **before** DEM download. If the
+mask is unavailable, it warns and falls back to radius-only bounds.
+
+Default land-mask lookup (`coastal_mask_dataset: natural_earth_110m_land`) is:
+
+- `read_path/ne_110m_land.*`
+- `read_path/coastal_masks/ne_110m_land.*`
+- `read_path/masks/ne_110m_land.*`
+
+with `*.fgb`, `*.gpkg`, `*.shp`, or `*.zip`.
+
+If none of those exist and `coastal_mask_auto_download: true`, the tool tries
+to download:
+
+- `https://naturalearth.s3.amazonaws.com/110m_physical/ne_110m_land.zip`
+
+into `read_path/coastal_masks/ne_110m_land.zip` and then uses it as the mask.
+
+Auto-download example (first run on a new machine):
+
+```text
+read_path: ./input
+write_path: ./output
+write_fname: coast_prefetch
+
+bounds_mode: outlets
+outlet_points_fname: outlets.fgb
+
+coastal_mask_mode: clip_bbox_edges
+coastal_mask_dataset: natural_earth_110m_land
+coastal_mask_auto_download: true
+coastal_mask_edge_buffer_km: 2
+
+dem_source: cop30_aws
+target_epsg: 32632
+grid_spacing: 30
+```
+
+Coastal clipping examples:
+
+```text
+# Example A: use default Natural Earth lookup in read_path
+bounds_mode: outlets
+outlet_points_fname: outlets.csv
+
+coastal_mask_mode: clip_bbox_edges
+coastal_mask_dataset: natural_earth_110m_land
+coastal_mask_auto_download: true
+coastal_mask_edge_buffer_km: 2
+```
+
+```text
+# Example B: override with your own land polygon mask
+bounds_mode: outlets
+outlet_points_fname: outlets.gpkg
+
+coastal_mask_mode: clip_bbox_edges
+coastal_mask_fname: my_land_mask.gpkg
+coastal_mask_path: /home/me/masks
+coastal_mask_layer: land
+coastal_mask_edge_buffer_km: 1
+```
+
+#### Outlet points as FlatGeobuf (`.fgb`)
+
+You can provide outlets directly as FlatGeobuf point features.
+
+```text
+read_path: ./input
+write_path: ./output
+write_fname: ortler_outlets
+
+bounds_mode: outlets
+outlet_points_fname: outlets_ortler.fgb
+
+# final DEM settings
+dem_source: cop30_aws
+target_epsg: 32632
+grid_spacing: 30
+```
+
+Requirements for outlet vectors:
+
+- Geometry must be points.
+- Any CRS is accepted if it is declared; points are transformed to WGS84
+  internally.
+- For `.fgb`, the first (and usually only) layer is used.
+
+#### Basin workflow when you do not know the basin extent
+
+Use `bounds_mode: outlets` and let the tool discover a safe first envelope around
+each outlet, then expand until routed basin pixels meet edge-buffer checks.
+
+Important: outlet-mode basin delineation now snaps each provided outlet to a
+channel cell by default (`basin_outlet_snapping_method: downstream`) using
+`basin_outlet_contributing_pixels_threshold` (default `1000`). This avoids
+single-pixel micro-basins caused by unsnapped hillslope points.
+
+Recommended sequence:
+
+1. Start coarse for discovery (`prefetch_grid_spacing: 90` is the default).
+2. If you have an OpenTopography key, set `prefetch_source: opentopography` and
+   use `coarse_prefetch_demtype` for the coarse stage (default:
+   `GEBCOIceTopo`).
+3. Keep final output on your preferred source/resolution (`dem_source` and
+   `grid_spacing`), with `verify_final_resolution_basins: true`.
+4. If any group still fails edge/nodata buffers, raise
+   `prefetch_initial_radius_km` and/or `prefetch_max_iters` first.
+
+When nested prefetch is enabled, the coarse-stage fetch writes
+`<write_fname>_coarse_prefetch_DEM.tif` before final grouping/refinement. If
+`basin_nested_stop_level: coarse`, the workflow exits after that coarse output.
+If `discard_intermediate_rasters: true`, this coarse raster is removed when
+continuing to later stages.
+
+For grouped refinement:
+
+- `basin_nested_stop_level: 90m` writes group outputs at 90 m and exits.
+- `basin_nested_stop_level: 30m` runs a 90 m intermediate stage first, then
+  final group fetches at `grid_spacing`.
+- Intermediate 90 m stage rasters use
+  `<write_fname>_group_####_90m_DEM.tif` and are removed when
+  `discard_intermediate_rasters: true`.
+- With `tight_basin_bbox_refetch: true` (default), once a basin is delineated,
+  final group fetches are reissued on a tight basin envelope with
+  `tight_basin_bbox_buffer_pixels` around it (default `3` pixels).
+  For a one-pixel basin this gives a `7 x 7` raster footprint before any
+  projection/resampling effects.
+
+Example profile (unknown basin extent, OT key available):
+
+```text
+bounds_mode: outlets
+outlet_points_fname: outlets.csv
+
+# coarse basin discovery pass
+prefetch_source: opentopography
+coarse_prefetch_demtype: GEBCOIceTopo
+prefetch_grid_spacing: 90
+
+# final DEM pass
+dem_source: cop30_aws
+grid_spacing: 30
+verify_final_resolution_basins: true
+
+# snap outlets to channels and keep final fetch tight to basin shape
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 1000
+tight_basin_bbox_refetch: true
+tight_basin_bbox_buffer_pixels: 3
+```
 
 ### Group splitting and manifests (`bounds_mode: outlets`)
 
@@ -192,8 +366,77 @@ The tool writes per-outlet status to `<write_fname>_outlet_bounds_status.csv`.
 | `split_overlap_km` | float | `2` | Overlap buffer applied around each group bbox. |
 | `max_basins_per_dem` | int | `0` | Optional cap per group (`0` = unlimited). |
 
+How grouping decides to split into 2+ rasters:
+
+1. **Disconnected outlets first (optional):** if
+   `auto_split_disconnected_basins: true`, outlets are clustered by
+   outlet-to-outlet distance. Any pair farther apart than `split_cluster_gap_km`
+   ends up in different clusters, so separate rasters are produced.
+2. **Size/cap checks per cluster:** each cluster's merged bbox is checked
+   against:
+   - `max_final_dem_area_km2`
+   - `max_basins_per_dem` (if > 0)
+3. **Recursive split when too large:** if either limit is exceeded, the cluster
+   is split into two parts by median outlet longitude, then each part is checked
+   again recursively.
+4. **Overlap padding:** once final groups are accepted, each group bbox is
+   expanded by `split_overlap_km` to avoid seam-edge clipping.
+
+So, in practice, you get 2 rasters when either:
+
+- two outlet sets are farther apart than `split_cluster_gap_km` (with
+  `auto_split_disconnected_basins: true`), or
+- one cluster exceeds area/basin-count limits and the recursive split produces
+  two valid subgroups.
+
+If you want fewer splits, increase `split_cluster_gap_km`, increase
+`max_final_dem_area_km2`, or set `max_basins_per_dem: 0`.
+
+Example tuned to encourage splitting into multiple rasters:
+
+```text
+bounds_mode: outlets
+outlet_points_fname: outlets_ortler.fgb
+
+auto_split_disconnected_basins: true
+split_cluster_gap_km: 15
+max_final_dem_area_km2: 800
+max_basins_per_dem: 2
+split_overlap_km: 1
+
+dem_source: cop30_aws
+target_epsg: 32632
+grid_spacing: 30
+```
+
+Example tuned to keep more basins in one raster:
+
+```text
+bounds_mode: outlets
+outlet_points_fname: outlets_ortler.fgb
+
+auto_split_disconnected_basins: true
+split_cluster_gap_km: 80
+max_final_dem_area_km2: 6000
+max_basins_per_dem: 0
+split_overlap_km: 2
+
+dem_source: cop30_aws
+target_epsg: 32632
+grid_spacing: 30
+```
+
 Manifest output `<write_fname>_dem_groups.csv` records one row per final group
 including requested/used source, bbox, area, and final verification metrics.
+
+If `write_fetch_extents_manifest: true`,
+`<write_fname>_fetch_extents_manifest.csv` records each staged fetch attempt
+(coarse prefetch, group 90 m, group final) with stage label, attempt number,
+source requested/used, spacing, exact bbox, area, and status.
+
+If `write_basin_outlines_fgb: true`, basin outlines are written per group as
+`<write_fname>_group_####_basin_outlines.fgb` at the retained stage
+(`90m` stop-level outputs or final-stage outputs).
 
 ### Final-resolution basin safety verification
 
@@ -241,25 +484,28 @@ answers a bad `demtype` with a bare 400.
 
 Run `lsdtt-fetch-raster -h ot_dem_type` for the same table with citations.
 
-| `ot_dem_type` | Dataset | Res. | Coverage | Notes |
-|---|---|---|---|---|
-| `COP30` | Copernicus GLO-30 | 30 m | global | TanDEM-X **DSM**, edited water bodies and coastlines. The default, and the same data `cop30_aws` serves keylessly. |
-| `COP90` | Copernicus GLO-90 | 90 m | global | The 90 m Copernicus DSM. Use it when the area exceeds the 30 m request limit. |
-| `SRTMGL1` | SRTM GL1 | 30 m | 60 N–56 S | 1 arc-second SRTM, EGM96 heights. The long-standing comparison baseline. |
-| `SRTMGL1_E` | SRTM GL1 Ellipsoidal | 30 m | 60 N–56 S | As `SRTMGL1` but WGS84 ellipsoidal heights — for co-registering with GNSS or lidar. |
-| `SRTMGL3` | SRTM GL3 | 90 m | 60 N–56 S | 3 arc-second SRTM. Larger request limit than GL1. |
-| `NASADEM` | NASADEM | 30 m | 60 N–56 S | SRTM reprocessed: better geolocation, voids filled from ASTER GDEM and ICESat. Generally preferable to raw `SRTMGL1`. |
-| `AW3D30` | ALOS World 3D | 30 m | global | JAXA optical-stereo DSM. An *independent* global 30 m surface — useful as a cross-check on the radar products. |
-| `AW3D30_E` | ALOS World 3D Ellipsoidal | 30 m | global | `AW3D30` with ellipsoidal rather than geoid heights. |
-| `GEDTM30` | Global Ensemble DTM | 30 m | global | Machine-learning ensemble **DTM** — bare earth, vegetation and buildings removed. |
-| `EU_DTM` | Continental Europe DTM | 30 m | Europe | Bare-earth DTM from national lidar and photogrammetric surveys. |
-| `ANADEM` | ANADEM | 30 m | South America | Bare-earth DTM; vegetation bias removed from Copernicus GLO-30. |
-| `CA_MRDEM_DTM` | Canada MRDEM (terrain) | 30 m | Canada | Natural Resources Canada medium-resolution bare-earth model. |
-| `CA_MRDEM_DSM` | Canada MRDEM (surface) | 30 m | Canada | The surface-model companion to `CA_MRDEM_DTM`. |
-| `SRTM15Plus` | SRTM15+ V2.1 | 500 m | global, land and sea | Merged topography and bathymetry. Use it when the domain continues offshore. |
-| `GEBCOIceTopo` | GEBCO 2023 (ice surface) | 500 m | global, land and sea | Bathymetry and topography, with the *ice-sheet surface* over Greenland and Antarctica. |
-| `GEBCOSubIceTopo` | GEBCO 2023 (bed under ice) | 500 m | global, land and sea | As above, but the ice sheets are replaced by the underlying bed. |
-| `GEDI_L3` | GEDI L3 gridded metrics | 1000 m | 52 N–52 S | Gridded GEDI lidar land-surface metrics. A metrics product, **not** a DEM for flow routing. |
+| `ot_dem_type` | Dataset | Band type (`GTiff`) | Grid spacing | Coverage | Notes |
+|---|---|---|---|---|---|
+| `COP30` | Copernicus GLO-30 | `Float32` | 1 arc-second (~30 m) | global | TanDEM-X **DSM**, edited water bodies and coastlines. The default, and the same data `cop30_aws` serves keylessly. |
+| `COP90` | Copernicus GLO-90 | `Float32` | 3 arc-second (~90 m) | global | The 90 m Copernicus DSM. Use it when the area exceeds the 30 m request limit. |
+| `SRTMGL1` | SRTM GL1 | `Int16` | 1 arc-second (~30 m) | 60 N–56 S | 1 arc-second SRTM, EGM96 heights. The long-standing comparison baseline. |
+| `SRTMGL1_E` | SRTM GL1 Ellipsoidal | `Float32` | 1 arc-second (~30 m) | 60 N–56 S | As `SRTMGL1` but WGS84 ellipsoidal heights — for co-registering with GNSS or lidar. |
+| `SRTMGL3` | SRTM GL3 | `Int16` | 3 arc-second (~90 m) | 60 N–56 S | 3 arc-second SRTM. Larger request limit than GL1. |
+| `NASADEM` | NASADEM | `Int16` | 1 arc-second (~30 m) | 60 N–56 S | SRTM reprocessed: better geolocation, voids filled from ASTER GDEM and ICESat. Generally preferable to raw `SRTMGL1`. |
+| `AW3D30` | ALOS World 3D | `Int16` | 1 arc-second (~30 m) | global | JAXA optical-stereo DSM. An *independent* global 30 m surface — useful as a cross-check on the radar products. |
+| `AW3D30_E` | ALOS World 3D Ellipsoidal | `Float32` | 1 arc-second (~30 m) | global | `AW3D30` with ellipsoidal rather than geoid heights. |
+| `GEDTM30` | Global Ensemble DTM | `Float32` | 1 arc-second (~30 m) | global | Machine-learning ensemble **DTM** — bare earth, vegetation and buildings removed. |
+| `EU_DTM` | Continental Europe DTM | `Float32` | 30 m (EPSG:3035 output grid) | Europe | Bare-earth DTM from national lidar and photogrammetric surveys. |
+| `ANADEM` | ANADEM | `Float32` | ~30 m (EPSG:4674, API sample grid `0.000269494585` deg) | South America | Bare-earth DTM; vegetation bias removed from Copernicus GLO-30. |
+| `CA_MRDEM_DTM` | Canada MRDEM (terrain) | `Float32` | 30 m (EPSG:3979 output grid) | Canada | Natural Resources Canada medium-resolution bare-earth model. |
+| `CA_MRDEM_DSM` | Canada MRDEM (surface) | `Float32` | 30 m (EPSG:3979 output grid) | Canada | The surface-model companion to `CA_MRDEM_DTM`. |
+| `SRTM15Plus` | SRTM15+ V2.1 | `Float32` | 15 arc-second (~500 m) | global, land and sea | Merged topography and bathymetry. Use it when the domain continues offshore. |
+| `GEBCOIceTopo` | GEBCO 2023 (ice surface) | `Int16` | 15 arc-second (~500 m) | global, land and sea | Bathymetry and topography, with the *ice-sheet surface* over Greenland and Antarctica. |
+| `GEBCOSubIceTopo` | GEBCO 2023 (bed under ice) | `Int16` | 15 arc-second (~500 m) | global, land and sea | As above, but the ice sheets are replaced by the underlying bed. |
+| `GEDI_L3` | GEDI L3 gridded metrics | `Float32` | nominal 1000 m (API sample in EPSG:4326: `0.010573500689` deg) | 52 N–52 S | Gridded GEDI lidar land-surface metrics. A metrics product, **not** a DEM for flow routing. |
+
+Band types and sample grid spacing values above were verified from direct
+`/globaldem` `GTiff` responses (tiny bounding boxes, 2026-07-30).
 
 **DSM or DTM matters.** `COP30`, `AW3D30` and the `CA_MRDEM_DSM` product are
 *surface* models: they include canopy and buildings, so hillslope curvature and
@@ -371,6 +617,37 @@ message**, so a mistyped key would otherwise be printed to your terminal and
 into any redirected log. You will see `***` instead.
 
 A key file readable by other users produces a warning suggesting `chmod 600`.
+
+### Quick OpenTopography smoke test (after `source`-ing your key)
+
+If you have just exported/sourced your key, validate the auth path with a tiny
+request before a larger run:
+
+```text
+write_path: ./dem
+write_fname: ot_smoke
+
+west: 10.3373594105
+south: 46.4568810636
+east: 10.3626405895
+north: 46.4818810636
+
+dem_source: opentopography
+ot_dem_type: SRTMGL1
+target_epsg: 32632
+grid_spacing: 30
+size_pixels: 128
+
+http_connect_timeout_seconds: 10
+http_timeout_seconds: 30
+```
+
+```sh
+lsdtt-fetch-raster . ot_smoke.param
+```
+
+Expected result: `ot_smoke_DEM.tif` is written, the fetch banner shows
+`Source      : opentopography`, and the dataset citation block is printed.
 
 ### Copernicus Data Space (CDSE) is not supported
 

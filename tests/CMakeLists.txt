@@ -435,6 +435,15 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_nested_stop_level
+    lsdtt-fetch-raster
+    fetch_raster_bad_nested_stop_level.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: basin_nested_stop_level must be one of: coarse, 90m, 30m"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_fetch_raster_outlets_missing_dataset
     lsdtt-fetch-raster
     fetch_raster_outlets_not_implemented.param.in
@@ -676,6 +685,14 @@ target_include_directories(lsdtt-test-dem-grouping PRIVATE ${CMAKE_SOURCE_DIR}/s
 add_test(NAME unit_dem_grouping
          COMMAND lsdtt-test-dem-grouping)
 set_tests_properties(unit_dem_grouping PROPERTIES LABELS "unit;fetch")
+
+add_executable(lsdtt-test-coastal-mask cpp/test_coastal_mask.cpp)
+target_link_libraries(lsdtt-test-coastal-mask PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-coastal-mask PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+
+add_test(NAME unit_coastal_mask
+         COMMAND lsdtt-test-coastal-mask)
+set_tests_properties(unit_coastal_mask PROPERTIES LABELS "unit;fetch")
 
 # The network half actually downloads. Off by default; skips (77) rather than
 # failing when the source is unreachable.

@@ -249,7 +249,8 @@ void test_ot_dataset_catalogue()
     for (const auto& d : catalogue)
     {
         if (d.demtype.empty() || d.name.empty() || d.resolution.empty() ||
-            d.coverage.empty() || d.description.empty() || d.max_area_km2 <= 0.0)
+            d.gdal_type.empty() || d.coverage.empty() ||
+            d.description.empty() || d.max_area_km2 <= 0.0)
         {
             all_fields_set = false;
         }

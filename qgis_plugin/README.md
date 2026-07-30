@@ -2,6 +2,21 @@
 
 Utilities and source for the `lsdtt_qgis` QGIS plugin.
 
+## Finding the latest backend version number
+
+Use one of these from the repository root:
+
+```bash
+# latest git tag in this checkout (for example v0.2.2)
+git describe --tags --abbrev=0
+
+# latest GitHub release tag (requires gh auth)
+gh release list --limit 1
+```
+
+Use the numeric part (for example `0.2.2`) as the `-Version` argument for
+packaging scripts.
+
 ## Package plugin zip
 
 From the repository root:
@@ -31,14 +46,14 @@ bundle before running algorithms.
 1. Build/package backend (developer side):
 
 ```powershell
-.\tools\package_windows_backend.ps1 -Version 0.2.0
+.\tools\package_windows_backend.ps1 -Version <version>
 ```
 
-2. Share and unzip `dist/lsdtt3-backend-win64-minimal-v0.2.0.zip`.
+2. Share and unzip `dist/lsdtt3-backend-win64-qgis-v<version>.zip`.
 3. In a PowerShell session, load runtime env vars:
 
 ```powershell
-cd C:\path\to\lsdtt3-backend-win64-minimal-v0.2.0
+cd C:\path\to\lsdtt3-backend-win64-qgis-v<version>
 . .\setenv.ps1
 .\bin\lsdtt-raster-preprocessing.exe --version
 ```
