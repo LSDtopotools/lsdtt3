@@ -139,6 +139,24 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    failure_divide_migration_missing_outlets
+    lsdtt-divide-migration
+    divide_migration_missing_outlets.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: basin_outlet_file must be set."
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_divide_migration_bad_integer_cluster_mode
+    lsdtt-divide-migration
+    divide_migration_bad_integer_cluster_mode.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: outlet cluster value 'alpha' is not an integer"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_hydraulic_routing_invalid_mode
     lsdtt-hydraulic-routing
     hydraulic_routing_invalid_mode.param.in
@@ -948,6 +966,11 @@ add_test(NAME smoke_cosmo_tool_help COMMAND lsdtt-cosmo-tool -h)
 set_tests_properties(smoke_cosmo_tool_help PROPERTIES
     LABELS "smoke;cli;cosmo"
     PASS_REGULAR_EXPRESSION "sample_age_yr")
+
+add_test(NAME smoke_divide_migration_help COMMAND lsdtt-divide-migration -h)
+set_tests_properties(smoke_divide_migration_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "basin_outlet_file")
 
 add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
 set_tests_properties(smoke_cosmo_prediction_help PROPERTIES

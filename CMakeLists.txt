@@ -231,6 +231,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_coastal_mask.cpp
     src/core/lsdtt_dem_grouping.cpp
     src/core/lsdtt_stat_csv.cpp
+    src/core/lsdtt_outlet_clusters.cpp
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
@@ -370,6 +371,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_side_tributary_basins_cpu.cpp
     src/cpu/lsdtt_ridgeline_cpu.cpp
     src/cpu/lsdtt_channel_sources_wiener_cpu.cpp
+    src/cpu/lsdtt_divide_migration_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)
@@ -530,6 +532,7 @@ lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)
 lsdtt_cli(lsdtt-ridgeline-analysis     cli/lsdtt-ridgeline-analysis.cpp)
 lsdtt_cli(lsdtt-basin-surface-metrics  cli/lsdtt-basin-surface-metrics.cpp)
+lsdtt_cli(lsdtt-divide-migration       cli/lsdtt-divide-migration.cpp)
 lsdtt_cli(lsdtt-test-hillslope-implicit cli/lsdtt-test-hillslope-implicit.cpp)
 lsdtt_cli(lsdtt-raster-calculator      cli/lsdtt-raster-calculator.cpp)
 lsdtt_cli(lsdtt-fetch-raster           cli/lsdtt-fetch-raster.cpp)
