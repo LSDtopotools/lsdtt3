@@ -36,6 +36,11 @@ At least one prediction mode must be activated; the program exits with a message
 | 4. Erosion raster | Raster or uniform scalar |
 | 5. Steady-state concentrations | `calculate_crn_concentration_raster` |
 | 6. Step-change concentrations | `calculate_step_change_crn_concentration_raster` |
+| `calculate_multi_isotope_step_change` | bool | `false` | Carry Be-10, Al-26 and C-14 through the **same** step change at every pixel, and write the two isotope-ratio rasters. See below. |
+| `calculate_multi_isotope_transient` | bool | `false` | The same three nuclides through an **arbitrary erosion history** from `transient_history_file`. The general case of the step-change mode. See below. |
+| `transient_history_file` | string | `NULL` | CSV erosion history: `time,rate,removal` (yr BP, m/yr, m). Rows run most-recent-first; the last row must be `time = -9999` carrying the background rate. Unordered records are rejected. |
+| `transient_rock_density_kg_m3` | float | `2650` | Density used to convert the history's metre-based rates and removals into effective depths. |
+| `write_isotope_ratio_rasters` | bool | `true` | Write `_R2610_step.tif` (Al26/Be10) and `_R1410_step.tif` (C14/Be10). Needs `calculate_multi_isotope_step_change`. |
 | 7. Accumulated concentrations | `calculate_accumulated_crn_concentration` |
 
 ---
@@ -57,7 +62,7 @@ At least one prediction mode must be activated; the program exits with a message
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `nuclide` | string | `Be10` | Nuclide to predict. `Be10`, `Al26`, or `C14`. |
-| `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. `Braucher`, `BraucherBorchers`, `Granger`, `Schaller`, or `newCRONUS`. |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. `Braucher`, `BraucherBorchers`, `Granger`, `Schaller`, `newCRONUS`, or `balcoCRONUSv3PD` (pressure-dependent Balco/CRONUS-v3 style; scan alias: `cronusv3pd`). |
 
 ---
 
@@ -168,6 +173,30 @@ The concentration raster to accumulate is selected in priority order:
 
 ---
 
+## lsdviztools3 interface notes
+
+`lsdtt-cosmo-prediction` is the forward side used by lsdtt3 comparison
+workflows (including point sweeps) that are then plotted by `lsdviztools3`.
+
+- For point/sweep workflows, sampled concentrations are emitted as
+  `<write_fname>_sampled_crn_conc.csv` and paired with inverse runs from
+  `lsdtt-cosmo-tool`.
+- The Phase-M2 sweep script
+  `tests/scripts/run_cosmo_single_point_scaling_scan.py` writes
+  `single_point_scan_comparison.csv`.
+- `lsdviztools3` command for sweep comparison figures:
+
+```
+lsdviz3-cosmo-compare \
+  --scan-csv tests/expected/cosmo/generated/single_point_scan_comparison.csv \
+  --outdir demo_output/cosmo
+```
+
+Optional `--sample-csv` can be used to include a sample-level residual figure in
+the same run.
+
+---
+
 ## Example parameter files
 
 ### Steady-state concentration map
@@ -228,3 +257,62 @@ boundary_conditions:     oooo
 Stone, J.O. (2000). Air pressure and cosmogenic isotope production. *Journal of Geophysical Research*, 105(B10), 23753–23759.
 
 Braucher, R., et al. (2011). Production rates of cosmogenic radionuclides at the atmosphere–land surface interface. *Earth and Planetary Science Letters*, 304(3–4), 417–428.
+
+
+### Multi-isotope step change
+
+Isotope **ratios** carry the transient signal. The half-lives differ by orders of
+magnitude — C-14 5.7 kyr, Al-26 0.7 Myr, Be-10 1.39 Myr — so after a change in
+erosion rate the three re-equilibrate at different speeds, and the pair dates the
+perturbation in a way one nuclide alone cannot.
+
+A ratio is only meaningful if both members saw an identical scenario, so
+`calculate_multi_isotope_step_change` computes all three from **one particle
+evolution per pixel** — same shielding, same rates, same elapsed time — rather
+than from three separate runs. Each nuclide is bitwise identical to what
+`calculate_step_change_crn_concentration_raster` returns for the same inputs, and
+the whole thing costs little more than a single-nuclide run.
+
+Inputs are the same as the single-nuclide step change: `time_since_change_yr` (or
+a raster), `step_change_eff_erate_old_g_cm2_yr`, `step_change_eff_erate_new_g_cm2_yr`,
+the production raster and topographic shielding. The `nuclide` parameter is
+ignored — all three are always produced.
+
+Outputs: `_Be10_step_crn_conc.tif`, `_Al26_step_crn_conc.tif`,
+`_C14_step_crn_conc.tif`, plus `_R2610_step.tif` and `_R1410_step.tif`. Pixels
+with zero Be-10 are written as nodata in the ratio rasters and the count is
+reported.
+
+Note that after an erosion-rate *increase* all concentrations fall, C-14 reaches
+its new value first, and the C14/Be10 ratio is therefore **suppressed** and
+approaches its endpoint from below — it does not overshoot.
+
+
+### Multi-isotope transient (arbitrary history)
+
+`calculate_multi_isotope_transient` generalises the step-change mode: instead of
+one change in erosion rate, every pixel follows the history in
+`transient_history_file`. A two-row history reproduces the step-change mode
+**bitwise**, so this is a strict generalisation rather than a parallel
+implementation — the per-pixel walk is the same code the column tool uses.
+
+History file format — three columns, `time,rate,removal`:
+
+```
+time,rate,removal
+3000,0.00113,0        <- most recent phase: 0.00113 m/yr for the last 3 kyr
+30000,0.0000377,0     <- before that, 0.0000377 m/yr back to 30 kyr
+-9999,0.0000755,0     <- long-term background rate (required last row)
+```
+
+Rows run from the **most recent** (index 0) to the oldest, and the final row must
+carry `time = -9999` with the long-term background rate that initialises the
+column. A row with `rate = 0` and a non-zero `removal` is an instantaneous
+stripping event in metres, and must repeat the time of the row before it.
+
+**An unordered history is rejected**, not silently accepted: reversed rows would
+produce negative timesteps and a confidently wrong answer.
+
+Outputs are the same five rasters as the step-change mode. Cost is
+`O(pixels × history rows)`, so this is substantially slower — inherent, since an
+arbitrary history has no closed form.

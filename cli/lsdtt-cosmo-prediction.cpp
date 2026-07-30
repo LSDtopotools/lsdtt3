@@ -56,6 +56,7 @@
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_crn_column.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
@@ -152,7 +153,7 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.","",
+        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD.","",
         "Nuclide and muon scheme", "param", ""};
 
     string_default_map["scaling_scheme"] = "stone";
@@ -179,6 +180,56 @@ int main(int argc, char* argv[])
         "Compute transient CRN concentration after a step change in erosion rate.",
         "Requires: time_since_change raster, step_change_eff_erate_old/new, production raster, topo shielding.",
         "Prediction modes", "switch", ""};
+
+    bool_default_map["calculate_multi_isotope_step_change"] = false;
+    help_map["calculate_multi_isotope_step_change"] = {"bool","false",
+        "Carry Be-10, Al-26 and C-14 through the SAME step change at every pixel, "
+        "and write the two isotope-ratio rasters.",
+        "The isotope RATIOS are what carry a transient signal: the half-lives differ "
+        "by orders of magnitude (C-14 5.7 kyr, Al-26 0.7 Myr, Be-10 1.39 Myr), so a "
+        "pair dates the perturbation in a way one nuclide alone cannot. A ratio is "
+        "only meaningful if both members saw an identical scenario, so all three are "
+        "computed from ONE particle evolution per pixel -- same shielding, same rates, "
+        "same elapsed time -- rather than from three separate runs. Each nuclide is "
+        "bitwise identical to what calculate_step_change_crn_concentration_raster "
+        "returns for the same inputs, and costs little more than a single-nuclide run. "
+        "Uses the same inputs as that mode: time_since_change raster, "
+        "step_change_eff_erate_old/new, production raster, topographic shielding. "
+        "The nuclide parameter is ignored here -- all three are always produced.",
+        "Prediction modes", "switch", ""};
+
+    bool_default_map["calculate_multi_isotope_transient"] = false;
+    help_map["calculate_multi_isotope_transient"] = {"bool","false",
+        "Carry Be-10, Al-26 and C-14 through an ARBITRARY erosion history at every "
+        "pixel, and write the two isotope-ratio rasters.",
+        "The general case of calculate_multi_isotope_step_change: instead of one step, "
+        "the pixels follow a user-supplied history from transient_history_file. A "
+        "two-row history reproduces the step-change mode exactly (bitwise), so this is "
+        "a strict generalisation. COST: every pixel walks the whole history, so this is "
+        "O(pixels x history rows) and is much slower than the step-change mode -- "
+        "inherent, since an arbitrary history has no closed form. The nuclide parameter "
+        "is ignored; all three are always produced.",
+        "Prediction modes", "switch", ""};
+
+    float_default_map["transient_rock_density_kg_m3"] = 2650.0f;
+    help_map["transient_rock_density_kg_m3"] = {"float","2650",
+        "Rock density (kg/m3) used to convert the erosion history's metre-based "
+        "rates and removals into effective depths.",
+        "Only used by calculate_multi_isotope_transient. The history file gives rates "
+        "in m/yr and removals in m; the physics works in g/cm2, and this is the "
+        "conversion.",
+        "Prediction modes", "param", "calculate_multi_isotope_transient"};
+
+    string_default_map["transient_history_file"] = "NULL";
+    help_map["transient_history_file"] = {"string","NULL",
+        "CSV erosion history for calculate_multi_isotope_transient.",
+        "Three columns: time,rate,removal -- time in yr BP, rate in m/yr, removal in m. "
+        "Rows run from the MOST RECENT (index 0) to the oldest, and the LAST row must "
+        "have time = -9999 carrying the long-term background rate. A row with rate = 0 "
+        "and a non-zero removal is an instantaneous stripping event and must share the "
+        "time of the row before it. An unordered record is rejected: it would produce "
+        "negative timesteps and a silently wrong answer.",
+        "Prediction modes", "param", "calculate_multi_isotope_transient"};
 
     bool_default_map["calculate_accumulated_crn_concentration"] = false;
     help_map["calculate_accumulated_crn_concentration"] = {"bool","false",
@@ -381,6 +432,14 @@ int main(int argc, char* argv[])
         "Output: write_fname + _<nuclide>_step_crn_conc.tif",
         "Output write toggles", "switch", ""};
 
+    bool_default_map["write_isotope_ratio_rasters"] = true;
+    help_map["write_isotope_ratio_rasters"] = {"bool","true",
+        "Write the Al26/Be10 and C14/Be10 ratio rasters.",
+        "Output: write_fname + _R2610_step.tif and _R1410_step.tif. Requires "
+        "calculate_multi_isotope_step_change: true. The three concentration rasters "
+        "are written by write_step_change_concentration_raster, one per nuclide.",
+        "Output write toggles", "switch", "calculate_multi_isotope_step_change"};
+
     bool_default_map["write_accumulated_crn_raster"] = true;
     help_map["write_accumulated_crn_raster"] = {"bool","true",
         "Write the accumulated CRN concentration raster.",
@@ -424,6 +483,14 @@ int main(int argc, char* argv[])
 
     const std::string nuclide     = sf["nuclide"];
     const std::string muon_scheme = sf["muon_scheme"];
+    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
+    {
+        std::cerr << "FATAL: unknown muon_scheme \"" << muon_scheme
+                  << "\". Allowed values: "
+                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
+                  << ".\n";
+        return 1;
+    }
     const std::string write_base  = pp.get_full_write_path();
 
     // Production scaling scheme. Never falls back: an unknown value is FATAL,
@@ -456,15 +523,31 @@ int main(int argc, char* argv[])
     const bool do_ss_conc   = bf["calculate_crn_concentration_raster"];
     const bool do_step_conc = bf["calculate_step_change_crn_concentration_raster"];
     const bool do_accum     = bf["calculate_accumulated_crn_concentration"];
+    const bool do_multi     = bf["calculate_multi_isotope_step_change"];
+    const bool do_multi_tr  = bf["calculate_multi_isotope_transient"];
     const bool do_sample    = (sf["sample_points_filename"] != "NULL");
 
-    if (!do_ss_conc && !do_step_conc && !do_accum)
+    if (!do_ss_conc && !do_step_conc && !do_accum && !do_multi && !do_multi_tr)
     {
         std::cout << "No prediction mode activated.  Set one of:\n"
                   << "  calculate_crn_concentration_raster: true\n"
                   << "  calculate_step_change_crn_concentration_raster: true\n"
+                  << "  calculate_multi_isotope_step_change: true\n"
+                  << "  calculate_multi_isotope_transient: true\n"
                   << "  calculate_accumulated_crn_concentration: true\n";
         return 0;
+    }
+
+    // The multi-isotope mode supersedes the single-nuclide step change: it
+    // produces that nuclide's raster bit-for-bit, plus the other two and the
+    // ratios. Running both would compute the same thing twice and write the
+    // same file twice, so say so rather than doing it silently.
+    if (do_multi && do_step_conc)
+    {
+        std::cout << "Note: calculate_multi_isotope_step_change already produces "
+                     "the single-nuclide step-change raster (bit-for-bit), so "
+                     "calculate_step_change_crn_concentration_raster is redundant "
+                     "here and is skipped.\n";
     }
 
     if (do_sample && !do_accum)
@@ -488,6 +571,35 @@ int main(int argc, char* argv[])
               << dem.get_meta().n_cols << " cols.\n";
 
     // -------------------------------------------------------------------------
+    // Atmosphere + optional CRN netcdf data (shared by production and pressure)
+    // -------------------------------------------------------------------------
+    lsdtt::CrnNcData crn_nc;
+    const std::string nc_path = sf["crn_nc_file"].empty()
+        ? lsdtt::default_crn_nc_path()
+        : pp.add_read_path_if_needed(sf["crn_nc_file"]);
+    if (!nc_path.empty())
+    {
+        std::cout << "  Loading CRN NC data: " << nc_path << "\n";
+        crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
+    }
+
+    const std::string atm_name = sf["atmosphere"];
+    lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
+    if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
+    else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
+    else if (atm_name != "ERA40")
+    {
+        std::cerr << "FATAL: unknown atmosphere \"" << atm_name
+                  << "\". Allowed values: ERA40, NCEP, standard.\n";
+        return 1;
+    }
+    const bool nc_ncep = crn_nc.ncep_loaded;
+    const std::string atm_report =
+        (atm_source == lsdtt::AtmSource::NCEP && nc_ncep)          ? "NCEP"
+      : (atm_source == lsdtt::AtmSource::ERA40 && crn_nc.loaded)   ? "ERA40"
+                                                                    : "standard";
+
+    // -------------------------------------------------------------------------
     // Production raster
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu prod_raster;
@@ -504,17 +616,6 @@ int main(int argc, char* argv[])
     {
         std::cout << "Computing " << (use_lsdn ? "LSDn" : "Stone 2000")
                   << " production raster...\n";
-        lsdtt::CrnNcData crn_nc;
-        // Fall back to the bundled crn_parameters.nc (relative to this executable)
-        // when the user gives no path. Empty => standard atmosphere.
-        const std::string nc_path = sf["crn_nc_file"].empty()
-            ? lsdtt::default_crn_nc_path()
-            : pp.add_read_path_if_needed(sf["crn_nc_file"]);
-        if (!nc_path.empty())
-        {
-            std::cout << "  Loading CRN NC data: " << nc_path << "\n";
-            crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
-        }
         if (use_lsdn && !crn_nc.lsdn_loaded)
         {
             std::cerr << "FATAL: scaling_scheme: lsdn requires the LSDn scaling grids in "
@@ -526,27 +627,6 @@ int main(int argc, char* argv[])
             return 1;
         }
         double age_yr = static_cast<double>(ff["sample_age_yr"]);
-
-        // Resolve the atmosphere model, same wording and same fallbacks as
-        // lsdtt-cosmo-tool so the pair can be driven consistently. ERA40 is the
-        // default and resolves exactly as the previous AtmSource::Auto did
-        // (Auto => ERA40 when the nc is loaded, standard otherwise), so this is
-        // additive: an existing parameter file gets the behaviour it had.
-        const std::string atm_name = sf["atmosphere"];
-        lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
-        if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
-        else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
-        else if (atm_name != "ERA40")
-        {
-            std::cerr << "FATAL: unknown atmosphere \"" << atm_name
-                      << "\". Allowed values: ERA40, NCEP, standard.\n";
-            return 1;
-        }
-        const bool nc_ncep = crn_nc.ncep_loaded;
-        const std::string atm_report =
-            (atm_source == lsdtt::AtmSource::NCEP && nc_ncep)          ? "NCEP"
-          : (atm_source == lsdtt::AtmSource::ERA40 && crn_nc.loaded)   ? "ERA40"
-                                                                       : "standard";
         std::cout << "  Atmosphere: " << atm_report << "\n";
 
         try
@@ -605,13 +685,33 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu conc_raster;
     bool have_conc_raster = false;
+    lsdtt::lsdtt_raster_cpu pressure_raster;
+    const lsdtt::lsdtt_raster_cpu* pressure_ptr = nullptr;
 
     if (do_ss_conc)
     {
+        if (muon_scheme == "balcoCRONUSv3PD")
+        {
+            std::cout << "Computing pressure raster for balcoCRONUSv3PD ("
+                      << atm_report << " atmosphere)...\n";
+            try
+            {
+                pressure_raster = lsdtt::calculate_pressure_raster(dem, crn_nc, atm_source);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: pressure raster failed: " << e.what() << "\n";
+                return 1;
+            }
+            pressure_ptr = &pressure_raster;
+            std::cout << "  Pressure raster computed.\n";
+        }
+
         std::cout << "Computing steady-state CRN concentration raster (" << nuclide << ")...\n";
         conc_raster = lsdtt::calculate_crn_concentration_raster_whole(
             nuclide, muon_scheme,
-            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield);
+            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield,
+            pressure_ptr);
         have_conc_raster = true;
         std::cout << "  Done.\n";
 
@@ -629,7 +729,144 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu step_conc_raster;
     bool have_step_conc_raster = false;
 
-    if (do_step_conc)
+    // -------------------------------------------------------------------------
+    // Multi-isotope step change: Be-10, Al-26 and C-14 through ONE scenario.
+    // -------------------------------------------------------------------------
+    // Shared by both multi-isotope modes: three concentration rasters plus the
+    // two ratios. Kept in one place so the step-change and transient modes can
+    // never drift in naming, nodata policy or reporting.
+    auto write_multi_isotope = [&](const lsdtt::MultiNuclideRasters& multi,
+                                   const std::string& conc_suffix,
+                                   const std::string& r2610_suffix,
+                                   const std::string& r1410_suffix)
+    {
+        if (bf["write_step_change_concentration_raster"])
+        {
+            const std::pair<const char*, const lsdtt::lsdtt_raster_cpu*> outs[3] = {
+                {"Be10", &multi.Be10}, {"Al26", &multi.Al26}, {"C14", &multi.C14}};
+            for (const auto& o : outs)
+            {
+                const std::string out_path =
+                    write_base + "_" + o.first + conc_suffix;
+                std::cout << "Writing " << o.first
+                          << " concentration raster: " << out_path << "\n";
+                loader.write_full(o.second->get_data(), o.second->get_meta(),
+                                  out_path, out_fmt);
+            }
+        }
+
+        if (bf["write_isotope_ratio_rasters"])
+        {
+            const auto& meta = multi.Be10.get_meta();
+            const auto& be_d = multi.Be10.get_data_array();
+            const auto& be_m = multi.Be10.get_mask_array();
+            const float ndv  = static_cast<float>(meta.no_data_value);
+
+            auto make_ratio = [&](const lsdtt::lsdtt_raster_cpu& num,
+                                  const std::string& suffix,
+                                  const std::string& label)
+            {
+                const auto& n_d = num.get_data_array();
+                lsdtt::lsdtt_array2d<float>   r_d(meta.n_rows, meta.n_cols, ndv);
+                lsdtt::lsdtt_array2d<uint8_t> r_m(meta.n_rows, meta.n_cols, 0);
+                std::int64_t n_zero = 0;
+                for (int r = 0; r < meta.n_rows; ++r)
+                    for (int c = 0; c < meta.n_cols; ++c)
+                    {
+                        if (!be_m(r, c)) continue;
+                        if (be_d(r, c) == 0.0f) { ++n_zero; continue; }
+                        r_d(r, c) = n_d(r, c) / be_d(r, c);
+                        r_m(r, c) = 1;
+                    }
+                if (n_zero > 0)
+                    std::cout << "  Warning: " << n_zero << " pixel(s) had zero "
+                              << "Be-10 and are nodata in " << label << ".\n";
+                const lsdtt::lsdtt_raster_cpu ratio(std::move(r_d),
+                                                    std::move(r_m), meta);
+                const std::string out_path = write_base + suffix;
+                std::cout << "Writing " << label << " ratio raster: "
+                          << out_path << "\n";
+                loader.write_full(ratio.get_data(), meta, out_path, out_fmt);
+            };
+            make_ratio(multi.Al26, r2610_suffix, "Al26/Be10");
+            make_ratio(multi.C14,  r1410_suffix, "C14/Be10");
+        }
+    };
+
+    if (do_multi_tr)
+    {
+        const std::string hist = pp.add_read_path_if_needed(sf["transient_history_file"]);
+        if (sf["transient_history_file"] == "NULL" || hist.empty())
+        {
+            std::cerr << "FATAL: calculate_multi_isotope_transient needs "
+                         "transient_history_file (time,rate,removal CSV).\n";
+            return 1;
+        }
+        std::cout << "Computing multi-isotope TRANSIENT rasters (Be10, Al26, C14)\n"
+                  << "  erosion history: " << hist << "\n"
+                  << "  NOTE: every pixel walks the whole history, so this is much "
+                     "slower than the step-change mode.\n";
+
+        lsdtt::lsdtt_crn_column column(
+            static_cast<double>(ff["transient_rock_density_kg_m3"]));
+        try { column.read_erosion_time_series(hist); }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: erosion history rejected: " << e.what() << "\n";
+            return 1;
+        }
+
+        lsdtt::MultiNuclideRasters multi;
+        try
+        {
+            multi = lsdtt::calculate_crn_concentration_raster_transient_multi(
+                muon_scheme, column, prod_raster, topo_shield, 0.0);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: multi-isotope transient failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+        std::cout << "  Done.\n";
+        write_multi_isotope(multi, "_step_crn_conc.tif", "_R2610_step.tif",
+                            "_R1410_step.tif");
+    }
+
+    if (do_multi)
+    {
+        const double eff_erate_old =
+            static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
+        const double eff_erate_new =
+            static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);
+
+        lsdtt::lsdtt_raster_cpu time_since_change = load_or_constant(
+            "time_since_change_raster_prefix", ff["time_since_change_yr"]);
+
+        std::cout << "Computing multi-isotope step-change rasters "
+                     "(Be10, Al26, C14)...\n"
+                  << "  eff_erate_old = " << eff_erate_old << " g/cm2/yr"
+                  << "  eff_erate_new = " << eff_erate_new << " g/cm2/yr\n";
+
+        lsdtt::MultiNuclideRasters multi;
+        try
+        {
+            multi = lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                muon_scheme, time_since_change, prod_raster, topo_shield,
+                eff_erate_old, eff_erate_new);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: multi-isotope step change failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+        std::cout << "  Done.\n";
+        write_multi_isotope(multi, "_step_crn_conc.tif", "_R2610_step.tif",
+                            "_R1410_step.tif");
+    }
+
+    if (do_step_conc && !do_multi)
     {
         double eff_erate_old = static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
         double eff_erate_new = static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);

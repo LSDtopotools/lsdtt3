@@ -24,8 +24,9 @@ Physics notes:
 - Pressure is submitted directly ('pre' flag) using OUR standard-atmosphere
   pressures from the fixture CSV, so atmosphere-model differences (CRONUS
   'std' = NCEP) are excluded from the comparison by construction.
-- Thickness 0, density 2.65, shielding 1, standards 07KNSTD / KNSTD
-  (factor 1.0 on both sides).
+- Thickness 0, density 2.65, shielding 1, standards 07KNSTD / KNSTD.
+- C-14 is included when `conc_C14_C14STD` is present in the samples CSV.
+  CRONUS v3 expects C-14 lines without an AMS standard token.
 - CRONUS reports erosion in m/Myr per scheme (St/Lm/LSDn) plus g/cm2/yr;
   we keep g/cm2/yr as primary (density-free, matches lsdtt3).
 """
@@ -63,6 +64,7 @@ def read_samples(path: Path):
 def build_text_block(samples):
     """v3 input: sample line (10 fields) + one nuclide line per measurement."""
     lines = []
+    has_c14 = "conc_C14_C14STD" in samples[0]
     for s in samples:
         name = s["name"]
         lines.append(
@@ -77,6 +79,11 @@ def build_text_block(samples):
         lines.append(
             f"{name} Al-26 quartz {c26:.4f} {c26 * UNC_FRACTION:.4f} KNSTD ;"
         )
+        if has_c14:
+            c14 = float(s["conc_C14_C14STD"])
+            lines.append(
+                f"{name} C-14 quartz {c14:.4f} {c14 * UNC_FRACTION:.4f} ;"
+            )
     return "\n".join(lines)
 
 
@@ -130,6 +137,8 @@ def parse_xml(raw: str):
                 nuclide = "Be-10"
             elif "26" in nuclide:
                 nuclide = "Al-26"
+            elif "14" in nuclide:
+                nuclide = "C-14"
             for scheme in ("St", "Lm", "LSDn"):
                 e_text = nres.findtext(f"E_gcm2_{scheme}")
                 if e_text is None:

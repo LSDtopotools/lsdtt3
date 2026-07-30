@@ -389,6 +389,78 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "FATAL: unknown dem_source"
 )
 
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_bounds_mode
+    lsdtt-fetch-raster
+    fetch_raster_bad_bounds_mode.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: bounds_mode must be one of"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_outlets_missing_file
+    lsdtt-fetch-raster
+    fetch_raster_outlets_missing_file.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: bounds_mode=outlets requires outlet_points_fname"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_outlets_conflict_area
+    lsdtt-fetch-raster
+    fetch_raster_outlets_conflict_area.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: bounds_mode=outlets forbids west/south/east/north and bounds_fname"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_prefetch_source
+    lsdtt-fetch-raster
+    fetch_raster_bad_prefetch_source.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: unknown prefetch_source"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_bad_auth_fallback_source
+    lsdtt-fetch-raster
+    fetch_raster_bad_auth_fallback_source.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: auth_fallback_source must be keyless"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_outlets_missing_dataset
+    lsdtt-fetch-raster
+    fetch_raster_outlets_not_implemented.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: could not open outlet points CSV"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_ot_missing_key_strict
+    lsdtt-fetch-raster
+    fetch_raster_ot_missing_key_strict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: no credential found"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_ot_missing_key_fallback
+    lsdtt-fetch-raster
+    fetch_raster_ot_missing_key_fallback.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: lsdtt::fetch_dem: west must be less than east"
+)
+
 # -h must work without a parameter file, and without touching the network.
 add_test(NAME smoke_fetch_raster_help
          COMMAND lsdtt-fetch-raster -h)
@@ -497,6 +569,19 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
         --expect-raster-size ortler_test_DEM.tif:128x128
     )
     set_tests_properties(network_fetch_raster_cli PROPERTIES LABELS "network;cli;fetch")
+
+    add_lsdtt_cli_smoke_test(
+        network_fetch_raster_outlets_cli
+        lsdtt-fetch-raster
+        fetch_raster_outlets_network.param.in
+        outlets_net_group_0001_DEM.tif
+        --expect outlets_net_group_0002_DEM.tif
+        --expect outlets_net_dem_groups.csv
+        --expect outlets_net_outlet_bounds_status.csv
+        --expect-file-contains "outlets_net_dem_groups.csv:group_id"
+        --expect-file-contains "outlets_net_dem_groups.csv:group_0002_DEM.tif"
+    )
+    set_tests_properties(network_fetch_raster_outlets_cli PROPERTIES LABELS "network;cli;fetch")
 endif()
 
 # Flow-routing performance (docs/testing_and_benchmarking.md).
@@ -583,6 +668,14 @@ target_include_directories(lsdtt-test-raster-fetch PRIVATE ${CMAKE_SOURCE_DIR}/s
 add_test(NAME unit_raster_fetch
          COMMAND lsdtt-test-raster-fetch --offline --data-dir=${CMAKE_CURRENT_SOURCE_DIR}/data/bounds)
 set_tests_properties(unit_raster_fetch PROPERTIES LABELS "unit;fetch")
+
+add_executable(lsdtt-test-dem-grouping cpp/test_dem_grouping.cpp)
+target_link_libraries(lsdtt-test-dem-grouping PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-dem-grouping PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+
+add_test(NAME unit_dem_grouping
+         COMMAND lsdtt-test-dem-grouping)
+set_tests_properties(unit_dem_grouping PROPERTIES LABELS "unit;fetch")
 
 # The network half actually downloads. Off by default; skips (77) rather than
 # failing when the source is unreachable.
@@ -730,6 +823,77 @@ add_test(NAME rigorous_cosmo_cli_bridge
 set_tests_properties(rigorous_cosmo_cli_bridge PROPERTIES
     LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
 
+# Multi-isotope step change: Be-10, Al-26 and C-14 through ONE scenario, plus
+# the two ratio rasters. The isotope RATIOS are what carry a transient signal,
+# and a ratio is only meaningful if both members saw an identical scenario --
+# hence one particle evolution per pixel, not three separate runs.
+#
+# Bitwise equality of each nuclide against the single-nuclide kernel is asserted
+# in the unit tier (M1); this pins the CLI plumbing: all five rasters appear,
+# every pixel valid, and the ratio rasters carry positive, physically sane
+# values. Verified to fail on perturbation.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_multi_isotope
+    lsdtt-cosmo-prediction
+    cosmo_prediction_multi_isotope.param.in
+    mi_Be10_step_crn_conc.tif
+    --expect mi_Al26_step_crn_conc.tif
+    --expect mi_C14_step_crn_conc.tif
+    --expect mi_R2610_step.tif
+    --expect mi_R1410_step.tif
+    --expect-valid-percent-100 mi_R2610_step.tif
+    --expect-valid-percent-100 mi_R1410_step.tif
+    --expect-raster-min mi_R2610_step.tif:1.0
+    --expect-raster-min mi_R1410_step.tif:0.01
+    --stdout-contains "multi-isotope step-change rasters (Be10, Al26, C14)"
+    --stdout-contains "Al26/Be10 ratio raster"
+    --stdout-contains "C14/Be10 ratio raster"
+)
+set_tests_properties(smoke_cosmo_prediction_multi_isotope
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
+# Multi-isotope step change under LSDn scaling: smoke that the prediction CLI
+# reaches the LSDn path and writes the same 3 nuclide + 2 ratio rasters.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_multi_isotope_lsdn
+    lsdtt-cosmo-prediction
+    cosmo_prediction_multi_isotope_lsdn.param.in
+    mi_lsdn_Be10_step_crn_conc.tif
+    --expect mi_lsdn_Al26_step_crn_conc.tif
+    --expect mi_lsdn_C14_step_crn_conc.tif
+    --expect mi_lsdn_R2610_step.tif
+    --expect mi_lsdn_R1410_step.tif
+    --expect-valid-percent-100 mi_lsdn_R2610_step.tif
+    --expect-valid-percent-100 mi_lsdn_R1410_step.tif
+    --expect-raster-min mi_lsdn_R2610_step.tif:1.0
+    --expect-raster-min mi_lsdn_R1410_step.tif:0.01
+    --stdout-contains "Scaling scheme: LSDn"
+    --stdout-contains "LSDn scaling (Be10)"
+)
+set_tests_properties(smoke_cosmo_prediction_multi_isotope_lsdn
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
+# Multi-isotope ARBITRARY erosion history: the general case of the step-change
+# mode. Bitwise equality with the step-change kernel for a two-row history is
+# asserted in the unit tier (H1); this pins the CLI plumbing -- the history file
+# is read and validated, all five rasters appear, and the ratios are sane.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_multi_transient
+    lsdtt-cosmo-prediction
+    cosmo_prediction_multi_transient.param.in
+    tr_Be10_step_crn_conc.tif
+    --expect tr_Al26_step_crn_conc.tif
+    --expect tr_C14_step_crn_conc.tif
+    --expect tr_R2610_step.tif
+    --expect tr_R1410_step.tif
+    --expect-valid-percent-100 tr_R2610_step.tif
+    --expect-raster-min tr_R2610_step.tif:1.0
+    --stdout-contains "multi-isotope TRANSIENT rasters (Be10, Al26, C14)"
+    --stdout-contains "every pixel walks the whole history"
+)
+set_tests_properties(smoke_cosmo_prediction_multi_transient
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
 # An unknown scheme is FATAL, and the message names both allowed values.
 add_lsdtt_cli_smoke_test(
     failure_cosmo_tool_bad_scaling_scheme
@@ -819,6 +983,14 @@ add_test(NAME unit_cosmo_validation_harness
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
                  --self-test)
 set_tests_properties(unit_cosmo_validation_harness PROPERTIES LABELS "unit;cosmo")
+
+# Riversand-comparison harness self-test (Phase 5 carried-forward item §6c(B)).
+# OFFLINE scaffold check only: manifest/sample preflight + cleanup-trap contract.
+add_test(NAME unit_cosmo_riversand_harness
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_riversand_comparison.py"
+                 --self-test)
+set_tests_properties(unit_cosmo_riversand_harness PROPERTIES LABELS "unit;cosmo")
 
 # Real download -> run -> delete for the pilot dataset, in --check (regression)
 # mode: it reproduces the fresh inverted rates and compares them to the FROZEN

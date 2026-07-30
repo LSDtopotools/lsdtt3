@@ -1,0 +1,11 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_bad_auth_fallback_source
+
+west: 10.3373594105
+south: 46.4568810636
+east: 10.4626405895
+north: 46.5431189364
+
+# Fallback must be keyless, not opentopography.
+auth_fallback_source: opentopography

@@ -1,0 +1,6 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_outlets_missing_file
+
+# outlet mode requires outlet_points_fname.
+bounds_mode: outlets

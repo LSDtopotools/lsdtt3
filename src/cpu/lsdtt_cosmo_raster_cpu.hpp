@@ -100,6 +100,12 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               ScalingScheme            scheme = ScalingScheme::Stone,
                                               const std::string&       nuclide = "Be10");
 
+// Atmospheric pressure raster (hPa/mbar) using the same atmosphere selection
+// logic as calculate_production_raster.
+lsdtt_raster_cpu calculate_pressure_raster(const lsdtt_raster_cpu& dem,
+                                           const CrnNcData&         nc,
+                                           AtmSource                atm = AtmSource::Auto);
+
 // Backward-compatible overload: standard atmosphere, no paleomagnetic correction.
 inline lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem)
 {
@@ -127,6 +133,18 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     const lsdtt_raster_cpu& topo_shield,
     const lsdtt_raster_cpu& snow_shield,
     const lsdtt_raster_cpu& self_shield,
+    const lsdtt_flowinfo& flow,
+    std::int64_t            outlet_node);
+
+lsdtt_raster_cpu calculate_crn_concentration_raster(
+    const std::string&      nuclide,
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& erosion_raster,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const lsdtt_raster_cpu& snow_shield,
+    const lsdtt_raster_cpu& self_shield,
+    const lsdtt_raster_cpu* pressure_raster,
     const lsdtt_flowinfo& flow,
     std::int64_t            outlet_node);
 
@@ -158,7 +176,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield);
+    const lsdtt_raster_cpu& self_shield,
+    const lsdtt_raster_cpu* pressure_raster = nullptr);
 
 //  Step-change CRN concentration (whole raster) 
 // Computes the transient concentration after an instantaneous step change in
@@ -172,6 +191,65 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
 //
 // eff_erate_old_g_cm2_yr / eff_erate_new_g_cm2_yr : uniform scalar erosion rates
 // time_since_change : raster of years since the step change occurred (0 = no change)
+//  Multi-isotope step change (whole raster)
+// The three nuclides carried through the SAME step change, per pixel, in one
+// pass. This is the quantity a multi-isotope study actually wants: the isotope
+// RATIOS carry the transient signal, because the half-lives differ by orders of
+// magnitude, and a ratio is only meaningful if both members saw an identical
+// scenario -- same shielding, same rates, same elapsed time, same pixel.
+//
+// Not a convenience wrapper around three calls. One particle is evolved once
+// per pixel with all three F arrays scaled, so the three concentrations are the
+// same evolution read three ways, and the cost is close to a single-nuclide run
+// rather than triple. Each nuclide is asserted equal to what the single-nuclide
+// function returns for the same inputs.
+//
+// Ratios are deliberately NOT returned: they are a pure per-pixel division the
+// caller can do, and returning them here would invent a nodata policy for
+// zero denominators that belongs at the output layer.
+struct MultiNuclideRasters
+{
+    lsdtt_raster_cpu Be10;
+    lsdtt_raster_cpu Al26;
+    lsdtt_raster_cpu C14;
+};
+
+//  Multi-isotope ARBITRARY erosion history (whole raster)
+// The three nuclides carried through a user-supplied erosion history at every
+// pixel -- the general case of which the step-change kernel below is the
+// two-row special case. The history is uniform in time across the raster; what
+// varies per pixel is the production scaling and shielding.
+//
+// The history walk itself is NOT reimplemented here: each pixel calls
+// lsdtt_crn_column::run_transient, which is the same code the column tool
+// drives and is pinned against step_change by test T1. A raster kernel with its
+// own copy of the walk would be a second implementation of the same physics,
+// which is the failure mode this codebase has already been bitten by twice.
+//
+// column must already carry the erosion history (set_erosion_time_series or
+// read_erosion_time_series). Its rock density is used for the depth conversion.
+// sampling_depth_m is the depth below the CURRENT surface to report, normally 0.
+//
+// COST: every pixel walks the whole history, so this is O(n_pixels x n_steps)
+// and is far more expensive than the step-change kernel. That is inherent, not
+// an implementation shortcoming -- an arbitrary history has no closed form.
+class lsdtt_crn_column;   // fwd decl; defined in lsdtt_crn_column.hpp
+
+MultiNuclideRasters calculate_crn_concentration_raster_transient_multi(
+    const std::string&      muon_scheme,
+    const lsdtt_crn_column& column,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  sampling_depth_m = 0.0);
+
+MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& time_since_change,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    double                  eff_erate_old_g_cm2_yr,
+    double                  eff_erate_new_g_cm2_yr);
+
 lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     const std::string&      nuclide,
     const std::string&      muon_scheme,
@@ -203,6 +281,19 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
 // predicted_conc   : OUTPUT - the predicted concentration at convergence
 //
 // Returns the best-estimate effective erosion rate (g cm^-^2 yr^-^1).
+double calculate_eff_erate_from_conc(
+    double                  measured_conc,
+    const std::string&      nuclide,
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const lsdtt_raster_cpu& snow_shield,
+    const lsdtt_raster_cpu& self_shield,
+    const lsdtt_raster_cpu* pressure_raster,
+    const lsdtt_flowinfo& flow,
+    std::int64_t            outlet_node,
+    double&                 predicted_conc);
+
 double calculate_eff_erate_from_conc(
     double                  measured_conc,
     const std::string&      nuclide,

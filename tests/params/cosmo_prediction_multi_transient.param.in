@@ -1,0 +1,7 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tr
+
+calculate_multi_isotope_transient: true
+transient_history_file: __READ_PATH__/cosmo_erosion_history.csv

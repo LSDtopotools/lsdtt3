@@ -1,0 +1,7 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_outlets_not_implemented
+
+# Deliberately points at a missing outlet CSV; this should fail before network.
+bounds_mode: outlets
+outlet_points_fname: dummy_outlets.csv

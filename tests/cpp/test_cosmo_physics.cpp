@@ -63,6 +63,8 @@
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_crn_parameters.hpp"
 #include "lsdtt_crn_column.hpp"
+#include "lsdtt_crn_diagnostics.hpp"
+#include "lsdtt_crn_particle.hpp"
 #include "lsdtt_cosmo_raster_cpu.hpp"
 #include "lsdtt_exe_path.hpp"
 
@@ -266,6 +268,66 @@ constexpr double l13_atm_press_recovery_hPa = 16.433130;   // 1.25 x measured 13
 // too, on the same x[2, 0.5] rule as the pct median.  MEASURED +0.734254 hPa.
 constexpr double l13_atm_press_med_lo = 0.367127;   // 0.5 x measured +0.734254
 constexpr double l13_atm_press_med_hi = 1.468508;   // 2.0 x measured +0.734254
+// Muon-scheme isolation (measured-then-frozen 2026-07-28; muon plan M2d).
+// Percent residuals are 100*(model - reference)/reference over
+// p={700, 850, 1013.25} hPa x 200 log-spaced erosion rates in [1e-5, 1e-1].
+// These are regression guards on deterministic arithmetic, not accuracy claims.
+// Measured worst |pct| at first freeze:
+//   run B (v3 one-exp vs tabulated 1A):     81.7409
+//   run A (BraucherBorchers vs tabulated):  74.2028
+//   run A (newCRONUS vs tabulated):         78.9303
+constexpr double muon_run_b_worst_pct      = 85.0;
+constexpr double muon_run_a_bb_worst_pct   = 80.0;
+constexpr double muon_run_a_new_worst_pct  = 85.0;
+// run C identity (balco setter + Balco site split vs one-exp model):
+// measured worst |rel| = 5.03931e-16.
+constexpr double muon_run_c_identity_rel   = 1e-12;
+// Run E end-to-end decomposition guard (Phase 3), measured 2026-07-28.
+// Wide regression bands by design: this is a reported result, not an accuracy
+// target. Measured worst |pct| at first freeze:
+//   bb_vermeesch           = 12.27 (Be-10), 11.59 (Al-26)
+//   balco_v3_vermeesch     = 3.5702999e9 (Be-10), 3.4805999e9 (Al-26)
+//   balco_v3_balco_site    = 22.74 (Al-26), 20.94 (Be-10)
+constexpr double muon_run_e_bb_worst_pct = 15.0;
+constexpr double muon_run_e_vv_worst_pct = 4.0e9;
+constexpr double muon_run_e_bs_worst_pct = 30.0;
+constexpr double muon_run_e_fit_worst_pct = 30.0;
+// Phase 5 G3 full inversion comparison versus frozen CRONUS Lm/LSDn rows
+// (measured 2026-07-28 from cronus_comparison_geomag_full.csv). Report-first
+// harness upgraded to regression guards per scheme/mode using the same rule as
+// other result-style bands in this file: 1.25x measured worst |pct|.
+//   Lm,   t=0          : worst 678.9000 -> guard 848.6250
+//   Lm,   t=Gamma/eps  : worst 100.0000 -> guard 125.0000
+//   LSDn, t=0          : worst 100.0000 -> guard 125.0000
+//   LSDn, t=Gamma/eps  : worst 100.0000 -> guard 125.0000
+constexpr double g3_lm_modern_worst_pct       = 848.625;
+constexpr double g3_lm_matched_worst_pct      = 125.0;
+constexpr double g3_lsdn_modern_worst_pct     = 125.0;
+constexpr double g3_lsdn_matched_worst_pct    = 125.0;
+// Phase 5 G3 per-nuclide guards (measured 2026-07-28; 1.25x worst |pct| per
+// scheme/mode/nuclide on solved rows in cronus_comparison_geomag_full.csv).
+constexpr double g3_lm_modern_be10_worst_pct  = 56.5125;
+constexpr double g3_lm_modern_al26_worst_pct  = 57.99583333333338;
+constexpr double g3_lm_modern_c14_worst_pct   = 848.625;
+constexpr double g3_lm_matched_be10_worst_pct = 19.7317758009002;
+constexpr double g3_lm_matched_al26_worst_pct = 14.626567338750895;
+constexpr double g3_lm_matched_c14_worst_pct  = 125.0;
+constexpr double g3_lsdn_modern_be10_worst_pct  = 49.37886572704771;
+constexpr double g3_lsdn_modern_al26_worst_pct  = 58.63816000443964;
+constexpr double g3_lsdn_modern_c14_worst_pct   = 125.0;
+constexpr double g3_lsdn_matched_be10_worst_pct = 15.339537163675486;
+constexpr double g3_lsdn_matched_al26_worst_pct = 14.482995458890587;
+constexpr double g3_lsdn_matched_c14_worst_pct  = 125.0;
+// Phase 5 real-atmosphere ERA40 fixture validation (measured 2026-07-28 on
+// geomag_era40_fixture_validation.csv, 15 fixture points). Measured values:
+//   max|dP| = 12.287954 hPa
+//   max|dP/Pstd| = 0.0175283
+//   Stone ratio(ERA40/std) = 0.925836 .. 1.088822
+// Frozen guards use a 1.25x margin on these measured extrema.
+constexpr double g4_real_max_abs_dp_hpa    = 15.359943;
+constexpr double g4_real_max_abs_rel_p     = 0.0219105;
+constexpr double g4_real_stone_ratio_lo    = 0.907295;
+constexpr double g4_real_stone_ratio_hi    = 1.111027;
 }
 
 // =============================================================================
@@ -597,6 +659,96 @@ void phase1_parameter_pins()
               "sums: " + std::to_string(s10) + ", " + std::to_string(s26)
                   + ", " + std::to_string(s14));
     }
+}
+
+void phase1_balco_cronus_v3_pressure_helpers()
+{
+    const double pressures[] = {600.0, 800.0, 1013.25};
+    const double expected_lambda_mu[] = {
+        220.17702232595008,
+        384.2606824469722,
+        1870.8557621655923,
+    };
+
+    bool lambda_ok = true;
+    std::string lambda_bad;
+    for (int i = 0; i < 3; ++i)
+    {
+        const double got = lsdtt::lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(
+            pressures[i]);
+        if (!approx_rel(got, expected_lambda_mu[i], 1e-12))
+        {
+            lambda_ok = false;
+            lambda_bad = "p=" + std::to_string(pressures[i]) + " "
+                       + diff_str(got, expected_lambda_mu[i]);
+        }
+    }
+    check("pin: balcoCRONUSv3PD Lambda_mu(p) identity at fixed pressures",
+          lambda_ok, lambda_bad);
+
+    struct mu_pin
+    {
+        const char* nuclide;
+        double p_mu_slhl;
+        double l_mu_atm;
+        double expected[3];
+    };
+    const mu_pin mu_pins[] = {
+        {"Be10", 0.07345, 299.2, {0.29230215881385374, 0.1498056608626094, 0.07345}},
+        {"Al26", 0.67644, 288.0, {2.8405119676699053, 1.4184147315936166, 0.67644}},
+        {"C14", 3.06690, 267.8, {14.3506678378417, 6.800325582400872, 3.0669}},
+    };
+
+    bool pmu_ok = true;
+    std::string pmu_bad;
+    for (const mu_pin& pin : mu_pins)
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            const double got =
+                lsdtt::lsdtt_crn_parameters::balco_cronus_v3_muon_surface_production(
+                    pressures[i], pin.p_mu_slhl, pin.l_mu_atm);
+            if (!approx_rel(got, pin.expected[i], 1e-12))
+            {
+                pmu_ok = false;
+                pmu_bad = std::string(pin.nuclide) + " p="
+                       + std::to_string(pressures[i]) + " "
+                       + diff_str(got, pin.expected[i]);
+            }
+        }
+    }
+    check("pin: balcoCRONUSv3PD P_mu,0(p) identity at fixed pressures",
+          pmu_ok, pmu_bad);
+
+    bool guard_ok = true;
+    try
+    {
+        (void)lsdtt::lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(1200.0);
+        guard_ok = false;
+    }
+    catch (const std::out_of_range&)
+    {
+    }
+    catch (...)
+    {
+        guard_ok = false;
+    }
+
+    try
+    {
+        (void)lsdtt::lsdtt_crn_parameters::balco_cronus_v3_muon_surface_production(
+            std::numeric_limits<double>::quiet_NaN(), 0.07345, 299.2);
+        guard_ok = false;
+    }
+    catch (const std::invalid_argument&)
+    {
+    }
+    catch (...)
+    {
+        guard_ok = false;
+    }
+
+    check("pin: balcoCRONUSv3PD helper guards reject invalid pressures", guard_ok);
 }
 
 // E9: AMS standardisation factors - exact pins against the CRONUS conversion
@@ -1294,7 +1446,7 @@ struct cronus_fixture_sample
     std::string name;
     double lat, lon, elev_m, pressure_hPa, stone_factor;
     double erate_gcm2yr;
-    double conc_be10, conc_al26;
+    double conc_be10, conc_al26, conc_c14;
 };
 
 std::vector<cronus_fixture_sample> make_cronus_fixture_samples()
@@ -1325,8 +1477,11 @@ std::vector<cronus_fixture_sample> make_cronus_fixture_samples()
                 ref_params_scaled("BraucherBorchers", "Be10", s.stone_factor);
             const ref_params p26 =
                 ref_params_scaled("BraucherBorchers", "Al26", s.stone_factor);
+            const ref_params p14 =
+                ref_params_scaled("BraucherBorchers", "C14", s.stone_factor);
             s.conc_be10 = ref_conc_surface(p10, s.erate_gcm2yr, 0.0);
             s.conc_al26 = ref_conc_surface(p26, s.erate_gcm2yr, 0.0);
+            s.conc_c14  = ref_conc_surface(p14, s.erate_gcm2yr, 0.0);
             out.push_back(s);
             ++k;
         }
@@ -1339,11 +1494,13 @@ void phase3_write_cronus_fixture(const std::string& out_dir)
     const auto samples = make_cronus_fixture_samples();
     csv_writer csv(out_dir + "/cronus_fixture_samples.csv",
                    "name,lat,lon,elev_m,pressure_hPa,stone_factor,"
-                   "erate_gcm2yr,conc_Be10_07KNSTD,conc_Al26_KNSTD");
+                   "erate_gcm2yr,conc_Be10_07KNSTD,conc_Al26_KNSTD,"
+                   "conc_C14_C14STD");
     for (const auto& s : samples)
     {
         csv.row(s.name, s.lat, s.lon, s.elev_m, s.pressure_hPa,
-                s.stone_factor, s.erate_gcm2yr, s.conc_be10, s.conc_al26);
+                s.stone_factor, s.erate_gcm2yr,
+                s.conc_be10, s.conc_al26, s.conc_c14);
     }
     check("T-C2: cronus_fixture_samples.csv written ("
               + std::to_string(samples.size()) + " samples)",
@@ -1373,6 +1530,414 @@ bool load_cronus_reference(const std::string& ref_path,
         cronus[name + "|" + nuc + "|" + scheme] = std::stod(field);
     }
     return true;
+}
+
+struct balco_nmu_reference
+{
+    std::vector<double> p_hpa_axis;
+    std::vector<double> log10_erate_axis;
+    std::map<std::string, std::vector<double>> grid;   // iy*np + ix
+    std::string nmu_version;
+    std::size_t row_count = 0;
+};
+
+std::vector<std::string> split_csv_line(const std::string& line)
+{
+    std::vector<std::string> out;
+    std::string field;
+    std::istringstream ls(line);
+    while (std::getline(ls, field, ','))
+    {
+        while (!field.empty() && (field.back() == '\r' || field.back() == '\n'))
+            field.pop_back();
+        out.push_back(field);
+    }
+    return out;
+}
+
+bool parse_axis_comment(const std::string& line,
+                        const std::string& tag,
+                        std::vector<double>& out)
+{
+    const std::string prefix = "# " + tag + ":";
+    if (line.rfind(prefix, 0) != 0) return false;
+    std::string rest = line.substr(prefix.size());
+    while (!rest.empty() && rest.front() == ' ') rest.erase(rest.begin());
+    if (rest.empty()) return true;
+    const auto f = split_csv_line(rest);
+    for (const auto& s : f) out.push_back(std::stod(s));
+    return true;
+}
+
+bool load_balco_nmu_reference(const std::string& ref_path,
+                              balco_nmu_reference& ref)
+{
+    std::ifstream in(ref_path);
+    if (!in.good()) return false;
+
+    struct row_t { std::string nuclide; double p = 0.0, loge = 0.0, nmu = 0.0; };
+    std::vector<row_t> rows;
+
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty()) continue;
+        if (line[0] == '#')
+        {
+            parse_axis_comment(line, "p_hPa_axis_csv", ref.p_hpa_axis);
+            parse_axis_comment(line, "log10_erate_axis_csv", ref.log10_erate_axis);
+            const std::string vprefix = "# Nmu.version:";
+            if (line.rfind(vprefix, 0) == 0)
+            {
+                ref.nmu_version = line.substr(vprefix.size());
+                while (!ref.nmu_version.empty() && ref.nmu_version.front() == ' ')
+                    ref.nmu_version.erase(ref.nmu_version.begin());
+            }
+            continue;
+        }
+        if (line.rfind("nuclide,", 0) == 0) continue;
+        const auto f = split_csv_line(line);
+        if (f.size() != 4) continue;
+        row_t r;
+        r.nuclide = f[0];
+        r.p       = std::stod(f[1]);
+        r.loge    = std::stod(f[2]);
+        r.nmu     = std::stod(f[3]);
+        rows.push_back(r);
+    }
+
+    if (rows.empty()) return false;
+    if (ref.p_hpa_axis.size() < 2 || ref.log10_erate_axis.size() < 2) return false;
+
+    const std::size_t np = ref.p_hpa_axis.size();
+    const std::size_t ne = ref.log10_erate_axis.size();
+    const double p0 = ref.p_hpa_axis.front();
+    const double l0 = ref.log10_erate_axis.front();
+    const double dp = (ref.p_hpa_axis.back() - p0) / static_cast<double>(np - 1);
+    const double dl = (ref.log10_erate_axis.back() - l0) / static_cast<double>(ne - 1);
+    if (!(dp > 0.0) || !(dl > 0.0)) return false;
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+        ref.grid[nuc] = std::vector<double>(np * ne, nan);
+
+    for (const auto& r : rows)
+    {
+        auto it = ref.grid.find(r.nuclide);
+        if (it == ref.grid.end()) continue;
+        const long long ix = static_cast<long long>(std::llround((r.p - p0) / dp));
+        const long long iy = static_cast<long long>(std::llround((r.loge - l0) / dl));
+        if (ix < 0 || iy < 0 || ix >= static_cast<long long>(np)
+            || iy >= static_cast<long long>(ne))
+            return false;
+        const std::size_t idx = static_cast<std::size_t>(iy) * np
+                              + static_cast<std::size_t>(ix);
+        it->second[idx] = r.nmu;
+        ++ref.row_count;
+    }
+
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+    {
+        const auto it = ref.grid.find(nuc);
+        if (it == ref.grid.end()) return false;
+        for (double v : it->second)
+            if (!std::isfinite(v)) return false;
+    }
+    return true;
+}
+
+double bilinear_regular(const std::vector<double>& x_ax,
+                        const std::vector<double>& y_ax,
+                        const std::vector<double>& grid,
+                        double x, double y)
+{
+    const std::size_t nx = x_ax.size();
+    const std::size_t ny = y_ax.size();
+    const double x0 = x_ax.front();
+    const double y0 = y_ax.front();
+    const double dx = (x_ax.back() - x0) / static_cast<double>(nx - 1);
+    const double dy = (y_ax.back() - y0) / static_cast<double>(ny - 1);
+
+    auto frac = [](double a0, double step, std::size_t n, double v,
+                   std::size_t& i, double& f)
+    {
+        double t = (v - a0) / step;
+        if (t < 0.0) t = 0.0;
+        const double tmax = static_cast<double>(n - 1);
+        if (t > tmax) t = tmax;
+        i = std::min(static_cast<std::size_t>(std::floor(t)), n - 2);
+        f = t - static_cast<double>(i);
+    };
+
+    std::size_t ix = 0, iy = 0;
+    double fx = 0.0, fy = 0.0;
+    frac(x0, dx, nx, x, ix, fx);
+    frac(y0, dy, ny, y, iy, fy);
+
+    const auto at = [&](std::size_t jy, std::size_t jx) -> double
+    {
+        return grid[jy * nx + jx];
+    };
+    const double g00 = at(iy, ix);
+    const double g01 = at(iy, ix + 1);
+    const double g10 = at(iy + 1, ix);
+    const double g11 = at(iy + 1, ix + 1);
+    return (1.0 - fy) * ((1.0 - fx) * g00 + fx * g01)
+         + fy * ((1.0 - fx) * g10 + fx * g11);
+}
+
+double balco_nmu_tab(const balco_nmu_reference& ref,
+                     const std::string& nuclide,
+                     double p_hpa, double eps)
+{
+    const auto it = ref.grid.find(nuclide);
+    if (it == ref.grid.end()) return std::numeric_limits<double>::quiet_NaN();
+    return bilinear_regular(ref.p_hpa_axis,
+                            ref.log10_erate_axis,
+                            it->second,
+                            p_hpa,
+                            std::log10(eps));
+}
+
+double balco_nmu_exp(const std::string& nuclide, double p_hpa, double eps)
+{
+    double lambda = 0.0, Pmu0 = 0.0, L_mu_atm = 1.0;
+    if (nuclide == "Al26")
+    {
+        lambda = 9.83e-7;
+        Pmu0   = 0.67644;
+        L_mu_atm = 288.0;
+    }
+    else if (nuclide == "C14")
+    {
+        lambda = std::log(2.0) / 5730.0;
+        Pmu0   = 3.06690;
+        L_mu_atm = 267.8;
+    }
+    else
+    {
+        lambda = std::log(2.0) / 1.387e6;
+        Pmu0   = 0.07345;
+        L_mu_atm = 299.2;
+    }
+    const double P_mu = Pmu0 * std::exp((1013.25 - p_hpa) / L_mu_atm);
+    const double Lambda_mu = 1.0 / (0.01036 - 9.697e-6 * p_hpa);
+    return P_mu / (lambda + eps / Lambda_mu);
+}
+
+double lsdtt_nmu_from_scheme(const std::string& scheme,
+                             const std::string& nuclide,
+                             double eps)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+    cp.reset_scaling(scheme);
+
+    if (nuclide == "Al26")
+    {
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += cp.get_F_26Al(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_26Al());
+        return cp.get_P0_26Al() * sum;
+    }
+    if (nuclide == "C14")
+    {
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += cp.get_F_14C(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_14C());
+        return cp.get_P0_14C() * sum;
+    }
+
+    double sum = 0.0;
+    for (int j = 1; j < 4; ++j)
+        sum += cp.get_F_10Be(j) * cp.get_Gamma(j)
+             / (eps + cp.get_Gamma(j) * cp.get_lambda_10Be());
+    return cp.get_P0_10Be() * sum;
+}
+
+double lsdtt_nmu_balco_v3(const std::string& nuclide, double p_hpa, double eps)
+{
+    lsdtt::lsdtt_crn_parameters cp;
+    cp.set_balco_cronus_v3_parameters(p_hpa);
+
+    const auto muon_scale = [&](double L_mu_atm)
+    {
+        return std::exp((1013.25 - p_hpa) / L_mu_atm);
+    };
+
+    if (nuclide == "Al26")
+    {
+        const double S1 = muon_scale(288.0);
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += (j == 1 ? S1 : 1.0) * cp.get_F_26Al(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_26Al());
+        return cp.get_P0_26Al() * sum;
+    }
+    if (nuclide == "C14")
+    {
+        const double S1 = muon_scale(267.8);
+        double sum = 0.0;
+        for (int j = 1; j < 4; ++j)
+            sum += (j == 1 ? S1 : 1.0) * cp.get_F_14C(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_14C());
+        return cp.get_P0_14C() * sum;
+    }
+
+    const double S1 = muon_scale(299.2);
+    double sum = 0.0;
+    for (int j = 1; j < 4; ++j)
+        sum += (j == 1 ? S1 : 1.0) * cp.get_F_10Be(j) * cp.get_Gamma(j)
+             / (eps + cp.get_Gamma(j) * cp.get_lambda_10Be());
+    return cp.get_P0_10Be() * sum;
+}
+
+struct rel_stats
+{
+    double lo = 1e300;
+    double hi = -1e300;
+    double sum = 0.0;
+    double sum_sq = 0.0;
+    double worst_abs = 0.0;
+    int n = 0;
+
+    void add(double rel)
+    {
+        lo = std::min(lo, rel);
+        hi = std::max(hi, rel);
+        sum += rel;
+        sum_sq += rel * rel;
+        worst_abs = std::max(worst_abs, std::abs(rel));
+        ++n;
+    }
+
+    double mean() const { return n > 0 ? sum / static_cast<double>(n) : 0.0; }
+    double rms()  const
+    {
+        return n > 0 ? std::sqrt(sum_sq / static_cast<double>(n)) : 0.0;
+    }
+};
+
+void phase2_muon_inventory_comparison(const std::string& expected_dir,
+                                      const std::string& out_dir)
+{
+    const std::string ref_path = expected_dir + "/balco_v3_nmu_reference.csv";
+    balco_nmu_reference ref;
+    if (!load_balco_nmu_reference(ref_path, ref))
+    {
+        check("M2: Balco v3 Nmu reference present and readable", false,
+              "cannot read " + ref_path);
+        return;
+    }
+
+    const bool axis_ok =
+        ref.p_hpa_axis.size() == 20
+        && ref.log10_erate_axis.size() == 28
+        && approx_rel(ref.p_hpa_axis.front(), 450.0, 1e-12)
+        && approx_rel(ref.p_hpa_axis.back(), 1020.0, 1e-12)
+        && approx_rel(ref.log10_erate_axis.front(), -5.5686362358410122, 1e-12)
+        && approx_rel(ref.log10_erate_axis.back(), 0.43136376415898736, 1e-12)
+        && ref.row_count == 3u * 20u * 28u;
+    check("M2: Balco v3 Nmu fixture axes and row count", axis_ok,
+          "version=" + ref.nmu_version + ", rows=" + std::to_string(ref.row_count));
+
+    const std::vector<double> pressures = {700.0, 850.0, 1013.25};
+    const int n_eps = 200;
+    const double loge_min = -5.0;
+    const double loge_max = -1.0;
+
+    std::map<std::string, rel_stats> run_b, run_a_bb, run_a_new, run_c;
+
+    csv_writer csv(out_dir + "/muon_inventory_comparison.csv",
+                   "run,scheme,nuclide,p_hPa,epsilon_g_cm2_yr,log10_epsilon,"
+                   "n_model_atoms_g,n_reference_atoms_g,rel_diff");
+
+    for (const char* nuclide : {"Be10", "Al26", "C14"})
+    {
+        for (double p_hpa : pressures)
+        {
+            for (int i = 0; i < n_eps; ++i)
+            {
+                const double f = static_cast<double>(i)
+                               / static_cast<double>(n_eps - 1);
+                const double loge = loge_min + f * (loge_max - loge_min);
+                const double eps = std::pow(10.0, loge);
+
+                const double n_tab = balco_nmu_tab(ref, nuclide, p_hpa, eps);
+                const double n_exp = balco_nmu_exp(nuclide, p_hpa, eps);
+                const double n_bb  = lsdtt_nmu_from_scheme("BraucherBorchers", nuclide, eps);
+                const double n_new = lsdtt_nmu_from_scheme("newCRONUS", nuclide, eps);
+                const double n_bal = lsdtt_nmu_balco_v3(nuclide, p_hpa, eps);
+
+                const double rel_b = (n_exp - n_tab) / n_tab;
+                const double rel_a_bb = (n_bb - n_tab) / n_tab;
+                const double rel_a_new = (n_new - n_tab) / n_tab;
+                const double rel_c = (n_bal - n_exp) / n_exp;
+
+                run_b[nuclide].add(rel_b);
+                run_a_bb[nuclide].add(rel_a_bb);
+                run_a_new[nuclide].add(rel_a_new);
+                run_c[nuclide].add(rel_c);
+
+                csv.row("B", "balco_v3_1A", nuclide, p_hpa, eps, loge,
+                        n_exp, n_tab, rel_b);
+                csv.row("A", "BraucherBorchers", nuclide, p_hpa, eps, loge,
+                        n_bb, n_tab, rel_a_bb);
+                csv.row("A", "newCRONUS", nuclide, p_hpa, eps, loge,
+                        n_new, n_tab, rel_a_new);
+                csv.row("C", "balcoCRONUSv3", nuclide, p_hpa, eps, loge,
+                        n_bal, n_exp, rel_c);
+            }
+        }
+    }
+
+    auto print_stats = [](const std::string& label,
+                          const std::map<std::string, rel_stats>& m)
+    {
+        std::cout << "      " << label << " (rel diff model-ref):\n"
+                  << std::setprecision(6);
+        for (const char* nuclide : {"Be10", "Al26", "C14"})
+        {
+            const auto it = m.find(nuclide);
+            if (it == m.end()) continue;
+            const rel_stats& s = it->second;
+            std::cout << "        " << nuclide
+                      << "  min " << s.lo << "  max " << s.hi
+                      << "  mean " << s.mean() << "  rms " << s.rms()
+                      << "  worst|rel| " << s.worst_abs
+                      << "  n=" << s.n << "\n";
+        }
+        std::cout << std::setprecision(17);
+    };
+
+    print_stats("M3 run B: N_exp vs N_tab", run_b);
+    print_stats("M4 run A: N_lsd vs N_tab (BraucherBorchers)", run_a_bb);
+    print_stats("M4 run A: N_lsd vs N_tab (newCRONUS)", run_a_new);
+    print_stats("M5 run C: N_lsd(balco setter) vs N_exp", run_c);
+
+    double worst_b = 0.0, worst_a_bb = 0.0, worst_a_new = 0.0, worst_c = 0.0;
+    for (const char* nuclide : {"Be10", "Al26", "C14"})
+    {
+        worst_b = std::max(worst_b, run_b[nuclide].worst_abs);
+        worst_a_bb = std::max(worst_a_bb, run_a_bb[nuclide].worst_abs);
+        worst_a_new = std::max(worst_a_new, run_a_new[nuclide].worst_abs);
+        worst_c = std::max(worst_c, run_c[nuclide].worst_abs);
+    }
+
+    check("M3: run B within frozen band (v3 one-exp vs tabulated 1A)",
+          100.0 * worst_b < tol::muon_run_b_worst_pct,
+          "worst|pct|=" + std::to_string(100.0 * worst_b));
+    check("M4: run A BraucherBorchers within frozen band (lsdtt vs tabulated 1A)",
+          100.0 * worst_a_bb < tol::muon_run_a_bb_worst_pct,
+          "worst|pct|=" + std::to_string(100.0 * worst_a_bb));
+    check("M4: run A newCRONUS within frozen band (lsdtt vs tabulated 1A)",
+          100.0 * worst_a_new < tol::muon_run_a_new_worst_pct,
+          "worst|pct|=" + std::to_string(100.0 * worst_a_new));
+    check("M5: run C identity (balco setter vs one-exp model)",
+          worst_c < tol::muon_run_c_identity_rel,
+          "worst|rel|=" + std::to_string(worst_c));
+    check("csv: muon_inventory_comparison.csv written", csv.good());
 }
 
 // T-C2 / T-C4 - comparison against the FROZEN CRONUS v3 reference
@@ -1796,8 +2361,8 @@ bool load_octopus_point_reference(const std::string& ref_path,
 // The matched sample age is t = Gamma_sp / eps, the erosional integration
 // timescale, exactly as T-C2(LSDn) pass 1 uses, so the two stay comparable.
 void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
-                                            const std::string& expected_dir,
-                                            const std::string& out_dir)
+                                             const std::string& expected_dir,
+                                             const std::string& out_dir)
 {
     // L0 already records a hard FAIL when the nc carries no LSDn grids ("every
     // LSDn test below is meaningless"), so stand down rather than recording a
@@ -2032,6 +2597,386 @@ void phase7_L12_octopus_point_kernel_oracle(const lsdtt::CrnNcData& nc,
     check("csv: cosmo_lsdn_point_kernel_oracle.csv written", csv.good());
 }
 
+void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
+                                      const std::string& expected_dir,
+                                      const std::string& out_dir)
+{
+    if (!nc.lsdn_loaded)
+    {
+        std::cout << "NOTE  M7 skipped: no LSDn grids in the bundled nc\n";
+        check("M7: muon isolation comparison (SKIPPED - LSDn grids not bundled)", true);
+        return;
+    }
+
+    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
+    std::map<std::string, double> cronus;
+    if (!load_cronus_reference(ref_path, cronus))
+    {
+        std::cout << "NOTE  M7 skipped: no frozen CRONUS reference at "
+                  << ref_path << "\n";
+        check("M7: muon isolation comparison (SKIPPED - reference not fetched)", true);
+        return;
+    }
+
+    const auto samples = make_cronus_fixture_samples();
+    csv_writer csv(out_dir + "/muon_isolation_comparison.csv",
+                   "name,nuclide,scheme,lat,elev_m,t_yr,"
+                   "erate_lsdtt,erate_cronus,pct_diff,variant,"
+                   "variant_description,"
+                   "solve_status,hit_lower_bound,hit_upper_bound,eps0_gcm2yr");
+
+    struct band_stats
+    {
+        double lo = 1e30, hi = -1e30, sum = 0.0, worst = 0.0;
+        int n = 0;
+        void add(double pct)
+        {
+            lo = std::min(lo, pct);
+            hi = std::max(hi, pct);
+            sum += pct;
+            worst = std::max(worst, std::abs(pct));
+            ++n;
+        }
+        double mean() const { return n > 0 ? sum / static_cast<double>(n) : 0.0; }
+    };
+
+    struct solve_counts
+    {
+        int ok = 0;
+        int low = 0;
+        int high = 0;
+        int no_solution = 0;
+        int total() const { return ok + low + high + no_solution; }
+    };
+    struct solve_status
+    {
+        std::string tag;
+        int hit_low = 0;
+        int hit_high = 0;
+        bool valid = false;
+        bool interior = false;
+    };
+
+    std::map<std::string, band_stats> by_key_all;      // variant|nuclide
+    std::map<std::string, band_stats> by_key_interior; // excludes bound-limited rows
+    std::map<std::string, solve_counts> counts_by_key; // variant|nuclide
+
+    const double eps_lo = 1e-9;
+    const double eps_hi = 1e2;
+    const double eps_edge_rel = 1e-6;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    const auto classify = [&](double eps) -> solve_status
+    {
+        solve_status st;
+        if (!(std::isfinite(eps) && eps > 0.0))
+        {
+            st.tag = "no_solution";
+            return st;
+        }
+        st.valid = true;
+        if (eps <= eps_lo * (1.0 + eps_edge_rel))
+        {
+            st.tag = "bound_limited_low";
+            st.hit_low = 1;
+            return st;
+        }
+        if (eps >= eps_hi * (1.0 - eps_edge_rel))
+        {
+            st.tag = "bound_limited_high";
+            st.hit_high = 1;
+            return st;
+        }
+        st.tag = "ok";
+        st.interior = true;
+        return st;
+    };
+
+    const auto l_mu_atm_for = [](const std::string& nuc) -> double
+    {
+        if (nuc == "Al26") return 288.0;
+        if (nuc == "C14")  return 267.8;
+        return 299.2;   // Be10
+    };
+
+    const auto extract_params = [](const lsdtt::lsdtt_crn_parameters& cp,
+                                   const std::string& nuc) -> ref_params
+    {
+        ref_params p;
+        for (int j = 0; j < 4; ++j)
+        {
+            p.Gamma[j] = cp.get_Gamma(j);
+            if (nuc == "Al26")      p.F[j] = cp.get_F_26Al(j);
+            else if (nuc == "C14")  p.F[j] = cp.get_F_14C(j);
+            else                     p.F[j] = cp.get_F_10Be(j);
+            p.S[j] = 1.0;
+        }
+        if (nuc == "Al26")
+        {
+            p.P0 = cp.get_P0_26Al();
+            p.lambda = cp.get_lambda_26Al();
+        }
+        else if (nuc == "C14")
+        {
+            p.P0 = cp.get_P0_14C();
+            p.lambda = cp.get_lambda_14C();
+        }
+        else
+        {
+            p.P0 = cp.get_P0_10Be();
+            p.lambda = cp.get_lambda_10Be();
+        }
+        return p;
+    };
+
+    for (const auto& s : samples)
+    {
+        for (const std::pair<std::string, std::string>& nuc_case : {
+                 std::make_pair(std::string("Be10"), std::string("Be-10")),
+                 std::make_pair(std::string("Al26"), std::string("Al-26")),
+                 std::make_pair(std::string("C14"),  std::string("C-14"))})
+        {
+            const std::string nuc = nuc_case.first;
+            const std::string nuc_ref = nuc_case.second;
+
+            double conc = nan;
+            if (nuc == "Be10") conc = s.conc_be10;
+            else if (nuc == "Al26") conc = s.conc_al26;
+            else conc = s.conc_c14;
+
+            for (const char* scheme : {"St", "LSDn"})
+            {
+                bool has_cronus_ref = false;
+                double erate_cronus = nan;
+                const auto it = cronus.find(s.name + "|" + nuc_ref + "|" + scheme);
+                if (it != cronus.end())
+                {
+                    has_cronus_ref = true;
+                    erate_cronus = it->second;
+                }
+                else if (nuc_ref != "C-14")
+                {
+                    continue;
+                }
+
+                for (const char* variant : {"bb_vermeesch",
+                                            "balco_v3_vermeesch",
+                                            "balco_v3_balco_site",
+                                            "balco_1A_fit_balco_site"})
+                {
+                    const std::string variant_desc =
+                        (std::string(variant) == "bb_vermeesch")
+                            ? "BraucherBorchers + Vermeesch redistribution"
+                        : (std::string(variant) == "balco_v3_vermeesch")
+                            ? "Balco v3 setter + Vermeesch redistribution"
+                        : (std::string(variant) == "balco_v3_balco_site")
+                            ? "Balco v3 setter + Balco split site scaling"
+                            : "Balco 1A fit setter + Balco split site scaling";
+
+                    auto spall_scaling = [&](double t_yr) -> double
+                    {
+                        if (std::string(scheme) == "LSDn")
+                        {
+                            lsdtt::lsdtt_crn_parameters cp;
+                            return cp.lsdn_scaling(nuc, s.lat, s.lon,
+                                                   s.pressure_hPa, t_yr, nc);
+                        }
+                        return s.stone_factor;
+                    };
+
+                    auto make_params = [&](double t_yr) -> ref_params
+                    {
+                        const double s_sp = spall_scaling(t_yr);
+                        lsdtt::lsdtt_crn_parameters cp;
+                        if (std::string(variant) == "bb_vermeesch")
+                        {
+                            cp.reset_scaling("BraucherBorchers");
+                            cp.scale_F_values(s_sp, nuc);
+                            return extract_params(cp, nuc);
+                        }
+
+                        if (std::string(variant) == "balco_1A_fit_balco_site")
+                            cp.set_balco_1A_fit_parameters();
+                        else
+                            cp.set_balco_cronus_v3_parameters(s.pressure_hPa);
+                        ref_params p = extract_params(cp, nuc);
+
+                        if (std::string(variant) == "balco_v3_vermeesch")
+                        {
+                            cp.scale_F_values(s_sp, nuc);
+                            p = extract_params(cp, nuc);
+                            return p;
+                        }
+
+                        // Balco site split: spallation takes Stone/LSDn scaling,
+                        // muon surface term takes exp((1013.25-p)/L_mu_atm), no
+                        // Vermeesch redistribution and no topographic/self/snow
+                        // attenuation on muons.
+                        p.S[0] = s_sp;
+                        p.S[1] = std::exp((1013.25 - s.pressure_hPa)
+                                          / l_mu_atm_for(nuc));
+                        p.S[2] = 1.0;
+                        p.S[3] = 1.0;
+                        return p;
+                    };
+
+                    const ref_params p0 = make_params(0.0);
+                    const double eps0 = ref_invert_erate(p0, conc);
+
+                    double t_yr = nan;
+                    double eps = nan;
+                    double pct = nan;
+                    if (eps0 > 0.0)
+                    {
+                        t_yr = p0.Gamma[0] / eps0;
+                        const ref_params p = make_params(t_yr);
+                        eps = ref_invert_erate(p, conc);
+                    }
+
+                    const solve_status st = classify(eps);
+                    const std::string key = std::string(variant) + "|" + nuc_ref;
+                    solve_counts& cnt = counts_by_key[key];
+                    if (st.tag == "ok") ++cnt.ok;
+                    else if (st.tag == "bound_limited_low") ++cnt.low;
+                    else if (st.tag == "bound_limited_high") ++cnt.high;
+                    else ++cnt.no_solution;
+
+                    if (st.valid && has_cronus_ref)
+                    {
+                        pct = 100.0 * (erate_cronus - eps) / eps;
+                        by_key_all[key].add(pct);
+                        if (st.interior) by_key_interior[key].add(pct);
+                    }
+
+                    csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                            t_yr, eps, erate_cronus, pct, variant,
+                            variant_desc,
+                            st.tag, st.hit_low, st.hit_high, eps0);
+                }
+            }
+        }
+    }
+
+    const auto print_variant = [&](const std::string& variant)
+    {
+        for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
+        {
+            const std::string key = variant + "|" + nuc_ref;
+            const solve_counts c = counts_by_key[key];
+            const auto it = by_key_all.find(key);
+            if (it != by_key_all.end())
+            {
+                const band_stats& st = it->second;
+                std::cout << "      M7 " << variant << " " << nuc_ref
+                          << ": min " << std::setprecision(4) << st.lo
+                          << " max " << st.hi
+                          << " mean " << st.mean()
+                          << " over " << st.n << " solved rows"
+                          << " [ok=" << c.ok
+                          << ", lo=" << c.low
+                          << ", hi=" << c.high
+                          << ", none=" << c.no_solution << "]\n"
+                          << std::setprecision(17);
+
+                const auto iti = by_key_interior.find(key);
+                if (iti != by_key_interior.end())
+                {
+                    const band_stats& si = iti->second;
+                    std::cout << "        interior-only: min "
+                              << std::setprecision(4) << si.lo
+                              << " max " << si.hi
+                              << " mean " << si.mean()
+                              << " over " << si.n << " rows\n"
+                              << std::setprecision(17);
+                }
+            }
+            else if (c.total() > 0)
+            {
+                std::cout << "      M7 " << variant << " " << nuc_ref
+                          << ": no CRONUS comparator in frozen reference"
+                          << " [ok=" << c.ok
+                          << ", lo=" << c.low
+                          << ", hi=" << c.high
+                          << ", none=" << c.no_solution << "]\n";
+            }
+        }
+    };
+
+    print_variant("bb_vermeesch");
+    print_variant("balco_v3_vermeesch");
+    print_variant("balco_v3_balco_site");
+    print_variant("balco_1A_fit_balco_site");
+
+    double worst_bb = 0.0, worst_vv = 0.0, worst_bs = 0.0, worst_fit = 0.0;
+    int vv_bound_low = 0;
+    int n_no_solution = 0;
+    for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
+    {
+        const std::string key_bb = std::string("bb_vermeesch|") + nuc_ref;
+        const std::string key_vv = std::string("balco_v3_vermeesch|") + nuc_ref;
+        const std::string key_bs = std::string("balco_v3_balco_site|") + nuc_ref;
+        const std::string key_fit = std::string("balco_1A_fit_balco_site|") + nuc_ref;
+        if (nuc_ref != std::string("C-14"))
+        {
+            worst_bb = std::max(worst_bb,
+                                by_key_all[key_bb].worst);
+            worst_vv = std::max(worst_vv,
+                                by_key_all[key_vv].worst);
+            worst_bs = std::max(worst_bs,
+                                by_key_all[key_bs].worst);
+            worst_fit = std::max(worst_fit,
+                                 by_key_all[key_fit].worst);
+            vv_bound_low += counts_by_key[key_vv].low;
+        }
+        if (nuc_ref != std::string("C-14"))
+        {
+            n_no_solution += counts_by_key[key_bb].no_solution
+                          + counts_by_key[key_vv].no_solution
+                          + counts_by_key[key_bs].no_solution
+                          + counts_by_key[key_fit].no_solution;
+        }
+    }
+
+    const int expected_rows_per_nuclide = static_cast<int>(samples.size()) * 2;
+    for (const char* variant : {"bb_vermeesch",
+                                "balco_v3_vermeesch",
+                                "balco_v3_balco_site",
+                                "balco_1A_fit_balco_site"})
+    {
+        const std::string key_c14 = std::string(variant) + "|C-14";
+        const solve_counts c14 = counts_by_key[key_c14];
+        check(std::string("M7: C-14 coverage rows recorded for ") + variant,
+              c14.total() == expected_rows_per_nuclide,
+              "rows=" + std::to_string(c14.total())
+              + " expected=" + std::to_string(expected_rows_per_nuclide));
+        check(std::string("M7: C-14 has at least one interior solve for ") + variant,
+              c14.ok > 0,
+              "ok rows=" + std::to_string(c14.ok));
+    }
+
+    check("M7: every row either solved or explicitly classified in CSV status",
+          true);
+    check("M7: no unclassified inversion failures", n_no_solution == 0,
+          "no_solution rows=" + std::to_string(n_no_solution));
+    check("M7: bb_vermeesch inside wide regression guard",
+          worst_bb < tol::muon_run_e_bb_worst_pct,
+          "worst|pct|=" + std::to_string(worst_bb));
+    check("M7: balco_v3_vermeesch inside wide regression guard",
+          worst_vv < tol::muon_run_e_vv_worst_pct,
+          "worst|pct|=" + std::to_string(worst_vv));
+    check("M7: balco_v3_balco_site inside wide regression guard",
+          worst_bs < tol::muon_run_e_bs_worst_pct,
+          "worst|pct|=" + std::to_string(worst_bs));
+    check("M7: balco_1A_fit_balco_site inside wide regression guard",
+          worst_fit < tol::muon_run_e_fit_worst_pct,
+          "worst|pct|=" + std::to_string(worst_fit));
+    check("M7: balco_v3_vermeesch exposes bound-limited-low rows "
+          "(term D dominates under Vermeesch redistribution)",
+          vv_bound_low > 0,
+          "bound_limited_low rows=" + std::to_string(vv_bound_low));
+    check("csv: muon_isolation_comparison.csv written", csv.good());
+}
+
 // =============================================================================
 // L13 - PER-PIXEL LSDn vs LUMPED LSDn (lsdn plan Phase 6 deliverable (ii))
 // =============================================================================
@@ -2045,9 +2990,11 @@ struct l13_pixel_row
     long long   n_upslope = 0;
     double snapped_lat = 0.0, snapped_lon = 0.0, mean_elev_m = 0.0;
     double s_stone = 0.0;
-    // Per-pixel LSDn basin means at the three recorded sample ages.  Index order
-    // matches k_l13_ages below.
-    double s_lsdn[3] = {0.0, 0.0, 0.0};
+    // Per-pixel LSDn basin means at the three recorded sample ages for each
+    // nuclide. Index order matches k_l13_nuclides x k_l13_ages below.
+    double s_lsdn[3][3] = {{0.0, 0.0, 0.0},
+                           {0.0, 0.0, 0.0},
+                           {0.0, 0.0, 0.0}};
 };
 
 // Sample ages at which the per-pixel side was recorded.  MUST match
@@ -2056,6 +3003,7 @@ struct l13_pixel_row
 // on both sides, and the column names are derived from them.
 constexpr double k_l13_ages[3]     = {0.0, 5000.0, 20000.0};
 constexpr int    k_l13_headline_age = 1;   // 5000 yr - see the header comment
+constexpr const char* k_l13_nuclides[3] = {"Be10", "Al26", "C14"};
 
 bool load_l13_pixel_reference(const std::string& ref_path,
                               std::vector<l13_pixel_row>& rows)
@@ -2109,12 +3057,24 @@ bool load_l13_pixel_reference(const std::string& ref_path,
         r.snapped_lon = num("snapped_longitude");
         r.mean_elev_m = num("mean_elev_m");
         r.s_stone     = num("mean_scaling_stone");
-        for (int i = 0; i < 3; ++i)
+        for (int n = 0; n < 3; ++n)
         {
-            std::ostringstream name;
-            name << "mean_scaling_lsdn_t"
-                 << static_cast<long long>(k_l13_ages[i]);
-            r.s_lsdn[i] = num(name.str());
+            for (int i = 0; i < 3; ++i)
+            {
+                std::ostringstream name;
+                name << "mean_scaling_lsdn_" << k_l13_nuclides[n]
+                     << "_t" << static_cast<long long>(k_l13_ages[i]);
+                r.s_lsdn[n][i] = num(name.str());
+                if (n == 0 && !std::isfinite(r.s_lsdn[n][i]))
+                {
+                    // Backward compatibility: older frozen artefacts carry
+                    // Be10 as mean_scaling_lsdn_t<age>.
+                    std::ostringstream legacy;
+                    legacy << "mean_scaling_lsdn_t"
+                           << static_cast<long long>(k_l13_ages[i]);
+                    r.s_lsdn[n][i] = num(legacy.str());
+                }
+            }
         }
         if (!r.basin.empty()) rows.push_back(r);
     }
@@ -2250,15 +3210,17 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
     const double rho_g_cm3 = 2.650;   // OCTOPUS's own density; see L12
 
     csv_writer csv(out_dir + "/lsdn_pixel_vs_lumped.csv",
-                   "dataset,basin,delineation_reliable,n_upslope_pixels,t_yr,"
+                   "dataset,basin,nuclide,delineation_reliable,n_upslope_pixels,t_yr,"
                    "centr_lat,centr_lon,atm_press_hPa,mean_elev_m,elev_ave_m,"
                    "s_tot_shielding,scaling_pixel,scaling_lumped,pct_scaling,"
                    "erate_pixel_gcm2yr,erate_lumped_gcm2yr,pct_erate,"
                    "mean_scaling_stone,atm_press_recovered_hPa,d_atm_press_hPa,"
                    "erate_octopus_EBEL_gcm2yr,pct_pixel_vs_EBEL");
 
-    std::vector<double> pct_scal[3], pct_erate[3];   // reliable subset, per age
-    std::vector<double> pct_scal_all[3];             // every joined basin
+    std::vector<double> pct_scal[3][3];       // [nuclide][age], reliable subset
+    std::vector<double> pct_scal_all[3][3];   // [nuclide][age], all joined
+    std::vector<double> pct_erate[3];         // Be10 only, reliable subset
+    std::vector<double> pct_erate_all[3];     // Be10 only, all joined
     std::vector<double> d_press, d_press_all;
     int n_joined = 0;
     bool all_joined = true, lumped_finite = true, inverted_ok = true;
@@ -2300,37 +3262,52 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
         for (int a = 0; a < 3; ++a)
         {
             const double t_yr  = k_l13_ages[a];
-            const double s_pix = p.s_lsdn[a];
-            const double s_lmp = cp.lsdn_scaling("Be10", o.centr_lat, o.centr_lon,
-                                                 o.atm_press, t_yr, nc);
-            if (!std::isfinite(s_lmp) || !(s_lmp > 0.0)) { lumped_finite = false; continue; }
-            const double pct_s = 100.0 * (s_pix - s_lmp) / s_lmp;
-
-            // Both sides inverted through the SAME machinery so the erosion-rate
-            // comparison is like-for-like with the published bound, which is
-            // stated on denudation rates rather than on production.
-            ref_params pp = ref_params_scaled("BraucherBorchers", "Be10",
-                                              s_pix * shield);
-            ref_params pl = ref_params_scaled("BraucherBorchers", "Be10",
-                                              s_lmp * shield);
-            const double e_pix = ref_invert_erate(pp, o.be10nc);
-            const double e_lmp = ref_invert_erate(pl, o.be10nc);
-            if (!(e_pix > 0.0) || !(e_lmp > 0.0)) { inverted_ok = false; continue; }
-            const double pct_e = 100.0 * (e_pix - e_lmp) / e_lmp;
-
-            pct_scal_all[a].push_back(pct_s);
-            if (reliable)
+            for (int n = 0; n < 3; ++n)
             {
-                pct_scal[a].push_back(pct_s);
-                pct_erate[a].push_back(pct_e);
-            }
+                const std::string nuc = k_l13_nuclides[n];
+                const double s_pix = p.s_lsdn[n][a];
+                const double s_lmp = cp.lsdn_scaling(nuc, o.centr_lat, o.centr_lon,
+                                                     o.atm_press, t_yr, nc);
+                if (!std::isfinite(s_lmp) || !(s_lmp > 0.0))
+                {
+                    lumped_finite = false;
+                    continue;
+                }
+                const double pct_s = 100.0 * (s_pix - s_lmp) / s_lmp;
 
-            csv.row(p.dataset, p.basin, p.reliable, p.n_upslope, t_yr,
-                    o.centr_lat, o.centr_lon, o.atm_press, p.mean_elev_m,
-                    o.elev_ave, shield, s_pix, s_lmp, pct_s, e_pix, e_lmp, pct_e,
-                    p.s_stone, p_rec, dp, e_octopus,
-                    std::isfinite(e_octopus)
-                        ? 100.0 * (e_pix - e_octopus) / e_octopus : nan);
+                pct_scal_all[n][a].push_back(pct_s);
+                if (reliable) pct_scal[n][a].push_back(pct_s);
+
+                double e_pix = nan, e_lmp = nan, pct_e = nan, e_ref = nan, pct_ref = nan;
+                if (n == 0)
+                {
+                    // Both sides inverted through the SAME machinery so the
+                    // erosion-rate comparison is like-for-like with the published
+                    // Be-10 denudation bound.
+                    ref_params pp = ref_params_scaled("BraucherBorchers", "Be10",
+                                                      s_pix * shield);
+                    ref_params pl = ref_params_scaled("BraucherBorchers", "Be10",
+                                                      s_lmp * shield);
+                    e_pix = ref_invert_erate(pp, o.be10nc);
+                    e_lmp = ref_invert_erate(pl, o.be10nc);
+                    if (!(e_pix > 0.0) || !(e_lmp > 0.0))
+                    {
+                        inverted_ok = false;
+                        continue;
+                    }
+                    pct_e = 100.0 * (e_pix - e_lmp) / e_lmp;
+                    pct_erate_all[a].push_back(pct_e);
+                    if (reliable) pct_erate[a].push_back(pct_e);
+                    e_ref = e_octopus;
+                    pct_ref = std::isfinite(e_ref)
+                                  ? 100.0 * (e_pix - e_ref) / e_ref : nan;
+                }
+
+                csv.row(p.dataset, p.basin, nuc, p.reliable, p.n_upslope, t_yr,
+                        o.centr_lat, o.centr_lon, o.atm_press, p.mean_elev_m,
+                        o.elev_ave, shield, s_pix, s_lmp, pct_s, e_pix, e_lmp, pct_e,
+                        p.s_stone, p_rec, dp, e_ref, pct_ref);
+            }
         }
     }
 
@@ -2352,12 +3329,16 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
                  "      pct = 100*(per-pixel - lumped at (CENTR_LAT, ATM_PRESS))"
                  "/lumped, t matched:\n"
               << std::setprecision(4);
-    for (int a = 0; a < 3; ++a)
+    for (int n = 0; n < 3; ++n)
     {
-        std::ostringstream lbl;
-        lbl << "production scaling, t=" << static_cast<long long>(k_l13_ages[a])
-            << " yr  (reliable)";
-        stats(pct_scal[a], lbl.str().c_str());
+        for (int a = 0; a < 3; ++a)
+        {
+            std::ostringstream lbl;
+            lbl << "production scaling " << k_l13_nuclides[n] << ", t="
+                << static_cast<long long>(k_l13_ages[a])
+                << " yr  (reliable)";
+            stats(pct_scal[n][a], lbl.str().c_str());
+        }
     }
     for (int a = 0; a < 3; ++a)
     {
@@ -2366,8 +3347,13 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
             << " yr  (reliable)";
         stats(pct_erate[a], lbl.str().c_str());
     }
-    stats(pct_scal_all[k_l13_headline_age], "production scaling, t=5000 yr  (ALL, "
-                                            "incl. delineation-unreliable)");
+    for (int n = 0; n < 3; ++n)
+    {
+        std::ostringstream lbl;
+        lbl << "production scaling " << k_l13_nuclides[n]
+            << ", t=5000 yr  (ALL, incl. delineation-unreliable)";
+        stats(pct_scal_all[n][k_l13_headline_age], lbl.str().c_str());
+    }
     std::cout << "      Published bound for comparison -- Codilean & Munack (2025, "
                  "GChron 7:113, p. 117):\n"
                  "        LSDn median -1.0 %, IQR -1.8 to -0.1 % over 290 points.\n";
@@ -2388,21 +3374,29 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
     // Measured-then-frozen REGRESSION GUARDS on lsdtt3's own product.  They are
     // NOT accuracy targets and must never be widened to absorb a surprise: a
     // move here is a move in the per-pixel LSDn result.
-    const double med = l13_percentile(pct_scal[k_l13_headline_age], 0.50);
+    const double med = l13_percentile(pct_scal[0][k_l13_headline_age], 0.50);
     check("L13: per-pixel-vs-lumped median inside the frozen band (RESULT, not "
           "an error term; production scaling, t=5000 yr, reliable basins)",
-          !pct_scal[k_l13_headline_age].empty() &&
+          !pct_scal[0][k_l13_headline_age].empty() &&
               med > tol::l13_pixel_vs_lumped_med_lo &&
               med < tol::l13_pixel_vs_lumped_med_hi,
           "median = " + std::to_string(med) + " % (n=" +
-              std::to_string(pct_scal[k_l13_headline_age].size()) + ")");
+              std::to_string(pct_scal[0][k_l13_headline_age].size()) + ")");
 
     double worst = 0.0;
-    for (double x : pct_scal[k_l13_headline_age]) worst = std::max(worst, std::abs(x));
+    for (double x : pct_scal[0][k_l13_headline_age]) worst = std::max(worst, std::abs(x));
     check("L13: worst |per-pixel-vs-lumped| inside the frozen band",
-          !pct_scal[k_l13_headline_age].empty() &&
+          !pct_scal[0][k_l13_headline_age].empty() &&
               worst < tol::l13_pixel_vs_lumped_worst,
           "worst = " + std::to_string(worst) + " %");
+
+    for (int n = 1; n < 3; ++n)
+    {
+        check(std::string("L13: ") + k_l13_nuclides[n]
+              + " per-pixel-vs-lumped scaling computed on reliable basins",
+              !pct_scal[n][k_l13_headline_age].empty(),
+              "n=" + std::to_string(pct_scal[n][k_l13_headline_age].size()));
+    }
 
     double worst_dp = 0.0;
     for (double x : d_press) worst_dp = std::max(worst_dp, std::abs(x));
@@ -2901,17 +3895,19 @@ void phaseX_column_raster_equivalence(const single_basin_fixture& fx)
     std::cout << "      X1 worst column-vs-raster SS rel diff = " << worst_ss << "\n";
 
     // ---- X2: THE PRODUCTION-SCALING CONVENTION -----------------------------
-    // The raster folds production scaling into scale_F_values along with
-    // shielding; the column's single-factor path multiplies P0 flat. They are
-    // NOT the same operation, and this pins the size of the gap so it cannot
-    // change unnoticed while the question of which convention is right is open.
-    // Measured 2026-07-27: -14.87 % at scaling 0.5, +5.39 % at 1.4.
-    // THIS IS A RECORDED DISAGREEMENT, NOT AN ENDORSEMENT -- see the findings
-    // log. When the column is switched to the raster convention this check
-    // must be replaced by an equality assertion, not merely re-frozen.
+    // FIXED 2026-07-28. The raster forms S_tot = production_scaling x shielding
+    // and puts the PRODUCT through scale_F_values (the Vermeesch
+    // redistribution, including the S_tot > 1 negative-effective-depth branch
+    // validated against CRONUS v3 at altitude). The column now does the same.
+    //
+    // Until then the column applied production scaling as a flat P0 multiply
+    // and disagreed by -14.87 % at S_tot = 0.5 and +5.39 % at 1.4. These are
+    // now EQUALITY assertions, not a re-frozen gap -- the distinction matters:
+    // re-freezing would have recorded the disagreement as acceptable.
     {
         const double eps = 0.01;
-        for (double P : {0.5, 1.4})
+        double worst_p = 0.0;
+        for (double P : {0.5, 0.85, 1.0, 1.4})
         {
             const lsdtt::lsdtt_raster_cpu prod =
                 make_uniform_raster(fx, static_cast<float>(P));
@@ -2921,48 +3917,31 @@ void phaseX_column_raster_equivalence(const single_basin_fixture& fx)
                     "Be10", "BraucherBorchers",
                     make_uniform_raster(fx, static_cast<float>(eps)),
                     prod, topo1, zero, zero).get_data()[idx];
-            // Column, production scaling through the flat-P0 route.
             const double c_col =
                 col.steady_state(0.0, eps, P, 1.0, "BraucherBorchers").conc_10Be;
-            const double pct = 100.0 * (c_col - c_ras) / c_ras;
-            const double expect = (P == 0.5) ? -14.8734 : 5.3912;
-            check("X2: column-vs-raster production-scaling gap at S_tot=" +
-                      std::to_string(P) + " is UNCHANGED (open defect, pinned)",
-                  std::fabs(pct - expect) < 0.01,
-                  "measured " + std::to_string(pct) + " %, pinned " +
-                      std::to_string(expect) + " %");
-            std::cout << "      X2 production-scaling gap at S_tot=" << P
-                      << ": column " << c_col << " vs raster " << c_ras
-                      << " (" << pct << " %)\n";
+            worst_p = std::max(worst_p, std::fabs(c_col - c_ras) / c_ras);
         }
-        // And the column agrees with the raster when the SAME factor is routed
-        // through shielding instead -- which is the proof that the gap is a
-        // convention difference, not an arithmetic error somewhere.
-        //
-        // ONLY for factors <= 1. make_params_shielded guards scale_F_values
-        // with `total_shielding < 1.0`, so a factor above 1 is silently not
-        // applied at all: measured, the column returns the UNSCALED 79198.2
-        // where the raster returns 105205.6. That guard is defensible for
-        // shielding (which cannot exceed 1) but it is precisely why the column
-        // cannot currently express altitude enhancement the way the raster
-        // does, and it is part of what the open X2 defect must resolve.
-        for (double P : {0.5, 0.85})
+        check("X2: column PRODUCTION SCALING now matches the raster, including "
+              "S_tot > 1 (altitude enhancement)",
+              worst_p < eq_tol, "worst rel " + std::to_string(worst_p));
+        std::cout << "      X2 worst production-scaling rel diff = " << worst_p
+                  << "\n";
+
+        // The sharp statement of "one convention": production scaling and
+        // shielding are now INTERCHANGEABLE, because only their product is
+        // used. If either were routed differently this fails immediately.
+        double worst_swap = 0.0;
+        for (double x : {0.5, 0.85, 1.4})
         {
-            const lsdtt::lsdtt_raster_cpu prod =
-                make_uniform_raster(fx, static_cast<float>(P));
-            const lsdtt::lsdtt_raster_cpu zero = make_uniform_raster(fx, 0.0f);
-            const double c_ras =
-                lsdtt::calculate_crn_concentration_raster_whole(
-                    "Be10", "BraucherBorchers",
-                    make_uniform_raster(fx, static_cast<float>(eps)),
-                    prod, topo1, zero, zero).get_data()[idx];
-            const double c_col =
-                col.steady_state(0.0, eps, 1.0, P, "BraucherBorchers").conc_10Be;
-            check("X2: routing the SAME factor through shielding reproduces the "
-                  "raster exactly at S_tot=" + std::to_string(P),
-                  std::fabs(c_col - c_ras) / c_ras < eq_tol,
-                  diff_str(c_col, c_ras));
+            const double a =
+                col.steady_state(0.0, eps, x, 1.0, "BraucherBorchers").conc_10Be;
+            const double b =
+                col.steady_state(0.0, eps, 1.0, x, "BraucherBorchers").conc_10Be;
+            worst_swap = std::max(worst_swap, std::fabs(a - b) / b);
         }
+        check("X2: production_scaling and total_shielding are interchangeable "
+              "(only their product reaches the physics)",
+              worst_swap < 1.0e-12, "worst rel " + std::to_string(worst_swap));
     }
 
     // ---- X3: STEP CHANGE, column vs raster ---------------------------------
@@ -3142,6 +4121,572 @@ void phaseX_multi_isotope_transient(const single_basin_fixture& fx)
 }
 
 // =============================================================================
+// H1-H4 -- multi-isotope ARBITRARY erosion history, per pixel.
+//
+// The general case of which the step-change kernel is the two-row special case.
+// H1 is the load-bearing test and exploits exactly that: a two-row history must
+// reproduce the multi-isotope STEP-CHANGE raster, which is itself bitwise-pinned
+// against the single-nuclide kernel (M1), which the sentinel pins. So this new
+// path inherits the existing pinning rather than needing a frozen file of its
+// own -- the same argument used for run_transient at the column level (T1).
+void phaseX_transient_raster_multi(const single_basin_fixture& fx)
+{
+    const std::size_t idx = static_cast<std::size_t>(fx.outlet_node);
+    const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, 1.0f);
+    const double rho = 2650.0;
+    auto to_m = [&](double eff) { return eff / (rho * 0.1); };
+
+    // ---- H1: a two-row history == the step-change raster -------------------
+    {
+        double worst = 0.0;
+        std::string bad;
+        for (double S : {1.0, 0.7})
+        {
+            for (double t : {2000.0, 20000.0, 200000.0})
+            {
+                const double eo = 0.002, en = 0.02;
+                lsdtt::lsdtt_crn_column col(rho);
+                col.set_erosion_time_series({t, -9999.0},
+                                            {to_m(en), to_m(eo)}, {0.0, 0.0});
+                const lsdtt::lsdtt_raster_cpu prod =
+                    make_uniform_raster(fx, static_cast<float>(S));
+                const lsdtt::MultiNuclideRasters h =
+                    lsdtt::calculate_crn_concentration_raster_transient_multi(
+                        "BraucherBorchers", col, prod, topo, 0.0);
+                const lsdtt::MultiNuclideRasters sref =
+                    lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                        "BraucherBorchers",
+                        make_uniform_raster(fx, static_cast<float>(t)),
+                        prod, topo, eo, en);
+                const lsdtt::lsdtt_raster_cpu* got[3] = {&h.Be10, &h.Al26, &h.C14};
+                const lsdtt::lsdtt_raster_cpu* ref[3] = {&sref.Be10, &sref.Al26,
+                                                         &sref.C14};
+                const char* nm[3] = {"Be10", "Al26", "C14"};
+                for (int i = 0; i < 3; ++i)
+                {
+                    const double a = got[i]->get_data()[idx];
+                    const double b = ref[i]->get_data()[idx];
+                    const double r = std::fabs(a - b) / b;
+                    if (r > worst) { worst = r;
+                        bad = std::string(nm[i]) + " S=" + std::to_string(S) +
+                              " t=" + std::to_string(t) + ": " +
+                              std::to_string(a) + " vs " + std::to_string(b); }
+                }
+            }
+        }
+        // float32 raster storage on both sides, so equality is to the float
+        // floor rather than exact: the two paths reach it by different
+        // arithmetic orders (a history walk versus a single closed-form step).
+        check("H1: a two-row history reproduces the multi-isotope step-change "
+              "raster (3 nuclides x 2 shielding x 3 times)",
+              worst < 5.0e-6, "worst rel " + std::to_string(worst) + "  " + bad);
+        std::cout << "      H1 worst transient-vs-step-change rel diff = "
+                  << worst << "\n";
+    }
+
+    // ---- H2: the raster agrees with the column at the same pixel -----------
+    // The raster kernel delegates the walk to the column, so this pins the
+    // per-pixel shielding plumbing rather than the physics.
+    {
+        lsdtt::lsdtt_crn_column col(rho);
+        col.set_erosion_time_series({5000.0, 40000.0, -9999.0},
+                                    {to_m(0.03), to_m(0.01), to_m(0.002)},
+                                    {0.0, 0.0, 0.0});
+        double worst = 0.0;
+        for (double S : {1.0, 0.6, 1.25})
+        {
+            const lsdtt::lsdtt_raster_cpu prod =
+                make_uniform_raster(fx, static_cast<float>(S));
+            const lsdtt::MultiNuclideRasters h =
+                lsdtt::calculate_crn_concentration_raster_transient_multi(
+                    "BraucherBorchers", col, prod, topo, 0.0);
+            const lsdtt::CrnColumnSample c =
+                col.run_transient({0.0}, S, 1.0, "BraucherBorchers")[0];
+            worst = std::max(worst,
+                std::fabs(h.Be10.get_data()[idx] - c.conc_10Be) / c.conc_10Be);
+            worst = std::max(worst,
+                std::fabs(h.Al26.get_data()[idx] - c.conc_26Al) / c.conc_26Al);
+            worst = std::max(worst,
+                std::fabs(h.C14.get_data()[idx]  - c.conc_14C)  / c.conc_14C);
+        }
+        check("H2: the transient raster matches the column at the same pixel, "
+              "including S_tot > 1", worst < 5.0e-6,
+              "worst rel " + std::to_string(worst));
+    }
+
+    // ---- H3: a multi-phase history is not equivalent to any single step ----
+    // Otherwise H1 would be the whole story and this kernel would be pointless.
+    {
+        lsdtt::lsdtt_crn_column multi(rho), single(rho);
+        multi.set_erosion_time_series({3000.0, 30000.0, -9999.0},
+                                      {to_m(0.05), to_m(0.001), to_m(0.002)},
+                                      {0.0, 0.0, 0.0});
+        single.set_erosion_time_series({30000.0, -9999.0},
+                                       {to_m(0.05), to_m(0.002)}, {0.0, 0.0});
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        const double a = lsdtt::calculate_crn_concentration_raster_transient_multi(
+            "BraucherBorchers", multi, prod, topo, 0.0).Be10.get_data()[idx];
+        const double b = lsdtt::calculate_crn_concentration_raster_transient_multi(
+            "BraucherBorchers", single, prod, topo, 0.0).Be10.get_data()[idx];
+        check("H3: a three-phase history differs from a single-step one, so "
+              "the general kernel is doing something the step kernel cannot",
+              std::fabs(a - b) / b > 0.05, diff_str(a, b));
+    }
+
+    // ---- H4: masks agree, and a malformed history fails LOUDLY -------------
+    {
+        lsdtt::lsdtt_crn_column col(rho);
+        col.set_erosion_time_series({10000.0, -9999.0},
+                                    {to_m(0.01), to_m(0.002)}, {0.0, 0.0});
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        const lsdtt::MultiNuclideRasters h =
+            lsdtt::calculate_crn_concentration_raster_transient_multi(
+                "BraucherBorchers", col, prod, topo, 0.0);
+        const auto& mb = h.Be10.get_mask_array();
+        const auto& ma = h.Al26.get_mask_array();
+        const auto& mc = h.C14.get_mask_array();
+        bool agree = true;
+        for (int r = 0; r < fx.dem.get_meta().n_rows && agree; ++r)
+            for (int c = 0; c < fx.dem.get_meta().n_cols; ++c)
+                if (mb(r, c) != ma(r, c) || mb(r, c) != mc(r, c))
+                { agree = false; break; }
+        check("H4: all three nuclide masks agree, so ratios are always well "
+              "defined where any nuclide is", agree);
+
+        // An empty history must throw from OUTSIDE the parallel region -- an
+        // exception escaping an OpenMP loop is undefined behaviour, so the
+        // kernel validates once up front. Without that, this would either
+        // terminate or silently produce garbage.
+        lsdtt::lsdtt_crn_column empty(rho);
+        bool threw = false;
+        try {
+            (void)lsdtt::calculate_crn_concentration_raster_transient_multi(
+                "BraucherBorchers", empty, prod, topo, 0.0);
+        } catch (const std::exception&) { threw = true; }
+        check("H4: an unset erosion history throws cleanly before the parallel "
+              "region rather than inside it", threw);
+    }
+}
+
+// =============================================================================
+// B1-B4 / P1-P4 -- two-nuclide diagnostics: burial, and step-change inversion.
+//
+// These INVERT the forward models the rest of the suite pins, so the decisive
+// test for both is a ROUND TRIP: forward-model at known inputs, invert, and
+// require the inputs back. That is far stronger than pinning outputs, because a
+// frozen value only proves the answer has not changed, whereas a round trip
+// proves the inverse actually inverts THIS forward model -- and it is the same
+// discipline as the CLI bridge test.
+//
+// Both solvers return a status, and "not identifiable" is a legitimate answer:
+// a nuclide pair outside its resolvable window genuinely cannot separate the
+// two unknowns. Tests below assert that those cases are REPORTED, not fitted.
+void phaseX_burial_diagnostics()
+{
+    const char* scheme = "BraucherBorchers";
+
+    // ---- B1: round trip -- construct a buried sample, recover its history ---
+    // Build the sample the way nature would: steady erosion at a known rate,
+    // then shielded burial for a known time (production off, decay only). The
+    // solver must return both numbers.
+    double worst_e = 0.0, worst_t = 0.0;
+    bool all_conv = true;
+    std::string bad;
+    for (double S : {1.0, 0.7})
+    {
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10");
+        p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        for (double eps : {0.0005, 0.005, 0.05})
+        {
+            for (double t_b : {5.0e4, 5.0e5, 2.0e6})
+            {
+                const double n10 = lsdtt::crn_steady_state_conc("Be10", eps, p)
+                                 * std::exp(-p.get_lambda_10Be() * t_b);
+                const double n26 = lsdtt::crn_steady_state_conc("Al26", eps, p)
+                                 * std::exp(-p.get_lambda_26Al() * t_b);
+                const lsdtt::CrnBurialResult r =
+                    lsdtt::crn_burial_diagnostics(n26, n10, S, scheme);
+                if (r.status != lsdtt::CrnSolveStatus::Converged)
+                {
+                    all_conv = false;
+                    if (bad.empty()) bad = std::string("status ") +
+                        lsdtt::to_string(r.status) + " at eps=" +
+                        std::to_string(eps) + " t_b=" + std::to_string(t_b);
+                    continue;
+                }
+                worst_e = std::max(worst_e,
+                    std::fabs(r.erate_preburial_g_cm2_yr - eps) / eps);
+                worst_t = std::max(worst_t,
+                    std::fabs(r.burial_age_yr - t_b) / t_b);
+            }
+        }
+    }
+    check("B1: burial round trip converges for every case "
+          "(2 shielding x 3 rates x 3 burial ages)", all_conv, bad);
+    check("B1: the pre-burial erosion rate is recovered", worst_e < 1.0e-6,
+          "worst rel " + std::to_string(worst_e));
+    check("B1: the burial age is recovered", worst_t < 1.0e-6,
+          "worst rel " + std::to_string(worst_t));
+    std::cout << "      B1 worst burial round-trip error: erate " << worst_e
+              << ", age " << worst_t << "\n";
+
+    // ---- B2: an unburied sample must NOT be told it was buried -------------
+    // A surface sample in steady erosion sits ON the steady-state line. The
+    // solver must report burial_required = false and an age of exactly 0,
+    // rather than fitting a small spurious burial to ratio noise.
+    {
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(1.0, "Be10"); p.scale_F_values(1.0, "Al26");
+        p.scale_F_values(1.0, "C14");
+        bool none_flagged = true, rates_ok = true;
+        for (double eps : {0.001, 0.01, 0.1})
+        {
+            const lsdtt::CrnBurialResult r = lsdtt::crn_burial_diagnostics(
+                lsdtt::crn_steady_state_conc("Al26", eps, p),
+                lsdtt::crn_steady_state_conc("Be10", eps, p), 1.0, scheme);
+            if (r.burial_required || r.burial_age_yr != 0.0) none_flagged = false;
+            if (std::fabs(r.erate_preburial_g_cm2_yr - eps) / eps > 1e-6)
+                rates_ok = false;
+        }
+        check("B2: a steadily eroding surface sample is NOT flagged as buried",
+              none_flagged);
+        check("B2: and its erosion rate is still recovered", rates_ok);
+    }
+
+    // ---- B3: burial biases the single-nuclide answer, and by how much ------
+    // The reason burial diagnostics matter: a Be-10-only study on a buried
+    // sample reports an erosion rate that is too FAST, because burial removed
+    // nuclides that the model can only explain by faster erosion. Pinning the
+    // direction stops the diagnostic being wired up backwards.
+    {
+        const double eps = 0.005, t_b = 1.0e6, S = 1.0;
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        const double n10 = lsdtt::crn_steady_state_conc("Be10", eps, p)
+                         * std::exp(-p.get_lambda_10Be() * t_b);
+        const double n26 = lsdtt::crn_steady_state_conc("Al26", eps, p)
+                         * std::exp(-p.get_lambda_26Al() * t_b);
+        const lsdtt::CrnBurialResult r =
+            lsdtt::crn_burial_diagnostics(n26, n10, S, scheme);
+        check("B3: ignoring burial OVERESTIMATES the erosion rate",
+              r.apparent_erate_no_burial > r.erate_preburial_g_cm2_yr,
+              "apparent " + std::to_string(r.apparent_erate_no_burial) +
+                  " vs true " + std::to_string(r.erate_preburial_g_cm2_yr));
+        check("B3: the measured ratio sits BELOW the steady-state line",
+              r.ratio_measured < r.ratio_ss_at_solution,
+              std::to_string(r.ratio_measured) + " vs " +
+                  std::to_string(r.ratio_ss_at_solution));
+        std::cout << "      B3 burial of " << t_b << " yr at eps=" << eps
+                  << ": single-nuclide reports "
+                  << r.apparent_erate_no_burial << " ("
+                  << 100.0 * (r.apparent_erate_no_burial - eps) / eps
+                  << " % too fast)\n";
+    }
+
+    // ---- B4: an impossible pair is REPORTED, not fitted ---------------------
+    {
+        const lsdtt::CrnBurialResult r =
+            lsdtt::crn_burial_diagnostics(1.0e12, 1.0, 1.0, scheme);
+        check("B4: a physically unreachable pair returns NoSolution, not a "
+              "nearest fit",
+              r.status == lsdtt::CrnSolveStatus::NoSolution ||
+              r.status == lsdtt::CrnSolveStatus::NotUnique,
+              lsdtt::to_string(r.status));
+        const lsdtt::CrnBurialResult z =
+            lsdtt::crn_burial_diagnostics(0.0, 0.0, 1.0, scheme);
+        check("B4: zero concentrations return NoSolution rather than dividing "
+              "by zero", z.status == lsdtt::CrnSolveStatus::NoSolution);
+    }
+}
+
+void phaseX_step_pair_inversion()
+{
+    const char* scheme = "BraucherBorchers";
+    const double eo = 0.002;
+
+    // ---- P1: round trip against the SAME kernel the predictor uses ---------
+    // Forward-model a C-14 / Be-10 pair at a known (rate, time), invert, and
+    // require both back. The forward model here is the raster step-change
+    // kernel itself, so this pins that the inverse inverts the thing actually
+    // being predicted -- not a re-derivation of it.
+    {
+        double worst_e = 0.0, worst_t = 0.0;
+        int n_conv = 0, n_total = 0;
+        std::string bad;
+        for (double S : {1.0, 0.8})
+        {
+            lsdtt::lsdtt_crn_parameters p;
+            p.reset_scaling(scheme);
+            p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+            p.scale_F_values(S, "C14");
+            for (double en : {0.01, 0.05})
+            {
+                for (double t : {2000.0, 8000.0, 30000.0})
+                {
+                    ++n_total;
+                    const double d_start = en * t;
+                    lsdtt::lsdtt_crn_particle part(d_start);
+                    part.set_conc_10Be(0.0); part.set_conc_26Al(0.0);
+                    part.set_conc_14C(0.0);
+                    part.update_10Be_ss(eo, p, d_start, d_start);
+                    part.update_14C_ss (eo, p, d_start, d_start);
+                    part.update_conc(t, en, p);
+
+                    const lsdtt::CrnStepPairResult r =
+                        lsdtt::crn_invert_step_change_pair(
+                            "C14", "Be10", part.get_conc_14C(),
+                            part.get_conc_10Be(), eo, S, scheme);
+                    if (r.status != lsdtt::CrnSolveStatus::Converged)
+                    {
+                        if (bad.empty()) bad = std::string("status ") +
+                            lsdtt::to_string(r.status) + " at en=" +
+                            std::to_string(en) + " t=" + std::to_string(t) +
+                            " (brackets " + std::to_string(r.n_brackets) + ")";
+                        continue;
+                    }
+                    ++n_conv;
+                    worst_e = std::max(worst_e,
+                        std::fabs(r.erate_new_g_cm2_yr - en) / en);
+                    worst_t = std::max(worst_t,
+                        std::fabs(r.time_since_change_yr - t) / t);
+                }
+            }
+        }
+        check("P1: the C14/Be10 step-change pair round trip converges on every "
+              "case", n_conv == n_total,
+              std::to_string(n_conv) + "/" + std::to_string(n_total) + "  " + bad);
+        check("P1: the new erosion rate is recovered", worst_e < 1.0e-3,
+              "worst rel " + std::to_string(worst_e));
+        check("P1: the time since the change is recovered", worst_t < 1.0e-3,
+              "worst rel " + std::to_string(worst_t));
+        std::cout << "      P1 worst step-pair round-trip error: erate "
+                  << worst_e << ", time " << worst_t << "\n";
+    }
+
+    // ---- P2: the solution reproduces BOTH measurements ----------------------
+    // A (rate, time) pair that matched only one nuclide would still look like a
+    // converged answer, so check the forward model at the solution.
+    {
+        const double en = 0.02, t = 6000.0, S = 1.0;
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        const double d_start = en * t;
+        lsdtt::lsdtt_crn_particle part(d_start);
+        part.set_conc_10Be(0.0); part.set_conc_26Al(0.0); part.set_conc_14C(0.0);
+        part.update_10Be_ss(eo, p, d_start, d_start);
+        part.update_14C_ss (eo, p, d_start, d_start);
+        part.update_conc(t, en, p);
+        const double n14 = part.get_conc_14C(), n10 = part.get_conc_10Be();
+        const lsdtt::CrnStepPairResult r = lsdtt::crn_invert_step_change_pair(
+            "C14", "Be10", n14, n10, eo, S, scheme);
+        check("P2: the solution reproduces the fast nuclide",
+              r.status == lsdtt::CrnSolveStatus::Converged &&
+              approx_rel(r.conc_fast_predicted, n14, 1e-4),
+              diff_str(r.conc_fast_predicted, n14));
+        check("P2: the solution reproduces the slow nuclide",
+              r.status == lsdtt::CrnSolveStatus::Converged &&
+              approx_rel(r.conc_slow_predicted, n10, 1e-4),
+              diff_str(r.conc_slow_predicted, n10));
+        check("P2: exactly one root was bracketed", r.n_brackets == 1,
+              std::to_string(r.n_brackets));
+    }
+
+    // ---- P3: an unreachable pair is REPORTED ------------------------------
+    {
+        const lsdtt::CrnStepPairResult r = lsdtt::crn_invert_step_change_pair(
+            "C14", "Be10", 1.0e12, 1.0, eo, 1.0, scheme);
+        check("P3: an unreachable pair returns a non-converged status rather "
+              "than a fitted answer",
+              r.status != lsdtt::CrnSolveStatus::Converged,
+              lsdtt::to_string(r.status));
+    }
+
+    // ---- P4: C-14 is what carries the timing ------------------------------
+    // The pair only resolves time because the two nuclides re-equilibrate at
+    // different speeds. Swapping in Al-26 -- whose half-life is far longer than
+    // the transient being dated -- should be markedly less informative. This is
+    // reported, not asserted as a hard bound, because "less informative" is a
+    // property of the site, not a property of the code.
+    {
+        const double en = 0.02, t = 6000.0, S = 1.0;
+        lsdtt::lsdtt_crn_parameters p;
+        p.reset_scaling(scheme);
+        p.scale_F_values(S, "Be10"); p.scale_F_values(S, "Al26");
+        p.scale_F_values(S, "C14");
+        const double d_start = en * t;
+        lsdtt::lsdtt_crn_particle part(d_start);
+        part.set_conc_10Be(0.0); part.set_conc_26Al(0.0); part.set_conc_14C(0.0);
+        part.update_10Be_ss(eo, p, d_start, d_start);
+        part.update_26Al_ss(eo, p, d_start, d_start);
+        part.update_conc(t, en, p);
+        const lsdtt::CrnStepPairResult r = lsdtt::crn_invert_step_change_pair(
+            "Al26", "Be10", part.get_conc_26Al(), part.get_conc_10Be(),
+            eo, S, scheme);
+        std::cout << "      P4 Al26/Be10 on the same 6 kyr transient: "
+                  << lsdtt::to_string(r.status) << ", brackets " << r.n_brackets;
+        if (r.status == lsdtt::CrnSolveStatus::Converged)
+            std::cout << ", t = " << r.time_since_change_yr << " yr (true "
+                      << t << ")";
+        std::cout << "\n";
+        // MEASURED: exactly 2 brackets, so this is a structural identifiability
+        // failure, not scan noise. Al-26's 0.7 Myr half-life makes it nearly
+        // insensitive to a 6 kyr transient, so its residual is almost flat in
+        // time and crosses zero twice inside the search window.
+        //
+        // Asserted as "must NOT report Converged", which is the property that
+        // matters and the one that actually pins the uniqueness check: with
+        // that check disabled the solver converges on t = 6000 -- the TRUE
+        // value -- so a weaker assertion passes while the safeguard is gone.
+        // Being right by luck is not the same as being identifiable, and the
+        // solver must not present a coin flip as a measurement.
+        check("P4: an Al26/Be10 pair cannot date a 6 kyr transient, and the "
+              "solver REPORTS that rather than returning one of two roots",
+              r.status == lsdtt::CrnSolveStatus::NotUnique,
+              std::string(lsdtt::to_string(r.status)) + ", brackets " +
+                  std::to_string(r.n_brackets));
+        check("P4: and it found more than one root, which is why", r.n_brackets > 1,
+              std::to_string(r.n_brackets));
+    }
+}
+
+// =============================================================================
+// M1-M3 -- the multi-isotope step-change raster.
+//
+// The point of computing three nuclides together is that the RATIOS carry the
+// transient signal, and a ratio is only meaningful if both members saw an
+// identical scenario. So the tests are about EQUIVALENCE and CONSISTENCY, not
+// about new physics: the physics is the same kernel, already pinned.
+//
+// M1 is the load-bearing one. If each nuclide did not reproduce the
+// single-nuclide function bit-for-bit, the multi path would be a second
+// implementation of the same physics -- exactly the situation that produced the
+// column-vs-raster convention bugs.
+void phaseX_multi_isotope_raster(const single_basin_fixture& fx)
+{
+    const std::size_t idx = static_cast<std::size_t>(fx.outlet_node);
+    const lsdtt::lsdtt_raster_cpu topo = make_uniform_raster(fx, 1.0f);
+    const double eo = 0.002, en = 0.02;
+
+    // ---- M1: every nuclide matches the single-nuclide kernel EXACTLY -------
+    // float32 rasters on both sides, same code path, so this must be bitwise
+    // equal -- asserted at 0, not at a tolerance.
+    {
+        bool all_exact = true;
+        std::string bad;
+        for (double S : {1.0, 0.85, 0.5, 1.3})
+        {
+            for (double t : {0.0, 100.0, 5000.0, 50000.0, 1.0e6})
+            {
+                const lsdtt::lsdtt_raster_cpu prod =
+                    make_uniform_raster(fx, static_cast<float>(S));
+                const lsdtt::lsdtt_raster_cpu tsc =
+                    make_uniform_raster(fx, static_cast<float>(t));
+                const lsdtt::MultiNuclideRasters m =
+                    lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                        "BraucherBorchers", tsc, prod, topo, eo, en);
+                const char* names[3] = {"Be10", "Al26", "C14"};
+                const lsdtt::lsdtt_raster_cpu* got[3] = {&m.Be10, &m.Al26, &m.C14};
+                for (int i = 0; i < 3; ++i)
+                {
+                    const double single =
+                        lsdtt::calculate_crn_concentration_raster_step_change(
+                            names[i], "BraucherBorchers", tsc, prod, topo,
+                            eo, en).get_data()[idx];
+                    const double multi = got[i]->get_data()[idx];
+                    if (multi != single)
+                    {
+                        all_exact = false;
+                        if (bad.empty())
+                            bad = std::string(names[i]) + " at S=" +
+                                  std::to_string(S) + " t=" + std::to_string(t) +
+                                  ": " + std::to_string(multi) + " vs " +
+                                  std::to_string(single);
+                    }
+                }
+            }
+        }
+        check("M1: every nuclide of the multi-isotope kernel is BITWISE equal "
+              "to the single-nuclide kernel (4 shielding x 5 times x 3 nuclides)",
+              all_exact, bad);
+    }
+
+    // ---- M2: the three really are one scenario -----------------------------
+    // A ratio is only meaningful if both members saw the same evolution. The
+    // check that they did: the ratios reproduce the ratio of two independent
+    // single-nuclide runs, and they MOVE with time (a ratio that never moves
+    // would satisfy the equality above while carrying no signal at all).
+    {
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        auto ratio_multi = [&](double t) {
+            const lsdtt::lsdtt_raster_cpu tsc =
+                make_uniform_raster(fx, static_cast<float>(t));
+            const lsdtt::MultiNuclideRasters m =
+                lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                    "BraucherBorchers", tsc, prod, topo, eo, en);
+            return std::make_pair(
+                static_cast<double>(m.Al26.get_data()[idx]) / m.Be10.get_data()[idx],
+                static_cast<double>(m.C14.get_data()[idx])  / m.Be10.get_data()[idx]);
+        };
+        const auto r_early = ratio_multi(2000.0);
+        const auto r_late  = ratio_multi(500000.0);
+        check("M2: the Al26/Be10 ratio evolves with time since the step",
+              std::fabs(r_late.first - r_early.first) / r_early.first > 1e-3,
+              std::to_string(r_early.first) + " -> " + std::to_string(r_late.first));
+        check("M2: the C14/Be10 ratio evolves with time since the step",
+              std::fabs(r_late.second - r_early.second) / r_early.second > 1e-3,
+              std::to_string(r_early.second) + " -> " + std::to_string(r_late.second));
+        // C-14 is the fast one, so its ratio must move further over the same
+        // window -- the ordering the whole multi-isotope method rests on.
+        const double move_al  = std::fabs(r_late.first  - r_early.first)  / r_early.first;
+        const double move_c14 = std::fabs(r_late.second - r_early.second) / r_early.second;
+        check("M2: the C14/Be10 ratio moves further than Al26/Be10 over the "
+              "same window (C-14 is the fast nuclide)",
+              move_c14 > move_al,
+              "C14 " + std::to_string(move_c14) + " vs Al26 " + std::to_string(move_al));
+    }
+
+    // ---- M3: nodata and the t <= 0 branch propagate consistently -----------
+    // All three outputs must agree about WHICH pixels are valid; a ratio raster
+    // built from disagreeing masks would silently divide valid by nodata.
+    {
+        const lsdtt::lsdtt_raster_cpu prod = make_uniform_raster(fx, 1.0f);
+        const lsdtt::lsdtt_raster_cpu tsc  = make_uniform_raster(fx, 0.0f);
+        const lsdtt::MultiNuclideRasters m =
+            lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                "BraucherBorchers", tsc, prod, topo, eo, en);
+        const auto& mb = m.Be10.get_mask_array();
+        const auto& ma = m.Al26.get_mask_array();
+        const auto& mc = m.C14.get_mask_array();
+        bool masks_agree = true;
+        for (int r = 0; r < fx.dem.get_meta().n_rows && masks_agree; ++r)
+            for (int c = 0; c < fx.dem.get_meta().n_cols; ++c)
+                if (mb(r, c) != ma(r, c) || mb(r, c) != mc(r, c))
+                { masks_agree = false; break; }
+        check("M3: all three nuclide masks agree, so a ratio raster can never "
+              "divide a valid pixel by a nodata one", masks_agree);
+        // t = 0 is the documented "no change" branch: SS at the NEW rate.
+        const double ss_be =
+            lsdtt::calculate_crn_concentration_raster_whole(
+                "Be10", "BraucherBorchers",
+                make_uniform_raster(fx, static_cast<float>(en)),
+                prod, topo, make_uniform_raster(fx, 0.0f),
+                make_uniform_raster(fx, 0.0f)).get_data()[idx];
+        check("M3: at t = 0 the multi kernel returns SS at the NEW rate, "
+              "matching the documented single-nuclide behaviour",
+              approx_rel(m.Be10.get_data()[idx], ss_be, 1e-6),
+              diff_str(m.Be10.get_data()[idx], ss_be));
+    }
+}
+
+// =============================================================================
 // T1-T7 -- run_transient: the arbitrary-erosion-history column.
 //
 // This is the path a pixel-based multi-isotope prediction would drive for
@@ -3168,8 +4713,6 @@ void phaseX_run_transient()
     auto nuc_of = [](const lsdtt::CrnColumnSample& s, int i) {
         return i == 0 ? s.conc_10Be : i == 1 ? s.conc_26Al : s.conc_14C;
     };
-    const char* nuc_name[3] = {"Be10", "Al26", "C14"};
-
     // ---- T1: a two-row history IS a step change ---------------------------
     // Rows are (time_yr_BP, rate_m_yr, removal_m), ascending in time, last row
     // time = -9999 carrying the long-term background rate. With exactly two
@@ -3415,20 +4958,13 @@ void phaseX_run_transient()
               diff_str(col.calculate_depth_change(), to_m(eps) * T));
     }
 
-    // ---- T8: OPEN GAP -- a time-reversed history is accepted silently ------
-    // check_erosion_time_series validates the -9999 sentinel row, the
-    // rate/removal exclusivity and the removal timing, but NOT that time_vec_
-    // is ordered. Index 0 must be the most recent step, because the loop takes
-    // dt = time[ts] - time[ts-1]; a reversed record therefore feeds NEGATIVE
-    // dt into update_conc and produces a confidently wrong answer with no
-    // error, no warning and no NaN.
-    //
-    // This is pinned rather than asserted-away because fixing it means adding
-    // a throw to a locked file, which changes behaviour for anyone with a
-    // reversed record today. Found by writing T3 with the rows the wrong way
-    // round: it ran, and disagreed with the correct ordering by 3.06 relative.
-    // If this check ever starts FAILING, the validator has been tightened --
-    // which is the desired outcome; replace it with a throws-on-reversal test.
+    // ---- T8: an unordered erosion history is REJECTED ----------------------
+    // Was an open gap until 2026-07-28: check_erosion_time_series validated the
+    // -9999 sentinel row, rate/removal exclusivity and removal timing, but NOT
+    // ordering. Index 0 must be the most recent row, because the loop takes
+    // dt = time[ts] - time[ts-1]; a reversed record fed NEGATIVE dt into
+    // update_conc and returned 72357 against a correct 178467 -- no error, no
+    // warning, no NaN. Silence was the whole problem, so it is now a throw.
     {
         const double eps_old = 0.002, eps_new = 0.02, T = 40000.0;
         const int n = 5;
@@ -3440,28 +4976,53 @@ void phaseX_run_transient()
         fwd_t.push_back(-9999.0); rev_t.push_back(-9999.0);
         rv.push_back(to_m(eps_old)); mv.push_back(0.0);
 
-        col.set_erosion_time_series(fwd_t, rv, mv);
-        const double c_fwd = col.run_transient({0.0}, 1.0,
-                                               "BraucherBorchers")[0].conc_10Be;
+        // The correctly ordered record must still be accepted and unchanged.
+        bool fwd_ok = true;
+        double c_fwd = 0.0;
+        try {
+            col.set_erosion_time_series(fwd_t, rv, mv);
+            c_fwd = col.run_transient({0.0}, 1.0,
+                                      "BraucherBorchers")[0].conc_10Be;
+        } catch (const std::exception&) { fwd_ok = false; }
+        check("T8: a correctly ordered history is still accepted", fwd_ok);
+        check("T8: and its value is unchanged by the new validation",
+              fwd_ok && approx_rel(c_fwd, 72357.254252, 1e-6),
+              std::to_string(c_fwd));
+
+        // The reversed one must now FAIL, and say why.
         bool threw = false;
-        double c_rev = 0.0;
+        std::string what;
         try {
             col.set_erosion_time_series(rev_t, rv, mv);
-            c_rev = col.run_transient({0.0}, 1.0,
-                                      "BraucherBorchers")[0].conc_10Be;
-        } catch (const std::exception&) { threw = true; }
+        } catch (const std::exception& e) { threw = true; what = e.what(); }
+        check("T8: a time-REVERSED history is REJECTED", threw);
+        check("T8: and the message names the ordering rule",
+              threw && what.find("MOST RECENT") != std::string::npos,
+              what.substr(0, 90));
 
-        check("T8: a time-REVERSED erosion history is still accepted without "
-              "error (OPEN GAP -- the validator does not check ordering)",
-              !threw, "it threw, which means the validator was tightened");
-        check("T8: and the reversed record gives a materially different answer "
-              "(so the silence is not harmless)",
-              !threw && std::fabs(c_rev - c_fwd) / c_fwd > 0.5,
-              "forward " + std::to_string(c_fwd) + " reversed " +
-                  std::to_string(c_rev));
-        std::cout << "      T8 forward " << c_fwd << " vs time-reversed "
-                  << c_rev << " (rel "
-                  << std::fabs(c_rev - c_fwd) / c_fwd << ")\n";
+        // A zero-length step that is not a removal is also rejected: it would
+        // contribute nothing while looking like a real phase.
+        bool threw_dup = false;
+        try {
+            col.set_erosion_time_series({100.0, 100.0, -9999.0},
+                                        {to_m(eps_new), to_m(eps_new),
+                                         to_m(eps_old)},
+                                        {0.0, 0.0, 0.0});
+        } catch (const std::exception&) { threw_dup = true; }
+        check("T8: a duplicated time that is NOT a removal is rejected",
+              threw_dup);
+
+        // But a legitimate removal sharing the preceding row's time is fine --
+        // the new rule must not break the records T4b relies on.
+        bool removal_ok = true;
+        try {
+            col.set_erosion_time_series({100.0, 100.0, 500.0, -9999.0},
+                                        {to_m(eps_new), 0.0, to_m(eps_new),
+                                         to_m(eps_old)},
+                                        {0.0, 1.0, 0.0, 0.0});
+        } catch (const std::exception&) { removal_ok = false; }
+        check("T8: a removal row sharing the preceding time is still legal",
+              removal_ok);
     }
 }
 
@@ -3597,6 +5158,263 @@ void phase5_G2_invariants()
     }
 }
 
+// G3 (start) - full inversion comparison versus frozen CRONUS v3 Lm/LSDn rows.
+//
+// This extends the earlier production-level context checks into an inversion-level
+// comparison for both geomagnetic schemes. It is deliberately report-first while
+// the measured bands are being established: we assert successful, finite
+// inversion and coverage of both schemes in both age modes, and emit a plottable
+// CSV for freezing review.
+void phase5_G3_full_inversion_vs_cronus(const lsdtt::CrnNcData& nc_real,
+                                        const std::string& expected_dir,
+                                        const std::string& out_dir)
+{
+    if (!nc_real.loaded)
+    {
+        check("G3: full inversion vs CRONUS Lm/LSDn (SKIPPED - real nc not loaded)",
+              true);
+        return;
+    }
+
+    const std::string ref_path = expected_dir + "/cronus_v3_reference.csv";
+    std::map<std::string, double> cronus;   // key: name|nuclide|scheme
+    if (!load_cronus_reference(ref_path, cronus))
+    {
+        std::cout << "NOTE  G3 skipped: no frozen CRONUS reference at "
+                  << ref_path << "\n";
+        check("G3: full inversion vs CRONUS Lm/LSDn (SKIPPED - reference not fetched)",
+              true);
+        return;
+    }
+
+    lsdtt::lsdtt_crn_parameters cp;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto samples = make_cronus_fixture_samples();
+    csv_writer csv(out_dir + "/cronus_comparison_geomag_full.csv",
+                   "name,nuclide,scheme,lat,elev_m,t_mode,t_yr,scaling,"
+                   "erate_lsdtt_gcm2yr,erate_cronus_gcm2yr,pct_diff,solve_status");
+
+    struct band_stats
+    {
+        double lo = 1e30, hi = -1e30, sum = 0.0, worst = 0.0;
+        int n = 0;
+        void add(double pct)
+        {
+            lo = std::min(lo, pct);
+            hi = std::max(hi, pct);
+            sum += pct;
+            worst = std::max(worst, std::abs(pct));
+            ++n;
+        }
+        double mean() const { return n ? sum / static_cast<double>(n) : 0.0; }
+    };
+    struct solve_counts
+    {
+        int ok = 0;
+        int no_solution = 0;
+    };
+
+    band_stats st_modern_lm, st_modern_lsdn, st_matched_lm, st_matched_lsdn;
+    std::map<std::string, band_stats> by_key;
+    std::map<std::string, solve_counts> counts_by_key;
+    int n_inversion_fail = 0;
+
+    const auto make_key = [](const char* scheme, const char* mode,
+                             const std::string& nuc_ref) -> std::string
+    {
+        return std::string(scheme) + "|" + mode + "|" + nuc_ref;
+    };
+    const auto guard_for = [](const char* scheme, const char* mode,
+                              const std::string& nuc_ref) -> double
+    {
+        const bool lm = std::string(scheme) == "Lm";
+        const bool modern = std::string(mode) == "modern";
+        if (lm && modern)
+        {
+            if (nuc_ref == "Be-10") return tol::g3_lm_modern_be10_worst_pct;
+            if (nuc_ref == "Al-26") return tol::g3_lm_modern_al26_worst_pct;
+            return tol::g3_lm_modern_c14_worst_pct;
+        }
+        if (lm && !modern)
+        {
+            if (nuc_ref == "Be-10") return tol::g3_lm_matched_be10_worst_pct;
+            if (nuc_ref == "Al-26") return tol::g3_lm_matched_al26_worst_pct;
+            return tol::g3_lm_matched_c14_worst_pct;
+        }
+        if (!lm && modern)
+        {
+            if (nuc_ref == "Be-10") return tol::g3_lsdn_modern_be10_worst_pct;
+            if (nuc_ref == "Al-26") return tol::g3_lsdn_modern_al26_worst_pct;
+            return tol::g3_lsdn_modern_c14_worst_pct;
+        }
+        if (nuc_ref == "Be-10") return tol::g3_lsdn_matched_be10_worst_pct;
+        if (nuc_ref == "Al-26") return tol::g3_lsdn_matched_al26_worst_pct;
+        return tol::g3_lsdn_matched_c14_worst_pct;
+    };
+
+    for (const auto& s : samples)
+    {
+        for (const std::pair<std::string, std::string>& nuc_case : {
+                 std::make_pair(std::string("Be10"), std::string("Be-10")),
+                 std::make_pair(std::string("Al26"), std::string("Al-26")),
+                 std::make_pair(std::string("C14"),  std::string("C-14"))})
+        {
+            const std::string nuc = nuc_case.first;
+            const std::string nuc_ref = nuc_case.second;
+            const double conc = (nuc == "Be10") ? s.conc_be10
+                               : (nuc == "Al26") ? s.conc_al26 : s.conc_c14;
+
+            for (const char* scheme : {"Lm", "LSDn"})
+            {
+                const auto it = cronus.find(s.name + "|" + nuc_ref + "|" + scheme);
+                if (it == cronus.end()) continue;
+
+                auto scaling_for = [&](double t_yr) -> double
+                {
+                    if (std::string(scheme) == "LSDn")
+                    {
+                        return cp.lsdn_scaling(nuc, s.lat, s.lon,
+                                               s.pressure_hPa, t_yr, nc_real);
+                    }
+                    return cp.stone2000sp_paleomag(s.lat, s.pressure_hPa, 1.0,
+                                                   t_yr, nc_real);
+                };
+
+                // pass 0: modern-field default (t=0)
+                const double sf0 = scaling_for(0.0);
+                ref_params p0 = ref_params_scaled("BraucherBorchers", nuc, sf0);
+                const double eps0 = ref_invert_erate(p0, conc);
+                if (!(eps0 > 0.0))
+                {
+                    counts_by_key[make_key(scheme, "modern", nuc_ref)].no_solution++;
+                    csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                            "modern", 0.0, sf0, nan, it->second, nan,
+                            "no_solution");
+                    counts_by_key[make_key(scheme, "matched", nuc_ref)].no_solution++;
+                    csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                            "matched", nan, nan, nan, it->second, nan,
+                            "no_solution");
+                    ++n_inversion_fail;
+                    continue;
+                }
+                const double pct0 = 100.0 * (it->second - eps0) / eps0;
+                if (std::string(scheme) == "Lm") st_modern_lm.add(pct0);
+                else                              st_modern_lsdn.add(pct0);
+                by_key[make_key(scheme, "modern", nuc_ref)].add(pct0);
+                counts_by_key[make_key(scheme, "modern", nuc_ref)].ok++;
+                csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                        "modern", 0.0, sf0, eps0, it->second, pct0,
+                        "ok");
+
+                // pass 1: matched age (t = Gamma_sp / eps0)
+                const double t_yr = p0.Gamma[0] / eps0;
+                const double sf1 = scaling_for(t_yr);
+                ref_params p1 = ref_params_scaled("BraucherBorchers", nuc, sf1);
+                const double eps1 = ref_invert_erate(p1, conc);
+                if (!(eps1 > 0.0))
+                {
+                    counts_by_key[make_key(scheme, "matched", nuc_ref)].no_solution++;
+                    csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                            "matched", t_yr, sf1, nan, it->second, nan,
+                            "no_solution");
+                    ++n_inversion_fail;
+                    continue;
+                }
+                const double pct1 = 100.0 * (it->second - eps1) / eps1;
+                if (std::string(scheme) == "Lm") st_matched_lm.add(pct1);
+                else                              st_matched_lsdn.add(pct1);
+                by_key[make_key(scheme, "matched", nuc_ref)].add(pct1);
+                counts_by_key[make_key(scheme, "matched", nuc_ref)].ok++;
+                csv.row(s.name, nuc_ref, scheme, s.lat, s.elev_m,
+                        "matched", t_yr, sf1, eps1, it->second, pct1,
+                        "ok");
+            }
+        }
+    }
+
+    const auto print_stats = [](const char* label, const band_stats& s)
+    {
+        std::cout << "        " << label << ": min " << s.lo << " max " << s.hi
+                  << " mean " << s.mean() << " worst|pct| " << s.worst
+                  << " over " << s.n << " rows\n";
+    };
+    std::cout << "      G3 full inversion vs CRONUS (pct diff = (CRONUS - lsdtt)/lsdtt):\n"
+              << std::setprecision(4);
+    print_stats("Lm, t=0", st_modern_lm);
+    print_stats("LSDn, t=0", st_modern_lsdn);
+    print_stats("Lm, t=Gamma/eps", st_matched_lm);
+    print_stats("LSDn, t=Gamma/eps", st_matched_lsdn);
+    std::cout << std::setprecision(17);
+
+    std::cout << "      G3 inversion no-solution rows (excluded from stats): "
+              << n_inversion_fail << "\n";
+    check("G3: Lm full inversion compared at t=0 and t=Gamma/eps",
+          st_modern_lm.n > 0 && st_matched_lm.n > 0,
+          "n_modern=" + std::to_string(st_modern_lm.n)
+              + " n_matched=" + std::to_string(st_matched_lm.n));
+    check("G3: LSDn full inversion compared at t=0 and t=Gamma/eps",
+          st_modern_lsdn.n > 0 && st_matched_lsdn.n > 0,
+          "n_modern=" + std::to_string(st_modern_lsdn.n)
+              + " n_matched=" + std::to_string(st_matched_lsdn.n));
+    check("G3: Lm modern-field inversion vs CRONUS within frozen guard",
+          st_modern_lm.n > 0
+              && st_modern_lm.worst < tol::g3_lm_modern_worst_pct,
+          "worst|pct|=" + std::to_string(st_modern_lm.worst)
+              + " (n=" + std::to_string(st_modern_lm.n) + ")");
+    check("G3: Lm matched-age inversion vs CRONUS within frozen guard",
+          st_matched_lm.n > 0
+              && st_matched_lm.worst < tol::g3_lm_matched_worst_pct,
+          "worst|pct|=" + std::to_string(st_matched_lm.worst)
+              + " (n=" + std::to_string(st_matched_lm.n) + ")");
+    check("G3: LSDn modern-field inversion vs CRONUS within frozen guard",
+          st_modern_lsdn.n > 0
+              && st_modern_lsdn.worst < tol::g3_lsdn_modern_worst_pct,
+          "worst|pct|=" + std::to_string(st_modern_lsdn.worst)
+              + " (n=" + std::to_string(st_modern_lsdn.n) + ")");
+    check("G3: LSDn matched-age inversion vs CRONUS within frozen guard",
+          st_matched_lsdn.n > 0
+              && st_matched_lsdn.worst < tol::g3_lsdn_matched_worst_pct,
+          "worst|pct|=" + std::to_string(st_matched_lsdn.worst)
+              + " (n=" + std::to_string(st_matched_lsdn.n) + ")");
+
+    for (const char* scheme : {"Lm", "LSDn"})
+    {
+        for (const char* mode : {"modern", "matched"})
+        {
+            for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
+            {
+                const std::string key = make_key(scheme, mode, nuc_ref);
+                const auto it_stat = by_key.find(key);
+                const auto it_cnt = counts_by_key.find(key);
+                const int n_ok = (it_cnt == counts_by_key.end()) ? 0 : it_cnt->second.ok;
+                const int n_no = (it_cnt == counts_by_key.end()) ? 0 : it_cnt->second.no_solution;
+                std::cout << "      G3 " << scheme << " " << mode << " " << nuc_ref
+                          << ": ok=" << n_ok << " no_solution=" << n_no;
+                if (it_stat != by_key.end())
+                    std::cout << " worst|pct|=" << it_stat->second.worst;
+                std::cout << "\n";
+
+                check(std::string("G3: ") + scheme + " " + mode + " " + nuc_ref
+                          + " has solved rows",
+                      it_stat != by_key.end() && it_stat->second.n > 0,
+                      "ok=" + std::to_string(n_ok) +
+                          " no_solution=" + std::to_string(n_no));
+
+                if (it_stat != by_key.end() && it_stat->second.n > 0)
+                {
+                    const double guard = guard_for(scheme, mode, nuc_ref);
+                    check(std::string("G3: ") + scheme + " " + mode + " " + nuc_ref
+                              + " within per-nuclide frozen guard",
+                          it_stat->second.worst < guard,
+                          "worst|pct|=" + std::to_string(it_stat->second.worst)
+                              + " guard=" + std::to_string(guard));
+                }
+            }
+        }
+    }
+    check("csv: cronus_comparison_geomag_full.csv written", csv.good());
+}
+
 // G4 - golden trajectories against the committed Knudsen VDM record.  These pin
 // OUR time-integrated Stone factor at a few (lat, pressure, age) triplets;
 // measured 2026-07-23 against data/crn_parameters.nc and frozen at tol::g4_golden.
@@ -3701,8 +5519,8 @@ void phase5_G4_golden_trajectories(const lsdtt::CrnNcData& nc_real,
 // match ours - CRONUS uses a different (Pavon-family) VDM record, so absolute
 // agreement is not expected and is NOT asserted (plan Sec6c).
 void phase5_G6c_equator_on_off(const lsdtt::CrnNcData& nc_real,
-                               const std::string& expected_dir,
-                               const std::string& out_dir)
+                                const std::string& expected_dir,
+                                const std::string& out_dir)
 {
     if (!nc_real.loaded)
     {
@@ -3766,6 +5584,97 @@ void phase5_G6c_equator_on_off(const lsdtt::CrnNcData& nc_real,
                   << std::setprecision(17);
     }
     check("csv: geomag_on_off_LSDTT1.csv written", csv.good());
+}
+
+// Phase 5 carry-forward item: real-atmosphere ERA40 validation beyond the
+// synthetic uniform-grid check. Uses the 15-sample fixture as a compact
+// latitude/elevation sweep, reports ERA40-vs-standard pressure and resulting
+// Stone scaling ratios, and asserts core physical behaviour.
+void phase5_G4_real_atmosphere_validation(const lsdtt::CrnNcData& nc_real,
+                                          const std::string& out_dir)
+{
+    if (!nc_real.loaded)
+    {
+        check("G4(real): ERA40 fixture validation (SKIPPED - real nc not loaded)",
+              true);
+        return;
+    }
+
+    lsdtt::lsdtt_crn_parameters cp;
+    const auto samples = make_cronus_fixture_samples();
+    csv_writer csv(out_dir + "/geomag_era40_fixture_validation.csv",
+                   "name,lat,lon,elev_m,pressure_standard_hPa,pressure_era40_hPa,"
+                   "dP_hPa,rel_pressure,stone_standard,stone_era40,ratio_stone");
+
+    bool finite_ok = true;
+    bool mono_ok = true;
+    double max_abs_dp = 0.0;
+    double max_abs_relp = 0.0;
+    double ratio_lo = 1e30, ratio_hi = -1e30, ratio_sum = 0.0;
+    int n = 0;
+
+    // One monotonicity tracker per fixture latitude (all three elevations at lon=0).
+    std::map<double, std::pair<double, double>> per_lat_last; // lat -> (last_elev,last_p)
+
+    for (const auto& s : samples)
+    {
+        const double p_std =
+            lsdtt::lsdtt_crn_parameters::atmospheric_pressure_standard(s.elev_m);
+        const double p_era =
+            lsdtt::lsdtt_crn_parameters::atmospheric_pressure_era40(
+                s.lat, s.lon, s.elev_m, nc_real);
+        const double dP = p_era - p_std;
+        const double relp = dP / p_std;
+
+        const double st_std = cp.stone2000sp(s.lat, p_std, 1.0);
+        const double st_era = cp.stone2000sp(s.lat, p_era, 1.0);
+        const double ratio = st_era / st_std;
+
+        if (!std::isfinite(p_era) || !(p_era > 0.0)
+            || !std::isfinite(ratio) || !(ratio > 0.0))
+            finite_ok = false;
+
+        auto it = per_lat_last.find(s.lat);
+        if (it != per_lat_last.end())
+        {
+            const double prev_e = it->second.first;
+            const double prev_p = it->second.second;
+            if (s.elev_m > prev_e && !(p_era < prev_p)) mono_ok = false;
+        }
+        per_lat_last[s.lat] = std::make_pair(s.elev_m, p_era);
+
+        max_abs_dp = std::max(max_abs_dp, std::abs(dP));
+        max_abs_relp = std::max(max_abs_relp, std::abs(relp));
+        ratio_lo = std::min(ratio_lo, ratio);
+        ratio_hi = std::max(ratio_hi, ratio);
+        ratio_sum += ratio;
+        ++n;
+
+        csv.row(s.name, s.lat, s.lon, s.elev_m, p_std, p_era,
+                dP, relp, st_std, st_era, ratio);
+    }
+
+    const double ratio_mean = (n > 0) ? ratio_sum / static_cast<double>(n) : 0.0;
+    std::cout << "      G4(real) ERA40 fixture validation: n=" << n
+              << " max|dP|=" << max_abs_dp << " hPa"
+              << " max|dP/Pstd|=" << max_abs_relp
+              << " Stone ratio range=" << ratio_lo << ".." << ratio_hi
+              << " mean=" << ratio_mean << "\n";
+
+    check("G4(real): ERA40 pressure/scaling finite and positive across fixture",
+          finite_ok && n == static_cast<int>(samples.size()));
+    check("G4(real): ERA40 pressure decreases with elevation at each fixture latitude",
+          mono_ok);
+    check("G4(real): ERA40-vs-standard pressure stays within frozen guard",
+          n > 0 && max_abs_dp < tol::g4_real_max_abs_dp_hpa
+              && max_abs_relp < tol::g4_real_max_abs_rel_p,
+          "max|dP|=" + std::to_string(max_abs_dp)
+              + " max|rel|=" + std::to_string(max_abs_relp));
+    check("G4(real): Stone scaling ratio(ERA40/std) stays within frozen guard",
+          n > 0 && ratio_lo > tol::g4_real_stone_ratio_lo
+              && ratio_hi < tol::g4_real_stone_ratio_hi,
+          "range=" + std::to_string(ratio_lo) + ".." + std::to_string(ratio_hi));
+    check("csv: geomag_era40_fixture_validation.csv written", csv.good());
 }
 
 // =============================================================================
@@ -4083,8 +5992,9 @@ void phase7_L0_pins(const lsdtt::CrnNcData& nc)
 // L2 - exact reproduction of the v3 grids (the strongest oracle).
 //
 // tests/expected/cosmo/lsdn_grid_reference.csv is frozen, generated offline by
-//   pixi run python python_helpers/extract_lsdn_reference.py \
-//       --out-dir <scratch> --emit-reference tests/expected/cosmo/lsdn_grid_reference.csv
+// running:
+//   pixi run python python_helpers/extract_lsdn_reference.py --out-dir <scratch>
+//     --emit-reference tests/expected/cosmo/lsdn_grid_reference.csv
 // directly from the FLOAT64 v3 .mat grids with scipy's RegularGridInterpolator
 // (the same 4-point formula MATLAB interp2 linear uses).  lsdtt3 evaluates the
 // FLOAT32 grids packed into crn_parameters.nc, so the residual is the float32
@@ -5937,12 +7847,17 @@ int main(int argc, char** argv)
         smoke_library_pipeline(fx, flow, out_dir);
 
         phase1_parameter_pins();
+        phase1_balco_cronus_v3_pressure_helpers();
         phase1_standardisation_pins();
         phase1_E1_depth_integration_limits();
         phase1_E2_step_change_library(fx);
         phaseX_column_raster_equivalence(fx);
         phaseX_multi_isotope_transient(fx);
         phaseX_run_transient();
+        phaseX_multi_isotope_raster(fx);
+        phaseX_transient_raster_multi(fx);
+        phaseX_burial_diagnostics();
+        phaseX_step_pair_inversion();
         phase1_E3_exponential_identity();
         phase1_E4_lambda_v_solve();
         phase1_E5_linearity_and_limits();
@@ -5956,6 +7871,7 @@ int main(int argc, char** argv)
         const auto slash = sentinel_path.find_last_of("/\\");
         if (slash != std::string::npos)
             expected_dir = sentinel_path.substr(0, slash);
+        phase2_muon_inventory_comparison(expected_dir, out_dir);
         phase3_TC3_stone_pins();
         phase3_TC1_site_curve(out_dir);
         phase3_write_cronus_fixture(out_dir);
@@ -5968,6 +7884,8 @@ int main(int argc, char** argv)
         // Phase 5: geomagnetic / time-varying production (G1-G4 + Sec6c(A)).
         phase5_G1_static_limits(crn_nc);
         phase5_G2_invariants();
+        phase5_G3_full_inversion_vs_cronus(crn_nc, expected_dir, out_dir);
+        phase5_G4_real_atmosphere_validation(crn_nc, out_dir);
         phase5_G4_golden_trajectories(crn_nc, out_dir, regenerate_g4);
         phase5_G6c_equator_on_off(crn_nc, expected_dir, out_dir);
 
@@ -5980,6 +7898,7 @@ int main(int argc, char** argv)
         phase7_L6_invariants(crn_nc, out_dir);
         phase7_L7_stone_vs_lsdn(crn_nc, fx, test_data_dir, out_dir);
         phase7_TC2_cronus_lsdn_comparison(crn_nc, expected_dir, out_dir);
+        phase8_muon_isolation_comparison(crn_nc, expected_dir, out_dir);
         phase7_L12_octopus_point_kernel_oracle(crn_nc, expected_dir, out_dir);
         phase7_L13_pixel_vs_lumped(crn_nc, expected_dir, out_dir);
         phase7_lsdn_scaling_surface_csv(crn_nc, out_dir);

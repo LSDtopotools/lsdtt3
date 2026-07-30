@@ -54,7 +54,7 @@ The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `nuclide` | string | `Be10` | Nuclide used for erosion rate inversion. Options: `Be10`, `Al26`, `C14`. |
-| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`, `balcoCRONUSv3PD` (pressure-dependent Balco/CRONUS-v3 style muon terms; scan alias: `cronusv3pd`). |
 | `rock_density_kg_m3` | float | `2650` | Rock bulk density (kg/m³). Used to convert effective erosion rate (g/cm²/yr) to mm/kyr. |
 | `scaling_scheme` | string | `stone` | Production-rate scaling. `stone` = Stone (2000)/Lal, the default and the CAIRN/OCTOPUS scheme. `lsdn` = Lifton, Sato & Dunai (2014) nuclide-specific scaling, interpolated from the LSDn2015 grids; needs the LSDn grids in `crn_parameters.nc` and supports `Be10`, `Al26`, `C14` only. Both are evaluated **per pixel**, including when `sample_age_yr > 0`. `muon_scheme` is unaffected. |
 
@@ -152,7 +152,60 @@ Sample points are snapped to the nearest channel pixel meeting the contributing-
 |---|---|---|---|
 | `write_production_raster` | bool | `false` | `<write_fname>_PROD.tif` — Stone 2000 production scaling raster. |
 
-The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns include latitude, longitude, measured concentration, predicted concentration, effective erosion rate (g/cm²/yr), and erosion rate (mm/kyr). Uncertainty bound columns are added when an uncertainty column is present in the input.
+The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns include:
+
+- sample metadata (`sample_name` when present, `nuclide`),
+- snapped outlet location (`latitude`, `longitude`),
+- basin comparison metadata (`effective_pressure_hpa`, `centroid_latitude_deg`),
+- measured + predicted concentration,
+- effective erosion rate (`apparent_eff_e_g_cm2_yr`),
+- erosion rate in mm/kyr (`*_mm_kyr`).
+
+For backward compatibility, duplicated legacy `*_mm_yr` aliases are still written and carry the same **mm/kyr** numeric values. Uncertainty-bound columns are added when an uncertainty column is present in the input.
+
+---
+
+## lsdviztools3 interface notes
+
+`lsdviztools3` can plot comparison figures from the standard cosmogenic CSV
+workflows that include `lsdtt-cosmo-tool` outputs.
+
+- Basin/sample comparison tiers (`run_cosmo_validation.py`,
+  `run_cosmo_riversand_comparison.py`) produce summary CSVs under
+  `tests/expected/cosmo/published/` such as:
+  - `<dataset>_summary.csv`
+  - `<dataset>_lsdn_summary.csv`
+  - `<dataset>_riversand_summary.csv`
+- `lsdviztools3` command:
+
+```
+lsdviz3-cosmo-published \
+  --published-dir tests/expected/cosmo/published \
+  --datasets dethier2014,clapp2002,dibiase2010 \
+  --mode auto \
+  --outdir demo_output/cosmo
+```
+
+For sweep-style lsdtt3-vs-reference figures, see the single-point scan script
+`tests/scripts/run_cosmo_single_point_scaling_scan.py` and
+`lsdviz3-cosmo-compare`.
+
+For **sample-set** comparison against CRONUS v3 (separate from synthetic point
+scan), use:
+
+```
+python3 tests/scripts/compare_cosmo_tool_vs_cronus_v3.py \
+  --cosmo-csv <write_path>/<write_fname>_CN_ERATE.csv \
+  --points-csv <input_points.csv> \
+  --uncertainty-col <sigma_column> \
+  --standardisation-col <standardisation_column> \
+  --scheme St \
+  --out-csv <write_path>/<write_fname>_CRONUS_COMPARE.csv
+```
+
+This builds a CRONUS v3 batch request from each sample's nuclide,
+concentration, basin-effective pressure, and basin-centroid latitude, then
+writes per-sample lsdtt3-vs-CRONUS erosion-rate residuals.
 
 ---
 

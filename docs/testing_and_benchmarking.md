@@ -908,6 +908,82 @@ Stone (2000) pins — tight, near-exact) and **T-C4** (newCRONUS mode vs
 CRONUScalc/v3, expected < 2–5 %; folded into the T-C2 machinery and enabled by
 adding a newCRONUS concentration column to the fixture).
 
+#### Muon-scheme isolation decomposition (M7, 2026-07-28)
+
+The Phase-3 harness `phase8_muon_isolation_comparison()` adds the end-to-end
+decomposition requested in `muon_scheme_isolation_plan.md`: same 15-sample
+fixture, age-matched inversion (`t = Γ_sp/ε`), compared against the frozen
+CRONUS v3 **St** and **LSDn** columns, and emitted as
+`muon_isolation_comparison.csv`.
+
+Reported sign is `100*(CRONUS - lsdtt)/lsdtt`.
+
+The CSV now carries explicit solve diagnostics per row:
+`solve_status`, `hit_lower_bound`, `hit_upper_bound`, `eps0_gcm2yr`.
+That makes bracket-limited rows machine-identifiable instead of inferring them
+from huge percentages.
+
+Nuclide coverage is now Be-10, Al-26, and C-14. The frozen
+`cronus_v3_reference.csv` now includes C-14 rows (fetched 2026-07-28), so the
+percent-difference table includes all three nuclides.
+
+Variant naming in this table/CSV:
+
+- `bb_vermeesch` = **BraucherBorchers** constants (`bb`) + Vermeesch pathway
+  redistribution (`scale_F_values`).
+- `balco_v3_vermeesch` = Balco-v3 setter constants + Vermeesch redistribution.
+- `balco_v3_balco_site` = Balco-v3 setter constants + Balco split site rule
+  (`S[0]=Stone/LSDn`, `S[1]=exp((1013.25-p)/L_mu_atm)`).
+- `balco_1A_fit_balco_site` = fitted-1A setter constants + Balco split site
+  rule.
+
+| variant | nuclide | min % | max % | mean % | n |
+|---|---:|---:|---:|---:|---:|
+| `bb_vermeesch` | Be-10 | +1.82 | +12.27 | +5.032 | 30 |
+| `bb_vermeesch` | Al-26 | -1.827 | +11.59 | +3.056 | 30 |
+| `bb_vermeesch` | C-14 | -100 | +831.13 | -15.166 | 30 |
+| `balco_v3_vermeesch` | Be-10 | -0.110 | +3.57e9 | +3.02e8 | 30 |
+| `balco_v3_vermeesch` | Al-26 | -1.051 | +3.48e9 | +2.95e8 | 30 |
+| `balco_v3_vermeesch` | C-14 | -100 | +2.45e9 | +2.47e8 | 30 |
+| `balco_v3_balco_site` | Be-10 | +1.009 | +20.94 | +6.745 | 30 |
+| `balco_v3_balco_site` | Al-26 | +0.514 | +22.74 | +7.150 | 30 |
+| `balco_v3_balco_site` | C-14 | -41.39 | +9.239 | -7.231 | 30 |
+| `balco_1A_fit_balco_site` | Be-10 | -2.316 | +5.226 | +0.695 | 30 |
+| `balco_1A_fit_balco_site` | Al-26 | -3.858 | +7.606 | +1.056 | 30 |
+| `balco_1A_fit_balco_site` | C-14 | -42.65 | +25.37 | -5.302 | 30 |
+
+The `balco_v3_vermeesch` blow-up is a real measured behaviour, not a formatting
+error: in several high-elevation/high-erosion rows the inversion collapses to the
+lower bisection bracket (`ε = 1e-9`), giving order-`1e9` percent residuals. That
+is exactly the decomposition signal: with Balco's constants but Vermeesch-style
+pathway redistribution, the site-scaling term (D) dominates and can make the
+point inversion physically unusable. Switching only the site rule to Balco's
+split (`balco_v3_balco_site`) removes the collapse and brings residuals back to
+order-10 %. This is why the decomposition records the three baseline variants
+(and now the optional fitted fourth variant) side by side, rather than tuning
+one toward zero.
+
+On the first tightened run (2026-07-28), `balco_v3_vermeesch` has **16**
+`bound_limited_low` rows in the Be-10/Al-26 decomposition (all at 3000 m sites),
+and no Be-10/Al-26 `no_solution` rows. C-14 adds expected saturation-driven
+`no_solution`/`-100 %` rows where CRONUS reports zero erosion under some scheme
+combinations.
+
+For review diffs, `tests/scripts/summarize_muon_isolation.py` reads
+`muon_isolation_comparison.csv` and prints stable per-variant/per-nuclide counts
+plus all-row and interior-only min/max/mean summaries.
+
+Phase-4 optional fit status (2026-07-28):
+
+- Fit report frozen at `tests/expected/cosmo/balco_1A_exp_fit_report.csv`
+  (`r=0.90416523765093271`, `Gamma1=1560.6559641830763`,
+  `Gamma2=17133.604883282504`).
+- The fitted variant is accepted under the plan gate because its run-E worst case
+  (`+7.606 %`) is below run-B worst (`81.7409 %`).
+- Wide regression guards now include
+  `muon_run_e_bb_worst_pct=15.0`, `muon_run_e_vv_worst_pct=4.0e9`,
+  `muon_run_e_bs_worst_pct=30.0`, `muon_run_e_fit_worst_pct=30.0`.
+
 ### 7.5 Geomagnetic correction — no published benchmark
 
 The Muscheler-VDM + ERA40 machinery (`crn_nc_file` + `sample_age_yr`) is
@@ -1020,6 +1096,31 @@ stored in the repository or tracked in version control.** The rule that follows:
   LSDTopoTools GitHub data repositories, not in the paper tables; the manifests
   point there.
 
+#### 7.7.1 riversand cross-check (manual, not in CI)
+
+The Phase 5 riversand harness lives at
+`tests/scripts/run_cosmo_riversand_comparison.py` and follows the same
+download -> run -> delete discipline. In default mode it runs riversand directly
+from the harness (with `lsdtt-basin-extraction`), then compares against the
+tracked frozen summary `<dataset>_riversand_summary.csv`.
+
+```bash
+# check against frozen summary (default mode)
+python3 tests/scripts/run_cosmo_riversand_comparison.py dethier2014 \
+    --exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-cosmo-tool \
+    --fetch-exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-fetch-raster \
+    --samples S169WTS035
+
+# freeze/update the tracked summary
+python3 tests/scripts/run_cosmo_riversand_comparison.py dethier2014 \
+    --exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-cosmo-tool \
+    --fetch-exe /mnt/c/LSDTopoTools/lsdtt3/build/lsdtt-fetch-raster \
+    --samples S169WTS035 --freeze
+```
+
+You can still bypass built-in execution with `--riversand-csv` (out-of-band
+results) or `--riversand-cmd` (external invocation template).
+
 ### 7.8 Plottable outputs
 
 Every cosmo test family writes tidy long-format CSVs into the test output
@@ -1037,6 +1138,11 @@ documentation figures.
 | `analytic_vs_integrator.csv` | the full E7 comparison grid with relative differences |
 | `cronus_fixture_samples.csv` | the 15-sample comparison fixture (inputs) |
 | `cronus_comparison.csv` | per-sample ε from lsdtt vs CRONUS St/Lm/LSDn with percent differences |
+| `cronus_comparison_lsdn.csv` | Phase 7/5 LSDn-column comparison vs frozen CRONUS reference at `t=0` and `t=Gamma/eps` |
+| `cronus_comparison_geomag_full.csv` | Phase 5 G3 full-inversion comparison vs CRONUS `Lm`/`LSDn` with explicit `solve_status` |
+| `geomag_on_off_LSDTT1.csv` | equatorial (`LSDTT-1`) geomag ON/OFF delta sweep for §6c(A) |
+| `geomag_era40_fixture_validation.csv` | real-atmosphere ERA40 pressure/scaling deltas vs standard atmosphere over the 15-point fixture |
+| `geomag_scaling.csv` | six frozen Knudsen-record G4 trajectory triplets (plus modern ratio context) |
 | `lsdn_vs_stone.csv` | LSDn against Stone across the fixture grid |
 | `lsdn_scaling_surface.csv` | the LSDn scaling factor over the (lat, p) fixture grid |
 | `lsdn_surface_vs_direct.csv` | time-averaged surface against the direct per-pixel loop |
@@ -1044,6 +1150,11 @@ documentation figures.
 | `stone_paleomag_surface_vs_direct.csv`, `stone_paleomag_resolution_sweep.csv` | the same pair for the Stone palaeomagnetic path |
 | `g4_paleomag_refreeze.csv` | per-triplet old/new/shift for the six geomagnetic goldens — written every run, as a report; the driver never edits the goldens |
 | `lsdn_pixel_vs_lumped.csv` | per-basin per-pixel LSDn against LSDn evaluated once at the basin's published centre |
+
+Tracked/frozen realworld artefacts (under `tests/expected/cosmo/published/`) also
+include riversand summaries, e.g.
+`dethier2014_riversand_summary.csv` from
+`tests/scripts/run_cosmo_riversand_comparison.py`.
 
 ### 7.9 LSDn production scaling, and what "validated" means for it
 
@@ -1235,16 +1346,16 @@ away from `t = 0`, because the raster documents `t <= 0` as "no change" while th
 column evaluates the step there; equating them would erase a real documented
 difference that another test asserts.
 
-**One convention still differs, and it is pinned rather than assumed away.** The
+**They also share one production-scaling convention, as of 2026-07-28.** The
 raster folds production scaling and shielding *together* through the Vermeesch
 redistribution — including the `S_tot > 1` branch that reproduces CRONUS v3 at
-altitude — whereas the column applies production scaling as a flat `P0` multiply.
-Measured, that is −14.9 % at a scaling of 0.5 and +5.4 % at 1.4. Routing the same
-factor through the column's *shielding* argument instead reproduces the raster
-exactly, which is what identifies it as a convention difference rather than an
-arithmetic error. The gap is pinned at its measured values so it cannot drift
-while the question is open; the raster is the reference, since it is what the
-numerics sentinel pins and what the altitude validation exercises.
+altitude — and the column now does the same. It previously applied production
+scaling as a flat `P0` multiply, which put it −14.9 % out at a scaling of 0.5 and
++5.4 % at 1.4, and a guard meant factors above 1 were silently ignored, so the
+column could not express altitude enhancement at all. Both are gone: one factor,
+one mechanism, verified equal to the raster's own values. The test asserts the
+sharp form — production scaling and shielding are **interchangeable**, because
+only their product reaches the physics.
 
 #### Arbitrary erosion histories
 
@@ -1269,14 +1380,133 @@ erosion and the mass-removal bookkeeping cancel. Removals are covered twice,
 because they take two different code paths depending on whether they sit at the
 most recent row or inside the record.
 
-**One robustness gap is pinned open.** The history validator checks the
-background-row sentinel, rate/removal exclusivity and removal timing, but not
-that the record is *ordered in time*. Index 0 must be the most recent step; a
-reversed record feeds negative timesteps into the solver and returns a
-confidently wrong number — 72 357 against 178 467, 147 % apart — with no error,
-no warning and no NaN. It is pinned as an open gap rather than fixed, because the
-fix is a hard failure in locked code that would reject records some users may
-hold today.
+**Unordered records are rejected, as of 2026-07-28.** The history validator
+originally checked the background-row sentinel, rate/removal exclusivity and
+removal timing, but not that the record was *ordered in time*. Index 0 must be
+the most recent step; a reversed record fed negative timesteps into the solver
+and returned a confidently wrong number — 72 357 against 178 467, 147 % apart —
+with no error, no warning and no NaN. It now throws, with a message naming the
+rule and how to fix the file. This deliberately rejects records that previously
+ran, because what they returned was meaningless.
+
+The check earns its keep immediately: it caught a mis-ordered fixture inside this
+very test suite, which had been passing only because its erosion rate was
+constant, so the negative timesteps cancelled.
+
+#### The multi-isotope step-change raster
+
+`lsdtt-cosmo-prediction`'s `calculate_multi_isotope_step_change` carries Be-10,
+Al-26 and C-14 through the *same* step change at every pixel and writes the two
+isotope-ratio rasters alongside the three concentrations.
+
+It is not a wrapper around three runs. All three come from **one particle
+evolution per pixel**, with the three F arrays scaled independently — which
+matters for correctness, not just cost: a ratio is only meaningful if both
+members saw an identical scenario, and computing them together makes that true by
+construction rather than by careful parameter matching. The cost is close to a
+single-nuclide run.
+
+The load-bearing test is **bitwise equality**: each nuclide from the multi kernel
+must equal the single-nuclide kernel exactly — not to a tolerance — across four
+shielding values, five times and three nuclides. Anything less would mean a
+second implementation of the same physics, which is precisely the situation that
+produced the column-versus-raster convention bugs. The remaining checks confirm
+the three really are one scenario (the ratios evolve, and C-14's moves further
+over the same window), that all three masks agree so a ratio can never divide a
+valid pixel by a nodata one, and that the documented `t <= 0` branch still
+returns steady state at the new rate.
+
+Ratios are formed at the output layer rather than in the library, so the nodata
+policy for a zero denominator lives with the writer; pixels with zero Be-10 are
+reported and written as nodata rather than silently producing infinities.
+
+#### Arbitrary erosion histories, per pixel
+
+`calculate_multi_isotope_transient` is the general case of which the step-change
+mode is the two-row special case: the three nuclides carried through a
+user-supplied erosion history at every pixel, with the history uniform in time
+and the production scaling and shielding varying per pixel.
+
+The history walk is **not** reimplemented in the raster kernel — each pixel calls
+`lsdtt_crn_column::run_transient`, the same code the column tool drives. A raster
+kernel with its own copy of the walk would be a second implementation of the same
+physics, which is the failure mode this codebase has already been bitten by
+twice.
+
+The load-bearing test exploits the special-case relationship: a two-row history
+must reproduce the multi-isotope step-change raster, which is itself
+bitwise-pinned against the single-nuclide kernel, which the sentinel pins.
+Measured agreement is **bitwise zero** across three nuclides, two shielding
+values and three times — so this path inherits the existing pinning rather than
+needing a frozen file of its own. A separate check confirms a three-phase history
+gives a materially different answer from any single step, without which the
+general kernel would be doing nothing the step kernel could not.
+
+The history is validated **once, before** the parallel region, for two reasons: an
+exception escaping an OpenMP loop is undefined behaviour, and a malformed history
+should fail immediately rather than after most of a long raster has been
+computed. A time-reversed history is rejected at the CLI boundary with the
+message naming the ordering rule.
+
+Cost is `O(pixels × history rows)` and therefore much higher than the
+step-change kernel. That is inherent — an arbitrary history has no closed form —
+and the CLI says so when the mode runs.
+
+#### Two-nuclide diagnostics: burial, and inverting a ratio pair
+
+One nuclide gives one number, so it resolves one unknown — an apparent erosion
+rate, assuming steady erosion and no burial. A *pair* with different half-lives
+gives two numbers and can resolve two unknowns. `lsdtt_crn_diagnostics` provides
+the two cases that matter: burial/inheritance from a fast/slow pair, and
+(erosion rate, time since change) from a step-change pair.
+
+These diagnostics are now exposed on `lsdtt-cosmo-column-tool` in both single
+and batch forms (`burial_pair`, `step_pair`, `burial_pair_batch`,
+`step_pair_batch`). Pair choice is generic: users can choose fast/slow members
+from `Be10`, `Al26`, `C14`. Solver status is surfaced explicitly as
+`status`/`status_code`; non-identifiable outcomes (`not unique`, `no solution`)
+are first-class outputs, never silent drops.
+
+These **invert** the forward models the rest of the suite pins, so the decisive
+test is a **round trip** — forward-model at known inputs, invert, require the
+inputs back. That is much stronger than freezing outputs: a frozen value only
+proves the answer has not changed, whereas a round trip proves the inverse
+actually inverts *this* forward model. Measured worst errors: **5.2e-16** on the
+pre-burial erosion rate, **9.3e-15** on the burial age, **6.4e-15** on the new
+erosion rate and **1.0e-14** on the time since change.
+
+Both solvers avoid a two-dimensional Newton iteration, which would be fragile
+here. Burial reduces to **one** dimension because the burial time can be
+eliminated analytically from the ratio equation. The step-change pair is
+genuinely two-dimensional but is solved as *nested* one-dimensional problems: for
+a trial time, the slow nuclide is inverted for the rate that reproduces it
+(monotone, bracketed), leaving the fast nuclide's residual a function of time
+alone.
+
+**Non-identifiability is reported, not fitted.** The time axis is scanned to find
+sign changes *before* bisecting, so more than one root is detected rather than
+hidden. This matters: an Al-26/Be-10 pair cannot date a 6 kyr transient — Al-26's
+0.7 Myr half-life makes it nearly insensitive on that timescale, and its residual
+crosses zero twice — so the solver returns "not unique". Disabling that safeguard
+makes it converge on *the true answer*, 6000 yr, which is exactly why the test
+asserts the status rather than the value: being right by luck is not the same as
+being identifiable, and a solver must not present a coin flip as a measurement.
+
+The burial diagnostic also reports what a single-nuclide study would have
+concluded. Ignoring 1 Myr of burial on a sample eroding at 0.005 g cm⁻² yr⁻¹
+makes a Be-10-only analysis report a rate **69.5 % too fast**, because burial
+removes nuclides that a steady-erosion model can only explain by faster erosion.
+The direction of that bias is pinned, so the diagnostic cannot be wired up
+backwards.
+
+Pair modes also report uncertainty summaries from concentration-corner re-solves
+(`fast ± σ_fast`, `slow ± σ_slow`): lower/upper bounds (`*_lo_*`, `*_hi_*`),
+an internal uncertainty (`*_unc_int_*`, half-range), and an external
+uncertainty (`*_unc_ext_*`, internal plus optional production/decay terms in
+quadrature). The number of converged corners used is reported (`*_unc_n_valid`)
+so a partially non-convergent corner set is visible rather than hidden. The
+`unc_int`/`unc_ext` naming matches the CRONUS internal/external convention used
+throughout this test regime.
 
 #### Multi-isotope transients, and two expectations the data corrected
 
@@ -1347,7 +1577,8 @@ above 1, so the altitude-enhancement branch is covered too.
 #### Where the expensive parts run
 
 The per-pixel side of (a) needs real DEMs, so it follows the §7.7 pattern: a
-`cosmo_realworld` script fetches keyless COP30, runs 50 basins, and freezes the
+`cosmo_realworld` script (`run_cosmo_validation.py` / `run_cosmo_lsdn_pixel_vs_lumped.py`)
+fetches keyless COP30, runs 50 basins, and freezes the
 per-basin means into a small tracked CSV; the default `unit` suite then does the
 cheap comparison against that frozen artefact. The frozen artefacts are
 **check-only by default** and regenerate only under an explicit `--freeze`. A

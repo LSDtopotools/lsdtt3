@@ -94,6 +94,40 @@ void lsdtt_crn_column::check_erosion_time_series() const
     }
     if (rate_vec_[0] == 0.0 && time_vec_[0] != 0.0)
         throw std::runtime_error("lsdtt_crn_column: first removal event must be at time=0.");
+
+    // TIME ORDERING (added 2026-07-28). run_transient walks the record with
+    // dt = time_vec_[ts] - time_vec_[ts-1], and dt = time_vec_[0] for the most
+    // recent step, so index 0 must be the YOUNGEST row and yr BP must increase
+    // with index. Without this check a reversed record fed negative dt straight
+    // into update_conc and returned a confidently wrong number -- measured
+    // 72357 forward against 178467 reversed -- with no error, no warning and no
+    // NaN. Silence was the whole problem, so this is a hard failure.
+    //
+    // Equal times are legal ONLY for a removal event, which is instantaneous
+    // and is required above to share the time of the row before it.
+    if (time_vec_[0] < 0.0)
+        throw std::runtime_error("lsdtt_crn_column: first row time must be >= 0 "
+                                 "(yr BP of the most recent step); got " +
+                                 std::to_string(time_vec_[0]) + ".");
+    for (int i = 1; i < n-1; ++i)
+    {
+        if (time_vec_[i] < time_vec_[i-1])
+            throw std::runtime_error(
+                "lsdtt_crn_column: erosion history must be ordered with index 0 "
+                "the MOST RECENT row and yr BP increasing with index, but row " +
+                std::to_string(i) + " (time " + std::to_string(time_vec_[i]) +
+                ") is younger than row " + std::to_string(i-1) + " (time " +
+                std::to_string(time_vec_[i-1]) + "). A reversed record would "
+                "produce negative timesteps and a silently wrong result. "
+                "Reverse the rows, keeping time = -9999 last.");
+        if (time_vec_[i] == time_vec_[i-1] && removal_vec_[i] == 0.0)
+            throw std::runtime_error(
+                "lsdtt_crn_column: rows " + std::to_string(i-1) + " and " +
+                std::to_string(i) + " share time " +
+                std::to_string(time_vec_[i]) + " but row " + std::to_string(i) +
+                " is not a removal event, so it would contribute a zero-length "
+                "timestep.");
+    }
 }
 
 // 
@@ -149,7 +183,43 @@ lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
         throw std::runtime_error("lsdtt_crn_column::run_transient: erosion time series "
                                  "not loaded or has fewer than 2 rows.");
 
-    lsdtt_crn_parameters params = make_params(production_scaling, muon_scheme);
+    return run_transient_impl(sampling_depths_m,
+                              make_params(production_scaling, muon_scheme),
+                              initial_10Be, initial_26Al, initial_14C);
+}
+
+// Raster-convention overload: production scaling and shielding go through
+// scale_F_values as one factor (see make_params_shielded).
+std::vector<CrnColumnSample>
+lsdtt_crn_column::run_transient(const std::vector<double>& sampling_depths_m,
+                                 double production_scaling,
+                                 double total_shielding,
+                                 const std::string& muon_scheme,
+                                 double initial_10Be,
+                                 double initial_26Al,
+                                 double initial_14C) const
+{
+    return run_transient_impl(sampling_depths_m,
+                              make_params_shielded(production_scaling,
+                                                   total_shielding, muon_scheme),
+                              initial_10Be, initial_26Al, initial_14C);
+}
+
+// Shared body. The ONLY thing the two overloads differ in is the parameter
+// object, so the evolution itself lives in exactly one place.
+std::vector<CrnColumnSample>
+lsdtt_crn_column::run_transient_impl(const std::vector<double>& sampling_depths_m,
+                                      const lsdtt_crn_parameters& params,
+                                      double initial_10Be,
+                                      double initial_26Al,
+                                      double initial_14C) const
+{
+    int n_steps   = static_cast<int>(time_vec_.size());
+    int n_samples = static_cast<int>(sampling_depths_m.size());
+
+    if (n_steps < 2)
+        throw std::runtime_error("lsdtt_crn_column::run_transient: erosion time series "
+                                 "not loaded or has fewer than 2 rows.");
 
     // Background (long-term) erosion rate
     double ss_rate_m_yr  = rate_vec_[n_steps-1];
@@ -282,19 +352,29 @@ lsdtt_crn_column::make_params_shielded(double production_scaling,
                                         double total_shielding,
                                         const std::string& muon_scheme) const
 {
-    lsdtt_crn_parameters p = make_params(production_scaling, muon_scheme);
-    // Guarded exactly as the caller that this consolidates did, so
-    // total_shielding == 1.0 leaves the parameter object bit-identical to the
-    // single-factor path. scale_F_values is a Newton solve; running it for a
-    // shielding of exactly 1 would be a no-op in exact arithmetic but not
-    // necessarily bit-for-bit, so the guard is load-bearing, not an
-    // optimisation.
-    if (total_shielding < 1.0)
-    {
-        p.scale_F_values(total_shielding, "Be10");
-        p.scale_F_values(total_shielding, "Al26");
-        p.scale_F_values(total_shielding, "C14");
-    }
+    // THE RASTER'S RULE, EXACTLY (changed 2026-07-28).
+    // calculate_crn_concentration_raster* forms S_tot = production_scaling x
+    // shielding and puts the PRODUCT through scale_F_values -- the Vermeesch
+    // virtual-attenuation redistribution -- with no guard, including the
+    // S_tot > 1 negative-effective-depth branch that reproduces CRONUS v3 at
+    // altitude. That is the convention the numerics sentinel pins and every
+    // validated comparison exercises, so it is the reference.
+    //
+    // This previously applied production scaling through a flat P0 multiply
+    // (make_params) and only shielding through scale_F_values, which made the
+    // column disagree with the raster by -14.87 % at S_tot = 0.5 and +5.39 % at
+    // 1.4 -- and, because of a `< 1.0` guard, made it unable to express
+    // altitude enhancement at all. Both are gone: one factor, one mechanism.
+    //
+    // make_params and the single-factor overloads are deliberately NOT changed;
+    // they remain the flat-P0 form for callers that want it, and run_transient
+    // still uses them unless the shielded overload is called.
+    lsdtt_crn_parameters p;
+    p.reset_scaling(muon_scheme);
+    const double s_tot = production_scaling * total_shielding;
+    p.scale_F_values(s_tot, "Be10");
+    p.scale_F_values(s_tot, "Al26");
+    p.scale_F_values(s_tot, "C14");
     return p;
 }
 

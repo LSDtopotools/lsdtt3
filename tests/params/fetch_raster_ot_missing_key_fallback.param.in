@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_ot_missing_key_fallback
+
+# Invalid bbox (west > east) ensures deterministic failure without network.
+west: 10.5
+south: 46.4
+east: 10.3
+north: 46.6
+
+dem_source: opentopography
+allow_auth_fallback_to_keyless: true
+auth_fallback_source: cop30_aws

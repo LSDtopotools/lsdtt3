@@ -121,8 +121,8 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production parameter scheme.",
-        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
+        "Muon production parameter scheme (BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD).",
+        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD.",
         "CRN physics", "param", ""};
 
     string_default_map["scaling_scheme"] = "stone";
@@ -242,6 +242,30 @@ int main(int argc, char* argv[])
         "Defaults to <nuclide>_uncertainty. If absent, uncertainty bounds are skipped.",
         "Sample points", "param", ""};
 
+    bool_default_map["propagate_production_uncertainty"] = false;
+    help_map["propagate_production_uncertainty"] = {"bool","false",
+        "If true, add a production-calibration term to external erosion-rate uncertainty.",
+        "Added in quadrature with concentration-derived uncertainty using production_rel_sigma.",
+        "Sample points", "switch", ""};
+
+    float_default_map["production_rel_sigma"] = 0.0f;
+    help_map["production_rel_sigma"] = {"float","0",
+        "Relative 1-sigma production uncertainty (dimensionless, e.g. 0.05 for 5%).",
+        "Used only when propagate_production_uncertainty is true.",
+        "Sample points", "param", ""};
+
+    bool_default_map["propagate_decay_uncertainty"] = false;
+    help_map["propagate_decay_uncertainty"] = {"bool","false",
+        "If true, add a decay-constant term to external erosion-rate uncertainty.",
+        "Added in quadrature with concentration-derived uncertainty using decay_rel_sigma.",
+        "Sample points", "switch", ""};
+
+    float_default_map["decay_rel_sigma"] = 0.0f;
+    help_map["decay_rel_sigma"] = {"float","0",
+        "Relative 1-sigma decay uncertainty term (dimensionless).",
+        "Used only when propagate_decay_uncertainty is true.",
+        "Sample points", "param", ""};
+
     string_default_map["standardisation_column_name"] = "standardisation";
     help_map["standardisation_column_name"] = {"string","standardisation",
         "Column name for the AMS standardisation name.",
@@ -356,6 +380,14 @@ int main(int argc, char* argv[])
     // Derive defaults that depend on other parameters
     const std::string nuclide     = sf["nuclide"];
     const std::string muon_scheme = sf["muon_scheme"];
+    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
+    {
+        std::cerr << "FATAL: unknown muon_scheme \"" << muon_scheme
+                  << "\". Allowed values: "
+                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
+                  << ".\n";
+        return 1;
+    }
     const double rock_density_kg_m3 = static_cast<double>(ff["rock_density_kg_m3"]);
 
     std::string concentration_col_name = sf["concentration_column_name"];
@@ -375,8 +407,25 @@ int main(int argc, char* argv[])
     const int    snap_radius      = ifs["snap_search_radius_pixels"];
 
     const bool   self_consistent_age = bf["self_consistent_age"];
+    const bool   propagate_prod_unc  = bf["propagate_production_uncertainty"];
+    const bool   propagate_decay_unc = bf["propagate_decay_uncertainty"];
     const double sc_age_tol      = static_cast<double>(ff["self_consistent_age_tol"]);
     const int    sc_age_max_iter = ifs["self_consistent_age_max_iter"];
+    const double production_rel_sigma = static_cast<double>(ff["production_rel_sigma"]);
+    const double decay_rel_sigma      = static_cast<double>(ff["decay_rel_sigma"]);
+
+    if (propagate_prod_unc && production_rel_sigma < 0.0)
+    {
+        std::cerr << "FATAL: production_rel_sigma must be >= 0 (got "
+                  << production_rel_sigma << ").\n";
+        return 1;
+    }
+    if (propagate_decay_unc && decay_rel_sigma < 0.0)
+    {
+        std::cerr << "FATAL: decay_rel_sigma must be >= 0 (got "
+                  << decay_rel_sigma << ").\n";
+        return 1;
+    }
     if (self_consistent_age)
     {
         if (!(sc_age_tol > 0.0))
@@ -582,6 +631,25 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    lsdtt::lsdtt_raster_cpu pressure_raster;
+    const lsdtt::lsdtt_raster_cpu* pressure_for_inversion = nullptr;
+    if (muon_scheme == "balcoCRONUSv3PD")
+    {
+        std::cout << "Calculating pressure raster for balcoCRONUSv3PD"
+                  << " (" << atm_report << " atmosphere)...\n";
+        try
+        {
+            pressure_raster = lsdtt::calculate_pressure_raster(
+                filled_dem, crn_nc, atm_source);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: pressure raster failed: " << e.what() << "\n";
+            return 1;
+        }
+        pressure_for_inversion = &pressure_raster;
+    }
+
     if (bf["write_production_raster"])
     {
         std::string prod_path = write_base + "_PROD.tif";
@@ -729,21 +797,31 @@ int main(int argc, char* argv[])
 
     if (has_sample_name)
         csv_out << "sample_name,";
-    csv_out << "latitude,longitude,"
+    csv_out << "nuclide,latitude,longitude,"
+            << "effective_pressure_hpa,centroid_latitude_deg,"
             << "concentration_" << nuclide << ","
             << "predicted_conc_" << nuclide << ","
             << "apparent_eff_e_g_cm2_yr,"
+            << "apparent_e_mm_kyr,"
             << "apparent_e_mm_yr";
     if (has_uncertainty)
     {
         csv_out << ",concentration_minus_" << nuclide
                 << ",predicted_conc_minus_" << nuclide
                 << ",apparent_eff_e_minus_g_cm2_yr"
+                << ",apparent_e_minus_mm_kyr"
                 << ",apparent_e_minus_mm_yr"
                 << ",concentration_plus_" << nuclide
                 << ",predicted_conc_plus_" << nuclide
                 << ",apparent_eff_e_plus_g_cm2_yr"
-                << ",apparent_e_plus_mm_yr";
+                << ",apparent_e_plus_mm_kyr"
+                << ",apparent_e_plus_mm_yr"
+                << ",apparent_eff_e_unc_int_g_cm2_yr"
+                << ",apparent_e_unc_int_mm_kyr"
+                << ",apparent_e_unc_int_mm_yr"
+                << ",apparent_eff_e_unc_ext_g_cm2_yr"
+                << ",apparent_e_unc_ext_mm_kyr"
+                << ",apparent_e_unc_ext_mm_yr";
     }
     // The converged age is a per-sample result, so it belongs in the output next
     // to the rate it produced; n_iter and converged make a non-converged sample
@@ -817,12 +895,60 @@ int main(int argc, char* argv[])
         }
 
         std::int64_t outlet_node = snapped.snapped_flat;
+        lsdtt::lsdtt_flat_index_slice up = flow.upslope_nodes(outlet_node);
 
         // Convert snapped position to WGS84 lat/lon for output
         lsdtt::lsdtt_lonlat ll = lsdtt::cell_center_to_lonlat(
             meta, snapped.snapped_row, snapped.snapped_col);
         double out_lat = ll.latitude;
         double out_lon = ll.longitude;
+        double basin_centroid_lat_deg = std::numeric_limits<double>::quiet_NaN();
+        double eff_pressure_hpa = std::numeric_limits<double>::quiet_NaN();
+
+        {
+            const int nc_cols = meta.n_cols;
+            double sum_lat = 0.0;
+            std::int64_t n_lat = 0;
+            double sum_p = 0.0;
+            std::int64_t n_p = 0;
+
+            const auto* p_data = pressure_for_inversion
+                ? &pressure_for_inversion->get_data_array()
+                : nullptr;
+            const auto* p_mask = pressure_for_inversion
+                ? &pressure_for_inversion->get_mask_array()
+                : nullptr;
+
+            for (std::size_t kk = 0; kk < up.size(); ++kk)
+            {
+                std::int64_t f = up[kk];
+                int rr = static_cast<int>(f / nc_cols);
+                int cc = static_cast<int>(f % nc_cols);
+
+                lsdtt::lsdtt_lonlat pll = lsdtt::cell_center_to_lonlat(meta, rr, cc);
+                sum_lat += pll.latitude;
+                ++n_lat;
+
+                if (p_data != nullptr && p_mask != nullptr && (*p_mask)(rr, cc))
+                {
+                    sum_p += static_cast<double>((*p_data)(rr, cc));
+                    ++n_p;
+                }
+            }
+
+            if (n_lat > 0) basin_centroid_lat_deg = sum_lat / static_cast<double>(n_lat);
+            if (n_p > 0)   eff_pressure_hpa = sum_p / static_cast<double>(n_p);
+        }
+
+        // Fallbacks if the per-basin aggregates were unavailable.
+        if (!std::isfinite(basin_centroid_lat_deg)) basin_centroid_lat_deg = out_lat;
+        if (!std::isfinite(eff_pressure_hpa) && pressure_for_inversion != nullptr)
+        {
+            const auto& p_data = pressure_for_inversion->get_data_array();
+            const auto& p_mask = pressure_for_inversion->get_mask_array();
+            if (p_mask(snapped.snapped_row, snapped.snapped_col))
+                eff_pressure_hpa = static_cast<double>(p_data(snapped.snapped_row, snapped.snapped_col));
+        }
 
         std::cout << "\n--- Sample " << (csv_row + 1)
                   << (has_sample_name ? ("  " + get_col_str(sample_col_name, csv_row)) : "")
@@ -842,7 +968,6 @@ int main(int argc, char* argv[])
             const auto& ps_mask = prod_raster.get_mask_array();
             const auto& dz_data = dem.get_data_array();
             const auto& dz_mask = dem.get_mask_array();
-            lsdtt::lsdtt_flat_index_slice up = flow.upslope_nodes(outlet_node);
             double sum_scal = 0.0, sum_elev = 0.0;
             std::int64_t n_pix = 0;
             for (std::size_t kk = 0; kk < up.size(); ++kk)
@@ -902,7 +1027,8 @@ int main(int argc, char* argv[])
         double erate = lsdtt::calculate_eff_erate_from_conc(
             conc, nuclide, muon_scheme,
             *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-            self_shield_raster, flow, outlet_node, predicted_conc);
+            self_shield_raster, pressure_for_inversion,
+            flow, outlet_node, predicted_conc);
 
         if (self_consistent_age)
         {
@@ -945,7 +1071,8 @@ int main(int argc, char* argv[])
                 erate = lsdtt::calculate_eff_erate_from_conc(
                     conc, nuclide, muon_scheme,
                     *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-                    self_shield_raster, flow, outlet_node, predicted_conc);
+                    self_shield_raster, pressure_for_inversion,
+                    flow, outlet_node, predicted_conc);
 
                 const double rel = (erate > 0.0)
                     ? std::fabs(erate - erate_prev) / erate
@@ -975,9 +1102,12 @@ int main(int argc, char* argv[])
 
         if (has_sample_name)
             csv_out << get_col_str(sample_col_name, csv_row) << ",";
-        csv_out << out_lat << "," << out_lon << ","
+        csv_out << nuclide << ","
+                << out_lat << "," << out_lon << ","
+                << eff_pressure_hpa << "," << basin_centroid_lat_deg << ","
                 << conc << "," << predicted_conc << ","
-                << erate << "," << erate * e_scale;
+                << erate << "," << erate * e_scale
+                << "," << erate * e_scale;
 
         // Uncertainty bounds
         if (has_uncertainty)
@@ -1002,19 +1132,37 @@ int main(int argc, char* argv[])
             double erate_minus = lsdtt::calculate_eff_erate_from_conc(
                 conc_minus, nuclide, muon_scheme,
                 *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-                self_shield_raster, flow, outlet_node, pred_minus);
+                self_shield_raster, pressure_for_inversion,
+                flow, outlet_node, pred_minus);
 
             double conc_plus = conc + uncert;
             double pred_plus = 0.0;
             double erate_plus = lsdtt::calculate_eff_erate_from_conc(
                 conc_plus, nuclide, muon_scheme,
                 *prod_for_inversion, topo_shield_raster, snow_shield_raster,
-                self_shield_raster, flow, outlet_node, pred_plus);
+                self_shield_raster, pressure_for_inversion,
+                flow, outlet_node, pred_plus);
+
+            const double unc_int_g_cm2_yr = 0.5 * std::fabs(erate_plus - erate_minus);
+            const double unc_prod_g_cm2_yr =
+                propagate_prod_unc ? std::fabs(erate) * production_rel_sigma : 0.0;
+            const double unc_decay_g_cm2_yr =
+                propagate_decay_unc ? std::fabs(erate) * decay_rel_sigma : 0.0;
+            const double unc_ext_g_cm2_yr = std::sqrt(
+                unc_int_g_cm2_yr * unc_int_g_cm2_yr +
+                unc_prod_g_cm2_yr * unc_prod_g_cm2_yr +
+                unc_decay_g_cm2_yr * unc_decay_g_cm2_yr);
 
             csv_out << "," << conc_minus << "," << pred_minus << ","
                     << erate_minus << "," << erate_minus * e_scale
+                    << "," << erate_minus * e_scale
                     << "," << conc_plus  << "," << pred_plus  << ","
-                    << erate_plus  << "," << erate_plus  * e_scale;
+                    << erate_plus  << "," << erate_plus  * e_scale
+                    << "," << erate_plus  * e_scale
+                    << "," << unc_int_g_cm2_yr << "," << unc_int_g_cm2_yr * e_scale
+                    << "," << unc_int_g_cm2_yr * e_scale
+                    << "," << unc_ext_g_cm2_yr << "," << unc_ext_g_cm2_yr * e_scale
+                    << "," << unc_ext_g_cm2_yr * e_scale;
 
             // NOTE: the +/- bounds are inverted against the CENTRAL sample's
             // converged production raster, not against one re-converged at each
@@ -1024,6 +1172,10 @@ int main(int argc, char* argv[])
             // second, coupled solve. The difference is second order: the bounds
             // shift tau by the same relative amount as the rate.
             std::cout << "  Uncertainty    : " << uncert << " atoms/g\n"
+                      << "  Erate unc int  : " << unc_int_g_cm2_yr * e_scale
+                      << " mm/kyr\n"
+                      << "  Erate unc ext  : " << unc_ext_g_cm2_yr * e_scale
+                      << " mm/kyr\n"
                       << "  Erate range    : ["
                       << erate_minus * e_scale << ", "
                       << erate_plus  * e_scale << "] mm/kyr\n";
