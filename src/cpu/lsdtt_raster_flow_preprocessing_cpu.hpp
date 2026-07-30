@@ -251,7 +251,7 @@ lsdtt_raster_cpu breach_depressions(
 lsdtt_raster_cpu breach_depressions_least_cost(
     const lsdtt_raster_cpu& raster,
     int   max_dist       = 1000,
-    float max_cost       = std::numeric_limits<float>::max(),
+    float max_cost       = (std::numeric_limits<float>::max)(),
     bool  min_dist       = true,
     float flat_increment = 0.0f,
     bool  fill_remainder = true,

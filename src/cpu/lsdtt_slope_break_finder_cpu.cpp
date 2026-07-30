@@ -40,7 +40,7 @@ namespace lsdtt {
 // Criterion (b) retains large isolated curvilinear features that are separated
 // from the seeded network by a small gap.
 // -----------------------------------------------------------------------------
-static lsdtt_raster_cpu keep_adjacent_to(
+[[maybe_unused]] static lsdtt_raster_cpu keep_adjacent_to(
     const lsdtt_raster_cpu& candidate,
     const lsdtt_raster_cpu& prev,
     int                     min_isolated_pixels)
@@ -156,7 +156,7 @@ static lsdtt_raster_cpu keep_adjacent_to(
 // Returns a binary raster: 1 where either a or b is 1 (union semantics).
 // Nodata follows intersection of masks.
 // -----------------------------------------------------------------------------
-static lsdtt_raster_cpu binary_or(
+[[maybe_unused]] static lsdtt_raster_cpu binary_or(
     const lsdtt_raster_cpu& a,
     const lsdtt_raster_cpu& b)
 {
@@ -185,7 +185,7 @@ static lsdtt_raster_cpu binary_or(
 //
 // Restricts a curvature raster to pixels where the flat mask is foreground.
 // -----------------------------------------------------------------------------
-static lsdtt_raster_cpu mask_to_flat(
+[[maybe_unused]] static lsdtt_raster_cpu mask_to_flat(
     const lsdtt_raster_cpu& curv,
     const lsdtt_raster_cpu& flat_mask)
 {

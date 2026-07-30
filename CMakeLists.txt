@@ -49,6 +49,7 @@ if(MSVC)
     add_compile_options(
         /W4
         /wd4100              # unreferenced formal parameter
+        /wd4189              # local variable initialized but not referenced
     )
 else()
     add_compile_options(

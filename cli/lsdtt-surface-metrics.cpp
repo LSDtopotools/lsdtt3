@@ -1575,14 +1575,14 @@ int main(int argc, char* argv[])
             for (const std::string& method_str : methods)
             {
                 // Build the path to the slope_degrees raster written in Step 3.
-                const std::string input_path = pp.make_output_path(polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str));
+                const std::string slope_input_path = pp.make_output_path(polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str));
 
-                std::cout << "\nOpening slope degrees raster: " << input_path << "\n";
+                std::cout << "\nOpening slope degrees raster: " << slope_input_path << "\n";
 
                 lsdtt::lsdtt_data_loader slope_loader;
                 try
                 {
-                    slope_loader.open_raster(input_path);
+                    slope_loader.open_raster(slope_input_path);
                 }
                 catch (const std::exception& e)
                 {

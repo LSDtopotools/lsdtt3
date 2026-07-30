@@ -312,9 +312,9 @@ void clean_valley_patches(
             const double eu =
                 (dist_mask[i] && std::isfinite(dist_to_channel[i]))
                     ? static_cast<double>(dist_to_channel[i]) : 0.0;
-            const double allowed =
+            const double allowed_detour =
                 std::max(max_detour_ratio * eu, 10.0 * cell);
-            if (static_cast<double>(geo[i]) > allowed) valley[i] = k_off;
+            if (static_cast<double>(geo[i]) > allowed_detour) valley[i] = k_off;
         }
     }
 
@@ -475,7 +475,13 @@ double find_valley_break(
     if (nb < 8 || hi_log - lo_log < 1e-9) return -1.0;
     const double bw = (hi_log - lo_log) / nb;
 
-    std::vector<double> sm(hist.begin(), hist.end()), tmp(nb, 0.0);
+    std::vector<double> sm;
+    sm.reserve(hist.size());
+    for (const std::int64_t h : hist)
+    {
+        sm.push_back(static_cast<double>(h));
+    }
+    std::vector<double> tmp(nb, 0.0);
     for (int pass = 0; pass < 2; ++pass)
     {
         for (int b = 0; b < nb; ++b)
