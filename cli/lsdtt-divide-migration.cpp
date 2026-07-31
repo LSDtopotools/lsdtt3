@@ -17,8 +17,8 @@
 //   3. selects basins and extracts the interfluvial divides between units
 //   4. extracts channel heads and computes chi with an outlet-zero base
 //   5. measures relief and gradient from each head to its nearest divide
-//
-// Pair-level summary statistics and uncertainty are not yet implemented.
+//   6. optionally summarises each divide pair side against side, with means,
+//      A-minus-B deltas and an uncertainty (write_pair_summary_csv)
 //
 // Usage:
 //   lsdtt-divide-migration <path> <parameter_file>
@@ -37,9 +37,11 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <set>
+#include <utility>
 #include <limits>
 #include <iomanip>
 #include <vector>
@@ -436,26 +438,32 @@ int main(int argc, char* argv[])
 
     bool_default_map["write_pair_summary_csv"] = false;
     help_map["write_pair_summary_csv"] = {"bool","false",
-        "Write pair-level summary CSV.",
-        "Planned for phase-2 statistics; scaffold parameter provided now.",
+        "Write the side-vs-side pair summary CSV.",
+        "One row per divide pair with side means, A-minus-B deltas (A is the "
+        "LOWER-numbered unit) and an uncertainty per metric. Output path: "
+        "<write_fname>_divide_pair_summary.csv.",
         "Output", "io", ""};
 
     string_default_map["pair_uncertainty_method"] = "std_err";
     help_map["pair_uncertainty_method"] = {"string","std_err",
         "Uncertainty method for pair summaries.",
-        "Options: std_dev, std_err, bootstrap, ttest.",
+        "Options: std_dev (pooled standard deviation of the two sides), "
+        "std_err (standard error of the difference of means), bootstrap "
+        "(95% CI half-width of the bootstrapped delta), ttest (two-sided "
+        "Welch p-value). Needs two valid values on both sides, else NaN.",
         "Output", "param", "write_pair_summary_csv"};
 
     int_default_map["bootstrap_replicates"] = 1000;
     help_map["bootstrap_replicates"] = {"int","1000",
         "Bootstrap replicate count for pair summary uncertainty.",
-        "Used when pair_uncertainty_method is bootstrap.",
+        "Used when pair_uncertainty_method is bootstrap. Must be > 0.",
         "Output", "param", "pair_uncertainty_method"};
 
     int_default_map["bootstrap_seed"] = 5489;
     help_map["bootstrap_seed"] = {"int","5489",
         "Random seed for bootstrap uncertainty.",
-        "Used when pair_uncertainty_method is bootstrap.",
+        "Used when pair_uncertainty_method is bootstrap. The same seed and the "
+        "same input always give bit-identical output.",
         "Output", "param", "pair_uncertainty_method"};
 
     if (cli_args.help_requested)
@@ -973,63 +981,115 @@ int main(int argc, char* argv[])
     const std::vector<std::int64_t> selected_basin_outlet_flats =
         basin_manager.get_basin_outlet_flat_indices();
 
-    std::vector<lsdtt::lsdtt_divide_segment_record> divide_segments;
-    int segment_counter = 1;
+    // -------------------------------------------------------------------------
+    // Unit-pair divide search, driven by basin adjacency (plan §3.1).
+    //
+    // Only basins that touch on the grid can share a divide, so one pass over
+    // the basin cells decides which pairs are worth the (expensive) ridgeline
+    // extraction, instead of testing all N(N-1)/2 combinations and discovering
+    // non-adjacency only after the fact. The adjacency test is eight-connected
+    // and so returns a superset of the pairs that can produce a divide -- see
+    // find_adjacent_basin_pairs -- and the pairs come back in (i, j) ascending
+    // order, so the emitted segment order and segment_id assignment are exactly
+    // what the old nested loop produced.
+    // -------------------------------------------------------------------------
+    std::vector<lsdtt::lsdtt_flat_index_slice> basin_cells;
+    basin_cells.reserve(basin_manager.size());
     for (std::size_t i = 0; i < basin_manager.size(); ++i)
     {
+        basin_cells.push_back(basin_manager.basin_at(i).get_slice());
+    }
+
+    const std::string bc_text = sf.at("boundary_conditions");
+    const auto bc_char = [&bc_text](std::size_t k) -> char {
+        if (k >= bc_text.size()) return 'o';
+        return static_cast<char>(
+            std::tolower(static_cast<unsigned char>(bc_text[k])));
+    };
+    // N,E,S,W: an axis only wraps when both of its boundaries are periodic,
+    // matching lsdtt_basin_outline_cpu.
+    const bool periodic_ns = (bc_char(0) == 'p' && bc_char(2) == 'p');
+    const bool periodic_ew = (bc_char(1) == 'p' && bc_char(3) == 'p');
+
+    const std::vector<std::pair<int, int>> adjacent_basin_pairs =
+        lsdtt::find_adjacent_basin_pairs(
+            basin_cells, dem.get_meta().n_rows, dem.get_meta().n_cols,
+            periodic_ns, periodic_ew);
+
+    std::vector<lsdtt::lsdtt_divide_segment_record> divide_segments;
+    int segment_counter = 1;
+    int cached_outline_basin = -1;
+    std::optional<lsdtt::lsdtt_basin_outline_cpu> cached_outline;
+
+    for (const std::pair<int, int>& adjacent : adjacent_basin_pairs)
+    {
+        const std::size_t i = static_cast<std::size_t>(adjacent.first);
+        const std::size_t j = static_cast<std::size_t>(adjacent.second);
+
         const lsdtt::lsdtt_junction_basin_cpu& basin_i = basin_manager.basin_at(i);
         const std::int64_t flat_i = basin_i.get_basin_outlet_flat_index();
         const std::int32_t junc_i = basin_i.get_junction_number();
         const int unit_i = flat_to_unit_id.at(flat_i);
-        const lsdtt::lsdtt_basin_outline_cpu outline_i = basin_i.get_basin_outline();
 
-        for (std::size_t j = i + 1; j < basin_manager.size(); ++j)
+        const lsdtt::lsdtt_junction_basin_cpu& basin_j = basin_manager.basin_at(j);
+        const std::int64_t flat_j = basin_j.get_basin_outlet_flat_index();
+        const std::int32_t junc_j = basin_j.get_junction_number();
+        const int unit_j = flat_to_unit_id.at(flat_j);
+
+        if (unit_i == unit_j)
         {
-            const lsdtt::lsdtt_junction_basin_cpu& basin_j = basin_manager.basin_at(j);
-            const std::int64_t flat_j = basin_j.get_basin_outlet_flat_index();
-            const std::int32_t junc_j = basin_j.get_junction_number();
-            const int unit_j = flat_to_unit_id.at(flat_j);
-
-            if (unit_i == unit_j)
-            {
-                continue;
-            }
-
-            if (flow->is_upslope_of(flat_i, flat_j) || flow->is_upslope_of(flat_j, flat_i))
-            {
-                continue;
-            }
-
-            lsdtt::lsdtt_ridgeline_cpu shared_divide;
-            try
-            {
-                shared_divide = outline_i.get_interfluvial_divide_as_ridgeline(
-                    junc_i, junc_j, junction_network);
-            }
-            catch (const std::exception&)
-            {
-                continue;
-            }
-
-            if (shared_divide.empty())
-            {
-                continue;
-            }
-
-            const int ua = std::min(unit_i, unit_j);
-            const int ub = std::max(unit_i, unit_j);
-            lsdtt::lsdtt_divide_segment_record rec;
-            rec.pair_id = lsdtt::make_unit_pair_id(ua, ub);
-            rec.unit_a = ua;
-            rec.unit_b = ub;
-            rec.basin_junction_a = junc_i;
-            rec.basin_junction_b = junc_j;
-            rec.segment_id = segment_counter++;
-            rec.points = shared_divide.positions();
-            rec.length_m = shared_divide.total_length();
-            divide_segments.push_back(std::move(rec));
+            continue;
         }
+
+        if (flow->is_upslope_of(flat_i, flat_j) || flow->is_upslope_of(flat_j, flat_i))
+        {
+            continue;
+        }
+
+        // Pairs arrive with i ascending, so one outline serves every pair that
+        // shares its first basin and is built at most once per basin.
+        if (cached_outline_basin != adjacent.first)
+        {
+            cached_outline.emplace(basin_i.get_basin_outline());
+            cached_outline_basin = adjacent.first;
+        }
+
+        lsdtt::lsdtt_ridgeline_cpu shared_divide;
+        try
+        {
+            shared_divide = cached_outline->get_interfluvial_divide_as_ridgeline(
+                junc_i, junc_j, junction_network);
+        }
+        catch (const std::exception&)
+        {
+            continue;
+        }
+
+        if (shared_divide.empty())
+        {
+            continue;
+        }
+
+        const int ua = std::min(unit_i, unit_j);
+        const int ub = std::max(unit_i, unit_j);
+        lsdtt::lsdtt_divide_segment_record rec;
+        rec.pair_id = lsdtt::make_unit_pair_id(ua, ub);
+        rec.unit_a = ua;
+        rec.unit_b = ub;
+        rec.basin_junction_a = junc_i;
+        rec.basin_junction_b = junc_j;
+        rec.segment_id = segment_counter++;
+        rec.points = shared_divide.positions();
+        rec.length_m = shared_divide.total_length();
+        divide_segments.push_back(std::move(rec));
     }
+
+    // A unit made of several basins emits one fragment per adjacent basin pair.
+    // Join the fragments that are contiguous in space so that each row of the
+    // divide layer is one divide, while genuinely separate stretches between the
+    // same unit pair stay separate features.
+    divide_segments = lsdtt::merge_divide_fragments(
+        divide_segments, dem.get_meta().cell_size);
 
     // -------------------------------------------------------------------------
     // Channel-head + chi extraction (Phase F)
@@ -1190,10 +1250,11 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_vector_schema schema;
             schema.field_names = {
                 "pair_id", "unit_a", "unit_b", "junc_a", "junc_b",
-                "segment_id", "n_vertices", "length_m"
+                "segment_id", "n_fragments", "n_vertices", "length_m"
             };
             schema.field_types = {
                 lsdtt::lsdtt_vector_field_type::string_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
                 lsdtt::lsdtt_vector_field_type::int64_type,
                 lsdtt::lsdtt_vector_field_type::int64_type,
                 lsdtt::lsdtt_vector_field_type::int64_type,
@@ -1217,6 +1278,7 @@ int main(int argc, char* argv[])
                     static_cast<long int>(rec.basin_junction_a),
                     static_cast<long int>(rec.basin_junction_b),
                     static_cast<long int>(rec.segment_id),
+                    static_cast<long int>(rec.n_fragments),
                     static_cast<long int>(rec.points.size()),
                     rec.length_m
                 });
@@ -1337,6 +1399,89 @@ int main(int argc, char* argv[])
         std::cout << "Wrote channel-head metrics CSV: " << out_csv << "\n";
     }
 
+    // -------------------------------------------------------------------------
+    // Pair-level summary: one side-vs-side row per divide pair.
+    //
+    // Sign convention: side A is the LOWER-numbered unit of the pair (the same
+    // ordering the pair_id uses) and every delta is A minus B, so a column can
+    // never silently change sign because the sides were listed the other way
+    // round. See lsdtt_divide_migration_cpu.hpp for what each uncertainty
+    // method reports and how NaN metrics and small samples are handled.
+    // -------------------------------------------------------------------------
+    std::vector<lsdtt::lsdtt_pair_summary_record> pair_summaries;
+    if (bf.at("write_pair_summary_csv"))
+    {
+        lsdtt::lsdtt_pair_summary_options summary_options;
+        summary_options.uncertainty_method =
+            lsdtt::parse_pair_uncertainty_method(sf.at("pair_uncertainty_method"));
+        summary_options.bootstrap_replicates = ifs.at("bootstrap_replicates");
+        summary_options.bootstrap_seed =
+            static_cast<std::uint32_t>(ifs.at("bootstrap_seed"));
+
+        // Summaries are driven by the divides: every extracted pair gets a row,
+        // even one that attracted no channel heads, so this table and the
+        // _divides layer always list the same pairs.
+        pair_summaries = lsdtt::compute_pair_summaries(
+            divide_segments, head_metrics, summary_options);
+
+        const std::string out_csv =
+            pp.get_full_write_path() + "_divide_pair_summary.csv";
+        std::ofstream out(out_csv);
+        if (!out)
+        {
+            std::cerr << "FATAL: could not write pair summary CSV: "
+                      << out_csv << "\n";
+            return 1;
+        }
+
+        out << "pair_id,unit_a,unit_b,n_heads_a,n_heads_b,"
+            << "mean_head_elevation_a,mean_head_elevation_b,delta_head_elevation,"
+            << "n_head_elevation_a,n_head_elevation_b,"
+            << "mean_gradient_a,mean_gradient_b,delta_gradient,"
+            << "n_gradient_a,n_gradient_b,"
+            << "mean_relief_a,mean_relief_b,delta_relief,"
+            << "n_relief_a,n_relief_b,"
+            << "mean_chi_a,mean_chi_b,delta_chi,n_chi_a,n_chi_b,"
+            << "uncertainty_method,uncertainty_head_elevation,"
+            << "uncertainty_gradient,uncertainty_relief,uncertainty_chi\n";
+
+        out << std::setprecision(12);
+        for (const auto& rec : pair_summaries)
+        {
+            out << rec.pair_id << ","
+                << rec.unit_a << ","
+                << rec.unit_b << ","
+                << rec.n_heads_a << ","
+                << rec.n_heads_b << ","
+                << rec.mean_head_elevation_a << ","
+                << rec.mean_head_elevation_b << ","
+                << rec.delta_head_elevation << ","
+                << rec.n_head_elevation_a << ","
+                << rec.n_head_elevation_b << ","
+                << rec.mean_gradient_a << ","
+                << rec.mean_gradient_b << ","
+                << rec.delta_gradient << ","
+                << rec.n_gradient_a << ","
+                << rec.n_gradient_b << ","
+                << rec.mean_relief_a << ","
+                << rec.mean_relief_b << ","
+                << rec.delta_relief << ","
+                << rec.n_relief_a << ","
+                << rec.n_relief_b << ","
+                << rec.mean_chi_a << ","
+                << rec.mean_chi_b << ","
+                << rec.delta_chi << ","
+                << rec.n_chi_a << ","
+                << rec.n_chi_b << ","
+                << rec.uncertainty_method << ","
+                << rec.uncertainty_head_elevation << ","
+                << rec.uncertainty_gradient << ","
+                << rec.uncertainty_relief << ","
+                << rec.uncertainty_chi << "\n";
+        }
+        std::cout << "Wrote pair summary CSV: " << out_csv << "\n";
+    }
+
     std::cout << "Outlet ingest summary:\n";
     std::cout << "  outlet file      : " << outlet_path << "\n";
     std::cout << "  requested points : " << requested_outlets.size() << "\n";
@@ -1357,13 +1502,21 @@ int main(int argc, char* argv[])
     std::cout << "  heads with divide: " << n_heads_with_divide << "\n";
     std::cout << "  heads without    : " << (head_metrics.size() - n_heads_with_divide)
               << " (unit borders no extracted divide)\n";
+    if (bf.at("write_pair_summary_csv"))
+    {
+        std::cout << "  pair summaries   : " << pair_summaries.size() << "\n";
+        std::cout << "  uncertainty      : " << sf.at("pair_uncertainty_method")
+                  << "\n";
+    }
 
     std::cout << "Divide-migration analysis complete: basins selected from outlets, "
               << "interfluvial divides extracted, channel heads and chi computed, "
               << "and nearest-divide relief and gradient measured.\n";
-    std::cout << "Pair-level summary statistics and uncertainty "
-              << "(write_pair_summary_csv, pair_uncertainty_method, "
-              << "bootstrap_replicates, bootstrap_seed) are not yet implemented.\n";
+    if (bf.at("write_pair_summary_csv"))
+    {
+        std::cout << "Pair summaries report side A minus side B, A being the "
+                  << "lower-numbered unit of each pair.\n";
+    }
 
     pp.print_help(help_map, pp.get_write_fname() + "_README", k_version, k_citation);
     pp.print_parameters();

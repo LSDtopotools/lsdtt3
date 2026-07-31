@@ -1,0 +1,17 @@
+# The control run for divide_migration_merge_fragments: the same ridge fixture
+# with NO clustering, so every outlet is its own unit.
+#
+# All three basins are pairwise adjacent here (north-southwest, north-southeast
+# and southwest-southeast), giving three divide segments. That is what makes the
+# clustered run's single segment meaningful: the two 1|2 fragments really do
+# both exist before merging.
+read_path: __READ_PATH__
+read_fname: divmig_ridge.tif
+write_path: __WRITE_PATH__
+write_fname: divmig_merge_nc
+
+basin_outlet_file: divmig_ridge_outlets.fgb
+basin_outlet_snapping_method: none
+
+source_pixels_threshold: 40
+m_over_n: 0.45

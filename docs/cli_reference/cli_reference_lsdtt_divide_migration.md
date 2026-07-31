@@ -28,9 +28,13 @@ key: value
 
 ## Status of this tool
 
-`lsdtt-divide-migration` is at version 0.1.0 and some of its parameter surface is declared ahead of its implementation. **Four parameters are accepted and validated but currently have no effect**: `write_pair_summary_csv`, `pair_uncertainty_method`, `bootstrap_replicates`, `bootstrap_seed`. No pair‑summary CSV is written yet; the per‑head metrics CSV carries everything needed to compute side‑by‑side comparisons downstream.
+`lsdtt-divide-migration` is at version 0.1.0. **Every parameter it accepts is live** — there are no declared‑but‑inert parameters. The four pair‑summary controls (`write_pair_summary_csv`, `pair_uncertainty_method`, `bootstrap_replicates`, `bootstrap_seed`) became active on 2026‑07‑31 and are documented under *Pair‑summary statistics* below.
 
-One further limitation to be aware of: divide fragments are **not merged into continuous polylines**. Where a unit consists of several basins, each adjacent basin pair contributes its own segment, so more than one feature may share a `pair_id`.
+Divide fragments **are** merged into continuous polylines (see *Outputs* below). Two units that meet along two genuinely separate stretches of divide still produce two features sharing one `pair_id` — that is correct, not a failure to merge.
+
+Unit pairs are found from **basin adjacency** (2026‑07‑31): a single pass over the basin cells records which basins touch on the grid, and only those pairs are handed to the divide extraction, so the cost no longer grows with the square of the outlet count. Contact is tested eight‑connected, which is how the divide tracing itself sees the grid — basins that meet only at a cell corner can still share a divide — and it is a superset of the pairs that can yield a divide, so the results are exactly what the previous all‑vs‑all loop produced.
+
+One design limit is worth knowing: `nearest_divide_method` has only one implementation (`euclidean`).
 
 ---
 
@@ -46,7 +50,8 @@ One further limitation to be aware of: divide fragments are **not merged into co
 | 6 | Extract the interfluvial divide between every adjacent pair of units |
 | 7 | Extract channel heads and integrate chi with chi = 0 at each outlet |
 | 8 | Match each head to the nearest point on a divide bounding **its own unit**; measure relief and gradient |
-| 9 | Write divide vectors, channel‑head vectors, and the metrics CSV |
+| 9 | Optionally summarise each pair side against side: means, A − B deltas, uncertainty |
+| 10 | Write divide vectors, channel‑head vectors, the metrics CSV and the pair summary |
 
 ---
 
@@ -148,6 +153,7 @@ Edge cases are reported rather than hidden:
 | `write_divide_vectors` | bool | `true` | `<write_fname>_divides.fgb` \| `.gpkg` — divide segments as polylines. |
 | `write_channel_heads` | bool | `true` | `<write_fname>_channel_heads.fgb` \| `.gpkg` — channel heads as points, with the full metric set. |
 | `write_metrics_csv` | bool | `true` | `<write_fname>_divide_migration_metrics.csv` — the same metrics as a flat table. |
+| `write_pair_summary_csv` | bool | `false` | `<write_fname>_divide_pair_summary.csv` — one side‑vs‑side row per divide pair. See *Pair‑summary statistics* below. |
 | `vector_output_format` | string | `flatgeobuf` | `flatgeobuf` (or `fgb`) or `gpkg`. Applies to both vector outputs. |
 
 Three provenance files are always written regardless of the switches above: `<write_fname>_README.html` and `<write_fname>_README.csv` (the parameter reference for this run) and `<write_fname>_ingested_params.param` (every parameter as actually parsed, including defaults you did not set — useful for reproducing a run exactly).
@@ -158,10 +164,23 @@ Three provenance files are always written regardless of the switches above: `<wr
 |---|---|---|
 | `pair_id` | string | `"<unit_a>\|<unit_b>"`, units in ascending order. |
 | `unit_a`, `unit_b` | int | The two units this divide separates. |
-| `junc_a`, `junc_b` | int | Junction numbers of the two source basins. |
+| `junc_a`, `junc_b` | int | Junction numbers of the two source basins, or `-1` when the feature was merged from more than one fragment (see below). |
 | `segment_id` | int | Unique per segment within the run. |
+| `n_fragments` | int | How many extracted fragments were merged into this feature. `1` for a divide between a single pair of basins. |
 | `n_vertices` | int | Vertex count of the polyline. |
-| `length_m` | double | Segment length in map units. |
+| `length_m` | double | Segment length in map units, measured on the polyline as written. |
+
+A unit made of several basins borders a neighbouring unit through one fragment
+per adjacent basin pair. Fragments that are contiguous in space — endpoints
+within one cell diagonal of each other — are merged into a single polyline, so
+one feature is one divide and `length_m` is the whole along‑divide length. Two
+units that meet along two genuinely separate stretches of divide (wrapping
+around a third unit, say) still get one feature per stretch: sharing a `pair_id`
+does not merge anything on its own.
+
+Because `junc_a` / `junc_b` describe one basin pair, they are only meaningful on
+a feature with `n_fragments = 1`; a merged feature reports `-1` for both rather
+than one contributing basin's junction as though it described the whole line.
 
 ### Channel‑head attributes (vector and CSV)
 
@@ -179,6 +198,93 @@ Three provenance files are always written regardless of the switches above: `<wr
 | `distance_to_divide_m` | Straight‑line distance, map units. |
 | `relief_m` | `divide_elevation_m − head_elevation_m`. May be negative. |
 | `gradient_to_divide` | `relief_m / distance_to_divide_m`. NaN at zero distance. |
+
+---
+
+## Pair‑summary statistics
+
+Set `write_pair_summary_csv: true` and the run writes `<write_fname>_divide_pair_summary.csv`: **one row per divide pair**, comparing the channel heads on one side against those on the other. This is the table you interpret; the per‑head CSV is the evidence behind it.
+
+The row set comes from the **divides**, not from the heads: every pair present in the `_divides` layer gets exactly one row, so the two outputs always list the same pairs. A pair whose divide was extracted but which attracted no channel heads on either side still gets a row, with `n_heads_a` and `n_heads_b` at 0 and every mean, delta and uncertainty `nan` — the same convention a single empty side follows. Two separate stretches of divide between the same unit pair share one `pair_id` and are summarised together, in one row.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_pair_summary_csv` | bool | `false` | Write the pair‑summary CSV. |
+| `pair_uncertainty_method` | string | `std_err` | `std_dev`, `std_err`, `bootstrap` or `ttest` — see below. |
+| `bootstrap_replicates` | int | `1000` | Resamples per side. Read only when the method is `bootstrap`. Must be > 0. |
+| `bootstrap_seed` | int | `5489` | Seed for the bootstrap. Read only when the method is `bootstrap`. |
+
+### The sign convention: side A is the lower‑numbered unit
+
+**Side A is always the lower‑numbered unit of the pair** — the same ordering the `pair_id` itself uses, so pair `3|7` has `unit_a = 3` and `unit_b = 7`. Every delta is
+
+```
+delta_<metric> = mean_<metric>_a − mean_<metric>_b
+```
+
+This is fixed by the unit ids, never by the order heads happen to arrive in, so a column cannot silently change sign between runs. The run prints a reminder on stdout.
+
+### Rows, grouping and sample sizes
+
+Heads are grouped by `pair_id_nearest`. A head that matched no divide (empty `pair_id_nearest`) takes no part in any row, and a head is only ever counted on the side its own `unit_id` names.
+
+`n_heads_a` / `n_heads_b` count the heads assigned to each side. They are **not** the sample size of every mean: `relief_m` and `gradient_to_divide` are legitimately NaN for some heads (the nearest divide point fell on nodata, or the head sits on its divide), and those heads are **skipped** rather than allowed to turn a side mean into NaN. Each metric therefore carries its own valid‑value count, `n_<metric>_a` / `n_<metric>_b`, which is the n its mean *and* its uncertainty were computed from. If `n_relief_a` is well below `n_heads_a`, treat that side's relief with caution.
+
+A pair in which one side has **no** heads still gets a row, with that side's counts at 0 and its mean, the delta and the uncertainty NaN. The divide exists in the vector output, so a row saying one side is empty is more useful than a divide that vanishes from the table.
+
+### What each uncertainty method reports
+
+The column is `uncertainty_<metric>` — one number per metric — and the row's `uncertainty_method` field always records which of the four produced it.
+
+DivideTools' `AcrossDivide.m` reports a dispersion for *each* side and then asks whether the two intervals overlap. This tool has one column, so each option is the equivalent statistic **of the delta**. The per‑side ingredients are DivideTools' (the n−1 sample standard deviation, `s/√n`, a bootstrap of the mean, and Welch's unequal‑variance t‑test); combining them into a single number per metric is this tool's choice, not something inherited from DivideTools.
+
+| `pair_uncertainty_method` | The `uncertainty_*` columns hold | Compare it with |
+|---|---|---|
+| `std_dev` | Pooled standard deviation of the two sides, `sqrt(((na−1)sa² + (nb−1)sb²)/(na+nb−2))`. A spread of the **head populations**, not of the delta — it does not shrink as you add heads. | Nothing directly; use it to see how variable the two sides are. |
+| `std_err` *(default)* | Standard error of the **difference of means**, `sqrt(sa²/na + sb²/nb)`. | The delta. `\|delta\| > 2 ×` this is roughly a 95 % separation of the two side means. |
+| `bootstrap` | Half‑width of the 95 % confidence interval of the **bootstrap distribution of the delta**. Both sides are resampled with replacement `bootstrap_replicates` times and the delta recorded each time; the reported value is the mean of the distances from the bootstrap mean to the 2.5th and 97.5th percentiles — the statistic `AcrossDivide.m`'s `bootCI` helper returns. | The delta directly: `\|delta\| >` this is a ~95 % separation. Roughly 1.96 × `std_err` for a large, well‑behaved sample, so **never** compare a bootstrap column against a std_err column from another run. |
+| `ttest` | The **two‑sided p‑value** of Welch's unequal‑variance t‑test on the difference of means, matching `ttest2(...,'Vartype','unequal')`. This column is a probability, not a dispersion. | 0.05 (or your own threshold). Small means the two sides genuinely differ. |
+
+**Small samples.** Every method needs a within‑side spread, so all four require at least **two valid values on both sides** of the metric concerned and return **NaN** otherwise. A side with one head, or none, gives a NaN uncertainty rather than a meaningless zero.
+
+**Reproducibility.** The bootstrap uses an explicitly seeded `std::mt19937`; the same seed and the same input always give bit‑identical output. The seed is combined with the pair id and the metric rather than with a loop counter, so adding an unrelated pair to a run cannot change an existing pair's numbers, and the result does not depend on thread count.
+
+### Pair‑summary CSV columns
+
+| Field | Description |
+|---|---|
+| `pair_id` | `"<unit_a>\|<unit_b>"`, matching the divide vector output. |
+| `unit_a`, `unit_b` | The two units. `unit_a < unit_b` always. |
+| `n_heads_a`, `n_heads_b` | Channel heads assigned to each side. |
+| `mean_head_elevation_a`, `mean_head_elevation_b`, `delta_head_elevation` | Head elevation (m), and A − B. |
+| `n_head_elevation_a`, `n_head_elevation_b` | Valid values behind those means. |
+| `mean_gradient_a`, `mean_gradient_b`, `delta_gradient` | Gradient to divide, and A − B. |
+| `n_gradient_a`, `n_gradient_b` | Valid values behind those means. |
+| `mean_relief_a`, `mean_relief_b`, `delta_relief` | Relief to divide (m), and A − B. |
+| `n_relief_a`, `n_relief_b` | Valid values behind those means. |
+| `mean_chi_a`, `mean_chi_b`, `delta_chi` | Chi, and A − B. |
+| `n_chi_a`, `n_chi_b` | Valid values behind those means. |
+| `uncertainty_method` | `std_dev`, `std_err`, `bootstrap` or `ttest`. |
+| `uncertainty_head_elevation`, `uncertainty_gradient`, `uncertainty_relief`, `uncertainty_chi` | As defined in the table above. |
+
+### Reading a row
+
+Across a divide, the **aggressor** is the side whose channel heads sit at *lower* elevation, with *higher* gradient and relief, and *lower* chi. The divide is expected to migrate *away* from the aggressor, into the victim.
+
+With A − B deltas, side A is the aggressor when:
+
+| Column | Points to A as aggressor when |
+|---|---|
+| `delta_head_elevation` | **negative** (A's heads are lower) |
+| `delta_gradient` | **positive** (A is steeper towards the divide) |
+| `delta_relief` | **positive** (more relief between A's heads and the divide) |
+| `delta_chi` | **negative** (A's heads have lower chi) |
+
+Reverse every sign and B is the aggressor.
+
+Judge each metric against its uncertainty before believing it. Under `std_err` or `bootstrap`, a metric whose `|delta|` does not clearly exceed its uncertainty column is **not** evidence of anything; under `ttest`, one whose p‑value is above your threshold is not either. A divide with all four metrics small relative to their uncertainties is best read as **stable**, which is a real and common result, not a failed analysis.
+
+The four metrics can and do disagree. That is informative rather than a problem — chi responds to the drainage‑network geometry and is sensitive to base‑level and to `m_over_n`, while gradient and relief respond to the present hillslope form. Cross‑divide chi is only comparable at all when the basins share a base level, so a chi delta from a run with `outlet_control_mode: none` on a DEM whose basins are clipped at the edge should be discounted. Agreement between elevation, gradient and relief, with chi consistent, is the strong case.
 
 ---
 
@@ -233,9 +339,17 @@ outlet_control_mode: max_out_elevation
 write_metrics_csv:    true
 write_channel_heads:  true
 vector_output_format: gpkg
+
+# The side-vs-side table, with a bootstrap uncertainty on each delta
+write_pair_summary_csv:  true
+pair_uncertainty_method: bootstrap
+bootstrap_replicates:    2000
+bootstrap_seed:          5489
 ```
 
-To compare the two sides, group the metrics CSV by `unit_id` and take the mean of `head_elevation_m`, `gradient_to_divide`, `relief_m`, and `chi` for the rows whose `pair_id_nearest` names the divide of interest. (An automated pair‑summary table is planned; see *Status* above.)
+This writes `sc_sides_divide_pair_summary.csv` with one row per pair of range sides. If units are `1` (west) and `2` (east), then side A is west and a **negative** `delta_head_elevation` with a **positive** `delta_gradient` and `delta_relief` and a **negative** `delta_chi` says the west side is the aggressor and the divide should be migrating east — provided each `|delta|` clearly exceeds its `uncertainty_*` column. Because the uncertainty method here is `bootstrap`, those columns are 95 % interval half‑widths, so compare `|delta|` against them directly.
+
+If you would rather do the statistics yourself, the per‑head CSV has everything: group by `unit_id`, restrict to the rows whose `pair_id_nearest` names the divide of interest, and take the means of `head_elevation_m`, `gradient_to_divide`, `relief_m` and `chi`.
 
 ---
 
@@ -285,6 +399,23 @@ Filtering removed too much. Under `outlet_control_mode: complete_only` this usua
 ### The metrics CSV has rows but every divide field is NaN
 
 The heads were not matched to any divide. Either only one unit had basins that survived filtering, or the units are not adjacent in the DEM (units separated by a third basin share no divide). Check `divide segments` in the run summary — if it is `0`, no divides were extracted at all.
+
+### The pair‑summary CSV has a row but the uncertainties are NaN
+
+Every uncertainty method needs at least **two valid values on both sides** of the metric. Check `n_<metric>_a` and `n_<metric>_b` on the row:
+
+- one of them is `0` or `1`: that side has too few heads. Lower `source_pixels_threshold` for a denser network, or check that side's basins survived `outlet_control_mode` filtering.
+- `n_heads_a` is healthy but `n_relief_a` or `n_gradient_a` is small: most of that side's heads have NaN relief, which means their nearest divide point landed on nodata — see the all‑NaN case above.
+
+A NaN here is deliberate: a standard error from one value would be meaningless, and reporting `0` would be worse than reporting nothing.
+
+### The pair‑summary CSV is missing but the metrics CSV is there
+
+`write_pair_summary_csv` defaults to **false**. Set it to `true`.
+
+### The pair‑summary CSV has a header but no rows
+
+No head was matched to any divide, so there was nothing to summarise. The file is still written so the absence is visible rather than silent. Check `divide segments` and `heads with divide` in the run summary — see *The metrics CSV has rows but every divide field is NaN* above for the usual causes.
 
 ### Too few or too many channel heads
 

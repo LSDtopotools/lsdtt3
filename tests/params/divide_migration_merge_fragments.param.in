@@ -1,0 +1,25 @@
+# End-to-end divide-migration run that exercises FRAGMENT MERGING (plan §11.1E).
+#
+# The fixture is a single E-W ridge with one valley draining north and two
+# draining south, so the northern basin faces BOTH southern basins. cluster_id
+# groups the two southern outlets into one unit, which therefore borders the
+# northern unit along two fragments that meet where the south-south divide hits
+# the main ridge.
+#
+# Without merging the run emits two segments sharing pair_id 1|2. Merged, it
+# emits exactly one: that is the observable. The companion
+# smoke_divide_migration_merge_unmerged run over the same DEM shows all three
+# basins are pairwise adjacent, so "1" here means "merged", not "only one
+# fragment ever existed".
+read_path: __READ_PATH__
+read_fname: divmig_ridge.tif
+write_path: __WRITE_PATH__
+write_fname: divmig_merge
+
+basin_outlet_file: divmig_ridge_outlets.fgb
+outlet_cluster_field: cluster_id
+outlet_cluster_mode: auto
+basin_outlet_snapping_method: none
+
+source_pixels_threshold: 40
+m_over_n: 0.45

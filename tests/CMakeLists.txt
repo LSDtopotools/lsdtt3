@@ -257,6 +257,85 @@ set_tests_properties(failure_divide_migration_single_unit PROPERTIES
     LABELS "failure;cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
+# --- divide-fragment merging end to end (plan §11.1E) -------------------------
+#
+# A second fixture DEM: one E-W ridge with a single valley draining north and
+# two draining south, so the northern basin faces BOTH southern basins. The
+# three-valley fixture above cannot test merging -- every unit pair there is
+# adjacent along exactly one stretch of divide.
+#
+# The pair of tests is the assertion. Unclustered, all three basins are pairwise
+# adjacent and the run emits THREE segments. Clustering the two southern outlets
+# into one unit leaves that unit bordering the northern unit along TWO fragments
+# that meet on the main ridge, and merging must turn those into ONE segment. A
+# run that did not merge would report 2 here, and a fixture where the second
+# fragment did not exist would fail the unclustered control.
+add_lsdtt_cli_smoke_test(
+    smoke_divide_migration_merge_unmerged
+    lsdtt-divide-migration
+    divide_migration_merge_unmerged.param.in
+    divmig_merge_nc_divides.fgb
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect-vector-feature-min divmig_merge_nc_divides.fgb:3
+    --stdout-contains "mapped units     : 3"
+    --stdout-contains "selected basins  : 3"
+    --stdout-contains "divide segments  : 3"
+)
+set_tests_properties(smoke_divide_migration_merge_unmerged PROPERTIES
+    LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_divide_migration_merge_fragments
+    lsdtt-divide-migration
+    divide_migration_merge_fragments.param.in
+    divmig_merge_divides.fgb
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect divmig_merge_divide_migration_metrics.csv
+    --expect-vector-feature-min divmig_merge_divides.fgb:1
+    --stdout-contains "cluster field    : cluster_id"
+    --stdout-contains "cluster groups   : 2"
+    --stdout-contains "selected basins  : 3"
+    --stdout-contains "divide segments  : 1"
+    --stdout-contains "heads without    : 0"
+)
+set_tests_properties(smoke_divide_migration_merge_fragments PROPERTIES
+    LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+# --- pair-summary statistics end to end (plan §11.2 L/M) ----------------------
+#
+# The same ridge fixture and clustering as the merge test above, so the topology
+# is known: exactly two units bordering along one merged divide. The pair
+# summary must therefore be exactly ONE row, on pair 1|2, with heads on both
+# sides -- which is what makes the header assertion worth anything.
+#
+# The header is pinned in full because it is the published schema (§6.3 plus the
+# per-metric valid-value counts this work added). The row assertion pins the
+# leading pair_id/unit_a/unit_b, and the trailing uncertainty_method proves the
+# parameter was read rather than defaulted: the CLI is run with bootstrap, not
+# the std_err default.
+add_lsdtt_cli_smoke_test(
+    smoke_divide_migration_pair_summary
+    lsdtt-divide-migration
+    divide_migration_pair_summary.param.in
+    divmig_pairsum_divide_pair_summary.csv
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect divmig_pairsum_divides.fgb
+    --expect divmig_pairsum_divide_migration_metrics.csv
+    --expect-file-contains "divmig_pairsum_divide_pair_summary.csv:pair_id,unit_a,unit_b,n_heads_a,n_heads_b,mean_head_elevation_a,mean_head_elevation_b,delta_head_elevation,n_head_elevation_a,n_head_elevation_b,mean_gradient_a,mean_gradient_b,delta_gradient,n_gradient_a,n_gradient_b,mean_relief_a,mean_relief_b,delta_relief,n_relief_a,n_relief_b,mean_chi_a,mean_chi_b,delta_chi,n_chi_a,n_chi_b,uncertainty_method,uncertainty_head_elevation,uncertainty_gradient,uncertainty_relief,uncertainty_chi"
+    --expect-file-contains "divmig_pairsum_divide_pair_summary.csv:1|2,1,2,"
+    --expect-file-contains "divmig_pairsum_divide_pair_summary.csv:,bootstrap,"
+    --stdout-contains "divide segments  : 1"
+    --stdout-contains "pair summaries   : 1"
+    --stdout-contains "uncertainty      : bootstrap"
+    --stdout-contains "Pair summaries report side A minus side B"
+    --stdout-contains "heads without    : 0"
+)
+set_tests_properties(smoke_divide_migration_pair_summary PROPERTIES
+    LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
 # --- lsdtt-lem: the in-LEM coupled hillslope path -----------------------------
 #
 # Why this exists (docs/testing_and_benchmarking.md §8.4): the semi-implicit fast
@@ -531,10 +610,13 @@ add_test(NAME unit_hydraulic_routing
 set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "unit;hydraulic")
 
 # Divide-migration compute layer (docs/plan_docs/divide_migration_cli_plan.md
-# §11.1I).  Covers the two routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
+# §11.1I).  Covers the routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
 # nearest-divide geometry (mid-segment projection, zero-distance guard, negative
 # relief, nodata sampling, and the PER-UNIT index that stops a head being matched
-# to a divide between two other units) and the common-base-level chi rebasing.
+# to a divide between two other units), the common-base-level chi rebasing,
+# fragment merging, the pair summaries (which are driven by the DIVIDES, so a
+# pair with no matched heads still gets a row), and the eight-connected basin
+# adjacency pass that decides which pairs are worth a ridgeline extraction.
 #
 # The same binary writes the synthetic three-valley DEM and outlet layer used by
 # the divide-migration CLI end-to-end tests, so the fixture and the in-memory
