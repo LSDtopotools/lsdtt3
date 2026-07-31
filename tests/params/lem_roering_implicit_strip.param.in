@@ -1,0 +1,42 @@
+# In-LEM roering_implicit hillslope strip (docs/testing_and_benchmarking.md §8.4).
+#
+# Fluvial OFF, uplift ON, channels supplied by the geometry-defined
+# channel_mask_fname rather than a drainage-area threshold: a fixed-channel
+# hillslope relaxation from a flat start, which must land on the Roering
+# nonlinear steady hill.
+#
+# NESW boundary_conditions "popo": rows (N, S) periodic, channel columns (E, W)
+# fixed-elevation 'o' so the LEM boundary restore pins them across steps. The
+# channel mask additionally supplies those columns as Dirichlet sinks inside the
+# solve.
+#
+# 600 steps of 25 yr = 15 kyr, several relaxation times: delta_max_z reaches
+# exactly 0 well before the end, so the assertion is on a converged state and
+# not on a snapshot of a still-moving field.
+read_path: __READ_PATH__
+read_fname: lemstrip_hillslope_strip.tif
+channel_mask_fname: lemstrip_hillslope_strip_channel_mask.tif
+read_initial_dem: true
+write_path: __WRITE_PATH__
+write_fname: lemstrip_run
+write_output_format: gtiff
+
+boundary_conditions: popo
+baselevel_elevation: 0.0
+
+enable_d8_fluvial_erosion: false
+enable_dinf_fluvial_erosion: false
+enable_hillslope_transport: true
+enable_nonlinear_hillslopes: true
+hillslope_model: roering_implicit
+hillslope_diffusivity: 1.0
+critical_hillslope_slope: 0.8
+incision_threshold_area: 0.0
+enable_uplift: true
+uplift_rate: 4e-3
+
+timestep: 25.0
+number_of_iterations: 600
+stop_at_steady_state: false
+write_elevation_stats_csv: true
+n_threads: 0

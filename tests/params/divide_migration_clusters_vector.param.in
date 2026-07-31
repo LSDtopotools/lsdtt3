@@ -1,0 +1,24 @@
+# End-to-end divide-migration run WITH clustering, reading the cluster field
+# from a VECTOR outlet file rather than a CSV.
+#
+# Regression test. load_cluster_values_from_vector used to call
+# read_vector_layer(""), and read_vector_layer resolves the name with
+# GetLayerByName(), which never matches an empty string -- so every clustered
+# run backed by a vector outlet file died with "layer not found:" regardless of
+# the layer's actual name. The CSV-backed clustered smoke could not see this.
+#
+# Expectations are identical to divide_migration_clusters_smoke: the same
+# outlets in the same two groups must give the same one-segment topology
+# whichever container the cluster labels arrive in.
+read_path: __READ_PATH__
+read_fname: divmig_valleys.tif
+write_path: __WRITE_PATH__
+write_fname: divmig_cluster_vec
+
+basin_outlet_file: divmig_outlets.fgb
+outlet_cluster_field: cluster_id
+outlet_cluster_mode: auto
+basin_outlet_snapping_method: none
+
+source_pixels_threshold: 40
+m_over_n: 0.45

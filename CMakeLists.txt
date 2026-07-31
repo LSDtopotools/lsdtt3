@@ -533,7 +533,6 @@ lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)
 lsdtt_cli(lsdtt-ridgeline-analysis     cli/lsdtt-ridgeline-analysis.cpp)
 lsdtt_cli(lsdtt-basin-surface-metrics  cli/lsdtt-basin-surface-metrics.cpp)
 lsdtt_cli(lsdtt-divide-migration       cli/lsdtt-divide-migration.cpp)
-lsdtt_cli(lsdtt-test-hillslope-implicit cli/lsdtt-test-hillslope-implicit.cpp)
 lsdtt_cli(lsdtt-raster-calculator      cli/lsdtt-raster-calculator.cpp)
 lsdtt_cli(lsdtt-fetch-raster           cli/lsdtt-fetch-raster.cpp)
 

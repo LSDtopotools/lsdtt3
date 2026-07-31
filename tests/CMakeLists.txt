@@ -4,6 +4,11 @@ set(LSDTT_TEST_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cli_smoke.py")
 set(LSDTT_TEST_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data")
 set(LSDTT_TEST_PARAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/params")
 
+# Written by lsdtt-test-divide-migration (the unit_divide_migration CTest
+# fixture) and read by the divide-migration CLI tests.
+set(LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/divide_migration_fixture")
+
 function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
     set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
 
@@ -155,6 +160,157 @@ add_lsdtt_cli_smoke_test(
     --expect-failure
     --stderr-contains "FATAL: outlet cluster value 'alpha' is not an integer"
 )
+
+# --- divide-migration end to end (plan §11.1I) -------------------------------
+#
+# These run the whole pipeline on the synthetic three-valley DEM written by
+# unit_divide_migration, so they need the fixture directory rather than
+# tests/data as their read path. run_cli_smoke.py stores --read-path (it does
+# not append), so the value passed here through ARGN overrides the default the
+# function supplies.
+#
+# The assertions are on CONTENT, not exit status. The divide-segment count is
+# the topology: three parallel valleys give exactly two divides (1|2 and 2|3)
+# and never a 1|3, so a run that matched heads across non-adjacent units, or
+# that ignored the cluster field, cannot produce these numbers.
+add_lsdtt_cli_smoke_test(
+    smoke_divide_migration_no_clusters
+    lsdtt-divide-migration
+    divide_migration_smoke.param.in
+    divmig_nocluster_divides.fgb
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect divmig_nocluster_channel_heads.fgb
+    --expect divmig_nocluster_divide_migration_metrics.csv
+    --expect-vector-feature-min divmig_nocluster_divides.fgb:2
+    --expect-vector-feature-min divmig_nocluster_channel_heads.fgb:69
+    --expect-file-contains "divmig_nocluster_divide_migration_metrics.csv:head_id,outlet_id,unit_id,pair_id_nearest,head_x,head_y,head_elevation_m,chi,nearest_divide_x,nearest_divide_y,divide_elevation_m,distance_to_divide_m,relief_m,gradient_to_divide"
+    --stdout-contains "mapped units     : 3"
+    --stdout-contains "selected basins  : 3"
+    --stdout-contains "divide segments  : 2"
+    --stdout-contains "channel heads    : 69"
+    --stdout-contains "heads with divide: 69"
+    --stdout-contains "heads without    : 0"
+)
+set_tests_properties(smoke_divide_migration_no_clusters PROPERTIES
+    LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+# Grouping outlets 1 and 2 into one unit makes the 1-2 divide internal, so the
+# two-divide topology above must collapse to exactly one segment.
+add_lsdtt_cli_smoke_test(
+    smoke_divide_migration_clusters
+    lsdtt-divide-migration
+    divide_migration_clusters_smoke.param.in
+    divmig_cluster_divides.fgb
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect divmig_cluster_channel_heads.fgb
+    --expect divmig_cluster_divide_migration_metrics.csv
+    --expect-vector-feature-min divmig_cluster_divides.fgb:1
+    --stdout-contains "cluster field    : cluster_id"
+    --stdout-contains "cluster groups   : 2"
+    --stdout-contains "selected basins  : 3"
+    --stdout-contains "divide segments  : 1"
+    --stdout-contains "heads with divide: 69"
+)
+set_tests_properties(smoke_divide_migration_clusters PROPERTIES
+    LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+# The same clustered run, but the cluster labels arrive in a VECTOR outlet file
+# instead of a CSV. Regression test: read_vector_layer("") resolves through
+# GetLayerByName(), which never matches an empty string, so this path used to
+# fail outright for every vector outlet file. Asserting the same topology as the
+# CSV run is the point -- the container must not change the answer.
+add_lsdtt_cli_smoke_test(
+    smoke_divide_migration_clusters_vector
+    lsdtt-divide-migration
+    divide_migration_clusters_vector.param.in
+    divmig_cluster_vec_divides.fgb
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect divmig_cluster_vec_channel_heads.fgb
+    --expect divmig_cluster_vec_divide_migration_metrics.csv
+    --expect-vector-feature-min divmig_cluster_vec_divides.fgb:1
+    --stdout-contains "cluster field    : cluster_id"
+    --stdout-contains "cluster groups   : 2"
+    --stdout-contains "selected basins  : 3"
+    --stdout-contains "divide segments  : 1"
+    --stdout-contains "heads with divide: 69"
+)
+set_tests_properties(smoke_divide_migration_clusters_vector PROPERTIES
+    LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+# A clustered run whose outlets all collapse into ONE unit has no unit pair to
+# compare. Counting snapped flats rather than units let this through and simply
+# produced an empty divide set; the guard now rejects it and names both counts.
+add_lsdtt_cli_smoke_test(
+    failure_divide_migration_single_unit
+    lsdtt-divide-migration
+    divide_migration_single_unit_cluster.param.in
+    unused_expected_output
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "FATAL: fewer than two valid snapped outlets in two distinct units remain for unit mapping (outlets=3, units=1)."
+    --stderr-contains "Divide extraction needs at least two units to compare."
+)
+set_tests_properties(failure_divide_migration_single_unit PROPERTIES
+    LABELS "failure;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+# --- lsdtt-lem: the in-LEM coupled hillslope path -----------------------------
+#
+# Why this exists (docs/testing_and_benchmarking.md §8.4): the semi-implicit fast
+# path applied the DAMPED Picard omega to its single IMEX solve, under-diffusing
+# every step. The standalone driver (unit_hillslope_implicit) could not see it --
+# its steady-state tests all finish on full Picard -- while coupled LEM steady
+# states came out about 40 % HIGH. A fast path that is only taken in regimes the
+# unit tests do not finish in is a fast path the unit tests cannot validate.
+#
+# This run spends essentially all of its steps in that fast path: U*L/D = 0.2 is
+# a quarter of Sc = 0.8, well under the max-face-ratio < 0.5 semi-implicit
+# threshold. It therefore exercises exactly the path the unit driver structurally
+# cannot reach.
+#
+# The assertion is the CONVERGED STEADY STATE, two-sided:
+#   peak 4.9429 m -- the recorded in-LEM strip value (§8.3), against the analytic
+#                    Roering peak of ~4.85 and the explicit model's 4.91
+#   mean 3.2719 m -- pins the profile SHAPE, not just its crest
+# Verified to fail on perturbation: reinstating the omega bug (step_omega =
+# cur_omega for a lone semi-implicit solve) moves the peak to 6.862 m (+38.8 %)
+# and the mean to 4.516 m, both far outside the bands. Starting from a FLAT
+# initial profile is what stops "the solver did nothing" from landing inside the
+# band -- inaction leaves the strip at 0 m.
+#
+# ~0.5 s, so it stays in the default suite.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_strip_fixture
+    lsdtt-raster-synthetic-tests
+    lem_strip_fixture.param.in
+    lemstrip_hillslope_strip.tif
+    --expect lemstrip_hillslope_strip_channel_mask.tif
+    --expect-raster-size lemstrip_hillslope_strip.tif:101x11
+)
+set_tests_properties(smoke_lem_strip_fixture PROPERTIES
+    LABELS "smoke;cli;hillslope"
+    FIXTURES_SETUP lem_strip_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_roering_implicit_strip
+    lsdtt-lem
+    lem_roering_implicit_strip.param.in
+    lemstrip_run_modelled_topography.tif
+    --read-path "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_strip_fixture/out"
+    --expect lemstrip_run_model_elevation_stats.csv
+    --expect-raster-stat lemstrip_run_modelled_topography.tif:max:4.90:4.99
+    --expect-raster-stat lemstrip_run_modelled_topography.tif:mean:3.24:3.31
+    --expect-raster-stat lemstrip_run_modelled_topography.tif:min:0.0:0.0
+    --expect-valid-percent-100 lemstrip_run_modelled_topography.tif
+    --stdout-contains "Hillslope transp. : on  (model=roering_implicit"
+    --stdout-contains "Loading channel mask:"
+)
+set_tests_properties(smoke_lem_roering_implicit_strip PROPERTIES
+    LABELS "smoke;cli;hillslope"
+    FIXTURES_REQUIRED lem_strip_fixture)
 
 add_lsdtt_cli_smoke_test(
     failure_hydraulic_routing_invalid_mode
@@ -373,6 +529,46 @@ target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydraulic_routing
          COMMAND lsdtt-test-hydraulic-routing)
 set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "unit;hydraulic")
+
+# Divide-migration compute layer (docs/plan_docs/divide_migration_cli_plan.md
+# §11.1I).  Covers the two routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
+# nearest-divide geometry (mid-segment projection, zero-distance guard, negative
+# relief, nodata sampling, and the PER-UNIT index that stops a head being matched
+# to a divide between two other units) and the common-base-level chi rebasing.
+#
+# The same binary writes the synthetic three-valley DEM and outlet layer used by
+# the divide-migration CLI end-to-end tests, so the fixture and the in-memory
+# geometry come from one generator.  Test domains are generated in C++, never in
+# Python (docs/testing_and_benchmarking.md §8).
+add_executable(lsdtt-test-divide-migration cpp/test_divide_migration.cpp)
+target_link_libraries(lsdtt-test-divide-migration PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_divide_migration
+         COMMAND lsdtt-test-divide-migration
+                 "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}")
+set_tests_properties(unit_divide_migration PROPERTIES
+    LABELS "unit;divide_migration"
+    FIXTURES_SETUP divide_migration_fixture)
+
+# Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
+# (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the
+# analytic Roering steady profile, the SOR steady-state solver, and the
+# conservation / Sc-enforcement / timestep-independence properties.  Synthetic
+# surfaces only: no network, no committed DEM, so it runs in the default suite.
+# It writes its plottable profile / grid-refinement CSVs into the test working
+# directory (consumed by lsdviztools.lsdtransientvalidation).
+#
+# The Phase 4 linear-solve TIMING sweep in the same driver is NOT part of this
+# test -- it is reported, never asserted, and is registered separately as
+# performance_hillslope_implicit below.
+add_executable(lsdtt-test-hillslope-implicit cpp/test_hillslope_implicit.cpp)
+target_link_libraries(lsdtt-test-hillslope-implicit PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_implicit
+         COMMAND lsdtt-test-hillslope-implicit
+                 ${CMAKE_CURRENT_BINARY_DIR}/hillslope_implicit_output)
+set_tests_properties(unit_hillslope_implicit PROPERTIES LABELS "unit;hillslope")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/hillslope_implicit_output)
 
 # -----------------------------------------------------------------------------
 # lsdtt-fetch-raster CLI (docs/testing_and_benchmarking.md)
@@ -631,6 +827,19 @@ if(LSDTT_ENABLE_PERF_TESTS)
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --quick)
     set_tests_properties(performance_flow_routines
         PROPERTIES LABELS "performance;flow" TIMEOUT 1800)
+
+    # Implicit hillslope solver: per-solve linear-algebra cost and grid scaling
+    # (128^2 / 256^2 / 512^2) for each Eigen backend, from the SAME driver as
+    # unit_hillslope_implicit via --performance.
+    #
+    # REPORTED, NEVER ASSERTED -- it can only fail by not running. Kept out of the
+    # default suite because the 512^2 LDLT solve alone is seconds of wall time and
+    # the timings are worthless (and flaky) on a loaded shared runner.
+    add_test(NAME performance_hillslope_implicit
+             COMMAND lsdtt-test-hillslope-implicit
+                     ${CMAKE_CURRENT_BINARY_DIR}/perf_output --performance)
+    set_tests_properties(performance_hillslope_implicit
+        PROPERTIES LABELS "performance;hillslope" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
     # Surface-metrics timing sweep: every comparison, plus the
     # marginal-cost-per-extra-metric and window-size (O(n)) studies.

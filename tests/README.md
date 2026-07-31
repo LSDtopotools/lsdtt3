@@ -15,12 +15,35 @@ CTest-driven test suite, selected by label:
 | `unit` | nothing | C++ unit tests (parameter parser, cosmogenic physics, flow properties) |
 | `cosmo` | nothing | cosmogenic-nuclide physics vs frozen CRONUS + numerics sentinel |
 | `flow` | nothing | flow routing and depression-handling properties |
+| `cosmo_realworld` | network | inverted erosion rates vs frozen published/OCTOPUS rates on real DEMs (opt-in) |
 | `benchmark` | network + RichDEM | comparison against RichDEM on fetched real DEMs (opt-in) |
 | `performance` | nothing | in-process timings of the flow routines (opt-in, reported not asserted) |
 
-Everything except `benchmark` runs offline with committed fixtures. `benchmark`
-is off unless configured with `-DLSDTT_ENABLE_BENCHMARKS=ON`, and skips rather
-than fails when its dependencies are absent.
+Everything except `benchmark` and `cosmo_realworld` runs offline with committed
+fixtures. `benchmark` is off unless configured with
+`-DLSDTT_ENABLE_BENCHMARKS=ON`, and skips rather than fails when its
+dependencies are absent.
+
+## Running the suite
+
+**Use `ctest -LE cosmo_realworld` for a normal run.**
+
+```bash
+ctest -LE cosmo_realworld     # 2-5 minutes -- everything offline
+ctest                         # ~15 minutes -- adds the networked cosmo tier
+ctest -L cosmo_realworld      # the cosmo real-landscape validation on its own
+```
+
+The offline run is dominated by `unit_hillslope_implicit`, whose wall time swings
+widely under WSL2 host load (68 s to 219 s observed on the same machine). If that
+becomes a nuisance, gate it by label rather than loosening its tolerances.
+
+Bare `ctest` ignores labels and so pulls in `cosmo_realworld`, which downloads
+real DEMs and dominates the wall time (~745 s of ~865 s, one test alone ~540 s).
+Those tests are validation against published erosion rates, not smoke tests: each
+one's DEM extent is tied to the study area of its samples, so they cannot be made
+faster by shrinking the DEM without destroying what they measure. Run them when
+touching cosmogenic code, not on every iteration.
 
 ## CLI smoke and rigorous tests
 
@@ -44,6 +67,45 @@ More rigorous checks currently included:
 - `rigorous_chi_nodes_sha256`: checks SHA256 of `tiny_chi_fit_nodes_mn_0p500.csv`.
 - `failure_channel_extraction_invalid_threshold`: expected-failure test for invalid `source_pixels_threshold`.
 - `failure_raster_calculator_missing_second`: expected-failure test for missing `second_raster_fname`.
+
+## Divide migration
+
+`unit_divide_migration` (labels `unit;divide_migration`) runs
+`tests/cpp/test_divide_migration.cpp` — 30 checks over
+`src/cpu/lsdtt_divide_migration_cpu.cpp`. The headline property is **N6**: a head
+is never matched to a divide between two *other* units, even when that divide is
+80× closer in space. That is what the per-unit spatial index exists to guarantee.
+Also covered: mid-segment projection (every fixture puts the answer strictly
+between two vertices, so a nearest-vertex bug cannot hide), a NaN — not infinite
+— gradient at zero distance, negative relief passed through unchanged, nodata
+sampling, and per-fragment chi re-zeroing under a common base level.
+
+The same binary writes the **CLI fixture** into its output directory (a CTest
+`FIXTURES_SETUP`): a synthetic three-valley DEM plus outlet layers in FGB and
+CSV. Generated in C++, never committed.
+
+- `smoke_divide_migration_no_clusters` — one unit per outlet: 3 basins, **2**
+  divide segments (1|2 and 2|3; the outer valleys are not adjacent so 1|3 never
+  exists), 69 channel heads, all matched.
+- `smoke_divide_migration_clusters` — the same DEM with outlets 1 and 2 grouped:
+  the 1-2 divide becomes internal and the topology collapses to **1** segment.
+- `failure_divide_migration_single_unit` — all outlets in one cluster is rejected
+  with `outlets=3, units=1` rather than silently producing no divides.
+
+## lsdtt-lem
+
+`smoke_lem_strip_fixture` generates the hillslope strip through
+`lsdtt-raster-synthetic-tests`; `smoke_lem_roering_implicit_strip` then runs
+`lsdtt-lem` with `hillslope_model: roering_implicit` on it and asserts the
+**converged steady state** — peak 4.9429 m and mean 3.2719 m, both two-sided.
+
+This is the integration test §8.4 of `docs/testing_and_benchmarking.md` argues
+for. The semi-implicit fast path is only taken when the field is well below `Sc`,
+which is a regime the standalone driver's steady-state tests never *finish* in —
+so the omega bug there biased coupled LEM steady states ~40 % high while every
+unit check passed. Reinstating that bug moves this test's peak to 6.862 m
+(+38.8 %), far outside the band. The strip starts **flat**, so "the solver did
+nothing" leaves it at 0 m and cannot be mistaken for the answer. ~1.5 s for both.
 
 ## Cosmogenic nuclide tests
 

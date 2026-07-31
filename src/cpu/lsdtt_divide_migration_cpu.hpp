@@ -8,14 +8,19 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "../utils/lsdtt_raster_geometry.hpp"
+#include "lsdtt_raster_cpu.hpp"
 
 namespace lsdtt
 {
+
+// Defined in lsdtt_chi_extraction_cpu.hpp; only referenced here.
+struct lsdtt_chi_collection_result;
 
 struct lsdtt_outlet_record
 {
@@ -102,5 +107,58 @@ struct lsdtt_pair_summary_record
     double uncertainty_relief = 0.0;
     double uncertainty_chi = 0.0;
 };
+
+// -----------------------------------------------------------------------------
+// compute_nearest_divide_metrics
+//
+// For every channel head, find the nearest location on the divide geometry and
+// fill the nearest-divide fields of the record:
+//   pair_id_nearest, nearest_divide_x, nearest_divide_y, divide_elevation_m,
+//   distance_to_divide_m, relief_m, gradient_to_divide.
+//
+// Rules:
+//   - only divide segments whose pair involves the head's own unit_id are
+//     considered, so a head is never matched to a divide between two other
+//     units. A head whose unit takes part in no divide keeps its NaN fields
+//     and an empty pair_id_nearest,
+//   - the nearest location is the closest point on a divide *segment*
+//     (point-to-line-segment projection), not merely the closest vertex,
+//   - divide_elevation_m is sampled from elevation (normally the filled/routed
+//     DEM) at the cell containing the nearest point. Out-of-bounds or nodata
+//     cells leave the elevation-derived fields as NaN,
+//   - gradient_to_divide is NaN when the head sits on (or within rounding of)
+//     the divide, so the division by zero never happens. Negative relief is a
+//     legitimate result and is passed through unchanged.
+//
+// The search uses a uniform-grid index built per unit, so cost is close to
+// linear in the number of heads for well-distributed divides.
+//
+// Returns the number of heads that were matched to a divide.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::size_t compute_nearest_divide_metrics(
+    const std::vector<lsdtt_divide_segment_record>& divide_segments,
+    const lsdtt_raster_cpu&                         elevation,
+    std::vector<lsdtt_channel_head_metric_record>&  head_metrics);
+
+// -----------------------------------------------------------------------------
+// apply_common_base_level_to_chi
+//
+// Impose a common base level on an outlet-seeded chi collection, mirroring the
+// intent of DivideTools' SetOutlet.m: every chi network is truncated below
+// base_elevation_m and chi is re-zeroed at the lowest retained node of each
+// remaining channel fragment. Comparisons across basins are then made from the
+// same elevation datum rather than from each basin's own outlet.
+//
+// Elevations are read from elevation (this must be the filled/routed DEM so
+// that flow paths are monotonic and the retained node set stays upslope
+// closed). basin.outlet_flat is left untouched so caller-side outlet -> unit
+// maps remain valid.
+//
+// Returns the number of chi nodes removed.
+// -----------------------------------------------------------------------------
+std::size_t apply_common_base_level_to_chi(
+    lsdtt_chi_collection_result& chi,
+    const lsdtt_raster_cpu&      elevation,
+    double                       base_elevation_m);
 
 } // namespace lsdtt

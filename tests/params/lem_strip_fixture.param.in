@@ -1,0 +1,33 @@
+# Generates the hillslope-strip fixture for the in-LEM roering_implicit test
+# (docs/testing_and_benchmarking.md §8.1/§8.4).
+#
+# Test domains are generated in C++, never in Python: this is the strip
+# generator in lsdtt_raster_synthetic_surfaces_cpu, driven through
+# lsdtt-raster-synthetic-tests.
+#
+# 11 x 101 at dx = 1 m, channels at both end columns (cols 0 and 100), divide at
+# col 50, and a FLAT initial profile. Flat matters: the LEM run has to grow the
+# hill from nothing, so "did not evolve" is 0 m and can never be mistaken for the
+# steady answer. The Roering parameters here (U = 4e-3, D = 1, Sc = 0.8) are the
+# ones the steady peak is pinned against; U*L/D = 0.2 sits at a quarter of Sc,
+# which keeps the field inside the semi-implicit fast path (see §8.4).
+write_path: __WRITE_PATH__
+write_fname: lemstrip
+write_output_format: gtiff
+
+n_rows: 11
+n_cols: 101
+cell_size: 1.0
+
+write_hillslope_strip_surface: true
+write_hillslope_strip_channel_mask: true
+
+strip_channel_config: both_ends
+strip_init_profile: flat
+strip_cross_axis_is_x: true
+strip_nonlinear_profile: false
+strip_baselevel_elevation: 0.0
+strip_half_width: 0.0
+strip_uplift: 4e-3
+strip_diffusivity: 1.0
+strip_critical_slope: 0.8

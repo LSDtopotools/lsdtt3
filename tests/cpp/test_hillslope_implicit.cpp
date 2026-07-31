@@ -1,4 +1,4 @@
-// lsdtt-test-hillslope-implicit.cpp
+// test_hillslope_implicit.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -7,7 +7,19 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Standalone validation driver for the implicit *Roering nonlinear* hillslope
+// Usage:
+//   lsdtt-test-hillslope-implicit [output_dir] [--performance]
+//
+//     output_dir      where the diagnostic profile / refinement CSVs are written
+//                     (default "."); the CSVs are DIAGNOSTICS, not assertions, so
+//                     an unwritable directory warns and the run continues.
+//     --performance   run ONLY the Phase 4 linear-solve timing sweep (reported,
+//                     never asserted) and none of the validation checks.  It is a
+//                     separate CTest entry with the "performance" label, kept out
+//                     of the default suite because it takes several seconds and is
+//                     load-sensitive.
+//
+// Validation driver for the implicit *Roering nonlinear* hillslope
 // solver (compute_roering_hillslope_transport_implicit), exercising the
 // rectangular-domain validation cases: Roering steady state (two boundary
 // scenarios) and a step-change uplift transient.  It drives the solver directly (NOT through lsdtt-lem),
@@ -40,6 +52,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -50,6 +63,26 @@
 
 namespace
 {
+
+int g_n_checks = 0;
+int g_n_failed = 0;
+
+// Compact formatting for the [detail] string attached to a failed check.
+std::string fmt(double v)
+{
+    std::ostringstream os;
+    os << std::scientific << std::setprecision(3) << v;
+    return os.str();
+}
+
+void check(const std::string& name, bool ok, const std::string& detail = "")
+{
+    ++g_n_checks;
+    if (!ok) ++g_n_failed;
+    std::cout << (ok ? "PASS" : "FAIL") << "  " << name;
+    if (!ok && !detail.empty()) std::cout << "   [" << detail << "]";
+    std::cout << "\n";
+}
 
 // Roering steady-state slope magnitude at distance x from the divide.
 double roering_slope(double x, double U, double D, double Sc)
@@ -248,8 +281,9 @@ double total_volume_above(const lsdtt::lsdtt_raster_cpu& field, double datum)
 }
 
 // Output directory for plot CSVs consumed by lsdviztools.lsdtransientvalidation.
-// Relative to the run directory (../data/roering_transient_tests).
-const std::string plot_data_dir = "plot_data/";
+// Set from argv[1] in main(); the trailing separator is appended there.  These
+// CSVs are diagnostics, not assertions: an unwritable path warns and continues.
+std::string plot_data_dir = "./";
 
 // Write a per-row profile: x (cell index), numeric mid-column z, analytic z.
 void write_profile_csv(const std::string& path,
@@ -283,10 +317,75 @@ void write_refinement_csv(const std::string& path,
         os << gs[i] << "," << linf[i] << "," << rms[i] << "\n";
 }
 
+// --- Phase 4 benchmark (test 8): per-step linear-algebra cost and grid scaling
+// for each backend.  To isolate the solve cost (assembly + symbolic-reuse
+// factorize + back-substitution) from the transient dynamics, this drives a
+// FLAT field with U=0 over one fixed moderate sub-step: nothing moves, the
+// semi-implicit path takes a single solve, the step is accepted immediately,
+// and the wall-time is the cost of one implicit solve on a near-Poisson
+// (large-dt-like) operator at that grid size.  Sizes are modest so the
+// sweep stays quick; the design target is ~10^6 DOF.
+//
+// REPORTED, NEVER ASSERTED -- it can only fail by not running -- and it is
+// several seconds of load-sensitive wall time, so it lives behind the
+// "performance" label rather than in the default suite.
+void run_phase4_benchmark(double D, double Sc)
+{
+    std::cout << "\nPhase 4 benchmark (one implicit solve, flat U=0, square domains):\n"
+              << "    side      DOF     backend     wall_ms\n";
+    const int sides[3] = { 128, 256, 512 };
+    const double cs = 1.0;
+    const double dt_bench = 1.0e4;   // yr; 1/dt << D/h^2 -> diffusion-dominated matrix
+    for (int si = 0; si < 3; ++si)
+    {
+        const int side = sides[si];
+        for (int sc_choice = 0; sc_choice < 2; ++sc_choice)
+        {
+            lsdtt::lsdtt_raster_cpu dem = flat_strip(side, side, cs);
+            lsdtt::lsdtt_roering_implicit_options opts;
+            opts.D = static_cast<float>(D); opts.U = 0.0f;
+            opts.Sc = static_cast<float>(Sc); opts.nonlinear = true;
+            opts.dt_init = static_cast<float>(dt_bench);
+            opts.dt_max  = static_cast<float>(dt_bench);
+            opts.relaxation_omega = 0.7f; opts.picard_max_iter = 50;
+            opts.boundary_conditions = "opop";
+            opts.solver_choice = sc_choice; opts.n_threads = 0;
+            const std::vector<std::uint8_t> nochan(
+                static_cast<std::size_t>(side) * side, 0);
+            const auto t0 = std::chrono::steady_clock::now();
+            lsdtt::lsdtt_roering_implicit_result r =
+                lsdtt::compute_roering_hillslope_transport_implicit(
+                    dem, nochan, static_cast<float>(dt_bench), opts);
+            const auto t1 = std::chrono::steady_clock::now();
+            const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            (void)r;
+            const long dof = static_cast<long>(side - 2) * (side - 2);  // 'o' edges fixed
+            std::cout << "  " << std::setw(6) << side << "  " << std::setw(9) << dof
+                      << "  " << std::setw(10) << (sc_choice == 0 ? "LDLT" : "CG+IC")
+                      << "  " << std::fixed << std::setprecision(1) << std::setw(9) << ms
+                      << std::scientific << std::setprecision(3) << "\n";
+        }
+    }
+}
+
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    // Positional argv[1] is the directory the diagnostic CSVs are written to;
+    // --performance runs ONLY the Phase 4 timing sweep (a separate CTest entry).
+    std::string out_dir = ".";
+    bool performance_only = false;
+    int  positional = 0;
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--performance") performance_only = true;
+        else if (positional == 0)   { out_dir = arg; ++positional; }
+    }
+    if (!out_dir.empty() && out_dir.back() != '/') out_dir += '/';
+    plot_data_dir = out_dir;
+
     std::cout << "=========================================================\n"
               << "|| lsdtt-test-hillslope-implicit (Roering nonlinear)   ||\n"
               << "|| Rectangular-domain validation (plan section 9       ||\n"
@@ -302,8 +401,15 @@ int main()
 
     const double rel_tol  = 2.0e-2;
     const double col_tol  = 1.0e-9;
-    bool all_pass = true;
     std::cout << std::scientific << std::setprecision(3);
+
+    if (performance_only)
+    {
+        std::cout << "Phase 4 linear-solve timing sweep (reported, not asserted)\n";
+        run_phase4_benchmark(D, Sc);
+        std::cout << "\nRESULT: PASS (performance is recorded, not asserted)\n";
+        return 0;
+    }
 
     // --- Test 1, Full scenario: grid-refinement convergence to Roering steady ---
     std::cout << "Test 1 Full (Roering steady, BC opop) -- grid refinement:\n";
@@ -332,7 +438,12 @@ int main()
         prev = rr.linf;
         full_gs.push_back(cs); full_linf.push_back(rr.linf); full_rms.push_back(rr.rms);
         if (cs == 1.0) write_profile_csv(plot_data_dir + "test1_full_profile.csv", f, ref);
-        if (rel > rel_tol || rr.max_col_spread > col_tol) all_pass = false;
+        std::ostringstream nm;
+        nm << "test1_full_roering_steady_opop_dx" << cs << "m";
+        check(nm.str(), rel <= rel_tol && rr.max_col_spread <= col_tol,
+              "Linf/peak=" + fmt(rel) + " (tol " + fmt(rel_tol)
+              + "), col_spread=" + fmt(rr.max_col_spread)
+              + " (tol " + fmt(col_tol) + ")");
     }
     write_refinement_csv(plot_data_dir + "test1_full_refinement.csv",
                          full_gs, full_linf, full_rms);
@@ -367,7 +478,12 @@ int main()
             prevh = rr.linf;
             half_gs.push_back(cs); half_linf.push_back(rr.linf); half_rms.push_back(rr.rms);
             if (cs == 1.0) write_profile_csv(plot_data_dir + "test1_half_profile.csv", f, ref);
-            if (rel > rel_tol || rr.max_col_spread > col_tol) all_pass = false;
+            std::ostringstream nm;
+            nm << "test1_half_roering_steady_opnp_dx" << cs << "m";
+            check(nm.str(), rel <= rel_tol && rr.max_col_spread <= col_tol,
+                  "Linf/peak=" + fmt(rel) + " (tol " + fmt(rel_tol)
+                  + "), col_spread=" + fmt(rr.max_col_spread)
+                  + " (tol " + fmt(col_tol) + ")");
         }
         write_refinement_csv(plot_data_dir + "test1_half_refinement.csv",
                              half_gs, half_linf, half_rms);
@@ -396,7 +512,10 @@ int main()
         std::cout << "\nTest 2 step-change uplift (5e-4 -> 1e-3 at 200 kyr):\n"
                   << "  pre-step  vs Roering(U1): Linf/peak=" << r1 << "\n"
                   << "  post-step vs Roering(U2): Linf/peak=" << r2 << "\n";
-        if (r1 > rel_tol || r2 > rel_tol) all_pass = false;
+        check("test2_step_change_uplift_pre_and_post_step_vs_roering",
+              r1 <= rel_tol && r2 <= rel_tol,
+              "pre-step Linf/peak=" + fmt(r1) + ", post-step Linf/peak=" + fmt(r2)
+              + " (tol " + fmt(rel_tol) + ")");
     }
 
     // --- Test 2 strong: strongly supercritical step-change on the 40 m domain.
@@ -424,7 +543,11 @@ int main()
         const bool ok = (r2 <= rel_tol)
                      && (s2.max_slope_ratio <= 1.0f + 1e-4f)
                      && (s2.n_rejected_substeps < s2.n_substeps + 50);
-        if (!ok) all_pass = false;
+        check("test2_strong_supercritical_step_change_holds_Sc", ok,
+              "Linf/peak=" + fmt(r2) + " (tol " + fmt(rel_tol)
+              + "), max_slope_ratio=" + fmt(s2.max_slope_ratio)
+              + ", n_rejected=" + std::to_string(s2.n_rejected_substeps)
+              + " of n_substeps=" + std::to_string(s2.n_substeps));
     }
 
     // --- Test 6: timestep independence.  Same steady end state (40 m, U2) across a
@@ -449,7 +572,10 @@ int main()
         std::cout << "\nTest 6 timestep independence (40 m, U2; dt_init = tau/{10,40,160}):\n"
                   << "  max end-state Linf spread vs dt=tau/10 = " << max_spread
                   << "  (rel=" << rel_spread << ")\n";
-        if (rel_spread > rel_tol) all_pass = false;
+        check("test6_timestep_independence_dt_init_tau_over_10_40_160",
+              rel_spread <= rel_tol,
+              "end-state Linf spread=" + fmt(max_spread) + " (rel=" + fmt(rel_spread)
+              + ", tol " + fmt(rel_tol) + ")");
     }
 
     // --- Test 9: Sc enforcement stress.  Very strong driving (U=2e-2 -> a~100,
@@ -470,7 +596,10 @@ int main()
                   << "  limiter_fired=" << (s.limiter_fired ? "yes" : "no") << "\n";
         const bool ok = (s.max_slope_ratio <= 1.0f + 1e-4f)
                      && (s.n_rejected_substeps < s.n_substeps + 200);
-        if (!ok) all_pass = false;
+        check("test9_Sc_enforcement_stress_slopes_driven_to_Sc", ok,
+              "max_slope_ratio=" + fmt(s.max_slope_ratio)
+              + ", n_rejected=" + std::to_string(s.n_rejected_substeps)
+              + " of n_substeps=" + std::to_string(s.n_substeps));
     }
 
     // --- Phase 4 test: CG + IncompleteCholesky backend agrees with LDLT. ---
@@ -489,53 +618,10 @@ int main()
         const double rel = (rp.peak > 0.0) ? diff / rp.peak : diff;
         std::cout << "\nPhase 4 backend agreement (LDLT vs CG+IC, 40 m steady):\n"
                   << "  Linf(LDLT - CG) = " << diff << "  (rel=" << rel << ")\n";
-        if (rel > rel_tol) all_pass = false;
-    }
-
-    // --- Phase 4 benchmark (test 8): per-step linear-algebra cost and grid scaling
-    // for each backend.  To isolate the solve cost (assembly + symbolic-reuse
-    // factorize + back-substitution) from the transient dynamics, this drives a
-    // FLAT field with U=0 over one fixed moderate sub-step: nothing moves, the
-    // semi-implicit path takes a single solve, the step is accepted immediately,
-    // and the wall-time is the cost of one implicit solve on a near-Poisson
-    // (large-dt-like) operator at that grid size.  Sizes are modest so the
-    // validation run stays quick; the design target is ~10^6 DOF. ---
-    {
-        std::cout << "\nPhase 4 benchmark (one implicit solve, flat U=0, square domains):\n"
-                  << "    side      DOF     backend     wall_ms\n";
-        const int sides[3] = { 128, 256, 512 };
-        const double cs = 1.0;
-        const double dt_bench = 1.0e4;   // yr; 1/dt << D/h^2 -> diffusion-dominated matrix
-        for (int si = 0; si < 3; ++si)
-        {
-            const int side = sides[si];
-            for (int sc_choice = 0; sc_choice < 2; ++sc_choice)
-            {
-                lsdtt::lsdtt_raster_cpu dem = flat_strip(side, side, cs);
-                lsdtt::lsdtt_roering_implicit_options opts;
-                opts.D = static_cast<float>(D); opts.U = 0.0f;
-                opts.Sc = static_cast<float>(Sc); opts.nonlinear = true;
-                opts.dt_init = static_cast<float>(dt_bench);
-                opts.dt_max  = static_cast<float>(dt_bench);
-                opts.relaxation_omega = 0.7f; opts.picard_max_iter = 50;
-                opts.boundary_conditions = "opop";
-                opts.solver_choice = sc_choice; opts.n_threads = 0;
-                const std::vector<std::uint8_t> nochan(
-                    static_cast<std::size_t>(side) * side, 0);
-                const auto t0 = std::chrono::steady_clock::now();
-                lsdtt::lsdtt_roering_implicit_result r =
-                    lsdtt::compute_roering_hillslope_transport_implicit(
-                        dem, nochan, static_cast<float>(dt_bench), opts);
-                const auto t1 = std::chrono::steady_clock::now();
-                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-                (void)r;
-                const long dof = static_cast<long>(side - 2) * (side - 2);  // 'o' edges fixed
-                std::cout << "  " << std::setw(6) << side << "  " << std::setw(9) << dof
-                          << "  " << std::setw(10) << (sc_choice == 0 ? "LDLT" : "CG+IC")
-                          << "  " << std::fixed << std::setprecision(1) << std::setw(9) << ms
-                          << std::scientific << std::setprecision(3) << "\n";
-            }
-        }
+        check("phase4_backend_agreement_ldlt_vs_cg_incomplete_cholesky",
+              rel <= rel_tol,
+              "Linf(LDLT-CG)=" + fmt(diff) + " (rel=" + fmt(rel)
+              + ", tol " + fmt(rel_tol) + ")");
     }
 
     // --- Test 7: conservation (plan section 9 item 7). -----------------------
@@ -616,7 +702,11 @@ int main()
         const bool ok = (max_rel_drift <= conserve_tol)
                      && !any_limiter
                      && (final_ratio <= 1.0f);
-        if (!ok) all_pass = false;
+        check("test7_volume_conservation_no_flux_no_source", ok,
+              "max rel volume drift=" + fmt(max_rel_drift)
+              + " (tol " + fmt(conserve_tol) + "), limiter_fired="
+              + (any_limiter ? "yes" : "no")
+              + ", max_slope_ratio=" + fmt(final_ratio));
     }
 
     // --- Test 4: match the SOR steady state (plan section 9 item 4). ----------
@@ -683,7 +773,10 @@ int main()
             std::cout << "  linear   : Linf(implicit-SOR)=" << diff << "  peak=" << peak
                       << "  rel=" << rel << "  (SOR iters=" << sr.n_iterations
                       << ", res=" << sr.final_residual << ")\n";
-            if (rel > 1.0e-3) all_pass = false;
+            check("test4_linear_implicit_matches_sor_steady_state",
+                  rel <= 1.0e-3,
+                  "Linf(implicit-SOR)=" + fmt(diff) + " (rel=" + fmt(rel)
+                  + ", tol " + fmt(1.0e-3) + ")");
         }
 
         // -- Nonlinear (Roering) mode: integrate to steady state, compare to SOR. ---
@@ -726,7 +819,10 @@ int main()
             }
             write_profile_csv(plot_data_dir + "test4_sor_match_profile.csv",
                               ir.elevation, sor_midcol);
-            if (rel > 5.0e-3) all_pass = false;
+            check("test4_nonlinear_implicit_matches_sor_steady_state",
+                  rel <= 5.0e-3,
+                  "Linf(implicit-SOR)=" + fmt(diff) + " (rel=" + fmt(rel)
+                  + ", tol " + fmt(5.0e-3) + ")");
         }
     }
 
@@ -877,7 +973,13 @@ int main()
         const bool new_ok     = (new_linf_rel_max <= rel_tol) && (rel_spread <= rel_tol);
         const bool handoff_ok = (old_bias_large >= 0.5 * E * dts[0])    // bias real, ~E*dt
                              && (new_bias_large <= 0.2 * E * dts[0]);   // new-time bias tiny
-        if (!(new_ok && handoff_ok)) all_pass = false;
+        check("test3_coupled_lowering_channel_new_time_dirichlet_handoff",
+              new_ok && handoff_ok,
+              "max Linf/peak=" + fmt(new_linf_rel_max) + ", divide-relief dt-spread rel="
+              + fmt(rel_spread) + " (tol " + fmt(rel_tol) + "); old-time bias="
+              + fmt(old_bias_large) + " (must be >= " + fmt(0.5 * E * dts[0])
+              + "), new-time |bias|=" + fmt(new_bias_large)
+              + " (must be <= " + fmt(0.2 * E * dts[0]) + ")");
     }
 
     // --- Test 12: TR-BDF2 integrator (Phase 6) -- 2nd-order time accuracy. -----
@@ -984,9 +1086,17 @@ int main()
         const bool order_ok  = (tr_order >= 1.7) && (be_order <= 1.4)
                             && (tr_order - be_order >= 0.5)
                             && (err_tr[2] < err_be[2]);
-        if (!(steady_ok && order_ok)) all_pass = false;
+        check("test12_trbdf2_steady_state_and_second_order_time_accuracy",
+              steady_ok && order_ok,
+              "steady Linf/peak=" + fmt(steady_rel) + " (tol " + fmt(rel_tol)
+              + "); tr_bdf2 order=" + fmt(tr_order) + " (must be >= 1.7), "
+              + "backward_euler order=" + fmt(be_order) + " (must be <= 1.4), "
+              + "gap=" + fmt(tr_order - be_order) + " (must be >= 0.5), "
+              + "err_tr=" + fmt(err_tr[2]) + " vs err_be=" + fmt(err_be[2]));
     }
 
-    std::cout << "\nRESULT: " << (all_pass ? "PASS" : "FAIL") << "\n";
-    return all_pass ? 0 : 1;
+    std::cout << "\n" << (g_n_checks - g_n_failed) << "/" << g_n_checks
+              << " checks passed\n"
+              << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+    return g_n_failed == 0 ? 0 : 1;
 }

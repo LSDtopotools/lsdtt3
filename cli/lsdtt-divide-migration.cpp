@@ -9,12 +9,16 @@
 // -----------------------------------------------------------------------------
 // lsdtt-divide-migration
 //
-// Phase-1 scaffold CLI for divide-migration analysis.
+// Divide-migration metrics from user-supplied outlets.
 //
-// This first phase provides:
-//   1. standard lsdtt3 CLI skeleton and help output
-//   2. parameter declarations and validation
-//   3. explicit placeholder execution message
+// The tool:
+//   1. fills and routes the DEM, then snaps the supplied outlets to channels
+//   2. groups outlets into comparison units (optionally by a cluster field)
+//   3. selects basins and extracts the interfluvial divides between units
+//   4. extracts channel heads and computes chi with an outlet-zero base
+//   5. measures relief and gradient from each head to its nearest divide
+//
+// Pair-level summary statistics and uncertainty are not yet implemented.
 //
 // Usage:
 //   lsdtt-divide-migration <path> <parameter_file>
@@ -26,6 +30,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -88,19 +93,52 @@ static bool cluster_field_is_set(const std::string& field_name)
     return lowercase_copy(field_name) != "null";
 }
 
+// Split one CSV row into fields. Double-quoted fields may contain commas and
+// escaped quotes (""), so a label such as "Loch Etive, north" stays in a single
+// column instead of silently shifting every field after it.
 static std::vector<std::string> split_csv_row_simple(const std::string& row)
 {
     std::vector<std::string> cols;
     std::string token;
-    std::stringstream ss(row);
-    while (std::getline(ss, token, ','))
+    bool in_quotes = false;
+
+    for (std::size_t i = 0; i < row.size(); ++i)
     {
-        cols.push_back(token);
+        const char c = row[i];
+        if (in_quotes)
+        {
+            if (c == '"')
+            {
+                if (i + 1 < row.size() && row[i + 1] == '"')
+                {
+                    token.push_back('"');
+                    ++i;
+                }
+                else
+                {
+                    in_quotes = false;
+                }
+            }
+            else
+            {
+                token.push_back(c);
+            }
+        }
+        else if (c == '"')
+        {
+            in_quotes = true;
+        }
+        else if (c == ',')
+        {
+            cols.push_back(token);
+            token.clear();
+        }
+        else if (c != '\r')
+        {
+            token.push_back(c);
+        }
     }
-    if (!row.empty() && row.back() == ',')
-    {
-        cols.emplace_back("");
-    }
+    cols.push_back(token);
     return cols;
 }
 
@@ -193,7 +231,19 @@ static std::vector<std::string> load_cluster_values_from_vector(
 {
     lsdtt::lsdtt_data_loader loader;
     loader.open_vector(vector_path);
-    lsdtt::lsdtt_vector_layer layer = loader.read_vector_layer("");
+
+    // read_vector_layer resolves the name with GetLayerByName(), which never
+    // matches an empty string, so the layer must be named explicitly. Take the
+    // first layer, matching how every other vector reader in the codebase does
+    // it (see lsdtt_burn_streams_cpu.cpp and cli/lsdtt-basin-extraction.cpp).
+    const std::vector<std::string> layer_names = loader.get_layer_names();
+    if (layer_names.empty())
+    {
+        loader.close_vector();
+        throw std::runtime_error("no layers in outlet vector file: " + vector_path);
+    }
+
+    lsdtt::lsdtt_vector_layer layer = loader.read_vector_layer(layer_names[0]);
     loader.close_vector();
 
     const int idx = layer.schema.index_of(cluster_field);
@@ -299,7 +349,9 @@ int main(int argc, char* argv[])
     string_default_map["outlet_cluster_mode"] = "auto";
     help_map["outlet_cluster_mode"] = {"string","auto",
         "How to interpret cluster field values.",
-        "Options: auto, integer, string.",
+        "Options: auto (numeric grouping if every label is an integer, otherwise "
+        "string grouping), integer (labels must be integers, grouped numerically), "
+        "string (labels always grouped as raw text, so 01 and 1 are different units).",
         "Outlets / clusters", "param", "outlet_cluster_field"};
 
     string_default_map["basin_outlet_snapping_method"] = "downstream";
@@ -563,6 +615,7 @@ int main(int argc, char* argv[])
 
     // Optional cluster labels in input order.
     std::vector<std::string> cluster_values;
+    bool cluster_values_are_numeric = false;
     const bool use_clusters = cluster_field_is_set(sf.at("outlet_cluster_field"));
     if (use_clusters)
     {
@@ -596,21 +649,34 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        const std::string mode = lowercase_copy(sf.at("outlet_cluster_mode"));
-        if (mode == "integer")
+        // Grouping semantics per mode:
+        //   integer -> every label must be an integer; grouped by numeric value
+        //   auto    -> grouped numerically if every label is an integer,
+        //              otherwise grouped as raw text
+        //   string  -> always grouped as raw text, so "01" and "1" stay distinct
+        const lsdtt::lsdtt_outlet_cluster_mode cluster_mode =
+            lsdtt::parse_outlet_cluster_mode(sf.at("outlet_cluster_mode"));
+
+        bool all_values_are_integers = true;
+        for (std::size_t i = 0; i < requested_outlets.size(); ++i)
         {
-            for (std::size_t i = 0; i < requested_outlets.size(); ++i)
+            if (!lsdtt::outlet_cluster_value_is_integer(cluster_values[i]))
             {
-                const std::string& v = cluster_values[i];
-                if (!lsdtt::outlet_cluster_value_is_integer(v))
+                all_values_are_integers = false;
+                if (cluster_mode == lsdtt::lsdtt_outlet_cluster_mode::integer_mode)
                 {
-                    std::cerr << "FATAL: outlet cluster value '" << v
+                    std::cerr << "FATAL: outlet cluster value '" << cluster_values[i]
                               << "' is not an integer (point_id=" << (i + 1)
                               << ").\n";
                     return 1;
                 }
             }
         }
+
+        cluster_values_are_numeric =
+            (cluster_mode == lsdtt::lsdtt_outlet_cluster_mode::integer_mode) ||
+            (cluster_mode == lsdtt::lsdtt_outlet_cluster_mode::auto_mode &&
+             all_values_are_integers);
     }
 
     // -------------------------------------------------------------------------
@@ -738,6 +804,12 @@ int main(int argc, char* argv[])
                           << sf.at("outlet_cluster_field") << "\n";
                 return 1;
             }
+            if (cluster_values_are_numeric)
+            {
+                // Numeric grouping: normalise the label so 01, 1 and +1 all
+                // resolve to the same unit.
+                cluster_value = std::to_string(std::stoll(cluster_value));
+            }
             unit_key = "cluster:" + cluster_value;
         }
         else
@@ -773,10 +845,85 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (snapped_outlet_flats.size() < 2 || flat_to_unit_id.size() < 2)
+    // Count distinct units among a set of retained outlet flats. This must be
+    // computed from the flats still in play rather than from flat_to_unit_id
+    // itself: that map is keyed by flat, so it counts outlets (several of which
+    // may share one cluster) and it is not pruned when outlets are dropped by
+    // later filtering. A run whose outlets all collapse into a single unit has
+    // no unit pair to compare and therefore no divides to extract.
+    auto count_distinct_units =
+        [&flat_to_unit_id](const std::vector<std::int64_t>& flats) -> std::size_t
     {
-        std::cerr << "FATAL: fewer than two valid snapped outlets remain for unit mapping.\n";
+        std::set<int> units;
+        for (const std::int64_t f : flats)
+        {
+            const auto it = flat_to_unit_id.find(f);
+            if (it != flat_to_unit_id.end()) units.insert(it->second);
+        }
+        return units.size();
+    };
+
+    if (snapped_outlet_flats.size() < 2 || count_distinct_units(snapped_outlet_flats) < 2)
+    {
+        std::cerr << "FATAL: fewer than two valid snapped outlets in two distinct units "
+                  << "remain for unit mapping (outlets="
+                  << snapped_outlet_flats.size() << ", units="
+                  << count_distinct_units(snapped_outlet_flats) << "). "
+                  << "Divide extraction needs at least two units to compare.\n";
         return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Outlet / base-level control (Phase F)
+    //
+    //   none              : keep every basin, including edge-touching ones
+    //   elevation         : drop outlets below outlet_control_min_elevation
+    //   max_out_elevation : keep all outlets, but impose the highest selected
+    //                       outlet elevation as a common chi base level
+    //   complete_only     : drop basins whose upslope area touches nodata
+    // -------------------------------------------------------------------------
+    const std::string outlet_control_mode = lowercase_copy(sf.at("outlet_control_mode"));
+    std::cout << "Outlet control mode: " << outlet_control_mode << "\n";
+
+    if (outlet_control_mode == "elevation")
+    {
+        const std::vector<float>& routed_data = routed_dem.get_data();
+        const std::vector<std::uint8_t>& routed_mask = routed_dem.get_mask();
+        const double min_z = static_cast<double>(ff.at("outlet_control_min_elevation"));
+
+        std::vector<std::int64_t> retained_outlet_flats;
+        retained_outlet_flats.reserve(snapped_outlet_flats.size());
+        for (const std::int64_t flat : snapped_outlet_flats)
+        {
+            const std::size_t idx = static_cast<std::size_t>(flat);
+            const bool valid_cell = flat >= 0 && idx < routed_data.size() &&
+                                    idx < routed_mask.size() && routed_mask[idx] != 0;
+            if (valid_cell && static_cast<double>(routed_data[idx]) >= min_z)
+            {
+                retained_outlet_flats.push_back(flat);
+            }
+            else
+            {
+                flat_to_unit_id.erase(flat);
+                flat_to_outlet_point_id.erase(flat);
+            }
+        }
+
+        std::cout << "  dropped outlets below " << min_z << " m: "
+                  << (snapped_outlet_flats.size() - retained_outlet_flats.size())
+                  << "\n";
+        snapped_outlet_flats.swap(retained_outlet_flats);
+
+        if (snapped_outlet_flats.size() < 2 ||
+            count_distinct_units(snapped_outlet_flats) < 2)
+        {
+            std::cerr << "FATAL: fewer than two outlets in two distinct units remain after "
+                      << "outlet_control_mode=elevation filtering "
+                      << "(outlet_control_min_elevation=" << min_z
+                      << ", outlets=" << snapped_outlet_flats.size()
+                      << ", units=" << count_distinct_units(snapped_outlet_flats) << ").\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -804,7 +951,10 @@ int main(int argc, char* argv[])
     {
         basin_manager.select_junction_basins_from_basin_outlets(snapped_outlet_flats);
         basin_manager.filter_duplicates();
-        basin_manager.filter_incomplete();
+        if (outlet_control_mode == "complete_only")
+        {
+            basin_manager.filter_incomplete();
+        }
     }
     catch (const std::exception& e)
     {
@@ -814,7 +964,9 @@ int main(int argc, char* argv[])
 
     if (basin_manager.size() < 2)
     {
-        std::cerr << "FATAL: fewer than two complete, unique basins remain after selection/filtering.\n";
+        std::cerr << "FATAL: fewer than two unique basins remain after selection "
+                  << "and filtering (outlet_control_mode=" << outlet_control_mode
+                  << ").\n";
         return 1;
     }
 
@@ -896,9 +1048,49 @@ int main(int argc, char* argv[])
                 ifs.at("source_pixels_threshold"),
                 chi_opts);
 
+        // Common base level: chi is re-zeroed at the highest selected outlet
+        // elevation so all units are compared from the same datum.
+        if (outlet_control_mode == "max_out_elevation")
+        {
+            const std::vector<float>& routed_data = routed_dem.get_data();
+            const std::vector<std::uint8_t>& routed_mask = routed_dem.get_mask();
+
+            double base_elevation_m = -std::numeric_limits<double>::infinity();
+            for (const auto& basin_chi : chi_collection.basins)
+            {
+                const std::int64_t flat = basin_chi.outlet_flat;
+                const std::size_t idx = static_cast<std::size_t>(flat);
+                if (flat < 0 || idx >= routed_data.size() ||
+                    idx >= routed_mask.size() || routed_mask[idx] == 0)
+                {
+                    continue;
+                }
+                base_elevation_m = std::max(base_elevation_m,
+                                            static_cast<double>(routed_data[idx]));
+            }
+
+            if (std::isfinite(base_elevation_m))
+            {
+                const std::size_t n_pruned = lsdtt::apply_common_base_level_to_chi(
+                    chi_collection, routed_dem, base_elevation_m);
+                std::cout << "  common base level: " << base_elevation_m
+                          << " m (" << n_pruned << " chi nodes below base level removed)\n";
+            }
+            else
+            {
+                std::cout << "  common base level could not be determined; "
+                          << "chi left on per-outlet base levels\n";
+            }
+        }
+
         int next_head_id = 1;
-        const std::vector<float>& dem_data = dem.get_data();
-        const std::vector<std::uint8_t>& dem_mask = dem.get_mask();
+        // Sample head elevations from the routed (filled) DEM so that
+        // head_elevation_m and divide_elevation_m come from the same surface and
+        // relief_m does not mix the two. Channel heads in upland terrain are
+        // very unlikely to sit in a filled depression, so this is normally
+        // identical to the input DEM.
+        const std::vector<float>& dem_data = routed_dem.get_data();
+        const std::vector<std::uint8_t>& dem_mask = routed_dem.get_mask();
 
         for (const auto& basin_chi : chi_collection.basins)
         {
@@ -948,6 +1140,7 @@ int main(int argc, char* argv[])
                 rec.head_elevation_m = static_cast<double>(dem_data[idx]);
                 rec.chi = static_cast<double>(basin_chi.chi[i]);
 
+                // Nearest-divide fields are filled in below (Phase G).
                 rec.nearest_divide_x = std::numeric_limits<double>::quiet_NaN();
                 rec.nearest_divide_y = std::numeric_limits<double>::quiet_NaN();
                 rec.divide_elevation_m = std::numeric_limits<double>::quiet_NaN();
@@ -962,6 +1155,25 @@ int main(int argc, char* argv[])
     catch (const std::exception& e)
     {
         std::cerr << "FATAL: channel-head/chi extraction failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Nearest-divide metrics (Phase G)
+    //
+    // Elevations along the divide are sampled from the routed (filled) DEM so
+    // that the divide crest is not read from an unresolved pit.
+    // -------------------------------------------------------------------------
+    std::size_t n_heads_with_divide = 0;
+    try
+    {
+        n_heads_with_divide = lsdtt::compute_nearest_divide_metrics(
+            divide_segments, routed_dem, head_metrics);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: nearest-divide metric computation failed: "
+                  << e.what() << "\n";
         return 1;
     }
 
@@ -1015,6 +1227,75 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: could not write divide vectors: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (bf.at("write_channel_heads") && !head_metrics.empty())
+    {
+        try
+        {
+            const lsdtt::vector_output_format out_fmt =
+                lsdtt::resolve_vector_output_format(sf.at("vector_output_format"));
+            const std::string ext = lsdtt::output_extension(out_fmt);
+            const std::string out_path = lsdtt::lsdtt_data_loader::resolve_writable_path(
+                pp.get_full_write_path() + "_channel_heads", ext);
+
+            lsdtt::lsdtt_vector_schema schema;
+            schema.field_names = {
+                "head_id", "outlet_id", "unit_id", "pair_id_nearest",
+                "head_x", "head_y", "head_elevation_m", "chi",
+                "nearest_divide_x", "nearest_divide_y", "divide_elevation_m",
+                "distance_to_divide_m", "relief_m", "gradient_to_divide"
+            };
+            schema.field_types = {
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::string_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type
+            };
+
+            lsdtt::lsdtt_data_loader writer;
+            writer.begin_vector_write(
+                out_path, "channel_heads", schema, dem.get_meta().crs_wkt,
+                out_fmt, false);
+
+            for (const lsdtt::lsdtt_channel_head_metric_record& rec : head_metrics)
+            {
+                writer.write_point(rec.head_x, rec.head_y, {
+                    static_cast<long int>(rec.head_id),
+                    static_cast<long int>(rec.outlet_id),
+                    static_cast<long int>(rec.unit_id),
+                    rec.pair_id_nearest,
+                    rec.head_x,
+                    rec.head_y,
+                    rec.head_elevation_m,
+                    rec.chi,
+                    rec.nearest_divide_x,
+                    rec.nearest_divide_y,
+                    rec.divide_elevation_m,
+                    rec.distance_to_divide_m,
+                    rec.relief_m,
+                    rec.gradient_to_divide
+                });
+            }
+            writer.finish_vector_write();
+            std::cout << "Wrote channel heads: " << out_path << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: could not write channel-head vectors: "
+                      << e.what() << "\n";
             return 1;
         }
     }
@@ -1073,9 +1354,16 @@ int main(int argc, char* argv[])
     std::cout << "  selected basins  : " << basin_manager.size() << "\n";
     std::cout << "  divide segments  : " << divide_segments.size() << "\n";
     std::cout << "  channel heads    : " << head_metrics.size() << "\n";
+    std::cout << "  heads with divide: " << n_heads_with_divide << "\n";
+    std::cout << "  heads without    : " << (head_metrics.size() - n_heads_with_divide)
+              << " (unit borders no extracted divide)\n";
 
-    std::cout << "Phase-1 scaffold complete: parameters parsed, DEM/flow prepared, outlets ingested and mapped to units.\n";
-    std::cout << "Core divide-migration analysis is not yet implemented in this phase.\n";
+    std::cout << "Divide-migration analysis complete: basins selected from outlets, "
+              << "interfluvial divides extracted, channel heads and chi computed, "
+              << "and nearest-divide relief and gradient measured.\n";
+    std::cout << "Pair-level summary statistics and uncertainty "
+              << "(write_pair_summary_csv, pair_uncertainty_method, "
+              << "bootstrap_replicates, bootstrap_seed) are not yet implemented.\n";
 
     pp.print_help(help_map, pp.get_write_fname() + "_README", k_version, k_citation);
     pp.print_parameters();

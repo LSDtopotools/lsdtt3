@@ -45,6 +45,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--expect-raster-stat",
+        action="append",
+        default=[],
+        help=(
+            "Expected band-1 statistic within a band, as rel_path:STAT:LO:HI "
+            "with STAT one of min, max, mean. Two-sided, so it pins a value "
+            "rather than a direction. For example "
+            "lemstrip_modelled_topography.tif:max:4.90:4.99"
+        ),
+    )
+    parser.add_argument(
         "--expect-valid-percent-100",
         action="append",
         default=[],
@@ -169,6 +180,42 @@ def assert_raster_min(raster_path: pathlib.Path, minimum: float) -> None:
         raise AssertionError(
             f"Expected every pixel of {raster_path} to be valid and finite "
             "(STATISTICS_VALID_PERCENT=100)."
+        )
+
+
+def assert_raster_stat(
+    raster_path: pathlib.Path, stat: str, low: float, high: float
+) -> None:
+    """Band-1 min / max / mean must lie in [low, high].
+
+    Two-sided on purpose: a physical steady state is pinned by a band around a
+    known value, and a one-sided bound would be satisfied by a run that simply
+    did not evolve.
+    """
+    keys = {
+        "min": "STATISTICS_MINIMUM",
+        "max": "STATISTICS_MAXIMUM",
+        "mean": "STATISTICS_MEAN",
+    }
+    if stat not in keys:
+        raise AssertionError(f"Unknown raster stat {stat!r}; use min, max or mean.")
+
+    cmd = ["gdalinfo", "-stats", str(raster_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"gdalinfo -stats failed for {raster_path} (exit {result.returncode})."
+        )
+
+    match = re.search(rf"{keys[stat]}=([-0-9.eE+]+)", result.stdout)
+    if not match:
+        raise AssertionError(f"Could not parse {keys[stat]} for {raster_path}.")
+
+    got = float(match.group(1))
+    if not (low <= got <= high):
+        raise AssertionError(
+            f"{keys[stat]} out of band for {raster_path}: expected "
+            f"[{low}, {high}], got {got}."
         )
 
 
@@ -402,6 +449,11 @@ def main() -> int:
         for spec in args.expect_raster_min:
             rel_path, min_spec = spec.rsplit(":", 1)
             assert_raster_min(out_dir / rel_path, float(min_spec))
+
+        for spec in args.expect_raster_stat:
+            rel_path, stat, low_spec, high_spec = spec.rsplit(":", 3)
+            assert_raster_stat(out_dir / rel_path, stat.lower(),
+                               float(low_spec), float(high_spec))
 
         for spec in args.expect_raster_size:
             rel_path, size_spec = spec.rsplit(":", 1)

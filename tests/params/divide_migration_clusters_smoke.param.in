@@ -1,0 +1,19 @@
+# End-to-end divide-migration run WITH clustering.
+#
+# Same three-valley fixture as divide_migration_smoke, but cluster_id groups the
+# first two outlets into one unit. The 1-2 divide then becomes internal to a
+# single unit and must disappear, leaving exactly one divide segment: that is
+# the observable that distinguishes real cluster grouping from a run that merely
+# read the field and ignored it.
+read_path: __READ_PATH__
+read_fname: divmig_valleys.tif
+write_path: __WRITE_PATH__
+write_fname: divmig_cluster
+
+basin_outlet_file: divmig_outlets.csv
+outlet_cluster_field: cluster_id
+outlet_cluster_mode: auto
+basin_outlet_snapping_method: none
+
+source_pixels_threshold: 40
+m_over_n: 0.45

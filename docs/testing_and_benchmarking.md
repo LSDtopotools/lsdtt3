@@ -1591,9 +1591,17 @@ tracked and their absence means a broken checkout, not an optional step.
 
 The backward-Euler + damped-Picard solver for the Roering (1999) nonlinear
 hillslope flux law (`compute_roering_hillslope_transport_implicit`) is validated
-by the standalone driver `cli/lsdtt-test-hillslope-implicit.cpp`, plus in-LEM
+by the unit-test driver `tests/cpp/test_hillslope_implicit.cpp` (CTest target
+`unit_hillslope_implicit`, label `unit;hillslope`), plus in-LEM
 hillslope-strip runs driven entirely from `lsdtt-lem` parameter files. The driver
-emits `plot_data/*.csv` for plotting.
+takes its output directory as `argv[1]` and emits the plottable `*.csv` there —
+under CTest that is `build/tests/hillslope_implicit_output/`. The CSVs are
+diagnostics, not assertions: an unwritable directory warns and the run continues.
+
+The same binary carries the Phase 4 linear-solve **timing sweep** behind
+`--performance`; it is registered separately as `performance_hillslope_implicit`
+(label `performance;hillslope`, gated on `LSDTT_ENABLE_PERF_TESTS`) and is
+reported, never asserted, so it stays out of the default suite.
 
 **Test domains are generated in C++, never in Python.** The hillslope-strip
 generator in `lsdtt_raster_synthetic_surfaces_cpu` (exposed through
@@ -1641,10 +1649,10 @@ edge handling — the lower-risk of the two options, and it works.
 | 2 | Step change in uplift (U 5×10⁻⁴ → 1×10⁻³) — the field must land on the Roering steady state for each rate | strongly supercritical driving (`U·L/D = 2.5·Sc`, 40 m domain) lands on Roering(U₂) at Linf/peak ≈ 4.1e-4, `max_slope_ratio ≈ 0.816`, 51 rejected sub-steps |
 | 3 | Coupled lowering-channel dynamic equilibrium — the Dirichlet hand-off check | new-time relief matches the Roering `(U+E)` profile to ~2e-5 and is `dt`-independent |
 | 4 | Match the nonlinear SOR steady state on the same DEM and `is_channel` | agrees to the SOR float32 floor: linear rel **3.9e-6**, nonlinear rel **2.4e-6** |
-| 5 | Linear-mode contrast (`nonlinear = false`) against the exact parabola | 2nd-order in `h`; quantifies the gap to the Roering solution, confirming the nonlinear term is live |
+| 5 | Linear-mode contrast (`nonlinear = false`) against the exact parabola | **NOT IMPLEMENTED** — no such check exists in the driver. The row describes intent, not a result. The only linear-mode check present is test 4's linear half, which compares the implicit solver against SOR, not against the analytic parabola |
 | 6 | Timestep independence across `dt_init = tau/{10, 40, 160}` | rel ≈ **2.4e-6** |
 | 7 | Conservation (U = 0, `'nnnn'`, no sinks) — the discrete volume budget must close | max relative volume drift **2.3e-8** |
-| 8 | Performance benchmark, one implicit solve, flat, U = 0 | see §8.3 |
+| 8 | Performance benchmark, one implicit solve, flat, U = 0 | see §8.3; run via `--performance` as `performance_hillslope_implicit`, not part of the default suite |
 | 9 | `Sc` enforcement stress (U = 2×10⁻²) | caps at `max_slope_ratio = 0.99` with `limiter_fired` set and bounded rejections |
 | 12 | TR-BDF2 temporal accuracy | reaches Roering(U) at Linf/peak 5.0e-4 with **observed order 2.00** against 0.96 for backward Euler — ~35× more accurate at the coarsest `dt` |
 
@@ -1665,6 +1673,9 @@ coupled fluvial + hillslope diamond-square run. Both run entirely from
 
 One implicit solve, flat field, U = 0, run as back-to-back interleaved A/B pairs
 on the same machine — WSL2 host-load noise makes isolated timings unreliable.
+Run it with `ctest -L performance -R hillslope` after configuring with
+`-DLSDTT_ENABLE_PERF_TESTS=ON`, or directly as
+`lsdtt-test-hillslope-implicit <out_dir> --performance`.
 
 | Grid | LDLT | CG + IncompleteCholesky |
 |---|---|---|
@@ -1686,7 +1697,7 @@ reproducing its recorded steady peak (4.943 vs 4.94).
 **The semi-implicit omega bug — the case for an integration test.** The
 semi-implicit fast path applied the *damped* Picard `omega` to its single IMEX
 solve, under-relaxing and therefore under-diffusing the step. This was **invisible
-to the standalone driver**, whose steady-state tests all finish on full Picard, so
+to the unit-test driver**, whose steady-state tests all finish on full Picard, so
 every unit-level check passed — while coupled LEM steady states were biased about
 **40 % high**. It was only exposed by the in-LEM integration run. A lone
 semi-implicit solve now uses `omega = 1`.
@@ -1695,6 +1706,18 @@ semi-implicit solve now uses `omega = 1`.
 > fast path the unit tests cannot validate. Where a code path exists specifically
 > for the cheap case, an end-to-end test that actually spends time in it is not
 > optional.
+
+That end-to-end test is now registered and runs in the default suite:
+`smoke_lem_strip_fixture` generates the strip through
+`lsdtt-raster-synthetic-tests`, and `smoke_lem_roering_implicit_strip` runs
+`lsdtt-lem` on it (`tests/params/lem_roering_implicit_strip.param.in`) and pins
+the converged steady state two-sided — peak **4.9429 m** and mean **3.2719 m**,
+the recorded in-LEM strip values. `U·L/D = 0.2` is a quarter of `Sc`, so the run
+spends essentially every step inside the semi-implicit fast path. Reinstating the
+omega bug moves the peak to **6.862 m (+38.8 %)** and the mean to 4.516 m, both
+far outside the bands; and because the strip starts **flat**, a solver that does
+nothing leaves it at 0 m rather than somewhere plausible. Both tests together
+take ~1.5 s.
 
 **The explicit solver's CFL estimator was wrong — and silently so.**
 `compute_roering_hillslope_transport` sub-cycled on `dt_stable = h²/(4·D·α_max)`
