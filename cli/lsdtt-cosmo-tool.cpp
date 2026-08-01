@@ -618,25 +618,10 @@ int main(int argc, char* argv[])
     }
     const auto& flow = dynamic_cast<const lsdtt::lsdtt_flowinfo&>(*flow_ptr);
 
-    //  3. Production raster
-    std::cout << "Calculating " << (use_lsdn ? "LSDn" : "Stone 2000")
-              << " production raster"
-              << " (" << atm_report << " atmosphere)"
-              << ((use_lsdn ? sample_age_yr > 0.0 : use_paleomag)
-                      ? " + palaeomagnetic correction" : "")
-              << "...\n";
-    lsdtt::lsdtt_raster_cpu prod_raster;
-    try
-    {
-        prod_raster = lsdtt::calculate_production_raster(
-            filled_dem, crn_nc, sample_age_yr, atm_source, scaling_scheme, nuclide);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "FATAL: production raster failed: " << e.what() << "\n";
-        return 1;
-    }
-
+    //  3a. Pressure raster -- built FIRST so the production raster can reuse
+    //  it instead of deriving the same values from the same inputs a second
+    //  time (a second full reprojection plus a second ERA40/NCEP
+    //  interpolation per pixel).
     // The pressure raster is always computed.  It no longer feeds any muon
     // scheme (balcoCRONUSv3PD was removed 2026-08-01), but the basin-mean
     // effective pressure derived from it is reported in the output CSV and is
@@ -656,6 +641,25 @@ int main(int argc, char* argv[])
     {
         std::cerr << "WARNING: pressure raster failed: " << e.what() << "\n"
                   << "         effective_pressure_hpa will be reported as nan.\n";
+    }
+
+    //  3b. Production raster
+    std::cout << "Calculating " << (use_lsdn ? "LSDn" : "Stone 2000")
+              << " production raster"
+              << " (" << atm_report << " atmosphere)"
+              << ((use_lsdn ? sample_age_yr > 0.0 : use_paleomag)
+                      ? " + palaeomagnetic correction" : "")
+              << "...\n";
+    lsdtt::lsdtt_raster_cpu prod_raster;
+    try
+    {
+        prod_raster = lsdtt::calculate_production_raster(
+            filled_dem, crn_nc, sample_age_yr, atm_source, scaling_scheme, nuclide);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: production raster failed: " << e.what() << "\n";
+        return 1;
     }
 
     // CRONUS emulator inputs.  The pressure raster is already computed above;

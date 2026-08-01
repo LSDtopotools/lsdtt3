@@ -64,6 +64,26 @@ NuclideView view_of(const std::string& nuclide, const lsdtt_crn_parameters& p)
     return v;
 }
 
+
+// Steady-state concentration from a prebuilt view.  The bisections below call
+// this tens of thousands of times per sample, so the view is hoisted out of the
+// loop rather than rebuilt (three std::string comparisons) on each evaluation.
+double ss_conc_view(const NuclideView& v, double eff_erate_g_cm2_yr)
+{
+    double sum = 0.0;
+    for (int j = 0; j < 4; ++j)
+        sum += v.F[j] * v.Gamma[j] / (eff_erate_g_cm2_yr + v.Gamma[j] * v.lambda);
+    return v.P0 * sum;
+}
+
+double ss_ratio_view(const NuclideView& num, const NuclideView& den,
+                     double eff_erate_g_cm2_yr)
+{
+    const double d = ss_conc_view(den, eff_erate_g_cm2_yr);
+    if (d <= 0.0) return std::numeric_limits<double>::quiet_NaN();
+    return ss_conc_view(num, eff_erate_g_cm2_yr) / d;
+}
+
 lsdtt_crn_parameters scaled_params(double total_shielding,
                                    const std::string& muon_scheme)
 {
@@ -117,11 +137,7 @@ double crn_steady_state_conc(const std::string& nuclide,
                              double eff_erate_g_cm2_yr,
                              const lsdtt_crn_parameters& params)
 {
-    const NuclideView v = view_of(nuclide, params);
-    double sum = 0.0;
-    for (int j = 0; j < 4; ++j)
-        sum += v.F[j] * v.Gamma[j] / (eff_erate_g_cm2_yr + v.Gamma[j] * v.lambda);
-    return v.P0 * sum;
+    return ss_conc_view(view_of(nuclide, params), eff_erate_g_cm2_yr);
 }
 
 //
@@ -169,7 +185,7 @@ CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
     // reports.
     double eps_apparent = 0.0;
     const bool app_ok = bisect_decreasing(
-        [&](double e) { return crn_steady_state_conc(nuclide_slow, e, params); },
+        [&](double e) { return ss_conc_view(v_slow, e); },
         conc_slow_atoms_g, eps_apparent);
     out.apparent_erate_no_burial = app_ok ? eps_apparent : 0.0;
 
@@ -178,7 +194,7 @@ CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
     if (app_ok)
     {
         out.ratio_ss_at_solution =
-            crn_steady_state_ratio(nuclide_fast, nuclide_slow, eps_apparent, params);
+            ss_ratio_view(v_fast, v_slow, eps_apparent);
         if (out.ratio_measured >= out.ratio_ss_at_solution)
         {
             // On or above the steady-state line: a simple steady-erosion history
@@ -199,10 +215,10 @@ CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
     // The right-hand side decreases monotonically in eps (both factors do), so a
     // single bracketed bisection resolves it.
     auto predicted_N10 = [&](double e) {
-        const double r_ss = crn_steady_state_ratio(nuclide_fast, nuclide_slow, e, params);
+        const double r_ss = ss_ratio_view(v_fast, v_slow, e);
         if (!(r_ss > out.ratio_measured)) return 0.0;   // no burial time exists
         const double t = std::log(r_ss / out.ratio_measured) / dlam;
-        return crn_steady_state_conc(nuclide_slow, e, params) * std::exp(-lam_slow * t);
+        return ss_conc_view(v_slow, e) * std::exp(-lam_slow * t);
     };
 
     // The search must start where a burial time EXISTS. R_ss rises with erosion
@@ -218,7 +234,7 @@ CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
     double e_min = k_erate_lo;
     {
         double lo = k_erate_lo, hi = k_erate_hi;
-        if (crn_steady_state_ratio(nuclide_fast, nuclide_slow, hi, params)
+        if (ss_ratio_view(v_fast, v_slow, hi)
               <= out.ratio_measured)
         {
             // Even the fastest erosion cannot produce a ratio above the measured
@@ -229,7 +245,7 @@ CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
         for (int i = 0; i < k_bisect_iters; ++i)
         {
             const double mid = 0.5 * (lo + hi);
-            if (crn_steady_state_ratio(nuclide_fast, nuclide_slow, mid, params)
+            if (ss_ratio_view(v_fast, v_slow, mid)
                     <= out.ratio_measured) lo = mid; else hi = mid;
         }
         e_min = hi;   // smallest rate admitting a positive burial time
@@ -245,7 +261,7 @@ CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
         return out;
     }
 
-    const double r_ss = crn_steady_state_ratio(nuclide_fast, nuclide_slow, eps, params);
+    const double r_ss = ss_ratio_view(v_fast, v_slow, eps);
     out.erate_preburial_g_cm2_yr = eps;
     out.ratio_ss_at_solution     = r_ss;
     out.burial_age_yr            = std::log(r_ss / out.ratio_measured) / dlam;

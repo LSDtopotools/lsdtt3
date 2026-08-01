@@ -352,6 +352,11 @@ static CrnBasinPrecomp precompute_basin_crn(
            snow_d, snow_m, self_d, self_m, nuclide, muon_scheme, pre) \
     reduction(+:bsum0, bsum1, bsum2, bsum3, n_pixels)
     {
+        lsdtt_crn_parameters pristine;
+        // Guarded: reset_scaling() deliberately throws for the emulator
+        // schemes, which take the dedicated per-pixel branch below and
+        // never touch `pristine`.
+        if (!is_cronus_emulator(muon_scheme)) pristine.reset_scaling(muon_scheme);
         lsdtt_crn_parameters params;
 
 #pragma omp for schedule(static)
@@ -372,7 +377,7 @@ static CrnBasinPrecomp precompute_basin_crn(
             double d_top  = d_snow;
             double d_bot  = d_snow + d_self;
 
-            params.reset_scaling(muon_scheme);
+            params = pristine;
             params.scale_F_values(shielding, nuclide);
 
             double F[4];
@@ -474,19 +479,25 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
 
     // Collect valid pixel indices and compute their projected coordinates.
     // Then batch-transform all at once (one GDAL call instead of one per pixel).
-    std::vector<int>    valid_r, valid_c;
+    // One flat index per valid pixel rather than a separate row and column
+    // vector: row and col come back by / and %, so this is 4 bytes/pixel less
+    // staging for the same information.  The reserve is computed in int64
+    // because nr*nc_cols overflows int above ~46341 square.
+    std::vector<std::int64_t> flat_idx;
     std::vector<double> xs, ys;
-    valid_r.reserve(static_cast<std::size_t>(nr * nc_cols / 2));
-    valid_c.reserve(valid_r.capacity());
-    xs.reserve(valid_r.capacity());
-    ys.reserve(valid_r.capacity());
+    {
+        const std::size_t guess =
+            static_cast<std::size_t>(static_cast<std::int64_t>(nr) * nc_cols / 2);
+        flat_idx.reserve(guess);
+        xs.reserve(guess);
+        ys.reserve(guess);
+    }
 
     for (int r = 0; r < nr; ++r)
         for (int c = 0; c < nc_cols; ++c)
             if (mask(r, c))
             {
-                valid_r.push_back(r);
-                valid_c.push_back(c);
+                flat_idx.push_back(static_cast<std::int64_t>(r) * nc_cols + c);
                 xs.push_back(meta.x_min + (c + 0.5) * meta.cell_size);
                 ys.push_back(meta.y_min + (meta.n_rows - r - 0.5) * meta.cell_size);
             }
@@ -600,13 +611,14 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
     const bool use_stone_surface = use_paleomag && !use_lsdn && stone_surface.valid;
 
 #pragma omp parallel for schedule(static) default(none) \
-    shared(n_valid, valid_r, valid_c, xs, ys, data, prod_data, prod_mask, \
+    shared(n_valid, flat_idx, nc_cols, xs, ys, data, prod_data, prod_mask, \
            ref_params, meta, nc, age_yr, atm_mode, use_paleomag, \
            use_lsdn, use_lsdn_surface, lsdn_surface, nuclide, \
            use_stone_surface, stone_surface)
     for (int k = 0; k < n_valid; ++k)
     {
-        int r = valid_r[k], c = valid_c[k];
+        const int r = static_cast<int>(flat_idx[k] / nc_cols);
+        const int c = static_cast<int>(flat_idx[k] % nc_cols);
         double lat  = ys[k];
         double lon  = xs[k];
         double elev = static_cast<double>(data(r, c));
@@ -669,19 +681,23 @@ lsdtt_raster_cpu calculate_pressure_raster(const lsdtt_raster_cpu& dem,
             "calculate_pressure_raster: could not create coordinate transform. "
             "DEM must be in a projected CRS.");
 
-    std::vector<int> valid_r, valid_c;
+    // See calculate_production_raster: one int64 flat index instead of separate
+    // row/column vectors, and an int64 reserve so nr*nc_cols cannot overflow.
+    std::vector<std::int64_t> flat_idx;
     std::vector<double> xs, ys;
-    valid_r.reserve(static_cast<std::size_t>(nr * nc_cols / 2));
-    valid_c.reserve(valid_r.capacity());
-    xs.reserve(valid_r.capacity());
-    ys.reserve(valid_r.capacity());
+    {
+        const std::size_t guess =
+            static_cast<std::size_t>(static_cast<std::int64_t>(nr) * nc_cols / 2);
+        flat_idx.reserve(guess);
+        xs.reserve(guess);
+        ys.reserve(guess);
+    }
 
     for (int r = 0; r < nr; ++r)
         for (int c = 0; c < nc_cols; ++c)
             if (mask(r, c))
             {
-                valid_r.push_back(r);
-                valid_c.push_back(c);
+                flat_idx.push_back(static_cast<std::int64_t>(r) * nc_cols + c);
                 xs.push_back(meta.x_min + (c + 0.5) * meta.cell_size);
                 ys.push_back(meta.y_min + (meta.n_rows - r - 0.5) * meta.cell_size);
             }
@@ -707,11 +723,11 @@ lsdtt_raster_cpu calculate_pressure_raster(const lsdtt_raster_cpu& dem,
     }
 
 #pragma omp parallel for default(none) schedule(static) \
-    shared(n_valid, valid_r, valid_c, xs, ys, data, out_data, out_mask, nc, atm_mode)
+    shared(n_valid, flat_idx, nc_cols, xs, ys, data, out_data, out_mask, nc, atm_mode)
     for (int i = 0; i < n_valid; ++i)
     {
-        const int r = valid_r[i];
-        const int c = valid_c[i];
+        const int r = static_cast<int>(flat_idx[i] / nc_cols);
+        const int c = static_cast<int>(flat_idx[i] % nc_cols);
         const double lon = xs[i];
         const double lat = ys[i];
         const double elev = static_cast<double>(data(r, c));
@@ -783,6 +799,16 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
             snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme, \
             use_emu, emu_lsdn, emu_lsdn_ref, pr_data, pr_mask)
     {
+        // reset_scaling() runs up to five std::string comparisons and rewrites
+        // ~30 doubles.  It writes literal constants, so doing it once per
+        // thread and copying the pristine object per pixel is exactly
+        // equivalent -- and since the standardisation tables became static,
+        // lsdtt_crn_parameters is all scalars, so the copy is a POD assignment.
+        lsdtt_crn_parameters pristine;
+        // Guarded: reset_scaling() deliberately throws for the emulator
+        // schemes, which take the dedicated per-pixel branch below and
+        // never touch `pristine`.
+        if (!is_cronus_emulator(muon_scheme)) pristine.reset_scaling(muon_scheme);
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
 
@@ -818,7 +844,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
                 continue;
             }
 
-            params.reset_scaling(muon_scheme);
+            params = pristine;
             params.scale_F_values(total_shielding, nuclide);
 
             double conc = 0.0;
@@ -897,6 +923,16 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
             snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme, \
             use_emu, emu_lsdn, emu_lsdn_ref, pr_data, pr_mask)
     {
+        // reset_scaling() runs up to five std::string comparisons and rewrites
+        // ~30 doubles.  It writes literal constants, so doing it once per
+        // thread and copying the pristine object per pixel is exactly
+        // equivalent -- and since the standardisation tables became static,
+        // lsdtt_crn_parameters is all scalars, so the copy is a POD assignment.
+        lsdtt_crn_parameters pristine;
+        // Guarded: reset_scaling() deliberately throws for the emulator
+        // schemes, which take the dedicated per-pixel branch below and
+        // never touch `pristine`.
+        if (!is_cronus_emulator(muon_scheme)) pristine.reset_scaling(muon_scheme);
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
 
@@ -929,7 +965,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
                 continue;
             }
 
-            params.reset_scaling(muon_scheme);
+            params = pristine;
             params.scale_F_values(total_shielding, nuclide);
 
             double conc = 0.0;
@@ -991,6 +1027,16 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
            out_data, out_mask, nuclide, muon_scheme, \
            eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr)
     {
+        // reset_scaling() runs up to five std::string comparisons and rewrites
+        // ~30 doubles.  It writes literal constants, so doing it once per
+        // thread and copying the pristine object per pixel is exactly
+        // equivalent -- and since the standardisation tables became static,
+        // lsdtt_crn_parameters is all scalars, so the copy is a POD assignment.
+        lsdtt_crn_parameters pristine;
+        // Guarded: reset_scaling() deliberately throws for the emulator
+        // schemes, which take the dedicated per-pixel branch below and
+        // never touch `pristine`.
+        if (!is_cronus_emulator(muon_scheme)) pristine.reset_scaling(muon_scheme);
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
 
@@ -1007,7 +1053,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
                                      static_cast<double>(ts_data(row, col));
             double t_step = static_cast<double>(t_data(row, col));
 
-            params.reset_scaling(muon_scheme);
+            params = pristine;
             params.scale_F_values(total_shielding, nuclide);
 
             double conc = 0.0;
@@ -1181,6 +1227,16 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
            be_data, be_mask, al_data, al_mask, c14_data, c14_mask, muon_scheme, \
            eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr)
     {
+        // reset_scaling() runs up to five std::string comparisons and rewrites
+        // ~30 doubles.  It writes literal constants, so doing it once per
+        // thread and copying the pristine object per pixel is exactly
+        // equivalent -- and since the standardisation tables became static,
+        // lsdtt_crn_parameters is all scalars, so the copy is a POD assignment.
+        lsdtt_crn_parameters pristine;
+        // Guarded: reset_scaling() deliberately throws for the emulator
+        // schemes, which take the dedicated per-pixel branch below and
+        // never touch `pristine`.
+        if (!is_cronus_emulator(muon_scheme)) pristine.reset_scaling(muon_scheme);
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
 
@@ -1197,7 +1253,7 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
                                      static_cast<double>(ts_data(row, col));
             double t_step = static_cast<double>(t_data(row, col));
 
-            params.reset_scaling(muon_scheme);
+            params = pristine;
             // All three, on the same object: scale_F_values touches only the
             // named nuclide's F array, so the three are independent and each
             // matches what a single-nuclide call would have produced.

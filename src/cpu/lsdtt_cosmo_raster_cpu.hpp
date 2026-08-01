@@ -113,6 +113,14 @@ enum class ScalingScheme { Stone, LSDn };
 // never silently substituted by Stone. (This deliberately differs from the
 // atmosphere selector, which may fall back quietly because it refines one input
 // rather than replacing the physics.)
+//
+// NOTE: reusing a precomputed pressure raster here was tried and REVERTED
+// (2026-08-01).  It looks bit-identical -- same expression, same inputs -- but
+// calculate_pressure_raster stores float, so feeding it back in rounds the
+// pressure to single precision where the inline path keeps double.  Measured
+// effect: ~1e-6 relative on inverted erosion rates, on the DEFAULT path.  Doing
+// this properly needs the pressure carried in double, which is a separate
+// decision about raster storage.
 lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               const CrnNcData&         nc,
                                               double                   age_yr = 0.0,
