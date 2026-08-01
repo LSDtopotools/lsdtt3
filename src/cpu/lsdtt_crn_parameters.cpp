@@ -425,22 +425,31 @@ std::string lsdtt_crn_parameters::allowed_muon_schemes_csv()
 }
 
 
+
 //
-// Shared muon half of the CRONUS emulator.  Fills Gamma_[1..3] and returns the
-// three surface muon production rates P_k(p); the caller supplies the
-// spallation production, which is all that differs between St and LSDn.
-void lsdtt_crn_parameters::set_cronus_emulator_common(const std::string& nuclide,
-                                                       double P_mbar,
-                                                       double P0_spallation,
-                                                       double mu_out[3])
+// Fitted emulator evaluated at one site.  Allocation-free: six std::exp calls
+// and no container touched, so it is safe and cheap inside an OpenMP loop.
+CronusEmulatorTerms lsdtt_crn_parameters::cronus_emulator_terms(
+    const std::string& nuclide, double P_mbar, bool lsdn,
+    double lsdn_slhl_reference)
 {
     if (!std::isfinite(P_mbar))
         throw std::invalid_argument("cronus emulator: P_mbar must be finite");
-    if (!std::isfinite(P0_spallation) || P0_spallation <= 0.0)
-        throw std::invalid_argument(
-            "cronus emulator: spallation production must be finite and > 0");
 
     const int n = emu_nuclide_index(nuclide);
+
+    double p0_sp;
+    if (lsdn)
+    {
+        if (!std::isfinite(lsdn_slhl_reference) || lsdn_slhl_reference <= 0.0)
+            throw std::invalid_argument(
+                "cronus emulator: lsdn_slhl_reference must be finite and > 0");
+        p0_sp = lsdn_slhl_reference * kEmuRefPLSDn[n];
+    }
+    else
+    {
+        p0_sp = kEmuRefPSt[n];
+    }
 
     // Clamp exactly as v3's intNmu.m does, rather than extrapolating the fit.
     double p = P_mbar;
@@ -457,33 +466,50 @@ void lsdtt_crn_parameters::set_cronus_emulator_common(const std::string& nuclide
         D[k] = std::exp(b[0] + b[1] * x + b[2] * x * x);
     }
 
-    const double L1 = D[0];
-    const double L2 = L1 + D[1];
-    const double L3 = L2 + D[2];
+    CronusEmulatorTerms out;
+    out.lambda = kEmuLambda[n];
+    out.gamma_sp = 160.0;         // Lsp.m:5
+    out.p0_spallation = p0_sp;
+    out.gamma_mu[0] = D[0];
+    out.gamma_mu[1] = out.gamma_mu[0] + D[1];
+    out.gamma_mu[2] = out.gamma_mu[1] + D[2];
+    out.p_mu[0] = P[0];
+    out.p_mu[1] = P[1];
+    out.p_mu[2] = P[2];
+    return out;
+}
 
-    Gamma_[0] = 160.0;      // Lsp.m:5, and unchanged from every other scheme
-    Gamma_[1] = L1;
-    Gamma_[2] = L2;
-    Gamma_[3] = L3;
+//
+// Shared muon half of the CRONUS emulator.  Fills Gamma_[1..3] and returns the
+// three surface muon production rates P_k(p); the caller supplies the
+// spallation production, which is all that differs between St and LSDn.
+void lsdtt_crn_parameters::set_cronus_emulator_common(const std::string& nuclide,
+                                                       double P_mbar,
+                                                       bool lsdn,
+                                                       double lsdn_slhl_reference)
+{
+    const int n = emu_nuclide_index(nuclide);
+    const CronusEmulatorTerms e =
+        cronus_emulator_terms(nuclide, P_mbar, lsdn, lsdn_slhl_reference);
+
+    Gamma_[0] = e.gamma_sp;
+    Gamma_[1] = e.gamma_mu[0];
+    Gamma_[2] = e.gamma_mu[1];
+    Gamma_[3] = e.gamma_mu[2];
 
     // Only the requested nuclide's decay constant is meaningful here: the
     // fitted Gamma_ values are nuclide-specific, so one instance serves one
-    // nuclide.  The others are left at their constructor defaults.
-    const double lam = kEmuLambda[n];
-    if (n == 0)      lambda_10Be_ = lam;
-    else if (n == 1) lambda_26Al_ = lam;
-    else             lambda_14C_  = lam;
+    // nuclide.  The others keep their constructor defaults.
+    if (n == 0)      lambda_10Be_ = e.lambda;
+    else if (n == 1) lambda_26Al_ = e.lambda;
+    else             lambda_14C_  = e.lambda;
 
-    mu_out[0] = P[0];
-    mu_out[1] = P[1];
-    mu_out[2] = P[2];
-
-    const double p0 = P0_spallation + P[0] + P[1] + P[2];
+    const double p0 = e.p0_spallation + e.p_mu[0] + e.p_mu[1] + e.p_mu[2];
     double* F = (n == 0) ? F_10Be_ : (n == 1) ? F_26Al_ : F_14C_;
-    F[0] = P0_spallation / p0;
-    F[1] = P[0] / p0;
-    F[2] = P[1] / p0;
-    F[3] = P[2] / p0;
+    F[0] = e.p0_spallation / p0;
+    F[1] = e.p_mu[0] / p0;
+    F[2] = e.p_mu[1] / p0;
+    F[3] = e.p_mu[2] / p0;
 
     if (n == 0)      P0_10Be_ = p0;
     else if (n == 1) P0_26Al_ = p0;
@@ -505,9 +531,7 @@ void lsdtt_crn_parameters::set_cronus_emulator_common(const std::string& nuclide
 void lsdtt_crn_parameters::set_cronus_emulator_st_parameters(
     const std::string& nuclide, double P_mbar)
 {
-    const int n = emu_nuclide_index(nuclide);
-    double mu[3];
-    set_cronus_emulator_common(nuclide, P_mbar, kEmuRefPSt[n], mu);
+    set_cronus_emulator_common(nuclide, P_mbar, /*lsdn=*/false, 0.0);
 }
 
 //
@@ -526,13 +550,8 @@ void lsdtt_crn_parameters::set_cronus_emulator_st_parameters(
 void lsdtt_crn_parameters::set_cronus_emulator_lsdn_parameters(
     const std::string& nuclide, double P_mbar, double lsdn_slhl_reference)
 {
-    if (!std::isfinite(lsdn_slhl_reference) || lsdn_slhl_reference <= 0.0)
-        throw std::invalid_argument(
-            "cronus emulator: lsdn_slhl_reference must be finite and > 0");
-    const int n = emu_nuclide_index(nuclide);
-    double mu[3];
-    set_cronus_emulator_common(nuclide, P_mbar,
-                               lsdn_slhl_reference * kEmuRefPLSDn[n], mu);
+    set_cronus_emulator_common(nuclide, P_mbar, /*lsdn=*/true,
+                               lsdn_slhl_reference);
 }
 
 //

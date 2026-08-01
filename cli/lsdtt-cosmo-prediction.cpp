@@ -153,7 +153,12 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.","",
+        "Muon production scheme.",
+        "Braucher, BraucherBorchers, Granger, Schaller, newCRONUS, "
+        "cronusEmulatorSt, cronusEmulatorLSDn. The cronusEmulator schemes fit "
+        "lsdtt3's three muon pathways to the CRONUS v3 tabulated model-1A muon "
+        "inventory and are pressure-dependent; a pressure raster is computed "
+        "automatically.",
         "Nuclide and muon scheme", "param", ""};
 
     string_default_map["scaling_scheme"] = "stone";
@@ -686,12 +691,48 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu conc_raster;
     bool have_conc_raster = false;
 
+    // CRONUS emulator inputs: the muon terms are pressure-dependent, so the
+    // pressure raster is mandatory for these schemes.
+    lsdtt::lsdtt_raster_cpu emu_pressure_raster;
+    lsdtt::CronusEmulatorInputs emu_inputs;
+    if (muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
+    {
+        std::cout << "Computing pressure raster for " << muon_scheme
+                  << " (" << atm_report << " atmosphere)...\n";
+        try
+        {
+            emu_pressure_raster =
+                lsdtt::calculate_pressure_raster(dem, crn_nc, atm_source);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: pressure raster failed: " << e.what() << "\n";
+            return 1;
+        }
+        emu_inputs.pressure_raster = &emu_pressure_raster;
+        if (muon_scheme == "cronusEmulatorLSDn")
+        {
+            try
+            {
+                emu_inputs.lsdn_slhl_reference =
+                    lsdtt::lsdtt_crn_parameters::cronus_emulator_lsdn_slhl_reference(
+                        crn_nc, nuclide);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: cronusEmulatorLSDn: " << e.what() << "\n";
+                return 1;
+            }
+        }
+    }
+
     if (do_ss_conc)
     {
         std::cout << "Computing steady-state CRN concentration raster (" << nuclide << ")...\n";
         conc_raster = lsdtt::calculate_crn_concentration_raster_whole(
             nuclide, muon_scheme,
-            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield);
+            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield,
+            emu_inputs);
         have_conc_raster = true;
         std::cout << "  Done.\n";
 

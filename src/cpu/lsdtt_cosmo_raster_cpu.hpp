@@ -48,6 +48,26 @@ namespace lsdtt
 //   To convert to mm/kyr: multiply by 1e7 / rock_density_kg_m3
 // 
 
+
+//  CRONUS emulator inputs
+// Extra inputs the pressure- and nuclide-dependent emulator schemes need
+// ("cronusEmulatorSt" / "cronusEmulatorLSDn").  Ignored by every other muon
+// scheme, so existing call sites can leave it defaulted.
+//
+// pressure_raster      : site pressure in hPa per pixel, from
+//                        calculate_pressure_raster().  REQUIRED by both
+//                        emulator schemes; a null pointer is a hard error
+//                        rather than a silent fallback.
+// lsdn_slhl_reference  : raw LSDn grid value at SLHL for the nuclide in use,
+//                        from
+//                        lsdtt_crn_parameters::cronus_emulator_lsdn_slhl_reference().
+//                        REQUIRED by "cronusEmulatorLSDn" only.
+struct CronusEmulatorInputs
+{
+    const lsdtt_raster_cpu* pressure_raster = nullptr;
+    double lsdn_slhl_reference = 0.0;
+};
+
 //  Production raster 
 // Computes the spallation production scaling factor at every valid pixel, using
 // either the Stone (2000) scheme (the default) or LSDn (see ScalingScheme).
@@ -134,7 +154,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     const lsdtt_raster_cpu& snow_shield,
     const lsdtt_raster_cpu& self_shield,
     const lsdtt_flowinfo& flow,
-    std::int64_t            outlet_node);
+    std::int64_t            outlet_node,
+    const CronusEmulatorInputs& emu = CronusEmulatorInputs{});
 
 //  Accumulated concentration 
 // Returns the erosion-rate-weighted average concentration across all upslope
@@ -164,7 +185,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield);
+    const lsdtt_raster_cpu& self_shield,
+    const CronusEmulatorInputs& emu = CronusEmulatorInputs{});
 
 //  Step-change CRN concentration (whole raster) 
 // Computes the transient concentration after an instantaneous step change in
@@ -278,6 +300,7 @@ double calculate_eff_erate_from_conc(
     const lsdtt_raster_cpu& self_shield,
     const lsdtt_flowinfo& flow,
     std::int64_t            outlet_node,
-    double&                 predicted_conc);
+    double&                 predicted_conc,
+    const CronusEmulatorInputs& emu = CronusEmulatorInputs{});
 
 } // namespace lsdtt

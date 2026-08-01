@@ -153,6 +153,32 @@ CASES = [
     ("muon_Granger",  0.01,   {"muon_scheme": "Granger"}),
     ("muon_Schaller", 0.01,   {"muon_scheme": "Schaller"}),
     ("muon_newCRONUS", 0.01,  {"muon_scheme": "newCRONUS"}),
+    # CRONUS v3 emulator (plan Phase 3).  These take a DIFFERENT code path from
+    # every case above -- a dedicated per-pixel branch in the forward raster and
+    # a per-pixel basin precompute in the inversion, because their muon terms
+    # are pressure-dependent.  The generic reset_scaling()/scale_F_values() path
+    # is not used at all, so nothing else here covers this plumbing.  Swept
+    # across erosion rate as well: the muon share of the inventory falls with
+    # rate, so a muon term wired into the forward but not the inverse (or
+    # vice versa) shows up at one end of the sweep even if it hides at the other.
+    ("emu_st_slow",   0.001,  {"muon_scheme": "cronusEmulatorSt"}),
+    ("emu_st",        0.01,   {"muon_scheme": "cronusEmulatorSt"}),
+    ("emu_st_fast",   0.3,    {"muon_scheme": "cronusEmulatorSt"}),
+    ("emu_st_Al26",   0.01,   {"muon_scheme": "cronusEmulatorSt",
+                               "nuclide": "Al26"}),
+    ("emu_st_C14",    0.01,   {"muon_scheme": "cronusEmulatorSt",
+                               "nuclide": "C14"}),
+    # Shielding matters especially here: the emulator applies the site scaling
+    # and topographic shielding to the SPALLATION pathway only, so an
+    # accidental application to the muon pathways breaks the round trip.
+    ("emu_st_shield", 0.01,   {"muon_scheme": "cronusEmulatorSt",
+                               "topo_shield_value": 0.8,
+                               "snow_shield_eff_thickness": 20.0,
+                               "self_shield_eff_thickness": 15.0}),
+    ("emu_lsdn",      0.01,   {"muon_scheme": "cronusEmulatorLSDn",
+                               "scaling_scheme": "lsdn"}),
+    ("emu_lsdn_fast", 0.1,    {"muon_scheme": "cronusEmulatorLSDn",
+                               "scaling_scheme": "lsdn"}),
     # Production scaling, both schemes, and LSDn with a time-averaged field.
     ("scaling_lsdn",  0.01,   {"scaling_scheme": "lsdn"}),
     ("lsdn_aged",     0.01,   {"scaling_scheme": "lsdn", "sample_age_yr": 20000}),

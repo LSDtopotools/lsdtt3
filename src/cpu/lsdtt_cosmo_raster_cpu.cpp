@@ -78,6 +78,189 @@ struct CrnBasinPrecomp
     int    n_pixels;
 };
 
+
+// ---------------------------------------------------------------------------
+// CRONUS v3 emulator support (plan Phase 3)
+//
+// The emulator splits the site factor the way v3 does: the SPALLATION pathway
+// takes the production scaling and topographic shielding, the three MUON
+// pathways take neither, because v3's root-find calls intNmu(eps, pressure)
+// with no scaling or shielding argument at all (get_erates_v3.m:117,155).
+//
+// Snow/self shielding is a genuine depth attenuation rather than a scheme
+// choice, so it is applied to every pathway through the same weight function
+// used by the other schemes.
+// ---------------------------------------------------------------------------
+
+static bool is_cronus_emulator(const std::string& muon_scheme)
+{
+    return muon_scheme == "cronusEmulatorSt" ||
+           muon_scheme == "cronusEmulatorLSDn";
+}
+
+// Depth weight for a pathway of attenuation length gamma over [d_top, d_bot].
+static double emu_pathway_weight(double gamma, double d_top, double d_bot)
+{
+    if (d_top == d_bot)
+        return gamma * std::exp(-d_top / gamma);
+    const double inv_d = 1.0 / (d_bot - d_top);
+    return gamma * gamma *
+           (std::exp(-d_top / gamma) - std::exp(-d_bot / gamma)) * inv_d;
+}
+
+static double emu_concentration(const lsdtt::CronusEmulatorTerms& e,
+                                double erate,
+                                double total_shielding,
+                                double d_top,
+                                double d_bot)
+{
+    double c = e.p0_spallation * total_shielding
+             * emu_pathway_weight(e.gamma_sp, d_top, d_bot)
+             / (erate + e.gamma_sp * e.lambda);
+    for (int k = 0; k < 3; ++k)
+        c += e.p_mu[k] * emu_pathway_weight(e.gamma_mu[k], d_top, d_bot)
+           / (erate + e.gamma_mu[k] * e.lambda);
+    return c;
+}
+
+// Validate the emulator inputs once, up front, so failures are reported before
+// any per-pixel work rather than from inside an OpenMP region.
+static void check_emulator_inputs(const std::string& muon_scheme,
+                                  const CronusEmulatorInputs& emu)
+{
+    if (emu.pressure_raster == nullptr)
+        throw std::runtime_error(
+            muon_scheme + " requires a pressure raster (see "
+            "calculate_pressure_raster); the muon terms are pressure-dependent");
+    if (muon_scheme == "cronusEmulatorLSDn" &&
+        !(emu.lsdn_slhl_reference > 0.0))
+        throw std::runtime_error(
+            "cronusEmulatorLSDn requires lsdn_slhl_reference > 0 (see "
+            "lsdtt_crn_parameters::cronus_emulator_lsdn_slhl_reference)");
+}
+
+// Per-pixel basin precompute for the emulator inversion.  Each pixel keeps its
+// own muon attenuation lengths, so unlike CrnBasinPrecomp these cannot be
+// collapsed into four running sums.
+struct CrnBasinPrecompEmu
+{
+    double lambda = 0.0;
+    double gamma_sp = 160.0;
+    std::vector<double> a_sp;              // n
+    std::vector<double> a_mu;              // 3n, pathway-major per pixel
+    std::vector<double> gamma_mu;          // 3n
+    int n_pixels = 0;
+};
+
+static CrnBasinPrecompEmu precompute_basin_crn_emulator(
+    const std::string&      nuclide,
+    const std::string&      muon_scheme,
+    const lsdtt_raster_cpu& prod_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const lsdtt_raster_cpu& snow_shield,
+    const lsdtt_raster_cpu& self_shield,
+    const CronusEmulatorInputs& emu,
+    const lsdtt_flowinfo&   flow,
+    std::int64_t            outlet_node)
+{
+    const bool lsdn = (muon_scheme == "cronusEmulatorLSDn");
+
+    CrnBasinPrecompEmu pre{};
+    const auto& meta = prod_raster.get_meta();
+    const int nc = meta.n_cols;
+    lsdtt_flat_index_slice upslope = flow.upslope_nodes(outlet_node);
+
+    const auto& p_data  = prod_raster.get_data_array();
+    const auto& p_mask  = prod_raster.get_mask_array();
+    const auto& ts_data = topo_shield.get_data_array();
+    const auto& ts_mask = topo_shield.get_mask_array();
+    const auto& snow_d  = snow_shield.get_data_array();
+    const auto& snow_m  = snow_shield.get_mask_array();
+    const auto& self_d  = self_shield.get_data_array();
+    const auto& self_m  = self_shield.get_mask_array();
+    const auto& pr_data = emu.pressure_raster->get_data_array();
+    const auto& pr_mask = emu.pressure_raster->get_mask_array();
+
+    pre.a_sp.reserve(upslope.size());
+    pre.a_mu.reserve(upslope.size() * 3);
+    pre.gamma_mu.reserve(upslope.size() * 3);
+
+    bool have_scalars = false;
+    for (std::int64_t flat : upslope)
+    {
+        const int row = static_cast<int>(flat / nc);
+        const int col = static_cast<int>(flat % nc);
+
+        if (!p_mask(row, col) || !ts_mask(row, col) || !snow_m(row, col) ||
+            !self_m(row, col) || !pr_mask(row, col))
+            continue;
+
+        const double total_shielding = static_cast<double>(p_data(row, col)) *
+                                       static_cast<double>(ts_data(row, col));
+        const double d_top = static_cast<double>(snow_d(row, col));
+        const double d_bot = d_top + static_cast<double>(self_d(row, col));
+
+        const lsdtt::CronusEmulatorTerms e =
+            lsdtt_crn_parameters::cronus_emulator_terms(
+                nuclide, static_cast<double>(pr_data(row, col)), lsdn,
+                emu.lsdn_slhl_reference);
+
+        if (!have_scalars)
+        {
+            pre.lambda = e.lambda;
+            pre.gamma_sp = e.gamma_sp;
+            have_scalars = true;
+        }
+
+        pre.a_sp.push_back(e.p0_spallation * total_shielding
+                           * emu_pathway_weight(e.gamma_sp, d_top, d_bot));
+        for (int k = 0; k < 3; ++k)
+        {
+            pre.a_mu.push_back(e.p_mu[k]
+                               * emu_pathway_weight(e.gamma_mu[k], d_top, d_bot));
+            pre.gamma_mu.push_back(e.gamma_mu[k]);
+        }
+    }
+
+    pre.n_pixels = static_cast<int>(pre.a_sp.size());
+    return pre;
+}
+
+static double eval_conc_emulator(const CrnBasinPrecompEmu& pre, double erate)
+{
+    if (pre.n_pixels == 0) return 0.0;
+    const double d_sp = erate + pre.gamma_sp * pre.lambda;
+    double sum = 0.0;
+    for (int i = 0; i < pre.n_pixels; ++i)
+    {
+        sum += pre.a_sp[i] / d_sp;
+        for (int k = 0; k < 3; ++k)
+        {
+            const std::size_t j = static_cast<std::size_t>(i) * 3 + k;
+            sum += pre.a_mu[j] / (erate + pre.gamma_mu[j] * pre.lambda);
+        }
+    }
+    return sum / static_cast<double>(pre.n_pixels);
+}
+
+static double eval_conc_deriv_emulator(const CrnBasinPrecompEmu& pre, double erate)
+{
+    if (pre.n_pixels == 0) return -1.0;
+    const double d_sp = erate + pre.gamma_sp * pre.lambda;
+    double sum = 0.0;
+    for (int i = 0; i < pre.n_pixels; ++i)
+    {
+        sum += pre.a_sp[i] / (d_sp * d_sp);
+        for (int k = 0; k < 3; ++k)
+        {
+            const std::size_t j = static_cast<std::size_t>(i) * 3 + k;
+            const double d = erate + pre.gamma_mu[j] * pre.lambda;
+            sum += pre.a_mu[j] / (d * d);
+        }
+    }
+    return -sum / static_cast<double>(pre.n_pixels);
+}
+
 static CrnBasinPrecomp precompute_basin_crn(
     const std::string&      nuclide,
     const std::string&      muon_scheme,
@@ -499,7 +682,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     const lsdtt_raster_cpu& snow_shield,
     const lsdtt_raster_cpu& self_shield,
     const lsdtt_flowinfo&   flow,
-    std::int64_t            outlet_node)
+    std::int64_t            outlet_node,
+    const CronusEmulatorInputs& emu)
 {
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
@@ -521,10 +705,23 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     const auto& snow_m  = snow_shield.get_mask_array();
     const auto& self_d  = self_shield.get_data_array();
     const auto& self_m  = self_shield.get_mask_array();
+
+    const bool use_emu = is_cronus_emulator(muon_scheme);
+    const bool emu_lsdn = (muon_scheme == "cronusEmulatorLSDn");
+    lsdtt_array2d<float> pr_data(1, 1, 0.0f);
+    lsdtt_array2d<uint8_t> pr_mask(1, 1, 0);
+    if (use_emu)
+    {
+        check_emulator_inputs(muon_scheme, emu);
+        pr_data = emu.pressure_raster->get_data_array();
+        pr_mask = emu.pressure_raster->get_mask_array();
+    }
+    const double emu_lsdn_ref = emu.lsdn_slhl_reference;
     // Each pixel is independent. Each thread gets private params/particle.
 #pragma omp parallel default(none) \
     shared(n, upslope, nc, e_data, e_mask, p_data, p_mask, ts_data, ts_mask, \
-            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme)
+            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme, \
+            use_emu, emu_lsdn, emu_lsdn_ref, pr_data, pr_mask)
     {
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
@@ -547,6 +744,19 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
             double d_self        = static_cast<double>(self_d(row, col));
             double d_top         = d_snow;
             double d_bot         = d_snow + d_self;
+
+            if (use_emu)
+            {
+                if (!pr_mask(row, col)) continue;
+                const lsdtt::CronusEmulatorTerms e =
+                    lsdtt_crn_parameters::cronus_emulator_terms(
+                        nuclide, static_cast<double>(pr_data(row, col)),
+                        emu_lsdn, emu_lsdn_ref);
+                out_data(row, col) = static_cast<float>(
+                    emu_concentration(e, erate, total_shielding, d_top, d_bot));
+                out_mask(row, col) = 1;
+                continue;
+            }
 
             params.reset_scaling(muon_scheme);
             params.scale_F_values(total_shielding, nuclide);
@@ -584,7 +794,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield)
+    const lsdtt_raster_cpu& self_shield,
+    const CronusEmulatorInputs& emu)
 {
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
@@ -604,9 +815,23 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const auto& snow_m  = snow_shield.get_mask_array();
     const auto& self_d  = self_shield.get_data_array();
     const auto& self_m  = self_shield.get_mask_array();
+
+    const bool use_emu = is_cronus_emulator(muon_scheme);
+    const bool emu_lsdn = (muon_scheme == "cronusEmulatorLSDn");
+    lsdtt_array2d<float> pr_data(1, 1, 0.0f);
+    lsdtt_array2d<uint8_t> pr_mask(1, 1, 0);
+    if (use_emu)
+    {
+        check_emulator_inputs(muon_scheme, emu);
+        pr_data = emu.pressure_raster->get_data_array();
+        pr_mask = emu.pressure_raster->get_mask_array();
+    }
+    const double emu_lsdn_ref = emu.lsdn_slhl_reference;
+
 #pragma omp parallel default(none) \
     shared(nr, nc, n_total, e_data, e_mask, p_data, p_mask, ts_data, ts_mask, \
-            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme)
+            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme, \
+            use_emu, emu_lsdn, emu_lsdn_ref, pr_data, pr_mask)
     {
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
@@ -626,6 +851,19 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
                                      static_cast<double>(ts_data(row, col));
             double d_top = static_cast<double>(snow_d(row, col));
             double d_bot = d_top + static_cast<double>(self_d(row, col));
+
+            if (use_emu)
+            {
+                if (!pr_mask(row, col)) continue;
+                const lsdtt::CronusEmulatorTerms e =
+                    lsdtt_crn_parameters::cronus_emulator_terms(
+                        nuclide, static_cast<double>(pr_data(row, col)),
+                        emu_lsdn, emu_lsdn_ref);
+                out_data(row, col) = static_cast<float>(
+                    emu_concentration(e, erate, total_shielding, d_top, d_bot));
+                out_mask(row, col) = 1;
+                continue;
+            }
 
             params.reset_scaling(muon_scheme);
             params.scale_F_values(total_shielding, nuclide);
@@ -665,6 +903,17 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     double                  eff_erate_old_g_cm2_yr,
     double                  eff_erate_new_g_cm2_yr)
 {
+    // The emulator is a steady-state, pressure-dependent scheme: the transient
+    // kernels below build their parameters through reset_scaling(), which the
+    // emulator deliberately does not support.  Reject it here with a message
+    // that says so, rather than letting the reset_scaling guard surface from
+    // deep inside an OpenMP region.
+    if (is_cronus_emulator(muon_scheme))
+        throw std::runtime_error(
+            muon_scheme + " is not supported by the step-change / transient "
+            "concentration paths; it is implemented for the steady-state "
+            "forward and inversion paths only");
+
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
     int n_total = nr * nc;
@@ -773,6 +1022,17 @@ MultiNuclideRasters calculate_crn_concentration_raster_transient_multi(
     const lsdtt_raster_cpu& topo_shield,
     double                  sampling_depth_m)
 {
+    // The emulator is a steady-state, pressure-dependent scheme: the transient
+    // kernels below build their parameters through reset_scaling(), which the
+    // emulator deliberately does not support.  Reject it here with a message
+    // that says so, rather than letting the reset_scaling guard surface from
+    // deep inside an OpenMP region.
+    if (is_cronus_emulator(muon_scheme))
+        throw std::runtime_error(
+            muon_scheme + " is not supported by the step-change / transient "
+            "concentration paths; it is implemented for the steady-state "
+            "forward and inversion paths only");
+
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
     int n_total = nr * nc;
@@ -845,6 +1105,17 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
     double                  eff_erate_old_g_cm2_yr,
     double                  eff_erate_new_g_cm2_yr)
 {
+    // The emulator is a steady-state, pressure-dependent scheme: the transient
+    // kernels below build their parameters through reset_scaling(), which the
+    // emulator deliberately does not support.  Reject it here with a message
+    // that says so, rather than letting the reset_scaling guard surface from
+    // deep inside an OpenMP region.
+    if (is_cronus_emulator(muon_scheme))
+        throw std::runtime_error(
+            muon_scheme + " is not supported by the step-change / transient "
+            "concentration paths; it is implemented for the steady-state "
+            "forward and inversion paths only");
+
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
     int n_total = nr * nc;
@@ -1021,7 +1292,8 @@ double calculate_eff_erate_from_conc(
     const lsdtt_raster_cpu& self_shield,
     const lsdtt_flowinfo&   flow,
     std::int64_t            outlet_node,
-    double&                 predicted_conc)
+    double&                 predicted_conc,
+    const CronusEmulatorInputs& emu)
 {
     // Guard: non-positive concentration has no physical meaning
     if (measured_conc <= 0.0)
@@ -1031,12 +1303,27 @@ double calculate_eff_erate_from_conc(
         return 0.0;
     }
 
-    // Precompute basin summary terms.
-    CrnBasinPrecomp pre = precompute_basin_crn(
-        nuclide, muon_scheme, prod_raster, topo_shield,
-        snow_shield, self_shield, flow, outlet_node);
+    const bool use_emu = is_cronus_emulator(muon_scheme);
 
-    const int n_valid = pre.n_pixels;
+    // Precompute basin summary terms.  The emulator keeps per-pixel muon
+    // attenuation lengths, so it cannot use the four-sum collapse.
+    CrnBasinPrecomp pre{};
+    CrnBasinPrecompEmu pre_emu{};
+    if (use_emu)
+    {
+        check_emulator_inputs(muon_scheme, emu);
+        pre_emu = precompute_basin_crn_emulator(
+            nuclide, muon_scheme, prod_raster, topo_shield,
+            snow_shield, self_shield, emu, flow, outlet_node);
+    }
+    else
+    {
+        pre = precompute_basin_crn(
+            nuclide, muon_scheme, prod_raster, topo_shield,
+            snow_shield, self_shield, flow, outlet_node);
+    }
+
+    const int n_valid = use_emu ? pre_emu.n_pixels : pre.n_pixels;
     if (n_valid == 0)
     {
         std::cout << "calculate_eff_erate_from_conc: no valid upslope pixels -- returning 0.\n";
@@ -1052,7 +1339,11 @@ double calculate_eff_erate_from_conc(
     const double conc_tol = conc_tol_frac * measured_conc;
 
     //  Initial guess 
-    double eff_e = erate_initial_guess(measured_conc, pre);
+    double eff_e = use_emu
+        ? std::max(0.001, pre_emu.a_sp.empty()
+                              ? 0.001
+                              : pre_emu.a_sp[0] / measured_conc)
+        : erate_initial_guess(measured_conc, pre);
 
     //  Newton-Raphson with analytic derivative 
     // C(epsilon) is monotonically decreasing, so the derivative is always negative
@@ -1070,9 +1361,11 @@ double calculate_eff_erate_from_conc(
 
     for (; n_steps < nr_max_steps; ++n_steps)
     {
-        C_cur = eval_conc_analytic(pre, eff_e);
+        C_cur = use_emu ? eval_conc_emulator(pre_emu, eff_e)
+                        : (use_emu ? eval_conc_emulator(pre_emu, eff_e) : eval_conc_analytic(pre, eff_e));
         double fx    = C_cur - measured_conc;
-        double deriv = eval_conc_deriv_analytic(pre, eff_e);
+        double deriv = use_emu ? eval_conc_deriv_emulator(pre_emu, eff_e)
+                               : eval_conc_deriv_analytic(pre, eff_e);
 
         // Update brackets
         if (fx > 0.0) { have_lo = true; if (eff_e < hi_e) lo_e = std::max(lo_e, eff_e); }
@@ -1093,7 +1386,7 @@ double calculate_eff_erate_from_conc(
     }
 
     //  Check convergence; fall through to bisection if needed 
-    C_cur = eval_conc_analytic(pre, eff_e);
+    C_cur = (use_emu ? eval_conc_emulator(pre_emu, eff_e) : eval_conc_analytic(pre, eff_e));
     double fx_final = C_cur - measured_conc;
     if (std::fabs(fx_final) >= conc_tol)
     {
@@ -1107,7 +1400,7 @@ double calculate_eff_erate_from_conc(
             for (int s = 0; s <= scan_n && !(have_lo && have_hi); ++s)
             {
                 double e_scan = std::pow(10.0, log_lo + s * (log_hi - log_lo) / scan_n);
-                double C_scan = eval_conc_analytic(pre, e_scan);
+                double C_scan = (use_emu ? eval_conc_emulator(pre_emu, e_scan) : eval_conc_analytic(pre, e_scan));
                 if (C_scan > measured_conc) { have_lo = true; lo_e = std::max(lo_e, e_scan); }
                 if (C_scan < measured_conc) { have_hi = true; hi_e = std::min(hi_e, e_scan); }
             }
@@ -1134,7 +1427,7 @@ double calculate_eff_erate_from_conc(
         for (int bs = 0; bs < bisect_max; ++bs)
         {
             double mid   = 0.5 * (lo_e + hi_e);
-            double C_mid = eval_conc_analytic(pre, mid);
+            double C_mid = (use_emu ? eval_conc_emulator(pre_emu, mid) : eval_conc_analytic(pre, mid));
             double fx_mid = C_mid - measured_conc;
 
             if (C_mid > measured_conc) lo_e = mid;
@@ -1153,7 +1446,7 @@ double calculate_eff_erate_from_conc(
         if (std::fabs(C_cur - measured_conc) >= conc_tol)
         {
             eff_e = 0.5 * (lo_e + hi_e);
-            C_cur = eval_conc_analytic(pre, eff_e);
+            C_cur = (use_emu ? eval_conc_emulator(pre_emu, eff_e) : eval_conc_analytic(pre, eff_e));
         }
     }
 

@@ -121,8 +121,14 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production parameter scheme (BraucherBorchers, Braucher, Granger, Schaller, newCRONUS).",
-        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
+        "Muon production parameter scheme.",
+        "Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, "
+        "cronusEmulatorSt, cronusEmulatorLSDn. The cronusEmulator schemes fit "
+        "lsdtt3's three muon pathways to the CRONUS v3 tabulated model-1A muon "
+        "inventory; use them when the goal is agreement with the CRONUS v3 online "
+        "calculator. They are pressure-dependent (a pressure raster is computed "
+        "automatically) and nuclide-specific. Match cronusEmulatorSt with "
+        "scaling_scheme: stone and cronusEmulatorLSDn with scaling_scheme: lsdn.",
         "CRN physics", "param", ""};
 
     string_default_map["scaling_scheme"] = "stone";
@@ -652,6 +658,38 @@ int main(int argc, char* argv[])
                   << "         effective_pressure_hpa will be reported as nan.\n";
     }
 
+    // CRONUS emulator inputs.  The pressure raster is already computed above;
+    // the LSDn variant additionally needs the raw LSDn SLHL grid value, because
+    // v3's refP_LSDn multiplies the RAW LSDn scaling while lsdtt3's
+    // lsdn_scaling() is SLHL-normalised.
+    lsdtt::CronusEmulatorInputs emu_inputs;
+    if (muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
+    {
+        if (pressure_for_reporting == nullptr)
+        {
+            std::cerr << "FATAL: " << muon_scheme
+                      << " needs a pressure raster but it could not be built.\n";
+            return 1;
+        }
+        emu_inputs.pressure_raster = pressure_for_reporting;
+        if (muon_scheme == "cronusEmulatorLSDn")
+        {
+            try
+            {
+                emu_inputs.lsdn_slhl_reference =
+                    lsdtt::lsdtt_crn_parameters::cronus_emulator_lsdn_slhl_reference(
+                        crn_nc, nuclide);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: cronusEmulatorLSDn: " << e.what() << "\n";
+                return 1;
+            }
+        }
+        std::cout << "Muon scheme " << muon_scheme
+                  << ": per-pixel pressure-dependent CRONUS v3 emulator active.\n";
+    }
+
     if (bf["write_production_raster"])
     {
         std::string prod_path = write_base + "_PROD.tif";
@@ -858,8 +896,23 @@ int main(int argc, char* argv[])
     // timescale tau = Gamma_sp/eps that self_consistent_age iterates on. It is
     // 160 g/cm2 in every scheme lsdtt3 ships, but reading it means a scheme that
     // ever changed it would be followed rather than silently ignored.
-    crn_params.reset_scaling(muon_scheme);
-    const double gamma_sp = crn_params.get_Gamma(0);
+    double gamma_sp;
+    if (muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
+    {
+        // The emulator is not settable through reset_scaling (it needs a
+        // pressure and a nuclide).  Gamma_sp is pressure-independent in it, so
+        // read it from the terms accessor at the reference pressure.
+        gamma_sp = lsdtt::lsdtt_crn_parameters::cronus_emulator_terms(
+                       nuclide, 1013.25,
+                       muon_scheme == "cronusEmulatorLSDn",
+                       muon_scheme == "cronusEmulatorLSDn"
+                           ? emu_inputs.lsdn_slhl_reference : 0.0).gamma_sp;
+    }
+    else
+    {
+        crn_params.reset_scaling(muon_scheme);
+        gamma_sp = crn_params.get_Gamma(0);
+    }
 
     lsdtt::lsdtt_square_snap_options snap_opts;
     snap_opts.contributing_pixels_threshold = static_cast<std::uint64_t>(threshold_pixels);
@@ -1030,7 +1083,7 @@ int main(int argc, char* argv[])
             conc, nuclide, muon_scheme,
             *prod_for_inversion, topo_shield_raster, snow_shield_raster,
             self_shield_raster,
-            flow, outlet_node, predicted_conc);
+            flow, outlet_node, predicted_conc, emu_inputs);
 
         if (self_consistent_age)
         {
@@ -1074,7 +1127,7 @@ int main(int argc, char* argv[])
                     conc, nuclide, muon_scheme,
                     *prod_for_inversion, topo_shield_raster, snow_shield_raster,
                     self_shield_raster,
-                    flow, outlet_node, predicted_conc);
+                    flow, outlet_node, predicted_conc, emu_inputs);
 
                 const double rel = (erate > 0.0)
                     ? std::fabs(erate - erate_prev) / erate
@@ -1135,7 +1188,7 @@ int main(int argc, char* argv[])
                 conc_minus, nuclide, muon_scheme,
                 *prod_for_inversion, topo_shield_raster, snow_shield_raster,
                 self_shield_raster,
-                flow, outlet_node, pred_minus);
+                flow, outlet_node, pred_minus, emu_inputs);
 
             double conc_plus = conc + uncert;
             double pred_plus = 0.0;
@@ -1143,7 +1196,7 @@ int main(int argc, char* argv[])
                 conc_plus, nuclide, muon_scheme,
                 *prod_for_inversion, topo_shield_raster, snow_shield_raster,
                 self_shield_raster,
-                flow, outlet_node, pred_plus);
+                flow, outlet_node, pred_plus, emu_inputs);
 
             const double unc_int_g_cm2_yr = 0.5 * std::fabs(erate_plus - erate_minus);
             const double unc_prod_g_cm2_yr =

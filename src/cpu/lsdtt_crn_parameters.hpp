@@ -178,6 +178,26 @@ struct LsdnTimeAvgSurface
 // (-13.9% mean at latitude -1 deg, against -4.5% for BraucherBorchers).
 // A replacement fitted to the tabulated inventory is planned.
 //
+
+// Per-site CRONUS-emulator production terms, in the split form v3 actually
+// uses: the spallation pathway carries the site scaling and shielding, the
+// three muon pathways carry neither (get_erates_v3.m:117,155 -- intNmu takes
+// only erosion rate and pressure).
+//
+//   C(eps) = p0_spallation * S_site * w(gamma_sp) / (eps + gamma_sp*lambda)
+//          + sum_k p_mu[k]        * w(gamma_mu[k]) / (eps + gamma_mu[k]*lambda)
+//
+// where w() is the depth weight for snow/self shielding.  Plain aggregate, no
+// allocation: cheap enough to build per pixel inside an OpenMP loop.
+struct CronusEmulatorTerms
+{
+    double lambda = 0.0;          // decay constant, yr^-1 (v3 value)
+    double gamma_sp = 160.0;      // spallation attenuation, g cm^-2
+    double p0_spallation = 0.0;   // SLHL spallation production, atoms g^-1 yr^-1
+    double gamma_mu[3] = {0.0, 0.0, 0.0};   // muon attenuations, ordered
+    double p_mu[3] = {0.0, 0.0, 0.0};       // muon surface production at this p
+};
+
 class lsdtt_crn_parameters
 {
 public:
@@ -224,6 +244,19 @@ public:
     static double cronus_emulator_lsdn_slhl_reference(const CrnNcData& nc,
                                                        const std::string& nuclide);
 
+    // Evaluate the fitted emulator at one site.  This is the allocation-free
+    // entry point used per pixel; the set_cronus_emulator_*_parameters()
+    // setters are thin wrappers that install the same numbers into this object.
+    //
+    // lsdn = false -> St spallation reference (refP_St, used with stone2000sp)
+    // lsdn = true  -> LSDn reference; lsdn_slhl_reference must come from
+    //                 cronus_emulator_lsdn_slhl_reference() (see its note on
+    //                 why refP_LSDn cannot be used as a P0 directly).
+    static CronusEmulatorTerms cronus_emulator_terms(const std::string& nuclide,
+                                                      double P_mbar,
+                                                      bool lsdn,
+                                                      double lsdn_slhl_reference = 0.0);
+
     // Surface muon production vs pressure, Balco (2017) Eq. (7):
     //   P_mu,0(p) = p_mu_slhl * exp((1013.25 - p)/l_mu_atm)
     // Verified against the v3 tabulated inventory at the eps -> 0 limit to
@@ -239,8 +272,8 @@ public:
     // Shared muon half of the CRONUS emulator setters.
     void set_cronus_emulator_common(const std::string& nuclide,
                                     double P_mbar,
-                                    double P0_spallation,
-                                    double mu_out[3]);
+                                    bool lsdn,
+                                    double lsdn_slhl_reference);
 
     // Muon-scheme helpers.
     static bool is_valid_muon_scheme(const std::string& muon_scheme);

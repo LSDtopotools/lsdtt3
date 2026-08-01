@@ -449,8 +449,10 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production parameter scheme (BraucherBorchers, Braucher, Granger, Schaller, newCRONUS).",
-        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
+        "Muon production parameter scheme.",
+        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS. The pressure-dependent "
+        "cronusEmulatorSt / cronusEmulatorLSDn schemes are not available here: this "
+        "tool works on a single column with no pressure raster.",
         "-", "param", "use_initial_concentration"};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;
