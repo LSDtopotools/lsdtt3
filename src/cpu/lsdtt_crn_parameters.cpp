@@ -147,7 +147,6 @@ lsdtt_crn_parameters::lsdtt_crn_parameters()
 {
     init_defaults();
     set_braucher_borchers_parameters();
-    init_standardisation_maps();
 }
 
 // 
@@ -175,38 +174,45 @@ void lsdtt_crn_parameters::init_defaults()
 }
 
 // 
-void lsdtt_crn_parameters::init_standardisation_maps()
+// AMS standardisation tables.  Shared, immutable, built once on first use.
+const std::map<std::string, double>& lsdtt_crn_parameters::be10_std_map()
 {
-    // 10Be: reference standard is 07KNSTD (factor = 1.0)
-    // Values convert measured standard -> 07KNSTD equivalent
-    be10_std_map_["07KNSTD"]      = 1.0;
-    be10_std_map_["KNSTD"]        = 0.9042;
-    be10_std_map_["NIST_Certified"] = 1.0425;
-    be10_std_map_["LLNL31000"]    = 0.8761;
-    be10_std_map_["LLNL10000"]    = 0.9042;
-    be10_std_map_["LLNL3000"]     = 0.8644;
-    be10_std_map_["LLNL1000"]     = 0.9313;
-    be10_std_map_["LLNL300"]      = 0.8562;
-    be10_std_map_["NIST_30000"]   = 0.9313;
-    be10_std_map_["NIST_30200"]   = 0.9251;
-    be10_std_map_["NIST_30300"]   = 0.9221;
-    be10_std_map_["NIST_30600"]   = 0.9130;
-    be10_std_map_["NIST_27900"]   = 1.0;
-    be10_std_map_["S555"]         = 0.9124;
-    be10_std_map_["S2007"]        = 0.9124;
-    be10_std_map_["BEST433"]      = 0.9124;
-    be10_std_map_["BEST433N"]     = 1.0;
-    be10_std_map_["S555N"]        = 1.0;
-    be10_std_map_["S2007N"]       = 1.0;
+    static const std::map<std::string, double> m = {
+        {"07KNSTD", 1.0},
+        {"KNSTD", 0.9042},
+        {"NIST_Certified", 1.0425},
+        {"LLNL31000", 0.8761},
+        {"LLNL10000", 0.9042},
+        {"LLNL3000", 0.8644},
+        {"LLNL1000", 0.9313},
+        {"LLNL300", 0.8562},
+        {"NIST_30000", 0.9313},
+        {"NIST_30200", 0.9251},
+        {"NIST_30300", 0.9221},
+        {"NIST_30600", 0.9130},
+        {"NIST_27900", 1.0},
+        {"S555", 0.9124},
+        {"S2007", 0.9124},
+        {"BEST433", 0.9124},
+        {"BEST433N", 1.0},
+        {"S555N", 1.0},
+        {"S2007N", 1.0},
+    };
+    return m;
+}
 
-    // 26Al: reference standard is KNSTD (factor = 1.0)
-    al26_std_map_["KNSTD"]  = 1.0;
-    al26_std_map_["ZAL94"]  = 0.9134;
-    al26_std_map_["SMAL11"] = 1.021;
-    al26_std_map_["0"]      = 1.0;
-    al26_std_map_["ZAL94N"] = 1.0;
-    al26_std_map_["ASTER"]  = 1.021;
-    al26_std_map_["Z92-0222"] = 1.0;
+const std::map<std::string, double>& lsdtt_crn_parameters::al26_std_map()
+{
+    static const std::map<std::string, double> m = {
+        {"KNSTD", 1.0},
+        {"ZAL94", 0.9134},
+        {"SMAL11", 1.021},
+        {"0", 1.0},
+        {"ZAL94N", 1.0},
+        {"ASTER", 1.021},
+        {"Z92-0222", 1.0},
+    };
+    return m;
 }
 
 // 
@@ -677,8 +683,9 @@ double lsdtt_crn_parameters::stone2000sp(double lat_deg,
 double lsdtt_crn_parameters::be10_standardisation_factor(
     const std::string& standard_name) const
 {
-    auto it = be10_std_map_.find(standard_name);
-    if (it == be10_std_map_.end())
+    const auto& m = be10_std_map();
+    auto it = m.find(standard_name);
+    if (it == m.end())
     {
         std::cout << "be10_standardisation_factor: unknown standard \""
                   << standard_name << "\". Assuming 07KNSTD (factor=1)." << std::endl;
@@ -690,8 +697,9 @@ double lsdtt_crn_parameters::be10_standardisation_factor(
 double lsdtt_crn_parameters::al26_standardisation_factor(
     const std::string& standard_name) const
 {
-    auto it = al26_std_map_.find(standard_name);
-    if (it == al26_std_map_.end())
+    const auto& m = al26_std_map();
+    auto it = m.find(standard_name);
+    if (it == m.end())
     {
         std::cout << "al26_standardisation_factor: unknown standard \""
                   << standard_name << "\". Assuming KNSTD (factor=1)." << std::endl;
@@ -1847,13 +1855,27 @@ inline void stone_basis_sf(double P, double S[18])
 
     // Log-log extension to 25 GV, fitted to the lat 0/10/20 points exactly as
     // stone_factor_at_rc does.
-    const double i_Rc0 = 14.3 * std::pow(std::cos(ilat[0] * kPi / 180.0), 4.0);
-    const double i_Rc2 = 14.3 * std::pow(std::cos(ilat[2] * kPi / 180.0), 4.0);
-    const double slope = (std::log(i_sf[0]) - std::log(i_sf[2]))
-                       / (std::log(i_Rc0)   - std::log(i_Rc2));
+    // ilat[0] = 0 and ilat[2] = 20 are compile-time constants, as are log(16)
+    // ... log(25), so all of these are loop- and call-invariant.  Hoisting them
+    // is bit-identical (std::exp/std::log are deterministic for a fixed
+    // argument) and removes ~14 transcendental calls per pixel from what is a
+    // per-pixel path on the Stone paleomag production raster.
+    static const double i_Rc0     = 14.3 * std::pow(std::cos(ilat[0] * kPi / 180.0), 4.0);
+    static const double i_Rc2     = 14.3 * std::pow(std::cos(ilat[2] * kPi / 180.0), 4.0);
+    static const double log_i_Rc0 = std::log(i_Rc0);
+    static const double log_i_Rc2 = std::log(i_Rc2);
+    static const double log_rc_ext[10] = {
+        std::log(16.0), std::log(17.0), std::log(18.0), std::log(19.0),
+        std::log(20.0), std::log(21.0), std::log(22.0), std::log(23.0),
+        std::log(24.0), std::log(25.0)
+    };
+
+    const double log_i_sf0 = std::log(i_sf[0]);
+    const double slope = (log_i_sf0 - std::log(i_sf[2]))
+                       / (log_i_Rc0 - log_i_Rc2);
     for (int rc_ext = 16; rc_ext <= 25; ++rc_ext)
-        S[8 + rc_ext - 16] = std::exp(std::log(i_sf[0])
-                                      + slope * (std::log(rc_ext) - std::log(i_Rc0)));
+        S[8 + rc_ext - 16] = std::exp(log_i_sf0
+                                      + slope * (log_rc_ext[rc_ext - 16] - log_i_Rc0));
 }
 
 // The interp1d weights on that table: at most two are non-zero.  Mirrors

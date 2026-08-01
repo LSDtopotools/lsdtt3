@@ -98,6 +98,20 @@ static bool is_cronus_emulator(const std::string& muon_scheme)
            muon_scheme == "cronusEmulatorLSDn";
 }
 
+
+// The emulator is a steady-state, pressure-dependent scheme: the transient
+// kernels build their parameters through reset_scaling(), which the emulator
+// deliberately does not support.  Rejecting it here, rather than letting the
+// reset_scaling guard surface from inside an OpenMP region, keeps the message
+// actionable.  One definition, three call sites.
+[[noreturn]] static void throw_emulator_unsupported(const std::string& muon_scheme)
+{
+    throw std::runtime_error(
+        muon_scheme + " is not supported by the step-change / transient "
+        "concentration paths; it is implemented for the steady-state "
+        "forward and inversion paths only");
+}
+
 // Depth weight for a pathway of attenuation length gamma over [d_top, d_bot].
 static double emu_pathway_weight(double gamma, double d_top, double d_bot)
 {
@@ -146,9 +160,14 @@ struct CrnBasinPrecompEmu
 {
     double lambda = 0.0;
     double gamma_sp = 160.0;
-    std::vector<double> a_sp;              // n
+    // gamma_sp and lambda are pixel-independent, so the spallation sum
+    //     sum_i a_sp[i] / (eps + gamma_sp*lambda)
+    // collapses to a single division on the running total.  Only the total is
+    // kept; the per-pixel a_sp values are never needed again.
+    double a_sp_total = 0.0;
+    double a_sp_mean = 0.0;                // for the initial guess
     std::vector<double> a_mu;              // 3n, pathway-major per pixel
-    std::vector<double> gamma_mu;          // 3n
+    std::vector<double> gamma_mu_lambda;   // 3n, pre-multiplied by lambda
     int n_pixels = 0;
 };
 
@@ -181,19 +200,48 @@ static CrnBasinPrecompEmu precompute_basin_crn_emulator(
     const auto& pr_data = emu.pressure_raster->get_data_array();
     const auto& pr_mask = emu.pressure_raster->get_mask_array();
 
-    pre.a_sp.reserve(upslope.size());
-    pre.a_mu.reserve(upslope.size() * 3);
-    pre.gamma_mu.reserve(upslope.size() * 3);
-
-    bool have_scalars = false;
-    for (std::int64_t flat : upslope)
+    // lambda and gamma_sp do not depend on the pixel, so read them once rather
+    // than racing to discover them from whichever pixel happens to be first.
     {
+        const lsdtt::CronusEmulatorTerms e0 =
+            lsdtt_crn_parameters::cronus_emulator_terms(
+                nuclide, 1013.25, lsdn, emu.lsdn_slhl_reference);
+        pre.lambda   = e0.lambda;
+        pre.gamma_sp = e0.gamma_sp;
+    }
+
+    // Pass 1: which upslope pixels are valid.  Mask reads only, so this is
+    // cheap next to the six std::exp per pixel in pass 2.
+    const int n_up = static_cast<int>(upslope.size());
+    std::vector<std::int64_t> valid;
+    valid.reserve(upslope.size());
+    for (int k = 0; k < n_up; ++k)
+    {
+        const std::int64_t flat = upslope[k];
         const int row = static_cast<int>(flat / nc);
         const int col = static_cast<int>(flat % nc);
+        if (p_mask(row, col) && ts_mask(row, col) && snow_m(row, col) &&
+            self_m(row, col) && pr_mask(row, col))
+            valid.push_back(flat);
+    }
 
-        if (!p_mask(row, col) || !ts_mask(row, col) || !snow_m(row, col) ||
-            !self_m(row, col) || !pr_mask(row, col))
-            continue;
+    const int n = static_cast<int>(valid.size());
+    pre.n_pixels = n;
+    pre.a_mu.assign(static_cast<std::size_t>(n) * 3, 0.0);
+    pre.gamma_mu_lambda.assign(static_cast<std::size_t>(n) * 3, 0.0);
+
+    // Pass 2: independent per pixel, so it parallelises the way the
+    // non-emulator precompute does.
+    double a_sp_total = 0.0;
+#pragma omp parallel for schedule(static) default(none) \
+    shared(n, valid, nc, p_data, ts_data, snow_d, self_d, pr_data, pre, \
+           nuclide, lsdn, emu) \
+    reduction(+:a_sp_total)
+    for (int i = 0; i < n; ++i)
+    {
+        const std::int64_t flat = valid[i];
+        const int row = static_cast<int>(flat / nc);
+        const int col = static_cast<int>(flat % nc);
 
         const double total_shielding = static_cast<double>(p_data(row, col)) *
                                        static_cast<double>(ts_data(row, col));
@@ -205,60 +253,60 @@ static CrnBasinPrecompEmu precompute_basin_crn_emulator(
                 nuclide, static_cast<double>(pr_data(row, col)), lsdn,
                 emu.lsdn_slhl_reference);
 
-        if (!have_scalars)
-        {
-            pre.lambda = e.lambda;
-            pre.gamma_sp = e.gamma_sp;
-            have_scalars = true;
-        }
-
-        pre.a_sp.push_back(e.p0_spallation * total_shielding
-                           * emu_pathway_weight(e.gamma_sp, d_top, d_bot));
+        a_sp_total += e.p0_spallation * total_shielding
+                    * emu_pathway_weight(e.gamma_sp, d_top, d_bot);
         for (int k = 0; k < 3; ++k)
         {
-            pre.a_mu.push_back(e.p_mu[k]
-                               * emu_pathway_weight(e.gamma_mu[k], d_top, d_bot));
-            pre.gamma_mu.push_back(e.gamma_mu[k]);
+            const std::size_t j = static_cast<std::size_t>(i) * 3 + k;
+            pre.a_mu[j] = e.p_mu[k]
+                        * emu_pathway_weight(e.gamma_mu[k], d_top, d_bot);
+            // Fold lambda in here so the evaluation loop does not re-multiply
+            // it on every one of its ~290 passes.
+            pre.gamma_mu_lambda[j] = e.gamma_mu[k] * e.lambda;
         }
     }
 
-    pre.n_pixels = static_cast<int>(pre.a_sp.size());
+    pre.a_sp_total = a_sp_total;
+    pre.a_sp_mean  = (n > 0) ? a_sp_total / static_cast<double>(n) : 0.0;
     return pre;
 }
 
 static double eval_conc_emulator(const CrnBasinPrecompEmu& pre, double erate)
 {
     if (pre.n_pixels == 0) return 0.0;
-    const double d_sp = erate + pre.gamma_sp * pre.lambda;
-    double sum = 0.0;
-    for (int i = 0; i < pre.n_pixels; ++i)
-    {
-        sum += pre.a_sp[i] / d_sp;
-        for (int k = 0; k < 3; ++k)
-        {
-            const std::size_t j = static_cast<std::size_t>(i) * 3 + k;
-            sum += pre.a_mu[j] / (erate + pre.gamma_mu[j] * pre.lambda);
-        }
-    }
+    double sum = pre.a_sp_total / (erate + pre.gamma_sp * pre.lambda);
+    const std::size_t m = static_cast<std::size_t>(pre.n_pixels) * 3;
+    for (std::size_t j = 0; j < m; ++j)
+        sum += pre.a_mu[j] / (erate + pre.gamma_mu_lambda[j]);
     return sum / static_cast<double>(pre.n_pixels);
 }
 
-static double eval_conc_deriv_emulator(const CrnBasinPrecompEmu& pre, double erate)
+// Value and derivative in one pass.  Newton needs both at the same erate, and
+// the derivative reuses each denominator, so evaluating them together halves
+// the number of O(n) sweeps the root-find performs.
+static void eval_conc_and_deriv_emulator(const CrnBasinPrecompEmu& pre,
+                                         double erate,
+                                         double& conc,
+                                         double& deriv)
 {
-    if (pre.n_pixels == 0) return -1.0;
+    if (pre.n_pixels == 0) { conc = 0.0; deriv = -1.0; return; }
+
     const double d_sp = erate + pre.gamma_sp * pre.lambda;
-    double sum = 0.0;
-    for (int i = 0; i < pre.n_pixels; ++i)
+    double sum = pre.a_sp_total / d_sp;
+    double dsum = pre.a_sp_total / (d_sp * d_sp);
+
+    const std::size_t m = static_cast<std::size_t>(pre.n_pixels) * 3;
+    for (std::size_t j = 0; j < m; ++j)
     {
-        sum += pre.a_sp[i] / (d_sp * d_sp);
-        for (int k = 0; k < 3; ++k)
-        {
-            const std::size_t j = static_cast<std::size_t>(i) * 3 + k;
-            const double d = erate + pre.gamma_mu[j] * pre.lambda;
-            sum += pre.a_mu[j] / (d * d);
-        }
+        const double d = erate + pre.gamma_mu_lambda[j];
+        const double q = pre.a_mu[j] / d;
+        sum  += q;
+        dsum += q / d;
     }
-    return -sum / static_cast<double>(pre.n_pixels);
+
+    const double inv_n = 1.0 / static_cast<double>(pre.n_pixels);
+    conc  = sum * inv_n;
+    deriv = -dsum * inv_n;
 }
 
 static CrnBasinPrecomp precompute_basin_crn(
@@ -582,6 +630,15 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
             scaling = lsdtt_crn_parameters::stone_paleomag_from_surface(
                 stone_surface, lat, pressure, 1.0, ref_params);
         else
+            // NOTE: reaching stone2000sp_paleomag() here would build a whole
+            // LsdnTimeAvgSurface PER PIXEL (it calls with force_build).  That
+            // branch requires use_paleomag && !use_lsdn && !stone_surface.valid,
+            // and build_stone_paleomag_surface() only returns invalid for cases
+            // (nc not loaded, age <= 0, < 2 record points) where the per-pixel
+            // build also returns invalid cheaply and falls back to the plain
+            // Stone factor.  So it is not a live per-pixel surface build today
+            // -- but it is one condition away from becoming one, hence this
+            // note.  Do not remove the use_stone_surface branch above.
             scaling = use_paleomag
                 ? ref_params.stone2000sp_paleomag(lat, pressure, 1.0, age_yr, nc)
                 : ref_params.stone2000sp(lat, pressure, 1.0);
@@ -708,13 +765,16 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
 
     const bool use_emu = is_cronus_emulator(muon_scheme);
     const bool emu_lsdn = (muon_scheme == "cronusEmulatorLSDn");
-    lsdtt_array2d<float> pr_data(1, 1, 0.0f);
-    lsdtt_array2d<uint8_t> pr_mask(1, 1, 0);
+    // Pointers, not copies: lsdtt_array2d owns a std::vector, so assigning
+    // get_data_array() here would deep-copy the whole pressure raster (5 bytes
+    // per pixel) for data that is already resident and read-only.
+    const lsdtt_array2d<float>*   pr_data = nullptr;
+    const lsdtt_array2d<uint8_t>* pr_mask = nullptr;
     if (use_emu)
     {
         check_emulator_inputs(muon_scheme, emu);
-        pr_data = emu.pressure_raster->get_data_array();
-        pr_mask = emu.pressure_raster->get_mask_array();
+        pr_data = &emu.pressure_raster->get_data_array();
+        pr_mask = &emu.pressure_raster->get_mask_array();
     }
     const double emu_lsdn_ref = emu.lsdn_slhl_reference;
     // Each pixel is independent. Each thread gets private params/particle.
@@ -747,10 +807,10 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
 
             if (use_emu)
             {
-                if (!pr_mask(row, col)) continue;
+                if (!(*pr_mask)(row, col)) continue;
                 const lsdtt::CronusEmulatorTerms e =
                     lsdtt_crn_parameters::cronus_emulator_terms(
-                        nuclide, static_cast<double>(pr_data(row, col)),
+                        nuclide, static_cast<double>((*pr_data)(row, col)),
                         emu_lsdn, emu_lsdn_ref);
                 out_data(row, col) = static_cast<float>(
                     emu_concentration(e, erate, total_shielding, d_top, d_bot));
@@ -799,7 +859,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
 {
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
-    int n_total = nr * nc;
+    // int64: nr*nc overflows int above ~46341 square.
+    const std::int64_t n_total = static_cast<std::int64_t>(nr) * nc;
     float ndv = static_cast<float>(meta.no_data_value);
 
     lsdtt_array2d<float>   out_data(nr, nc, ndv);
@@ -818,13 +879,16 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
 
     const bool use_emu = is_cronus_emulator(muon_scheme);
     const bool emu_lsdn = (muon_scheme == "cronusEmulatorLSDn");
-    lsdtt_array2d<float> pr_data(1, 1, 0.0f);
-    lsdtt_array2d<uint8_t> pr_mask(1, 1, 0);
+    // Pointers, not copies: lsdtt_array2d owns a std::vector, so assigning
+    // get_data_array() here would deep-copy the whole pressure raster (5 bytes
+    // per pixel) for data that is already resident and read-only.
+    const lsdtt_array2d<float>*   pr_data = nullptr;
+    const lsdtt_array2d<uint8_t>* pr_mask = nullptr;
     if (use_emu)
     {
         check_emulator_inputs(muon_scheme, emu);
-        pr_data = emu.pressure_raster->get_data_array();
-        pr_mask = emu.pressure_raster->get_mask_array();
+        pr_data = &emu.pressure_raster->get_data_array();
+        pr_mask = &emu.pressure_raster->get_mask_array();
     }
     const double emu_lsdn_ref = emu.lsdn_slhl_reference;
 
@@ -837,10 +901,10 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
         lsdtt_crn_particle   particle;
 
 #pragma omp for schedule(static)
-        for (int k = 0; k < n_total; ++k)
+        for (std::int64_t k = 0; k < n_total; ++k)
         {
-            int row = k / nc;
-            int col = k % nc;
+            const int row = static_cast<int>(k / nc);
+            const int col = static_cast<int>(k % nc);
 
             if (!e_mask(row, col) || !p_mask(row, col) ||
                 !ts_mask(row, col) || !snow_m(row, col) || !self_m(row, col))
@@ -854,10 +918,10 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
 
             if (use_emu)
             {
-                if (!pr_mask(row, col)) continue;
+                if (!(*pr_mask)(row, col)) continue;
                 const lsdtt::CronusEmulatorTerms e =
                     lsdtt_crn_parameters::cronus_emulator_terms(
-                        nuclide, static_cast<double>(pr_data(row, col)),
+                        nuclide, static_cast<double>((*pr_data)(row, col)),
                         emu_lsdn, emu_lsdn_ref);
                 out_data(row, col) = static_cast<float>(
                     emu_concentration(e, erate, total_shielding, d_top, d_bot));
@@ -903,20 +967,13 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     double                  eff_erate_old_g_cm2_yr,
     double                  eff_erate_new_g_cm2_yr)
 {
-    // The emulator is a steady-state, pressure-dependent scheme: the transient
-    // kernels below build their parameters through reset_scaling(), which the
-    // emulator deliberately does not support.  Reject it here with a message
-    // that says so, rather than letting the reset_scaling guard surface from
-    // deep inside an OpenMP region.
     if (is_cronus_emulator(muon_scheme))
-        throw std::runtime_error(
-            muon_scheme + " is not supported by the step-change / transient "
-            "concentration paths; it is implemented for the steady-state "
-            "forward and inversion paths only");
+        throw_emulator_unsupported(muon_scheme);
 
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
-    int n_total = nr * nc;
+    // int64: nr*nc overflows int above ~46341 square.
+    const std::int64_t n_total = static_cast<std::int64_t>(nr) * nc;
     float ndv = static_cast<float>(meta.no_data_value);
 
     lsdtt_array2d<float>   out_data(nr, nc, ndv);
@@ -938,10 +995,10 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
         lsdtt_crn_particle   particle;
 
 #pragma omp for schedule(static)
-        for (int k = 0; k < n_total; ++k)
+        for (std::int64_t k = 0; k < n_total; ++k)
         {
-            int row = k / nc;
-            int col = k % nc;
+            const int row = static_cast<int>(k / nc);
+            const int col = static_cast<int>(k % nc);
 
             if (!p_mask(row, col) || !ts_mask(row, col) || !t_mask(row, col))
                 continue;
@@ -1022,20 +1079,13 @@ MultiNuclideRasters calculate_crn_concentration_raster_transient_multi(
     const lsdtt_raster_cpu& topo_shield,
     double                  sampling_depth_m)
 {
-    // The emulator is a steady-state, pressure-dependent scheme: the transient
-    // kernels below build their parameters through reset_scaling(), which the
-    // emulator deliberately does not support.  Reject it here with a message
-    // that says so, rather than letting the reset_scaling guard surface from
-    // deep inside an OpenMP region.
     if (is_cronus_emulator(muon_scheme))
-        throw std::runtime_error(
-            muon_scheme + " is not supported by the step-change / transient "
-            "concentration paths; it is implemented for the steady-state "
-            "forward and inversion paths only");
+        throw_emulator_unsupported(muon_scheme);
 
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
-    int n_total = nr * nc;
+    // int64: nr*nc overflows int above ~46341 square.
+    const std::int64_t n_total = static_cast<std::int64_t>(nr) * nc;
     float ndv = static_cast<float>(meta.no_data_value);
 
     lsdtt_array2d<float>   be_data(nr, nc, ndv), al_data(nr, nc, ndv),
@@ -1061,10 +1111,10 @@ MultiNuclideRasters calculate_crn_concentration_raster_transient_multi(
            muon_scheme, column, depths)
     {
 #pragma omp for schedule(static)
-        for (int k = 0; k < n_total; ++k)
+        for (std::int64_t k = 0; k < n_total; ++k)
         {
-            int row = k / nc;
-            int col = k % nc;
+            const int row = static_cast<int>(k / nc);
+            const int col = static_cast<int>(k % nc);
 
             if (!p_mask(row, col) || !ts_mask(row, col))
                 continue;
@@ -1105,20 +1155,13 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
     double                  eff_erate_old_g_cm2_yr,
     double                  eff_erate_new_g_cm2_yr)
 {
-    // The emulator is a steady-state, pressure-dependent scheme: the transient
-    // kernels below build their parameters through reset_scaling(), which the
-    // emulator deliberately does not support.  Reject it here with a message
-    // that says so, rather than letting the reset_scaling guard surface from
-    // deep inside an OpenMP region.
     if (is_cronus_emulator(muon_scheme))
-        throw std::runtime_error(
-            muon_scheme + " is not supported by the step-change / transient "
-            "concentration paths; it is implemented for the steady-state "
-            "forward and inversion paths only");
+        throw_emulator_unsupported(muon_scheme);
 
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
-    int n_total = nr * nc;
+    // int64: nr*nc overflows int above ~46341 square.
+    const std::int64_t n_total = static_cast<std::int64_t>(nr) * nc;
     float ndv = static_cast<float>(meta.no_data_value);
 
     lsdtt_array2d<float>   be_data(nr, nc, ndv), al_data(nr, nc, ndv),
@@ -1142,10 +1185,10 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
         lsdtt_crn_particle   particle;
 
 #pragma omp for schedule(static)
-        for (int k = 0; k < n_total; ++k)
+        for (std::int64_t k = 0; k < n_total; ++k)
         {
-            int row = k / nc;
-            int col = k % nc;
+            const int row = static_cast<int>(k / nc);
+            const int col = static_cast<int>(k % nc);
 
             if (!p_mask(row, col) || !ts_mask(row, col) || !t_mask(row, col))
                 continue;
@@ -1219,7 +1262,7 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
     std::vector<double> atoms_flux(static_cast<std::size_t>(n_total), 0.0);
     std::vector<double> erosion_wt(static_cast<std::size_t>(n_total), 0.0);
 
-    for (int k = 0; k < n_total; ++k)
+    for (std::int64_t k = 0; k < n_total; ++k)
     {
         int row = k / nc_cols;
         int col = k % nc_cols;
@@ -1236,7 +1279,7 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
     lsdtt_array2d<float>   out_data(nr, nc_cols, ndv);
     lsdtt_array2d<uint8_t> out_mask(nr, nc_cols, 0);
 
-    for (int k = 0; k < n_total; ++k)
+    for (std::int64_t k = 0; k < n_total; ++k)
     {
         int row = k / nc_cols;
         int col = k % nc_cols;
@@ -1339,11 +1382,23 @@ double calculate_eff_erate_from_conc(
     const double conc_tol = conc_tol_frac * measured_conc;
 
     //  Initial guess 
-    double eff_e = use_emu
-        ? std::max(0.001, pre_emu.a_sp.empty()
-                              ? 0.001
-                              : pre_emu.a_sp[0] / measured_conc)
-        : erate_initial_guess(measured_conc, pre);
+    // Same spallation-only inversion erate_initial_guess() uses, but from the
+    // basin MEAN rather than whichever pixel happened to be first: on a basin
+    // with any relief pixel 0 is arbitrary, and a poor start costs two extra
+    // O(n) sweeps per Newton step.
+    double eff_e;
+    if (use_emu)
+    {
+        eff_e = (pre_emu.n_pixels == 0 || measured_conc <= 0.0)
+                    ? 0.01
+                    : pre_emu.a_sp_mean / measured_conc
+                          - pre_emu.gamma_sp * pre_emu.lambda;
+        if (eff_e <= 1e-8) eff_e = 0.001;
+    }
+    else
+    {
+        eff_e = erate_initial_guess(measured_conc, pre);
+    }
 
     //  Newton-Raphson with analytic derivative 
     // C(epsilon) is monotonically decreasing, so the derivative is always negative
@@ -1361,11 +1416,17 @@ double calculate_eff_erate_from_conc(
 
     for (; n_steps < nr_max_steps; ++n_steps)
     {
-        C_cur = use_emu ? eval_conc_emulator(pre_emu, eff_e)
-                        : eval_conc_analytic(pre, eff_e);
-        double fx    = C_cur - measured_conc;
-        double deriv = use_emu ? eval_conc_deriv_emulator(pre_emu, eff_e)
-                               : eval_conc_deriv_analytic(pre, eff_e);
+        double deriv;
+        if (use_emu)
+        {
+            eval_conc_and_deriv_emulator(pre_emu, eff_e, C_cur, deriv);
+        }
+        else
+        {
+            C_cur = eval_conc_analytic(pre, eff_e);
+            deriv = eval_conc_deriv_analytic(pre, eff_e);
+        }
+        double fx = C_cur - measured_conc;
 
         // Update brackets
         if (fx > 0.0) { have_lo = true; if (eff_e < hi_e) lo_e = std::max(lo_e, eff_e); }

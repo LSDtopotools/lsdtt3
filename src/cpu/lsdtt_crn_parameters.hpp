@@ -689,7 +689,6 @@ private:
 
     // Initialise to Vermeesh (2007) defaults
     void init_defaults();
-    void init_standardisation_maps();
 
     // Internal Newton-Raphson: finds effective depth x such that
     //   Sigma_i F[i] * exp(-x/Gamma[i]) == total_shielding, then applies it to F[].
@@ -733,8 +732,14 @@ private:
     // PR_processes.py (Martin et al. / CREp).
     static double stone_factor_at_rc(double Rc_GV, double P_mbar);
 
-    std::map<std::string, double> be10_std_map_;
-    std::map<std::string, double> al26_std_map_;
+    // The AMS standardisation tables are identical for every instance and are
+    // never mutated after construction, so they are shared rather than rebuilt.
+    // This matters: lsdtt_crn_parameters is constructed inside per-pixel paths
+    // (lsdtt_crn_column::make_params_shielded), and building two 13-entry
+    // std::maps per pixel cost ~26 node allocations per pixel inside an OpenMP
+    // region.  Function-local statics give thread-safe one-time init (C++11).
+    static const std::map<std::string, double>& be10_std_map();
+    static const std::map<std::string, double>& al26_std_map();
 };
 
 } // namespace lsdtt
