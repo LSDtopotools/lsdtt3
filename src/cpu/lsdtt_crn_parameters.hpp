@@ -210,12 +210,16 @@ public:
     void set_schaller_parameters();
     void set_new_cronus_parameters();
 
-    // Not reachable via reset_scaling(): a prototype three-exponential fit to
-    // the Balco v3 tabulated model-1A muon inventory, kept as the starting
-    // point for the fitted CRONUS-emulator scheme.  Pressure-independent, so
-    // it is accurate near sea level only (see
-    // tests/expected/cosmo/balco_1A_exp_fit_report.csv).
-    void set_balco_1A_fit_parameters();
+    // NOTE: set_balco_1A_fit_parameters() was REMOVED on 2026-08-01.  It was a
+    // prototype fit to the same Balco v3 tabulated model-1A muon inventory the
+    // cronusEmulator* schemes below now fit properly, but it was fitted at a
+    // SINGLE pressure (1013.25 hPa) and so froze its attenuation lengths at
+    // their sea-level values.  Measured against the table it degraded from
+    // ~6-10% at sea level to 37-47% at 700 hPa
+    // (tests/expected/cosmo/balco_1A_exp_fit_report.csv, retained as the
+    // record) -- the same failure mode as the removed balcoCRONUSv3PD scheme.
+    // Superseded by the pressure-dependent emulator below, which holds
+    // 0.77-1.15% across 450-1020 hPa.
 
     // ---- CRONUS v3 emulator -------------------------------------------------
     // Three-exponential fit to v3's TABULATED model-1A muon inventory, the

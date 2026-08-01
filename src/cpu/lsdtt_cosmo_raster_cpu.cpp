@@ -1362,7 +1362,7 @@ double calculate_eff_erate_from_conc(
     for (; n_steps < nr_max_steps; ++n_steps)
     {
         C_cur = use_emu ? eval_conc_emulator(pre_emu, eff_e)
-                        : (use_emu ? eval_conc_emulator(pre_emu, eff_e) : eval_conc_analytic(pre, eff_e));
+                        : eval_conc_analytic(pre, eff_e);
         double fx    = C_cur - measured_conc;
         double deriv = use_emu ? eval_conc_deriv_emulator(pre_emu, eff_e)
                                : eval_conc_deriv_analytic(pre, eff_e);

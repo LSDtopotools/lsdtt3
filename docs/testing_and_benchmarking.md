@@ -865,7 +865,8 @@ difference and asserts only that it stays inside a frozen band.
 | vs CRONUS-2.2 (St) | up to ~40 % in C, a function of S_tot | higher P0 (4.49) plus Heisinger muon overproduction |
 | vs CRONUScalc | 2.5–5 % in ε | muon scheme plus spatial averaging |
 | vs CRONUScalc running newCRONUS parameters | < 2 % | residual spatial averaging and fixed Λ₀ = 160 |
-| **vs CRONUS v3 St** | **measured 2026-07-16: +1.8 % to +6.65 %, mean +3.6 %; band frozen at 10 %** | Balco (2017) model-1A muons; grows with ε as the muon share rises |
+| **vs CRONUS v3 St, default `BraucherBorchers`** | **measured 2026-07-16: +1.8 % to +6.65 %, mean +3.6 %; band frozen at 10 %** | Balco (2017) model-1A muons; grows with ε as the muon share rises |
+| **vs CRONUS v3 St, `cronusEmulatorSt`** | **measured 2026-08-01: mean −0.23 %, max 1.03 % (Be-10)** | purpose-built to reproduce v3; see §7.4.1 |
 | vs CRONUS v3 Lm | mean +14.6 %, max +45 % against our time-independent rates | different VDM record |
 | vs CRONUS v3 LSDn | mean +11.8 % against our time-independent rates | LSD framework |
 
@@ -908,81 +909,159 @@ Stone (2000) pins — tight, near-exact) and **T-C4** (newCRONUS mode vs
 CRONUScalc/v3, expected < 2–5 %; folded into the T-C2 machinery and enabled by
 adding a newCRONUS concentration column to the fixture).
 
-#### Muon-scheme isolation decomposition (M7, 2026-07-28)
+#### 7.4.1 The CRONUS v3 emulator schemes
 
-The Phase-3 harness `phase8_muon_isolation_comparison()` adds the end-to-end
-decomposition requested in `muon_scheme_isolation_plan.md`: same 15-sample
-fixture, age-matched inversion (`t = Γ_sp/ε`), compared against the frozen
-CRONUS v3 **St** and **LSDn** columns, and emitted as
-`muon_isolation_comparison.csv`.
+`cronusEmulatorSt` and `cronusEmulatorLSDn` exist for one purpose: to reproduce
+the CRONUS v3 online calculator's erosion rates. **Use them when agreement with
+that calculator is the goal.** For everything else the default
+`BraucherBorchers` remains appropriate — it is a physical parameter set, not an
+emulation target, and its few-percent offset from v3 is a real difference
+between production models rather than an error.
 
-Reported sign is `100*(CRONUS - lsdtt)/lsdtt`.
+**What they emulate, and why the obvious approach fails.** CRONUS v3 ships two
+muon models. One is a single-exponential "fast approximation" with a
+pressure-dependent effective attenuation length; the other is a numerically
+integrated model-1A muon inventory, tabulated on a (pressure, log erosion rate)
+grid. **v3 uses the exponential only for exposure ages, saturation checks and
+plotting — its erosion-rate root-find interpolates the table.** The exponential's
+attenuation length is described in its own source as a *near-surface* value, and
+an eroding column integrates muon production to a depth of order ε/λ, which for
+Be-10 at 0.05 g cm⁻² yr⁻¹ is ~10⁵ g cm⁻² — kilometres of rock, dominated by the
+deep fast-muon tail. Measured against v3's own table the exponential delivers
+only **17.6–78.5 %** of the true muon inventory across the erosion rates that
+matter for erosion-rate work (Be-10, ε = 0.01–0.55 g cm⁻² yr⁻¹), worsening with
+altitude; over the full tabulated grid the ratio spans 0.175–1.037, approaching
+parity only in the near-saturation corner where the attenuation length barely
+enters. Frozen at `tests/expected/cosmo/nmu_exponential_error_report.csv`.
 
-The CSV now carries explicit solve diagnostics per row:
-`solve_status`, `hit_lower_bound`, `hit_upper_bound`, `eps0_gcm2yr`.
-That makes bracket-limited rows machine-identifiable instead of inferring them
-from huge percentages.
+lsdtt3 therefore fits the **tabulated** inventory using the three muon pathways
+the concentration kernel already provides:
 
-Nuclide coverage is now Be-10, Al-26, and C-14. The frozen
-`cronus_v3_reference.csv` now includes C-14 rows (fetched 2026-07-28), so the
-percent-difference table includes all three nuclides.
+    N_mu(ε, p) = Σ_k P_k(p) Λ_k(p) / (ε + Λ_k(p) λ)     k = 1..3
 
-Variant naming in this table/CSV:
+with `log P_k` and `log Λ_k` quadratic in pressure, `Λ_1 < Λ_2 < Λ_3` enforced
+structurally so the ordering cannot swap with pressure. Fit quality against the
+table over 450–1020 hPa and 2.7e-6–2.7 g cm⁻² yr⁻¹, frozen in
+`tests/expected/cosmo/cronus_muon_emulator_fit_report.csv`:
 
-- `bb_vermeesch` = **BraucherBorchers** constants (`bb`) + Vermeesch pathway
-  redistribution (`scale_F_values`).
-- `balco_v3_vermeesch` = Balco-v3 setter constants + Vermeesch redistribution.
-- `balco_v3_balco_site` = Balco-v3 setter constants + Balco split site rule
-  (`S[0]=Stone/LSDn`, `S[1]=exp((1013.25-p)/L_mu_atm)`).
-- `balco_1A_fit_balco_site` = fitted-1A setter constants + Balco split site
-  rule.
+| exponentials | Be-10 | Al-26 | C-14 |
+|---|---|---|---|
+| 1 (a single-exponential scheme) | 22.4 % | 19.8 % | 10.6 % |
+| 2 | 2.8 % | 2.9 % | 1.9 % |
+| **3 (shipped)** | **0.77 %** | **0.87 %** | **1.15 %** |
 
-| variant | nuclide | min % | max % | mean % | n |
-|---|---:|---:|---:|---:|---:|
-| `bb_vermeesch` | Be-10 | +1.82 | +12.27 | +5.032 | 30 |
-| `bb_vermeesch` | Al-26 | -1.827 | +11.59 | +3.056 | 30 |
-| `bb_vermeesch` | C-14 | -100 | +831.13 | -15.166 | 30 |
-| `balco_v3_vermeesch` | Be-10 | -0.110 | +3.57e9 | +3.02e8 | 30 |
-| `balco_v3_vermeesch` | Al-26 | -1.051 | +3.48e9 | +2.95e8 | 30 |
-| `balco_v3_vermeesch` | C-14 | -100 | +2.45e9 | +2.47e8 | 30 |
-| `balco_v3_balco_site` | Be-10 | +1.009 | +20.94 | +6.745 | 30 |
-| `balco_v3_balco_site` | Al-26 | +0.514 | +22.74 | +7.150 | 30 |
-| `balco_v3_balco_site` | C-14 | -41.39 | +9.239 | -7.231 | 30 |
-| `balco_1A_fit_balco_site` | Be-10 | -2.316 | +5.226 | +0.695 | 30 |
-| `balco_1A_fit_balco_site` | Al-26 | -3.858 | +7.606 | +1.056 | 30 |
-| `balco_1A_fit_balco_site` | C-14 | -42.65 | +25.37 | -5.302 | 30 |
+Coefficients are frozen in `tests/expected/cosmo/cronus_muon_emulator_coeffs.csv`
+and regenerated by `python_helpers/fit_cronus_muon_emulator.py`, which reads the
+frozen table extraction rather than the GPL reference tree. The surface
+production is **not** anchored to Balco's published `P_mu,0(p)` formula: the
+table itself departs from that formula by up to 3.0 % (Be-10), and anchoring
+measurably pulls the fit off ground truth (Be-10 0.77 % → 1.57 %).
 
-The `balco_v3_vermeesch` blow-up is a real measured behaviour, not a formatting
-error: in several high-elevation/high-erosion rows the inversion collapses to the
-lower bisection bracket (`ε = 1e-9`), giving order-`1e9` percent residuals. That
-is exactly the decomposition signal: with Balco's constants but Vermeesch-style
-pathway redistribution, the site-scaling term (D) dominates and can make the
-point inversion physically unusable. Switching only the site rule to Balco's
-split (`balco_v3_balco_site`) removes the collapse and brings residuals back to
-order-10 %. This is why the decomposition records the three baseline variants
-(and now the optional fitted fourth variant) side by side, rather than tuning
-one toward zero.
+**Structure.** v3 applies the spallation scaling and topographic shielding to
+the spallation pathway only — its muon lookup takes erosion rate and pressure
+and nothing else. The emulator reproduces that split. Snow and self shielding
+are genuine depth attenuation and apply to all pathways. The muon terms are
+identical between the St and LSDn variants, because v3 calls the same muon
+lookup for both; only the spallation reference production differs.
 
-On the first tightened run (2026-07-28), `balco_v3_vermeesch` has **16**
-`bound_limited_low` rows in the Be-10/Al-26 decomposition (all at 3000 m sites),
-and no Be-10/Al-26 `no_solution` rows. C-14 adds expected saturation-driven
-`no_solution`/`-100 %` rows where CRONUS reports zero erosion under some scheme
-combinations.
+**Three things to know before using them.**
 
-For review diffs, `tests/scripts/summarize_muon_isolation.py` reads
-`muon_isolation_comparison.csv` and prints stable per-variant/per-nuclide counts
-plus all-row and interior-only min/max/mean summaries.
+1. They are **pressure- and nuclide-dependent**, so they are not reachable
+   through `reset_scaling()`, which has neither argument. It throws a message
+   naming the right entry point. The raster paths dispatch to them per pixel.
+2. They are **steady-state only**. The step-change and transient concentration
+   paths reject them explicitly.
+3. `lsdtt-cosmo-column-tool` does not offer them: it works on a single column
+   with no pressure raster.
 
-Phase-4 optional fit status (2026-07-28):
+**Validation against the live calculator (2026-08-01).** 210 points, latitude
+{−60, −30, −1, 30, 60} × elevation {0, 500, 1000, 1500, 2500, 3500} m × erosion
+rate {0.001, 0.01, 0.05, 0.1, 0.3, 0.55, 1.0} g cm⁻² yr⁻¹, `sample_age_yr = 0`,
+sign `100 (lsdtt3 − v3)/v3`:
 
-- Fit report frozen at `tests/expected/cosmo/balco_1A_exp_fit_report.csv`
-  (`r=0.90416523765093271`, `Gamma1=1560.6559641830763`,
-  `Gamma2=17133.604883282504`).
-- The fitted variant is accepted under the plan gate because its run-E worst case
-  (`+7.606 %`) is below run-B worst (`81.7409 %`).
-- Wide regression guards now include
-  `muon_run_e_bb_worst_pct=15.0`, `muon_run_e_vv_worst_pct=4.0e9`,
-  `muon_run_e_bs_worst_pct=30.0`, `muon_run_e_fit_worst_pct=30.0`.
+| run | mean | max abs | latitude trend |
+|---|---|---|---|
+| `cronusEmulatorSt`, Be-10 | **−0.233 %** | 1.028 % | 0.114 pp |
+| `cronusEmulatorSt`, Al-26 | −0.255 % | 1.083 % | 0.108 pp |
+| `cronusEmulatorSt`, C-14 | −0.252 % | 4.234 % | 0.255 pp |
+| `BraucherBorchers`, Be-10 (baseline) | −4.638 % | 10.534 % | 2.767 pp |
+| `cronusEmulatorLSDn`, Be-10 | −3.366 % | 26.573 % | 9.154 pp |
+
+C-14's 4.2 % worst case is confined to ε = 0.001, where τ = Λ_sp/ε is ~28 C-14
+half-lives: the nuclide is saturated and the inversion is ill-conditioned, so a
+sub-percent concentration difference maps to a several-percent erosion rate. At
+every other rate C-14 stays inside 1.25 %.
+
+**`cronusEmulatorLSDn` does not meet the same standard, and the cause is not the
+muons.** v3's LSDn root-find integrates a time-varying spallation production
+history that lsdtt3's steady-state inversion has no analogue for, and no single
+`sample_age_yr` makes the two agree by construction. The residual's shape
+confirms it — −8 % at both poles, +1 % at the equator, asymmetric between −30°
+and +30° — which is spallation- and field-side structure, not muon-side. **The
+muon coefficients must not be retuned to absorb it**: they are shared with the
+St variant by construction, which passes at −0.23 %.
+
+**A comparison trap worth knowing.** The scan driver defaults to
+`--sample-age-yr 20000`. Under `scaling_scheme: stone` that switches lsdtt3 to
+the Muscheler VDM paleomagnetic correction, while **CRONUS v3's St is by
+definition non-time-dependent**. Comparing at age 20000 is apples to oranges and
+carries a latitude shape, because paleomagnetic corrections vanish as cutoff
+rigidity goes to zero: the same emulator grid reads mean +1.00 %, max 4.87 %,
+trend 2.99 pp at age 20000 against −0.23 %, 1.03 %, 0.11 pp at age 0. **Any St
+comparison against CRONUS must use `--sample-age-yr 0`.** Earlier scans carry
+this term; scheme-versus-scheme comparisons at equal age remain valid, but
+absolute residuals quoted from them are inflated.
+
+**Test coverage.** `P2-T1` asserts the structural invariants (Γ₀ = 160, ordered
+Γ, ΣF = 1, spallation production equal to v3's reference, pressure clamped to
+the fitted range, guards, and that St and LSDn share bit-identical muon terms).
+`P2-T2` reproduces the frozen tabulated inventory at all 560 grid points per
+nuclide inside the fit gates — that is what catches the C++ drifting from the
+Python fit. Eight cases in `rigorous_cosmo_cli_bridge` close the forward↔inverse
+loop through both CLIs across erosion rate, nuclide, shielding and both
+variants, to ≤ 0.27 %.
+
+#### Muon-scheme isolation decomposition (M7)
+
+`phase8_muon_isolation_comparison()` is the end-to-end decomposition that led to
+the emulator described in §7.4.1: the same 15-sample fixture, age-matched
+inversion (`t = Γ_sp/ε`), compared against the frozen CRONUS v3 **St** and
+**LSDn** columns and emitted as `muon_isolation_comparison.csv`. Reported sign is
+`100*(CRONUS − lsdtt)/lsdtt`. Nuclide coverage is Be-10, Al-26 and C-14.
+
+The CSV carries explicit solve diagnostics per row — `solve_status`,
+`hit_lower_bound`, `hit_upper_bound`, `eps0_gcm2yr` — so bracket-limited rows are
+machine-identifiable rather than inferred from huge percentages.
+`tests/scripts/summarize_muon_isolation.py` prints stable per-variant counts and
+min/max/mean summaries for review diffs.
+
+**As of 2026-08-01 this harness carries one variant, `bb_vermeesch`**
+(BraucherBorchers constants plus Vermeesch pathway redistribution), and serves as
+an end-to-end regression guard on the default scheme. Three comparison variants
+were removed along with the setters they exercised:
+
+- two variants built on a setter reproducing v3's single-exponential muon
+  approximation — the wrong muon model for erosion rates (§7.4.1);
+- one built on a fit to the tabulated inventory made at a **single pressure**
+  (1013.25 hPa), which froze its attenuation lengths at their sea-level values
+  and degraded from ~6–10 % at sea level to 37–47 % at 700 hPa. Its fit report is
+  retained at `tests/expected/cosmo/balco_1A_exp_fit_report.csv` as the record of
+  what a pressure-independent fit costs.
+
+Both failure modes are superseded by the pressure-dependent emulator, which is
+validated far more strongly — against the tabulated inventory at every grid point
+(`P2-T2`) and against the live calculator (§7.4.1) — so the decomposition's role
+as a *diagnostic* is complete. What it retains is the `bb_vermeesch` regression
+guard, `muon_run_e_bb_worst_pct = 15.0`.
+
+**What the decomposition established**, and why it is worth recording even though
+the variants are gone: the residual against CRONUS v3 was dominated not by the
+choice of muon constants but by two structural differences — which muon model is
+being reproduced at all, and whether the site scaling is redistributed across
+every pathway (Vermeesch) or applied to spallation alone (as v3 does). Applying
+Vermeesch redistribution with Balco's constants was severe enough to collapse
+some high-elevation inversions onto the lower bisection bracket entirely. Both
+lessons are built into the emulator.
 
 ### 7.5 Geomagnetic correction — no published benchmark
 

@@ -62,7 +62,7 @@ At least one prediction mode must be activated; the program exits with a message
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `nuclide` | string | `Be10` | Nuclide to predict. `Be10`, `Al26`, or `C14`. |
-| `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`, `cronusEmulatorSt`, `cronusEmulatorLSDn`. The `cronusEmulator*` schemes reproduce the CRONUS v3 online calculator; they are pressure-dependent (a pressure raster is computed automatically) and are **steady-state only** — the step-change and transient prediction modes reject them. |
 
 ---
 

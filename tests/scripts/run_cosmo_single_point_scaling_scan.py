@@ -39,12 +39,24 @@ EXIT_SKIP = 77
 
 NUCLIDES = ("Be10", "Al26", "C14")
 SCALING_VALUES = ("stone", "lsdn")
-MUON_VALUES = ("braucherborchers", "tunedexp")
+MUON_VALUES = ("braucherborchers", "tunedexp", "emulator")
 
 MUON_TO_LSDTT = {
     "braucherborchers": "BraucherBorchers",
     "tunedexp": "newCRONUS",
+    # The CRONUS emulator comes in a St and an LSDn flavour that must be paired
+    # with the matching scaling_scheme: its spallation reference production is
+    # scheme-specific (refP_St vs refP_LSDn).  Resolved per (scaling, muon)
+    # combination by lsdtt_muon_name(); "emulator" is the scan-level alias.
+    "emulator": None,
 }
+
+
+def lsdtt_muon_name(muon_scheme: str, scaling: str) -> str:
+    """Scan muon alias + scaling scheme -> lsdtt3 muon_scheme value."""
+    if muon_scheme == "emulator":
+        return "cronusEmulatorLSDn" if scaling == "lsdn" else "cronusEmulatorSt"
+    return MUON_TO_LSDTT[muon_scheme]
 
 FILE_INPUTS = "single_point_scan_inputs.csv"
 FILE_LSDTT = "single_point_scan_predictions_lsdtt3.csv"
@@ -164,6 +176,13 @@ def build_grid(preset: str) -> list[GridPoint]:
         lats = [-60.0, -30.0, 0.0, 30.0, 60.0]
         elevations = [0.0, 1000.0, 2000.0, 3000.0]
         erates = [0.001, 0.003, 0.01, 0.03, 0.1]
+    elif preset == "latsweep":
+        # Plan Phase 4 validation grid.  The erosion-rate ceiling is 1.0, not
+        # 0.1: the mini/full presets stopped at 0.1, which is a large part of
+        # why the balcoCRONUSv3PD defect went unnoticed on real samples.
+        lats = [-60.0, -30.0, -1.0, 30.0, 60.0]
+        elevations = [0.0, 500.0, 1000.0, 1500.0, 2500.0, 3500.0]
+        erates = [0.001, 0.01, 0.05, 0.1, 0.3, 0.55, 1.0]
     elif preset == "full":
         lats = [-75.0, -60.0, -45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0, 60.0, 75.0]
         elevations = [0.0, 500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0]
@@ -335,7 +354,7 @@ def lsdtt_forward_concentration(
         f"effective_erosion_rate: {point.erate_gcm2yr}",
         f"nuclide: {nuclide}",
         f"scaling_scheme: {scaling}",
-        f"muon_scheme: {MUON_TO_LSDTT[muon_scheme]}",
+        f"muon_scheme: {lsdtt_muon_name(muon_scheme, scaling)}",
         f"sample_age_yr: {sample_age_yr}",
         f"atmosphere: {atmosphere_source}",
         f"sample_points_filename: {pts.name}",
@@ -424,7 +443,7 @@ def lsdtt_inverse_erate(
         f"points_filename: {points.name}",
         f"nuclide: {nuclide}",
         f"scaling_scheme: {scaling}",
-        f"muon_scheme: {MUON_TO_LSDTT[muon_scheme]}",
+        f"muon_scheme: {lsdtt_muon_name(muon_scheme, scaling)}",
         f"sample_age_yr: {sample_age_yr}",
         f"atmosphere: {atmosphere_source}",
         "threshold_contributing_pixels: 1",
@@ -705,11 +724,11 @@ def copy_file(src: Path, dst: Path) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--preset", default="mini", choices=["mini", "full"])
+    ap.add_argument("--preset", default="mini", choices=["mini", "full", "latsweep"])
     ap.add_argument("--max-points", type=int, default=0,
                     help="optional cap on number of grid points (0 = no cap)")
     ap.add_argument("--scaling", default="both", help="stone|lsdn|both")
-    ap.add_argument("--muon-scheme", default="both", help="braucherborchers|tunedexp|both")
+    ap.add_argument("--muon-scheme", default="both", help="braucherborchers|tunedexp|emulator|both")
     ap.add_argument("--sample-age-yr", type=float, default=20000.0)
     ap.add_argument("--atmosphere-source", default="standard",
                     choices=["standard", "ERA40", "NCEP"])

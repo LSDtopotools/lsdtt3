@@ -284,7 +284,6 @@ constexpr double muon_run_a_new_worst_pct  = 85.0;
 // target. Measured worst |pct| at first freeze:
 //   bb_vermeesch           = 12.27 (Be-10), 11.59 (Al-26)
 constexpr double muon_run_e_bb_worst_pct = 15.0;
-constexpr double muon_run_e_fit_worst_pct = 30.0;
 // Phase 5 G3 full inversion comparison versus frozen CRONUS Lm/LSDn rows
 // (measured 2026-07-28 from cronus_comparison_geomag_full.csv). Report-first
 // harness upgraded to regression guards per scheme/mode using the same rule as
@@ -2858,13 +2857,6 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
         return st;
     };
 
-    const auto l_mu_atm_for = [](const std::string& nuc) -> double
-    {
-        if (nuc == "Al26") return 288.0;
-        if (nuc == "C14")  return 267.8;
-        return 299.2;   // Be10
-    };
-
     const auto extract_params = [](const lsdtt::lsdtt_crn_parameters& cp,
                                    const std::string& nuc) -> ref_params
     {
@@ -2925,18 +2917,19 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
                     continue;
                 }
 
-                // The two "balco_v3_*" variants were dropped on 2026-08-01 with
-                // set_balco_cronus_v3_parameters(): they exercised v3's
-                // single-exponential approximation, which is the wrong muon
-                // model for erosion rates (see the removal note in
-                // lsdtt_crn_parameters.hpp).
-                for (const char* variant : {"bb_vermeesch",
-                                            "balco_1A_fit_balco_site"})
+                // Three variants were dropped on 2026-08-01 with the setters
+                // they exercised: the two "balco_v3_*" (v3's single-exponential
+                // approximation) and "balco_1A_fit_balco_site" (a fit made at a
+                // single pressure).  Both were the wrong muon model for erosion
+                // rates; see the removal notes in lsdtt_crn_parameters.hpp.
+                // What remains is the BraucherBorchers end-to-end regression
+                // guard.  The CRONUS emulator is validated separately and more
+                // strongly -- against the tabulated inventory in P2-T2 and
+                // against the live calculator in the Phase 4/5 sweeps.
+                for (const char* variant : {"bb_vermeesch"})
                 {
                     const std::string variant_desc =
-                        (std::string(variant) == "bb_vermeesch")
-                            ? "BraucherBorchers + Vermeesch redistribution"
-                            : "Balco 1A fit setter + Balco split site scaling";
+                        "BraucherBorchers + Vermeesch redistribution";
 
                     auto spall_scaling = [&](double t_yr) -> double
                     {
@@ -2953,26 +2946,9 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
                     {
                         const double s_sp = spall_scaling(t_yr);
                         lsdtt::lsdtt_crn_parameters cp;
-                        if (std::string(variant) == "bb_vermeesch")
-                        {
-                            cp.reset_scaling("BraucherBorchers");
-                            cp.scale_F_values(s_sp, nuc);
-                            return extract_params(cp, nuc);
-                        }
-
-                        cp.set_balco_1A_fit_parameters();
-                        ref_params p = extract_params(cp, nuc);
-
-                        // Balco site split: spallation takes Stone/LSDn scaling,
-                        // muon surface term takes exp((1013.25-p)/L_mu_atm), no
-                        // Vermeesch redistribution and no topographic/self/snow
-                        // attenuation on muons.
-                        p.S[0] = s_sp;
-                        p.S[1] = std::exp((1013.25 - s.pressure_hPa)
-                                          / l_mu_atm_for(nuc));
-                        p.S[2] = 1.0;
-                        p.S[3] = 1.0;
-                        return p;
+                        cp.reset_scaling("BraucherBorchers");
+                        cp.scale_F_values(s_sp, nuc);
+                        return extract_params(cp, nuc);
                     };
 
                     const ref_params p0 = make_params(0.0);
@@ -3058,31 +3034,25 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
     };
 
     print_variant("bb_vermeesch");
-    print_variant("balco_1A_fit_balco_site");
 
-    double worst_bb = 0.0, worst_fit = 0.0;
+    double worst_bb = 0.0;
     int n_no_solution = 0;
     for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
     {
         const std::string key_bb = std::string("bb_vermeesch|") + nuc_ref;
-        const std::string key_fit = std::string("balco_1A_fit_balco_site|") + nuc_ref;
         if (nuc_ref != std::string("C-14"))
         {
             worst_bb = std::max(worst_bb,
                                 by_key_all[key_bb].worst);
-            worst_fit = std::max(worst_fit,
-                                 by_key_all[key_fit].worst);
         }
         if (nuc_ref != std::string("C-14"))
         {
-            n_no_solution += counts_by_key[key_bb].no_solution
-                          + counts_by_key[key_fit].no_solution;
+            n_no_solution += counts_by_key[key_bb].no_solution;
         }
     }
 
     const int expected_rows_per_nuclide = static_cast<int>(samples.size()) * 2;
-    for (const char* variant : {"bb_vermeesch",
-                                "balco_1A_fit_balco_site"})
+    for (const char* variant : {"bb_vermeesch"})
     {
         const std::string key_c14 = std::string(variant) + "|C-14";
         const solve_counts c14 = counts_by_key[key_c14];
@@ -3102,9 +3072,6 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
     check("M7: bb_vermeesch inside wide regression guard",
           worst_bb < tol::muon_run_e_bb_worst_pct,
           "worst|pct|=" + std::to_string(worst_bb));
-    check("M7: balco_1A_fit_balco_site inside wide regression guard",
-          worst_fit < tol::muon_run_e_fit_worst_pct,
-          "worst|pct|=" + std::to_string(worst_fit));
     check("csv: muon_isolation_comparison.csv written", csv.good());
 }
 
