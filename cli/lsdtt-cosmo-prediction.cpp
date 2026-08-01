@@ -153,7 +153,7 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD.","",
+        "Muon production scheme: Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.","",
         "Nuclide and muon scheme", "param", ""};
 
     string_default_map["scaling_scheme"] = "stone";
@@ -685,33 +685,13 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu conc_raster;
     bool have_conc_raster = false;
-    lsdtt::lsdtt_raster_cpu pressure_raster;
-    const lsdtt::lsdtt_raster_cpu* pressure_ptr = nullptr;
 
     if (do_ss_conc)
     {
-        if (muon_scheme == "balcoCRONUSv3PD")
-        {
-            std::cout << "Computing pressure raster for balcoCRONUSv3PD ("
-                      << atm_report << " atmosphere)...\n";
-            try
-            {
-                pressure_raster = lsdtt::calculate_pressure_raster(dem, crn_nc, atm_source);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: pressure raster failed: " << e.what() << "\n";
-                return 1;
-            }
-            pressure_ptr = &pressure_raster;
-            std::cout << "  Pressure raster computed.\n";
-        }
-
         std::cout << "Computing steady-state CRN concentration raster (" << nuclide << ")...\n";
         conc_raster = lsdtt::calculate_crn_concentration_raster_whole(
             nuclide, muon_scheme,
-            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield,
-            pressure_ptr);
+            erosion_raster, prod_raster, topo_shield, snow_shield, self_shield);
         have_conc_raster = true;
         std::cout << "  Done.\n";
 

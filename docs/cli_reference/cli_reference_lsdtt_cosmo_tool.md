@@ -54,7 +54,7 @@ The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `nuclide` | string | `Be10` | Nuclide used for erosion rate inversion. Options: `Be10`, `Al26`, `C14`. |
-| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`, `balcoCRONUSv3PD` (pressure-dependent Balco/CRONUS-v3 style muon terms; scan alias: `cronusv3pd`). |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. |
 | `rock_density_kg_m3` | float | `2650` | Rock bulk density (kg/m³). Used to convert effective erosion rate (g/cm²/yr) to mm/kyr. |
 | `scaling_scheme` | string | `stone` | Production-rate scaling. `stone` = Stone (2000)/Lal, the default and the CAIRN/OCTOPUS scheme. `lsdn` = Lifton, Sato & Dunai (2014) nuclide-specific scaling, interpolated from the LSDn2015 grids; needs the LSDn grids in `crn_parameters.nc` and supports `Be10`, `Al26`, `C14` only. Both are evaluated **per pixel**, including when `sample_age_yr > 0`. `muon_scheme` is unaffected. |
 

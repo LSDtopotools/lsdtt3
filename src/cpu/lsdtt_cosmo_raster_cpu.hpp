@@ -136,18 +136,6 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     const lsdtt_flowinfo& flow,
     std::int64_t            outlet_node);
 
-lsdtt_raster_cpu calculate_crn_concentration_raster(
-    const std::string&      nuclide,
-    const std::string&      muon_scheme,
-    const lsdtt_raster_cpu& erosion_raster,
-    const lsdtt_raster_cpu& prod_raster,
-    const lsdtt_raster_cpu& topo_shield,
-    const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield,
-    const lsdtt_raster_cpu* pressure_raster,
-    const lsdtt_flowinfo& flow,
-    std::int64_t            outlet_node);
-
 //  Accumulated concentration 
 // Returns the erosion-rate-weighted average concentration across all upslope
 // pixels (including outlet_node):
@@ -176,8 +164,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield,
-    const lsdtt_raster_cpu* pressure_raster = nullptr);
+    const lsdtt_raster_cpu& self_shield);
 
 //  Step-change CRN concentration (whole raster) 
 // Computes the transient concentration after an instantaneous step change in
@@ -281,19 +268,6 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
 // predicted_conc   : OUTPUT - the predicted concentration at convergence
 //
 // Returns the best-estimate effective erosion rate (g cm^-^2 yr^-^1).
-double calculate_eff_erate_from_conc(
-    double                  measured_conc,
-    const std::string&      nuclide,
-    const std::string&      muon_scheme,
-    const lsdtt_raster_cpu& prod_raster,
-    const lsdtt_raster_cpu& topo_shield,
-    const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield,
-    const lsdtt_raster_cpu* pressure_raster,
-    const lsdtt_flowinfo& flow,
-    std::int64_t            outlet_node,
-    double&                 predicted_conc);
-
 double calculate_eff_erate_from_conc(
     double                  measured_conc,
     const std::string&      nuclide,

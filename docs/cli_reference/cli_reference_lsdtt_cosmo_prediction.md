@@ -62,7 +62,7 @@ At least one prediction mode must be activated; the program exits with a message
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `nuclide` | string | `Be10` | Nuclide to predict. `Be10`, `Al26`, or `C14`. |
-| `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. `Braucher`, `BraucherBorchers`, `Granger`, `Schaller`, `newCRONUS`, or `balcoCRONUSv3PD` (pressure-dependent Balco/CRONUS-v3 style; scan alias: `cronusv3pd`). |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. |
 
 ---
 

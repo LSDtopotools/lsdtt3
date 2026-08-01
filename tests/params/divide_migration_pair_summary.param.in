@@ -1,0 +1,29 @@
+# End-to-end divide-migration run that writes the PAIR SUMMARY CSV
+# (plan §11.2 L/M).
+#
+# The fixture is the ridge DEM used by the fragment-merging smokes: one valley
+# draining north and two draining south, with cluster_id grouping the two
+# southern outlets. That gives exactly two units bordering each other along one
+# merged divide, so the pair summary must be exactly one row -- pair 1|2, with
+# heads on BOTH sides.
+#
+# pair_uncertainty_method is set to bootstrap so that the seeded path runs end
+# to end in the CLI rather than only in the unit driver; bootstrap_seed and
+# bootstrap_replicates are set explicitly so the run is reproducible.
+read_path: __READ_PATH__
+read_fname: divmig_ridge.tif
+write_path: __WRITE_PATH__
+write_fname: divmig_pairsum
+
+basin_outlet_file: divmig_ridge_outlets.fgb
+outlet_cluster_field: cluster_id
+outlet_cluster_mode: auto
+basin_outlet_snapping_method: none
+
+source_pixels_threshold: 40
+m_over_n: 0.45
+
+write_pair_summary_csv: true
+pair_uncertainty_method: bootstrap
+bootstrap_replicates: 500
+bootstrap_seed: 5489

@@ -279,18 +279,11 @@ constexpr double l13_atm_press_med_hi = 1.468508;   // 2.0 x measured +0.734254
 constexpr double muon_run_b_worst_pct      = 85.0;
 constexpr double muon_run_a_bb_worst_pct   = 80.0;
 constexpr double muon_run_a_new_worst_pct  = 85.0;
-// run C identity (balco setter + Balco site split vs one-exp model):
-// measured worst |rel| = 5.03931e-16.
-constexpr double muon_run_c_identity_rel   = 1e-12;
 // Run E end-to-end decomposition guard (Phase 3), measured 2026-07-28.
 // Wide regression bands by design: this is a reported result, not an accuracy
 // target. Measured worst |pct| at first freeze:
 //   bb_vermeesch           = 12.27 (Be-10), 11.59 (Al-26)
-//   balco_v3_vermeesch     = 3.5702999e9 (Be-10), 3.4805999e9 (Al-26)
-//   balco_v3_balco_site    = 22.74 (Al-26), 20.94 (Be-10)
 constexpr double muon_run_e_bb_worst_pct = 15.0;
-constexpr double muon_run_e_vv_worst_pct = 4.0e9;
-constexpr double muon_run_e_bs_worst_pct = 30.0;
 constexpr double muon_run_e_fit_worst_pct = 30.0;
 // Phase 5 G3 full inversion comparison versus frozen CRONUS Lm/LSDn rows
 // (measured 2026-07-28 from cronus_comparison_geomag_full.csv). Report-first
@@ -661,30 +654,17 @@ void phase1_parameter_pins()
     }
 }
 
-void phase1_balco_cronus_v3_pressure_helpers()
+// Surface muon production vs pressure, Balco (2017) Eq. 7.  Retained after the
+// balcoCRONUSv3/balcoCRONUSv3PD schemes were removed (2026-08-01): this helper
+// stays because the eps -> 0 limit of v3's tabulated inventory agrees with it
+// to within 1-3% over 700-1013 hPa, so it is a sound building block for the
+// fitted CRONUS-emulator scheme.  The companion Lambda_mu(p) pin was deleted
+// with the helper it tested -- that near-surface attenuation length is the
+// wrong quantity for an eroding column (too short by 1.7x at sea level, 4.6x
+// at 900 hPa vs the tabulated inventory).
+void phase1_muon_surface_production_pins()
 {
     const double pressures[] = {600.0, 800.0, 1013.25};
-    const double expected_lambda_mu[] = {
-        220.17702232595008,
-        384.2606824469722,
-        1870.8557621655923,
-    };
-
-    bool lambda_ok = true;
-    std::string lambda_bad;
-    for (int i = 0; i < 3; ++i)
-    {
-        const double got = lsdtt::lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(
-            pressures[i]);
-        if (!approx_rel(got, expected_lambda_mu[i], 1e-12))
-        {
-            lambda_ok = false;
-            lambda_bad = "p=" + std::to_string(pressures[i]) + " "
-                       + diff_str(got, expected_lambda_mu[i]);
-        }
-    }
-    check("pin: balcoCRONUSv3PD Lambda_mu(p) identity at fixed pressures",
-          lambda_ok, lambda_bad);
 
     struct mu_pin
     {
@@ -717,23 +697,9 @@ void phase1_balco_cronus_v3_pressure_helpers()
             }
         }
     }
-    check("pin: balcoCRONUSv3PD P_mu,0(p) identity at fixed pressures",
-          pmu_ok, pmu_bad);
+    check("pin: P_mu,0(p) identity at fixed pressures", pmu_ok, pmu_bad);
 
     bool guard_ok = true;
-    try
-    {
-        (void)lsdtt::lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(1200.0);
-        guard_ok = false;
-    }
-    catch (const std::out_of_range&)
-    {
-    }
-    catch (...)
-    {
-        guard_ok = false;
-    }
-
     try
     {
         (void)lsdtt::lsdtt_crn_parameters::balco_cronus_v3_muon_surface_production(
@@ -748,7 +714,31 @@ void phase1_balco_cronus_v3_pressure_helpers()
         guard_ok = false;
     }
 
-    check("pin: balcoCRONUSv3PD helper guards reject invalid pressures", guard_ok);
+    check("pin: P_mu,0 guard rejects invalid pressure", guard_ok);
+}
+
+// Removed schemes must not silently resolve.
+void phase1_removed_muon_schemes_rejected()
+{
+    bool ok = true;
+    for (const char* name : {"balcoCRONUSv3", "balcoCRONUSv3PD"})
+    {
+        lsdtt::lsdtt_crn_parameters cp;
+        try
+        {
+            cp.reset_scaling(name);
+            ok = false;   // should have thrown
+        }
+        catch (const std::invalid_argument&)
+        {
+        }
+        catch (...)
+        {
+            ok = false;
+        }
+        if (lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(name)) ok = false;
+    }
+    check("removed: balcoCRONUSv3/PD rejected by reset_scaling and is_valid_muon_scheme", ok);
 }
 
 // E9: AMS standardisation factors - exact pins against the CRONUS conversion
@@ -1756,43 +1746,6 @@ double lsdtt_nmu_from_scheme(const std::string& scheme,
     return cp.get_P0_10Be() * sum;
 }
 
-double lsdtt_nmu_balco_v3(const std::string& nuclide, double p_hpa, double eps)
-{
-    lsdtt::lsdtt_crn_parameters cp;
-    cp.set_balco_cronus_v3_parameters(p_hpa);
-
-    const auto muon_scale = [&](double L_mu_atm)
-    {
-        return std::exp((1013.25 - p_hpa) / L_mu_atm);
-    };
-
-    if (nuclide == "Al26")
-    {
-        const double S1 = muon_scale(288.0);
-        double sum = 0.0;
-        for (int j = 1; j < 4; ++j)
-            sum += (j == 1 ? S1 : 1.0) * cp.get_F_26Al(j) * cp.get_Gamma(j)
-                 / (eps + cp.get_Gamma(j) * cp.get_lambda_26Al());
-        return cp.get_P0_26Al() * sum;
-    }
-    if (nuclide == "C14")
-    {
-        const double S1 = muon_scale(267.8);
-        double sum = 0.0;
-        for (int j = 1; j < 4; ++j)
-            sum += (j == 1 ? S1 : 1.0) * cp.get_F_14C(j) * cp.get_Gamma(j)
-                 / (eps + cp.get_Gamma(j) * cp.get_lambda_14C());
-        return cp.get_P0_14C() * sum;
-    }
-
-    const double S1 = muon_scale(299.2);
-    double sum = 0.0;
-    for (int j = 1; j < 4; ++j)
-        sum += (j == 1 ? S1 : 1.0) * cp.get_F_10Be(j) * cp.get_Gamma(j)
-             / (eps + cp.get_Gamma(j) * cp.get_lambda_10Be());
-    return cp.get_P0_10Be() * sum;
-}
-
 struct rel_stats
 {
     double lo = 1e300;
@@ -1847,7 +1800,7 @@ void phase2_muon_inventory_comparison(const std::string& expected_dir,
     const double loge_min = -5.0;
     const double loge_max = -1.0;
 
-    std::map<std::string, rel_stats> run_b, run_a_bb, run_a_new, run_c;
+    std::map<std::string, rel_stats> run_b, run_a_bb, run_a_new;
 
     csv_writer csv(out_dir + "/muon_inventory_comparison.csv",
                    "run,scheme,nuclide,p_hPa,epsilon_g_cm2_yr,log10_epsilon,"
@@ -1868,17 +1821,14 @@ void phase2_muon_inventory_comparison(const std::string& expected_dir,
                 const double n_exp = balco_nmu_exp(nuclide, p_hpa, eps);
                 const double n_bb  = lsdtt_nmu_from_scheme("BraucherBorchers", nuclide, eps);
                 const double n_new = lsdtt_nmu_from_scheme("newCRONUS", nuclide, eps);
-                const double n_bal = lsdtt_nmu_balco_v3(nuclide, p_hpa, eps);
 
                 const double rel_b = (n_exp - n_tab) / n_tab;
                 const double rel_a_bb = (n_bb - n_tab) / n_tab;
                 const double rel_a_new = (n_new - n_tab) / n_tab;
-                const double rel_c = (n_bal - n_exp) / n_exp;
 
                 run_b[nuclide].add(rel_b);
                 run_a_bb[nuclide].add(rel_a_bb);
                 run_a_new[nuclide].add(rel_a_new);
-                run_c[nuclide].add(rel_c);
 
                 csv.row("B", "balco_v3_1A", nuclide, p_hpa, eps, loge,
                         n_exp, n_tab, rel_b);
@@ -1886,8 +1836,6 @@ void phase2_muon_inventory_comparison(const std::string& expected_dir,
                         n_bb, n_tab, rel_a_bb);
                 csv.row("A", "newCRONUS", nuclide, p_hpa, eps, loge,
                         n_new, n_tab, rel_a_new);
-                csv.row("C", "balcoCRONUSv3", nuclide, p_hpa, eps, loge,
-                        n_bal, n_exp, rel_c);
             }
         }
     }
@@ -1914,15 +1862,13 @@ void phase2_muon_inventory_comparison(const std::string& expected_dir,
     print_stats("M3 run B: N_exp vs N_tab", run_b);
     print_stats("M4 run A: N_lsd vs N_tab (BraucherBorchers)", run_a_bb);
     print_stats("M4 run A: N_lsd vs N_tab (newCRONUS)", run_a_new);
-    print_stats("M5 run C: N_lsd(balco setter) vs N_exp", run_c);
 
-    double worst_b = 0.0, worst_a_bb = 0.0, worst_a_new = 0.0, worst_c = 0.0;
+    double worst_b = 0.0, worst_a_bb = 0.0, worst_a_new = 0.0;
     for (const char* nuclide : {"Be10", "Al26", "C14"})
     {
         worst_b = std::max(worst_b, run_b[nuclide].worst_abs);
         worst_a_bb = std::max(worst_a_bb, run_a_bb[nuclide].worst_abs);
         worst_a_new = std::max(worst_a_new, run_a_new[nuclide].worst_abs);
-        worst_c = std::max(worst_c, run_c[nuclide].worst_abs);
     }
 
     check("M3: run B within frozen band (v3 one-exp vs tabulated 1A)",
@@ -1934,9 +1880,6 @@ void phase2_muon_inventory_comparison(const std::string& expected_dir,
     check("M4: run A newCRONUS within frozen band (lsdtt vs tabulated 1A)",
           100.0 * worst_a_new < tol::muon_run_a_new_worst_pct,
           "worst|pct|=" + std::to_string(100.0 * worst_a_new));
-    check("M5: run C identity (balco setter vs one-exp model)",
-          worst_c < tol::muon_run_c_identity_rel,
-          "worst|rel|=" + std::to_string(worst_c));
     check("csv: muon_inventory_comparison.csv written", csv.good());
 }
 
@@ -2759,18 +2702,17 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
                     continue;
                 }
 
+                // The two "balco_v3_*" variants were dropped on 2026-08-01 with
+                // set_balco_cronus_v3_parameters(): they exercised v3's
+                // single-exponential approximation, which is the wrong muon
+                // model for erosion rates (see the removal note in
+                // lsdtt_crn_parameters.hpp).
                 for (const char* variant : {"bb_vermeesch",
-                                            "balco_v3_vermeesch",
-                                            "balco_v3_balco_site",
                                             "balco_1A_fit_balco_site"})
                 {
                     const std::string variant_desc =
                         (std::string(variant) == "bb_vermeesch")
                             ? "BraucherBorchers + Vermeesch redistribution"
-                        : (std::string(variant) == "balco_v3_vermeesch")
-                            ? "Balco v3 setter + Vermeesch redistribution"
-                        : (std::string(variant) == "balco_v3_balco_site")
-                            ? "Balco v3 setter + Balco split site scaling"
                             : "Balco 1A fit setter + Balco split site scaling";
 
                     auto spall_scaling = [&](double t_yr) -> double
@@ -2795,18 +2737,8 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
                             return extract_params(cp, nuc);
                         }
 
-                        if (std::string(variant) == "balco_1A_fit_balco_site")
-                            cp.set_balco_1A_fit_parameters();
-                        else
-                            cp.set_balco_cronus_v3_parameters(s.pressure_hPa);
+                        cp.set_balco_1A_fit_parameters();
                         ref_params p = extract_params(cp, nuc);
-
-                        if (std::string(variant) == "balco_v3_vermeesch")
-                        {
-                            cp.scale_F_values(s_sp, nuc);
-                            p = extract_params(cp, nuc);
-                            return p;
-                        }
 
                         // Balco site split: spallation takes Stone/LSDn scaling,
                         // muon surface term takes exp((1013.25-p)/L_mu_atm), no
@@ -2903,44 +2835,30 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
     };
 
     print_variant("bb_vermeesch");
-    print_variant("balco_v3_vermeesch");
-    print_variant("balco_v3_balco_site");
     print_variant("balco_1A_fit_balco_site");
 
-    double worst_bb = 0.0, worst_vv = 0.0, worst_bs = 0.0, worst_fit = 0.0;
-    int vv_bound_low = 0;
+    double worst_bb = 0.0, worst_fit = 0.0;
     int n_no_solution = 0;
     for (const char* nuc_ref : {"Be-10", "Al-26", "C-14"})
     {
         const std::string key_bb = std::string("bb_vermeesch|") + nuc_ref;
-        const std::string key_vv = std::string("balco_v3_vermeesch|") + nuc_ref;
-        const std::string key_bs = std::string("balco_v3_balco_site|") + nuc_ref;
         const std::string key_fit = std::string("balco_1A_fit_balco_site|") + nuc_ref;
         if (nuc_ref != std::string("C-14"))
         {
             worst_bb = std::max(worst_bb,
                                 by_key_all[key_bb].worst);
-            worst_vv = std::max(worst_vv,
-                                by_key_all[key_vv].worst);
-            worst_bs = std::max(worst_bs,
-                                by_key_all[key_bs].worst);
             worst_fit = std::max(worst_fit,
                                  by_key_all[key_fit].worst);
-            vv_bound_low += counts_by_key[key_vv].low;
         }
         if (nuc_ref != std::string("C-14"))
         {
             n_no_solution += counts_by_key[key_bb].no_solution
-                          + counts_by_key[key_vv].no_solution
-                          + counts_by_key[key_bs].no_solution
                           + counts_by_key[key_fit].no_solution;
         }
     }
 
     const int expected_rows_per_nuclide = static_cast<int>(samples.size()) * 2;
     for (const char* variant : {"bb_vermeesch",
-                                "balco_v3_vermeesch",
-                                "balco_v3_balco_site",
                                 "balco_1A_fit_balco_site"})
     {
         const std::string key_c14 = std::string(variant) + "|C-14";
@@ -2961,19 +2879,9 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
     check("M7: bb_vermeesch inside wide regression guard",
           worst_bb < tol::muon_run_e_bb_worst_pct,
           "worst|pct|=" + std::to_string(worst_bb));
-    check("M7: balco_v3_vermeesch inside wide regression guard",
-          worst_vv < tol::muon_run_e_vv_worst_pct,
-          "worst|pct|=" + std::to_string(worst_vv));
-    check("M7: balco_v3_balco_site inside wide regression guard",
-          worst_bs < tol::muon_run_e_bs_worst_pct,
-          "worst|pct|=" + std::to_string(worst_bs));
     check("M7: balco_1A_fit_balco_site inside wide regression guard",
           worst_fit < tol::muon_run_e_fit_worst_pct,
           "worst|pct|=" + std::to_string(worst_fit));
-    check("M7: balco_v3_vermeesch exposes bound-limited-low rows "
-          "(term D dominates under Vermeesch redistribution)",
-          vv_bound_low > 0,
-          "bound_limited_low rows=" + std::to_string(vv_bound_low));
     check("csv: muon_isolation_comparison.csv written", csv.good());
 }
 
@@ -7847,7 +7755,8 @@ int main(int argc, char** argv)
         smoke_library_pipeline(fx, flow, out_dir);
 
         phase1_parameter_pins();
-        phase1_balco_cronus_v3_pressure_helpers();
+        phase1_muon_surface_production_pins();
+        phase1_removed_muon_schemes_rejected();
         phase1_standardisation_pins();
         phase1_E1_depth_integration_limits();
         phase1_E2_step_change_library(fx);

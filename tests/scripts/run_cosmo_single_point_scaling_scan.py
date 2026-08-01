@@ -39,12 +39,11 @@ EXIT_SKIP = 77
 
 NUCLIDES = ("Be10", "Al26", "C14")
 SCALING_VALUES = ("stone", "lsdn")
-MUON_VALUES = ("braucherborchers", "tunedexp", "cronusv3pd")
+MUON_VALUES = ("braucherborchers", "tunedexp")
 
 MUON_TO_LSDTT = {
     "braucherborchers": "BraucherBorchers",
     "tunedexp": "newCRONUS",
-    "cronusv3pd": "balcoCRONUSv3PD",
 }
 
 FILE_INPUTS = "single_point_scan_inputs.csv"
@@ -691,9 +690,6 @@ def run_self_test() -> int:
     if MUON_TO_LSDTT["tunedexp"] != "newCRONUS":
         print("SELFTEST FAIL: tunedexp map")
         return EXIT_FAIL
-    if MUON_TO_LSDTT["cronusv3pd"] != "balcoCRONUSv3PD":
-        print("SELFTEST FAIL: cronusv3pd map")
-        return EXIT_FAIL
     p = mini[0]
     ptest = std_pressure_hpa(p.elevation_m)
     if abs(ptest - p.pressure_hpa) > 1e-12:
@@ -713,7 +709,7 @@ def main() -> int:
     ap.add_argument("--max-points", type=int, default=0,
                     help="optional cap on number of grid points (0 = no cap)")
     ap.add_argument("--scaling", default="both", help="stone|lsdn|both")
-    ap.add_argument("--muon-scheme", default="both", help="braucherborchers|tunedexp|cronusv3pd|both")
+    ap.add_argument("--muon-scheme", default="both", help="braucherborchers|tunedexp|both")
     ap.add_argument("--sample-age-yr", type=float, default=20000.0)
     ap.add_argument("--atmosphere-source", default="standard",
                     choices=["standard", "ERA40", "NCEP"])

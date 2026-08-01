@@ -78,61 +78,6 @@ struct CrnBasinPrecomp
     int    n_pixels;
 };
 
-struct CrnBasinPrecompBalco
-{
-    double lambda;
-    double gamma_sp;
-    std::vector<double> a_sp;
-    std::vector<double> a_mu;
-    std::vector<double> gamma_mu;
-    int n_pixels = 0;
-};
-
-struct BalcoNuclideParams
-{
-    double p0 = 0.0;
-    double lambda = 0.0;
-    double f_sp = 0.0;
-    double f_mu = 0.0;
-    double gamma_sp = 160.0;
-    double l_mu_atm = 299.2;
-};
-
-static double balco_cronus_v3pd_l_mu_atm_mbar(const std::string& nuclide);
-
-static BalcoNuclideParams make_balco_nuclide_params(const std::string& nuclide)
-{
-    lsdtt_crn_parameters params;
-    params.reset_scaling("balcoCRONUSv3PD");
-
-    BalcoNuclideParams out;
-    out.gamma_sp = params.get_Gamma(0);
-    out.l_mu_atm = balco_cronus_v3pd_l_mu_atm_mbar(nuclide);
-
-    if (nuclide == "Al26")
-    {
-        out.p0 = params.get_P0_26Al();
-        out.lambda = params.get_lambda_26Al();
-        out.f_sp = params.get_F_26Al(0);
-        out.f_mu = params.get_F_26Al(1);
-        return out;
-    }
-    if (nuclide == "C14")
-    {
-        out.p0 = params.get_P0_14C();
-        out.lambda = params.get_lambda_14C();
-        out.f_sp = params.get_F_14C(0);
-        out.f_mu = params.get_F_14C(1);
-        return out;
-    }
-
-    out.p0 = params.get_P0_10Be();
-    out.lambda = params.get_lambda_10Be();
-    out.f_sp = params.get_F_10Be(0);
-    out.f_mu = params.get_F_10Be(1);
-    return out;
-}
-
 static CrnBasinPrecomp precompute_basin_crn(
     const std::string&      nuclide,
     const std::string&      muon_scheme,
@@ -235,91 +180,6 @@ static CrnBasinPrecomp precompute_basin_crn(
     return pre;
 }
 
-static CrnBasinPrecompBalco precompute_basin_crn_balco(
-    const std::string&      nuclide,
-    const lsdtt_raster_cpu& prod_raster,
-    const lsdtt_raster_cpu& topo_shield,
-    const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield,
-    const lsdtt_raster_cpu& pressure_raster,
-    const lsdtt_flowinfo&   flow,
-    std::int64_t            outlet_node)
-{
-    lsdtt_crn_parameters base;
-    base.reset_scaling("balcoCRONUSv3PD");
-
-    CrnBasinPrecompBalco pre{};
-    pre.lambda = nuclide == "Al26" ? base.get_lambda_26Al() :
-                 nuclide == "C14"  ? base.get_lambda_14C()  : base.get_lambda_10Be();
-    pre.gamma_sp = base.get_Gamma(0);
-
-    const double p0 = nuclide == "Al26" ? base.get_P0_26Al() :
-                      nuclide == "C14"  ? base.get_P0_14C()  : base.get_P0_10Be();
-    const double f_sp = nuclide == "Al26" ? base.get_F_26Al(0) :
-                        nuclide == "C14"  ? base.get_F_14C(0)  : base.get_F_10Be(0);
-    const double f_mu = nuclide == "Al26" ? base.get_F_26Al(1) :
-                        nuclide == "C14"  ? base.get_F_14C(1)  : base.get_F_10Be(1);
-    const double l_mu_atm = balco_cronus_v3pd_l_mu_atm_mbar(nuclide);
-
-    const auto& meta   = prod_raster.get_meta();
-    int nc             = meta.n_cols;
-    lsdtt_flat_index_slice upslope = flow.upslope_nodes(outlet_node);
-
-    const auto& p_data   = prod_raster.get_data_array();
-    const auto& p_mask   = prod_raster.get_mask_array();
-    const auto& ts_data  = topo_shield.get_data_array();
-    const auto& ts_mask  = topo_shield.get_mask_array();
-    const auto& snow_d   = snow_shield.get_data_array();
-    const auto& snow_m   = snow_shield.get_mask_array();
-    const auto& self_d   = self_shield.get_data_array();
-    const auto& self_m   = self_shield.get_mask_array();
-    const auto& pr_data  = pressure_raster.get_data_array();
-    const auto& pr_mask  = pressure_raster.get_mask_array();
-
-    pre.a_sp.reserve(upslope.size());
-    pre.a_mu.reserve(upslope.size());
-    pre.gamma_mu.reserve(upslope.size());
-
-    for (std::int64_t flat : upslope)
-    {
-        int row = static_cast<int>(flat / nc);
-        int col = static_cast<int>(flat % nc);
-
-        if (!p_mask(row, col) || !ts_mask(row, col) ||
-            !snow_m(row, col) || !self_m(row, col) || !pr_mask(row, col))
-            continue;
-
-        const double total_shielding = static_cast<double>(p_data(row, col)) *
-                                       static_cast<double>(ts_data(row, col));
-        const double d_top = static_cast<double>(snow_d(row, col));
-        const double d_bot = d_top + static_cast<double>(self_d(row, col));
-        const double p_mbar = static_cast<double>(pr_data(row, col));
-
-        const double gamma_mu = lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(p_mbar);
-        const double mu_surface = lsdtt_crn_parameters::balco_cronus_v3_muon_surface_production(
-            p_mbar, 1.0, l_mu_atm);
-
-        auto weight = [&](double gamma) -> double
-        {
-            if (d_top == d_bot)
-                return gamma * std::exp(-d_top / gamma);
-            const double inv_d = 1.0 / (d_bot - d_top);
-            return gamma * gamma *
-                   (std::exp(-d_top / gamma) - std::exp(-d_bot / gamma)) * inv_d;
-        };
-
-        const double w_sp = weight(pre.gamma_sp);
-        const double w_mu = weight(gamma_mu);
-
-        pre.a_sp.push_back(p0 * f_sp * total_shielding * w_sp);
-        pre.a_mu.push_back(p0 * f_mu * mu_surface * w_mu);
-        pre.gamma_mu.push_back(gamma_mu);
-    }
-
-    pre.n_pixels = static_cast<int>(pre.a_sp.size());
-    return pre;
-}
-
 // C_acc(epsilon) = P0/N x Sigma_j Bsum[j] / (epsilon + Gamma[j]xlambda)
 static double eval_conc_analytic(const CrnBasinPrecomp& pre, double erate)
 {
@@ -343,31 +203,6 @@ static double eval_conc_deriv_analytic(const CrnBasinPrecomp& pre, double erate)
     return -pre.P0 / pre.n_pixels * sum;
 }
 
-static double eval_conc_balco(const CrnBasinPrecompBalco& pre, double erate)
-{
-    if (pre.n_pixels == 0) return 0.0;
-    double sum = 0.0;
-    for (int i = 0; i < pre.n_pixels; ++i)
-    {
-        sum += pre.a_sp[i] / (erate + pre.gamma_sp * pre.lambda)
-             + pre.a_mu[i] / (erate + pre.gamma_mu[i] * pre.lambda);
-    }
-    return sum / static_cast<double>(pre.n_pixels);
-}
-
-static double eval_conc_deriv_balco(const CrnBasinPrecompBalco& pre, double erate)
-{
-    if (pre.n_pixels == 0) return -1.0;
-    double sum = 0.0;
-    for (int i = 0; i < pre.n_pixels; ++i)
-    {
-        const double d_sp = erate + pre.gamma_sp * pre.lambda;
-        const double d_mu = erate + pre.gamma_mu[i] * pre.lambda;
-        sum += pre.a_sp[i] / (d_sp * d_sp) + pre.a_mu[i] / (d_mu * d_mu);
-    }
-    return -sum / static_cast<double>(pre.n_pixels);
-}
-
 // Initial erosion rate guess from average shielding (spallation-only approximation).
 // epsilon ~= avg_shield x P0 x Gamma_0 / C_meas - Gamma_0 x lambda
 static double erate_initial_guess(double measured_conc,
@@ -381,44 +216,6 @@ static double erate_initial_guess(double measured_conc,
     double guess = avg_prod_term / measured_conc - pre.Gamma[0] * pre.lambda;
     if (guess <= 1e-8) guess = 0.001;
     return guess;
-}
-
-static double balco_cronus_v3pd_l_mu_atm_mbar(const std::string& nuclide)
-{
-    if (nuclide == "Al26") return 288.0;
-    if (nuclide == "C14") return 267.8;
-    return 299.2; // Be10 default
-}
-
-static double balco_cronus_v3pd_concentration(const BalcoNuclideParams& coeff,
-                                              double erate,
-                                              double total_shielding,
-                                              double pressure_mbar,
-                                              double d_top,
-                                              double d_bot)
-{
-    const double gamma_mu = lsdtt_crn_parameters::balco_cronus_v3_lambda_mu_eff(pressure_mbar);
-
-    const double mu_surface = lsdtt_crn_parameters::balco_cronus_v3_muon_surface_production(
-        pressure_mbar, 1.0, coeff.l_mu_atm);
-
-    auto pathway_weight = [&](double gamma) -> double
-    {
-        if (d_top == d_bot)
-            return gamma * std::exp(-d_top / gamma);
-        const double inv_dself = 1.0 / (d_bot - d_top);
-        return gamma * gamma *
-               (std::exp(-d_top / gamma) - std::exp(-d_bot / gamma)) * inv_dself;
-    };
-
-    const double w_sp = pathway_weight(coeff.gamma_sp);
-    const double w_mu = pathway_weight(gamma_mu);
-
-    const double c_sp = coeff.p0 * (coeff.f_sp * total_shielding) * w_sp
-                      / (erate + coeff.gamma_sp * coeff.lambda);
-    const double c_mu = coeff.p0 * (coeff.f_mu * mu_surface) * w_mu
-                      / (erate + gamma_mu * coeff.lambda);
-    return c_sp + c_mu;
 }
 
 // 
@@ -704,25 +501,6 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     const lsdtt_flowinfo&   flow,
     std::int64_t            outlet_node)
 {
-    return calculate_crn_concentration_raster(
-        nuclide, muon_scheme, erosion_raster, prod_raster,
-        topo_shield, snow_shield, self_shield, nullptr,
-        flow, outlet_node);
-}
-
-// 
-lsdtt_raster_cpu calculate_crn_concentration_raster(
-    const std::string&      nuclide,
-    const std::string&      muon_scheme,
-    const lsdtt_raster_cpu& erosion_raster,
-    const lsdtt_raster_cpu& prod_raster,
-    const lsdtt_raster_cpu& topo_shield,
-    const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield,
-    const lsdtt_raster_cpu* pressure_raster,
-    const lsdtt_flowinfo&   flow,
-    std::int64_t            outlet_node)
-{
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
     float ndv = static_cast<float>(meta.no_data_value);
@@ -743,26 +521,10 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
     const auto& snow_m  = snow_shield.get_mask_array();
     const auto& self_d  = self_shield.get_data_array();
     const auto& self_m  = self_shield.get_mask_array();
-    const bool use_balco_pd = (muon_scheme == "balcoCRONUSv3PD");
-    const BalcoNuclideParams balco_coeff = use_balco_pd
-        ? make_balco_nuclide_params(nuclide)
-        : BalcoNuclideParams{};
-
-    lsdtt_array2d<float> pressure_data(1, 1, 0.0f);
-    lsdtt_array2d<uint8_t> pressure_mask(1, 1, 0);
-    if (use_balco_pd)
-    {
-        if (pressure_raster == nullptr)
-            throw std::runtime_error("balcoCRONUSv3PD requires a pressure raster");
-        pressure_data = pressure_raster->get_data_array();
-        pressure_mask = pressure_raster->get_mask_array();
-    }
-
     // Each pixel is independent. Each thread gets private params/particle.
 #pragma omp parallel default(none) \
     shared(n, upslope, nc, e_data, e_mask, p_data, p_mask, ts_data, ts_mask, \
-            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme, \
-            pressure_data, pressure_mask, use_balco_pd, balco_coeff)
+            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme)
     {
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
@@ -785,19 +547,6 @@ lsdtt_raster_cpu calculate_crn_concentration_raster(
             double d_self        = static_cast<double>(self_d(row, col));
             double d_top         = d_snow;
             double d_bot         = d_snow + d_self;
-
-            if (use_balco_pd && !pressure_mask(row, col))
-                continue;
-
-            if (use_balco_pd)
-            {
-                const double p_mbar = static_cast<double>(pressure_data(row, col));
-                const double conc = balco_cronus_v3pd_concentration(
-                    balco_coeff, erate, total_shielding, p_mbar, d_top, d_bot);
-                out_data(row, col) = static_cast<float>(conc);
-                out_mask(row, col) = 1;
-                continue;
-            }
 
             params.reset_scaling(muon_scheme);
             params.scale_F_values(total_shielding, nuclide);
@@ -835,8 +584,7 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield,
-    const lsdtt_raster_cpu* pressure_raster)
+    const lsdtt_raster_cpu& self_shield)
 {
     const auto& meta = prod_raster.get_meta();
     int nr = meta.n_rows, nc = meta.n_cols;
@@ -856,25 +604,9 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
     const auto& snow_m  = snow_shield.get_mask_array();
     const auto& self_d  = self_shield.get_data_array();
     const auto& self_m  = self_shield.get_mask_array();
-    const bool use_balco_pd = (muon_scheme == "balcoCRONUSv3PD");
-    const BalcoNuclideParams balco_coeff = use_balco_pd
-        ? make_balco_nuclide_params(nuclide)
-        : BalcoNuclideParams{};
-
-    lsdtt_array2d<float> pressure_data(1, 1, 0.0f);
-    lsdtt_array2d<uint8_t> pressure_mask(1, 1, 0);
-    if (use_balco_pd)
-    {
-        if (pressure_raster == nullptr)
-            throw std::runtime_error("balcoCRONUSv3PD requires a pressure raster");
-        pressure_data = pressure_raster->get_data_array();
-        pressure_mask = pressure_raster->get_mask_array();
-    }
-
 #pragma omp parallel default(none) \
     shared(nr, nc, n_total, e_data, e_mask, p_data, p_mask, ts_data, ts_mask, \
-            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme, \
-            pressure_data, pressure_mask, use_balco_pd, balco_coeff)
+            snow_d, snow_m, self_d, self_m, out_data, out_mask, nuclide, muon_scheme)
     {
         lsdtt_crn_parameters params;
         lsdtt_crn_particle   particle;
@@ -894,19 +626,6 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
                                      static_cast<double>(ts_data(row, col));
             double d_top = static_cast<double>(snow_d(row, col));
             double d_bot = d_top + static_cast<double>(self_d(row, col));
-
-            if (use_balco_pd && !pressure_mask(row, col))
-                continue;
-
-            if (use_balco_pd)
-            {
-                const double p_mbar = static_cast<double>(pressure_data(row, col));
-                const double conc = balco_cronus_v3pd_concentration(
-                    balco_coeff, erate, total_shielding, p_mbar, d_top, d_bot);
-                out_data(row, col) = static_cast<float>(conc);
-                out_mask(row, col) = 1;
-                continue;
-            }
 
             params.reset_scaling(muon_scheme);
             params.scale_F_values(total_shielding, nuclide);
@@ -1304,26 +1023,6 @@ double calculate_eff_erate_from_conc(
     std::int64_t            outlet_node,
     double&                 predicted_conc)
 {
-    return calculate_eff_erate_from_conc(
-        measured_conc, nuclide, muon_scheme,
-        prod_raster, topo_shield, snow_shield, self_shield,
-        nullptr, flow, outlet_node, predicted_conc);
-}
-
-// 
-double calculate_eff_erate_from_conc(
-    double                  measured_conc,
-    const std::string&      nuclide,
-    const std::string&      muon_scheme,
-    const lsdtt_raster_cpu& prod_raster,
-    const lsdtt_raster_cpu& topo_shield,
-    const lsdtt_raster_cpu& snow_shield,
-    const lsdtt_raster_cpu& self_shield,
-    const lsdtt_raster_cpu* pressure_raster,
-    const lsdtt_flowinfo&   flow,
-    std::int64_t            outlet_node,
-    double&                 predicted_conc)
-{
     // Guard: non-positive concentration has no physical meaning
     if (measured_conc <= 0.0)
     {
@@ -1332,28 +1031,12 @@ double calculate_eff_erate_from_conc(
         return 0.0;
     }
 
-    const bool use_balco_pd = (muon_scheme == "balcoCRONUSv3PD");
-
     // Precompute basin summary terms.
-    CrnBasinPrecomp pre{};
-    CrnBasinPrecompBalco pre_balco{};
-    if (use_balco_pd)
-    {
-        if (pressure_raster == nullptr)
-            throw std::runtime_error("balcoCRONUSv3PD inversion requires a pressure raster");
-        pre_balco = precompute_basin_crn_balco(
-            nuclide, prod_raster, topo_shield,
-            snow_shield, self_shield, *pressure_raster,
-            flow, outlet_node);
-    }
-    else
-    {
-        pre = precompute_basin_crn(
-            nuclide, muon_scheme, prod_raster, topo_shield,
-            snow_shield, self_shield, flow, outlet_node);
-    }
+    CrnBasinPrecomp pre = precompute_basin_crn(
+        nuclide, muon_scheme, prod_raster, topo_shield,
+        snow_shield, self_shield, flow, outlet_node);
 
-    const int n_valid = use_balco_pd ? pre_balco.n_pixels : pre.n_pixels;
+    const int n_valid = pre.n_pixels;
     if (n_valid == 0)
     {
         std::cout << "calculate_eff_erate_from_conc: no valid upslope pixels -- returning 0.\n";
@@ -1369,10 +1052,7 @@ double calculate_eff_erate_from_conc(
     const double conc_tol = conc_tol_frac * measured_conc;
 
     //  Initial guess 
-    double eff_e = use_balco_pd
-        ? std::max(0.001, pre_balco.a_sp.empty() ? 0.001
-                    : pre_balco.a_sp[0] / measured_conc)
-        : erate_initial_guess(measured_conc, pre);
+    double eff_e = erate_initial_guess(measured_conc, pre);
 
     //  Newton-Raphson with analytic derivative 
     // C(epsilon) is monotonically decreasing, so the derivative is always negative
@@ -1390,11 +1070,9 @@ double calculate_eff_erate_from_conc(
 
     for (; n_steps < nr_max_steps; ++n_steps)
     {
-        C_cur = use_balco_pd ? eval_conc_balco(pre_balco, eff_e)
-                             : eval_conc_analytic(pre, eff_e);
+        C_cur = eval_conc_analytic(pre, eff_e);
         double fx    = C_cur - measured_conc;
-        double deriv = use_balco_pd ? eval_conc_deriv_balco(pre_balco, eff_e)
-                                    : eval_conc_deriv_analytic(pre, eff_e);
+        double deriv = eval_conc_deriv_analytic(pre, eff_e);
 
         // Update brackets
         if (fx > 0.0) { have_lo = true; if (eff_e < hi_e) lo_e = std::max(lo_e, eff_e); }
@@ -1415,8 +1093,7 @@ double calculate_eff_erate_from_conc(
     }
 
     //  Check convergence; fall through to bisection if needed 
-    C_cur = use_balco_pd ? eval_conc_balco(pre_balco, eff_e)
-                         : eval_conc_analytic(pre, eff_e);
+    C_cur = eval_conc_analytic(pre, eff_e);
     double fx_final = C_cur - measured_conc;
     if (std::fabs(fx_final) >= conc_tol)
     {
@@ -1430,8 +1107,7 @@ double calculate_eff_erate_from_conc(
             for (int s = 0; s <= scan_n && !(have_lo && have_hi); ++s)
             {
                 double e_scan = std::pow(10.0, log_lo + s * (log_hi - log_lo) / scan_n);
-                double C_scan = use_balco_pd ? eval_conc_balco(pre_balco, e_scan)
-                                             : eval_conc_analytic(pre, e_scan);
+                double C_scan = eval_conc_analytic(pre, e_scan);
                 if (C_scan > measured_conc) { have_lo = true; lo_e = std::max(lo_e, e_scan); }
                 if (C_scan < measured_conc) { have_hi = true; hi_e = std::min(hi_e, e_scan); }
             }
@@ -1458,8 +1134,7 @@ double calculate_eff_erate_from_conc(
         for (int bs = 0; bs < bisect_max; ++bs)
         {
             double mid   = 0.5 * (lo_e + hi_e);
-            double C_mid = use_balco_pd ? eval_conc_balco(pre_balco, mid)
-                                        : eval_conc_analytic(pre, mid);
+            double C_mid = eval_conc_analytic(pre, mid);
             double fx_mid = C_mid - measured_conc;
 
             if (C_mid > measured_conc) lo_e = mid;
@@ -1478,8 +1153,7 @@ double calculate_eff_erate_from_conc(
         if (std::fabs(C_cur - measured_conc) >= conc_tol)
         {
             eff_e = 0.5 * (lo_e + hi_e);
-            C_cur = use_balco_pd ? eval_conc_balco(pre_balco, eff_e)
-                                 : eval_conc_analytic(pre, eff_e);
+            C_cur = eval_conc_analytic(pre, eff_e);
         }
     }
 

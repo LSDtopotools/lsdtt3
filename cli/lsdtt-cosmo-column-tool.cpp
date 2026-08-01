@@ -449,8 +449,8 @@ int main(int argc, char* argv[])
 
     string_default_map["muon_scheme"] = "BraucherBorchers";
     help_map["muon_scheme"] = {"string","BraucherBorchers",
-        "Muon production parameter scheme (BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD).",
-        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, balcoCRONUSv3, balcoCRONUSv3PD.",
+        "Muon production parameter scheme (BraucherBorchers, Braucher, Granger, Schaller, newCRONUS).",
+        "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS.",
         "-", "param", "use_initial_concentration"};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;

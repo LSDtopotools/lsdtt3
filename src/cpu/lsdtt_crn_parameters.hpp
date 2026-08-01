@@ -162,9 +162,19 @@ struct LsdnTimeAvgSurface
 //
 // Supported nuclides: Be10, Al26, C14
 // Supported muon schemes: "Braucher", "BraucherBorchers" (default),
-//                         "Granger", "Schaller", "newCRONUS",
-//                         "balcoCRONUSv3", "balcoCRONUSv3PD"
-// 
+//                         "Granger", "Schaller", "newCRONUS"
+//
+// NOTE: "balcoCRONUSv3" / "balcoCRONUSv3PD" were REMOVED on 2026-08-01.  They
+// reproduced Balco CRONUS v3's single-exponential muon approximation
+// (make_consts_v3.m:193-211), which v3 uses only for exposure ages, saturation
+// checks and plotting.  v3's erosion-rate root-find (get_erates_v3.m:155 for
+// St, :268 for LSDn) instead interpolates a tabulated model-1A muon inventory,
+// so the approximation's near-surface Lambda_mu(p) is the wrong quantity for an
+// eroding column: it delivered only 18-75% of the true muon inventory and gave
+// the WORST agreement with the CRONUS v3 web calculator of any scheme
+// (-13.9% mean at latitude -1 deg, against -4.5% for BraucherBorchers).
+// A replacement fitted to the tabulated inventory is planned.
+//
 class lsdtt_crn_parameters
 {
 public:
@@ -176,12 +186,20 @@ public:
     void set_granger_parameters();
     void set_schaller_parameters();
     void set_new_cronus_parameters();
-    void set_balco_cronus_v3_parameters(double P_mbar = 1013.25);
+
+    // Not reachable via reset_scaling(): a prototype three-exponential fit to
+    // the Balco v3 tabulated model-1A muon inventory, kept as the starting
+    // point for the fitted CRONUS-emulator scheme.  Pressure-independent, so
+    // it is accurate near sea level only (see
+    // tests/expected/cosmo/balco_1A_exp_fit_report.csv).
     void set_balco_1A_fit_parameters();
 
-    // Balco (2017) / CRONUS v3 pressure-dependent muon helpers.
+    // Surface muon production vs pressure, Balco (2017) Eq. (7):
+    //   P_mu,0(p) = p_mu_slhl * exp((1013.25 - p)/l_mu_atm)
+    // Verified against the v3 tabulated inventory at the eps -> 0 limit to
+    // within 1-3% over 700-1013 hPa (2026-08-01), so this part of the v3
+    // approximation is sound and is retained for the replacement scheme.
     // pressure_mbar is site pressure in hPa (mbar).
-    static double balco_cronus_v3_lambda_mu_eff(double pressure_mbar);
     static double balco_cronus_v3_muon_surface_production(
         double pressure_mbar,
         double p_mu_slhl,
@@ -192,8 +210,7 @@ public:
     static std::string allowed_muon_schemes_csv();
 
     // Selects scheme by name (case-sensitive: "Braucher", "BraucherBorchers",
-    // "Granger", "Schaller", "newCRONUS", "balcoCRONUSv3",
-    // "balcoCRONUSv3PD").
+    // "Granger", "Schaller", "newCRONUS").
     // Throws std::invalid_argument on unknown scheme names.
     void reset_scaling(const std::string& muon_scheme);
 
