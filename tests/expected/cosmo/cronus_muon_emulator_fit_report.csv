@@ -1,0 +1,26 @@
+# lsdtt3 CRONUS v3 muon emulator: fit quality
+# FROZEN reference - refreshing it is a reviewable event.
+# generated_utc: 2026-08-01T10:35:22+00:00
+# generator: python_helpers/fit_cronus_muon_emulator.py
+# source_reference: tests/expected/cosmo/balco_v3_nmu_reference.csv
+# upstream source_path: /mnt/c/LSDTopoTools/crn_reference/v3/data/Nmu.mat
+# upstream source_sha256: af0bb19e3d84e72a0732c4f39a7437701214495b5710bfc25e514c17126956d5
+# upstream Nmu.version: 3.2
+#
+# Plan Phase 1 exit criterion: max |rel| < 1% (Be10), < 2% (Al26, C14).
+# rel = N_fit/N_tab - 1 over the full 20 pressure x 28 erosion-rate grid.
+#
+# ANCHOR QUESTION (plan 4.3) RESOLVED: 'free' is frozen for every
+# nuclide.  Compare fit_surface_vs_balco_max_pct against
+# table_surface_vs_balco_max_pct: the TABLE itself already departs from
+# Balco's P_mu,0(p) formula by that much, and the free fit departs by the
+# same amount, i.e. it is tracking ground truth.  Anchoring to the formula
+# costs real accuracy (Be10 0.77% -> 1.57%, through the gate) to chase a
+# quantity the reference does not itself honour.
+nuclide,variant,chosen,n_points,max_abs_pct,rms_pct,mean_pct,min_pct,max_pct,worst_p_hPa,worst_log10_erate,fit_surface_vs_balco_max_pct,table_surface_vs_balco_max_pct,exit_gate_pct,passes_gate
+Be10,free,yes,560,0.771898,0.252865,0.000320,-0.771898,0.768250,720,-5.56864,2.981000,3.000200,1.0,yes
+Be10,anchored,no,560,1.569599,0.536672,0.049304,-1.569599,1.322677,1020,-4.01308,1.058123,3.000200,1.0,no
+Al26,free,yes,560,0.869941,0.304514,0.000464,-0.869941,0.780500,720,-5.56864,2.615465,2.193148,2.0,yes
+Al26,anchored,no,560,1.444639,0.524674,0.061584,-1.444639,1.231033,1020,-3.79086,0.853009,2.193148,2.0,yes
+C14,free,yes,560,1.153195,0.230169,0.000265,-1.153195,0.623426,1020,-1.56864,0.724259,0.553482,2.0,yes
+C14,anchored,no,560,1.304590,0.262955,0.056682,-1.304590,0.685991,1020,-1.56864,0.410538,0.553482,2.0,yes
