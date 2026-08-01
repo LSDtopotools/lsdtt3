@@ -162,7 +162,10 @@ struct LsdnTimeAvgSurface
 //
 // Supported nuclides: Be10, Al26, C14
 // Supported muon schemes: "Braucher", "BraucherBorchers" (default),
-//                         "Granger", "Schaller", "newCRONUS"
+//                         "Granger", "Schaller", "newCRONUS",
+//                         "cronusEmulatorSt", "cronusEmulatorLSDn"
+// The two cronusEmulator* schemes are set through their own
+// pressure- and nuclide-aware setters, not reset_scaling().
 //
 // NOTE: "balcoCRONUSv3" / "balcoCRONUSv3PD" were REMOVED on 2026-08-01.  They
 // reproduced Balco CRONUS v3's single-exponential muon approximation
@@ -194,6 +197,33 @@ public:
     // tests/expected/cosmo/balco_1A_exp_fit_report.csv).
     void set_balco_1A_fit_parameters();
 
+    // ---- CRONUS v3 emulator -------------------------------------------------
+    // Three-exponential fit to v3's TABULATED model-1A muon inventory, the
+    // quantity v3's erosion-rate root-find actually uses.  Unlike the other
+    // set_*_parameters(), these take a nuclide and a site pressure, because the
+    // fitted muon attenuation lengths are both nuclide-specific and
+    // pressure-dependent (Be10's deep pathway is ~26000 g cm^-2 at sea level,
+    // C14's ~12000).  One instance therefore serves ONE nuclide.
+    //
+    // These are NOT reachable through reset_scaling(): it has neither argument.
+    // The raster path dispatches to them directly, and reset_scaling() throws a
+    // pointer to them if the emulator names are passed to it.
+    //
+    // Do not follow these with scale_F_values(): v3 applies shielding and the
+    // spallation scaling factor to the spallation pathway ONLY
+    // (get_erates_v3.m:117,155), so the caller must split the site factor.
+    void set_cronus_emulator_st_parameters(const std::string& nuclide,
+                                           double P_mbar);
+    void set_cronus_emulator_lsdn_parameters(const std::string& nuclide,
+                                             double P_mbar,
+                                             double lsdn_slhl_reference);
+
+    // Raw LSDn grid value at SLHL (Rc = 0 GV, 1013.25 hPa, S_ref), i.e. the
+    // divisor inside lsdn_scaling().  Converts lsdtt3's SLHL-normalised LSDn
+    // scaling to the raw convention v3's refP_LSDn expects.
+    static double cronus_emulator_lsdn_slhl_reference(const CrnNcData& nc,
+                                                       const std::string& nuclide);
+
     // Surface muon production vs pressure, Balco (2017) Eq. (7):
     //   P_mu,0(p) = p_mu_slhl * exp((1013.25 - p)/l_mu_atm)
     // Verified against the v3 tabulated inventory at the eps -> 0 limit to
@@ -204,6 +234,13 @@ public:
         double pressure_mbar,
         double p_mu_slhl,
         double l_mu_atm_mbar);
+
+
+    // Shared muon half of the CRONUS emulator setters.
+    void set_cronus_emulator_common(const std::string& nuclide,
+                                    double P_mbar,
+                                    double P0_spallation,
+                                    double mu_out[3]);
 
     // Muon-scheme helpers.
     static bool is_valid_muon_scheme(const std::string& muon_scheme);

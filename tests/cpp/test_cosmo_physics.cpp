@@ -1772,6 +1772,229 @@ struct rel_stats
     }
 };
 
+
+// ===========================================================================
+// CRONUS v3 emulator (plan Phase 2): T1 unit checks + T2 identity vs the
+// frozen tabulated muon inventory.
+// ===========================================================================
+
+// Muon-only inventory from a parameter set whose Gamma_[1..3]/F_[1..3] have
+// been filled by one of the cronus emulator setters.
+double emulator_nmu(const lsdtt::lsdtt_crn_parameters& cp,
+                    const std::string& nuclide, double eps)
+{
+    double sum = 0.0;
+    if (nuclide == "Al26")
+    {
+        for (int j = 1; j < 4; ++j)
+            sum += cp.get_F_26Al(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_26Al());
+        return cp.get_P0_26Al() * sum;
+    }
+    if (nuclide == "C14")
+    {
+        for (int j = 1; j < 4; ++j)
+            sum += cp.get_F_14C(j) * cp.get_Gamma(j)
+                 / (eps + cp.get_Gamma(j) * cp.get_lambda_14C());
+        return cp.get_P0_14C() * sum;
+    }
+    for (int j = 1; j < 4; ++j)
+        sum += cp.get_F_10Be(j) * cp.get_Gamma(j)
+             / (eps + cp.get_Gamma(j) * cp.get_lambda_10Be());
+    return cp.get_P0_10Be() * sum;
+}
+
+void phase2_cronus_emulator_unit()
+{
+    // T1a: structural invariants at a spread of pressures and nuclides.
+    bool ok = true;
+    std::string bad;
+    for (const char* nuc : {"Be10", "Al26", "C14"})
+    {
+        for (double p : {450.0, 700.0, 898.75, 1013.25, 1020.0})
+        {
+            lsdtt::lsdtt_crn_parameters cp;
+            cp.set_cronus_emulator_st_parameters(nuc, p);
+
+            if (cp.get_Gamma(0) != 160.0)
+            { ok = false; bad = "Gamma_0 != 160"; }
+            if (!(cp.get_Gamma(1) < cp.get_Gamma(2) &&
+                  cp.get_Gamma(2) < cp.get_Gamma(3)))
+            { ok = false; bad = std::string(nuc) + " p=" + std::to_string(p)
+                              + ": Gamma_1<Gamma_2<Gamma_3 violated"; }
+            for (int j = 0; j < 4; ++j)
+                if (!(cp.get_Gamma(j) > 0.0) || !std::isfinite(cp.get_Gamma(j)))
+                { ok = false; bad = "non-positive/non-finite Gamma"; }
+
+            double fsum = 0.0;
+            for (int j = 0; j < 4; ++j)
+            {
+                const double f = (std::string(nuc) == "Al26") ? cp.get_F_26Al(j)
+                               : (std::string(nuc) == "C14")  ? cp.get_F_14C(j)
+                                                              : cp.get_F_10Be(j);
+                if (!(f >= 0.0)) { ok = false; bad = "negative F"; }
+                fsum += f;
+            }
+            if (!approx_rel(fsum, 1.0, 1e-12))
+            { ok = false; bad = std::string(nuc) + ": sum F = "
+                              + std::to_string(fsum); }
+        }
+    }
+    check("P2-T1: emulator invariants (Gamma_0=160, ordered Gamma, sum F = 1)",
+          ok, bad);
+
+    // T1b: spallation SLHL production is v3's refP_St, i.e. P0*F_0.
+    {
+        struct pin { const char* nuc; double refp; };
+        const pin pins[] = {{"Be10", 4.086}, {"Al26", 28.535}, {"C14", 12.1}};
+        bool sp_ok = true;
+        std::string sp_bad;
+        for (const pin& q : pins)
+        {
+            lsdtt::lsdtt_crn_parameters cp;
+            cp.set_cronus_emulator_st_parameters(q.nuc, 1013.25);
+            const double p0 = (std::string(q.nuc) == "Al26") ? cp.get_P0_26Al()
+                            : (std::string(q.nuc) == "C14")  ? cp.get_P0_14C()
+                                                             : cp.get_P0_10Be();
+            const double f0 = (std::string(q.nuc) == "Al26") ? cp.get_F_26Al(0)
+                            : (std::string(q.nuc) == "C14")  ? cp.get_F_14C(0)
+                                                             : cp.get_F_10Be(0);
+            if (!approx_rel(p0 * f0, q.refp, 1e-12))
+            { sp_ok = false; sp_bad = std::string(q.nuc) + ": "
+                                    + diff_str(p0 * f0, q.refp); }
+        }
+        check("P2-T1: emulator spallation production equals v3 refP_St", sp_ok, sp_bad);
+    }
+
+    // T1c: pressure is clamped to the fitted range, matching intNmu.m's own
+    // bounds clamping, rather than extrapolating the polynomials.
+    {
+        lsdtt::lsdtt_crn_parameters lo, at_lo, hi, at_hi;
+        lo.set_cronus_emulator_st_parameters("Be10", 100.0);
+        at_lo.set_cronus_emulator_st_parameters("Be10", 450.0);
+        hi.set_cronus_emulator_st_parameters("Be10", 1500.0);
+        at_hi.set_cronus_emulator_st_parameters("Be10", 1020.0);
+        bool clamp_ok = true;
+        for (int j = 1; j < 4; ++j)
+        {
+            if (!approx_rel(lo.get_Gamma(j), at_lo.get_Gamma(j), 1e-14))
+                clamp_ok = false;
+            if (!approx_rel(hi.get_Gamma(j), at_hi.get_Gamma(j), 1e-14))
+                clamp_ok = false;
+        }
+        check("P2-T1: emulator clamps pressure to [450, 1020] hPa", clamp_ok);
+    }
+
+    // T1d: guards.
+    {
+        bool guard_ok = true;
+        try { lsdtt::lsdtt_crn_parameters c; c.set_cronus_emulator_st_parameters("Ne21", 1013.25); guard_ok = false; }
+        catch (const std::invalid_argument&) {} catch (...) { guard_ok = false; }
+        try { lsdtt::lsdtt_crn_parameters c;
+              c.set_cronus_emulator_st_parameters("Be10",
+                  std::numeric_limits<double>::quiet_NaN()); guard_ok = false; }
+        catch (const std::invalid_argument&) {} catch (...) { guard_ok = false; }
+        try { lsdtt::lsdtt_crn_parameters c;
+              c.set_cronus_emulator_lsdn_parameters("Be10", 1013.25, 0.0); guard_ok = false; }
+        catch (const std::invalid_argument&) {} catch (...) { guard_ok = false; }
+        check("P2-T1: emulator guards reject bad nuclide/pressure/LSDn reference",
+              guard_ok);
+    }
+
+    // T1e: the emulator names are valid schemes but reset_scaling() must refuse
+    // them loudly -- it has neither a pressure nor a nuclide to work with.
+    {
+        bool ok2 = true;
+        for (const char* name : {"cronusEmulatorSt", "cronusEmulatorLSDn"})
+        {
+            if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(name)) ok2 = false;
+            lsdtt::lsdtt_crn_parameters cp;
+            try { cp.reset_scaling(name); ok2 = false; }
+            catch (const std::invalid_argument&) {}
+            catch (...) { ok2 = false; }
+        }
+        check("P2-T1: cronusEmulator* are valid names but reset_scaling() refuses them",
+              ok2);
+    }
+
+    // T1f: LSDn differs from St only through the spallation pathway; the muon
+    // parameters are identical, because v3 calls the same intNmu for both.
+    {
+        lsdtt::lsdtt_crn_parameters st, lsdn;
+        st.set_cronus_emulator_st_parameters("Be10", 900.0);
+        lsdn.set_cronus_emulator_lsdn_parameters("Be10", 900.0, 4.5);
+        bool same_gamma = true;
+        for (int j = 1; j < 4; ++j)
+            if (!approx_rel(st.get_Gamma(j), lsdn.get_Gamma(j), 1e-15))
+                same_gamma = false;
+        // Absolute muon production P0*F_j must match too, not just Gamma.
+        bool same_mu = true;
+        for (int j = 1; j < 4; ++j)
+            if (!approx_rel(st.get_P0_10Be() * st.get_F_10Be(j),
+                            lsdn.get_P0_10Be() * lsdn.get_F_10Be(j), 1e-12))
+                same_mu = false;
+        check("P2-T1: St and LSDn emulators share identical muon terms",
+              same_gamma && same_mu);
+    }
+}
+
+void phase2_cronus_emulator_vs_table(const std::string& expected_dir)
+{
+    const std::string ref_path = expected_dir + "/balco_v3_nmu_reference.csv";
+    balco_nmu_reference ref;
+    if (!load_balco_nmu_reference(ref_path, ref))
+    {
+        check("P2-T2: Balco v3 Nmu reference present and readable", false,
+              "cannot read " + ref_path);
+        return;
+    }
+
+    // Plan Phase 1 gate, re-asserted against the C++ implementation: if the
+    // setter drifts from the Python fit this is what catches it.
+    struct gate { const char* nuclide; double max_pct; };
+    const gate gates[] = {{"Be10", 1.0}, {"Al26", 2.0}, {"C14", 2.0}};
+
+    for (const gate& g : gates)
+    {
+        const auto it = ref.grid.find(g.nuclide);
+        if (it == ref.grid.end())
+        {
+            check(std::string("P2-T2: reference grid present for ") + g.nuclide, false);
+            continue;
+        }
+        const std::vector<double>& grid = it->second;
+        const std::size_t np = ref.p_hpa_axis.size();
+
+        double worst = 0.0;
+        double worst_p = 0.0, worst_loge = 0.0;
+        for (std::size_t iy = 0; iy < ref.log10_erate_axis.size(); ++iy)
+        {
+            const double eps = std::pow(10.0, ref.log10_erate_axis[iy]);
+            for (std::size_t ix = 0; ix < np; ++ix)
+            {
+                const double p = ref.p_hpa_axis[ix];
+                lsdtt::lsdtt_crn_parameters cp;
+                cp.set_cronus_emulator_st_parameters(g.nuclide, p);
+                const double got = emulator_nmu(cp, g.nuclide, eps);
+                const double want = grid[iy * np + ix];
+                const double rel = std::abs(got / want - 1.0);
+                if (rel > worst)
+                {
+                    worst = rel;
+                    worst_p = p;
+                    worst_loge = ref.log10_erate_axis[iy];
+                }
+            }
+        }
+        check(std::string("P2-T2: emulator reproduces tabulated Nmu for ")
+                  + g.nuclide + " within " + std::to_string(g.max_pct) + "%",
+              100.0 * worst < g.max_pct,
+              "worst|pct|=" + std::to_string(100.0 * worst)
+              + " at p=" + std::to_string(worst_p)
+              + " log10eps=" + std::to_string(worst_loge));
+    }
+}
+
 void phase2_muon_inventory_comparison(const std::string& expected_dir,
                                       const std::string& out_dir)
 {
@@ -7780,6 +8003,8 @@ int main(int argc, char** argv)
         const auto slash = sentinel_path.find_last_of("/\\");
         if (slash != std::string::npos)
             expected_dir = sentinel_path.substr(0, slash);
+        phase2_cronus_emulator_unit();
+        phase2_cronus_emulator_vs_table(expected_dir);
         phase2_muon_inventory_comparison(expected_dir, out_dir);
         phase3_TC3_stone_pins();
         phase3_TC1_site_curve(out_dir);
