@@ -661,20 +661,26 @@ double lsdtt_crn_parameters::stone2000sp(double lat_deg,
     const double P3 = P2 * P_mbar;
     const double eP = std::exp(P_mbar / (-150.0));
 
-    std::vector<double> S_at_ilat(7), M_at_ilat(7);
+    // Stack arrays, not std::vector: this is the innermost function of the
+    // default production-raster path, so three heap allocations per pixel were
+    // also an allocator-contention point inside the OpenMP loop.  The muon
+    // exponential is invariant in k, so it is evaluated once instead of seven
+    // times.  Both changes are value-preserving: the expressions and their
+    // order are unchanged, and std::exp is deterministic for a fixed argument.
+    const double mu_atm = std::exp((1013.25 - P_mbar) / 242.0);
+
+    double S_at_ilat[7], M_at_ilat[7];
     for (int k = 0; k < 7; ++k)
     {
         S_at_ilat[k] = a[k] + b[k] * eP + c[k] * P_mbar + d[k] * P2 + e[k] * P3;
-        M_at_ilat[k] = mk[k] * std::exp((1013.25 - P_mbar) / 242.0);
+        M_at_ilat[k] = mk[k] * mu_atm;
     }
-
-    std::vector<double> ilat_v(ilat, ilat + 7);
 
     lat_deg = std::fabs(lat_deg);
     if (lat_deg > 60.0) lat_deg = 60.0;
 
-    double S = interp1d(ilat_v, S_at_ilat, lat_deg);
-    double M = interp1d(ilat_v, M_at_ilat, lat_deg);
+    double S = interp1d_n(ilat, S_at_ilat, 7, lat_deg);
+    double M = interp1d_n(ilat, M_at_ilat, 7, lat_deg);
 
     return (S * Fsp) + (M * (1.0 - Fsp));
 }
@@ -730,13 +736,11 @@ std::vector<double> lsdtt_crn_parameters::apply_standardisation(
 }
 
 // 
-double lsdtt_crn_parameters::interp1d(const std::vector<double>& x,
-                                       const std::vector<double>& y,
-                                       double xi)
+double lsdtt_crn_parameters::interp1d_n(const double* x, const double* y,
+                                        int n, double xi)
 {
-    // Linear interpolation on a monotone-increasing x vector.
-    // Clamps to boundary values outside [x.front(), x.back()].
-    int n = static_cast<int>(x.size());
+    // Linear interpolation on a monotone-increasing x array.
+    // Clamps to boundary values outside [x[0], x[n-1]].
     if (xi <= x[0])       return y[0];
     if (xi >= x[n - 1])   return y[n - 1];
     for (int k = 0; k < n - 1; ++k)
@@ -748,6 +752,13 @@ double lsdtt_crn_parameters::interp1d(const std::vector<double>& x,
         }
     }
     return y[n - 1];
+}
+
+double lsdtt_crn_parameters::interp1d(const std::vector<double>& x,
+                                       const std::vector<double>& y,
+                                       double xi)
+{
+    return interp1d_n(x.data(), y.data(), static_cast<int>(x.size()), xi);
 }
 
 // 

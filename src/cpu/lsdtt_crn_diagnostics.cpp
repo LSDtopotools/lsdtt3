@@ -103,7 +103,9 @@ lsdtt_crn_parameters scaled_params(double total_shielding,
 // measurement itself is outside the model's reach.
 constexpr double k_erate_lo = 1.0e-7;
 constexpr double k_erate_hi = 10.0;
-constexpr int    k_bisect_iters = 200;   // far past double precision; cheap
+constexpr int    k_bisect_iters = 80;    // 10/2^80 is far below the ULP of any
+                                         // erate in [1e-7,10]; 200 spent 120 iterations
+                                         // sitting on the same double.
 
 // Invert a monotone-decreasing function f(eps) = target by bisection.
 // Returns false when the target is not bracketed, which is a real answer.

@@ -956,6 +956,15 @@ int main(int argc, char* argv[])
         std::int64_t outlet_node = snapped.snapped_flat;
         lsdtt::lsdtt_flat_index_slice up = flow.upslope_nodes(outlet_node);
 
+        // Pixel set for the self_consistent_age production-raster rebuilds
+        // below; harmless (and cheap) to build even when that mode is off.
+        std::vector<std::int64_t> sc_eval_set;
+        if (self_consistent_age)
+        {
+            sc_eval_set.reserve(up.size());
+            for (std::int64_t f : up) sc_eval_set.push_back(f);
+        }
+
         // Convert snapped position to WGS84 lat/lon for output
         lsdtt::lsdtt_lonlat ll = lsdtt::cell_center_to_lonlat(
             meta, snapped.snapped_row, snapped.snapped_col);
@@ -1114,9 +1123,14 @@ int main(int argc, char* argv[])
 
                 try
                 {
+                    // Only this basin's pixels are ever read from
+                    // sc_prod_raster, so evaluating the whole DEM on every
+                    // iterate of every sample was the dominant cost of this
+                    // mode.  The staging, transform and surface builds are
+                    // unaffected, so the values are bit-identical.
                     sc_prod_raster = lsdtt::calculate_production_raster(
                         filled_dem, crn_nc, sc_t_yr, atm_source, scaling_scheme,
-                        nuclide);
+                        nuclide, &sc_eval_set);
                 }
                 catch (const std::exception& e)
                 {

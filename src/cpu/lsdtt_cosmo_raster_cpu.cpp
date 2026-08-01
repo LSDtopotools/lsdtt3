@@ -460,7 +460,8 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               double                   age_yr,
                                               AtmSource                atm,
                                               ScalingScheme            scheme,
-                                              const std::string&       nuclide)
+                                              const std::string&       nuclide,
+                                              const std::vector<std::int64_t>* eval_only)
 {
     const auto& meta = dem.get_meta();
     const auto& data = dem.get_data_array();
@@ -610,13 +611,32 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
     }
     const bool use_stone_surface = use_paleomag && !use_lsdn && stone_surface.valid;
 
+    // Optional evaluation-set restriction.  Built AFTER the transform and the
+    // surface builds, so those are unaffected and the computed values are
+    // bit-identical to the unrestricted call.
+    std::vector<uint8_t> wanted;
+    if (eval_only != nullptr)
+    {
+        std::vector<uint8_t> in_set(static_cast<std::size_t>(nr) * nc_cols, 0u);
+        for (std::int64_t f : *eval_only)
+            if (f >= 0 && f < static_cast<std::int64_t>(in_set.size()))
+                in_set[static_cast<std::size_t>(f)] = 1u;
+        wanted.assign(static_cast<std::size_t>(n_valid), 0u);
+        for (int k = 0; k < n_valid; ++k)
+            wanted[static_cast<std::size_t>(k)] =
+                in_set[static_cast<std::size_t>(flat_idx[k])];
+    }
+    const uint8_t* wanted_p = wanted.empty() ? nullptr : wanted.data();
+
 #pragma omp parallel for schedule(static) default(none) \
-    shared(n_valid, flat_idx, nc_cols, xs, ys, data, prod_data, prod_mask, \
+    shared(n_valid, flat_idx, nc_cols, xs, ys, data, prod_data, prod_mask, wanted_p, \
            ref_params, meta, nc, age_yr, atm_mode, use_paleomag, \
            use_lsdn, use_lsdn_surface, lsdn_surface, nuclide, \
            use_stone_surface, stone_surface)
     for (int k = 0; k < n_valid; ++k)
     {
+        if (wanted_p != nullptr && !wanted_p[k]) continue;
+
         const int r = static_cast<int>(flat_idx[k] / nc_cols);
         const int c = static_cast<int>(flat_idx[k] % nc_cols);
         double lat  = ys[k];

@@ -697,6 +697,11 @@ private:
                                   double F[4]);
 
     // Linear 1-D interpolation on ordered x
+    // Pointer form of interp1d, for hot paths that build their 7-element
+    // tables on the stack.  The std::vector overload delegates to this, so
+    // there is exactly one implementation and the two cannot drift.
+    static double interp1d_n(const double* x, const double* y, int n, double xi);
+
     static double interp1d(const std::vector<double>& x,
                            const std::vector<double>& y,
                            double xi);

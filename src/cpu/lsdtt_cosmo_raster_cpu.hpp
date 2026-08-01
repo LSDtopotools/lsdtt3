@@ -22,6 +22,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_crn_parameters.hpp"
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -126,7 +127,21 @@ lsdtt_raster_cpu calculate_production_raster(const lsdtt_raster_cpu& dem,
                                               double                   age_yr = 0.0,
                                               AtmSource                atm = AtmSource::Auto,
                                               ScalingScheme            scheme = ScalingScheme::Stone,
-                                              const std::string&       nuclide = "Be10");
+                                              const std::string&       nuclide = "Be10",
+                                              const std::vector<std::int64_t>* eval_only = nullptr);
+
+// eval_only: OPTIONAL set of flat pixel indices (row*n_cols + col) to evaluate.
+// When given, only those pixels get a production value; the rest are left
+// no-data.  This exists for callers that rebuild the raster repeatedly but read
+// only one basin -- self_consistent_age does this once per sample per iterate.
+//
+// It is BIT-IDENTICAL for the evaluated pixels by construction: the coordinate
+// staging, the batch transform, and therefore the lat/lon extent and valid-pixel
+// count handed to the time-averaged surface builders are all left untouched.
+// Only the per-pixel scaling loop is skipped for unwanted pixels.  Restricting
+// the staging instead would change the surface footprint and could flip the
+// surface-vs-direct cost decision (which triggers below 512 pixels), so it is
+// deliberately NOT done that way.
 
 // Atmospheric pressure raster (hPa/mbar) using the same atmosphere selection
 // logic as calculate_production_raster.
