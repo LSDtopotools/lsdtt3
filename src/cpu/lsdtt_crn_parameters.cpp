@@ -634,6 +634,83 @@ double lsdtt_crn_parameters::atmospheric_pressure_standard(double elevation_m)
 // 
 // Stone (2000) spallation scaling.  Faithfully ported from LSDTopoTools2
 // (Balco / Stone 2000 Table 1 coefficients).
+// Stone (2000) Table 1 spallation factor at the seven index latitudes.
+// ONE definition, used by stone2000sp() and by stone_basis_sf().  Both used to
+// compute this independently with character-for-character identical
+// expressions, which on the Stone+paleomag production path meant evaluating it
+// twice per pixel.
+inline void stone_ilat_sf(double P, double i_sf[7])
+{
+    static const double sa[7] = { 31.8518, 34.3699, 40.3153, 42.0983, 56.7733, 69.0720, 71.8733 };
+    static const double sb[7] = { 250.3193, 258.4759, 308.9894, 512.6857, 649.1343, 832.4566, 863.1927 };
+    static const double sc[7] = { -0.083393,-0.089807,-0.106248,-0.120551,-0.160859,-0.199252,-0.207069 };
+    static const double sd[7] = { 7.4260e-5,7.9457e-5,9.4508e-5,1.1752e-4,1.5463e-4,1.9391e-4,2.0127e-4 };
+    static const double se[7] = { -2.2397e-8,-2.3697e-8,-2.8234e-8,-3.8809e-8,-5.0330e-8,-6.3653e-8,-6.6043e-8 };
+
+    const double P2 = P * P, P3 = P2 * P;
+    const double eP = std::exp(-P / 150.0);
+    for (int k = 0; k < 7; ++k)
+        i_sf[k] = sa[k] + sb[k] * eP + sc[k] * P + sd[k] * P2 + se[k] * P3;
+}
+
+// Basis expansion from a PRECOMPUTED index-latitude table.
+inline void stone_basis_sf_from_table(const double i_sf[7], double S[18])
+{
+    static const double ilat[7] = { 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0 };
+
+    S[0] = i_sf[6];                        // Rc = 0 carries the 60 deg value
+    for (int k = 0; k < 7; ++k) S[1 + k] = i_sf[6 - k];
+
+    // Log-log extension to 25 GV, fitted to the lat 0/10/20 points exactly as
+    // stone_factor_at_rc does.
+    // ilat[0] = 0 and ilat[2] = 20 are compile-time constants, as are log(16)
+    // ... log(25), so all of these are loop- and call-invariant.  Hoisting them
+    // is bit-identical (std::exp/std::log are deterministic for a fixed
+    // argument) and removes ~14 transcendental calls per pixel from what is a
+    // per-pixel path on the Stone paleomag production raster.
+    static const double i_Rc0     = 14.3 * std::pow(std::cos(ilat[0] * kPi / 180.0), 4.0);
+    static const double i_Rc2     = 14.3 * std::pow(std::cos(ilat[2] * kPi / 180.0), 4.0);
+    static const double log_i_Rc0 = std::log(i_Rc0);
+    static const double log_i_Rc2 = std::log(i_Rc2);
+    static const double log_rc_ext[10] = {
+        std::log(16.0), std::log(17.0), std::log(18.0), std::log(19.0),
+        std::log(20.0), std::log(21.0), std::log(22.0), std::log(23.0),
+        std::log(24.0), std::log(25.0)
+    };
+
+    const double log_i_sf0 = std::log(i_sf[0]);
+    const double slope = (log_i_sf0 - std::log(i_sf[2]))
+                       / (log_i_Rc0 - log_i_Rc2);
+    for (int rc_ext = 16; rc_ext <= 25; ++rc_ext)
+        S[8 + rc_ext - 16] = std::exp(log_i_sf0
+                                      + slope * (log_rc_ext[rc_ext - 16] - log_i_Rc0));
+}
+
+// Stone (2000) geographic scaling from a PRECOMPUTED index-latitude table.
+// Split out so the Stone+paleomag path can compute that table once per pixel
+// instead of once in stone2000sp() and again in stone_basis_sf().
+double stone2000sp_from_table(const double i_sf[7], double lat_deg,
+                              double P_mbar, double Fsp)
+{
+    static const double ilat[7] = { 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0 };
+    // Muonic scaling constants at the 7 index latitudes
+    static const double mk[7] = { 0.587, 0.600, 0.678, 0.833, 0.933, 1.000, 1.000 };
+
+    // Invariant in k, so evaluated once rather than seven times.
+    const double mu_atm = std::exp((1013.25 - P_mbar) / 242.0);
+
+    double M_at_ilat[7];
+    for (int k = 0; k < 7; ++k) M_at_ilat[k] = mk[k] * mu_atm;
+
+    lat_deg = std::fabs(lat_deg);
+    if (lat_deg > 60.0) lat_deg = 60.0;
+
+    const double S = lsdtt_crn_parameters::interp1d_n(ilat, i_sf, 7, lat_deg);
+    const double M = lsdtt_crn_parameters::interp1d_n(ilat, M_at_ilat, 7, lat_deg);
+
+    return (S * Fsp) + (M * (1.0 - Fsp));
+}
+
 double lsdtt_crn_parameters::stone2000sp(double lat_deg,
                                           double P_mbar,
                                           double Fsp) const
@@ -645,44 +722,9 @@ double lsdtt_crn_parameters::stone2000sp(double lat_deg,
         lat_deg = 45.0;
     }
 
-    // Spallogenic production at 7 index latitudes (0-60 deg), from Stone 2000 Table 1.
-    // S(P) = a + b*exp(-P/150) + c*P + d*P^2 + e*P^3
-    const double a[7] = { 31.8518, 34.3699, 40.3153, 42.0983, 56.7733, 69.0720, 71.8733 };
-    const double b[7] = { 250.3193, 258.4759, 308.9894, 512.6857, 649.1343, 832.4566, 863.1927 };
-    const double c[7] = { -0.083393, -0.089807, -0.106248, -0.120551, -0.160859, -0.199252, -0.207069 };
-    const double d[7] = { 7.4260e-5, 7.9457e-5, 9.4508e-5, 1.1752e-4, 1.5463e-4, 1.9391e-4, 2.0127e-4 };
-    const double e[7] = { -2.2397e-8, -2.3697e-8, -2.8234e-8, -3.8809e-8, -5.0330e-8, -6.3653e-8, -6.6043e-8 };
-    const double ilat[7] = { 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0 };
-
-    // Muonic scaling constants at 7 index latitudes
-    const double mk[7] = { 0.587, 0.600, 0.678, 0.833, 0.933, 1.000, 1.000 };
-
-    const double P2 = P_mbar * P_mbar;
-    const double P3 = P2 * P_mbar;
-    const double eP = std::exp(P_mbar / (-150.0));
-
-    // Stack arrays, not std::vector: this is the innermost function of the
-    // default production-raster path, so three heap allocations per pixel were
-    // also an allocator-contention point inside the OpenMP loop.  The muon
-    // exponential is invariant in k, so it is evaluated once instead of seven
-    // times.  Both changes are value-preserving: the expressions and their
-    // order are unchanged, and std::exp is deterministic for a fixed argument.
-    const double mu_atm = std::exp((1013.25 - P_mbar) / 242.0);
-
-    double S_at_ilat[7], M_at_ilat[7];
-    for (int k = 0; k < 7; ++k)
-    {
-        S_at_ilat[k] = a[k] + b[k] * eP + c[k] * P_mbar + d[k] * P2 + e[k] * P3;
-        M_at_ilat[k] = mk[k] * mu_atm;
-    }
-
-    lat_deg = std::fabs(lat_deg);
-    if (lat_deg > 60.0) lat_deg = 60.0;
-
-    double S = interp1d_n(ilat, S_at_ilat, 7, lat_deg);
-    double M = interp1d_n(ilat, M_at_ilat, 7, lat_deg);
-
-    return (S * Fsp) + (M * (1.0 - Fsp));
+    double i_sf[7];
+    stone_ilat_sf(P_mbar, i_sf);
+    return stone2000sp_from_table(i_sf, lat_deg, P_mbar, Fsp);
 }
 
 // 
@@ -1847,46 +1889,9 @@ inline void stone_basis_rc(double Rc[18])
 // what makes it cheap enough to call once per pixel.
 inline void stone_basis_sf(double P, double S[18])
 {
-    static const double ilat[7] = { 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0 };
-    static const double sa[7] = { 31.8518, 34.3699, 40.3153, 42.0983, 56.7733, 69.0720, 71.8733 };
-    static const double sb[7] = { 250.3193, 258.4759, 308.9894, 512.6857, 649.1343, 832.4566, 863.1927 };
-    static const double sc[7] = { -0.083393,-0.089807,-0.106248,-0.120551,-0.160859,-0.199252,-0.207069 };
-    static const double sd[7] = { 7.4260e-5,7.9457e-5,9.4508e-5,1.1752e-4,1.5463e-4,1.9391e-4,2.0127e-4 };
-    static const double se[7] = { -2.2397e-8,-2.3697e-8,-2.8234e-8,-3.8809e-8,-5.0330e-8,-6.3653e-8,-6.6043e-8 };
-
-    const double P2 = P * P, P3 = P2 * P;
-    const double eP = std::exp(-P / 150.0);
-
     double i_sf[7];
-    for (int k = 0; k < 7; ++k)
-        i_sf[k] = sa[k] + sb[k] * eP + sc[k] * P + sd[k] * P2 + se[k] * P3;
-
-    S[0] = i_sf[6];                        // Rc = 0 carries the 60 deg value
-    for (int k = 0; k < 7; ++k) S[1 + k] = i_sf[6 - k];
-
-    // Log-log extension to 25 GV, fitted to the lat 0/10/20 points exactly as
-    // stone_factor_at_rc does.
-    // ilat[0] = 0 and ilat[2] = 20 are compile-time constants, as are log(16)
-    // ... log(25), so all of these are loop- and call-invariant.  Hoisting them
-    // is bit-identical (std::exp/std::log are deterministic for a fixed
-    // argument) and removes ~14 transcendental calls per pixel from what is a
-    // per-pixel path on the Stone paleomag production raster.
-    static const double i_Rc0     = 14.3 * std::pow(std::cos(ilat[0] * kPi / 180.0), 4.0);
-    static const double i_Rc2     = 14.3 * std::pow(std::cos(ilat[2] * kPi / 180.0), 4.0);
-    static const double log_i_Rc0 = std::log(i_Rc0);
-    static const double log_i_Rc2 = std::log(i_Rc2);
-    static const double log_rc_ext[10] = {
-        std::log(16.0), std::log(17.0), std::log(18.0), std::log(19.0),
-        std::log(20.0), std::log(21.0), std::log(22.0), std::log(23.0),
-        std::log(24.0), std::log(25.0)
-    };
-
-    const double log_i_sf0 = std::log(i_sf[0]);
-    const double slope = (log_i_sf0 - std::log(i_sf[2]))
-                       / (log_i_Rc0 - log_i_Rc2);
-    for (int rc_ext = 16; rc_ext <= 25; ++rc_ext)
-        S[8 + rc_ext - 16] = std::exp(log_i_sf0
-                                      + slope * (log_rc_ext[rc_ext - 16] - log_i_Rc0));
+    stone_ilat_sf(P, i_sf);
+    stone_basis_sf_from_table(i_sf, S);
 }
 
 // The interp1d weights on that table: at most two are non-zero.  Mirrors
@@ -2073,10 +2078,18 @@ double lsdtt_crn_parameters::stone_paleomag_correction_from_surface(
             "the parallel region and use stone_paleomag_correction_direct() "
             "instead");
 
+    double i_sf[7];
+    stone_ilat_sf(P_mbar, i_sf);
+    return stone_paleomag_correction_from_surface_tab(surface, lat_deg, i_sf);
+}
+
+double lsdtt_crn_parameters::stone_paleomag_correction_from_surface_tab(
+    const LsdnTimeAvgSurface& surface, double lat_deg, const double i_sf[7])
+{
     const std::size_t nb = static_cast<std::size_t>(stone_paleomag_basis_n);
 
     double S[18];
-    stone_basis_sf(P_mbar, S);
+    stone_basis_sf_from_table(i_sf, S);
 
     int    ilat = 0;
     double tlat = 0.0;
@@ -2109,8 +2122,13 @@ double lsdtt_crn_parameters::stone_paleomag_from_surface(
     const LsdnTimeAvgSurface& surface, double lat_deg, double P_mbar,
     double Fsp, const lsdtt_crn_parameters& params)
 {
-    return params.stone2000sp(lat_deg, P_mbar, Fsp)
-         * stone_paleomag_correction_from_surface(surface, lat_deg, P_mbar);
+    // The index-latitude table is the shared half of both factors, so it is
+    // computed once here rather than independently inside each.
+    double i_sf[7];
+    stone_ilat_sf(P_mbar, i_sf);
+    (void)params;
+    return stone2000sp_from_table(i_sf, lat_deg, P_mbar, Fsp)
+         * stone_paleomag_correction_from_surface_tab(surface, lat_deg, i_sf);
 }
 
 } // namespace lsdtt

@@ -279,6 +279,11 @@ public:
                                     bool lsdn,
                                     double lsdn_slhl_reference);
 
+    // Pointer form of interp1d, for hot paths that build their 7-element
+    // tables on the stack.  The std::vector overload delegates to this, so
+    // there is exactly one implementation and the two cannot drift.
+    static double interp1d_n(const double* x, const double* y, int n, double xi);
+
     // Muon-scheme helpers.
     static bool is_valid_muon_scheme(const std::string& muon_scheme);
     static std::string allowed_muon_schemes_csv();
@@ -466,6 +471,11 @@ public:
     // surface's latitude extent are clamped to it.
     // Throws std::runtime_error if the surface is not valid; that is a caller
     // bug (validity belongs outside the parallel region).
+    // As stone_paleomag_correction_from_surface(), but taking the Stone
+    // index-latitude table the caller has already computed.
+    static double stone_paleomag_correction_from_surface_tab(
+        const LsdnTimeAvgSurface& surface, double lat_deg, const double i_sf[7]);
+
     static double stone_paleomag_correction_from_surface(
         const LsdnTimeAvgSurface& surface, double lat_deg, double P_mbar);
 
@@ -697,11 +707,6 @@ private:
                                   double F[4]);
 
     // Linear 1-D interpolation on ordered x
-    // Pointer form of interp1d, for hot paths that build their 7-element
-    // tables on the stack.  The std::vector overload delegates to this, so
-    // there is exactly one implementation and the two cannot drift.
-    static double interp1d_n(const double* x, const double* y, int n, double xi);
-
     static double interp1d(const std::vector<double>& x,
                            const std::vector<double>& y,
                            double xi);

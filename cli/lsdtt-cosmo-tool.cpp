@@ -448,6 +448,29 @@ int main(int argc, char* argv[])
         }
     }
 
+    // cronusEmulatorLSDn exists to reproduce the CRONUS v3 online calculator,
+    // and v3's LSDn root-find integrates production against an erosion-dependent
+    // memory kernel whose timescale is tau = Gamma_sp/(Gamma_sp*lambda + eps).
+    // lsdtt3 instead forms a uniform mean over [0, sample_age_yr], so a single
+    // fixed age cannot serve the range of tau that a sample set spans.  This is
+    // advisory, not fatal: a fixed-age LSDn run is a legitimate thing to ask for
+    // (the L13 regression tier does exactly that), it just is not the way to get
+    // agreement with v3.  Measured at Sulawasi, 10 samples, Be10:
+    // docs/plan_docs/cronus_to_lsdtt3_emulator_plan.md section 6.1.
+    if (muon_scheme == "cronusEmulatorLSDn" && !self_consistent_age)
+    {
+        std::cerr
+            << "WARNING: cronusEmulatorLSDn with self_consistent_age: false.\n"
+            << "         The LSDn averaging window is per-sample "
+               "(tau = Gamma_sp/eps); a fixed\n"
+            << "         sample_age_yr cannot serve it. Measured bias vs CRONUS "
+               "v3 at Sulawasi:\n"
+            << "         +10.9% at sample_age_yr 0, +0.5% with "
+               "self_consistent_age: true.\n"
+            << "         Set self_consistent_age: true if CRONUS agreement is "
+               "the goal.\n\n";
+    }
+
     const std::string points_path = pp.add_read_path_if_needed(sf["points_filename"]);
     const std::string write_base  = pp.get_full_write_path();
     // If the user does not give a path, fall back to the crn_parameters.nc bundled
