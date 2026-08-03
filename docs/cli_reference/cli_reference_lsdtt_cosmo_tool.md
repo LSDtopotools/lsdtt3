@@ -29,7 +29,7 @@ key: value
 | 1 | Load DEM; check projected CRS |
 | 2 | Pit fill (skipped when `fill_before_routing: false`) |
 | 3 | D8 flow routing |
-| 4 | Stone 2000 production raster |
+| 4 | Pressure raster (from `atmosphere`), then the production raster — Stone 2000 or LSDn per `scaling_scheme` |
 | 5 | Load sample points from CSV; snap to channel |
 | 6 | For each sample: apply standardisation, invert to erosion rate, compute uncertainty bounds |
 | 7 | Write output CSV |
@@ -65,13 +65,76 @@ The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `crn_nc_file` | string | `` | Path to `crn_parameters.nc` (ERA40 grids + Muscheler VDM record), for the ERA40 atmosphere and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically relative to the executable); if that is missing too, the standard (SLHL) atmosphere is used with no correction. |
-| `sample_age_yr` | float | `0` | Sample exposure age (yr BP). Drives the time-integrated production correction; what it selects depends on `scaling_scheme`. Under `stone` it is the Muscheler VDM palaeomagnetic correction; under `lsdn` it is the duration-weighted average of LSDn production over the Pavón-Carrasco record, so it is longitude-dependent as well as latitude-dependent. `0` = modern field, no correction. Requires the record in `crn_parameters.nc`. "Now" is taken as 2010, the reference year of the packed record. |
+| `sample_age_yr` | float | `0` | Sample exposure age (yr BP). Drives the time-integrated production correction; what it selects depends on `scaling_scheme`. Under `stone` it is the Muscheler VDM palaeomagnetic correction; under `lsdn` it is the duration-weighted average of LSDn production over the Pavón-Carrasco record, so it is longitude-dependent as well as latitude-dependent. `0` = modern field, no correction — the default, so **no time-series correction is applied unless you ask for it**; see below. Requires the record in `crn_parameters.nc`. "Now" is taken as 2010, the reference year of the packed record. |
 | `atmosphere` | string | `ERA40` | `ERA40` (Balco/Lifton climatology + latitude-dependent lapse, the lsdtt3 default), `NCEP` (the atmosphere CAIRN/OCTOPUS use; needs the NCEP grids), or `standard` (SLHL barometric formula). `ERA40`/`NCEP` fall back to `standard` if their grids are absent. |
 | `self_consistent_age` | bool | `false` | Solve the sample age and the erosion rate **together**, iterating to the erosional integration timescale `t = Γ_sp/ε` rather than holding the age at `sample_age_yr`. This is the CRONUScalc / Balco v3 convention, and it is how most published LSDn rates were computed — see below. Leaving it `false` while `muon_scheme: cronusEmulatorLSDn` raises an advisory warning, because that combination cannot reproduce CRONUS v3: measured bias at Sulawasi is +10.9 % at `sample_age_yr: 0` against +0.5 % with the iteration on. The warning is advisory — a fixed-age LSDn run is perfectly legitimate, it is just not the route to v3 agreement. |
 | `self_consistent_age_tol` | float | `0.001` | Relative convergence tolerance on ε for the iteration. The default sits just inside the inversion solver's own round-trip tolerance, so tightening it buys precision the forward model cannot deliver. |
 | `self_consistent_age_max_iter` | int | `10` | Iteration cap. A sample that has not converged is reported with a warning and flagged `self_consistent_converged = 0` in the output CSV; its last iterate is written, never silently accepted. |
 
+### No time-series correction is applied by default
+
+**Time-integrated production is opt-in, not the default.** It is switched on by
+*either* `sample_age_yr > 0` *or* `self_consistent_age: true`, and both are off
+out of the box. With the defaults, production is evaluated at the present-day
+field under either scaling scheme — `stone` applies no Muscheler VDM correction,
+and `lsdn` reads record step 0 with no time loop. Every run reports which it did:
+
+```
+Palaeomag     : off (modern field)
+```
+
+Check that line if you are unsure what a given parameter file produced.
+
+### CAIRN-comparable run
+
+CAIRN applied no palaeomagnetic time-series correction, so reproducing that
+convention means leaving the time settings alone and matching the scaling and
+atmosphere:
+
+```
+muon_scheme:         Braucher   # CAIRN's default muon scheme
+scaling_scheme:      stone      # Stone (2000)/Lal — the CAIRN/OCTOPUS scaling
+atmosphere:          NCEP       # the atmosphere CAIRN/OCTOPUS use
+sample_age_yr:       0          # default — modern field, no correction
+self_consistent_age: false      # default — no iteration to t = Γ_sp/ε
+topo_shield_value:   1          # default — see the shielding caveat below
+```
+
+Two of these differ from the lsdtt3 defaults: `muon_scheme` (lsdtt3 defaults to
+`BraucherBorchers`) and `atmosphere` (lsdtt3 defaults to `ERA40`). Both change
+the answer on their own, so set both explicitly for a like-for-like comparison.
+The atmosphere difference is a pressure difference, not a time-series one.
+
+**Topographic shielding is the one convention lsdtt3 deliberately does not
+follow.** CAIRN applies a topographic shielding correction; lsdtt3 defaults to
+`topo_shield_value: 1`, i.e. none, following DiBiase (2018) — see
+[Why topographic shielding defaults to off](#why-topographic-shielding-defaults-to-off).
+This is a *deliberate methodological difference from CAIRN, not an omission*,
+and it is why a CAIRN-convention run and an lsdtt3 default run will not agree
+exactly even with everything above matched. Set `topo_shield_value` to a basin
+shielding factor if you want CAIRN's convention.
+
+Finally, this note fixes the *convention*, not the numerical agreement: for
+validated per-sample targets against the CAIRN datasets (Bierman 2005, Dethier
+2014, Kirchner 2001, Munack, …) see `docs/testing_and_benchmarking.md`, which
+also records that CAIRN used SRTM 90 m throughout, so DEM resolution is a
+further difference to control.
+
 ### Self-consistent age
+
+**It applies to both scaling schemes, not just LSDn.** The iteration rebuilds the
+production raster at the converged age whatever `scaling_scheme` is set to, and
+what the age changes is scheme-specific — under `lsdn` it is the duration-weighted
+LSDn average, under `stone` it is the Muscheler VDM palaeomagnetic correction.
+Measured on the bundled tiny fixture, turning it on moves the rate **+9.0 % under
+`stone`** (19.96 → 21.76 mm/kyr) and **+8.7 % under `lsdn`** (17.72 → 19.26
+mm/kyr).
+
+The one case where it does nothing is when `crn_parameters.nc` is unavailable:
+the palaeomagnetic correction needs the VDM record, so with no NetCDF file the
+age has no effect under `stone` and the iteration converges immediately at the
+modern-field rate. (`lsdn` fails outright without the file, rather than falling
+back.)
 
 A sample's nuclide inventory accumulates over roughly one attenuation length of
 erosion, `τ = Γ_sp/ε` (Γ_sp = 160 g/cm² in every muon scheme lsdtt3 ships). The
@@ -89,9 +152,11 @@ differs sample to sample. With `scaling_scheme: lsdn` on a large DEM this
 dominates the run time.
 
 Turn it on when comparing against published LSDn or CRONUScalc rates, which are
-computed this way. The effect is largest where the past field departed furthest
-from modern — low latitudes, and slowly eroding samples with long τ. On the
-bundled tiny fixture the converged rate sits ~9 % above the modern-field rate.
+computed this way — but note that "computed this way" is a property of the
+reference calculator, not of the scaling scheme, so the same argument applies to
+a `stone` run being compared against CRONUScalc. The effect is largest where the
+past field departed furthest from modern — low latitudes, and slowly eroding
+samples with long τ.
 
 Three extra columns appear in the output CSV: `self_consistent_t_yr` (the
 converged age), `self_consistent_n_iter`, and `self_consistent_converged` (1/0).
@@ -109,7 +174,88 @@ concentration uncertainty with scaling held fixed.
 | `sample_column_name` | string | `sample_name` | Column name for sample identifiers. Optional; omitted from output if not present. |
 | `concentration_column_name` | string | `` | Column name for measured nuclide concentration (atoms/g). Defaults to `<nuclide>_CONC` if not set. |
 | `uncertainty_column_name` | string | `` | Column name for 1-sigma concentration uncertainty (atoms/g). Defaults to `<nuclide>_uncertainty`. If absent, uncertainty bounds are skipped. |
-| `standardisation_column_name` | string | `standardisation` | Column name for AMS standardisation name. If absent, no standardisation correction is applied. |
+| `standardisation_column_name` | string | `standardisation` | Column name for AMS standardisation name. If absent, no standardisation correction is applied. Supply the concentration **as measured on its own standard** — see the warning below. |
+
+> ### ⚠ Standardisation is applied by lsdtt3 — do not pre-normalise
+>
+> When `standardisation_column_name` names a column that is present and
+> non-empty, lsdtt3 multiplies both the concentration and its uncertainty by the
+> AMS standardisation factor for that standard (e.g. Be-10 `KNSTD` → `07KNSTD`,
+> factor 0.9042). The `concentration_*` value written to the output CSV is the
+> **normalised** one.
+>
+> Two consequences, and both have caused real errors:
+>
+> **1. Give the tool concentrations as your lab reported them.** If you
+> normalise to 07KNSTD yourself *and* leave the standardisation column
+> populated, the factor is applied twice. A 10 % error in concentration
+> propagates straight into the erosion rate. To supply
+> already-normalised values, either drop the column or set
+> `standardisation_column_name` to a name that does not exist in the file.
+>
+> **2. Do not feed the output CSV's `concentration_*` back into another
+> calculator together with the standard name.** It is already normalised;
+> pairing it with the standard name asks the second calculator to normalise it
+> again. This is exactly what happened in the OCTOPUS comparison tier — the
+> concentrations arrived already on the 07KNSTD basis and were corrected a
+> second time, which inverted the apparent sign of the residual (clapp2002
+> read +6.6 % instead of −4.09 %) and sent the investigation after a
+> non-existent physics discrepancy. See `docs/testing_and_benchmarking.md`.
+>
+> The CRONUS v3 input file that this tool writes handles the second case
+> correctly: it carries the **as-measured** concentration with the standard
+> name, so the calculator applies the factor exactly once.
+>
+> Known exception: `tests/scripts/compare_cosmo_tool_vs_cronus_v3.py` reads the
+> *normalised* `concentration_*` from the output CSV, so passing it
+> `--standardisation-col` reintroduces the double-count. Prefer the CLI's own
+> `<write_fname>_CRONUS_V3_INPUT.txt`.
+
+---
+
+## Uncertainty propagation
+
+**The internal/external split follows the CRONUS v3 convention.** CRONUS
+reports an *internal* (analytical, measurement-only) uncertainty and an
+*external* uncertainty that additionally carries the production-rate calibration
+and decay-constant terms. lsdtt3 uses the same two-tier structure and the same
+names, so `apparent_e_unc_int_mm_kyr` is comparable to the CRONUS internal
+uncertainty and `apparent_e_unc_ext_mm_kyr` to the external one.
+
+The consequence is that **lsdtt3's `unc_ext` is only comparable to a CRONUS
+external uncertainty once you switch the extra terms on** — see the two
+`propagate_*` parameters below. Left at their defaults, `unc_ext` equals
+`unc_int` and both are concentration-only, so quoting `unc_ext` as an external
+uncertainty would understate it. This is the single most common way to
+under-report absolute uncertainty from this tool.
+
+Uncertainty bounds are only produced when the input CSV carries the column named
+by `uncertainty_column_name` (default `<nuclide>_uncertainty`). The concentration
+sigma is scaled by the same AMS standardisation factor as the concentration
+itself before it is used — so it must be supplied **as measured**, on the same
+basis as the concentration. See the standardisation warning under
+[Sample points](#sample-points).
+
+The **internal** uncertainty is a re-inversion at each concentration bound:
+`unc_int = ½ |ε(C+σ) − ε(C−σ)|`. Both bounds are inverted against the *central*
+sample's production raster, with scaling held fixed — this matches how the
+reference calculators propagate concentration uncertainty, and keeps the bounds
+an uncertainty on the concentration rather than a second coupled solve.
+
+The **external** uncertainty adds the terms below in quadrature:
+`unc_ext = √(unc_int² + (ε·production_rel_sigma)² + (ε·decay_rel_sigma)²)`.
+
+Both switches are **off by default**, so `unc_ext` equals `unc_int` unless you
+turn them on. Reported uncertainties are then concentration-only and are an
+underestimate of the absolute rate uncertainty — enable these for publishable
+absolute uncertainties.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `propagate_production_uncertainty` | bool | `false` | Add a production-calibration term to the external erosion-rate uncertainty, using `production_rel_sigma`. |
+| `production_rel_sigma` | float | `0` | Relative 1-sigma production uncertainty (dimensionless, e.g. `0.05` for 5 %). Used only when `propagate_production_uncertainty: true`. Must be ≥ 0 or the run exits fatally. |
+| `propagate_decay_uncertainty` | bool | `false` | Add a decay-constant term to the external erosion-rate uncertainty, using `decay_rel_sigma`. |
+| `decay_rel_sigma` | float | `0` | Relative 1-sigma decay uncertainty term (dimensionless). Used only when `propagate_decay_uncertainty: true`. Must be ≥ 0 or the run exits fatally. |
 
 ---
 
@@ -121,7 +267,41 @@ Shielding values are applied uniformly across the entire basin.
 |---|---|---|---|
 | `self_shield_eff_thickness` | float | `0` | Sample self-shielding as effective depth (g/cm²). `0` = surface sample. |
 | `snow_shield_eff_thickness` | float | `0` | Snow shielding as effective depth (g/cm²). `0` = no snow correction. |
-| `topo_shield_value` | float | `1` | Topographic shielding factor (dimensionless, 0–1). `1` = no topographic shielding. |
+| `topo_shield_value` | float | `1` | Topographic shielding factor (dimensionless, 0–1). `1` = no topographic shielding — the default, deliberately; see below. |
+
+### Why topographic shielding defaults to off
+
+lsdtt3 applies **no topographic shielding correction by default**, which is a
+deliberate departure from CAIRN and from most older basin-averaged workflows.
+
+The reasoning follows DiBiase (2018). The conventional correction accounts only
+for the reduction of production *at the surface*, while assuming the effective
+mass attenuation length is spatially uniform. It is not: attenuation length
+increases on steep slopes, and the two effects largely offset. Correcting for
+one and not the other introduces a **slope-dependent systematic error** — which
+is worse than a bias, because slope correlates with erosion rate, so it can
+manufacture spurious topography-erosion relationships. In steep landscapes the
+surface-only correction reaches ~20 %.
+
+DiBiase's conclusion is that topographic shielding corrections are inappropriate
+for catchment-mean erosion rates in most cases, and are needed only for steep
+catchments with a **non-uniform distribution of quartz and/or erosion rate**.
+That is the case in which to set `topo_shield_value` yourself — along with
+reproducing a published rate computed the older way, such as a CAIRN rate.
+
+Two things to know if you do set it: it is applied as a **single uniform value
+across the whole basin**, not per pixel; and in lsdtt3's published-dataset
+comparison tier the topographic shielding term is decomposed at roughly
+**+0.70 %** at basin scale (`docs/testing_and_benchmarking.md`).
+
+> DiBiase, R. A. (2018). Short communication: Increasing vertical attenuation
+> length of cosmogenic nuclide production on steep slopes negates topographic
+> shielding corrections for catchment erosion rates. *Earth Surface Dynamics*,
+> 6, 923–931. <https://esurf.copernicus.org/articles/6/923/2018/>
+
+The same argument does not apply to `self_shield_eff_thickness` or
+`snow_shield_eff_thickness`, which are ordinary depth-attenuation terms and
+default to `0` simply because the common case is an unshielded surface sample.
 
 ---
 
@@ -150,7 +330,9 @@ Sample points are snapped to the nearest channel pixel meeting the contributing-
 
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
-| `write_production_raster` | bool | `false` | `<write_fname>_PROD.tif` — Stone 2000 production scaling raster. |
+| `write_production_raster` | bool | `false` | `<write_fname>_PROD.tif` — production scaling raster (Stone 2000 or LSDn, per `scaling_scheme`). |
+| `write_basin_production_csv` | bool | `false` | `<write_fname>_BASIN_PROD.csv` — per-sample basin-mean production scaling and mean elevation. |
+| `write_cronus_v3_input` | bool | **`true`** | `<write_fname>_CRONUS_V3_INPUT.txt` — a ready-to-paste CRONUS v3 batch request. See below. |
 
 The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns include:
 
@@ -161,7 +343,27 @@ The erosion rate CSV `<write_fname>_CN_ERATE.csv` is always written. Columns inc
 - effective erosion rate (`apparent_eff_e_g_cm2_yr`),
 - erosion rate in mm/kyr (`*_mm_kyr`).
 
-For backward compatibility, duplicated legacy `*_mm_yr` aliases are still written and carry the same **mm/kyr** numeric values. Uncertainty-bound columns are added when an uncertainty column is present in the input.
+For backward compatibility, duplicated legacy `*_mm_yr` aliases are still written and carry the same **mm/kyr** numeric values.
+
+When an uncertainty column is present in the input, these are appended: the
+lower and upper bounds (`concentration_minus_*`, `predicted_conc_minus_*`,
+`apparent_eff_e_minus_g_cm2_yr`, `apparent_e_minus_mm_kyr` and the matching
+`*_plus_*` set), and the summary uncertainties `apparent_eff_e_unc_int_g_cm2_yr`
+/ `apparent_e_unc_int_mm_kyr` and `apparent_eff_e_unc_ext_g_cm2_yr` /
+`apparent_e_unc_ext_mm_kyr`.
+
+With `self_consistent_age: true`, three further columns appear:
+`self_consistent_t_yr`, `self_consistent_n_iter`, `self_consistent_converged`.
+
+### Basin production diagnostic
+
+`write_basin_production_csv` is a **reporting-only diagnostic — it has no effect
+on the inversion**. For each snapped sample it averages the production scaling
+raster and the DEM elevation over the *exact* upslope pixel set the inversion
+uses, so the basin-mean production can be checked against an external oracle
+such as OCTOPUS `BEPROD`/`ELEV_AVE`. Columns: `sample_name`,
+`snapped_latitude`, `snapped_longitude`, `n_upslope_pixels`, `mean_prod_scaling`,
+`mean_elev_m`.
 
 ---
 
@@ -209,6 +411,90 @@ writes per-sample lsdtt3-vs-CRONUS erosion-rate residuals.
 
 ---
 
+## Building a CRONUS v3-compatible input file
+
+**The CLI writes this file for you — no Python required.** `write_cronus_v3_input`
+defaults to `true`, so every run produces
+`<write_fname>_CRONUS_V3_INPUT.txt` alongside the erosion-rate CSV. Set it to
+`false` to suppress it.
+
+A basin-averaged sample has no single site elevation, so the correct way to
+present it to a point calculator is as the basin-effective **pressure** together
+with the basin **centroid latitude** — exactly what CRONUS v3's `pre`
+(pre-calculated pressure) input mode takes. The tool has both numbers already;
+they are also reported in the output CSV as `effective_pressure_hpa` and
+`centroid_latitude_deg`.
+
+The file contains two lines per sample:
+
+```
+S00001 0.000027 -7.488704 1002.3418 pre 0 2.65 1 0.0001 2010 ;
+S00001 Be-10 quartz 100000.000000 3000.000000 07KNSTD ;
+```
+
+The first line is the sample/site record, the second the nuclide record:
+
+| line | fields |
+|---|---|
+| site | `id`, latitude, longitude, **pressure (hPa)**, `pre` (flag: the preceding value is a pressure, not an elevation), sample thickness (`0`), density (`2.65`), **shielding (`1`)**, erosion-rate guess (`0.0001`), sample year (`2010`) |
+| nuclide | `id`, nuclide (`Be-10` / `Al-26` / `C-14`), target mineral (`quartz`), concentration (atoms/g), 1-sigma uncertainty (atoms/g), AMS standard (`07KNSTD`, `KNSTD`, …) |
+
+Details worth knowing:
+
+- **Shielding is written from `topo_shield_value`**, so it is `1` (none) by
+  default, matching the DiBiase (2018) reasoning above. Change
+  `topo_shield_value` and the file follows; the run prints a note when it is
+  not 1.
+- **Density is written from `rock_density_kg_m3`**, converted to g/cm³.
+- **Concentrations are written as measured, not standardisation-normalised**,
+  and are paired with the sample's standardisation name so the calculator
+  applies its own factor. lsdtt3 normalises internally, so writing the
+  normalised value *and* the standard name would apply the correction twice —
+  the error that once produced a spurious sign flip in the OCTOPUS comparison
+  tier.
+- **Sample names are sanitised**, since CRONUS ids must be whitespace-free and
+  `;` terminates a record: anything outside `[A-Za-z0-9_-]` becomes `_`.
+  Duplicate names gain a `_2`, `_3`, … suffix, because the calculator keys its
+  results by id and would otherwise merge them.
+- If the input has no uncertainty column, **sigma is written as `0`** and the
+  run says so. It is never replaced by a guessed percentage — a fabricated
+  uncertainty in a file you might publish is worse than an obvious zero.
+- Samples whose pressure or centroid latitude did not resolve are omitted with a
+  warning rather than written as `nan`, which the calculator would reject.
+
+### Sending it to the online calculator
+
+Paste the file's contents into the text box on the CRONUS v3 erosion-rate input
+page (`hess.ess.washington.edu`, with a mirror at `stoneage.hzdr.de`) and
+submit. The block is already in the calculator's native batch format, so no
+reformatting is needed.
+
+The online calculator applies its own scaling and muon treatment, so a matching
+input file is necessary but not sufficient for agreement — see the CRONUS v3
+example parameter file below for the lsdtt3 settings that target it.
+
+### Automating the comparison
+
+`tests/scripts/compare_cosmo_tool_vs_cronus_v3.py` submits a batch and writes
+per-sample residuals, for when you want the round trip scripted rather than
+manual:
+
+```
+python3 tests/scripts/compare_cosmo_tool_vs_cronus_v3.py \
+  --cosmo-csv   <write_path>/<write_fname>_CN_ERATE.csv \
+  --points-csv  <input_points.csv> \
+  --uncertainty-col     <sigma_column> \
+  --standardisation-col <standardisation_column> \
+  --scheme St \
+  --out-csv <write_path>/<write_fname>_CRONUS_COMPARE.csv
+```
+
+Match `--scheme` to `scaling_scheme` (`St` for `stone`, `LSDn` for `lsdn`). Add
+`--no-submit --text-block-out <file>` to build a request without contacting the
+calculator, though for that the CLI's own output file is usually what you want.
+
+---
+
 ## Example parameter file
 
 ```
@@ -235,3 +521,34 @@ sample_column_name:              sample_name
 
 write_production_raster: false
 ```
+
+## Example parameter file: agreement with the CRONUS v3 online calculator
+
+Use this pairing when the goal is to reproduce CRONUS v3. Keep
+`sample_age_yr: 0`, pair `cronusEmulatorSt` with `scaling_scheme: stone`, and
+match `--scheme St` on `tests/scripts/compare_cosmo_tool_vs_cronus_v3.py`.
+
+```
+read_path:  /data/dems/
+read_fname: my_dem
+write_path: /data/output/
+write_fname: my_samples
+
+nuclide:        Be10
+muon_scheme:    cronusEmulatorSt
+scaling_scheme: stone
+atmosphere:     ERA40
+sample_age_yr:  0
+
+points_filename:             CRN_points.csv
+uncertainty_column_name:     Be10_uncertainty
+standardisation_column_name: standardisation
+
+propagate_production_uncertainty: true
+production_rel_sigma:             0.05
+```
+
+For the LSDn route use `muon_scheme: cronusEmulatorLSDn` with
+`scaling_scheme: lsdn` **and** `self_consistent_age: true` — see the
+`self_consistent_age` row above for why the fixed-age variant will not
+reproduce v3.

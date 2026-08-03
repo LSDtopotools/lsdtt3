@@ -87,6 +87,7 @@
 #include "../src/cpu/lsdtt_crn_column.hpp"
 #include "../src/cpu/lsdtt_crn_diagnostics.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
+#include "../src/cpu/lsdtt_cronus_v3_input.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -106,6 +107,47 @@ static void print_banner()
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
         << "========================================================\n\n";
+}
+
+// ---------------------------------------------------------------------------
+// Muon schemes this tool can service.
+//
+// lsdtt_crn_parameters::is_valid_muon_scheme() accepts every scheme lsdtt3
+// knows, including cronusEmulatorSt / cronusEmulatorLSDn.  Those two are
+// pressure- AND nuclide-dependent, and reset_scaling() -- the only entry point
+// a single column has -- deliberately throws for them because it receives
+// neither.  Validating against is_valid_muon_scheme() alone therefore accepts a
+// name that later aborts on an uncaught std::invalid_argument.  Check against
+// the serviceable subset here instead, so the user gets a diagnosis and a
+// pointer to the tool that does support them.
+//
+// `context` is prefixed to the message so the batch paths can say which CSV row
+// carried the bad name; pass an empty string for the parameter-file case.
+static bool column_muon_scheme_is_supported(const std::string& muon_scheme,
+                                            const std::string& context)
+{
+    if (muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
+    {
+        std::cerr << "FATAL: " << context << "muon_scheme \"" << muon_scheme
+                  << "\" is not supported by " << k_tool_name << ".\n"
+                  << "       Its muon terms depend on site pressure and nuclide, "
+                     "and this tool\n"
+                  << "       simulates a single column with no pressure raster. "
+                     "Use lsdtt-cosmo-tool\n"
+                  << "       for the CRONUS v3 emulator schemes.\n"
+                  << "       Schemes available here: "
+                  << "Braucher, BraucherBorchers, Granger, Schaller, newCRONUS.\n";
+        return false;
+    }
+    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
+    {
+        std::cerr << "FATAL: " << context << "unknown muon_scheme \""
+                  << muon_scheme << "\". Allowed values: "
+                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
+                  << ".\n";
+        return false;
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,8 +493,9 @@ int main(int argc, char* argv[])
     help_map["muon_scheme"] = {"string","BraucherBorchers",
         "Muon production parameter scheme.",
         "BraucherBorchers, Braucher, Granger, Schaller, newCRONUS. The pressure-dependent "
-        "cronusEmulatorSt / cronusEmulatorLSDn schemes are not available here: this "
-        "tool works on a single column with no pressure raster.",
+        "cronusEmulatorSt / cronusEmulatorLSDn schemes are rejected here: this "
+        "tool works on a single column with no pressure raster. Use lsdtt-cosmo-tool "
+        "for those.",
         "-", "param", "use_initial_concentration"};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;
@@ -662,7 +705,19 @@ int main(int argc, char* argv[])
         "Written relative to write_path.",
         "-", "param", "use_initial_concentration"};
 
-    //  Parse 
+    // On by default, matching lsdtt-cosmo-tool: a user checking a column result
+    // against the online calculator should not need a separate script to build
+    // the request.  Needs latitude AND elevation, since a CRONUS site record is
+    // a real location -- a bare production_scaling cannot be expressed as one.
+    bool_default_map["write_cronus_v3_input"] = true;
+    help_map["write_cronus_v3_input"] = {"bool","true",
+        "Write a CRONUS v3 input file that can be pasted into the online calculator.",
+        "Requires latitude and elevation to be set. Skipped for full_transient (a "
+        "depth profile is not a point sample) and for below-surface samples. "
+        "Filename: <output_file stem>_CRONUS_V3_INPUT.txt",
+        "-", "switch", "use_initial_concentration"};
+
+    //  Parse
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
     // -------------------------------------------------------------------------
@@ -697,14 +752,8 @@ int main(int argc, char* argv[])
     const std::string mode       = sf["column_mode"];
     const std::string nuclide    = sf["nuclide"];
     const std::string muon_scheme = sf["muon_scheme"];
-    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
-    {
-        std::cerr << "FATAL: unknown muon_scheme \"" << muon_scheme
-                  << "\". Allowed values: "
-                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
-                  << ".\n";
+    if (!column_muon_scheme_is_supported(muon_scheme, ""))
         return 1;
-    }
     const double density         = static_cast<double>(ff["rock_density_kg_m3"]);
     const bool propagate_prod_unc  = bf["propagate_production_uncertainty"];
     const bool propagate_decay_unc = bf["propagate_decay_uncertainty"];
@@ -756,6 +805,95 @@ int main(int argc, char* argv[])
               << "Prod scaling   : " << production_scaling << "\n"
               << "Total shielding: " << total_shielding    << "\n\n";
 
+    // ---- CRONUS v3 input collection ----------------------------------------
+    // Filled by the mode branches below, written once at the end.  A CRONUS site
+    // record needs a real location, so a run configured with production_scaling
+    // alone cannot produce one; say so once here rather than per sample.
+    const double lon = static_cast<double>(ff["longitude"]);
+    const bool   have_site = (lat > -9998.0 && elev > -9998.0);
+    bool write_cronus_input = bf["write_cronus_v3_input"];
+    std::vector<lsdtt::CronusV3Sample> cronus_samples;
+
+    if (write_cronus_input && !have_site)
+    {
+        std::cout << "Note: write_cronus_v3_input is on but latitude/elevation are "
+                     "not set,\n"
+                     "      so no CRONUS v3 site record can be built. Set both to "
+                     "enable it.\n\n";
+        write_cronus_input = false;
+    }
+
+    // Common site fields; each branch supplies the name and the nuclides.
+    auto make_cronus_site = [&](const std::string& name)
+    {
+        lsdtt::CronusV3Sample cs;
+        cs.name          = name;
+        cs.latitude_deg  = lat;
+        // longitude is optional for Stone scaling but required by the site
+        // record; 0 is the conventional stand-in and does not affect St.
+        cs.longitude_deg = (lon > -9998.0) ? lon : 0.0;
+        cs.use_pressure  = false;      // an elevation, so the calculator's "std"
+        cs.elevation_or_pressure = elev;
+        cs.thickness_cm  = 0.0;
+        cs.density_g_cm3 = density / 1000.0;
+        cs.shielding     = total_shielding;
+        cs.erate_guess_g_cm2_yr = 0.0001;
+        cs.sample_year   = 2010;
+        return cs;
+    };
+
+    // Forward modes model a concentration rather than measuring one; feeding it
+    // back through the calculator is a round-trip check.  Only meaningful at the
+    // surface: CRONUS treats the record as a surface sample, so a shielded
+    // depth would be inverted as if it were exposed.
+    auto add_forward_cronus_sample =
+        [&](std::vector<lsdtt::CronusV3Sample>& out, const std::string& label,
+            double d_eff, const lsdtt::CrnColumnSample& s)
+    {
+        if (!write_cronus_input)
+            return;
+        if (d_eff != 0.0)
+        {
+            std::cout << "Note: effective_depth_g_cm2 is " << d_eff
+                      << ", not a surface sample, so no CRONUS v3 input was "
+                         "written.\n";
+            return;
+        }
+        lsdtt::CronusV3Sample cs = make_cronus_site(label);
+        lsdtt::CronusV3Nuclide cn;
+        cn.nuclide = nuclide;
+        cn.conc_atoms_g = (nuclide == "Al26") ? s.conc_26Al
+                        : (nuclide == "C14")  ? s.conc_14C
+                                              : s.conc_10Be;
+        // A modelled concentration has no measurement uncertainty.
+        cn.sigma_atoms_g = 0.0;
+        cs.nuclides.push_back(cn);
+        out.push_back(cs);
+    };
+
+    // Pair modes carry two MEASURED concentrations, which is the natural CRONUS
+    // erosion-rate input: one site, two nuclide records.
+    auto add_pair_cronus_sample =
+        [&](std::vector<lsdtt::CronusV3Sample>& out, const std::string& name,
+            const std::string& n_fast, double c_fast, double s_fast,
+            const std::string& n_slow, double c_slow, double s_slow,
+            double shielding)
+    {
+        if (!write_cronus_input)
+            return;
+        lsdtt::CronusV3Sample cs = make_cronus_site(name);
+        // Batch rows may override the global shielding, so it is passed in
+        // rather than taken from make_cronus_site's default.
+        cs.shielding = shielding;
+        lsdtt::CronusV3Nuclide fast;
+        fast.nuclide = n_fast; fast.conc_atoms_g = c_fast; fast.sigma_atoms_g = s_fast;
+        lsdtt::CronusV3Nuclide slow;
+        slow.nuclide = n_slow; slow.conc_atoms_g = c_slow; slow.sigma_atoms_g = s_slow;
+        cs.nuclides.push_back(fast);
+        cs.nuclides.push_back(slow);
+        out.push_back(cs);
+    };
+
     lsdtt::lsdtt_crn_column col(density);
     const double e_scale = 1.0e7 / density;  // g/cm2/yr -> mm/kyr
 
@@ -781,6 +919,7 @@ int main(int argc, char* argv[])
                   << "C_14C  : " << s.conc_14C  << " atoms/g\n";
 
         write_point_result(pp, sf["output_file"], s);
+        add_forward_cronus_sample(cronus_samples, "steady_state", d_eff, s);
     }
 
     // ===========================================================================
@@ -810,6 +949,7 @@ int main(int argc, char* argv[])
                   << "C_14C  : " << result.conc_14C  << " atoms/g\n";
 
         write_point_result(pp, sf["output_file"], result);
+        add_forward_cronus_sample(cronus_samples, "step_change", d_eff, result);
     }
 
     // ===========================================================================
@@ -962,6 +1102,10 @@ int main(int argc, char* argv[])
                             conc_fast, conc_slow,
                             conc_fast_sigma, conc_slow_sigma,
                             total_shielding, muon_scheme, ue, e_scale);
+        add_pair_cronus_sample(cronus_samples, "burial_pair",
+                               nuclide_fast, conc_fast, conc_fast_sigma,
+                               nuclide_slow, conc_slow, conc_slow_sigma,
+                               total_shielding);
     }
 
     // ===========================================================================
@@ -1046,6 +1190,10 @@ int main(int argc, char* argv[])
                                conc_fast_sigma, conc_slow_sigma,
                                erate_old, total_shielding, muon_scheme,
                                ue, ut, e_scale);
+        add_pair_cronus_sample(cronus_samples, "step_pair",
+                               nuclide_fast, conc_fast, conc_fast_sigma,
+                               nuclide_slow, conc_slow, conc_slow_sigma,
+                               total_shielding);
     }
 
     // ===========================================================================
@@ -1117,6 +1265,9 @@ int main(int argc, char* argv[])
             const double S = row_double_optional(row, "total_shielding", total_shielding,
                                                 in_csv, row_id);
             const std::string scheme = row_string(row, "muon_scheme", muon_scheme);
+            if (!column_muon_scheme_is_supported(
+                    scheme, in_csv + " row " + std::to_string(row_id) + ": "))
+                return 1;
             if (sf_fast < 0.0 || sf_slow < 0.0)
             {
                 std::cerr << "FATAL: sigma values must be >= 0 in " << in_csv
@@ -1150,6 +1301,9 @@ int main(int argc, char* argv[])
                                            propagate_prod_unc, production_rel_sigma,
                                            propagate_decay_unc, decay_rel_sigma);
             }
+
+            add_pair_cronus_sample(cronus_samples, sample_name,
+                                   fast, cf, sf_fast, slow, cs, sf_slow, S);
 
             out << sample_name << ","
                 << lsdtt::to_string(r.status) << ","
@@ -1235,6 +1389,9 @@ int main(int argc, char* argv[])
             const double S = row_double_optional(row, "total_shielding", total_shielding,
                                                 in_csv, row_id);
             const std::string scheme = row_string(row, "muon_scheme", muon_scheme);
+            if (!column_muon_scheme_is_supported(
+                    scheme, in_csv + " row " + std::to_string(row_id) + ": "))
+                return 1;
             if (sf_fast < 0.0 || sf_slow < 0.0)
             {
                 std::cerr << "FATAL: sigma values must be >= 0 in " << in_csv
@@ -1276,6 +1433,9 @@ int main(int argc, char* argv[])
                                            false, 0.0, false, 0.0);
             }
 
+            add_pair_cronus_sample(cronus_samples, sample_name,
+                                   fast, cf, sf_fast, slow, cs, sf_slow, S);
+
             out << sample_name << ","
                 << lsdtt::to_string(r.status) << ","
                 << status_code(r.status) << ","
@@ -1316,6 +1476,43 @@ int main(int argc, char* argv[])
                   << "Valid options: steady_state, step_change, full_transient, "
                   << "burial_pair, step_pair, burial_pair_batch, step_pair_batch\n";
         return 1;
+    }
+
+    // ---- CRONUS v3 input file ----------------------------------------------
+    if (write_cronus_input && !cronus_samples.empty())
+    {
+        // output_file is a filename, so derive the companion name from its stem
+        // rather than from write_fname (which is the parameter-file stem here).
+        std::string stem = sf["output_file"];
+        const std::size_t dot = stem.find_last_of('.');
+        if (dot != std::string::npos)
+            stem = stem.substr(0, dot);
+        const std::string cronus_path =
+            pp.get_write_path() + stem + "_CRONUS_V3_INPUT.txt";
+
+        try
+        {
+            const std::size_t n_cronus =
+                lsdtt::write_cronus_v3_input_file(cronus_path, cronus_samples);
+            std::cout << "\nCRONUS v3 input written: " << cronus_path << " ("
+                      << n_cronus << " sample(s))\n"
+                      << "  Paste its contents into the CRONUS v3 erosion-rate "
+                         "input page to compare.\n";
+
+            bool any_zero_sigma = false;
+            for (const auto& s : cronus_samples)
+                for (const auto& n : s.nuclides)
+                    if (!(n.sigma_atoms_g > 0.0)) any_zero_sigma = true;
+            if (any_zero_sigma)
+                std::cout << "  NOTE: one or more concentrations had no "
+                             "uncertainty, written as 0.\n";
+        }
+        catch (const std::exception& e)
+        {
+            // A failed side-output must not discard a completed calculation.
+            std::cerr << "Warning: could not write CRONUS v3 input file: "
+                      << e.what() << "\n";
+        }
     }
 
     pp.print_help(help_map, pp.get_write_fname() + "_README",

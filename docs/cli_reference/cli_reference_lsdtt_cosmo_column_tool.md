@@ -2,7 +2,7 @@
 
 Simulates cosmogenic nuclide concentrations (¹⁰Be, ²⁶Al, ¹⁴C) in a bedrock or sediment column undergoing a known or hypothesised erosion history. No DEM or raster is required — this is a purely 1-D particle calculation.
 
-Six simulation modes are available, selected by `column_mode`.
+Seven simulation modes are available, selected by `column_mode`.
 
 ## Usage
 
@@ -42,7 +42,18 @@ key: value
 |---|---|---|---|
 | `column_mode` | string | `steady_state` | Simulation mode. Options: `steady_state`, `step_change`, `full_transient`, `burial_pair`, `step_pair`, `burial_pair_batch`, `step_pair_batch`. |
 | `nuclide` | string | `Be10` | Nuclide for output labelling. All three nuclides are always computed. Options: `Be10`, `Al26`, `C14`. |
-| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. The pressure-dependent `cronusEmulatorSt` / `cronusEmulatorLSDn` schemes available in `lsdtt-cosmo-tool` are **not** offered here: this tool works on a single column with no pressure raster. |
+| `muon_scheme` | string | `BraucherBorchers` | Muon production parameter scheme. Options: `BraucherBorchers`, `Braucher`, `Granger`, `Schaller`, `newCRONUS`. The pressure-dependent `cronusEmulatorSt` / `cronusEmulatorLSDn` schemes available in `lsdtt-cosmo-tool` are **not usable here** — see the note below. |
+
+> **The `cronusEmulator*` schemes do not work in this tool.** Their muon terms
+> depend on both site pressure and nuclide, and this tool works on a single
+> column with no pressure raster, so there is no correct parameter set to
+> install. The CLI's `muon_scheme` check validates against the shared
+> whole-of-lsdtt3 scheme list, which *does* include them, so the name is
+> accepted at parse time and the run then **aborts** (uncaught
+> `std::invalid_argument` from `reset_scaling`, exit 134) rather than exiting
+> with a clean error message. Use `lsdtt-cosmo-tool` if you need the emulator
+> schemes. Note that `muon_scheme` is also a per-row column in both batch pair
+> CSVs, and the same restriction applies there.
 | `rock_density_kg_m3` | float | `2650` | Rock density (kg/m³). Used to convert depth to effective depth. |
 
 ---
@@ -164,6 +175,59 @@ All modes write CSV output to `output_file` in `write_path`.
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
 | `output_file` | string | `crn_column.csv` | Output CSV filename. `steady_state`/`step_change`/`full_transient` use columns: `depth_m`, `effective_depth_g_cm2`, `C_10Be`, `C_26Al`, `C_14C`; pair inversion modes write diagnostic rows including `status`/`status_code`, uncertainty fields (`*_unc_int_*`, `*_unc_ext_*`), and corner bounds (`*_lo_*`, `*_hi_*`); batch modes write one diagnostic row per input row. |
+| `write_cronus_v3_input` | bool | **`true`** | Write `<output_file stem>_CRONUS_V3_INPUT.txt`, a ready-to-paste CRONUS v3 batch request. See below. |
+
+### CRONUS v3 input file
+
+The tool writes a CRONUS v3 input file by default, so a column result can be
+checked against the online calculator without any scripting. Set
+`write_cronus_v3_input: false` to suppress it. The format matches
+`lsdtt-cosmo-tool`'s, and the file is named from the `output_file` stem — e.g.
+`output_file: burial_pair_c14_be10.csv` gives
+`burial_pair_c14_be10_CRONUS_V3_INPUT.txt`.
+
+**It requires `latitude` and `elevation`.** A CRONUS site record is a real
+location, so a run configured with `production_scaling` alone cannot produce
+one; the tool says so once and carries on. Unlike `lsdtt-cosmo-tool` (which
+supplies a basin-effective pressure with the `pre` flag), this tool writes the
+elevation with the `std` flag and lets the calculator derive pressure from the
+standard atmosphere.
+
+What each mode contributes:
+
+| Mode | Written? | Contents |
+|---|---|---|
+| `burial_pair`, `step_pair` | yes | One site, two nuclide records — the **measured** concentrations and sigmas. This is the natural CRONUS input. |
+| `burial_pair_batch`, `step_pair_batch` | yes | One site per input row, named from the row's `sample_name`, honouring any per-row `total_shielding`. |
+| `steady_state`, `step_change` | only at the surface | The **modelled** concentration for the selected `nuclide`, with sigma `0`. A round-trip check: lsdtt3 forward-models, CRONUS inverts. Skipped with a note when `effective_depth_g_cm2` is not `0`, because CRONUS would treat a shielded sample as exposed. |
+| `full_transient` | no | A depth profile is not a point sample, and a transient history cannot be expressed in a CRONUS erosion-rate record. |
+
+Other behaviour: shielding is written from `total_shielding` (note that in this
+tool it is the *combined* topographic × snow × self factor, whereas the CRONUS
+field is nominally topographic); density from `rock_density_kg_m3`; names are
+sanitised to `[A-Za-z0-9_-]` and duplicates get a `_2`, `_3`, … suffix; a
+concentration with no uncertainty is written as sigma `0` and reported, never
+replaced by a guess.
+
+> ### ⚠ AMS standardisation
+>
+> **This tool applies no AMS standardisation correction.** It has no
+> standardisation parameter: concentrations are used exactly as given, which is
+> the right behaviour for a forward model but means the *basis* of a measured
+> concentration is yours to track.
+>
+> In the CRONUS v3 input file, each concentration is therefore written with the
+> calculator's **default** standard for its nuclide — `07KNSTD` for Be-10,
+> `KNSTD` for Al-26, none for C-14. If your measurement is on a different
+> standard, edit that field in the generated file before submitting, or CRONUS
+> will interpret it on the wrong basis.
+>
+> Conversely, do **not** normalise a concentration yourself and then leave the
+> default standard in place — that applies the factor twice. The safe
+> combination is an as-measured concentration with its own standard named in the
+> file. `lsdtt-cosmo-tool` automates this via `standardisation_column_name`;
+> this tool does not, because a single column has no sample metadata to read it
+> from.
 
 ---
 

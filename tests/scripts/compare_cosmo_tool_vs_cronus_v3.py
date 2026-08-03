@@ -4,6 +4,20 @@
 Reads ``<write_fname>_CN_ERATE.csv`` from lsdtt-cosmo-tool, builds a CRONUS v3
 batch request using per-sample nuclide, concentration, latitude and effective
 pressure, submits once, and writes a comparison CSV.
+
+WARNING -- AMS standardisation double-count with --standardisation-col.
+The ``concentration_*`` column in ``_CN_ERATE.csv`` is ALREADY normalised by
+lsdtt-cosmo-tool (e.g. KNSTD -> 07KNSTD, x0.9042).  Passing
+``--standardisation-col`` sends that normalised value together with the sample's
+standard name, so CRONUS applies the factor a SECOND time.  This is the error
+that inverted the apparent sign of the OCTOPUS-tier residual (clapp2002 read
++6.6 % rather than -4.09 %); see docs/testing_and_benchmarking.md.
+
+Omit ``--standardisation-col`` unless every sample is already on the calculator's
+default standard, in which case it is a no-op.  For a correct request built from
+as-measured concentrations, prefer the file lsdtt-cosmo-tool now writes itself:
+``<write_fname>_CRONUS_V3_INPUT.txt`` (parameter ``write_cronus_v3_input``,
+default true).
 """
 
 from __future__ import annotations
@@ -132,8 +146,23 @@ def main() -> int:
     ap.add_argument("--scheme", default="St", choices=["St", "Lm", "LSDn"])
     ap.add_argument("--endpoint", action="append", default=None)
     ap.add_argument("--raw-xml-out", type=Path, default=None)
-    ap.add_argument("--out-csv", required=True, type=Path)
+    # Writing the request out is useful on its own: it is exactly the text that
+    # the CRONUS v3 erosion-rate input page accepts, so a user can paste it into
+    # the web form instead of submitting from here (no network, and the online
+    # calculator's own reporting).  With --no-submit it is the only output, so
+    # --out-csv stops being required.
+    ap.add_argument("--text-block-out", type=Path, default=None,
+                    help="Write the CRONUS v3 input text block to this file.")
+    ap.add_argument("--no-submit", action="store_true",
+                    help="Build the input text block but do not contact CRONUS. "
+                         "Requires --text-block-out.")
+    ap.add_argument("--out-csv", type=Path, default=None)
     args = ap.parse_args()
+
+    if args.no_submit and args.text_block_out is None:
+        raise SystemExit("--no-submit requires --text-block-out")
+    if not args.no_submit and args.out_csv is None:
+        raise SystemExit("--out-csv is required unless --no-submit is given")
 
     rows = _read_csv(args.cosmo_csv)
     if not rows:
@@ -150,12 +179,41 @@ def main() -> int:
             if name:
                 points_by_name[name] = r
 
+    # The docstring warning only reaches someone who runs --help; this reaches
+    # the person who is actually about to submit a double-counted request.
+    # Warn on ANY non-empty standard rather than trying to exclude "default"
+    # ones: the default is nuclide-dependent (07KNSTD for Be-10, KNSTD for
+    # Al-26), so KNSTD is a no-op on Al-26 but a 0.9042 double-count on Be-10.
+    # A spurious warning costs a line of output; a missed one corrupts a rate.
+    if args.standardisation_col and points_by_name:
+        seen_standards = {
+            r.get(args.standardisation_col, "")
+            for r in points_by_name.values()
+            if r.get(args.standardisation_col, "")
+        }
+        if seen_standards:
+            print("WARNING: --standardisation-col double-counts AMS standardisation.\n"
+                  "         concentration_* in the cosmo CSV is already normalised by\n"
+                  "         lsdtt-cosmo-tool; sending it with a standard name applies the\n"
+                  "         factor twice. Standards seen: "
+                  + ", ".join(sorted(seen_standards)) + "\n"
+                  "         Prefer <write_fname>_CRONUS_V3_INPUT.txt from the CLI.")
+
     text_block, idmap = _build_text_block(
         rows,
         points_by_name,
         args.uncertainty_col,
         args.standardisation_col,
     )
+
+    if args.text_block_out is not None:
+        args.text_block_out.parent.mkdir(parents=True, exist_ok=True)
+        args.text_block_out.write_text(text_block + "\n")
+        print(f"Wrote CRONUS v3 input text block: {args.text_block_out} "
+              f"({len(rows)} sample(s))")
+
+    if args.no_submit:
+        return 0
 
     endpoints = args.endpoint or DEFAULT_ENDPOINTS
     raw = None

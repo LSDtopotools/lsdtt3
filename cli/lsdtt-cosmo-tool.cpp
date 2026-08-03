@@ -62,6 +62,7 @@
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
+#include "../src/cpu/lsdtt_cronus_v3_input.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -346,6 +347,18 @@ int main(int argc, char* argv[])
         "Write a per-sample basin-mean production-scaling + mean-elevation CSV "
         "(diagnostic; does not affect the inversion).",
         "Filename: <write_fname>_BASIN_PROD.csv",
+        "Output", "switch", ""};
+
+    // On by default: comparing an lsdtt3 rate against the CRONUS v3 online
+    // calculator is a routine thing to want, and building the request by hand
+    // from the output CSV is fiddly and easy to get wrong (the basin-effective
+    // pressure and centroid latitude have to be paired, and the "pre" flag set).
+    // Writing it always costs one small text file.
+    bool_default_map["write_cronus_v3_input"] = true;
+    help_map["write_cronus_v3_input"] = {"bool","true",
+        "Write a CRONUS v3 input file that can be pasted into the online calculator.",
+        "Basin-effective pressure + centroid latitude, in the calculator's batch "
+        "format. Filename: <write_fname>_CRONUS_V3_INPUT.txt",
         "Output", "switch", ""};
 
     // -------------------------------------------------------------------------
@@ -915,6 +928,11 @@ int main(int argc, char* argv[])
                        << "n_upslope_pixels,mean_prod_scaling,mean_elev_m\n";
     }
 
+    // Accumulated per sample inside the loop, written once at the end.
+    const bool write_cronus_input = bf["write_cronus_v3_input"];
+    std::vector<lsdtt::CronusV3Sample> cronus_samples;
+    bool cronus_missing_sigma = false;
+
     const double e_scale = 1.0e7 / rock_density_kg_m3;  // g/cm2/yr -> mm/kyr
     lsdtt::lsdtt_crn_parameters crn_params;
 
@@ -1080,12 +1098,23 @@ int main(int argc, char* argv[])
 
         double conc = get_col_float(concentration_col_name, csv_row);
 
+        // Kept unnormalised for the CRONUS v3 input file, which carries the
+        // standard NAME and lets the calculator apply its own factor. Sending
+        // the already-normalised concentration together with the standard name
+        // would apply the correction twice -- the exact failure that produced
+        // the spurious sign flip in the OCTOPUS tier (see the benchmarking doc).
+        const double conc_as_measured = conc;
+        std::string  sample_std_name;
+        // Likewise unnormalised; 0 means the input carried no uncertainty column.
+        double       sigma_as_measured = 0.0;
+
         // Apply standardisation correction
         if (has_standardisation)
         {
             std::string std_name = get_col_str(standardisation_col_name, csv_row);
             if (!std_name.empty())
             {
+                sample_std_name = std_name;
                 double factor = (nuclide == "Al26")
                     ? crn_params.al26_standardisation_factor(std_name)
                     : crn_params.be10_standardisation_factor(std_name);
@@ -1209,6 +1238,7 @@ int main(int argc, char* argv[])
         if (has_uncertainty)
         {
             double uncert = get_col_float(uncertainty_col_name, csv_row);
+            sigma_as_measured = uncert;
 
             // Apply standardisation to uncertainty too
             if (has_standardisation)
@@ -1282,15 +1312,97 @@ int main(int argc, char* argv[])
                     << (sc_converged ? 1 : 0);
 
         csv_out << "\n";
+
+        // CRONUS v3 request record for this sample. Concentration and sigma go
+        // in AS MEASURED, paired with the standard name, so the calculator does
+        // its own standardisation exactly once.
+        if (write_cronus_input)
+        {
+            lsdtt::CronusV3Sample cs;
+            cs.name = has_sample_name
+                ? get_col_str(sample_col_name, csv_row)
+                : ("S" + std::to_string(csv_row + 1));
+            // A catchment has no single elevation, so the basin-effective
+            // pressure and the basin-centroid latitude are the pair that make
+            // a point calculator represent the basin.
+            cs.latitude_deg  = basin_centroid_lat_deg;
+            cs.longitude_deg = out_lon;
+            cs.use_pressure  = true;
+            cs.elevation_or_pressure = eff_pressure_hpa;
+            cs.thickness_cm  = 0.0;
+            cs.density_g_cm3 = rock_density_kg_m3 / 1000.0;
+            cs.shielding     = topo_shield_val;
+            cs.erate_guess_g_cm2_yr = 0.0001;
+            cs.sample_year   = 2010;
+
+            lsdtt::CronusV3Nuclide cn;
+            cn.nuclide         = nuclide;
+            cn.conc_atoms_g    = conc_as_measured;
+            cn.sigma_atoms_g   = sigma_as_measured;
+            cn.standardisation = sample_std_name;
+            cs.nuclides.push_back(cn);
+
+            if (!(sigma_as_measured > 0.0))
+                cronus_missing_sigma = true;
+
+            // A sample whose pressure or centroid latitude never resolved would
+            // be written as nan and rejected by the calculator; drop it and say
+            // so rather than emitting a file that fails on paste.
+            if (std::isfinite(cs.latitude_deg) && std::isfinite(cs.longitude_deg) &&
+                std::isfinite(cs.elevation_or_pressure))
+            {
+                cronus_samples.push_back(cs);
+            }
+            else
+            {
+                std::cerr << "Warning: sample " << cs.name
+                          << " has a non-finite pressure or centroid latitude; "
+                             "omitted from the CRONUS v3 input file.\n";
+            }
+        }
+
         ++n_processed;
     }
 
     csv_out.close();
 
+    std::string cronus_fname;
+    if (write_cronus_input && !cronus_samples.empty())
+    {
+        cronus_fname = write_base + "_CRONUS_V3_INPUT.txt";
+        try
+        {
+            const std::size_t n_cronus =
+                lsdtt::write_cronus_v3_input_file(cronus_fname, cronus_samples);
+            std::cout << "\nCRONUS v3 input written: " << cronus_fname << " ("
+                      << n_cronus << " sample(s))\n"
+                      << "  Paste its contents into the CRONUS v3 erosion-rate "
+                         "input page to compare.\n";
+            if (cronus_missing_sigma)
+                std::cout << "  NOTE: one or more samples had no concentration "
+                             "uncertainty, written as 0.\n"
+                          << "        Set uncertainty_column_name for a "
+                             "meaningful CRONUS uncertainty.\n";
+            if (topo_shield_val != 1.0)
+                std::cout << "  NOTE: shielding written as " << topo_shield_val
+                          << " to match topo_shield_value.\n";
+        }
+        catch (const std::exception& e)
+        {
+            // A failed side-output must not discard a completed inversion.
+            std::cerr << "Warning: could not write CRONUS v3 input file: "
+                      << e.what() << "\n";
+            cronus_fname.clear();
+        }
+    }
+
     std::cout << "\n=== Summary ===\n"
               << "Processed : " << n_processed << " samples\n"
               << "Skipped   : " << n_skipped   << " samples\n"
-              << "Output    : " << out_fname   << "\n\n";
+              << "Output    : " << out_fname   << "\n";
+    if (!cronus_fname.empty())
+        std::cout << "CRONUS v3 : " << cronus_fname << "\n";
+    std::cout << "\n";
 
     pp.print_help(help_map, pp.get_write_fname() + "_README",
                   k_version, k_citation);

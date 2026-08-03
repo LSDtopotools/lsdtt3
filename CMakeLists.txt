@@ -350,6 +350,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_crn_column.cpp
     src/cpu/lsdtt_crn_diagnostics.cpp
     src/cpu/lsdtt_cosmo_raster_cpu.cpp
+    src/cpu/lsdtt_cronus_v3_input.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
     src/cpu/lsdtt_vector_ops_cpu.cpp
     src/cpu/lsdtt_vector_line_repair_cpu.cpp
