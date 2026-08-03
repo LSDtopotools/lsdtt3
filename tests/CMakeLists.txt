@@ -610,6 +610,11 @@ target_link_libraries(lsdtt-test-landslide-event PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-landslide-crn cpp/test_landslide_crn.cpp)
 target_link_libraries(lsdtt-test-landslide-crn PRIVATE lsdtt3_cpu)
 
+# Landslide series (plan Phases 3 and 5): multi-event integration, plus the
+# Niemi rate-closure and Yanites depth-regime reproductions.
+add_executable(lsdtt-test-landslide-series cpp/test_landslide_series.cpp)
+target_link_libraries(lsdtt-test-landslide-series PRIVATE lsdtt3_cpu)
+
 # Flow routing / depression handling property tests
 # (docs/testing_and_benchmarking.md).  Synthetic fixtures only: no
 # network, no RichDEM, so this runs in the default CTest suite.
@@ -1067,6 +1072,13 @@ add_test(NAME unit_landslide_crn
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
 set_tests_properties(unit_landslide_crn PROPERTIES LABELS "unit;landslide;cosmo")
 
+# Landslide series: Phase 3 multi-event + Phase 5 T14/T15. Emits
+# landslide_niemi_closure.csv and landslide_yanites_regimes.csv.
+add_test(NAME unit_landslide_series
+         COMMAND lsdtt-test-landslide-series
+                 ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+set_tests_properties(unit_landslide_series PROPERTIES LABELS "unit;landslide" TIMEOUT 900)
+
 add_test(NAME unit_cosmo_physics
          COMMAND lsdtt-test-cosmo-physics
                  ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output
@@ -1301,6 +1313,33 @@ set_tests_properties(failure_cosmo_tool_lsdn_without_grids
 # Help must render every parameter without a parameter file and without
 # touching the DEM or the network. Guards that the parameter declarations for
 # each cosmo CLI stay well-formed.
+# lsdtt-landslides (plan Phase 6).
+add_test(NAME smoke_landslides_help COMMAND lsdtt-landslides -h)
+set_tests_properties(smoke_landslides_help PROPERTIES
+    LABELS "smoke;cli;landslide"
+    PASS_REGULAR_EXPRESSION "long_term_erosion_rate_mm_kyr")
+
+# End-to-end on the tiny fixture: an event is placed and the inventory written.
+add_lsdtt_cli_smoke_test(
+    smoke_landslides_single_event
+    lsdtt-landslides
+    landslides_single_event.param.in
+    lssmoke_LS_INVENTORY.csv
+    --stdout-contains "landslide event:"
+    --expect-file-contains "lssmoke_LS_INVENTORY.csv:n_pixels"
+)
+
+# A geographic-CRS DEM must exit cleanly with a diagnosis, NOT abort on an
+# uncaught throw. The deeper check throws; the CLI catches it.
+add_lsdtt_cli_smoke_test(
+    failure_landslides_geographic_crs
+    lsdtt-landslides
+    landslides_geographic.param.in
+    lsgeo_LS_INVENTORY.csv
+    --expect-failure
+    --stderr-contains "projected"
+)
+
 add_test(NAME smoke_cosmo_tool_help COMMAND lsdtt-cosmo-tool -h)
 set_tests_properties(smoke_cosmo_tool_help PROPERTIES
     LABELS "smoke;cli;cosmo"

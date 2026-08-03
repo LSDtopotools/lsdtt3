@@ -78,6 +78,7 @@ nav:
       - Cosmo column tool: cli_reference/cli_reference_lsdtt_cosmo_column_tool.md
     - Landscape evolution:
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
+      - Landslides: cli_reference/cli_reference_lsdtt_landslides.md
   - Developer notes:
     - Developer onboarding: developer_notes/developer_onboarding.md
     - Git from the command line: developer_notes/git_notes.md

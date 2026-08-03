@@ -58,6 +58,11 @@ std::string LandslideEventResult::summary() const
     if (n_failed > 0)
         os << "\n  WARNING: " << n_failed << " landslide(s) could not be placed; "
               "the achieved volume is short of the sampled volume";
+    if (distribution_degenerate)
+        os << "\n  WARNING: only " << n_requested << " landslide(s) in this event. "
+              "Solving for N against a small budget SELECTS sizes rather than "
+              "sampling them, so the realised size distribution is biased. "
+              "Raise the per-event volume or lower A_max.";
     return os.str();
 }
 
@@ -182,6 +187,8 @@ LandslideEventResult trigger_landslide_event(
         rng, res.budget_converged, res.budget_iterations, res.sampled_volume_m3);
 
     res.n_requested = static_cast<int>(sizes.size());
+    res.distribution_degenerate =
+        res.n_requested < kMinLandslidesForDistribution;
     if (sizes.empty()) return res;
 
     // --- 2. Place, largest first ---
@@ -242,6 +249,153 @@ LandslideEventResult trigger_landslide_event(
 
     placer.finalise_diagnostics();
     res.median_host_fill_ratio = placer.diagnostics().median_host_fill_ratio;
+
+    return res;
+}
+
+
+std::string LandslideSeriesResult::summary() const
+{
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(2);
+    os << "landslide series: " << n_events << " events over " << duration_yr
+       << " yr, " << n_landslides << " landslides";
+    if (n_failed > 0) os << " (" << n_failed << " unplaceable)";
+    os << "\n  erosion rate requested "
+       << std::setprecision(3) << requested_erosion_rate_mm_kyr
+       << " mm/kyr, realised " << realised_erosion_rate_mm_kyr << " mm/kyr";
+    if (requested_erosion_rate_mm_kyr > 0.0)
+        os << " (" << std::setprecision(2)
+           << 100.0 * realised_erosion_rate_mm_kyr / requested_erosion_rate_mm_kyr
+           << "%)";
+    os << "\n  active area " << active_area_m2 << " m2, "
+       << std::setprecision(1) << 100.0 * fraction_area_failed
+       << "% bearing a scar at the end";
+    if (n_events_degenerate > 0)
+        os << "\n  WARNING: " << n_events_degenerate << " of " << n_events
+           << " events had too few landslides to sample the size distribution "
+              "(mean " << std::setprecision(1) << mean_landslides_per_event
+           << " per event). The realised sizes are biased regardless of run "
+              "length -- raise the per-event volume.";
+    if (n_events_short > 0)
+        os << "\n  WARNING: " << n_events_short << " of " << n_events
+           << " events could not place their full budget -- the landscape is "
+              "saturating. Lower the rate, shorten anneal_time, or accept the "
+              "shortfall as the supply limit it represents.";
+    return os.str();
+}
+
+
+LandslideSeriesResult run_landslide_series(
+    lsdtt_raster_cpu&            dem,
+    lsdtt_raster_cpu&            time_of_last_failure,
+    lsdtt_raster_cpu&            excavation_depth,
+    LandslidePlacer&             placer,
+    const LandslideSizeSampler&  sampler,
+    const LandslideSeriesConfig& config)
+{
+    LandslideSeriesResult res;
+    res.duration_yr = config.end_time_yr - config.start_time_yr;
+    if (!(res.duration_yr > 0.0)) return res;
+    if (!(config.mean_recurrence_yr > 0.0)) return res;
+
+    // The active area is the ground that could host a landslide -- not the
+    // whole raster. Using the raster area would understate the erosion rate on
+    // a channel-dominated or masked DEM, and the comparison against a
+    // prescribed rate would then be meaningless.
+    res.active_area_m2 = static_cast<double>(placer.n_eligible_hosts(1))
+                       * sampler.cell_area_m2();
+    if (!(res.active_area_m2 > 0.0)) return res;
+
+    // Per-event budget. A prescribed erosion rate is spread over the expected
+    // number of events, which is the Niemi convention: the rate is the input
+    // and the event count follows from it.
+    double per_event = config.target_volume_per_event_m3;
+    if (!(per_event > 0.0) && config.long_term_erosion_rate_mm_kyr > 0.0)
+    {
+        // mm/kyr -> m/yr is 1e-6.
+        const double rate_m_yr = config.long_term_erosion_rate_mm_kyr * 1.0e-6;
+        const double total     = rate_m_yr * res.active_area_m2 * res.duration_yr;
+        const double n_expected =
+            std::max(1.0, res.duration_yr / config.mean_recurrence_yr);
+        per_event = total / n_expected;
+    }
+    if (!(per_event > 0.0)) return res;
+
+    std::uint64_t rng = config.seed ? config.seed : 1;
+
+    double t = config.start_time_yr;
+    while (true)
+    {
+        // Poisson process -> exponential waiting times. Yanites Eq. 14.
+        double dt = config.mean_recurrence_yr;
+        if (config.poisson_timing)
+        {
+            double u = next_uniform(rng);
+            if (u <= 0.0) u = 1.0e-12;
+            dt = -config.mean_recurrence_yr * std::log(u);
+        }
+        t += dt;
+        if (t > config.end_time_yr) break;
+
+        // Ground healed since the last event becomes available again; ground
+        // still healing stays locked.
+        placer.apply_annealing(time_of_last_failure, t, config.anneal_time_yr);
+
+        LandslideEventConfig ecfg;
+        ecfg.event_time_yr    = t;
+        ecfg.target_volume_m3 = per_event;
+        ecfg.anneal_time_yr   = config.anneal_time_yr;
+        ecfg.budget_tol       = config.budget_tol;
+        ecfg.budget_max_iter  = config.budget_max_iter;
+        ecfg.seed             = rng ? rng : 1;
+
+        const LandslideEventResult er = trigger_landslide_event(
+            dem, time_of_last_failure, excavation_depth, placer, sampler, ecfg);
+
+        ++res.n_events;
+        res.event_times_yr.push_back(t);
+        res.n_landslides       += er.n_landslides;
+        res.n_failed           += er.n_failed;
+        res.requested_volume_m3 += er.requested_volume_m3;
+        res.total_volume_m3    += er.achieved_volume_m3;
+        if (er.n_failed > 0) ++res.n_events_short;
+        if (er.distribution_degenerate) ++res.n_events_degenerate;
+        res.realised_pixels.insert(res.realised_pixels.end(),
+                                   er.realised_pixels.begin(),
+                                   er.realised_pixels.end());
+
+        // Advance the generator so consecutive events do not repeat a draw.
+        (void)next_uniform(rng);
+    }
+
+    // Rates, both over the ACTIVE area and the full duration.
+    const double denom = res.active_area_m2 * res.duration_yr;
+    if (denom > 0.0)
+    {
+        res.realised_erosion_rate_mm_kyr  = res.total_volume_m3 / denom * 1.0e6;
+        res.requested_erosion_rate_mm_kyr =
+            (config.long_term_erosion_rate_mm_kyr > 0.0)
+                ? config.long_term_erosion_rate_mm_kyr
+                : res.requested_volume_m3 / denom * 1.0e6;
+    }
+
+    if (res.n_events > 0)
+        res.mean_landslides_per_event =
+            static_cast<double>(res.n_landslides) / res.n_events;
+
+    // How much ground carries a scar at the end.
+    {
+        const auto& ed = excavation_depth.get_data_array();
+        const auto& em = excavation_depth.get_mask_array();
+        long n_scarred = 0;
+        for (int r = 0; r < excavation_depth.meta().n_rows; ++r)
+            for (int c = 0; c < excavation_depth.meta().n_cols; ++c)
+                if (em(r, c) && ed(r, c) > 0.0f) ++n_scarred;
+        const double scarred_area =
+            static_cast<double>(n_scarred) * sampler.cell_area_m2();
+        res.fraction_area_failed = scarred_area / res.active_area_m2;
+    }
 
     return res;
 }

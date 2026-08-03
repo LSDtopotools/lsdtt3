@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+read_fname: tiny30_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lsgeo
+
+landslide_mode: single_event
+event_volume_m3: 100
+threshold_contributing_pixels: 10

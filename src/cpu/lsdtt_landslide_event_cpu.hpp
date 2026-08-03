@@ -102,6 +102,12 @@ struct LandslideEventConfig
 };
 
 
+// Below this many landslides in an event, the budget solve stops sampling the
+// size distribution and starts selecting sizes. 10 is a judgement, not a
+// derived threshold: at N = 1 the bias is total, and it falls off roughly as
+// 1/N as the number of ways to make up the budget grows.
+inline constexpr int kMinLandslidesForDistribution = 10;
+
 struct LandslideEventResult
 {
     int    n_landslides        = 0;   // PLACED
@@ -113,6 +119,19 @@ struct LandslideEventResult
     double achieved_area_m2    = 0.0;
     bool   budget_converged    = false;
     int    budget_iterations   = 0;
+
+    // TRUE when the budget was too small to sample the distribution properly.
+    // Solving for N conditions the draw on its total volume. With many
+    // landslides that conditioning is weak -- there are countless size
+    // combinations summing to the target. With only a handful it is severe, and
+    // at N = 1 it is absolute: the solver is no longer sampling the
+    // distribution at all, it is searching for the ONE landslide whose volume
+    // equals the budget. The realised sizes then cluster at
+    // (V_target/alpha)^(1/gamma) and both the mean and the tail are wrong.
+    //
+    // Raise the per-event budget (or lower A_max, which lowers E[V]) until
+    // n_requested is comfortably above kMinLandslidesForDistribution.
+    bool   distribution_degenerate = false;
 
     // Echoed because N depends strongly on them.
     double area_max_used_m2          = 0.0;
@@ -178,6 +197,103 @@ LandslideEventResult trigger_landslide_event(
     LandslidePlacer&            placer,
     const LandslideSizeSampler& sampler,
     const LandslideEventConfig& config);
+
+
+// -----------------------------------------------------------------------------
+// A SERIES of events through time.
+//
+// One event answers "what does this trigger do". A series answers the questions
+// that only appear over many events: does the realised size distribution
+// survive repeated annealing, does the landscape saturate, and does the
+// long-term erosion rate come out equal to the rate that was asked for. That
+// last one is the Niemi et al. (2005) closure test -- they report the output
+// rate returning the input to within about 3 %.
+//
+// TIMING is either a fixed recurrence or a Poisson process (exponential waiting
+// times), the latter following Yanites et al. (2009) Eqs. 14-15 and their cited
+// basis (Coe et al. 2004; Guzzetti et al. 2006). Yanites is explicit that this
+// is a simplification -- real landslides are "often caused by strong storms or
+// earthquakes" and are therefore neither independent nor uncorrelated. Poisson
+// timing is offered because it reproduces the published model, not because it
+// is believed.
+//
+// SATURATION IS A REAL OUTCOME, NOT AN ERROR. Ask for more erosion than the
+// hillslopes can supply -- through a high rate, a long anneal time, or both --
+// and events will start failing to place. The result reports the shortfall
+// rather than silently delivering less than requested.
+// -----------------------------------------------------------------------------
+
+struct LandslideSeriesConfig
+{
+    double start_time_yr = 0.0;
+    double end_time_yr   = 100000.0;
+
+    // Mean interval between events. With poisson_timing the actual intervals
+    // are exponential about this mean; without it they are exactly this.
+    double mean_recurrence_yr = 1000.0;
+    bool   poisson_timing     = true;
+
+    // Budget per event. Give ONE of these:
+    //   target_volume_per_event_m3  -- a fixed volume every event
+    //   long_term_erosion_rate_mm_kyr -- a rate over the ACTIVE area, from
+    //     which the per-event volume is derived. This is the Niemi convention:
+    //     prescribe the landslide erosion rate, let the model find the events.
+    double target_volume_per_event_m3   = 0.0;
+    double long_term_erosion_rate_mm_kyr = 0.0;
+
+    double anneal_time_yr = 0.0;
+    double budget_tol      = 0.02;
+    int    budget_max_iter = 50;
+    std::uint64_t seed = 1;
+};
+
+
+struct LandslideSeriesResult
+{
+    int    n_events      = 0;
+    int    n_landslides  = 0;
+    int    n_failed      = 0;
+    int    n_events_short = 0;      // events that could not place everything
+
+    double duration_yr      = 0.0;
+    double active_area_m2   = 0.0;
+    double requested_volume_m3 = 0.0;
+    double total_volume_m3  = 0.0;
+
+    // The Niemi closure: in and out, on the same footing.
+    double requested_erosion_rate_mm_kyr = 0.0;
+    double realised_erosion_rate_mm_kyr  = 0.0;
+
+    // Fraction of the active area bearing a scar at the end of the run.
+    double fraction_area_failed = 0.0;
+
+    // Events whose landslide count was too small to sample the distribution
+    // (see LandslideEventResult::distribution_degenerate). A series built from
+    // such events has a biased realised size distribution however long it runs.
+    int    n_events_degenerate = 0;
+    double mean_landslides_per_event = 0.0;
+
+    std::vector<double> event_times_yr;
+    std::vector<int>    realised_pixels;   // every landslide in the series
+
+    std::string summary() const;
+};
+
+
+// Run a sequence of events. `dem`, `time_of_last_failure` and
+// `excavation_depth` are updated throughout, exactly as for a single event; the
+// same contract on masks applies.
+//
+// Annealing is re-applied before every event from the accumulated
+// time_of_last_failure raster, so ground healed since the last event becomes
+// available again automatically.
+LandslideSeriesResult run_landslide_series(
+    lsdtt_raster_cpu&            dem,
+    lsdtt_raster_cpu&            time_of_last_failure,
+    lsdtt_raster_cpu&            excavation_depth,
+    LandslidePlacer&             placer,
+    const LandslideSizeSampler&  sampler,
+    const LandslideSeriesConfig& config);
 
 }  // namespace lsdtt
 
