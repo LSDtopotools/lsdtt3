@@ -590,6 +590,26 @@ set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
 target_link_libraries(lsdtt-test-cosmo-physics PRIVATE lsdtt3_cpu)
 
+# Landslide size distribution (plan Phase 0): the imposed magnitude-frequency
+# distribution and the area-volume scaling, with no landscape involved.
+# Synthetic only -- no DEM, no network.
+add_executable(lsdtt-test-landslide-size cpp/test_landslide_size.cpp)
+target_link_libraries(lsdtt-test-landslide-size PRIVATE lsdtt3_cpu)
+
+# Landslide placement (plan Phase 1): eligible hosts and the s_vector footprint.
+# Synthetic ridge-and-valley fixture, no network.
+add_executable(lsdtt-test-landslide-placement cpp/test_landslide_placement.cpp)
+target_link_libraries(lsdtt-test-landslide-placement PRIVATE lsdtt3_cpu)
+
+# Landslide event (plan Phase 2): budget -> N -> placed scars, with mass balance.
+add_executable(lsdtt-test-landslide-event cpp/test_landslide_event.cpp)
+target_link_libraries(lsdtt-test-landslide-event PRIVATE lsdtt3_cpu)
+
+# Landslide -> CRN coupling (plan Phase 4, T16). Composes existing crn_column
+# calls only; no new cosmogenic physics.
+add_executable(lsdtt-test-landslide-crn cpp/test_landslide_crn.cpp)
+target_link_libraries(lsdtt-test-landslide-crn PRIVATE lsdtt3_cpu)
+
 # Flow routing / depression handling property tests
 # (docs/testing_and_benchmarking.md).  Synthetic fixtures only: no
 # network, no RichDEM, so this runs in the default CTest suite.
@@ -1019,6 +1039,34 @@ endif()
 # Arguments: output dir, Stone sentinel, LSDn sentinel (a SEPARATE file with its
 # own gated regeneration flag; plan Sec3b), and the tests/data fixture dir (the
 # pre-LSDn crn_parameters.nc used by L5).
+# Landslide size distribution T1-T5b. Emits landslide_truncation.csv, which
+# tabulates how much of the distribution the A_max cutoff removes by number and
+# by volume (plan Sec 2.5).
+add_test(NAME unit_landslide_size
+         COMMAND lsdtt-test-landslide-size
+                 ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+set_tests_properties(unit_landslide_size PROPERTIES LABELS "unit;landslide")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+
+# Landslide placement T6-T10d. Emits landslide_host_fill.csv, which records how
+# completely landslides of each size fill their host basin (plan Sec 3.2).
+add_test(NAME unit_landslide_placement
+         COMMAND lsdtt-test-landslide-placement
+                 ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+set_tests_properties(unit_landslide_placement PROPERTIES LABELS "unit;landslide")
+
+# Landslide event T11-T13b. Emits landslide_budget_vs_amax.csv.
+add_test(NAME unit_landslide_event
+         COMMAND lsdtt-test-landslide-event
+                 ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+set_tests_properties(unit_landslide_event PROPERTIES LABELS "unit;landslide")
+
+# Landslide CRN response T16. Emits landslide_crn_response.csv.
+add_test(NAME unit_landslide_crn
+         COMMAND lsdtt-test-landslide-crn
+                 ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+set_tests_properties(unit_landslide_crn PROPERTIES LABELS "unit;landslide;cosmo")
+
 add_test(NAME unit_cosmo_physics
          COMMAND lsdtt-test-cosmo-physics
                  ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output

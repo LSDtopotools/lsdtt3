@@ -133,7 +133,30 @@ Uncertainty method for pair inversions:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `transient_history_file` | string | `erosion_history.csv` | CSV file with erosion history. Required columns: `time` (yr BP, ascending), `rate` (m/yr), `removal` (m, used when `rate` = 0). Last row: `time = -9999`, `rate` = background rate. |
+| `transient_history_file` | string | `erosion_history.csv` | CSV file with erosion history. Required columns: `time` (yr BP), `rate` (m/yr), `removal` (m, used when `rate` = 0). **Row order matters — see below.** Last row: `time = -9999`, `rate` = background rate. |
+
+> ### ⚠ Row order: the FIRST data row is the MOST RECENT
+>
+> `time` must **increase with row index**, so row 0 is the youngest (smallest
+> yr BP) and the record runs backwards in time as you read down. A reversed
+> record is rejected fatally:
+>
+> ```
+> FATAL: lsdtt_crn_column: erosion history must be ordered with index 0 the
+> MOST RECENT row and yr BP increasing with index...
+> ```
+>
+> This is a hard failure by design. Before the check was added, a reversed
+> record fed negative timesteps straight into the integrator and returned a
+> confidently wrong number with no error, no warning and no NaN — measured
+> 72,357 forward against 178,467 reversed.
+>
+> Each row's `time` is the yr BP at which that step *began*, so `time` on row 0
+> is the duration of the most recent step. It must be greater than 0, or the
+> most recent step has zero length.
+>
+> Two rows may share a `time` **only** when the second is a removal event
+> (`rate = 0`, `removal > 0`), which is instantaneous.
 | `n_samples` | int | `10` | Number of evenly-spaced depth samples in the column. |
 | `sample_spacing_m` | float | `0.05` | Spacing between depth samples (m). First sample is at the surface (0 m). |
 | `use_initial_concentration` | bool | `false` | If true, particles start with a user-specified concentration instead of steady state. Useful for re-exposed surfaces with a known inherited inventory. |
@@ -330,11 +353,29 @@ b2,Al26,Be10,2300000,330000,46000,6600,0.8,Braucher
 
 ### Erosion history CSV format
 
+Row 0 is the **most recent** step; `time` increases downwards. Both examples
+below are verified to run.
+
 ```
 time,rate,removal
-100000,0.0002,0
-50000,0.001,0
 10000,0.0005,0
-0,0.0005,0
+50000,0.001,0
+100000,0.0002,0
+-9999,0.0002,0
+```
+
+Reading down: the last 10,000 yr eroded at 0.0005 m/yr; from 10,000 to 50,000 yr
+BP at 0.001; from 50,000 to 100,000 yr BP at 0.0002; and 0.0002 m/yr as the
+background before that.
+
+**A landslide** is an instantaneous removal — `rate = 0` with `removal` in
+metres, sharing the `time` of the row above it. Here 2 m is stripped at 5,000 yr
+BP, with 0.0005 m/yr background either side:
+
+```
+time,rate,removal
+5000,0.0005,0
+5000,0,2.0
+100000,0.0005,0
 -9999,0.0005,0
 ```
