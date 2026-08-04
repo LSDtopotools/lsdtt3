@@ -429,17 +429,13 @@ static dem_coreg_result run_nuth_kaab(
 
 dem_coreg_method parse_dem_coreg_method(const std::string& method_name)
 {
-    if (method_name.empty() || method_name == "none")
-    {
-        return dem_coreg_method::none;
-    }
     if (method_name == "nuth_kaab")
     {
         return dem_coreg_method::nuth_kaab;
     }
     throw std::invalid_argument(
         "Unknown dem_coregistration_method '" + method_name +
-        "'. Allowed: none, nuth_kaab");
+        "'. Allowed: nuth_kaab");
 }
 
 dem_coreg_result dem_coregister_to_reference(

@@ -14,7 +14,7 @@
 // Workflow:
 //   1. Parse parameters and cross-parameter checks
 //   2. Load first raster (read_fname)
-//   3. Load second raster (second_raster_fname)
+//   3. Load second raster (second_raster_read_fname)
 //   4. If needed, warp second raster to first raster grid
 //   5. Harmonise second-raster nodata metadata to first raster nodata
 //   6. Optional DEM coregistration (second raster to first raster)
@@ -41,6 +41,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -103,18 +104,26 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
 
     // --- Second raster and alignment ---
-    string_default_map["second_raster_fname"] = "";
-    help_map["second_raster_fname"] = {"string","",
+    string_default_map["second_raster_read_fname"] = "";
+    help_map["second_raster_read_fname"] = {"string","",
         "Second raster filename including extension.",
         "Required. This is the right-hand raster operand in all two-raster "
         "operations.",
         "Second raster and alignment", "param", ""};
 
-    string_default_map["second_raster_path"] = "";
-    help_map["second_raster_path"] = {"string","",
-        "Optional directory for second_raster_fname.",
-        "If empty, read_path is used. If second_raster_fname is an absolute "
+    string_default_map["second_raster_read_path"] = "";
+    help_map["second_raster_read_path"] = {"string","",
+        "Optional directory for second_raster_read_fname.",
+        "If empty, read_path is used. If second_raster_read_fname is an absolute "
         "path, this parameter is ignored.",
+        "Second raster and alignment", "param", ""};
+
+    string_default_map["second_raster_write_fname"] = "";
+    help_map["second_raster_write_fname"] = {"string","",
+        "Output stem used when naming second-raster-derived outputs.",
+        "If empty, defaults to second_raster_read_fname stem (extension "
+        "removed). Used in output naming such as "
+        "<second_raster_write_fname>_resampled_to_<write_fname>.",
         "Second raster and alignment", "param", ""};
 
     bool_default_map["resample_second_to_first_grid"] = true;
@@ -146,16 +155,23 @@ int main(int argc, char* argv[])
         "optional resampling and before all algebra operations.",
         "DEM coregistration", "switch", ""};
 
-    string_default_map["dem_coregistration_method"] = "none";
-    help_map["dem_coregistration_method"] = {"string","none",
+    string_default_map["dem_coregistration_method"] = "nuth_kaab";
+    help_map["dem_coregistration_method"] = {"string","nuth_kaab",
         "DEM coregistration method.",
-        "Allowed values: none, nuth_kaab.",
+        "Allowed values: nuth_kaab. Method reference: Nuth and Kaab (2011), "
+        "https://doi.org/10.5194/tc-5-271-2011.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
     bool_default_map["write_second_coregistered"] = false;
     help_map["write_second_coregistered"] = {"bool","false",
         "Write the coregistered second raster.",
-        "Output file: <write_fname>_second_coregistered.",
+        "Output file: <second_raster_write_fname>_coregistered_to_<write_fname>.",
+        "DEM coregistration", "switch", "enable_dem_coregistration"};
+
+    bool_default_map["write_dem_coreg_diagnostics_csv"] = false;
+    help_map["write_dem_coreg_diagnostics_csv"] = {"bool","false",
+        "Write per-iteration DEM coregistration diagnostics CSV.",
+        "Output file: <write_fname>_and_<second_raster_write_fname>_coreg_diagnostics.csv.",
         "DEM coregistration", "switch", "enable_dem_coregistration"};
 
     int_default_map["nuth_kaab_coreg_max_iterations"] = 8;
@@ -228,52 +244,54 @@ int main(int argc, char* argv[])
     bool_default_map["write_overlap_mask"] = false;
     help_map["write_overlap_mask"] = {"bool","false",
         "Write overlap mask raster.",
-        "Writes <write_fname>_overlap_mask where 1 means both rasters are "
-        "valid and 0 means at least one raster is nodata.",
+        "Writes <write_fname>_and_<second_raster_write_fname>[_coreg]_overlap_mask "
+        "where _coreg is added when enable_dem_coregistration=true; 1 means "
+        "both rasters are valid and 0 means at least one raster is nodata.",
         "Output format and diagnostics", "switch", ""};
 
     // --- Selected outputs ---
     bool_default_map["write_sum"] = false;
     help_map["write_sum"] = {"bool","false",
         "Write sum raster.",
-        "Output file: <write_fname>_sum.",
+        "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_sum.",
         "Selected outputs", "switch", ""};
 
     bool_default_map["write_multiply"] = false;
     help_map["write_multiply"] = {"bool","false",
         "Write multiply raster.",
-        "Output file: <write_fname>_multiply.",
+        "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_multiply.",
         "Selected outputs", "switch", ""};
 
     bool_default_map["write_ratio"] = false;
     help_map["write_ratio"] = {"bool","false",
         "Write ratio raster (first / second).",
-        "Output file: <write_fname>_ratio. Division by zero is set to nodata.",
+        "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_ratio. "
+        "Division by zero is set to nodata.",
         "Selected outputs", "switch", ""};
 
     bool_default_map["write_difference"] = true;
     help_map["write_difference"] = {"bool","true",
         "Write difference raster (first - second).",
-        "Output file: <write_fname>_difference.",
+        "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_difference.",
         "Selected outputs", "switch", ""};
 
     bool_default_map["write_absolute_difference"] = false;
     help_map["write_absolute_difference"] = {"bool","false",
         "Write absolute difference raster.",
-        "Output file: <write_fname>_absolute_difference, computed as "
-        "abs(first - second).",
+        "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_absolute_difference, "
+        "computed as abs(first - second).",
         "Selected outputs", "switch", ""};
 
     bool_default_map["write_first_on_overlap"] = false;
     help_map["write_first_on_overlap"] = {"bool","false",
         "Write first raster where overlap with second is valid.",
-        "Output file: <write_fname>_first_on_overlap.",
+        "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_first_on_overlap.",
         "Selected outputs", "switch", ""};
 
     bool_default_map["write_second_on_overlap"] = false;
     help_map["write_second_on_overlap"] = {"bool","false",
         "Write second raster where overlap with first is valid.",
-        "Output file: <write_fname>_second_on_overlap.",
+        "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_second_on_overlap.",
         "Selected outputs", "switch", ""};
 
     // -------------------------------------------------------------------------
@@ -336,9 +354,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (sf["second_raster_fname"].empty())
+    if (sf["second_raster_read_fname"].empty())
     {
-        std::cerr << "FATAL: second_raster_fname must be set.\n";
+        std::cerr << "FATAL: second_raster_read_fname must be set.\n";
         return 1;
     }
 
@@ -363,16 +381,18 @@ int main(int argc, char* argv[])
 
     const std::string first_raster_path = pp.get_full_read_path();
 
+    const std::filesystem::path second_read_path_obj(sf["second_raster_read_fname"]);
+
     std::string second_raster_path;
-    if (std::filesystem::path(sf["second_raster_fname"]).is_absolute())
+    if (second_read_path_obj.is_absolute())
     {
-        second_raster_path = sf["second_raster_fname"];
+        second_raster_path = sf["second_raster_read_fname"];
     }
     else
     {
-        std::string second_dir = sf["second_raster_path"].empty()
+        std::string second_dir = sf["second_raster_read_path"].empty()
             ? pp.get_read_path()
-            : sf["second_raster_path"];
+            : sf["second_raster_read_path"];
 
         if (!second_dir.empty())
         {
@@ -382,8 +402,36 @@ int main(int argc, char* argv[])
                 second_dir += '/';
             }
         }
-        second_raster_path = second_dir + sf["second_raster_fname"];
+        second_raster_path = second_dir + sf["second_raster_read_fname"];
     }
+
+    std::string second_write_fname = sf["second_raster_write_fname"];
+    if (second_write_fname.empty())
+    {
+        second_write_fname = second_read_path_obj.stem().string();
+    }
+    if (second_write_fname.empty())
+    {
+        std::cerr << "FATAL: second_raster_write_fname resolved to an empty string.\n";
+        return 1;
+    }
+
+    const std::string second_write_fname_for_products =
+        bf["enable_dem_coregistration"]
+            ? second_write_fname + "_coreg"
+            : second_write_fname;
+
+    const std::string combined_pair_stem =
+        pp.get_write_fname() + "_and_" + second_write_fname_for_products;
+
+    std::cout << "First raster output stem : " << pp.get_write_fname() << "\n";
+    std::cout << "Second raster output stem: " << second_write_fname << "\n";
+    std::cout << "Product second stem      : " << second_write_fname_for_products << "\n";
+
+    const auto make_stem_output_path = [&](const std::string& stem) -> std::string
+    {
+        return pp.get_write_path() + stem + output_ext;
+    };
 
     lsdtt::lsdtt_data_loader first_loader;
     lsdtt::lsdtt_data_loader second_loader;
@@ -432,7 +480,8 @@ int main(int argc, char* argv[])
         }
 
         const std::string aligned_second_path =
-            pp.make_output_path("_second_resampled_to_first", ".tif");
+            pp.get_write_path() + second_write_fname +
+            "_resampled_to_" + pp.get_write_fname() + ".tif";
 
         lsdtt::lsdtt_warp_options wopt;
         wopt.resampling_method = sf["resampling_method"];
@@ -472,6 +521,7 @@ int main(int argc, char* argv[])
 
         std::cout << "Resampled second raster to first raster grid using method '"
                   << sf["resampling_method"] << "'.\n";
+        std::cout << "Wrote resampled second raster: " << aligned_second_path << "\n";
     }
     else
     {
@@ -574,72 +624,103 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        if (method != lsdtt::dem_coreg_method::none)
-        {
-            lsdtt::dem_coreg_options coreg_options;
-            coreg_options.method = method;
-            coreg_options.nuth_kaab.nuth_kaab_coreg_max_iterations =
-                ifs["nuth_kaab_coreg_max_iterations"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_tolerance_horizontal_m =
-                ff["nuth_kaab_coreg_tolerance_horizontal_m"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_slope_min_degrees =
-                ff["nuth_kaab_coreg_slope_min_degrees"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_slope_max_degrees =
-                ff["nuth_kaab_coreg_slope_max_degrees"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_residual_nmad_clip =
-                ff["nuth_kaab_coreg_residual_nmad_clip"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_min_samples =
-                ifs["nuth_kaab_coreg_min_samples"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_subsample_step =
-                ifs["nuth_kaab_coreg_subsample_step"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_apply_vertical_shift =
-                bf["nuth_kaab_coreg_apply_vertical_shift"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_max_horizontal_step_m =
-                ff["nuth_kaab_coreg_max_horizontal_step_m"];
-            coreg_options.nuth_kaab.nuth_kaab_coreg_polyfit_threads =
-                ifs["nuth_kaab_coreg_polyfit_threads"];
+        lsdtt::dem_coreg_options coreg_options;
+        coreg_options.method = method;
+        coreg_options.nuth_kaab.nuth_kaab_coreg_max_iterations =
+            ifs["nuth_kaab_coreg_max_iterations"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_tolerance_horizontal_m =
+            ff["nuth_kaab_coreg_tolerance_horizontal_m"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_slope_min_degrees =
+            ff["nuth_kaab_coreg_slope_min_degrees"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_slope_max_degrees =
+            ff["nuth_kaab_coreg_slope_max_degrees"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_residual_nmad_clip =
+            ff["nuth_kaab_coreg_residual_nmad_clip"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_min_samples =
+            ifs["nuth_kaab_coreg_min_samples"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_subsample_step =
+            ifs["nuth_kaab_coreg_subsample_step"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_apply_vertical_shift =
+            bf["nuth_kaab_coreg_apply_vertical_shift"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_max_horizontal_step_m =
+            ff["nuth_kaab_coreg_max_horizontal_step_m"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_polyfit_threads =
+            ifs["nuth_kaab_coreg_polyfit_threads"];
 
-            lsdtt::dem_coreg_result coreg_result;
-            try
+        lsdtt::dem_coreg_result coreg_result;
+        try
+        {
+            coreg_result = lsdtt::dem_coregister_to_reference(
+                first_raster, second_raster, coreg_options);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error in DEM coregistration: " << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "DEM coregistration offsets [m]: dx="
+                  << coreg_result.dx_m << ", dy="
+                  << coreg_result.dy_m << ", dz="
+                  << coreg_result.dz_m << "\n";
+        std::cout << "DEM coregistration iterations: "
+                  << coreg_result.iterations_run << ", converged: "
+                  << (coreg_result.converged ? "yes" : "no") << "\n";
+
+        second_raster = std::move(coreg_result.corrected_moving);
+
+        if (bf["write_dem_coreg_diagnostics_csv"])
+        {
+            const std::string diag_path =
+                pp.get_write_path() + combined_pair_stem + "_diagnostics.csv";
+            std::ofstream diag(diag_path);
+            if (!diag)
             {
-                coreg_result = lsdtt::dem_coregister_to_reference(
-                    first_raster, second_raster, coreg_options);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "Error in DEM coregistration: " << e.what() << "\n";
+                std::cerr << "Error writing DEM coreg diagnostics CSV: cannot open "
+                          << diag_path << "\n";
                 return 1;
             }
 
-            std::cout << "DEM coregistration offsets [m]: dx="
-                      << coreg_result.dx_m << ", dy="
-                      << coreg_result.dy_m << ", dz="
-                      << coreg_result.dz_m << "\n";
-            std::cout << "DEM coregistration iterations: "
-                      << coreg_result.iterations_run << ", converged: "
-                      << (coreg_result.converged ? "yes" : "no") << "\n";
-
-            second_raster = std::move(coreg_result.corrected_moving);
-
-            if (bf["write_second_coregistered"])
+            diag << "iteration,n_samples,median_residual,nmad_residual,"
+                 << "ddx_m,ddy_m,ddz_m,cumulative_dx_m,cumulative_dy_m,cumulative_dz_m\n";
+            for (const auto& d : coreg_result.diagnostics)
             {
-                std::cout << "Writing coregistered second raster...\n";
-                lsdtt::lsdtt_data_loader coreg_writer;
-                try
-                {
-                    coreg_writer.write_full(
-                        second_raster.get_data(),
-                        second_raster.get_meta(),
-                        pp.make_output_path("_second_coregistered", output_ext),
-                        out_fmt
-                    );
-                }
-                catch (const std::exception& e)
-                {
-                    std::cerr << "Error writing coregistered second raster: "
-                              << e.what() << "\n";
-                    return 1;
-                }
+                diag << d.iteration << ","
+                     << d.n_samples << ","
+                     << d.median_residual << ","
+                     << d.nmad_residual << ","
+                     << d.ddx_m << ","
+                     << d.ddy_m << ","
+                     << d.ddz_m << ","
+                     << d.cumulative_dx_m << ","
+                     << d.cumulative_dy_m << ","
+                     << d.cumulative_dz_m << "\n";
+            }
+            std::cout << "Wrote DEM coreg diagnostics CSV: " << diag_path << "\n";
+        }
+
+        if (bf["write_second_coregistered"])
+        {
+            std::cout << "Writing coregistered second raster...\n";
+            lsdtt::lsdtt_data_loader coreg_writer;
+            try
+            {
+                const std::string coreg_out_path = make_stem_output_path(
+                    second_write_fname + "_coregistered_to_" + pp.get_write_fname());
+                coreg_writer.write_full(
+                    second_raster.get_data(),
+                    second_raster.get_meta(),
+                    coreg_out_path,
+                    out_fmt
+                );
+                std::cout << "Wrote coregistered second raster: "
+                          << coreg_out_path << "\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Error writing coregistered second raster: "
+                          << e.what() << "\n";
+                return 1;
             }
         }
     }
@@ -700,9 +781,9 @@ int main(int argc, char* argv[])
     std::cout << "\n--- Write requested outputs ---\n";
 
     const auto write_raster = [&](const lsdtt::lsdtt_raster_cpu& raster,
-                                  const std::string& suffix) -> bool
+                                  const std::string& output_stem) -> bool
     {
-        const std::string out_path = pp.make_output_path(suffix, output_ext);
+        const std::string out_path = make_stem_output_path(output_stem);
         std::cout << "Writing " << out_path << "\n";
         try
         {
@@ -715,7 +796,7 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Error writing output " << suffix << ": "
+            std::cerr << "Error writing output " << output_stem << ": "
                       << e.what() << "\n";
             return false;
         }
@@ -725,7 +806,7 @@ int main(int argc, char* argv[])
     if (bf["write_overlap_mask"])
     {
         std::cout << "Preparing overlap mask raster...\n";
-        if (!write_raster(overlap_raster, "_overlap_mask")) return 1;
+        if (!write_raster(overlap_raster, combined_pair_stem + "_overlap_mask")) return 1;
     }
 
     if (bf["write_sum"])
@@ -733,7 +814,7 @@ int main(int argc, char* argv[])
         std::cout << "Preparing sum raster...\n";
         const lsdtt::lsdtt_raster_cpu sum_raster =
             lsdtt::algebra::raster_add(first_raster, second_raster);
-        if (!write_raster(sum_raster, "_sum")) return 1;
+        if (!write_raster(sum_raster, combined_pair_stem + "_sum")) return 1;
     }
 
     if (bf["write_multiply"])
@@ -741,7 +822,7 @@ int main(int argc, char* argv[])
         std::cout << "Preparing multiply raster...\n";
         const lsdtt::lsdtt_raster_cpu multiply_raster =
             lsdtt::algebra::raster_multiply(first_raster, second_raster);
-        if (!write_raster(multiply_raster, "_multiply")) return 1;
+        if (!write_raster(multiply_raster, combined_pair_stem + "_multiply")) return 1;
     }
 
     if (bf["write_ratio"])
@@ -749,7 +830,7 @@ int main(int argc, char* argv[])
         std::cout << "Preparing ratio raster...\n";
         const lsdtt::lsdtt_raster_cpu ratio_raster =
             lsdtt::algebra::raster_divide(first_raster, second_raster);
-        if (!write_raster(ratio_raster, "_ratio")) return 1;
+        if (!write_raster(ratio_raster, combined_pair_stem + "_ratio")) return 1;
     }
 
     if (bf["write_difference"])
@@ -757,7 +838,7 @@ int main(int argc, char* argv[])
         std::cout << "Preparing difference raster...\n";
         const lsdtt::lsdtt_raster_cpu difference_raster =
             lsdtt::algebra::raster_subtract(first_raster, second_raster);
-        if (!write_raster(difference_raster, "_difference")) return 1;
+        if (!write_raster(difference_raster, combined_pair_stem + "_difference")) return 1;
     }
 
     if (bf["write_absolute_difference"])
@@ -767,7 +848,7 @@ int main(int argc, char* argv[])
             lsdtt::algebra::raster_subtract(first_raster, second_raster);
         const lsdtt::lsdtt_raster_cpu abs_difference_raster =
             lsdtt::algebra::raster_abs(difference_raster);
-        if (!write_raster(abs_difference_raster, "_absolute_difference")) return 1;
+        if (!write_raster(abs_difference_raster, combined_pair_stem + "_absolute_difference")) return 1;
     }
 
     if (bf["write_first_on_overlap"])
@@ -775,7 +856,7 @@ int main(int argc, char* argv[])
         std::cout << "Preparing first-on-overlap raster...\n";
         const lsdtt::lsdtt_raster_cpu first_on_overlap =
             lsdtt::algebra::raster_mask_by_binary_keep(first_raster, overlap_raster);
-        if (!write_raster(first_on_overlap, "_first_on_overlap")) return 1;
+        if (!write_raster(first_on_overlap, combined_pair_stem + "_first_on_overlap")) return 1;
     }
 
     if (bf["write_second_on_overlap"])
@@ -783,7 +864,7 @@ int main(int argc, char* argv[])
         std::cout << "Preparing second-on-overlap raster...\n";
         const lsdtt::lsdtt_raster_cpu second_on_overlap =
             lsdtt::algebra::raster_mask_by_binary_keep(second_raster, overlap_raster);
-        if (!write_raster(second_on_overlap, "_second_on_overlap")) return 1;
+        if (!write_raster(second_on_overlap, combined_pair_stem + "_second_on_overlap")) return 1;
     }
 
     // -------------------------------------------------------------------------

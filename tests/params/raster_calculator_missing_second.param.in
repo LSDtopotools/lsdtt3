@@ -3,6 +3,6 @@ read_fname: tiny_dem.asc
 write_path: __WRITE_PATH__
 write_fname: tiny_missing_second
 
-second_raster_fname:
+second_raster_read_fname:
 write_output_format: gtiff
 write_difference: true
