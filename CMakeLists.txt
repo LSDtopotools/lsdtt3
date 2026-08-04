@@ -358,6 +358,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_landslide_crn_cpu.cpp
     src/cpu/lsdtt_step_change_cpu.cpp
     src/cpu/lsdtt_quartz_fertility_cpu.cpp
+    src/cpu/lsdtt_niemi_ensemble_cpu.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
     src/cpu/lsdtt_vector_ops_cpu.cpp
     src/cpu/lsdtt_vector_line_repair_cpu.cpp

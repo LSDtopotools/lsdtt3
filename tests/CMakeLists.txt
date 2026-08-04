@@ -122,7 +122,7 @@ add_lsdtt_cli_smoke_test(
     smoke_raster_calculator_difference
     lsdtt-raster-calculator
     raster_calculator_difference.param.in
-    tiny_difference.tif
+    tiny_and_tiny_dem_plus1_difference.tif
 )
 
 add_lsdtt_cli_smoke_test(
@@ -412,8 +412,8 @@ add_lsdtt_cli_smoke_test(
     rigorous_raster_calculator_difference_checksum
     lsdtt-raster-calculator
     raster_calculator_difference.param.in
-    tiny_difference.tif
-    --expect-raster-checksum tiny_difference.tif:65511
+    tiny_and_tiny_dem_plus1_difference.tif
+    --expect-raster-checksum tiny_and_tiny_dem_plus1_difference.tif:65511
 )
 
 add_lsdtt_cli_smoke_test(
@@ -601,6 +601,11 @@ target_link_libraries(lsdtt-test-step-change PRIVATE lsdtt3_cpu)
 # Synthetic only -- no DEM, no network.
 add_executable(lsdtt-test-landslide-size cpp/test_landslide_size.cpp)
 target_link_libraries(lsdtt-test-landslide-size PRIVATE lsdtt3_cpu)
+
+# Reproducing Niemi et al. (2005): the ensemble of basin samples, the
+# apparent-versus-true erosion rate, and the area dependence of the scatter.
+add_executable(lsdtt-test-niemi-ensemble cpp/test_niemi_ensemble.cpp)
+target_link_libraries(lsdtt-test-niemi-ensemble PRIVATE lsdtt3_cpu)
 
 # Quartz fertility as a mixing weight, and the ice mask that shares its
 # machinery. Synthetic rasters only.
@@ -1080,6 +1085,18 @@ add_test(NAME unit_landslide_size
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
 set_tests_properties(unit_landslide_size PROPERTIES LABELS "unit;landslide")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+
+# Niemi ensemble N1-N6. The CONTROL (N1) is the one that matters most: with no
+# landslides the inversion must return the imposed rate, or nothing else here
+# means anything. Emits niemi_basins.csv, niemi_area_bins.csv, niemi_ensemble.csv.
+# Its OWN output directory: sharing landslide_test_output with the other
+# landslide tests lets them race on the CSVs under `ctest -j`.
+add_test(NAME unit_niemi_ensemble
+         COMMAND lsdtt-test-niemi-ensemble
+                 ${CMAKE_CURRENT_BINARY_DIR}/niemi_test_output)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/niemi_test_output)
+set_tests_properties(unit_niemi_ensemble PROPERTIES
+    LABELS "unit;cosmo;landslide" TIMEOUT 1800)
 
 # Quartz fertility Q1-Q6 and the ice mask I1-I3. Pins the case that makes
 # fertility a correctness issue rather than a refinement: a quartz-free unit
@@ -1645,6 +1662,7 @@ set_tests_properties(cosmo_realworld_lsdn_pixel_vs_lumped PROPERTIES
 # =============================================================================
 
 set(LSDTT_DOMAIN_RULES
+    "niemi"                  "cosmo"
     "quartz|fertility"       "quartz"
     "cosmo"                  "cosmo"
     "landslide"              "landslide"
