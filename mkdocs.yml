@@ -73,6 +73,7 @@ nav:
     - Tidal / marsh:
       - Marsh topography: cli_reference/cli_reference_lsdtt_marsh_topography.md
     - Cosmogenic nuclides:
+      - Cosmogenic nuclides in lsdtt3: cosmogenic_nuclides.md
       - Cosmo tool: cli_reference/cli_reference_lsdtt_cosmo_tool.md
       - Cosmo prediction: cli_reference/cli_reference_lsdtt_cosmo_prediction.md
       - Cosmo column tool: cli_reference/cli_reference_lsdtt_cosmo_column_tool.md

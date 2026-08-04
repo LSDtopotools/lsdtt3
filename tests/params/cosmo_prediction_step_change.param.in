@@ -1,0 +1,18 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: scgen
+
+# Generate the erosion-rate / time-since-change / topography fields from the
+# analytical fluvial solution rather than loading them, then feed the generated
+# time-since-change straight into the step-change concentration kernel.
+make_step_change_rasters: true
+step_change_uplift_old_m_yr: 0.0001
+step_change_uplift_new_m_yr: 0.0005
+step_change_target_relief_m: 400
+step_change_age_yr: 1000000
+step_change_n: 1.0
+step_change_channel_pixels: 2
+write_step_change_rasters: true
+
+calculate_step_change_crn_concentration_raster: true

@@ -75,6 +75,84 @@ ctest --test-dir build -L unit --output-on-failure
 ctest --test-dir build -L flow --output-on-failure
 ```
 
+### Compartments: run what your change can affect
+
+Running the whole suite after every edit is wasteful. Most tests cannot be
+affected by a given change, and a few are heavy enough to dominate the clock.
+So every test carries **two orthogonal kinds of label**: a *kind*
+(`unit` / `smoke` / `rigorous` / `failure`) and a **domain** saying which part of
+the codebase it exercises. The expensive ones additionally carry `heavy`.
+
+| Domain | Tests | Covers |
+|---|---|---|
+| `cosmo` | 29 | cosmogenic physics, the three cosmo CLIs, CRONUS comparisons |
+| `fetch` | 24 | DEM fetching, offline logic by default |
+| `network` | 14 | chi, channels, drainage, basins, flow properties |
+| `divide_migration` | 11 | divide migration |
+| `raster` | 11 | preprocessing, filling, nodata, the raster calculator |
+| `landslide` | 8 | the triggered-landslide module |
+| `surface_metrics` | 5 | slope, curvature, SMAP, MADk2 |
+| `hillslope` | 3 | the implicit hillslope solver, wherever it is driven from |
+| `hydraulic` | 3 | hydraulic routing |
+| `lem` | 2 | landscape evolution |
+| `step_change` | 2 | the analytical step-change raster generator |
+| `core` | 2 | parameter parsing, credential handling |
+
+The intended inner loop:
+
+```sh
+ctest --test-dir build -L cosmo -LE heavy     # I changed cosmogenic code
+ctest --test-dir build -L network -LE heavy   # I changed routing / chi / basins
+ctest --test-dir build -LE heavy              # everything cheap
+ctest --test-dir build                        # everything, before committing
+```
+
+Measured 2026-08-04 on an 8-core machine, `-j4`:
+
+| Run | Tests | Wall |
+|---|---|---|
+| `-L step_change -LE heavy` | 2 | 1.5 s |
+| `-L cosmo -LE heavy` | 21 | 34 s |
+| `-LE heavy` | 93 | 71 s |
+| full suite | 103 | ~30 min |
+
+So the cheap tier is **~25x faster than the full suite** and still covers 93 of
+the 103 tests. Nothing is lost by using it in the inner loop as long as the full
+suite runs before a commit.
+
+#### What is `heavy`, and why `RUN_SERIAL` matters
+
+`heavy` is `unit_hillslope_implicit`, `smoke_lem_roering_implicit_strip`, and
+the eight `cosmo_realworld_*` tiers. The first two **saturate every core** — the
+implicit hillslope test takes 9 min 24 s wall for 73 min of CPU, a parallelism
+of 7.8 on 8 cores.
+
+Both are marked `RUN_SERIAL`. This is not a nicety. Under `ctest -j4` a test
+that wants 8 threads and gets 2 does not merely run slower, it can be starved
+past its timeout: `unit_hillslope_implicit` "failed" at CTest's default 1500 s
+ceiling while passing in 9 minutes when given the machine to itself. A timeout
+under `-j` is a scheduling result, not a defect — check for `RUN_SERIAL` before
+investigating one as a bug.
+
+#### The domain label is derived, and an unclassified test is a configure error
+
+Domains are derived from the **test name** by a rule table at the foot of
+`tests/CMakeLists.txt`, rather than declared at each of the hundred-odd call
+sites, so there is one table to read and one place to change. A test whose name
+matches no rule **fails the CMake configure step** with a message naming it.
+
+That guard is the point: without it, a newly added test silently belongs to no
+compartment and stops being run by anyone working on that subsystem — which is
+worse than no compartmentalisation at all, because the compartment run looks
+green. When you add a subsystem, add a rule.
+
+#### Do not build while a suite is running
+
+The build replaces binaries the running tests are about to exec, and on Linux
+that surfaces as `[Errno 26] Text file busy` inside whichever test was unlucky.
+It looks exactly like a real failure. `rigorous_cosmo_cli_bridge` reported
+21 of 35 checks failing that way once, entirely because of a concurrent rebuild.
+
 Opt-in tiers, each behind its own CMake option so enabling one does not drag in
 the others. **All three default to `OFF`**:
 
@@ -1252,8 +1330,14 @@ given basin there are three quantities:
 - **(a) the per-pixel LSDn basin mean — this is the product**, what the tool
   actually returns;
 - **(b) LSDn evaluated once** at the basin's published centre latitude and
-  pressure — what OCTOPUS and RIVERSAND do;
+  pressure — how OCTOPUS's **LSDn-equivalent comparison rate** is produced, and
+  how RIVERSAND works generally;
 - **(c) the published LSDn rate** itself.
+
+> Scope, because this is easy to over-read: (b) describes OCTOPUS's **LSDn**
+> column only. OCTOPUS's headline erosion rates are computed **per pixel using
+> CAIRN**, in the same spatially distributed way lsdtt3 computes them, and the
+> per-pixel-versus-lumped term below does not apply to them.
 
 Comparing **(b) against (c) validates the scaling kernel** and needs no DEM at
 all. Comparing **(a) against (b) is a scientific result, not an error term** — it

@@ -590,6 +590,12 @@ set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
 target_link_libraries(lsdtt-test-cosmo-physics PRIVATE lsdtt3_cpu)
 
+# Analytical step-change rasters: the Royden & Perron / Mitchell & Yanites
+# transient solution in chi, plus the imposed critical-slope hillslopes.
+# Synthetic ridge-and-valley fixture, no network, no external data.
+add_executable(lsdtt-test-step-change cpp/test_step_change.cpp)
+target_link_libraries(lsdtt-test-step-change PRIVATE lsdtt3_cpu)
+
 # Landslide size distribution (plan Phase 0): the imposed magnitude-frequency
 # distribution and the area-volume scaling, with no landscape involved.
 # Synthetic only -- no DEM, no network.
@@ -1044,6 +1050,17 @@ endif()
 # Arguments: output dir, Stone sentinel, LSDn sentinel (a SEPARATE file with its
 # own gated regeneration flag; plan Sec3b), and the tests/data fixture dir (the
 # pre-LSDn crn_parameters.nc used by L5).
+# Step-change rasters. Checks the analytic algebra (ksn, celerity, knickpoint
+# position, the A_0 dependence) and then the rasters themselves: time-since-change
+# equals the step age at the outlet and falls to zero at the knickpoint, erosion
+# rates split old/new across it, the chi profile is piecewise linear, and n < 1
+# produces a rarefaction fan. Emits step_change_profiles.csv.
+add_test(NAME unit_step_change
+         COMMAND lsdtt-test-step-change
+                 ${CMAKE_CURRENT_BINARY_DIR}/step_change_test_output)
+set_tests_properties(unit_step_change PROPERTIES LABELS "unit;step_change")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/step_change_test_output)
+
 # Landslide size distribution T1-T5b. Emits landslide_truncation.csv, which
 # tabulates how much of the distribution the A_max cutoff removes by number and
 # by volume (plan Sec 2.5).
@@ -1350,6 +1367,34 @@ set_tests_properties(smoke_divide_migration_help PROPERTIES
     LABELS "smoke;cli"
     PASS_REGULAR_EXPRESSION "basin_outlet_file")
 
+# Generate the step change from the analytical fluvial solution and feed the
+# generated time-since-change field straight into the concentration kernel.
+# Checks that the derived K is reported (it is back-calculated, so the whole
+# configuration hangs off it) and that the tag raster is written.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_step_change
+    lsdtt-cosmo-prediction
+    cosmo_prediction_step_change.param.in
+    scgen_Be10_step_crn_conc.tif
+    --stdout-contains "K (back-calculated)"
+    --stdout-contains "wave form"
+    --expect scgen_SC_STEPTIME.tif
+    --expect scgen_SC_TAG.tif
+)
+
+# The generated time-since-change field is consumed in memory. This asserts
+# that route agrees with writing it to disk and reading it back in a second
+# run -- the workflow the legacy tool forced. See the script header for why the
+# comparison is a checksum plus a 1e-6 statistics tolerance rather than bitwise.
+add_test(NAME regression_step_change_disk_roundtrip
+         COMMAND ${Python3_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_step_change_roundtrip.py
+                 --exe $<TARGET_FILE:lsdtt-cosmo-prediction>
+                 --data-dir ${LSDTT_TEST_DATA_DIR}
+                 --work-dir ${CMAKE_CURRENT_BINARY_DIR}/step_change_roundtrip)
+set_tests_properties(regression_step_change_disk_roundtrip PROPERTIES
+    LABELS "cli;cosmo;step_change")
+
 add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
 set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
     LABELS "smoke;cli;cosmo"
@@ -1533,3 +1578,131 @@ add_test(NAME cosmo_realworld_lsdn_pixel_vs_lumped
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
 set_tests_properties(cosmo_realworld_lsdn_pixel_vs_lumped PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 3600)
+
+# =============================================================================
+# COMPARTMENTALISATION: domain and cost labels
+#
+# Running all 100+ tests after every change is wasteful: most of them cannot be
+# affected by a given edit, and a handful are computationally heavy enough to
+# dominate the wall clock (the implicit hillslope solver saturates every core
+# for ~9 minutes on its own; the real-world cosmogenic tiers take longer still).
+#
+# So every test carries a DOMAIN label saying which part of the codebase it
+# exercises, and the expensive ones carry a COST label so they can be excluded.
+# The intended workflow:
+#
+#   ctest -L cosmo -LE heavy      # I changed cosmogenic code
+#   ctest -L network -LE heavy    # I changed flow routing / chi / basins
+#   ctest -LE heavy               # everything cheap; the normal inner loop
+#   ctest                         # everything; before a commit
+#
+# The domain is derived from the TEST NAME rather than declared at each of the
+# hundred-odd call sites, so there is one table to read and one place to change.
+# A test whose name matches no rule is a CONFIGURE ERROR, not a silently
+# unlabelled test -- that is what stops the scheme rotting as tests are added.
+#
+# DOMAIN RULES, first match wins. Add a rule here when you add a subsystem.
+# =============================================================================
+
+set(LSDTT_DOMAIN_RULES
+    "cosmo"                  "cosmo"
+    "landslide"              "landslide"
+    "step_change"            "step_change"
+    "divide_migration"       "divide_migration"
+    "fetch"                  "fetch"
+    "hydraulic"              "hydraulic"
+    "surface_metrics"        "surface_metrics"
+    "hillslope"              "hillslope"
+    "lem"                    "lem"
+    "chi|channel|drainage|basin|flow_properties"          "network"
+    "raster|nodata|fill|tif|coastal|dem_grouping"         "raster"
+    "param|secret"           "core"
+)
+
+# COST: tests that are expensive enough to keep out of the inner loop. Measured
+# 2026-08-04 on an 8-core machine; the figure is wall-clock when the test has
+# the machine to itself.
+#
+#   unit_hillslope_implicit         ~9 min, saturates all 8 cores
+#   smoke_lem_roering_implicit_strip ~5 min, likewise
+#   cosmo_realworld_*                67 s to 30 min, and most need the network
+set(LSDTT_HEAVY_TESTS
+    unit_hillslope_implicit
+    smoke_lem_roering_implicit_strip
+    cosmo_realworld_clapp2002
+    cosmo_realworld_clapp2002_lsdn
+    cosmo_realworld_dethier2014
+    cosmo_realworld_dethier2014_lsdn
+    cosmo_realworld_dibiase2010
+    cosmo_realworld_dibiase2010_lsdn
+    cosmo_realworld_lsdn_pixel_vs_lumped
+    cosmo_realworld_production_isolation
+)
+
+# Tests that use every core they can get. Under `ctest -j` these must not share
+# the machine: doing so does not merely slow them, it starves them past their
+# timeout, which is how unit_hillslope_implicit came to "fail" at 1500 s while
+# taking 9 minutes when run alone.
+set(LSDTT_SERIAL_TESTS
+    unit_hillslope_implicit
+    smoke_lem_roering_implicit_strip
+)
+
+get_property(_lsdtt_tests DIRECTORY PROPERTY TESTS)
+set(_lsdtt_unclassified "")
+
+foreach(_test IN LISTS _lsdtt_tests)
+    set(_domains "")
+    list(LENGTH LSDTT_DOMAIN_RULES _n_rules)
+    math(EXPR _last "${_n_rules} - 1")
+    foreach(_i RANGE 0 ${_last} 2)
+        if(_domains STREQUAL "")
+            list(GET LSDTT_DOMAIN_RULES ${_i} _pattern)
+            math(EXPR _j "${_i} + 1")
+            list(GET LSDTT_DOMAIN_RULES ${_j} _domain)
+            if(_test MATCHES "${_pattern}")
+                set(_domains "${_domain}")
+            endif()
+        endif()
+    endforeach()
+
+    if(_domains STREQUAL "")
+        list(APPEND _lsdtt_unclassified "${_test}")
+        continue()
+    endif()
+
+    # The implicit solvers are hillslope physics wherever they are driven from,
+    # so an LEM test that runs one belongs to both compartments.
+    if(_test MATCHES "roering|implicit" AND NOT _domains STREQUAL "hillslope")
+        list(APPEND _domains "hillslope")
+    endif()
+
+    if("${_test}" IN_LIST LSDTT_HEAVY_TESTS)
+        list(APPEND _domains "heavy")
+    endif()
+
+    get_test_property(${_test} LABELS _existing)
+    if(_existing)
+        list(APPEND _domains ${_existing})
+    endif()
+    list(REMOVE_DUPLICATES _domains)
+    set_tests_properties(${_test} PROPERTIES LABELS "${_domains}")
+
+    if("${_test}" IN_LIST LSDTT_SERIAL_TESTS)
+        set_tests_properties(${_test} PROPERTIES RUN_SERIAL TRUE)
+        get_test_property(${_test} TIMEOUT _has_timeout)
+        if(NOT _has_timeout)
+            set_tests_properties(${_test} PROPERTIES TIMEOUT 3600)
+        endif()
+    endif()
+endforeach()
+
+if(NOT _lsdtt_unclassified STREQUAL "")
+    string(REPLACE ";" "\n    " _pretty "${_lsdtt_unclassified}")
+    message(FATAL_ERROR
+        "These tests match no domain rule and would be unreachable by a "
+        "compartment run:\n    ${_pretty}\n"
+        "Add a rule to LSDTT_DOMAIN_RULES above, or rename the test so it "
+        "carries its subsystem in the name. Do not leave a test unlabelled -- "
+        "it will silently stop being run by anyone working on that subsystem.")
+endif()

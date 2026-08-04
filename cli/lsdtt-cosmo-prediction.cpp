@@ -62,6 +62,7 @@
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_step_change_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
 
 static const std::string k_version  = "0.2.0";
@@ -358,6 +359,135 @@ int main(int argc, char* argv[])
         "New (post-change) effective erosion rate for step change calculation (g/cm2/yr).","",
         "Step change parameters", "param", ""};
 
+    // --- Generate the step change from a fluvial solution -------------------
+    bool_default_map["make_step_change_rasters"] = false;
+    help_map["make_step_change_rasters"] = {"bool","false",
+        "Generate the erosion-rate, time-since-change and topography rasters "
+        "from an analytical step change in uplift, instead of loading them.",
+        "The time-since-change field is not a free input: it is the arrival "
+        "time of the incision wave, from the detachment-limited stream-power "
+        "solution in chi (Royden & Perron 2013; Mitchell & Yanites 2019). The "
+        "generated rasters feed the step-change concentration modes IN MEMORY, "
+        "so no round trip through disk is needed. K is back-calculated from "
+        "step_change_target_relief_m and is echoed at run time -- read it. The "
+        "generated fields cover ONE basin, so the concentration output is "
+        "restricted to that basin.",
+        "Generate the step change", "switch", ""};
+
+    float_default_map["step_change_uplift_old_m_yr"] = 1.0e-4f;
+    help_map["step_change_uplift_old_m_yr"] = {"float","0.0001",
+        "Uplift (= steady erosion) rate before the step, in METRES per year.",
+        "Metres per year, not mm/yr. Converted to an effective erosion rate "
+        "with rock_density_kg_m3, and that conversion OVERRIDES "
+        "step_change_eff_erate_old_g_cm2_yr when make_step_change_rasters is on.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_uplift_new_m_yr"] = 1.0e-3f;
+    help_map["step_change_uplift_new_m_yr"] = {"float","0.001",
+        "Uplift rate after the step, in METRES per year.",
+        "Overrides step_change_eff_erate_new_g_cm2_yr as above.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_target_relief_m"] = 1000.0f;
+    help_map["step_change_target_relief_m"] = {"float","1000",
+        "Relief the OLD steady-state landscape should have (m). K is "
+        "back-calculated from it.",
+        "This is how a user without a calibrated K gets a landscape of the "
+        "right size. Everything else -- knickpoint position, wave celerity, the "
+        "whole time-since-change field -- follows from the K it implies, so the "
+        "derived K is printed and should be reported.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_age_yr"] = 1.0e5f;
+    help_map["step_change_age_yr"] = {"float","100000",
+        "Time since the step change reached the basin outlet (yr).",
+        "Every pixel gets its own, smaller, time since the wave reached IT.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_n"] = 1.0f;
+    help_map["step_change_n"] = {"float","1",
+        "Slope exponent n in E = K A^m S^n.",
+        "n >= 1 with rising uplift gives a migrating knickpoint (a shock); "
+        "n < 1 gives a rarefaction fan in which the erosion rate varies "
+        "continuously between the old and new values. A FALLING step swaps the "
+        "two, which is handled. n = 1 is the classical case.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_m_over_n"] = 0.45f;
+    help_map["step_change_m_over_n"] = {"float","0.45",
+        "Concavity m/n used for the chi integral.","",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_A_0"] = 1.0f;
+    help_map["step_change_A_0"] = {"float","1",
+        "Reference drainage area for the chi integral (m2).",
+        "Any positive value is handled exactly; the A_0 dependence is carried "
+        "through the steepness and the wave celerity rather than assumed away.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    int_default_map["step_change_channel_pixels"] = 500;
+    help_map["step_change_channel_pixels"] = {"int","500",
+        "Contributing-pixel count above which a pixel is a channel.",
+        "Below it the pixel is a hillslope and is given a critical gradient "
+        "instead of the fluvial solution. Hillslopes inherit the erosion rate "
+        "and time-since-change of the channel they drain to.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_Sc_old"] = 0.25f;
+    help_map["step_change_Sc_old"] = {"float","0.25",
+        "Critical hillslope gradient in the unadjusted part of the landscape.","",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["step_change_Sc_new"] = 0.40f;
+    help_map["step_change_Sc_new"] = {"float","0.4",
+        "Critical hillslope gradient in the adjusted part of the landscape.","",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    string_default_map["step_change_basin_outlet_csv"] = "NULL";
+    help_map["step_change_basin_outlet_csv"] = {"string","NULL",
+        "CSV of latitude,longitude giving the basin outlet to model.",
+        "The first point is used and any others ignored. It is snapped to the "
+        "channel network using threshold_contributing_pixels and "
+        "snap_search_radius_pixels. If NULL the largest basin in the DEM is "
+        "used.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    float_default_map["rock_density_kg_m3"] = 2650.0f;
+    help_map["rock_density_kg_m3"] = {"float","2650",
+        "Rock density (kg/m3) converting the generated uplift rates (m/yr) to "
+        "effective erosion rates (g/cm2/yr).",
+        "eff = rate_m_yr * rho_kg_m3 * 0.1. Matches lsdtt-cosmo-tool's "
+        "parameter of the same name. Distinct from "
+        "transient_rock_density_kg_m3, which belongs to the erosion-history "
+        "file read by calculate_multi_isotope_transient.",
+        "Generate the step change", "param", "make_step_change_rasters"};
+
+    bool_default_map["step_change_production_from_generated_dem"] = true;
+    help_map["step_change_production_from_generated_dem"] = {"bool","true",
+        "Compute the production raster from the GENERATED topography rather "
+        "than the input DEM.",
+        "On by default because the generated surface is the landscape the "
+        "scenario describes: using the real DEM's elevations with the "
+        "scenario's erosion rates mixes two landscapes, and production depends "
+        "on elevation through pressure. The generated surface is offset so its "
+        "outlet sits at the input DEM's outlet elevation, keeping the base "
+        "level real. Set false to reproduce the legacy behaviour, which built "
+        "production from the input DEM.",
+        "Generate the step change", "switch", "make_step_change_rasters"};
+
+    bool_default_map["write_step_change_rasters"] = false;
+    help_map["write_step_change_rasters"] = {"bool","false",
+        "Write the generated topography, erosion rate, time-since-change, tag "
+        "and chi rasters.",
+        "Files: <write_fname>_SC_DEM, _SC_ERATE, _SC_STEPTIME, _SC_TAG, _SC_CHI. "
+        "The tag raster is 1 = unadjusted channel, 2 = unadjusted hillslope, "
+        "3 = adjusted channel, 4 = adjusted hillslope, 5/6 = the same inside a "
+        "rarefaction fan. USE THE TAG RASTER, not chi, to ask whether a pixel "
+        "has been rejuvenated: a hillslope always has a larger chi than the "
+        "channel it drains to, so an adjusted hillslope legitimately sits above "
+        "the knickpoint in chi.",
+        "Generate the step change", "switch", "make_step_change_rasters"};
+
     string_default_map["time_since_change_raster_prefix"] = "NULL";
     help_map["time_since_change_raster_prefix"] = {"string","NULL",
         "Prefix of raster giving years since the step change at each pixel.",
@@ -531,8 +661,20 @@ int main(int argc, char* argv[])
     const bool do_multi     = bf["calculate_multi_isotope_step_change"];
     const bool do_multi_tr  = bf["calculate_multi_isotope_transient"];
     const bool do_sample    = (sf["sample_points_filename"] != "NULL");
+    const bool do_make_step = bf["make_step_change_rasters"];
 
-    if (!do_ss_conc && !do_step_conc && !do_accum && !do_multi && !do_multi_tr)
+    if (do_make_step && !do_step_conc && !do_multi && !do_accum)
+    {
+        std::cout << "Note: make_step_change_rasters is on but no mode consumes "
+                     "the generated\n      time-since-change raster. Set "
+                     "calculate_step_change_crn_concentration_raster\n      or "
+                     "calculate_multi_isotope_step_change, or use "
+                     "write_step_change_rasters\n      to keep the generated "
+                     "fields.\n";
+    }
+
+    if (!do_ss_conc && !do_step_conc && !do_accum && !do_multi && !do_multi_tr
+        && !do_make_step)
     {
         std::cout << "No prediction mode activated.  Set one of:\n"
                   << "  calculate_crn_concentration_raster: true\n"
@@ -574,6 +716,196 @@ int main(int argc, char* argv[])
     dem.get_meta().check_projected_metres();
     std::cout << "DEM loaded: " << dem.get_meta().n_rows << " rows x "
               << dem.get_meta().n_cols << " cols.\n";
+
+    // -------------------------------------------------------------------------
+    // Generate the step change
+    //
+    // Runs before the production raster because it can supply the topography
+    // that production is computed from. The generated erosion-rate and
+    // time-since-change rasters are handed to the step-change kernels in
+    // memory; nothing round-trips through disk.
+    // -------------------------------------------------------------------------
+    bool have_generated_step = false;
+    lsdtt::lsdtt_raster_cpu sc_time_since_change;
+    lsdtt::lsdtt_raster_cpu sc_erosion_rate;
+    double sc_eff_erate_old = 0.0;
+    double sc_eff_erate_new = 0.0;
+
+    if (do_make_step)
+    {
+        std::cout << "\nGenerating step-change rasters from the fluvial "
+                     "solution...\n";
+
+        lsdtt::lsdtt_raster_cpu dem_for_sc = dem;
+        if (bf["fill_before_routing"])
+        {
+            std::cout << "  Filling pits (min_slope = "
+                      << ff["min_slope_for_fill"] << ")...\n";
+            dem_for_sc = lsdtt::fill_pits(
+                dem, static_cast<float>(ff["min_slope_for_fill"]));
+        }
+
+        lsdtt::lsdtt_flowinfo_options sc_flow_opts;
+        sc_flow_opts.boundary_conditions    = sf["boundary_conditions"];
+        sc_flow_opts.build_topological_order = true;
+        sc_flow_opts.build_s_vector          = true;   // the solution walks the stack
+
+        std::unique_ptr<lsdtt::lsdtt_flow_base> sc_flow_ptr =
+            lsdtt::make_flow_base(dem_for_sc.get_data_array(),
+                                  dem_for_sc.get_mask_array(),
+                                  dem_for_sc.get_meta(), sc_flow_opts);
+        const lsdtt::lsdtt_flow_base& sc_flow = *sc_flow_ptr;
+
+        // Outlet: a supplied point snapped to the channel network, or the
+        // largest basin in the DEM.
+        std::int64_t outlet_flat = -1;
+        if (sf["step_change_basin_outlet_csv"] != "NULL")
+        {
+            const std::string outlet_path =
+                pp.add_read_path_if_needed(sf["step_change_basin_outlet_csv"]);
+            std::cout << "  Basin outlet from: " << outlet_path << "\n";
+
+            std::vector<lsdtt::lsdtt_input_point> pts;
+            try
+            {
+                pts = lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
+                    outlet_path, dem_for_sc.get_meta());
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: could not read the basin outlet CSV: "
+                          << e.what() << "\n";
+                return 1;
+            }
+            if (pts.empty() ||
+                pts.front().status != lsdtt::lsdtt_point_input_status::success)
+            {
+                std::cerr << "FATAL: step_change_basin_outlet_csv has no point "
+                             "inside the DEM.\n";
+                return 1;
+            }
+            if (pts.size() > 1)
+                std::cout << "  Note: " << pts.size()
+                          << " points supplied; using the first and ignoring "
+                             "the rest.\n";
+
+            lsdtt::lsdtt_square_snap_options snap_opts;
+            snap_opts.contributing_pixels_threshold =
+                static_cast<std::uint64_t>(ifs["threshold_contributing_pixels"]);
+            snap_opts.max_search_radius_pixels = ifs["snap_search_radius_pixels"];
+            snap_opts.min_search_radius_pixels = 1;
+
+            const lsdtt::lsdtt_snap_result snapped =
+                lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
+                    sc_flow, pts.front().row, pts.front().col, snap_opts);
+            if (snapped.status != lsdtt::lsdtt_snap_status::success)
+            {
+                std::cerr << "FATAL: the basin outlet could not be snapped to a "
+                             "channel with >= "
+                          << ifs["threshold_contributing_pixels"]
+                          << " contributing pixels.\n";
+                return 1;
+            }
+            outlet_flat = sc_flow.flat_index(snapped.snapped_row,
+                                             snapped.snapped_col);
+        }
+        else
+        {
+            try
+            {
+                outlet_flat = lsdtt::get_largest_basin_outlet_flat(sc_flow);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: could not find a basin outlet: "
+                          << e.what() << "\n";
+                return 1;
+            }
+            std::cout << "  No outlet CSV supplied; using the largest basin.\n";
+        }
+
+        lsdtt::StepChangeConfig sc_cfg;
+        sc_cfg.uplift_old_m_yr     = static_cast<double>(ff["step_change_uplift_old_m_yr"]);
+        sc_cfg.uplift_new_m_yr     = static_cast<double>(ff["step_change_uplift_new_m_yr"]);
+        sc_cfg.target_relief_old_m = static_cast<double>(ff["step_change_target_relief_m"]);
+        sc_cfg.step_age_yr         = static_cast<double>(ff["step_change_age_yr"]);
+        sc_cfg.n                   = static_cast<double>(ff["step_change_n"]);
+        sc_cfg.m_over_n            = static_cast<double>(ff["step_change_m_over_n"]);
+        sc_cfg.A_0                 = static_cast<double>(ff["step_change_A_0"]);
+        sc_cfg.channel_threshold_pixels = ifs["step_change_channel_pixels"];
+        sc_cfg.S_c_old             = static_cast<double>(ff["step_change_Sc_old"]);
+        sc_cfg.S_c_new             = static_cast<double>(ff["step_change_Sc_new"]);
+
+        lsdtt::StepChangeResult sc;
+        try
+        {
+            sc = lsdtt::make_step_change_rasters(sc_flow, outlet_flat, sc_cfg);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: step-change generation failed: " << e.what()
+                      << "\n";
+            return 1;
+        }
+        std::cout << "\n" << sc.summary() << "\n";
+
+        // The generated topography is relative to the outlet. Shift it so the
+        // outlet sits at the real DEM's outlet elevation, keeping base level
+        // physical -- production depends on absolute elevation.
+        const double outlet_z = static_cast<double>(
+            dem_for_sc.get_data()[static_cast<std::size_t>(outlet_flat)]);
+        {
+            std::vector<float>&         zd = sc.topography.get_data();
+            const std::vector<uint8_t>& zm = sc.topography.get_mask();
+            for (std::size_t i = 0; i < zd.size(); ++i)
+                if (zm[i]) zd[i] = static_cast<float>(zd[i] + outlet_z);
+        }
+        std::cout << "  Generated topography offset to the real outlet "
+                     "elevation of " << outlet_z << " m.\n";
+
+        const double rho = static_cast<double>(ff["rock_density_kg_m3"]);
+        sc_eff_erate_old = sc_cfg.uplift_old_m_yr * rho * 0.1;
+        sc_eff_erate_new = sc_cfg.uplift_new_m_yr * rho * 0.1;
+        std::cout << "  Effective erosion rates from the uplift rates at rho = "
+                  << rho << " kg/m3:\n"
+                  << "    old " << sc_eff_erate_old << ", new "
+                  << sc_eff_erate_new << " g/cm2/yr\n"
+                  << "    (these OVERRIDE step_change_eff_erate_old/"
+                     "new_g_cm2_yr)\n";
+
+        if (sf["time_since_change_raster_prefix"] != "NULL")
+            std::cout << "  Note: time_since_change_raster_prefix is set but "
+                         "will be ignored --\n        the generated field is "
+                         "used instead.\n";
+
+        if (bf["write_step_change_rasters"])
+        {
+            const std::pair<const char*, const lsdtt::lsdtt_raster_cpu*> outs[5] = {
+                {"_SC_DEM.tif",      &sc.topography},
+                {"_SC_ERATE.tif",    &sc.erosion_rate_m_yr},
+                {"_SC_STEPTIME.tif", &sc.time_since_change_yr},
+                {"_SC_TAG.tif",      &sc.tags},
+                {"_SC_CHI.tif",      &sc.chi}};
+            for (const auto& o : outs)
+            {
+                const std::string out_path = write_base + o.first;
+                std::cout << "Writing " << out_path << "\n";
+                loader.write_full(o.second->get_data(), o.second->get_meta(),
+                                  out_path, out_fmt);
+            }
+        }
+
+        if (bf["step_change_production_from_generated_dem"])
+        {
+            std::cout << "  Production will be computed from the GENERATED "
+                         "topography.\n";
+            dem = sc.topography;
+        }
+
+        sc_time_since_change = std::move(sc.time_since_change_yr);
+        sc_erosion_rate      = std::move(sc.erosion_rate_m_yr);
+        have_generated_step  = true;
+    }
 
     // -------------------------------------------------------------------------
     // Atmosphere + optional CRN netcdf data (shared by production and pressure)
@@ -721,6 +1053,35 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu erosion_raster = load_or_constant(
         "background_erosion_rate_raster_prefix", ff["effective_erosion_rate"]);
 
+    // The generated solution knows the erosion rate at every pixel, so it is
+    // used in preference to the uniform value -- both for a steady-state
+    // concentration raster and, more importantly, as the flux weight in the
+    // downstream accumulation. Converted from m/yr to g/cm2/yr here; the
+    // generator works in metres because that is what the stream-power solution
+    // is written in.
+    if (have_generated_step)
+    {
+        const double rho = static_cast<double>(ff["rock_density_kg_m3"]);
+        const std::vector<float>&   ed = sc_erosion_rate.get_data();
+        const std::vector<uint8_t>& em = sc_erosion_rate.get_mask();
+        const auto& meta_e = sc_erosion_rate.get_meta();
+        lsdtt::lsdtt_array2d<float>   e_out(meta_e.n_rows, meta_e.n_cols,
+                                            static_cast<float>(meta_e.no_data_value));
+        lsdtt::lsdtt_array2d<uint8_t> e_msk(meta_e.n_rows, meta_e.n_cols, 0);
+        std::vector<float>&   eo = e_out.get_vector();
+        std::vector<uint8_t>& ek = e_msk.get_vector();
+        for (std::size_t i = 0; i < ed.size(); ++i)
+        {
+            if (!em[i]) continue;
+            eo[i] = static_cast<float>(static_cast<double>(ed[i]) * rho * 0.1);
+            ek[i] = 1;
+        }
+        erosion_raster = lsdtt::lsdtt_raster_cpu(std::move(e_out),
+                                                 std::move(e_msk), meta_e);
+        std::cout << "Using the generated per-pixel erosion rate "
+                     "(g/cm2/yr) for steady state and accumulation.\n";
+    }
+
     // -------------------------------------------------------------------------
     // Steady-state concentration raster
     // -------------------------------------------------------------------------
@@ -857,13 +1218,17 @@ int main(int argc, char* argv[])
 
     if (do_multi)
     {
-        const double eff_erate_old =
-            static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
-        const double eff_erate_new =
-            static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);
+        const double eff_erate_old = have_generated_step
+            ? sc_eff_erate_old
+            : static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
+        const double eff_erate_new = have_generated_step
+            ? sc_eff_erate_new
+            : static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);
 
-        lsdtt::lsdtt_raster_cpu time_since_change = load_or_constant(
-            "time_since_change_raster_prefix", ff["time_since_change_yr"]);
+        lsdtt::lsdtt_raster_cpu time_since_change = have_generated_step
+            ? sc_time_since_change
+            : load_or_constant("time_since_change_raster_prefix",
+                               ff["time_since_change_yr"]);
 
         std::cout << "Computing multi-isotope step-change rasters "
                      "(Be10, Al26, C14)...\n"
@@ -890,11 +1255,17 @@ int main(int argc, char* argv[])
 
     if (do_step_conc && !do_multi)
     {
-        double eff_erate_old = static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
-        double eff_erate_new = static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);
+        double eff_erate_old = have_generated_step
+            ? sc_eff_erate_old
+            : static_cast<double>(ff["step_change_eff_erate_old_g_cm2_yr"]);
+        double eff_erate_new = have_generated_step
+            ? sc_eff_erate_new
+            : static_cast<double>(ff["step_change_eff_erate_new_g_cm2_yr"]);
 
-        lsdtt::lsdtt_raster_cpu time_since_change = load_or_constant(
-            "time_since_change_raster_prefix", ff["time_since_change_yr"]);
+        lsdtt::lsdtt_raster_cpu time_since_change = have_generated_step
+            ? sc_time_since_change
+            : load_or_constant("time_since_change_raster_prefix",
+                               ff["time_since_change_yr"]);
 
         std::cout << "Computing step-change CRN concentration raster (" << nuclide << ")...\n";
         std::cout << "  eff_erate_old = " << eff_erate_old << " g/cm2/yr"
