@@ -88,6 +88,13 @@ sediment-routing tools' problem.
 |---|---|---|---|
 | `threshold_contributing_pixels` | int | `1000` | Channel initiation threshold, in pixels. Landslides start only **below** this. It also caps the largest landslide. |
 | `mask_fname` | string | `NULL` | Optional raster restricting where landslides may occur. Non-zero and valid = active. |
+| `ice_mask_fname` | string | `NULL` | Raster marking ice cover (non-zero = ice). No landslide is placed on ice. |
+
+`ice_mask_fname` is **intersected** with `mask_fname` when both are given: a
+pixel can host a landslide only if it is inside the active mask *and* not under
+ice. The number of pixels excluded is reported, because it changes the **active
+area** — and the active area sets the landslide count for a prescribed erosion
+rate, so two runs differing only in an ice mask are not comparable by count.
 
 Initiation pixels are drawn uniformly from the eligible set. This is what Niemi
 and Yanites both do, and both flag it as a simplification — real triggered
@@ -249,8 +256,39 @@ is not offered.
 | `background_eff_erate_g_cm2_yr` | float | `0.001` | Background effective erosion rate before and after failure. |
 | `production_scaling` | float | `1.0` | Stone 2000 scaling (1.0 at SLHL). |
 | `total_shielding` | float | `1.0` | Topographic × snow × self. |
-| `rock_density_kg_m3` | float | `2650` | Rock density. |
+| `rock_density_kg_m3` | float | `2650` | Density of the **eroding bedrock column**. |
+| `scar_density_kg_m3` | float | `-1` | Density of the material a landslide **excavates**. Negative takes it from `area_volume_preset`. |
 | `crn_report_time_yr` | float | `0` | Time at which concentrations are reported, on the same clock as event times. |
+
+### Two densities, and why they are not the same number
+
+`rock_density_kg_m3` is the eroding column; `scar_density_kg_m3` is the material
+that failed. They are different quantities and conflating them is a real error,
+not a rounding matter.
+
+The area-to-volume scaling `V = αA^γ` is fitted to **measured** scar volumes, so
+the excavation depth it implies is a true geometric thickness of whatever
+failed — and for a shallow landslide that is soil, at roughly 1500 kg/m³.
+Carrying it at 2650 overstates the mass depth by a factor of **1.77**, and since
+production falls exponentially with mass depth that changes production at the
+scar base by **2.05**.
+
+The density therefore travels with the preset, because choosing the preset is
+already a statement about the material:
+
+| Preset | γ | Scar density | Material-specific? |
+|---|---|---|---|
+| `larsen_soil_scar` | 1.262 | 1500 | yes |
+| `larsen_bedrock_scar` | 1.410 | 2650 | yes |
+| `larsen_soil_all` | 1.145 | 1500 | yes |
+| `larsen_bedrock_all` | 1.350 | 2650 | yes |
+| `larsen_global` *(default)* | 1.332 | 2650 *placeholder* | **no — warns** |
+| `hovius_slab` / `hovius_parabolic` | 1.5 | 2650 *placeholder* | **no — warns** |
+
+`larsen_global` and the Hovius rows are fitted across materials and have **no
+defensible density**, so leaving `scar_density_kg_m3` negative with one of those
+selected raises a warning. The default preset is one of them, which is
+deliberate: that is the case that would otherwise pass silently.
 
 No new cosmogenic physics is introduced. The model composes two existing
 validated calls: **inheritance** — a landslide stripping effective depth *d*
@@ -260,6 +298,24 @@ integrator's instantaneous *removal* event, which is precisely a landslide.
 
 The time-of-failure raster is both the annealing clock and the
 time-since-change field, so it feeds `lsdtt-cosmo-prediction` directly.
+
+### Feeding the landslide field into a step change
+
+`lsdtt-cosmo-prediction` reads `<stem>_LS_TFAIL` and `<stem>_LS_EXCAVATION` and
+superimposes the scars on a step-change concentration field, in either of two
+idealised scenarios — `scar` (the debris is long gone, what remains is a
+stripped column) or `flush` (the debris is still in the channel, so the sample
+contains the whole excavated slab), or `both` split by age. See
+[the landslide coupling section](cli_reference_lsdtt_cosmo_prediction.md#landslide-coupling).
+
+Two conventions to match across the two tools:
+
+- **the failure-time clock.** `_LS_TFAIL` holds an absolute time on whatever
+  clock `event_time_yr` / the series uses. `lsdtt-cosmo-prediction` converts it
+  to elapsed years with `landslide_report_time_yr`, so that must be "now" on the
+  same clock.
+- **the scar density.** Set `scar_density_kg_m3` consistently in both, or the
+  excavated slab is carried at one density here and another there.
 
 ---
 

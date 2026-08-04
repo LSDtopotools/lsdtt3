@@ -333,7 +333,38 @@ int main(int argc, char* argv[])
         "Cosmogenics","param",""};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;
-    help_map["rock_density_kg_m3"] = {"float","2650","Rock density (kg/m3).","",
+    help_map["rock_density_kg_m3"] = {"float","2650",
+        "Density of the ERODING BEDROCK COLUMN (kg/m3).",
+        "Converts the background erosion rate between m/yr and g/cm2/yr. This is "
+        "NOT the density of the material a landslide removes -- see "
+        "scar_density_kg_m3.",
+        "Cosmogenics","param",""};
+
+    string_default_map["ice_mask_fname"] = "NULL";
+    help_map["ice_mask_fname"] = {"string","NULL",
+        "Raster marking ice cover (non-zero = ice). No landslide is placed on "
+        "ice.",
+        "Intersected with mask_fname if both are given: a pixel can host a "
+        "landslide only if it is inside the active mask AND not under ice. The "
+        "number of pixels excluded is reported, since it changes the active "
+        "area and therefore the landslide count for a prescribed erosion rate.",
+        "Placement","param",""};
+
+    float_default_map["scar_density_kg_m3"] = -1.0f;
+    help_map["scar_density_kg_m3"] = {"float","-1",
+        "Density of the material a landslide EXCAVATES (kg/m3). Negative takes "
+        "it from area_volume_preset.",
+        "This is a different quantity from rock_density_kg_m3 and conflating "
+        "them is a real error. Larsen's V = alpha A^gamma is fitted to MEASURED "
+        "scar volumes, so the excavation depth is a true geometric thickness of "
+        "whatever failed -- soil, at roughly 1500 kg/m3, for a shallow "
+        "landslide. Carrying that at 2650 overstates the mass depth by about a "
+        "factor of 1.77, and since production falls exponentially with mass "
+        "depth it changes the concentration of the delivered material by more "
+        "than a factor of two. The material-specific presets carry a density: "
+        "larsen_soil_scar 1500, larsen_bedrock_scar 2650. larsen_global and the "
+        "hovius presets are fitted across materials and carry none, so leaving "
+        "this negative with one of those selected raises a warning.",
         "Cosmogenics","param",""};
 
     float_default_map["crn_report_time_yr"] = 0.0f;
@@ -485,6 +516,60 @@ int main(int argc, char* argv[])
         { std::cerr << "FATAL: could not load mask: " << e.what() << "\n"; return 1; }
     }
 
+    // Ice excludes ground from landsliding. The placer takes ONE mask, so the
+    // ice is intersected into it here rather than threaded through as a second
+    // field -- a pixel is hostable if it is inside the active mask AND not
+    // under ice.
+    lsdtt::lsdtt_raster_cpu combined_mask;
+    if (sf["ice_mask_fname"] != "NULL")
+    {
+        lsdtt::lsdtt_raster_cpu ice_raster;
+        try
+        {
+            lsdtt::lsdtt_data_loader ice_loader;
+            ice_loader.open_raster(
+                pp.add_read_path_if_needed(sf["ice_mask_fname"]));
+            ice_raster = lsdtt::lsdtt_raster_cpu(ice_loader);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: could not load ice mask: " << e.what() << "\n";
+            return 1;
+        }
+        if (ice_raster.get_meta().n_rows != meta.n_rows ||
+            ice_raster.get_meta().n_cols != meta.n_cols)
+        {
+            std::cerr << "FATAL: the ice mask does not match the DEM grid.\n";
+            return 1;
+        }
+
+        const auto& icd = ice_raster.get_data_array();
+        const auto& icm = ice_raster.get_mask_array();
+        const float ice_ndv = static_cast<float>(ice_raster.get_meta().no_data_value);
+
+        lsdtt::lsdtt_array2d_f  cd(meta.n_rows, meta.n_cols, 0.0f);
+        lsdtt::lsdtt_array2d_u8 ck(meta.n_rows, meta.n_cols, 1);
+        std::int64_t n_excluded = 0;
+        for (int r = 0; r < meta.n_rows; ++r)
+        {
+            for (int c = 0; c < meta.n_cols; ++c)
+            {
+                const bool in_active = mask_ptr
+                    ? (mask_ptr->get_mask_array()(r, c) &&
+                       mask_ptr->get_data_array()(r, c) != 0.0f)
+                    : true;
+                const bool iced = icm(r, c) && icd(r, c) != ice_ndv
+                                            && icd(r, c) != 0.0f;
+                if (iced && in_active) ++n_excluded;
+                cd(r, c) = (in_active && !iced) ? 1.0f : 0.0f;
+            }
+        }
+        combined_mask = lsdtt::lsdtt_raster_cpu(std::move(cd), std::move(ck), meta);
+        mask_ptr = &combined_mask;
+        std::cout << "Ice mask      : " << sf["ice_mask_fname"] << " -- "
+                  << n_excluded << " pixel(s) excluded from landsliding\n";
+    }
+
     lsdtt::LandslidePlacementConfig pcfg;
     pcfg.channel_threshold_pixels = chan_thresh;
     lsdtt::LandslidePlacer placer(*flow, meta, pcfg, mask_ptr);
@@ -633,6 +718,24 @@ int main(int argc, char* argv[])
         ccfg.total_shielding    = ff["total_shielding"];
         ccfg.muon_scheme        = sf["muon_scheme"];
         ccfg.rock_density_kg_m3 = ff["rock_density_kg_m3"];
+
+        // The scar density is a property of the material that failed, so it
+        // comes from the area-volume preset unless the user overrides it. A
+        // preset fitted across materials has no defensible value and says so.
+        if (ff["scar_density_kg_m3"] > 0.0f)
+        {
+            ccfg.scar_density_kg_m3 = ff["scar_density_kg_m3"];
+        }
+        else
+        {
+            ccfg.scar_density_kg_m3 = sp.av.scar_density_kg_m3;
+            const std::string note = lsdtt::area_volume_density_note(sp.av);
+            if (!note.empty())
+                std::cout << "\n  WARNING: " << note << "\n\n";
+        }
+        std::cout << "  Densities: bedrock column " << ccfg.rock_density_kg_m3
+                  << " kg/m3, scar material " << ccfg.scar_density_kg_m3
+                  << " kg/m3\n";
         ccfg.t_now_yr           = ff["crn_report_time_yr"];
         ccfg.nuclide            = sf["nuclide"];
 

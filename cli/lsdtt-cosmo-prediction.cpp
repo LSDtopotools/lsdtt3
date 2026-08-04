@@ -41,6 +41,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -62,6 +63,8 @@
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_landslide_crn_cpu.hpp"
+#include "../src/cpu/lsdtt_quartz_fertility_cpu.hpp"
 #include "../src/cpu/lsdtt_step_change_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
 
@@ -488,6 +491,174 @@ int main(int argc, char* argv[])
         "the knickpoint in chi.",
         "Generate the step change", "switch", "make_step_change_rasters"};
 
+    // --- Landslide coupling -------------------------------------------------
+    string_default_map["landslide_coupling"] = "none";
+    help_map["landslide_coupling"] = {"string","none",
+        "How landslides modify the step-change concentration: none, scar, flush "
+        "or both.",
+        "scar = the landslide material has long since left the system, and what "
+        "remains is a scar eroding at the catchment rate from a column whose "
+        "inheritance was stripped when it failed. flush = the debris is still "
+        "in the channel, so the sample contains the whole excavated slab. "
+        "both = flush inside flush_time_threshold_yr and scar outside it, which "
+        "is the physically complete case. Needs landslide_time_raster_prefix "
+        "and landslide_excavation_raster_prefix, both written by "
+        "lsdtt-landslides. Requires a step-change mode.",
+        "Landslide coupling", "param", ""};
+
+    string_default_map["landslide_time_raster_prefix"] = "NULL";
+    help_map["landslide_time_raster_prefix"] = {"string","NULL",
+        "Prefix of the time-of-failure raster (lsdtt-landslides <stem>_LS_TFAIL).",
+        "This holds an ABSOLUTE failure time on the model clock, with nodata "
+        "where nothing failed. It is converted here to elapsed years using "
+        "landslide_report_time_yr; 'never failed' is carried as a distinct "
+        "state, NOT as nodata, so unfailed ground stays in the raster and in "
+        "any basin average taken from it.",
+        "Landslide coupling", "param", ""};
+
+    string_default_map["landslide_excavation_raster_prefix"] = "NULL";
+    help_map["landslide_excavation_raster_prefix"] = {"string","NULL",
+        "Prefix of the excavation-depth raster (lsdtt-landslides <stem>_LS_EXCAVATION).",
+        "Real metres of material removed, not a rock-equivalent thickness. It is "
+        "converted to a mass depth with scar_density_kg_m3.",
+        "Landslide coupling", "param", ""};
+
+    float_default_map["landslide_report_time_yr"] = 0.0f;
+    help_map["landslide_report_time_yr"] = {"float","0",
+        "Present time on the same clock as the time-of-failure raster (yr).",
+        "elapsed = landslide_report_time_yr - time_of_failure. A failure at or "
+        "after this time has not happened yet and is treated as 'never'.",
+        "Landslide coupling", "param", ""};
+
+    // --- Quartz fertility and ice ------------------------------------------
+    float_default_map["quartz_fertility"] = 1.0f;
+    help_map["quartz_fertility"] = {"float","1",
+        "Uniform quartz mass fraction (0-1) used as the downstream mixing "
+        "weight.",
+        "A basin-averaged sample is a mixture of QUARTZ, not of rock. Two "
+        "pixels eroding at the same rate contribute unequally if their rock "
+        "carries different quartz, and a quartz-free unit (limestone, basalt, "
+        "many volcanics) contributes sediment but no sample at all. In "
+        "mixed-lithology terrain, routing concentrations without this is simply "
+        "wrong. The default of 1 makes the whole feature a no-op: nothing "
+        "changes unless you opt in.",
+        "Quartz fertility and ice", "param", ""};
+
+    string_default_map["quartz_fertility_raster_prefix"] = "NULL";
+    help_map["quartz_fertility_raster_prefix"] = {"string","NULL",
+        "Prefix of a raster of quartz mass fraction (0-1), typically a "
+        "reclassified lithology map.",
+        "Overrides quartz_fertility where present. Values outside [0,1] are "
+        "clamped and the number clamped is reported, so a map supplied as "
+        "percentages rather than fractions surfaces rather than being "
+        "silently truncated.",
+        "Quartz fertility and ice", "param", ""};
+
+    float_default_map["quartz_fertility_regolith"] = -1.0f;
+    help_map["quartz_fertility_regolith"] = {"float","-1",
+        "Quartz fraction of the regolith, for the two-layer model. Negative = off.",
+        "Chemical weathering removes soluble minerals and leaves quartz behind, "
+        "so regolith is enriched relative to the fresh bedrock a deep landslide "
+        "scar exposes. Set this, quartz_fertility_bedrock and "
+        "quartz_fertility_regolith_depth_m together to test whether that makes "
+        "landslide debris under-represented in the quartz separate, and so "
+        "weakens the dilution a landslide causes.",
+        "Quartz fertility and ice", "param", ""};
+
+    float_default_map["quartz_fertility_bedrock"] = -1.0f;
+    help_map["quartz_fertility_bedrock"] = {"float","-1",
+        "Quartz fraction of fresh bedrock, for the two-layer model. Negative = off.","",
+        "Quartz fertility and ice", "param", ""};
+
+    float_default_map["quartz_fertility_regolith_depth_m"] = 0.0f;
+    help_map["quartz_fertility_regolith_depth_m"] = {"float","0",
+        "Regolith thickness (m) separating the two fertility layers. 0 = off.","",
+        "Quartz fertility and ice", "param", ""};
+
+    string_default_map["ice_mask_raster_prefix"] = "NULL";
+    help_map["ice_mask_raster_prefix"] = {"string","NULL",
+        "Prefix of a raster marking present-day ice cover (non-zero = ice).",
+        "Ice changes exactly three things and lsdtt3 already has a field for "
+        "each: the ice column shields cosmic rays (SNOW SHIELDING, as an "
+        "effective depth), the erosion rate differs or is zero, and little or "
+        "no quartz reaches the sample. LIMITATION: this is PRESENT-DAY ice "
+        "only. Concentrations depend on the shielding HISTORY and lsdtt3 cannot "
+        "yet express a per-pixel time-varying shielding, so a "
+        "glacial-interglacial cycle is not representable and concentrations "
+        "under formerly glaciated ground are overestimated.",
+        "Quartz fertility and ice", "param", ""};
+
+    float_default_map["ice_thickness_m"] = 50.0f;
+    help_map["ice_thickness_m"] = {"float","50",
+        "Uniform ice thickness (m) used where the mask marks ice.",
+        "Converted to a snow-shielding mass depth at ice_density_kg_m3. Ten "
+        "metres of ice is already essentially total shielding (0.3 % of "
+        "spallation survives).",
+        "Quartz fertility and ice", "param", ""};
+
+    float_default_map["ice_density_kg_m3"] = 917.0f;
+    help_map["ice_density_kg_m3"] = {"float","917",
+        "Density of ice (kg/m3). Lower for firn.","",
+        "Quartz fertility and ice", "param", ""};
+
+    float_default_map["erate_under_ice_g_cm2_yr"] = 0.0f;
+    help_map["erate_under_ice_g_cm2_yr"] = {"float","0",
+        "Effective erosion rate beneath the ice (g/cm2/yr).",
+        "Zero is the cold-based idealisation and is numerically safe: the "
+        "steady-state kernel forms its denominator as (eps + Gamma*lambda), "
+        "never divides by eps, and returns the saturation concentration "
+        "P/lambda.",
+        "Quartz fertility and ice", "param", ""};
+
+    float_default_map["quartz_fertility_under_ice"] = 0.0f;
+    help_map["quartz_fertility_under_ice"] = {"float","0",
+        "Quartz fraction beneath the ice.",
+        "Zero means the ice contributes nothing to the sample, which is the "
+        "usual assumption when the erosion rate under it is also zero.",
+        "Quartz fertility and ice", "param", ""};
+
+    bool_default_map["write_quartz_weight_raster"] = false;
+    help_map["write_quartz_weight_raster"] = {"bool","false",
+        "Write the quartz mixing-weight raster.",
+        "File: <write_fname>_QUARTZ_WEIGHT.tif, kg of quartz m^-2 yr^-1. This "
+        "is what the accumulation mixes on when fertility or ice is active.",
+        "Quartz fertility and ice", "switch", ""};
+
+    float_default_map["flush_time_threshold_yr"] = 100.0f;
+    help_map["flush_time_threshold_yr"] = {"float","100",
+        "How long a scar keeps delivering its debris to the channel (yr).",
+        "Used by landslide_coupling: both. This is an AGE, following Niemi et "
+        "al. (2005), whose model has no sediment storage at all -- landslide "
+        "material passes through within one 100 yr timestep and mixes "
+        "homogeneously, which is where this default comes from. Set it to the "
+        "event recurrence interval to reproduce that convention. How long "
+        "landslide sediment actually persists in a channel network is a "
+        "separate research question and is not modelled here.",
+        "Landslide coupling", "param", ""};
+
+    bool_default_map["write_delivery_mass_raster"] = false;
+    help_map["write_delivery_mass_raster"] = {"bool","false",
+        "Write the delivery-mass raster: the weight a downstream mixing "
+        "calculation should use.",
+        "File: <write_fname>_LS_DELIVERY.tif, in kg m^-2 yr^-1. A flushing pixel "
+        "delivers its whole excavated slab over the flush window; everything "
+        "else delivers its background erosion. The erosion-rate raster is left "
+        "untouched, so the TRUE erosion rate stays available to compare an "
+        "apparent rate against.",
+        "Landslide coupling", "switch", ""};
+
+    float_default_map["scar_density_kg_m3"] = 1500.0f;
+    help_map["scar_density_kg_m3"] = {"float","1500",
+        "Density of the material a landslide EXCAVATED (kg/m3).",
+        "A DIFFERENT quantity from rock_density_kg_m3, which is the eroding "
+        "bedrock column. The excavation depth is a true geometric thickness of "
+        "whatever failed, and for a shallow landslide that is soil at roughly "
+        "1500 kg/m3. Carrying it at 2650 overstates the mass depth by about a "
+        "factor of 1.77 and changes the delivered concentration by more than a "
+        "factor of two. Set 2650 for bedrock failures. The default matches "
+        "lsdtt-landslides' larsen_soil_scar preset.",
+        "Landslide coupling", "param", ""};
+
     string_default_map["time_since_change_raster_prefix"] = "NULL";
     help_map["time_since_change_raster_prefix"] = {"string","NULL",
         "Prefix of raster giving years since the step change at each pixel.",
@@ -662,6 +833,50 @@ int main(int argc, char* argv[])
     const bool do_multi_tr  = bf["calculate_multi_isotope_transient"];
     const bool do_sample    = (sf["sample_points_filename"] != "NULL");
     const bool do_make_step = bf["make_step_change_rasters"];
+
+    const std::string ls_coupling = sf["landslide_coupling"];
+    if (ls_coupling != "none" && ls_coupling != "scar" &&
+        ls_coupling != "flush" && ls_coupling != "both")
+    {
+        std::cerr << "FATAL: unknown landslide_coupling \"" << ls_coupling
+                  << "\". Allowed values: none, scar, flush, both.\n";
+        return 1;
+    }
+    if (ls_coupling == "both" && !(ff["flush_time_threshold_yr"] > 0.0f))
+    {
+        std::cerr << "FATAL: landslide_coupling: both needs a positive "
+                     "flush_time_threshold_yr.\n"
+                     "       With a zero window nothing flushes, which is "
+                     "landslide_coupling: scar.\n";
+        return 1;
+    }
+    const bool do_landslide = (ls_coupling != "none");
+
+    if (do_landslide && !do_step_conc && !do_multi)
+    {
+        std::cerr << "FATAL: landslide_coupling: " << ls_coupling
+                  << " modifies a step-change concentration, so it needs\n"
+                     "       calculate_step_change_crn_concentration_raster or "
+                     "calculate_multi_isotope_step_change.\n";
+        return 1;
+    }
+    if (do_landslide && do_multi)
+    {
+        std::cerr << "FATAL: landslide_coupling is not yet available for "
+                     "calculate_multi_isotope_step_change.\n"
+                     "       Use calculate_step_change_crn_concentration_raster "
+                     "with a single nuclide.\n";
+        return 1;
+    }
+    if (do_landslide && (sf["landslide_time_raster_prefix"] == "NULL" ||
+                         sf["landslide_excavation_raster_prefix"] == "NULL"))
+    {
+        std::cerr << "FATAL: landslide_coupling: " << ls_coupling
+                  << " needs both landslide_time_raster_prefix and\n"
+                     "       landslide_excavation_raster_prefix (written by "
+                     "lsdtt-landslides).\n";
+        return 1;
+    }
 
     if (do_make_step && !do_step_conc && !do_multi && !do_accum)
     {
@@ -1053,6 +1268,110 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu erosion_raster = load_or_constant(
         "background_erosion_rate_raster_prefix", ff["effective_erosion_rate"]);
 
+    // -------------------------------------------------------------------------
+    // Quartz fertility and the ice mask
+    //
+    // Both are OPT-IN and both are no-ops when left alone: with fertility 1 and
+    // no ice mask the accumulation keeps using the erosion-rate raster exactly
+    // as before, so nothing that does not ask for this can move.
+    // -------------------------------------------------------------------------
+    const bool have_litho = (sf["quartz_fertility_raster_prefix"] != "NULL");
+    const bool have_ice   = (sf["ice_mask_raster_prefix"] != "NULL");
+
+    lsdtt::QuartzFertilityConfig qcfg;
+    qcfg.uniform_fertility   = static_cast<double>(ff["quartz_fertility"]);
+    qcfg.regolith_fertility  = static_cast<double>(ff["quartz_fertility_regolith"]);
+    qcfg.bedrock_fertility   = static_cast<double>(ff["quartz_fertility_bedrock"]);
+    qcfg.regolith_depth_m    =
+        static_cast<double>(ff["quartz_fertility_regolith_depth_m"]);
+
+    const bool do_quartz = have_litho || have_ice
+                        || qcfg.uniform_fertility != 1.0
+                        || qcfg.depth_dependent();
+
+    lsdtt::lsdtt_raster_cpu quartz_fertility;
+    if (do_quartz)
+    {
+        lsdtt::lsdtt_raster_cpu litho_raster;
+        const lsdtt::lsdtt_raster_cpu* litho_ptr = nullptr;
+        if (have_litho)
+        {
+            const std::string lp = pp.get_read_path()
+                                 + sf["quartz_fertility_raster_prefix"] + ".tif";
+            std::cout << "Loading quartz fertility raster: " << lp << "\n";
+            try
+            {
+                lsdtt::lsdtt_data_loader ld; ld.open_raster(lp);
+                litho_raster = lsdtt::lsdtt_raster_cpu(ld);
+                litho_ptr = &litho_raster;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: could not read the quartz fertility "
+                             "raster: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        std::int64_t n_clamped = 0;
+        quartz_fertility = lsdtt::make_quartz_fertility_raster(
+            dem.get_meta(), qcfg, litho_ptr, &n_clamped);
+        if (n_clamped > 0)
+            std::cout << "  WARNING: " << n_clamped << " fertility value(s) "
+                         "outside [0,1] were clamped.\n"
+                         "  A lithology map supplied as PERCENTAGES rather than "
+                         "fractions looks like this.\n";
+        if (qcfg.depth_dependent())
+            std::cout << "  Two-layer fertility: regolith "
+                      << qcfg.regolith_fertility << " above "
+                      << qcfg.regolith_depth_m << " m, bedrock "
+                      << qcfg.bedrock_fertility << " below.\n";
+    }
+
+    if (have_ice)
+    {
+        const std::string ip = pp.get_read_path()
+                             + sf["ice_mask_raster_prefix"] + ".tif";
+        std::cout << "Loading ice mask: " << ip << "\n";
+        lsdtt::lsdtt_raster_cpu ice_raster;
+        try
+        {
+            lsdtt::lsdtt_data_loader il; il.open_raster(ip);
+            ice_raster = lsdtt::lsdtt_raster_cpu(il);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: could not read the ice mask: " << e.what()
+                      << "\n";
+            return 1;
+        }
+
+        lsdtt::IceMaskConfig icfg;
+        icfg.ice_thickness_m            = static_cast<double>(ff["ice_thickness_m"]);
+        icfg.ice_density_kg_m3          = static_cast<double>(ff["ice_density_kg_m3"]);
+        icfg.erate_under_ice_g_cm2_yr   =
+            static_cast<double>(ff["erate_under_ice_g_cm2_yr"]);
+        icfg.quartz_fertility_under_ice =
+            static_cast<double>(ff["quartz_fertility_under_ice"]);
+
+        const std::int64_t n_ice = lsdtt::apply_ice_mask(
+            ice_raster, nullptr, icfg, snow_shield, erosion_raster,
+            quartz_fertility);
+
+        std::cout << "  Ice: " << n_ice << " pixel(s), "
+                  << icfg.ice_thickness_m << " m thick = "
+                  << lsdtt::ice_effective_depth_g_cm2(icfg.ice_thickness_m,
+                                                      icfg.ice_density_kg_m3)
+                  << " g/cm2 of shielding;\n"
+                     "       erosion " << icfg.erate_under_ice_g_cm2_yr
+                  << " g/cm2/yr, quartz fertility "
+                  << icfg.quartz_fertility_under_ice << ".\n"
+                     "       NOTE: present-day ice only -- concentrations under "
+                     "formerly glaciated\n"
+                     "       ground are overestimated, since the shielding "
+                     "HISTORY is not modelled.\n";
+    }
+
     // The generated solution knows the erosion rate at every pixel, so it is
     // used in preference to the uniform value -- both for a steady-state
     // concentration raster and, more importantly, as the flux weight in the
@@ -1271,10 +1590,110 @@ int main(int argc, char* argv[])
         std::cout << "  eff_erate_old = " << eff_erate_old << " g/cm2/yr"
                   << "  eff_erate_new = " << eff_erate_new << " g/cm2/yr\n";
 
-        step_conc_raster = lsdtt::calculate_crn_concentration_raster_step_change(
-            nuclide, muon_scheme,
-            time_since_change, prod_raster, topo_shield,
-            eff_erate_old, eff_erate_new);
+        if (do_landslide)
+        {
+            // Landslide scars superimposed on the step change. The unfailed
+            // pixels are computed by the same kernel the plain mode uses, so
+            // switching the coupling on cannot perturb ground that never
+            // failed.
+            const std::string t_path =
+                pp.get_read_path() + sf["landslide_time_raster_prefix"] + ".tif";
+            const std::string e_path =
+                pp.get_read_path() + sf["landslide_excavation_raster_prefix"] + ".tif";
+            std::cout << "  Landslide coupling: " << ls_coupling << "\n"
+                      << "    time of failure : " << t_path << "\n"
+                      << "    excavation depth: " << e_path << "\n";
+
+            lsdtt::lsdtt_raster_cpu tfail_raster, exc_raster;
+            try
+            {
+                lsdtt::lsdtt_data_loader tl; tl.open_raster(t_path);
+                tfail_raster = lsdtt::lsdtt_raster_cpu(tl);
+                lsdtt::lsdtt_data_loader el; el.open_raster(e_path);
+                exc_raster = lsdtt::lsdtt_raster_cpu(el);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: could not read the landslide rasters: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            const lsdtt::lsdtt_raster_cpu t_since_failure =
+                lsdtt::time_since_failure_from_time_of_failure(
+                    tfail_raster,
+                    static_cast<double>(ff["landslide_report_time_yr"]));
+
+            lsdtt::LandslideStepChangeConfig scfg;
+            scfg.eff_erate_old_g_cm2_yr = eff_erate_old;
+            scfg.eff_erate_new_g_cm2_yr = eff_erate_new;
+            scfg.rock_density_kg_m3     = static_cast<double>(ff["rock_density_kg_m3"]);
+            scfg.scar_density_kg_m3     = static_cast<double>(ff["scar_density_kg_m3"]);
+            scfg.muon_scheme            = muon_scheme;
+            scfg.nuclide                = nuclide;
+
+            // One kernel, one number. A zero window means nothing flushes
+            // (pure scar); an unbounded one means everything does (pure
+            // flush); a finite one is the two treatments either side of it.
+            if (ls_coupling == "scar")
+                scfg.flush_time_threshold_yr = 0.0;
+            else if (ls_coupling == "flush")
+            {
+                // Every scar flushes, but the mass still arrives over a finite
+                // window -- an unbounded selector must not become an unbounded
+                // rate denominator.
+                scfg.flush_time_threshold_yr  = std::numeric_limits<double>::max();
+                scfg.flush_delivery_window_yr =
+                    static_cast<double>(ff["flush_time_threshold_yr"]);
+            }
+            else
+                scfg.flush_time_threshold_yr =
+                    static_cast<double>(ff["flush_time_threshold_yr"]);
+
+            if (ls_coupling == "flush")
+                std::cout << "    every scar flushes, regardless of age\n";
+            else if (ls_coupling == "both")
+                std::cout << "    flush window: "
+                          << scfg.flush_time_threshold_yr << " yr\n";
+
+            std::cout << "    densities: bedrock column "
+                      << scfg.rock_density_kg_m3 << ", scar material "
+                      << scfg.scar_density_kg_m3 << " kg/m3\n";
+
+            lsdtt::LandslideCouplingResult sres;
+            try
+            {
+                sres = lsdtt::compute_landslide_step_change_concentration(
+                    exc_raster, t_since_failure, time_since_change,
+                    prod_raster, topo_shield, scfg, &erosion_raster);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: landslide scar coupling failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+            std::cout << "\n" << sres.summary();
+
+            if (bf["write_delivery_mass_raster"] &&
+                sres.delivery_mass_kg_m2_yr.get_meta().n_rows > 0)
+            {
+                const std::string dm_path = write_base + "_LS_DELIVERY.tif";
+                std::cout << "Writing delivery-mass raster: " << dm_path << "\n";
+                loader.write_full(sres.delivery_mass_kg_m2_yr.get_data(),
+                                  sres.delivery_mass_kg_m2_yr.get_meta(),
+                                  dm_path, out_fmt);
+            }
+
+            step_conc_raster = std::move(sres.concentration);
+        }
+        else
+        {
+            step_conc_raster = lsdtt::calculate_crn_concentration_raster_step_change(
+                nuclide, muon_scheme,
+                time_since_change, prod_raster, topo_shield,
+                eff_erate_old, eff_erate_new);
+        }
         have_step_conc_raster = true;
         std::cout << "  Done.\n";
 
@@ -1346,9 +1765,71 @@ int main(int argc, char* argv[])
             dynamic_cast<const lsdtt::lsdtt_flowinfo&>(*flow_ptr);
         std::cout << "  Flow routing complete.\n";
 
-        std::cout << "Accumulating CRN concentration downstream...\n";
+        // What the accumulation mixes ON. By default that is the erosion-rate
+        // raster, exactly as before -- switching to a quartz weight is opt-in,
+        // so a run that asks for neither fertility nor ice is untouched.
+        //
+        // When it IS active the weight is kg of quartz per m2 per year, because
+        // a basin-averaged sample is a mixture of quartz and not of rock. A
+        // quartz-free unit then contributes nothing however fast it erodes,
+        // which is the whole point.
+        const lsdtt::lsdtt_raster_cpu* accum_weight = &erosion_raster;
+        lsdtt::lsdtt_raster_cpu quartz_weight;
+
+        if (do_quartz)
+        {
+            // Mass flux in kg/m2/yr. The delivery-mass raster from the
+            // landslide coupling already carries this if it was produced;
+            // otherwise it is the erosion rate rescaled.
+            lsdtt::lsdtt_raster_cpu mass_flux;
+            {
+                const auto& ed2  = erosion_raster.get_data_array();
+                const auto& em2  = erosion_raster.get_mask_array();
+                const auto& mmeta = erosion_raster.get_meta();
+                lsdtt::lsdtt_array2d<float>   mf(mmeta.n_rows, mmeta.n_cols,
+                    static_cast<float>(mmeta.no_data_value));
+                lsdtt::lsdtt_array2d<uint8_t> mk(mmeta.n_rows, mmeta.n_cols, 0);
+                for (int r = 0; r < mmeta.n_rows; ++r)
+                    for (int c = 0; c < mmeta.n_cols; ++c)
+                        if (em2(r, c))
+                        {
+                            mf(r, c) = static_cast<float>(
+                                static_cast<double>(ed2(r, c)) * 10.0);
+                            mk(r, c) = 1;
+                        }
+                mass_flux = lsdtt::lsdtt_raster_cpu(std::move(mf),
+                                                    std::move(mk), mmeta);
+            }
+
+            lsdtt::QuartzWeightSummary qsum;
+            quartz_weight = lsdtt::make_quartz_weight_raster(
+                mass_flux, quartz_fertility, qcfg, nullptr, &qsum);
+            std::cout << "\n" << qsum.summary() << "\n";
+
+            if (qsum.yields_no_quartz())
+            {
+                std::cerr << "FATAL: no quartz is delivered anywhere, so a "
+                             "basin average is undefined.\n"
+                             "       Check quartz_fertility, the fertility "
+                             "raster and the ice mask.\n";
+                return 1;
+            }
+            accum_weight = &quartz_weight;
+
+            if (bf["write_quartz_weight_raster"])
+            {
+                const std::string qp = write_base + "_QUARTZ_WEIGHT.tif";
+                std::cout << "Writing quartz weight raster: " << qp << "\n";
+                loader.write_full(quartz_weight.get_data(),
+                                  quartz_weight.get_meta(), qp, out_fmt);
+            }
+        }
+
+        std::cout << "Accumulating CRN concentration downstream"
+                  << (do_quartz ? " (quartz-weighted)" : "") << "...\n";
         lsdtt::lsdtt_raster_cpu acc_raster =
-            lsdtt::calculate_accumulated_crn_raster(conc_for_accum, erosion_raster, flow);
+            lsdtt::calculate_accumulated_crn_raster(conc_for_accum,
+                                                    *accum_weight, flow);
         std::cout << "  Done.\n";
 
         if (bf["write_accumulated_crn_raster"])

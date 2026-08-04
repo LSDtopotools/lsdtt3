@@ -602,6 +602,17 @@ target_link_libraries(lsdtt-test-step-change PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-landslide-size cpp/test_landslide_size.cpp)
 target_link_libraries(lsdtt-test-landslide-size PRIVATE lsdtt3_cpu)
 
+# Quartz fertility as a mixing weight, and the ice mask that shares its
+# machinery. Synthetic rasters only.
+add_executable(lsdtt-test-quartz-fertility cpp/test_quartz_fertility.cpp)
+target_link_libraries(lsdtt-test-quartz-fertility PRIVATE lsdtt3_cpu)
+
+# Landslide scars superimposed on a step change, plus the density convention
+# (real metres vs mass depth, and the per-material scar density). Synthetic
+# rasters only -- no DEM, no flow routing.
+add_executable(lsdtt-test-landslide-step-change cpp/test_landslide_step_change.cpp)
+target_link_libraries(lsdtt-test-landslide-step-change PRIVATE lsdtt3_cpu)
+
 # Landslide placement (plan Phase 1): eligible hosts and the s_vector footprint.
 # Synthetic ridge-and-valley fixture, no network.
 add_executable(lsdtt-test-landslide-placement cpp/test_landslide_placement.cpp)
@@ -1070,6 +1081,21 @@ add_test(NAME unit_landslide_size
 set_tests_properties(unit_landslide_size PROPERTIES LABELS "unit;landslide")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
 
+# Quartz fertility Q1-Q6 and the ice mask I1-I3. Pins the case that makes
+# fertility a correctness issue rather than a refinement: a quartz-free unit
+# eroding ten times faster than its neighbour must contribute nothing.
+add_test(NAME unit_quartz_fertility COMMAND lsdtt-test-quartz-fertility)
+set_tests_properties(unit_quartz_fertility PROPERTIES LABELS "unit;cosmo")
+
+# Landslide scar coupling and densities. Emits landslide_scar_recovery.csv,
+# which shows how a scar's concentration recovers with age at three depths and
+# what carrying it at the wrong material density does to the answer.
+add_test(NAME unit_landslide_step_change
+         COMMAND lsdtt-test-landslide-step-change
+                 ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
+set_tests_properties(unit_landslide_step_change PROPERTIES
+    LABELS "unit;landslide;step_change")
+
 # Landslide placement T6-T10d. Emits landslide_host_fill.csv, which records how
 # completely landslides of each size fill their host basin (plan Sec 3.2).
 add_test(NAME unit_landslide_placement
@@ -1395,6 +1421,20 @@ add_test(NAME regression_step_change_disk_roundtrip
 set_tests_properties(regression_step_change_disk_roundtrip PROPERTIES
     LABELS "cli;cosmo;step_change")
 
+# The scar coupling end to end: lsdtt-landslides writes the failure-time and
+# excavation rasters, lsdtt-cosmo-prediction consumes them. Asserts that
+# switching the coupling on leaves unfailed ground BITWISE unchanged -- the
+# property that stops a landslide run silently perturbing the whole raster.
+add_test(NAME regression_landslide_scar_coupling
+         COMMAND ${Python3_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_landslide_scar_coupling.py
+                 --landslides-exe $<TARGET_FILE:lsdtt-landslides>
+                 --prediction-exe $<TARGET_FILE:lsdtt-cosmo-prediction>
+                 --data-dir ${LSDTT_TEST_DATA_DIR}
+                 --work-dir ${CMAKE_CURRENT_BINARY_DIR}/landslide_scar_coupling)
+set_tests_properties(regression_landslide_scar_coupling PROPERTIES
+    LABELS "cli;cosmo;landslide;step_change")
+
 add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
 set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
     LABELS "smoke;cli;cosmo"
@@ -1605,6 +1645,7 @@ set_tests_properties(cosmo_realworld_lsdn_pixel_vs_lumped PROPERTIES
 # =============================================================================
 
 set(LSDTT_DOMAIN_RULES
+    "quartz|fertility"       "quartz"
     "cosmo"                  "cosmo"
     "landslide"              "landslide"
     "step_change"            "step_change"

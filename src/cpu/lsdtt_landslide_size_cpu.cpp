@@ -9,6 +9,8 @@
 
 #include "lsdtt_landslide_size_cpu.hpp"
 
+#include <string>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -138,20 +140,23 @@ bool parse_landslide_size_model(const std::string& name, LandslideSizeModel& out
 // -----------------------------------------------------------------------------
 // Area-to-volume presets (Larsen et al. 2010 Supplementary Table S1)
 // -----------------------------------------------------------------------------
+// Densities: soil/regolith scars ~1500 kg/m3 (dry-loose 1300 to moist 1700);
+// bedrock 2650. The global and Hovius rows are fitted across materials and
+// carry no defensible density, so they are flagged rather than guessed.
 AreaVolumeScaling AreaVolumeScaling::larsen_global()
-{ return {0.1459, 1.332}; }          // log a -0.836, n=4231, R2 0.95
+{ return {0.1459, 1.332, 2650.0, false}; }   // log a -0.836, n=4231, R2 0.95
 AreaVolumeScaling AreaVolumeScaling::larsen_soil_scar()
-{ return {0.2244, 1.262}; }          // log a -0.649, n=1617, R2 0.92
+{ return {0.2244, 1.262, 1500.0, true}; }    // log a -0.649, n=1617, R2 0.92
 AreaVolumeScaling AreaVolumeScaling::larsen_bedrock_scar()
-{ return {0.2344, 1.410}; }          // log a -0.630, n=168,  R2 0.97
+{ return {0.2344, 1.410, 2650.0, true}; }    // log a -0.630, n=168,  R2 0.97
 AreaVolumeScaling AreaVolumeScaling::larsen_soil_all()
-{ return {0.3631, 1.145}; }          // log a -0.440, n=2136 (scar+deposit)
+{ return {0.3631, 1.145, 1500.0, true}; }    // log a -0.440, n=2136 (scar+deposit)
 AreaVolumeScaling AreaVolumeScaling::larsen_bedrock_all()
-{ return {0.1862, 1.350}; }          // log a -0.730, n=604  (scar+deposit)
+{ return {0.1862, 1.350, 2650.0, true}; }    // log a -0.730, n=604  (scar+deposit)
 AreaVolumeScaling AreaVolumeScaling::hovius_slab()
-{ return {0.05,  1.5}; }             // d = 0.05*sqrt(A), uniform depth
+{ return {0.05,  1.5, 2650.0, false}; }      // d = 0.05*sqrt(A), uniform depth
 AreaVolumeScaling AreaVolumeScaling::hovius_parabolic()
-{ return {0.025, 1.5}; }             // Niemi Eq. A12, parabolic scar
+{ return {0.025, 1.5, 2650.0, false}; }      // Niemi Eq. A12, parabolic scar
 
 bool AreaVolumeScaling::from_name(const std::string& name, AreaVolumeScaling& out)
 {
@@ -169,6 +174,32 @@ double AreaVolumeScaling::volume_m3(double area_m2) const
 {
     if (!(area_m2 > 0.0)) return 0.0;
     return alpha * std::pow(area_m2, gamma);
+}
+
+double AreaVolumeScaling::scar_effective_depth_g_cm2(double depth_m) const
+{
+    // m * kg/m3 -> g/cm2 is a factor of 0.1: 1 kg/m3 * 1 m = 1 kg/m2 =
+    // 1000 g / 10^4 cm2 = 0.1 g/cm2.
+    return depth_m * scar_density_kg_m3 * 0.1;
+}
+
+double AreaVolumeScaling::rock_equivalent_depth_m(double depth_m,
+                                                  double rock_density_kg_m3) const
+{
+    if (!(rock_density_kg_m3 > 0.0)) return depth_m;
+    return depth_m * scar_density_kg_m3 / rock_density_kg_m3;
+}
+
+std::string area_volume_density_note(const AreaVolumeScaling& av)
+{
+    if (av.density_is_material_specific) return {};
+    return "the selected area-volume preset is fitted across BOTH soil and "
+           "bedrock (or carries no material at all), so it has no defensible "
+           "scar density; " + std::to_string(static_cast<int>(av.scar_density_kg_m3))
+         + " kg/m3 is a placeholder. Set the scar density explicitly, or pick a "
+           "material-specific preset (larsen_soil_scar / larsen_bedrock_scar). "
+           "A soil scar carried at rock density overstates its mass depth by "
+           "about a factor of two.";
 }
 
 

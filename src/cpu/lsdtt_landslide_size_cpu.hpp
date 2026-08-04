@@ -104,6 +104,26 @@ struct AreaVolumeScaling
     double alpha = 0.1459;   // larsen_global
     double gamma = 1.332;
 
+    // DENSITY OF THE MATERIAL THE SCAR EXCAVATES, kg/m3.
+    //
+    // Larsen's V = alpha A^gamma is fitted to MEASURED scar volumes, so
+    // d = V/A is a true geometric thickness of whatever failed -- and for a
+    // shallow landslide that is soil, not rock. Converting it to a mass depth
+    // with 2650 overstates the shielding by roughly a factor of two, and since
+    // CRN production falls off exponentially with mass depth, a factor of two
+    // there is a several-fold error in the concentration of the material
+    // delivered.
+    //
+    // So the density travels WITH the preset: choosing larsen_soil_scar is
+    // already a statement that the failures are in soil.
+    double scar_density_kg_m3 = 2650.0;
+
+    // False for presets fitted across BOTH materials (larsen_global) or with no
+    // material attached (hovius_*). Those have no defensible density, and the
+    // 2650 above is a placeholder rather than a value. Callers should say so
+    // rather than pick silently -- see area_volume_density_note().
+    bool density_is_material_specific = false;
+
     // Table S1 rows. Prefer the SCAR presets: this module excavates scars.
     static AreaVolumeScaling larsen_global();        // g 1.332, a 0.1459, n=4231
     static AreaVolumeScaling larsen_soil_scar();     // g 1.262, a 0.2244, n=1617
@@ -122,7 +142,24 @@ struct AreaVolumeScaling
     static bool from_name(const std::string& name, AreaVolumeScaling& out);
 
     double volume_m3(double area_m2) const;
+
+    // Mass depth (g/cm2) of a scar of this geometric depth, using the preset's
+    // own material density. This is the ONLY correct way to turn a scar
+    // thickness into the quantity the CRN physics works in.
+    double scar_effective_depth_g_cm2(double depth_m) const;
+
+    // Geometric thickness of ROCK carrying the same mass as depth_m of this
+    // preset's material. Needed because lsdtt_crn_column carries a single
+    // density for a whole erosion history: a soil removal is handed to it as
+    // the rock-equivalent thickness, which removes the right mass without the
+    // column needing to know two densities.
+    double rock_equivalent_depth_m(double depth_m, double rock_density_kg_m3) const;
 };
+
+// Empty when the preset carries a defensible material density; otherwise a
+// sentence naming the problem, suitable for printing as a warning. A caller
+// that has been given an explicit density by the user should not print it.
+[[nodiscard]] std::string area_volume_density_note(const AreaVolumeScaling& av);
 
 
 // -----------------------------------------------------------------------------

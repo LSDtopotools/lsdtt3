@@ -6,7 +6,7 @@ other calculators, and how those choices are tested. It is intended to be read
 before using any of the three cosmogenic command-line tools, and to be citable
 when reporting results produced with them.
 
-Four points to take away if you read nothing else:
+Five points to take away if you read nothing else:
 
 1. **lsdtt3 simulates spatially distributed cosmogenic production** and this spatial distribution
    is also used in inversion of cosmogenic concentrations into erosion rates. 
@@ -22,6 +22,10 @@ Four points to take away if you read nothing else:
 4. **No time-varying production correction is applied unless you ask for it.**
    Production is evaluated at the present-day field out of the box, under either
    scaling scheme.
+5. **lsdtt3 can also generate the scenario**, not only predict from one: an
+   analytic step change in erosion rate, landslide scars superimposed on it, and
+   quartz-fertility or ice weighting of the downstream mixture (§10). All of it
+   is opt-in and none of it changes a run that does not ask for it.
 
 ---
 
@@ -695,6 +699,9 @@ against the imposed erosion rate.
 Use it to design sampling campaigns, to test what a scenario would look like in
 the data, and to check inversion machinery against a known answer.
 
+The forward tool also **generates** the scenario, rather than only consuming
+one — see §10.
+
 [Full parameter reference](cli_reference/cli_reference_lsdtt_cosmo_prediction.md)
 
 ### 9.3 `lsdtt-cosmo-column-tool` — one column, arbitrary history
@@ -717,17 +724,183 @@ no warning.
 
 ---
 
-## 10. Citing and reporting
+## 10. Landscape scenarios: generating the perturbation
+
+The step-change and transient modes of §9.2 need a per-pixel *time since the
+erosion rate changed*. That field is the hard one to supply, and it is not a
+free parameter — it is the **arrival time of the incision wave**. lsdtt3 can
+build it, along with the erosion rate, topography and landslide fields that go
+with it, so a complete scenario can be posed rather than assembled by hand.
+
+Everything in this section is **opt-in and a no-op by default**. A run that does
+not ask for it is unchanged, bitwise.
+
+### 10.1 The step change, from stream power
+
+`make_step_change_rasters: true` solves the transient response of
+detachment-limited stream power to a step in uplift, analytically, in the chi
+coordinate (Royden & Perron 2013; Mitchell & Yanites 2019). In chi the
+steady-state profile is a straight line of slope `ksn(U) = (U/K)^(1/n)·A_0^(−m/n)`,
+and a slope patch travels at
+
+```
+dchi/dt = n · K · A_0^m · ksn^(n−1)
+```
+
+Whether the transition **steepens into a migrating knickpoint** or **stretches
+into a rarefaction fan** therefore depends on which steepness travels faster:
+
+- new faster → a shock, whose position follows from elevation continuity
+  (the unadjusted reach rises at `U_new − U_old` relative to base level):
+  `chi_kp = (U_new − U_old)·t / (ksn_new − ksn_old)`, which reduces exactly to
+  `K·A_0^m·t` at `n = 1`;
+- new slower → a fan, inside which `S(chi) = (chi/(n K A_0^m t))^(1/(n−1))` and
+  the erosion rate varies **continuously** between the old and new values.
+
+The choice is made on the celerities, not on `n`, so a *falling* step — which
+swaps the two cases — comes out right without a special branch.
+
+Hillslopes below a contributing-area threshold get an imposed critical gradient
+and inherit the erosion rate and elapsed time of the channel they drain to.
+
+**Read the derived numbers.** `K` is back-calculated from a relief *you* choose,
+so the knickpoint position, the wave celerity and the whole time-since-change
+field follow from it. The run prints `K`, both steepness indices, the knickpoint
+and the adjusted area. Report them.
+
+> **Use the tag raster, never chi, to ask whether a pixel has been
+> rejuvenated.** Chi increases upslope, so a hillslope always has a larger chi
+> than the channel it drains to; a hillslope draining to an adjusted channel
+> therefore carries the new erosion rate while sitting *above* the knickpoint in
+> chi. That is correct — a hillslope belongs to its channel — but it means a chi
+> comparison misclassifies hillslopes.
+
+### 10.2 Landslides: two idealised scenarios
+
+`lsdtt-landslides` produces a landslide field (time of failure, excavation
+depth); `lsdtt-cosmo-prediction` superimposes it on the step change through
+`landslide_coupling`.
+
+The idealisation is a single flushing storm: sediment from landslides and from
+slow erosion alike accumulates in the channels and is flushed together, so a
+sampler gets a perfect mixture. The two end members are then
+
+| Coupling | The sample contains |
+|---|---|
+| `flush` | the **whole excavated slab** — the debris is still in the system |
+| `scar` | ordinary background erosion, but off a scar whose column was stripped |
+| `both` | flush inside `flush_time_threshold_yr`, scar outside it |
+
+They are one kernel with one number, so `both` is not a third code path.
+
+**They do not dilute by the same amount, and the ordering is the opposite of the
+intuitive one.** At short ages `background > flush > scar`, because the flushed
+slab *contains* the pre-failure column's concentrated top while the scar is what
+is left behind — material from the base of the slab, exposed and barely
+re-accumulated. In the fresh-failure limit `flush > scar` is exact: the mean of a
+decreasing profile over `[0, d]` must exceed its value at `d`. A recovering scar
+eventually overtakes the flush value.
+
+**On Niemi's Eq. 5.** Niemi et al. (2005) give the mean concentration of removed
+material as `N_D = N_f(Λ/D)(1 − e^(−Dρ/Λ))` with `N_f` the surface concentration
+*after* the removal. Taken literally that averages the pre-failure profile over
+the slab and then multiplies by a *further* `e^(−Dρ/Λ)` — the removed material
+would be more depleted than its own deepest part. lsdtt3 implements the depth
+average of the pre-failure profile, which is what the quantity means, and treats
+the published expression as a notation collision between his pre- and
+post-removal surface arrays. The averaging **factor** itself is unambiguous and
+is reproduced: for one production pathway it is `(Γ/d)(1 − e^(−d/Γ))`, and
+lsdtt3's four pathways make the exact depth average that factor applied
+pathway-by-pathway under the `F` weights, matched to 7.5×10⁻¹⁵.
+
+**The flush timescale is an age, following Niemi**, whose model has no sediment
+storage at all — landslide material passes through within one 100 yr timestep
+and mixes homogeneously. How long landslide sediment actually persists in a
+channel network is a separate research question and is not modelled.
+
+### 10.3 Two densities, and why they are not one number
+
+The CRN physics works in **mass depth**, g cm⁻². Metres appear only at the
+boundaries, and every conversion carries the density of the material actually
+there:
+
+| Quantity | Symbol | Typical |
+|---|---|---|
+| the eroding bedrock column | `rock_density_kg_m3` | 2650 |
+| the material a landslide **excavated** | `scar_density_kg_m3` | ~1500 soil, 2650 rock |
+
+Larsen's `V = αA^γ` is fitted to **measured** scar volumes, so an excavation
+depth is a true geometric thickness of whatever failed — soil, for a shallow
+landslide. Carrying it at the bedrock density overstates the mass depth by a
+factor of **1.77**, which changes spallation production at the scar base by
+**2.05**. `lsdtt-landslides` takes the density from its area–volume preset
+(`larsen_soil_scar` → 1500, `larsen_bedrock_scar` → 2650) and **warns** when the
+preset selected is fitted across both materials, such as the default
+`larsen_global`, which has no defensible value.
+
+### 10.4 Quartz fertility
+
+A basin-averaged sample is a mixture of **quartz**, not of rock. Two pixels
+eroding at the same rate contribute unequally if their rock carries different
+quartz, and a quartz-free unit — limestone, basalt, many volcanics — contributes
+sediment but no sample at all. In mixed-lithology terrain, routing
+concentrations without this is **wrong**, not merely imprecise: a quartz-free
+unit eroding ten times faster than its neighbour dominates the sediment flux and
+must contribute nothing to the mixture.
+
+Fertility enters as a mixing **weight**, `w = mass_flux × f_q` in kg of quartz
+m⁻² yr⁻¹, handed to the accumulation kernel in place of the erosion rate. No CRN
+physics changes.
+
+Two properties worth knowing before using it:
+
+- **A uniform fertility changes nothing.** A constant weight cancels in
+  `Σ(Cw)/Σ(w)`. Fertility only bites where it **varies**.
+- **An all-quartz-free domain is reported, not returned as nodata.** "This
+  catchment yields no quartz" is a meaningful answer and a common one in
+  volcanic terrain.
+
+An optional two-layer model expresses the secondary effect that chemical
+weathering enriches quartz in regolith relative to the fresh bedrock a deep scar
+exposes — which, if right, makes landslide debris under-represented in the
+quartz separate and so **weakens** the dilution a landslide causes.
+
+### 10.5 Ice
+
+An ice-covered pixel differs from a bare one in exactly three ways, and each
+already has a field: the ice column shields cosmic rays (**snow shielding**, as
+an effective mass depth — 10 m of ice is 917 g cm⁻², at which 0.3 % of spallation
+survives), the **erosion rate** differs or is zero, and little or no **quartz**
+reaches the sample. So the ice mask writes three existing rasters rather than
+being a model of its own. `lsdtt-landslides` accepts the same mask and places no
+landslide on ice.
+
+A zero erosion rate under cold-based ice is safe: the steady-state kernel forms
+its denominator as `(ε + Γλ)` and never divides by ε, so ε = 0 returns the
+saturation concentration `P/λ`.
+
+> **Limitation, stated rather than hidden.** This is **present-day ice only**.
+> Concentrations depend on the shielding *history*, and glaciated landscapes
+> advanced and retreated repeatedly. lsdtt3 can express a per-pixel erosion
+> history but not a per-pixel time-varying *shielding*, so a glacial–interglacial
+> cycle cannot be represented at all and concentrations under formerly glaciated
+> ground are overestimated.
+
+---
+
+## 11. Citing and reporting
 
 When reporting lsdtt3 cosmogenic results, state at minimum: the nuclide, the
 muon scheme, the scaling scheme, the atmosphere, whether a time-integration was
 applied (fixed age or self-consistent), the topographic shielding value, and the
-DEM and its resolution. Any of these changes the number, and several of them
+DEM and its resolution. For a generated scenario (§10) add the **back-calculated
+`K`** and the knickpoint position, since the whole configuration follows from
+them, and both densities if landslides are coupled. Any of these changes the number, and several of them
 differ from the defaults of other calculators.
 
 ---
 
-## 11. References
+## 12. References
 
 **Method and implementation**
 
@@ -798,3 +971,24 @@ differ from the defaults of other calculators.
 - Codilean, A. T. et al. (2018). OCTOPUS: an open cosmogenic isotope and
   luminescence database. *Earth System Science Data*, 10, 2123–2139.
 - Codilean, A. T. & Munack, H. (2025). *Geochronology*, 7, 113.
+
+**Landscape scenarios (§10)**
+
+- Royden, L. & Perron, J. T. (2013). Solutions of the stream power equation and
+  application to the evolution of river longitudinal profiles. *Journal of
+  Geophysical Research: Earth Surface*, 118, 497–518.
+- Mitchell, N. A. & Yanites, B. J. (2019). *Journal of Geophysical Research:
+  Earth Surface*, 124. The abbreviated knickpoint expressions.
+- Niemi, N. A., Oskin, M., Burbank, D. W., Heimsath, A. M. & Gabet, E. J.
+  (2005). Effects of bedrock landslides on cosmogenically determined erosion
+  rates. *Earth and Planetary Science Letters*, 237, 480–498.
+- Yanites, B. J., Tucker, G. E. & Anderson, R. S. (2009). Numerical and
+  analytical models of cosmogenic radionuclide dynamics in landslide-dominated
+  drainage basins. *Journal of Geophysical Research: Earth Surface*, 114,
+  F01007.
+- Larsen, I. J., Montgomery, D. R. & Korup, O. (2010). Landslide erosion
+  controlled by hillslope material. *Nature Geoscience*, 3, 247–251. Scar
+  area–volume scaling and the material densities that go with it.
+- Malamud, B. D., Turcotte, D. L., Guzzetti, F. & Reichenbach, P. (2004).
+  Landslide inventories and their statistical properties. *Earth Surface
+  Processes and Landforms*, 29, 687–711.

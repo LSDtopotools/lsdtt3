@@ -47,6 +47,7 @@
 #ifndef LSDTT_LANDSLIDE_CRN_CPU_HPP
 #define LSDTT_LANDSLIDE_CRN_CPU_HPP
 
+#include <cstdint>
 #include <string>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -67,7 +68,22 @@ struct LandslideCrnConfig
     double total_shielding    = 1.0;
 
     std::string muon_scheme        = "BraucherBorchers";
+
+    // Density of the ERODING COLUMN -- bedrock. Converts the background
+    // erosion rate between m/yr and g/cm2/yr.
     double      rock_density_kg_m3 = 2650.0;
+
+    // Density of the material the SCAR EXCAVATED. These are not the same
+    // quantity and conflating them is a real error, not a refinement: the
+    // excavation depth comes from Larsen's V = alpha A^gamma, which is fitted
+    // to measured scar volumes, so it is a true geometric thickness of soil for
+    // a shallow failure. Carrying it at 2650 overstates the mass depth by about
+    // a factor of two, and production falls exponentially with mass depth.
+    //
+    // Defaults to 2650 so existing bedrock results are unchanged; set it from
+    // the area-volume preset (AreaVolumeScaling::scar_density_kg_m3) whenever
+    // one is in play.
+    double      scar_density_kg_m3 = 2650.0;
 
     // Present time on the same clock as time_of_last_failure.
     double t_now_yr = 0.0;
@@ -97,6 +113,191 @@ lsdtt_raster_cpu compute_landslide_surface_concentration(
 // value every unfailed pixel takes. Exposed so a caller can report the
 // reduction a landslide field causes without recomputing it.
 double landslide_crn_background_concentration(const LandslideCrnConfig& config);
+
+
+// -----------------------------------------------------------------------------
+// time_since_failure_from_time_of_failure
+//
+// lsdtt-landslides writes an ABSOLUTE failure time with nodata on ground that
+// never failed. Every consumer here wants ELAPSED years, and needs "never" to
+// be a distinct state rather than nodata.
+//
+// The distinction matters more than it looks. If "never failed" were encoded as
+// nodata, unfailed ground would drop out of the raster, and therefore out of any
+// basin average computed from it -- silently removing most of the landscape from
+// a catchment mean and replacing a small correction with a large error. So the
+// output is valid everywhere the input is valid, and "never" is carried as a
+// NEGATIVE value.
+//
+// A failure recorded at or after t_report_yr has not happened yet at the
+// reporting time and is also returned as "never".
+// -----------------------------------------------------------------------------
+constexpr double k_landslide_never_failed = -1.0;
+
+[[nodiscard]] lsdtt_raster_cpu time_since_failure_from_time_of_failure(
+    const lsdtt_raster_cpu& time_of_last_failure,
+    double                  t_report_yr);
+
+
+// -----------------------------------------------------------------------------
+// LandslideStepChangeConfig
+//
+// The "scar" coupling of plan Phase 2: the landslide material is long gone from
+// the system, and what remains is a scar eroding at the catchment rate from a
+// column whose inheritance was stripped when it failed.
+//
+// Per pixel the erosion history is four rows, ordered MOST RECENT FIRST as the
+// integrator requires:
+//
+//   [0] t_since_failure   rate = eff_new   removal = 0
+//   [1] t_since_failure   rate = 0         removal = d_exc   <- the landslide
+//   [2] t_since_change    rate = eff_new   removal = 0
+//   [3] -9999             rate = eff_old   removal = 0       <- background
+//
+// with the initial concentration left at its default so the column starts at
+// steady state under eff_old, which is what inheritance requires.
+//
+// The removal is handed to the column as a ROCK-EQUIVALENT thickness, because
+// lsdtt_crn_column carries one density for a whole history. The mass removed is
+// what matters and is preserved exactly.
+// -----------------------------------------------------------------------------
+struct LandslideStepChangeConfig
+{
+    double eff_erate_old_g_cm2_yr = 0.001;
+    double eff_erate_new_g_cm2_yr = 0.010;
+
+    double rock_density_kg_m3 = 2650.0;
+    double scar_density_kg_m3 = 2650.0;
+
+    // FLUSH WINDOW, years. A scar younger than this is still delivering its
+    // debris to the channel, so the sample contains the whole excavated slab
+    // rather than the surface of the scar. Older scars have been evacuated and
+    // take the scar treatment above.
+    //
+    //   0        -> every scar takes the scar treatment (the default)
+    //   huge     -> every scar takes the flush treatment
+    //   finite   -> both, split by age, which is the physically complete case
+    //
+    // This is an AGE, following Niemi et al. (2005), whose model has no
+    // sediment storage at all: landslide material passes through within one
+    // 100 yr timestep and mixes homogeneously. Setting this to the event
+    // recurrence interval reproduces that convention. How long landslide
+    // sediment actually persists in a channel network is a separate research
+    // question and is deliberately not modelled here.
+    double flush_time_threshold_yr = 0.0;
+
+    // Window over which the delivered mass is SPREAD, years. The threshold
+    // above has two jobs -- deciding which scars flush, and setting the rate at
+    // which their mass arrives -- and those come apart in the pure-flush
+    // idealisation, where every scar flushes regardless of age but the mass
+    // still arrives over a finite time. A rate needs a timescale; an unbounded
+    // selector must not become an unbounded denominator, or the delivery weight
+    // collapses to zero.
+    //
+    // Zero (the default) means "use flush_time_threshold_yr", which is right
+    // whenever the threshold is finite.
+    double flush_delivery_window_yr = 0.0;
+
+    // Gauss-Legendre nodes used to depth-integrate the delivered slab. 12 is
+    // chosen by measurement, not assumption -- see the unit test, which pins
+    // the quadrature against the analytic depth-integrated steady state.
+    int flush_quadrature_nodes = 12;
+
+    std::string muon_scheme = "BraucherBorchers";
+    std::string nuclide     = "Be10";
+};
+
+
+// -----------------------------------------------------------------------------
+// compute_landslide_step_change_concentration
+//
+// Surface concentration under a step change in erosion rate, with landslide
+// scars superimposed.
+//
+// UNFAILED PIXELS ARE BITWISE IDENTICAL to what
+// calculate_crn_concentration_raster_step_change returns, because that function
+// is what computes them: it is called for the whole raster and only failed
+// pixels are then overwritten. There is no second implementation of the step
+// change here to drift from the first.
+//
+// A failure OLDER than the incision wave at its own pixel is discarded --
+// t_since_failure > t_since_change would mean the landslide fired before the
+// erosion-rate change that is supposed to have caused it. Those pixels keep
+// their plain step-change value and are counted in n_discarded_prewave.
+//
+// time_since_failure_yr must be the ELAPSED-years field from
+// time_since_failure_from_time_of_failure(), not an absolute clock.
+// -----------------------------------------------------------------------------
+struct LandslideCouplingResult
+{
+    lsdtt_raster_cpu concentration;
+
+    // Mass delivered to the channel per unit area per year, kg m^-2 yr^-1 --
+    // the weight a downstream mixing calculation should use, NOT the erosion
+    // rate. Inside the flush window a pixel delivers its whole excavated slab
+    // over the window; elsewhere it delivers its background erosion.
+    //
+    //   flush:  rho_scar * d_exc / flush_time_threshold_yr
+    //   else:   background erosion rate, converted from g/cm2/yr
+    //
+    // Empty when no erosion-rate raster was supplied.
+    lsdtt_raster_cpu delivery_mass_kg_m2_yr;
+
+    std::int64_t n_failed_pixels       = 0;
+    std::int64_t n_discarded_prewave   = 0;
+    std::int64_t n_flushing_pixels     = 0;   // inside the flush window
+    std::int64_t n_solves              = 0;   // distinct column solves performed
+    double total_delivered_kg_yr       = 0.0; // over the flushing pixels only
+    [[nodiscard]] std::string summary() const;
+};
+
+// erosion_rate_g_cm2_yr may be null; when supplied, the delivery-mass raster is
+// built from it and returned alongside the concentrations.
+[[nodiscard]] LandslideCouplingResult compute_landslide_step_change_concentration(
+    const lsdtt_raster_cpu& excavation_depth_m,
+    const lsdtt_raster_cpu& time_since_failure_yr,
+    const lsdtt_raster_cpu& time_since_change_yr,
+    const lsdtt_raster_cpu& production_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const LandslideStepChangeConfig& config,
+    const lsdtt_raster_cpu* erosion_rate_g_cm2_yr = nullptr);
+
+
+// -----------------------------------------------------------------------------
+// landslide_flush_concentration
+//
+// Mean concentration of the material a landslide delivers: the depth average of
+// the PRE-FAILURE profile over the excavated slab [0, d_eff].
+//
+// NOTE ON NIEMI EQ. 5. Niemi et al. (2005) give the mean concentration of the
+// removed material as N_D = N_f (Lambda/D)(1 - exp(-D rho/Lambda)) with N_f the
+// surface concentration AFTER the removal (their Eq. 3). Taken literally that
+// is the pre-failure profile averaged over the slab and then multiplied by a
+// further exp(-D rho/Lambda) -- the removed material cannot be more depleted
+// than its own deepest part. We therefore implement the depth average of the
+// pre-failure profile, which is what the quantity means, and treat the
+// published expression as a notation collision between the pre- and
+// post-removal surface arrays rather than as physics to reproduce. The
+// depth-averaging FACTOR itself, (Lambda/d)(1 - exp(-d/Lambda)) per production
+// pathway, is exactly what the integration reduces to and is pinned as such in
+// the unit test.
+//
+// Evaluated by Gauss-Legendre quadrature of the existing validated point
+// solution rather than by a new closed form: a second analytic expression next
+// to the locked core is a liability, and the profile is a smooth sum of
+// exponentials that quadrature handles to machine precision at modest order.
+// -----------------------------------------------------------------------------
+[[nodiscard]] double landslide_flush_concentration(
+    double d_eff_g_cm2,
+    double eff_erate_old_g_cm2_yr,
+    double eff_erate_new_g_cm2_yr,
+    double time_since_change_at_failure_yr,
+    double production_scaling,
+    double total_shielding,
+    const std::string& muon_scheme,
+    const std::string& nuclide,
+    double rock_density_kg_m3,
+    int    n_nodes = 12);
 
 }  // namespace lsdtt
 
