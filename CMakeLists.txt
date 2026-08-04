@@ -291,6 +291,7 @@ target_include_directories(lsdtt3_utils
 set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_cpu.cpp
     src/cpu/lsdtt_raster_algebra.cpp
+    src/cpu/lsdtt_raster_coregistration_cpu.cpp
     src/cpu/lsdtt_raster_surface_metrics_cpu.cpp
     src/cpu/lsdtt_surface_texture_cpu.cpp
     src/cpu/lsdtt_raster_surface_fitting_cpu.cpp

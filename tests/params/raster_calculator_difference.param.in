@@ -3,8 +3,8 @@ read_fname: tiny_dem.asc
 write_path: __WRITE_PATH__
 write_fname: tiny
 
-second_raster_fname: tiny_dem_plus1.asc
-second_raster_path: __READ_PATH__
+second_raster_read_fname: tiny_dem_plus1.asc
+second_raster_read_path: __READ_PATH__
 resample_second_to_first_grid: false
 
 write_output_format: gtiff
