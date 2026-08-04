@@ -140,7 +140,7 @@ add_lsdtt_cli_smoke_test(
     raster_calculator_missing_second.param.in
     tiny_missing_second_difference.tif
     --expect-failure
-    --stderr-contains "FATAL: second_raster_fname must be set."
+    --stderr-contains "FATAL: second_raster_read_fname must be set."
 )
 
 add_lsdtt_cli_smoke_test(
