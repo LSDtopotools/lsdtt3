@@ -36,16 +36,18 @@ enum class dem_coreg_method
 
 struct nuth_kaab_coreg_options
 {
-    int    nuth_kaab_coreg_max_iterations = 8;
-    double nuth_kaab_coreg_tolerance_horizontal_m = 0.05;
-    double nuth_kaab_coreg_slope_min_degrees = 3.0;
-    double nuth_kaab_coreg_slope_max_degrees = 45.0;
-    double nuth_kaab_coreg_residual_nmad_clip = 3.0;
+    int    nuth_kaab_coreg_max_iterations = 10;
+    double nuth_kaab_coreg_offset_threshold_pixels = 0.001;
+    double nuth_kaab_coreg_slope_min_degrees = 0.0;
+    double nuth_kaab_coreg_slope_max_degrees = 90.0;
+    int    nuth_kaab_coreg_aspect_bin_count = 72;
     int    nuth_kaab_coreg_min_samples = 500;
-    int    nuth_kaab_coreg_subsample_step = 1;
+    int    nuth_kaab_coreg_subsample_count = 500000;
     bool   nuth_kaab_coreg_apply_vertical_shift = true;
     double nuth_kaab_coreg_max_horizontal_step_m = 0.0;
-    int    nuth_kaab_coreg_polyfit_threads = 0;
+    double nuth_kaab_coreg_initial_dx_m = 0.0;
+    double nuth_kaab_coreg_initial_dy_m = 0.0;
+    double nuth_kaab_coreg_initial_dz_m = 0.0;
 };
 
 struct dem_coreg_options
@@ -63,6 +65,7 @@ struct dem_coreg_iteration_diagnostics
     double ddx_m = 0.0;
     double ddy_m = 0.0;
     double ddz_m = 0.0;
+    double horizontal_step_pixels = 0.0;
     double cumulative_dx_m = 0.0;
     double cumulative_dy_m = 0.0;
     double cumulative_dz_m = 0.0;

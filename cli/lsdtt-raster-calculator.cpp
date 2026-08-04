@@ -159,7 +159,8 @@ int main(int argc, char* argv[])
     help_map["dem_coregistration_method"] = {"string","nuth_kaab",
         "DEM coregistration method.",
         "Allowed values: nuth_kaab. Method reference: Nuth and Kaab (2011), "
-        "https://doi.org/10.5194/tc-5-271-2011.",
+        "https://doi.org/10.5194/tc-5-271-2011. This implementation was "
+        "ported from xdem.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
     bool_default_map["write_second_coregistered"] = false;
@@ -180,28 +181,29 @@ int main(int argc, char* argv[])
         "Used only when dem_coregistration_method is nuth_kaab.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_tolerance_horizontal_m"] = 0.05f;
-    help_map["nuth_kaab_coreg_tolerance_horizontal_m"] = {"float","0.05",
-        "Convergence tolerance on horizontal step magnitude [m].",
-        "Iteration stops when sqrt(ddx^2 + ddy^2) <= tolerance.",
+    float_default_map["nuth_kaab_coreg_offset_threshold_pixels"] = 0.001f;
+    help_map["nuth_kaab_coreg_offset_threshold_pixels"] = {"float","0.001",
+        "Convergence threshold in pixels for horizontal offset updates.",
+        "Matches Nuth and Kaab style stopping criterion: stop when estimated "
+        "horizontal residual offset per iteration falls below this value.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_slope_min_degrees"] = 3.0f;
-    help_map["nuth_kaab_coreg_slope_min_degrees"] = {"float","3.0",
+    float_default_map["nuth_kaab_coreg_slope_min_degrees"] = 0.0f;
+    help_map["nuth_kaab_coreg_slope_min_degrees"] = {"float","0.0",
         "Minimum slope [degrees] used in nuth_kaab sample selection.",
         "Used only when dem_coregistration_method is nuth_kaab.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_slope_max_degrees"] = 45.0f;
-    help_map["nuth_kaab_coreg_slope_max_degrees"] = {"float","45.0",
+    float_default_map["nuth_kaab_coreg_slope_max_degrees"] = 90.0f;
+    help_map["nuth_kaab_coreg_slope_max_degrees"] = {"float","90.0",
         "Maximum slope [degrees] used in nuth_kaab sample selection.",
         "Used only when dem_coregistration_method is nuth_kaab.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_residual_nmad_clip"] = 3.0f;
-    help_map["nuth_kaab_coreg_residual_nmad_clip"] = {"float","3.0",
-        "Residual clipping threshold in NMAD units.",
-        "Used only when dem_coregistration_method is nuth_kaab.",
+    int_default_map["nuth_kaab_coreg_aspect_bin_count"] = 72;
+    help_map["nuth_kaab_coreg_aspect_bin_count"] = {"int","72",
+        "Number of aspect bins used before cosine fitting.",
+        "Nuth and Kaab fitting is performed on binned dh/tan(slope) by aspect.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
     int_default_map["nuth_kaab_coreg_min_samples"] = 500;
@@ -210,10 +212,10 @@ int main(int argc, char* argv[])
         "Used only when dem_coregistration_method is nuth_kaab.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
-    int_default_map["nuth_kaab_coreg_subsample_step"] = 1;
-    help_map["nuth_kaab_coreg_subsample_step"] = {"int","1",
-        "Subsampling step in row/col units for nuth_kaab fitting.",
-        "1 uses all eligible cells, 2 uses every second cell, etc.",
+    int_default_map["nuth_kaab_coreg_subsample_count"] = 500000;
+    help_map["nuth_kaab_coreg_subsample_count"] = {"int","500000",
+        "Maximum number of eligible pixels used for iterative fitting.",
+        "Set -1 to use all eligible pixels; otherwise random subsample up to this count.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
     bool_default_map["nuth_kaab_coreg_apply_vertical_shift"] = true;
@@ -228,10 +230,22 @@ int main(int argc, char* argv[])
         "<= 0 disables per-iteration step capping.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
-    int_default_map["nuth_kaab_coreg_polyfit_threads"] = 0;
-    help_map["nuth_kaab_coreg_polyfit_threads"] = {"int","0",
-        "Thread count for gradient/slope derivation in nuth_kaab.",
-        "0 uses lsdtt3 default thread resolution.",
+    float_default_map["nuth_kaab_coreg_initial_dx_m"] = 0.0f;
+    help_map["nuth_kaab_coreg_initial_dx_m"] = {"float","0.0",
+        "Initial easting shift guess [m] applied before iterations.",
+        "Useful to seed the optimizer when large known offsets are present.",
+        "DEM coregistration", "param", "enable_dem_coregistration"};
+
+    float_default_map["nuth_kaab_coreg_initial_dy_m"] = 0.0f;
+    help_map["nuth_kaab_coreg_initial_dy_m"] = {"float","0.0",
+        "Initial northing shift guess [m] applied before iterations.",
+        "Useful to seed the optimizer when large known offsets are present.",
+        "DEM coregistration", "param", "enable_dem_coregistration"};
+
+    float_default_map["nuth_kaab_coreg_initial_dz_m"] = 0.0f;
+    help_map["nuth_kaab_coreg_initial_dz_m"] = {"float","0.0",
+        "Initial vertical shift guess [m].",
+        "If vertical-shift solving is enabled, iterations overwrite this with the final estimate.",
         "DEM coregistration", "param", "enable_dem_coregistration"};
 
     // --- Output format and diagnostics ---
@@ -628,24 +642,28 @@ int main(int argc, char* argv[])
         coreg_options.method = method;
         coreg_options.nuth_kaab.nuth_kaab_coreg_max_iterations =
             ifs["nuth_kaab_coreg_max_iterations"];
-        coreg_options.nuth_kaab.nuth_kaab_coreg_tolerance_horizontal_m =
-            ff["nuth_kaab_coreg_tolerance_horizontal_m"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_offset_threshold_pixels =
+            ff["nuth_kaab_coreg_offset_threshold_pixels"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_slope_min_degrees =
             ff["nuth_kaab_coreg_slope_min_degrees"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_slope_max_degrees =
             ff["nuth_kaab_coreg_slope_max_degrees"];
-        coreg_options.nuth_kaab.nuth_kaab_coreg_residual_nmad_clip =
-            ff["nuth_kaab_coreg_residual_nmad_clip"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_aspect_bin_count =
+            ifs["nuth_kaab_coreg_aspect_bin_count"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_min_samples =
             ifs["nuth_kaab_coreg_min_samples"];
-        coreg_options.nuth_kaab.nuth_kaab_coreg_subsample_step =
-            ifs["nuth_kaab_coreg_subsample_step"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_subsample_count =
+            ifs["nuth_kaab_coreg_subsample_count"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_apply_vertical_shift =
             bf["nuth_kaab_coreg_apply_vertical_shift"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_max_horizontal_step_m =
             ff["nuth_kaab_coreg_max_horizontal_step_m"];
-        coreg_options.nuth_kaab.nuth_kaab_coreg_polyfit_threads =
-            ifs["nuth_kaab_coreg_polyfit_threads"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_initial_dx_m =
+            ff["nuth_kaab_coreg_initial_dx_m"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_initial_dy_m =
+            ff["nuth_kaab_coreg_initial_dy_m"];
+        coreg_options.nuth_kaab.nuth_kaab_coreg_initial_dz_m =
+            ff["nuth_kaab_coreg_initial_dz_m"];
 
         lsdtt::dem_coreg_result coreg_result;
         try
@@ -682,7 +700,8 @@ int main(int argc, char* argv[])
             }
 
             diag << "iteration,n_samples,median_residual,nmad_residual,"
-                 << "ddx_m,ddy_m,ddz_m,cumulative_dx_m,cumulative_dy_m,cumulative_dz_m\n";
+                 << "ddx_m,ddy_m,ddz_m,horizontal_step_pixels,"
+                 << "cumulative_dx_m,cumulative_dy_m,cumulative_dz_m\n";
             for (const auto& d : coreg_result.diagnostics)
             {
                 diag << d.iteration << ","
@@ -692,6 +711,7 @@ int main(int argc, char* argv[])
                      << d.ddx_m << ","
                      << d.ddy_m << ","
                      << d.ddz_m << ","
+                     << d.horizontal_step_pixels << ","
                      << d.cumulative_dx_m << ","
                      << d.cumulative_dy_m << ","
                      << d.cumulative_dz_m << "\n";
