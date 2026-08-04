@@ -34,6 +34,7 @@ At least one prediction mode must be activated; the program exits with a message
 | 2. Production raster | Compute Stone 2000 or load from disk |
 | 3. Shielding rasters | Topographic, snow, self (raster or uniform scalar) |
 | 4. Erosion raster | Raster or uniform scalar |
+| 1b. Step-change generation | `make_step_change_rasters` — derives erosion rate, time-since-change and topography from the analytical fluvial solution |
 | 5. Steady-state concentrations | `calculate_crn_concentration_raster` |
 | 6. Step-change concentrations | `calculate_step_change_crn_concentration_raster` |
 | `calculate_multi_isotope_step_change` | bool | `false` | Carry Be-10, Al-26 and C-14 through the **same** step change at every pixel, and write the two isotope-ratio rasters. See below. |
@@ -141,6 +142,93 @@ Used only when `calculate_step_change_crn_concentration_raster: true`.
 | `step_change_eff_erate_new_g_cm2_yr` | float | `0.01` | Post-change effective erosion rate (g/cm²/yr). |
 | `time_since_change_raster_prefix` | string | `NULL` | Prefix of a raster giving time since step change (yr) at each pixel. Pixels with value 0 receive steady-state concentration at the new erosion rate. |
 | `time_since_change_yr` | float | `10000` | Uniform time since step change (yr) used when prefix is `NULL`. |
+
+---
+
+## Generating the step change from a fluvial solution
+
+The time-since-change field above is usually the hard input to supply, because
+it is not a free parameter: it is **the arrival time of the incision wave**. Set
+`make_step_change_rasters: true` and the tool derives it, along with the erosion
+rate and a matching topography, from the analytical transient response of
+detachment-limited stream power to a step in uplift (Royden & Perron 2013;
+Mitchell & Yanites 2019). The generated fields are handed to the step-change
+concentration kernel **in memory** — there is no round trip through disk.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `make_step_change_rasters` | bool | `false` | Generate the erosion-rate, time-since-change and topography fields instead of loading them. |
+| `step_change_uplift_old_m_yr` | float | `0.0001` | Uplift (= steady erosion) rate before the step, **m/yr**. |
+| `step_change_uplift_new_m_yr` | float | `0.001` | Uplift rate after the step, **m/yr**. |
+| `step_change_target_relief_m` | float | `1000` | Relief the old steady-state landscape should have. `K` is back-calculated from it. |
+| `step_change_age_yr` | float | `100000` | Time since the step reached the basin outlet. Every pixel gets its own, smaller, elapsed time. |
+| `step_change_n` | float | `1` | Slope exponent `n` in `E = K A^m S^n`. |
+| `step_change_m_over_n` | float | `0.45` | Concavity for the chi integral. |
+| `step_change_A_0` | float | `1` | Reference drainage area for chi. Any positive value is handled exactly. |
+| `step_change_channel_pixels` | int | `500` | Contributing-pixel count above which a pixel is a channel; below it a critical hillslope gradient is imposed. |
+| `step_change_Sc_old` | float | `0.25` | Critical hillslope gradient in the unadjusted part of the landscape. |
+| `step_change_Sc_new` | float | `0.4` | Critical hillslope gradient in the adjusted part. |
+| `step_change_basin_outlet_csv` | string | `NULL` | CSV of `latitude,longitude` giving the basin outlet. The first point is used and snapped to the channel network. `NULL` uses the largest basin in the DEM. |
+| `rock_density_kg_m3` | float | `2650` | Converts the uplift rates (m/yr) to effective erosion rates (g/cm²/yr). |
+| `step_change_production_from_generated_dem` | bool | `true` | Compute production from the generated topography rather than the input DEM. |
+| `write_step_change_rasters` | bool | `false` | Write `_SC_DEM`, `_SC_ERATE`, `_SC_STEPTIME`, `_SC_TAG` and `_SC_CHI`. |
+
+**Read the derived numbers.** `K` is back-calculated from
+`step_change_target_relief_m`, so the entire configuration — knickpoint
+position, wave celerity, the whole time-since-change field — follows from a
+relief you chose rather than a rate constant you typed. The run prints `K`, both
+steepness indices, the knickpoint position and elevation, and the adjusted area.
+Report them.
+
+**The uplift rates override the effective-rate parameters.**
+`step_change_eff_erate_old_g_cm2_yr` and `..._new_...` are ignored in this mode;
+the rates come from `step_change_uplift_*_m_yr × rock_density_kg_m3 × 0.1`. The
+run says so explicitly. Likewise `time_since_change_raster_prefix` is ignored,
+with a note.
+
+**What the wave does depends on `n`.** With `n ≥ 1` and rising uplift the
+transition steepens into a migrating knickpoint (a shock) separating an adjusted
+reach below from an unadjusted reach above. With `n < 1` it stretches into a
+rarefaction fan, inside which the erosion rate varies continuously between the
+old and new values — those pixels are tagged separately. A *falling* step swaps
+which case applies, and that is handled: the choice is made on the wave
+celerities, not on `n` alone.
+
+**Use the tag raster, never chi, to ask whether a pixel has been rejuvenated.**
+`_SC_TAG` is 1 = unadjusted channel, 2 = unadjusted hillslope, 3 = adjusted
+channel, 4 = adjusted hillslope, 5 and 6 = the same two inside a fan. Chi
+increases upslope, so a hillslope always has a larger chi than the channel it
+drains to; a hillslope draining to an adjusted channel therefore carries the new
+erosion rate while sitting *above* the knickpoint in chi. That is correct — a
+hillslope belongs to its channel — but it means a chi comparison misclassifies
+hillslopes.
+
+**Scope and side effects.** The generated fields cover **one basin**, so the
+concentration output is restricted to it. The generated topography is offset so
+its outlet sits at the input DEM's outlet elevation, keeping base level real.
+The generated per-pixel erosion rate is used for steady-state concentrations and
+as the flux weight in downstream accumulation. Flow routing for accumulation
+still uses the **input** DEM, not the generated one.
+
+### Example: generate and consume in one run
+
+```
+read_path: ./
+read_fname: my_dem.tif
+write_path: ./
+write_fname: sc
+
+make_step_change_rasters: true
+step_change_uplift_old_m_yr: 0.0001
+step_change_uplift_new_m_yr: 0.0005
+step_change_target_relief_m: 1200
+step_change_age_yr: 500000
+step_change_n: 1.0
+step_change_channel_pixels: 500
+write_step_change_rasters: true
+
+calculate_multi_isotope_step_change: true
+```
 
 ---
 
