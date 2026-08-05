@@ -57,6 +57,7 @@
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_crn_units.hpp"
 #include "../src/cpu/lsdtt_crn_column.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
@@ -92,21 +93,6 @@ static void print_banner()
 
 // -----------------------------------------------------------------------------
 // Build a uniform constant raster matching the geometry of a reference raster
-static lsdtt::lsdtt_raster_cpu make_constant_raster(const lsdtt::lsdtt_raster_cpu& ref,
-                                                     float value)
-{
-    const auto& meta = ref.get_meta();
-    int nr = meta.n_rows, nc = meta.n_cols;
-    lsdtt::lsdtt_array2d<float>   d(nr, nc, value);
-    lsdtt::lsdtt_array2d<uint8_t> m(nr, nc, 0);
-    // Copy valid mask from reference
-    const auto& ref_mask = ref.get_mask_array();
-    for (int r = 0; r < nr; ++r)
-        for (int c = 0; c < nc; ++c)
-            if (ref_mask(r, c)) m(r, c) = 1;
-    return lsdtt::lsdtt_raster_cpu(std::move(d), std::move(m), meta);
-}
-
 // -----------------------------------------------------------------------------
 // main
 // -----------------------------------------------------------------------------
@@ -888,6 +874,30 @@ int main(int argc, char* argv[])
                      "fields.\n";
     }
 
+    // The two multi-isotope modes write IDENTICAL filenames -- both use
+    // _step_crn_conc.tif, _R2610_step.tif and _R1410_step.tif -- and the
+    // transient runs first, so enabling both silently overwrote all five
+    // transient outputs with the step-change ones. A run that appeared to
+    // succeed produced half the results it was asked for, under names that
+    // said "step" either way.
+    //
+    // Rejected rather than renamed: the "_step" suffix on the transient
+    // outputs is a naming defect too, but changing shipped output filenames is
+    // a separate decision with its own migration cost. This guard removes the
+    // data loss without moving anyone's filenames.
+    if (do_multi && do_multi_tr)
+    {
+        std::cerr << "FATAL: calculate_multi_isotope_step_change and "
+                     "calculate_multi_isotope_transient\n"
+                     "       write the same output filenames, so running both "
+                     "in one invocation would\n"
+                     "       silently overwrite the transient results with the "
+                     "step-change ones.\n"
+                     "       Run them separately, with a different write_fname "
+                     "for each.\n";
+        return 1;
+    }
+
     if (!do_ss_conc && !do_step_conc && !do_accum && !do_multi && !do_multi_tr
         && !do_make_step)
     {
@@ -1079,8 +1089,8 @@ int main(int argc, char* argv[])
                      "elevation of " << outlet_z << " m.\n";
 
         const double rho = static_cast<double>(ff["rock_density_kg_m3"]);
-        sc_eff_erate_old = sc_cfg.uplift_old_m_yr * rho * 0.1;
-        sc_eff_erate_new = sc_cfg.uplift_new_m_yr * rho * 0.1;
+        sc_eff_erate_old = lsdtt::m_yr_to_eff_erate(sc_cfg.uplift_old_m_yr, rho);
+        sc_eff_erate_new = lsdtt::m_yr_to_eff_erate(sc_cfg.uplift_new_m_yr, rho);
         std::cout << "  Effective erosion rates from the uplift rates at rho = "
                   << rho << " kg/m3:\n"
                   << "    old " << sc_eff_erate_old << ", new "
@@ -1251,7 +1261,10 @@ int main(int argc, char* argv[])
             ld.open_raster(path);
             return lsdtt::lsdtt_raster_cpu(ld);
         }
-        return make_constant_raster(dem, uniform_val);
+        // MaskedFill::Value preserves the local helper this replaced, which
+        // filled the whole array including pixels outside the mask.
+        return lsdtt::make_uniform_raster(dem, uniform_val,
+                                          lsdtt::MaskedFill::Value);
     };
 
     std::cout << "Building shielding rasters...\n";
@@ -1392,7 +1405,8 @@ int main(int argc, char* argv[])
         for (std::size_t i = 0; i < ed.size(); ++i)
         {
             if (!em[i]) continue;
-            eo[i] = static_cast<float>(static_cast<double>(ed[i]) * rho * 0.1);
+            eo[i] = static_cast<float>(
+                lsdtt::m_yr_to_eff_erate(static_cast<double>(ed[i]), rho));
             ek[i] = 1;
         }
         erosion_raster = lsdtt::lsdtt_raster_cpu(std::move(e_out),
@@ -1459,39 +1473,27 @@ int main(int argc, char* argv[])
 
         if (bf["write_isotope_ratio_rasters"])
         {
-            const auto& meta = multi.Be10.get_meta();
-            const auto& be_d = multi.Be10.get_data_array();
-            const auto& be_m = multi.Be10.get_mask_array();
-            const float ndv  = static_cast<float>(meta.no_data_value);
-
-            auto make_ratio = [&](const lsdtt::lsdtt_raster_cpu& num,
-                                  const std::string& suffix,
-                                  const std::string& label)
+            // The nodata policy lives in the library (make_isotope_ratio_raster)
+            // rather than here, so the landslide coupling and the basin-averaged
+            // path use the SAME one. Three hand-written divisions would be three
+            // chances to disagree about what a zero denominator means.
+            auto write_ratio = [&](const lsdtt::lsdtt_raster_cpu& num,
+                                   const std::string& suffix,
+                                   const std::string& label)
             {
-                const auto& n_d = num.get_data_array();
-                lsdtt::lsdtt_array2d<float>   r_d(meta.n_rows, meta.n_cols, ndv);
-                lsdtt::lsdtt_array2d<uint8_t> r_m(meta.n_rows, meta.n_cols, 0);
-                std::int64_t n_zero = 0;
-                for (int r = 0; r < meta.n_rows; ++r)
-                    for (int c = 0; c < meta.n_cols; ++c)
-                    {
-                        if (!be_m(r, c)) continue;
-                        if (be_d(r, c) == 0.0f) { ++n_zero; continue; }
-                        r_d(r, c) = n_d(r, c) / be_d(r, c);
-                        r_m(r, c) = 1;
-                    }
-                if (n_zero > 0)
-                    std::cout << "  Warning: " << n_zero << " pixel(s) had zero "
-                              << "Be-10 and are nodata in " << label << ".\n";
-                const lsdtt::lsdtt_raster_cpu ratio(std::move(r_d),
-                                                    std::move(r_m), meta);
+                const lsdtt::RatioRasterResult rr =
+                    lsdtt::make_isotope_ratio_raster(num, multi.Be10);
+                if (rr.n_zero_denominator > 0 || rr.n_one_input_masked > 0 ||
+                    rr.n_non_finite > 0)
+                    std::cout << "  " << rr.summary(label) << "\n";
                 const std::string out_path = write_base + suffix;
                 std::cout << "Writing " << label << " ratio raster: "
                           << out_path << "\n";
-                loader.write_full(ratio.get_data(), meta, out_path, out_fmt);
+                loader.write_full(rr.ratio.get_data(), rr.ratio.get_meta(),
+                                  out_path, out_fmt);
             };
-            make_ratio(multi.Al26, r2610_suffix, "Al26/Be10");
-            make_ratio(multi.C14,  r1410_suffix, "C14/Be10");
+            write_ratio(multi.Al26, r2610_suffix, "Al26/Be10");
+            write_ratio(multi.C14,  r1410_suffix, "C14/Be10");
         }
     };
 
@@ -1794,7 +1796,8 @@ int main(int argc, char* argv[])
                         if (em2(r, c))
                         {
                             mf(r, c) = static_cast<float>(
-                                static_cast<double>(ed2(r, c)) * 10.0);
+                                lsdtt::eff_erate_to_kg_m2_yr(
+                                    static_cast<double>(ed2(r, c))));
                             mk(r, c) = 1;
                         }
                 mass_flux = lsdtt::lsdtt_raster_cpu(std::move(mf),

@@ -199,4 +199,25 @@ std::int64_t lsdtt_raster_cpu::assert_mask()
     return n_changed;
 }
 
+
+lsdtt_raster_cpu make_uniform_raster(const lsdtt_raster_cpu& reference,
+                                     float                   value,
+                                     MaskedFill              outside)
+{
+    const lsdtt_raster_meta& meta = reference.get_meta();
+    const float fill = (outside == MaskedFill::Value)
+                     ? value
+                     : static_cast<float>(meta.no_data_value);
+
+    lsdtt_array2d<float>   d(meta.n_rows, meta.n_cols, fill);
+    lsdtt_array2d<uint8_t> m(meta.n_rows, meta.n_cols, 0);
+
+    const auto& ref_mask = reference.get_mask_array();
+    for (int r = 0; r < meta.n_rows; ++r)
+        for (int c = 0; c < meta.n_cols; ++c)
+            if (ref_mask(r, c)) { d(r, c) = value; m(r, c) = 1; }
+
+    return lsdtt_raster_cpu(std::move(d), std::move(m), meta);
+}
+
 } // namespace lsdtt

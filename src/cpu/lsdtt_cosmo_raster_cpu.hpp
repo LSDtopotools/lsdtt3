@@ -238,13 +238,62 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_whole(
 //
 // Ratios are deliberately NOT returned: they are a pure per-pixel division the
 // caller can do, and returning them here would invent a nodata policy for
-// zero denominators that belongs at the output layer.
+// zero denominators that belongs at the output layer. See
+// make_isotope_ratio_raster() below, which IS that output layer -- opt-in,
+// explicit about its policy, and shared, so the policy exists once instead of
+// being re-decided at each call site.
 struct MultiNuclideRasters
 {
     lsdtt_raster_cpu Be10;
     lsdtt_raster_cpu Al26;
     lsdtt_raster_cpu C14;
 };
+
+
+// -----------------------------------------------------------------------------
+// make_isotope_ratio_raster
+//
+// A per-pixel nuclide ratio, with ONE nodata policy for the whole codebase.
+//
+// This lived as a lambda inside lsdtt-cosmo-prediction until 2026-08-05. It is
+// promoted because the landslide coupling and the basin-accumulated path both
+// need the same quantity, and three hand-written divisions would be three
+// chances to disagree about what a zero denominator means -- exactly the shape
+// of the `rho * 0.1` duplication that has already produced one measured bug.
+//
+// THE POLICY, stated rather than implied:
+//
+//   * a pixel is valid only where BOTH inputs are valid. The original lambda
+//     tested only the denominator's mask, which is harmless for
+//     MultiNuclideRasters (all three share a mask by construction) and wrong in
+//     general -- it would divide a nodata numerator and emit the result.
+//   * denominator exactly zero -> nodata, counted. A zero-concentration
+//     denominator is physically possible (a saturated-removal pixel) and is not
+//     an error, but the ratio does not exist there.
+//   * a non-finite result -> nodata, counted SEPARATELY. This should be
+//     unreachable given the two rules above; if it ever fires, something
+//     upstream produced an inf or NaN concentration and the count is how you
+//     find out. Silently emitting it would put a NaN into a basin average.
+//
+// Counts are returned rather than printed so the caller decides what is worth
+// reporting; summary() gives the standard wording.
+// -----------------------------------------------------------------------------
+struct RatioRasterResult
+{
+    lsdtt_raster_cpu ratio;
+
+    std::int64_t n_valid             = 0;
+    std::int64_t n_zero_denominator  = 0;
+    std::int64_t n_one_input_masked  = 0;
+    std::int64_t n_non_finite        = 0;
+
+    [[nodiscard]] std::string summary(const std::string& label) const;
+};
+
+// Throws std::invalid_argument if the two rasters disagree in geometry.
+[[nodiscard]] RatioRasterResult make_isotope_ratio_raster(
+    const lsdtt_raster_cpu& numerator,
+    const lsdtt_raster_cpu& denominator);
 
 //  Multi-isotope ARBITRARY erosion history (whole raster)
 // The three nuclides carried through a user-supplied erosion history at every

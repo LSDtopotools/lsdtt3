@@ -10,6 +10,7 @@
 // refinement, and for why the ice mask is a helper rather than a module.
 // -----------------------------------------------------------------------------
 
+#include "lsdtt_crn_units.hpp"
 #include "lsdtt_quartz_fertility_cpu.hpp"
 
 #include <algorithm>
@@ -39,7 +40,7 @@ void require_same_grid(const lsdtt_raster_meta& a, const lsdtt_raster_meta& b,
 // -----------------------------------------------------------------------------
 double ice_effective_depth_g_cm2(double thickness_m, double ice_density_kg_m3)
 {
-    return thickness_m * ice_density_kg_m3 * 0.1;
+    return metres_to_g_cm2(thickness_m, ice_density_kg_m3);
 }
 
 

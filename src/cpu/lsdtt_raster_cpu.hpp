@@ -182,4 +182,35 @@ private:
     lsdtt_raster_meta meta_;
 };
 
+
+// -----------------------------------------------------------------------------
+// make_uniform_raster
+//
+// A raster of one value, shaped like `reference` and carrying its valid mask.
+//
+// This replaces FOUR local variants that had drifted into TWO different
+// behaviours -- `make_constant_raster` in lsdtt-cosmo-prediction, `like` in
+// lsdtt-cosmo-landslides, a `make_uniform` lambda in lsdtt-cosmo-tool, and a
+// `uniform` helper repeated across the test files.
+//
+// THE DIFFERENCE IS EXPLICIT HERE BECAUSE IT WAS ACCIDENTAL THERE. Two of the
+// four filled the WHOLE array with `value`, including pixels outside the mask;
+// the third wrote nodata outside the mask. `get_data()` returns the raw array
+// and the mask is not applied on write, so for any raster that reaches disk
+// those two choices produce different files.
+//
+// Neither is wrong, so neither is imposed: `MaskedFill` makes the caller say
+// which it means. Standardising on one would have been a silent behaviour
+// change to a shipped output (`_LS_EXCAVATION.tif` is built this way).
+enum class MaskedFill
+{
+    Value,   // fill outside the mask with `value` too -- the array is uniform
+    NoData   // fill outside the mask with the metadata's no-data value
+};
+
+[[nodiscard]] lsdtt_raster_cpu make_uniform_raster(
+    const lsdtt_raster_cpu& reference,
+    float                   value,
+    MaskedFill              outside);
+
 } // namespace lsdtt

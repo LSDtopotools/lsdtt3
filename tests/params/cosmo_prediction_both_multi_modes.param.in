@@ -1,0 +1,15 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: bothmulti
+
+# Both multi-isotope modes at once. They write IDENTICAL filenames
+# (_step_crn_conc.tif, _R2610_step.tif, _R1410_step.tif), the transient runs
+# first, so before 2026-08-05 the step-change results silently overwrote it --
+# a run that looked successful produced half of what it was asked for.
+calculate_multi_isotope_transient: true
+transient_history_file: __READ_PATH__/cosmo_erosion_history.csv
+calculate_multi_isotope_step_change: true
+step_change_eff_erate_old_g_cm2_yr: 0.002
+step_change_eff_erate_new_g_cm2_yr: 0.02
+time_since_change_yr: 8000

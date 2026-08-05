@@ -1897,6 +1897,128 @@ status reflects only whether the files could be read.
 
 ---
 
+### 7.10d The isotope-ratio output policy (`unit_cosmo_ratio`, 2026-08-05)
+
+Ratios are deliberately **not** returned by the concentration kernels — that is
+a settled convention, on the grounds that a ratio is a pure per-pixel division
+and a nodata policy for zero denominators belongs at the output layer. What was
+missing was *the* output layer: the policy lived as a lambda inside
+`lsdtt-cosmo-prediction`, and the landslide coupling and basin-averaged paths
+would each have had to re-decide it.
+
+`make_isotope_ratio_raster` is now that layer, with the policy stated:
+
+| case | result |
+|---|---|
+| both inputs valid, denominator ≠ 0 | the quotient |
+| denominator exactly 0 | nodata, **counted** |
+| one input masked, the other not | nodata, **counted** |
+| both masked | outside the domain; not a failure |
+| non-finite quotient | nodata, counted **separately** |
+
+Two of those are corrections rather than transcriptions. The original lambda
+tested only the **denominator's** mask, so a nodata numerator would have been
+divided and the result emitted — harmless for `MultiNuclideRasters`, where all
+three nuclides share a mask by construction, and wrong for any other caller.
+And a non-finite result had no handling at all; it is unreachable given the
+other rules, which is exactly why it is counted separately rather than lumped
+in. If that count ever fires, something upstream produced an inf or NaN
+concentration, and the alternative is a NaN propagating into a basin average.
+
+**A zero numerator is a legitimate ratio of zero, not nodata.** Easy to get
+wrong when writing the guard, and pinned.
+
+`unit_cosmo_ratio` R8 requires the helper to reproduce the original lambda
+**bitwise** on shared-mask input — not "close". A promotion that shifts a
+shipped raster by one ulp is still a shipped raster that moved. The refactor
+oracle (§7.11) was unchanged at 34/34, so the promotion is verified at both
+levels.
+
+#### A silent-overwrite bug found in the same code
+
+`calculate_multi_isotope_step_change` and `calculate_multi_isotope_transient`
+write **identical filenames** — both use `_step_crn_conc.tif`,
+`_R2610_step.tif` and `_R1410_step.tif`. Nothing prevented both being enabled,
+the transient ran first, and the step change then overwrote all five of its
+outputs. The run reported success having produced half of what it was asked
+for, under names that said "step" either way.
+
+Now fatal, pinned by `failure_cosmo_prediction_both_multi_modes`. **Guarded
+rather than renamed**: the `_step` suffix on the transient outputs is a naming
+defect too, but changing shipped output filenames is a separate decision with a
+migration cost, and the guard removes the data loss without imposing one.
+
+---
+
+### 7.10e Named unit conversions and the redundancy guard (2026-08-05)
+
+`x * rho * 0.1` — a real thickness in metres to a mass depth in g/cm² — was
+open-coded at **nine** sites across the library and two CLIs, each independently
+choosing which density to use.
+
+That is not a style complaint. The density split of 2026-08-04 exists precisely
+because one of those choices was wrong: a soil scar carried at the bedrock
+density (2650 rather than ~1500) is **1.77× too deep in mass**, which changes
+spallation production at the scar base by **2.05×**. The arithmetic was never
+wrong; the density was.
+
+`src/cpu/lsdtt_crn_units.hpp` now owns it, and **the density argument has no
+default, deliberately**. A defaulted density would restore exactly the failure
+the file prevents: a call site that compiles, looks complete, and silently
+assumes bedrock.
+
+#### Expression order is preserved, not tidied
+
+`0.1 * rho * m` and `m * rho * 0.1` are not the same double, and the refactor
+oracle compares file hashes. Each function reproduces the multiplication order
+of the sites it replaced, and `unit_cosmo_units` U7 asserts that **bitwise**
+rather than "close". The oracle was unchanged at 34/34 across the migration.
+
+`unit_cosmo_units` also recomputes the 1.77× and 2.05× figures from the
+conversions rather than asserting them from memory, so the documented numbers
+and the code cannot drift apart.
+
+#### The guard, and what it caught
+
+The pattern accumulated one call site at a time, so a one-off cleanup would
+accumulate again. A **CMake-time configure error** now rejects any new
+hand-written conversion in the cosmogenic and landslide sources — matching the
+"unclassified test is a configure error" precedent, on the principle that a lint
+nobody runs is a lint that does not exist. Verified to fire: reintroducing the
+pattern in `lsdtt_landslide_size_cpu.cpp` fails the configure and names the
+line.
+
+Writing the guard immediately found a **ninth site the manual inventory had
+missed** — `ice_effective_depth_g_cm2` in `lsdtt_quartz_fertility_cpu.cpp` —
+and then a glob gap: the first draft scanned only `.cpp`, while two live
+conversions sit in `.hpp` files. Both lessons are the same one: an inventory
+assembled by reading is not a guarantee, and only the automated check is.
+
+**Exempt, deliberately**: `lsdtt_crn_column.{hpp,cpp}` and
+`lsdtt_crn_particle.hpp`. `to_eff()`, `remove_mass()` and the four `depth_m`
+recoveries are inside the locked numeric core and must not be touched.
+
+#### One uniform-raster helper, with the difference made explicit
+
+Four local variants of "a raster of one value shaped like this one" had drifted
+into **two different behaviours**: `make_constant_raster` (cosmo-prediction) and
+`like` (cosmo-landslides) filled the *whole array* including pixels outside the
+mask, while `make_uniform` (cosmo-tool) wrote nodata outside the mask.
+`get_data()` returns the raw array and the mask is not applied on write, so for
+any raster that reaches disk — `_LS_EXCAVATION.tif` is built this way — those
+are different files.
+
+`make_uniform_raster(reference, value, MaskedFill)` replaces all three, and the
+choice is a **parameter rather than a convention**. Standardising on either
+would have been a silent behaviour change to a shipped output; the point of the
+helper is to make a difference that was accidental into one that is stated.
+
+The `uniform()` fixtures in the test files are deliberately **not** migrated:
+they build from metadata alone with an all-valid mask, which is unambiguous, and
+the guard covers `src/` and `cli/` where the semantics actually differed.
+
+---
+
 ### 7.10c The `lsdtt-cosmo-landslides` rename, and the compartment trap in it (2026-08-05)
 
 `lsdtt-landslides` became **`lsdtt-cosmo-landslides`**, with no compatibility

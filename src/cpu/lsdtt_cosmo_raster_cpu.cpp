@@ -28,6 +28,7 @@
 #include <cmath>
 #include <iostream>
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -1601,6 +1602,73 @@ double calculate_eff_erate_from_conc(
 
     predicted_conc = C_cur;
     return eff_e;
+}
+
+
+// -----------------------------------------------------------------------------
+// make_isotope_ratio_raster -- see the header for the policy and why it is here.
+// -----------------------------------------------------------------------------
+std::string RatioRasterResult::summary(const std::string& label) const
+{
+    std::ostringstream os;
+    os << label << " ratio: " << n_valid << " valid pixel(s)";
+    if (n_zero_denominator > 0)
+        os << "; " << n_zero_denominator
+           << " with a zero denominator (nodata)";
+    if (n_one_input_masked > 0)
+        os << "; " << n_one_input_masked
+           << " where only one nuclide was valid (nodata)";
+    if (n_non_finite > 0)
+        os << "; " << n_non_finite
+           << " NON-FINITE (nodata) -- this indicates an inf or NaN upstream "
+              "and should be investigated";
+    return os.str();
+}
+
+
+RatioRasterResult make_isotope_ratio_raster(const lsdtt_raster_cpu& numerator,
+                                            const lsdtt_raster_cpu& denominator)
+{
+    const lsdtt_raster_meta& meta = denominator.meta();
+    const lsdtt_raster_meta& nmeta = numerator.meta();
+    if (meta.n_rows != nmeta.n_rows || meta.n_cols != nmeta.n_cols)
+        throw std::invalid_argument(
+            "make_isotope_ratio_raster: numerator and denominator rasters "
+            "differ in size");
+
+    const auto& num_d = numerator.get_data_array();
+    const auto& num_m = numerator.get_mask_array();
+    const auto& den_d = denominator.get_data_array();
+    const auto& den_m = denominator.get_mask_array();
+
+    const float ndv = static_cast<float>(meta.no_data_value);
+    lsdtt_array2d<float>   out_d(meta.n_rows, meta.n_cols, ndv);
+    lsdtt_array2d<uint8_t> out_m(meta.n_rows, meta.n_cols, 0);
+
+    RatioRasterResult res;
+    for (int r = 0; r < meta.n_rows; ++r)
+    {
+        for (int c = 0; c < meta.n_cols; ++c)
+        {
+            const bool nv = num_m(r, c) != 0;
+            const bool dv = den_m(r, c) != 0;
+            if (!nv && !dv) continue;            // outside the domain entirely
+            if (nv != dv) { ++res.n_one_input_masked; continue; }
+
+            const double den = static_cast<double>(den_d(r, c));
+            if (den == 0.0) { ++res.n_zero_denominator; continue; }
+
+            const double v = static_cast<double>(num_d(r, c)) / den;
+            if (!std::isfinite(v)) { ++res.n_non_finite; continue; }
+
+            out_d(r, c) = static_cast<float>(v);
+            out_m(r, c) = 1;
+            ++res.n_valid;
+        }
+    }
+
+    res.ratio = lsdtt_raster_cpu(std::move(out_d), std::move(out_m), meta);
+    return res;
 }
 
 } // namespace lsdtt

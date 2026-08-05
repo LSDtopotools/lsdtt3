@@ -590,6 +590,12 @@ set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
 target_link_libraries(lsdtt-test-cosmo-physics PRIVATE lsdtt3_cpu)
 
+add_executable(lsdtt-test-cosmo-ratio cpp/test_cosmo_ratio.cpp)
+target_link_libraries(lsdtt-test-cosmo-ratio PRIVATE lsdtt3_cpu)
+
+add_executable(lsdtt-test-cosmo-units cpp/test_cosmo_units.cpp)
+target_link_libraries(lsdtt-test-cosmo-units PRIVATE lsdtt3_cpu)
+
 # Analytical step-change rasters: the Royden & Perron / Mitchell & Yanites
 # transient solution in chi, plus the imposed critical-slope hillslopes.
 # Synthetic ridge-and-valley fixture, no network, no external data.
@@ -1139,6 +1145,25 @@ add_test(NAME unit_landslide_series
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
 set_tests_properties(unit_landslide_series PROPERTIES LABELS "unit;landslide" TIMEOUT 900)
 
+# The isotope-ratio output policy. One division per pixel, and every failure
+# mode is silent: an inf written into a raster a basin average then consumes, a
+# nodata numerator divided and emitted as a number, a mask disagreeing with its
+# own data. R8 pins the 2026-08-05 promotion from a lambda in
+# lsdtt-cosmo-prediction as BITWISE faithful on the input shape it was written
+# for, so the refactor is proved at unit level and not only through the CLI
+# oracle.
+# The metre <-> g/cm2 conversions. Four-line functions, and worth pinning
+# because the density split of 2026-08-04 exists precisely because one of the
+# eight hand-written `x * rho * 0.1` sites chose the wrong density. U7 asserts
+# the promoted functions reproduce those hand-written expressions BITWISE --
+# `0.1 * rho * m` and `m * rho * 0.1` are not the same double, and the refactor
+# oracle compares file hashes.
+add_test(NAME unit_cosmo_units COMMAND lsdtt-test-cosmo-units)
+set_tests_properties(unit_cosmo_units PROPERTIES LABELS "unit;cosmo")
+
+add_test(NAME unit_cosmo_ratio COMMAND lsdtt-test-cosmo-ratio)
+set_tests_properties(unit_cosmo_ratio PROPERTIES LABELS "unit;cosmo")
+
 add_test(NAME unit_cosmo_physics
          COMMAND lsdtt-test-cosmo-physics
                  ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output
@@ -1549,6 +1574,20 @@ add_test(NAME regression_cosmo_oracle_heavy
 set_tests_properties(regression_cosmo_oracle_heavy PROPERTIES
     LABELS "cli;cosmo;regression;heavy")
 
+# Two prediction modes that write the SAME filenames must not both run: the
+# transient goes first and the step change overwrote all five of its outputs,
+# so the run reported success having produced half its results. Found while
+# promoting the ratio helper (plan SA1); guarded rather than renamed, because
+# changing shipped output filenames is a separate decision.
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_prediction_both_multi_modes
+    lsdtt-cosmo-prediction
+    cosmo_prediction_both_multi_modes.param.in
+    bothmulti_Be10_step_crn_conc.tif
+    --expect-failure
+    --stderr-contains "silently overwrite"
+)
+
 add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
 set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
     LABELS "smoke;cli;cosmo"
@@ -1732,6 +1771,67 @@ add_test(NAME cosmo_realworld_lsdn_pixel_vs_lumped
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
 set_tests_properties(cosmo_realworld_lsdn_pixel_vs_lumped PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 3600)
+
+# =============================================================================
+# REDUNDANCY GUARD: no hand-written metre <-> g/cm2 conversion (plan R0b)
+#
+# `x * rho * 0.1` was open-coded at nine sites across the library and two CLIs,
+# each independently choosing WHICH density to use. That is not a style
+# complaint: the density split of 2026-08-04 exists because one of those choices
+# was wrong, and a soil scar carried at bedrock density is 1.77x too deep in
+# mass -- a 2.05x error in spallation production at the scar base.
+#
+# lsdtt_crn_units.hpp now owns the arithmetic, with a REQUIRED density argument.
+# This guard stops the pattern coming back one call site at a time, which is how
+# it accumulated in the first place. It is a CONFIGURE ERROR, matching the
+# "unclassified test" guard below: a lint nobody runs is a lint that does not
+# exist.
+#
+# EXEMPT, deliberately:
+#   * src/cpu/lsdtt_crn_column.{hpp,cpp} and lsdtt_crn_particle.hpp -- LOCKED
+#     NUMERICS. to_eff(), remove_mass() and the four depth_m recoveries live
+#     inside the validated core and must not be touched. They are excluded by
+#     NOT being in the glob below; that is deliberate, not an oversight.
+#     See feedback_cosmo_numerics_locked.
+#   * lsdtt_crn_units.hpp itself, which is where the arithmetic now lives.
+# =============================================================================
+
+set(_lsdtt_unit_guard_files "")
+file(GLOB_RECURSE _lsdtt_conv_candidates
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_landslide_*.cpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_cosmo_*.cpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_quartz_*.cpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_step_change_*.cpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_niemi_*.cpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_landslide_*.hpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_cosmo_*.hpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_quartz_*.hpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_step_change_*.hpp"
+     "${CMAKE_SOURCE_DIR}/src/cpu/lsdtt_niemi_*.hpp"
+     "${CMAKE_SOURCE_DIR}/cli/lsdtt-cosmo-*.cpp")
+
+foreach(_f IN LISTS _lsdtt_conv_candidates)
+    file(STRINGS "${_f}" _hits REGEX "(density|rho)[a-z_0-9]* *\\* *0\\.1[^0-9]")
+    foreach(_h IN LISTS _hits)
+        # Skip comments and help/doc strings -- they describe the conversion,
+        # which is exactly what we want them to keep doing.
+        string(STRIP "${_h}" _stripped)
+        if(NOT _stripped MATCHES "^//" AND NOT _stripped MATCHES "^\\*" AND
+           NOT _stripped MATCHES "^\"")
+            list(APPEND _lsdtt_unit_guard_files "${_f}: ${_stripped}")
+        endif()
+    endforeach()
+endforeach()
+
+if(_lsdtt_unit_guard_files)
+    string(REPLACE ";" "\n    " _guard_report "${_lsdtt_unit_guard_files}")
+    message(FATAL_ERROR
+        "Hand-written metre <-> g/cm2 conversion found:\n    ${_guard_report}\n\n"
+        "Use lsdtt_crn_units.hpp (metres_to_g_cm2 / m_yr_to_eff_erate / "
+        "g_cm2_to_metres).\nThe density argument is REQUIRED there, which is the "
+        "whole point: the bug this\nprevents was never the arithmetic, it was "
+        "using 2650 for a soil scar.")
+endif()
 
 # =============================================================================
 # COMPARTMENTALISATION: domain and cost labels

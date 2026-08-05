@@ -7,6 +7,7 @@
 //
 // See lsdtt_landslide_crn_cpu.hpp. No new CRN physics is defined here.
 
+#include "lsdtt_crn_units.hpp"
 #include "lsdtt_landslide_crn_cpu.hpp"
 
 #include "lsdtt_cosmo_raster_cpu.hpp"
@@ -37,11 +38,11 @@ double pick_nuclide(const CrnColumnSample& s, const std::string& nuclide)
 }
 
 // Effective erosion rate (g/cm2/yr) -> physical rate (m/yr).
-// to_eff() in lsdtt_crn_column is depth_m * rho_kg_m3 * 0.1, so the inverse is
-// eff / (rho * 0.1).
+// The inverse of lsdtt_crn_column's to_eff(). Kept as a named local so the
+// call sites read as intent; the arithmetic lives in lsdtt_crn_units.hpp.
 double eff_to_m_per_yr(double eff_g_cm2_yr, double rho_kg_m3)
 {
-    return eff_g_cm2_yr / (rho_kg_m3 * 0.1);
+    return eff_erate_to_m_yr(eff_g_cm2_yr, rho_kg_m3);
 }
 
 }  // namespace
@@ -119,7 +120,7 @@ lsdtt_raster_cpu compute_landslide_surface_concentration(
                 // rock that was at depth d, with no re-accumulation yet. That
                 // is the inherited concentration, straight from steady state.
                 const CrnColumnSample s = col.steady_state(
-                    d_m * config.scar_density_kg_m3 * 0.1,
+                    metres_to_g_cm2(d_m, config.scar_density_kg_m3),
                     config.background_eff_erate_g_cm2_yr,
                     config.production_scaling, config.total_shielding,
                     config.muon_scheme);
@@ -418,7 +419,8 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
             if (do_flush && t_f <= config.flush_time_threshold_yr)
             {
                 ++result.n_flushing_pixels;
-                const double d_eff = d_m * config.scar_density_kg_m3 * 0.1;
+                const double d_eff =
+                    metres_to_g_cm2(d_m, config.scar_density_kg_m3);
 
                 const std::tuple<long long, long long, long long, long long>
                     fkey{static_cast<long long>(std::llround(d_m * 1000.0)),
@@ -502,8 +504,8 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
             {
                 if (!erm(r, c)) continue;
 
-                // g/cm2/yr -> kg/m2/yr is a factor of 10.
-                double mass = static_cast<double>(er(r, c)) * 10.0;
+                double mass =
+                    eff_erate_to_kg_m2_yr(static_cast<double>(er(r, c)));
 
                 if (do_flush && dmask(r, c) && tsfm(r, c) && tscm(r, c))
                 {

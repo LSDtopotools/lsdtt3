@@ -739,16 +739,13 @@ int main(int argc, char* argv[])
     }
 
     //  4. Shielding rasters (uniform) 
+    // MaskedFill::NoData preserves the local lambda this replaced. NOTE it
+    // differs from the choice lsdtt-cosmo-prediction and lsdtt-cosmo-landslides
+    // make: they fill the whole array. Both were in use and neither is wrong,
+    // so the shared helper asks rather than assumes.
     auto make_uniform = [&](float val) -> lsdtt::lsdtt_raster_cpu
     {
-        int nr = meta.n_rows, nc = meta.n_cols;
-        lsdtt::lsdtt_array2d<float>   d(nr, nc, static_cast<float>(meta.no_data_value));
-        lsdtt::lsdtt_array2d<uint8_t> m(nr, nc, 0);
-        const auto& src_mask = dem.get_mask_array();
-        for (int r = 0; r < nr; ++r)
-            for (int c = 0; c < nc; ++c)
-                if (src_mask(r, c)) { d(r, c) = val; m(r, c) = 1; }
-        return lsdtt::lsdtt_raster_cpu(std::move(d), std::move(m), meta);
+        return lsdtt::make_uniform_raster(dem, val, lsdtt::MaskedFill::NoData);
     };
 
     lsdtt::lsdtt_raster_cpu topo_shield_raster = make_uniform(static_cast<float>(topo_shield_val));

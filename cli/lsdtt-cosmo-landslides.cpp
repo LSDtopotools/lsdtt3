@@ -118,21 +118,6 @@ static bool landslide_cosmo_parameters_supported(const std::string& muon_scheme,
     return true;
 }
 
-// Build a raster matching `ref` in geometry, filled with `value` and carrying
-// ref's valid mask. Both output fields need this, and neither may be built with
-// an empty mask -- the event writer sets data only.
-static lsdtt::lsdtt_raster_cpu like(const lsdtt::lsdtt_raster_cpu& ref, float value)
-{
-    const lsdtt::lsdtt_raster_meta& meta = ref.get_meta();
-    lsdtt::lsdtt_array2d_f  d(meta.n_rows, meta.n_cols, value);
-    lsdtt::lsdtt_array2d_u8 m(meta.n_rows, meta.n_cols, 0);
-    const auto& rm = ref.get_mask_array();
-    for (int r = 0; r < meta.n_rows; ++r)
-        for (int c = 0; c < meta.n_cols; ++c)
-            if (rm(r, c)) m(r, c) = 1;
-    return lsdtt::lsdtt_raster_cpu(std::move(d), std::move(m), meta);
-}
-
 
 int main(int argc, char* argv[])
 {
@@ -660,8 +645,17 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Run
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_raster_cpu tfail = like(filled, static_cast<float>(meta.no_data_value));
-    lsdtt::lsdtt_raster_cpu exc   = like(filled, 0.0f);
+    // Every pixel starts at the no-data value meaning "never failed", so the
+    // two MaskedFill choices coincide here; Value is used for consistency
+    // with the excavation raster below.
+    lsdtt::lsdtt_raster_cpu tfail = lsdtt::make_uniform_raster(
+        filled, static_cast<float>(meta.no_data_value),
+        lsdtt::MaskedFill::Value);
+    // MaskedFill::Value preserves the local `like()` this replaced: the
+    // excavation raster reaches disk, and it filled the whole array with 0
+    // rather than nodata outside the mask.
+    lsdtt::lsdtt_raster_cpu exc   = lsdtt::make_uniform_raster(
+        filled, 0.0f, lsdtt::MaskedFill::Value);
     lsdtt::lsdtt_raster_cpu work  = filled;
 
     std::vector<int> realised;

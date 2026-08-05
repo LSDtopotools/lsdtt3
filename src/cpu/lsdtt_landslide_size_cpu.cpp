@@ -7,6 +7,7 @@
 //
 // See lsdtt_landslide_size_cpu.hpp for the design and the sources.
 
+#include "lsdtt_crn_units.hpp"
 #include "lsdtt_landslide_size_cpu.hpp"
 
 #include <string>
@@ -178,9 +179,7 @@ double AreaVolumeScaling::volume_m3(double area_m2) const
 
 double AreaVolumeScaling::scar_effective_depth_g_cm2(double depth_m) const
 {
-    // m * kg/m3 -> g/cm2 is a factor of 0.1: 1 kg/m3 * 1 m = 1 kg/m2 =
-    // 1000 g / 10^4 cm2 = 0.1 g/cm2.
-    return depth_m * scar_density_kg_m3 * 0.1;
+    return metres_to_g_cm2(depth_m, scar_density_kg_m3);
 }
 
 double AreaVolumeScaling::rock_equivalent_depth_m(double depth_m,
