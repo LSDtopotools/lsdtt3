@@ -50,6 +50,7 @@
 #include <cstdint>
 #include <string>
 
+#include "lsdtt_cosmo_raster_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 
 namespace lsdtt
@@ -104,6 +105,14 @@ struct LandslideCrnConfig
 // Throws std::invalid_argument if the rasters disagree in geometry or the
 // nuclide is unknown.
 lsdtt_raster_cpu compute_landslide_surface_concentration(
+    const lsdtt_raster_cpu&   excavation_depth_m,
+    const lsdtt_raster_cpu&   time_of_last_failure,
+    const LandslideCrnConfig& config);
+
+// Multi-nuclide equivalent of compute_landslide_surface_concentration(): one
+// column evolution per pixel, all three nuclides returned. The scalar entry
+// point above remains as a selector wrapper over this.
+MultiNuclideRasters compute_landslide_surface_concentration_multi(
     const lsdtt_raster_cpu&   excavation_depth_m,
     const lsdtt_raster_cpu&   time_of_last_failure,
     const LandslideCrnConfig& config);
@@ -260,6 +269,31 @@ struct LandslideCouplingResult
     double total_delivered_kg_yr       = 0.0; // over the flushing pixels only
     [[nodiscard]] std::string summary() const;
 };
+
+
+struct LandslideCouplingResultMulti
+{
+    MultiNuclideRasters concentration;
+
+    // Same semantics as in LandslideCouplingResult.
+    lsdtt_raster_cpu delivery_mass_kg_m2_yr;
+
+    std::int64_t n_failed_pixels       = 0;
+    std::int64_t n_discarded_prewave   = 0;
+    std::int64_t n_flushing_pixels     = 0;
+    std::int64_t n_solves              = 0;
+    double total_delivered_kg_yr       = 0.0;
+    [[nodiscard]] std::string summary() const;
+};
+
+[[nodiscard]] LandslideCouplingResultMulti compute_landslide_step_change_concentration_multi(
+    const lsdtt_raster_cpu& excavation_depth_m,
+    const lsdtt_raster_cpu& time_since_failure_yr,
+    const lsdtt_raster_cpu& time_since_change_yr,
+    const lsdtt_raster_cpu& production_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const LandslideStepChangeConfig& config,
+    const lsdtt_raster_cpu* erosion_rate_g_cm2_yr = nullptr);
 
 // erosion_rate_g_cm2_yr may be null; when supplied, the delivery-mass raster is
 // built from it and returned alongside the concentrations.

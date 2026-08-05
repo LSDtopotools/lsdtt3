@@ -634,6 +634,57 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    std::cout << "\nF6: multi-nuclide landslide coupling equals single-nuclide selectors\n";
+    {
+        lsdtt::LandslideStepChangeConfig mcfg = cfg;
+        mcfg.flush_time_threshold_yr = 1000.0;
+        mcfg.scar_density_kg_m3      = 1500.0;
+
+        lsdtt::lsdtt_raster_cpu exc = uniform(meta, 2.0f);
+        lsdtt::lsdtt_array2d_f  tf(meta.n_rows, meta.n_cols, 2000.0f);
+        lsdtt::lsdtt_array2d_u8 tm(meta.n_rows, meta.n_cols, 1);
+        // Mix of flushing, scar and never-failed pixels.
+        for (int c = 0; c < meta.n_cols; ++c) tf(0, c) = 200.0f;
+        tf(2, 2) = static_cast<float>(lsdtt::k_landslide_never_failed);
+        tf(3, 3) = static_cast<float>(lsdtt::k_landslide_never_failed);
+        lsdtt::lsdtt_raster_cpu tsf(std::move(tf), std::move(tm), meta);
+
+        const auto multi = lsdtt::compute_landslide_step_change_concentration_multi(
+            exc, tsf, tsc, prod, shld, mcfg);
+
+        auto check_match = [&](const std::string& nuc,
+                               const lsdtt::lsdtt_raster_cpu& mr)
+        {
+            lsdtt::LandslideStepChangeConfig sc = mcfg;
+            sc.nuclide = nuc;
+            const auto single = lsdtt::compute_landslide_step_change_concentration(
+                exc, tsf, tsc, prod, shld, sc);
+
+            double worst_rel = 0.0;
+            const auto& a = mr.get_data_array();
+            const auto& b = single.concentration.get_data_array();
+            for (int r = 0; r < meta.n_rows; ++r)
+                for (int c = 0; c < meta.n_cols; ++c)
+                {
+                    const double va = static_cast<double>(a(r, c));
+                    const double vb = static_cast<double>(b(r, c));
+                    const double rel = std::fabs(va - vb)
+                                     / std::max(std::fabs(va), 1.0);
+                    if (rel > worst_rel) worst_rel = rel;
+                }
+
+            check(worst_rel < 1.0e-6,
+                  std::string("multi result matches single selector for ") + nuc);
+            check(single.n_solves == multi.n_solves,
+                  std::string("solve count is identical for ") + nuc);
+        };
+
+        check_match("Be10", multi.concentration.Be10);
+        check_match("Al26", multi.concentration.Al26);
+        check_match("C14",  multi.concentration.C14);
+    }
+
+    // -------------------------------------------------------------------------
     // Plottable record: how a scar's concentration recovers with age, at three
     // depths, and what carrying it at the wrong density does.
     {

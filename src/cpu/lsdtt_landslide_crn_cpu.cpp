@@ -37,6 +37,17 @@ double pick_nuclide(const CrnColumnSample& s, const std::string& nuclide)
         "\". Options: Be10, Al26, C14.");
 }
 
+lsdtt_raster_cpu select_nuclide_raster(MultiNuclideRasters&& m,
+                                       const std::string& nuclide)
+{
+    if (nuclide == "Be10") return std::move(m.Be10);
+    if (nuclide == "Al26") return std::move(m.Al26);
+    if (nuclide == "C14")  return std::move(m.C14);
+    throw std::invalid_argument(
+        "compute_landslide_step_change_concentration: unknown nuclide \""
+        + nuclide + "\". Options: Be10, Al26, C14.");
+}
+
 // Effective erosion rate (g/cm2/yr) -> physical rate (m/yr).
 // The inverse of lsdtt_crn_column's to_eff(). Kept as a named local so the
 // call sites read as intent; the arithmetic lives in lsdtt_crn_units.hpp.
@@ -58,7 +69,7 @@ double landslide_crn_background_concentration(const LandslideCrnConfig& config)
 }
 
 
-lsdtt_raster_cpu compute_landslide_surface_concentration(
+MultiNuclideRasters compute_landslide_surface_concentration_multi(
     const lsdtt_raster_cpu&   excavation_depth_m,
     const lsdtt_raster_cpu&   time_of_last_failure,
     const LandslideCrnConfig& config)
@@ -115,16 +126,52 @@ lsdtt_raster_cpu compute_landslide_surface_concentration(
     cfg.scar_density_kg_m3     = config.scar_density_kg_m3;
     cfg.flush_time_threshold_yr = 0.0;
     cfg.muon_scheme            = config.muon_scheme;
-    cfg.nuclide                = config.nuclide;
 
-    return compute_landslide_step_change_concentration(
+    return compute_landslide_step_change_concentration_multi(
                excavation_depth_m, t_since, t_since_change, prod, shld, cfg)
            .concentration;
 }
 
 
+lsdtt_raster_cpu compute_landslide_surface_concentration(
+    const lsdtt_raster_cpu&   excavation_depth_m,
+    const lsdtt_raster_cpu&   time_of_last_failure,
+    const LandslideCrnConfig& config)
+{
+    return select_nuclide_raster(
+        compute_landslide_surface_concentration_multi(
+            excavation_depth_m, time_of_last_failure, config),
+        config.nuclide);
+}
+
+
 // -----------------------------------------------------------------------------
 std::string LandslideCouplingResult::summary() const
+{
+    std::ostringstream os;
+    os << "Landslide coupling\n"
+       << "  failed pixels            : " << n_failed_pixels << "\n"
+       << "    of which flushing      : " << n_flushing_pixels << "\n"
+       << "    of which scars         : "
+       << (n_failed_pixels - n_flushing_pixels) << "\n"
+       << "  discarded (pre-wave)     : " << n_discarded_prewave << "\n"
+       << "  distinct column solves   : " << n_solves << "\n";
+    if (n_flushing_pixels > 0)
+    {
+        os << "  delivered by flushing    : " << total_delivered_kg_yr
+           << " kg/yr\n";
+    }
+    if (n_discarded_prewave > 0)
+    {
+        os << "  NOTE: those failures pre-date the erosion-rate change at their\n"
+              "  own pixel, so they cannot have been caused by it. They keep the\n"
+              "  plain step-change value.\n";
+    }
+    return os.str();
+}
+
+
+std::string LandslideCouplingResultMulti::summary() const
 {
     std::ostringstream os;
     os << "Landslide coupling\n"
@@ -230,7 +277,10 @@ void gauss_legendre(int n, std::vector<double>& x, std::vector<double>& w)
 }  // namespace
 
 
-double landslide_flush_concentration(
+namespace
+{
+
+CrnColumnSample landslide_flush_concentration_sample(
     double d_eff_g_cm2,
     double eff_erate_old_g_cm2_yr,
     double eff_erate_new_g_cm2_yr,
@@ -238,19 +288,17 @@ double landslide_flush_concentration(
     double production_scaling,
     double total_shielding,
     const std::string& muon_scheme,
-    const std::string& nuclide,
     double rock_density_kg_m3,
     int    n_nodes)
 {
     lsdtt_crn_column col(rock_density_kg_m3);
 
-    auto point = [&](double d) -> double
+    auto point = [&](double d) -> CrnColumnSample
     {
-        const CrnColumnSample s = col.step_change(
+        return col.step_change(
             d, eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr,
             std::max(0.0, time_since_change_at_failure_yr),
             production_scaling, total_shielding, muon_scheme);
-        return pick_nuclide(s, nuclide);
     };
 
     // A slab of zero thickness delivers nothing but is asked for at the limit;
@@ -263,15 +311,49 @@ double landslide_flush_concentration(
 
     // Map [-1,1] -> [0, d_eff]; the average is the integral over the thickness.
     const double half = 0.5 * d_eff_g_cm2;
-    double acc = 0.0;
+    CrnColumnSample acc;
+    acc.conc_10Be = 0.0;
+    acc.conc_26Al = 0.0;
+    acc.conc_14C = 0.0;
     for (int i = 0; i < n_nodes; ++i)
-        acc += w[i] * point(half * (x[i] + 1.0));
-    return 0.5 * acc;   // (half/d_eff) * acc = acc/2
+    {
+        const CrnColumnSample s = point(half * (x[i] + 1.0));
+        acc.conc_10Be += w[i] * s.conc_10Be;
+        acc.conc_26Al += w[i] * s.conc_26Al;
+        acc.conc_14C += w[i] * s.conc_14C;
+    }
+    acc.conc_10Be *= 0.5;
+    acc.conc_26Al *= 0.5;
+    acc.conc_14C *= 0.5;
+    return acc;   // (half/d_eff) * acc = acc/2
+}
+
+} // namespace
+
+
+double landslide_flush_concentration(
+    double d_eff_g_cm2,
+    double eff_erate_old_g_cm2_yr,
+    double eff_erate_new_g_cm2_yr,
+    double time_since_change_at_failure_yr,
+    double production_scaling,
+    double total_shielding,
+    const std::string& muon_scheme,
+    const std::string& nuclide,
+    double rock_density_kg_m3,
+    int    n_nodes)
+{
+    return pick_nuclide(
+        landslide_flush_concentration_sample(
+            d_eff_g_cm2, eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr,
+            time_since_change_at_failure_yr, production_scaling,
+            total_shielding, muon_scheme, rock_density_kg_m3, n_nodes),
+        nuclide);
 }
 
 
 // -----------------------------------------------------------------------------
-LandslideCouplingResult compute_landslide_step_change_concentration(
+LandslideCouplingResultMulti compute_landslide_step_change_concentration_multi(
     const lsdtt_raster_cpu& excavation_depth_m,
     const lsdtt_raster_cpu& time_since_failure_yr,
     const lsdtt_raster_cpu& time_since_change_yr,
@@ -306,14 +388,16 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
     // whole raster. Doing it this way is what makes "no landslides anywhere"
     // bitwise identical to a plain step-change run: there is no second
     // implementation of the step change here that could drift from the first.
-    LandslideCouplingResult result;
-    result.concentration = calculate_crn_concentration_raster_step_change(
-        config.nuclide, config.muon_scheme,
+    LandslideCouplingResultMulti result;
+    result.concentration = calculate_crn_concentration_raster_step_change_multi(
+        config.muon_scheme,
         time_since_change_yr, production_raster, topo_shield,
         config.eff_erate_old_g_cm2_yr, config.eff_erate_new_g_cm2_yr);
 
-    auto&       out   = result.concentration.get_data_array();
-    const auto& omask = result.concentration.get_mask_array();
+    auto& out10 = result.concentration.Be10.get_data_array();
+    auto& out26 = result.concentration.Al26.get_data_array();
+    auto& out14 = result.concentration.C14.get_data_array();
+    const auto& omask = result.concentration.Be10.get_mask_array();
 
     const auto& depth = excavation_depth_m.get_data_array();
     const auto& dmask = excavation_depth_m.get_mask_array();
@@ -334,7 +418,7 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
     // factor). Every pixel in a scar shares the first three and, over a few
     // hundred metres, very nearly the fourth -- so the site factor is quantised
     // rather than used raw, or the cache would never hit.
-    std::map<std::tuple<long long, long long, long long, long long>, double> cache;
+    std::map<std::tuple<long long, long long, long long, long long>, CrnColumnSample> cache;
 
     for (int r = 0; r < meta.n_rows; ++r)
     {
@@ -385,18 +469,19 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
                 auto fit = cache.find(fkey);
                 if (fit == cache.end())
                 {
-                    const double v = landslide_flush_concentration(
+                    const CrnColumnSample v = landslide_flush_concentration_sample(
                         d_eff, config.eff_erate_old_g_cm2_yr,
                         config.eff_erate_new_g_cm2_yr,
                         t_c - t_f, static_cast<double>(prod(r, c)),
-                        static_cast<double>(shld(r, c)),
-                        config.muon_scheme, config.nuclide,
+                        static_cast<double>(shld(r, c)), config.muon_scheme,
                         config.rock_density_kg_m3,
                         config.flush_quadrature_nodes);
                     fit = cache.emplace(fkey, v).first;
                     ++result.n_solves;
                 }
-                out(r, c) = static_cast<float>(fit->second);
+                out10(r, c) = static_cast<float>(fit->second.conc_10Be);
+                out26(r, c) = static_cast<float>(fit->second.conc_26Al);
+                out14(r, c) = static_cast<float>(fit->second.conc_14C);
                 continue;
             }
 
@@ -445,10 +530,12 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
                         metres_to_g_cm2(d_m, config.scar_density_kg_m3),
                         config.eff_erate_new_g_cm2_yr,
                         site, 1.0, config.muon_scheme);
-                    const double v = pick_nuclide(sample, config.nuclide);
+                    const CrnColumnSample v = sample;
                     it = cache.emplace(key, v).first;
                     ++result.n_solves;
-                    out(r, c) = static_cast<float>(it->second);
+                    out10(r, c) = static_cast<float>(it->second.conc_10Be);
+                    out26(r, c) = static_cast<float>(it->second.conc_26Al);
+                    out14(r, c) = static_cast<float>(it->second.conc_14C);
                     continue;
                 }
 
@@ -464,14 +551,24 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
                 const std::vector<CrnColumnSample> prof = col.run_transient(
                     std::vector<double>{0.0}, site, config.muon_scheme);
 
-                const double v = prof.empty()
-                    ? static_cast<double>(out(r, c))
-                    : pick_nuclide(prof[0], config.nuclide);
+                CrnColumnSample v;
+                if (prof.empty())
+                {
+                    v.conc_10Be = static_cast<double>(out10(r, c));
+                    v.conc_26Al = static_cast<double>(out26(r, c));
+                    v.conc_14C = static_cast<double>(out14(r, c));
+                }
+                else
+                {
+                    v = prof[0];
+                }
                 it = cache.emplace(key, v).first;
                 ++result.n_solves;
             }
 
-            out(r, c) = static_cast<float>(it->second);
+            out10(r, c) = static_cast<float>(it->second.conc_10Be);
+            out26(r, c) = static_cast<float>(it->second.conc_26Al);
+            out14(r, c) = static_cast<float>(it->second.conc_14C);
         }
     }
 
@@ -522,6 +619,33 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
     }
 
     return result;
+}
+
+
+LandslideCouplingResult compute_landslide_step_change_concentration(
+    const lsdtt_raster_cpu& excavation_depth_m,
+    const lsdtt_raster_cpu& time_since_failure_yr,
+    const lsdtt_raster_cpu& time_since_change_yr,
+    const lsdtt_raster_cpu& production_raster,
+    const lsdtt_raster_cpu& topo_shield,
+    const LandslideStepChangeConfig& config,
+    const lsdtt_raster_cpu* erosion_rate_g_cm2_yr)
+{
+    LandslideCouplingResultMulti mres =
+        compute_landslide_step_change_concentration_multi(
+            excavation_depth_m, time_since_failure_yr, time_since_change_yr,
+            production_raster, topo_shield, config, erosion_rate_g_cm2_yr);
+
+    LandslideCouplingResult out;
+    out.concentration = select_nuclide_raster(std::move(mres.concentration),
+                                              config.nuclide);
+    out.delivery_mass_kg_m2_yr = std::move(mres.delivery_mass_kg_m2_yr);
+    out.n_failed_pixels = mres.n_failed_pixels;
+    out.n_discarded_prewave = mres.n_discarded_prewave;
+    out.n_flushing_pixels = mres.n_flushing_pixels;
+    out.n_solves = mres.n_solves;
+    out.total_delivered_kg_yr = mres.total_delivered_kg_yr;
+    return out;
 }
 
 }  // namespace lsdtt
