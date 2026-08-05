@@ -282,6 +282,196 @@ int main(int argc, char** argv)
     }
 
     // -------------------------------------------------------------------------
+    // T17 -- THE TWO ENTRY POINTS MUST AGREE.
+    //
+    // There are two landslide -> concentration implementations in this file's
+    // library: compute_landslide_surface_concentration (scalar production
+    // scaling and shielding, used by lsdtt-cosmo-landslides) and
+    // compute_landslide_step_change_concentration (per-pixel rasters, used by
+    // lsdtt-cosmo-prediction). They share NO code and sit 260 lines apart.
+    //
+    // Nothing asserted they agreed. The density split of 2026-08-04 had to be
+    // applied to both by hand, and if it had reached only one, nothing here
+    // would have noticed. THAT is what this test exists to stop.
+    //
+    // The comparison is exact by construction: with eps_old == eps_new, a
+    // time-since-change far larger than any scar age, a uniform production
+    // raster equal to production_scaling, a uniform shielding raster equal to
+    // total_shielding, and a zero flush window, the step-change kernel builds
+    // the same four-row history the scalar path builds.
+    //
+    // total_shielding != 1 IS INCLUDED DELIBERATELY. Scaling and shielding
+    // reach the column as a product (S_tot, per the Vermeesch redistribution),
+    // and a change that merged or reordered them would be invisible at
+    // shielding == 1. This codebase has already paid 11.4 % for a
+    // scaling/shielding mistake once.
+    std::cout << "\nT17: the scalar and raster kernels agree\n";
+    {
+        const lsdtt::lsdtt_raster_meta m = make_meta(6, 6, 10.0);
+        const double t_now = 100000.0;
+        const double huge_t_since_change = 1.0e6;   // matches the scalar path
+
+        int n_compared = 0;
+        double worst_rel = 0.0;
+        std::string worst_case;
+
+        for (double scaling : {1.0, 4.0})
+        for (double shielding : {1.0, 0.85})
+        for (double rho_scar : {1500.0, 2650.0})
+        for (const char* nuc : {"Be10", "Al26", "C14"})
+        {
+            lsdtt::LandslideCrnConfig sc;
+            sc.background_eff_erate_g_cm2_yr = 0.002;
+            sc.production_scaling = scaling;
+            sc.total_shielding    = shielding;
+            sc.rock_density_kg_m3 = 2650.0;
+            sc.scar_density_kg_m3 = rho_scar;
+            sc.muon_scheme        = "BraucherBorchers";
+            sc.nuclide            = nuc;
+            sc.t_now_yr           = t_now;
+
+            lsdtt::LandslideStepChangeConfig rc;
+            rc.eff_erate_old_g_cm2_yr = sc.background_eff_erate_g_cm2_yr;
+            rc.eff_erate_new_g_cm2_yr = sc.background_eff_erate_g_cm2_yr;
+            rc.rock_density_kg_m3     = sc.rock_density_kg_m3;
+            rc.scar_density_kg_m3     = sc.scar_density_kg_m3;
+            rc.flush_time_threshold_yr = 0.0;      // pure scar
+            rc.muon_scheme            = sc.muon_scheme;
+            rc.nuclide                = sc.nuclide;
+
+            // Depth x age grid laid out over the raster.
+            const double depths[4] = {0.2, 0.5, 1.0, 3.0};
+            // age 0 == the instant of failure, which IS a failure. Including
+            // it is the point: the first version of this grid started at
+            // 50 yr and certified an equivalence that did not hold there.
+            const double ages[4]   = {0.0, 50.0, 5000.0, 50000.0};
+
+            lsdtt::lsdtt_raster_cpu exc    = filled_raster(m, 0.0f);
+            lsdtt::lsdtt_raster_cpu tfail  = filled_raster(m, static_cast<float>(m.no_data_value));
+            lsdtt::lsdtt_raster_cpu tsince = filled_raster(m, lsdtt::k_landslide_never_failed);
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4; ++j)
+                {
+                    exc.get_data_array()(i, j)    = static_cast<float>(depths[i]);
+                    tfail.get_data_array()(i, j)  = static_cast<float>(t_now - ages[j]);
+                    tsince.get_data_array()(i, j) = static_cast<float>(ages[j]);
+                }
+
+            const lsdtt::lsdtt_raster_cpu scalar_out =
+                lsdtt::compute_landslide_surface_concentration(exc, tfail, sc);
+
+            const lsdtt::lsdtt_raster_cpu tsc  = filled_raster(m, static_cast<float>(huge_t_since_change));
+            const lsdtt::lsdtt_raster_cpu prod = filled_raster(m, static_cast<float>(scaling));
+            const lsdtt::lsdtt_raster_cpu shld = filled_raster(m, static_cast<float>(shielding));
+            const lsdtt::LandslideCouplingResult raster_out =
+                lsdtt::compute_landslide_step_change_concentration(
+                    exc, tsince, tsc, prod, shld, rc);
+
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4; ++j)
+                {
+                    const double a = scalar_out.get_data_array()(i, j);
+                    const double b = raster_out.concentration.get_data_array()(i, j);
+                    const double rel = std::fabs(a - b) / std::max(std::fabs(a), 1.0);
+                    ++n_compared;
+                    if (rel > worst_rel)
+                    {
+                        worst_rel = rel;
+                        worst_case = std::string(nuc) + " scaling=" +
+                                     std::to_string(scaling) + " shield=" +
+                                     std::to_string(shielding) + " rho=" +
+                                     std::to_string(rho_scar) + " d=" +
+                                     std::to_string(depths[i]) + " age=" +
+                                     std::to_string(ages[j]);
+                    }
+                }
+        }
+
+        std::cout << "        compared " << n_compared
+                  << " (depth x age x scaling x shielding x density x nuclide)\n"
+                  << "        worst relative difference " << worst_rel
+                  << (worst_case.empty() ? "" : ("  at " + worst_case)) << "\n";
+        check(n_compared == 4 * 4 * 2 * 2 * 2 * 3,
+              "the whole grid was compared");
+        check(worst_rel < 1.0e-6,
+              "the scalar and raster landslide kernels agree to 1e-6");
+    }
+
+    // -------------------------------------------------------------------------
+    // T17b -- THE INSTANT OF FAILURE.
+    //
+    // A scar sampled at the very moment it forms IS a scar: the surface is now
+    // the rock that was at depth d, carrying the concentration it had there.
+    //
+    // Until 2026-08-05 the two kernels disagreed here by a factor of 5.5. The
+    // raster path tested `t_f > 0.0`, and its conversion helper folded "failed
+    // at the reporting instant" into "never failed", so it reported BACKGROUND
+    // -- the landslide appeared not to have happened. That convention was
+    // arbitrary and has been replaced: elapsed time zero now means "just
+    // failed", and only a failure in the FUTURE of the reporting time is never.
+    //
+    // This matters because it is the DEFAULT configuration of
+    // lsdtt-cosmo-landslides: crn_report_time_yr defaults to 0 and a
+    // single_event run defaults to event_time_yr 0.
+    std::cout << "\nT17b: a scar sampled at the instant of failure\n";
+    {
+        const lsdtt::lsdtt_raster_meta m = make_meta(4, 4, 10.0);
+
+        lsdtt::LandslideCrnConfig sc;
+        sc.background_eff_erate_g_cm2_yr = 0.002;
+        sc.production_scaling = 4.0;
+        sc.rock_density_kg_m3 = 2650.0;
+        sc.scar_density_kg_m3 = 1500.0;
+        sc.t_now_yr           = 0.0;      // report AT the failure time
+        const double background = lsdtt::landslide_crn_background_concentration(sc);
+
+        lsdtt::lsdtt_raster_cpu exc   = filled_raster(m, 0.0f);
+        lsdtt::lsdtt_raster_cpu tfail = filled_raster(m, static_cast<float>(m.no_data_value));
+        exc.get_data_array()(1, 1)    = 2.0f;
+        tfail.get_data_array()(1, 1)  = 0.0f;      // failed exactly now
+
+        const double at_scar =
+            lsdtt::compute_landslide_surface_concentration(exc, tfail, sc)
+                .get_data_array()(1, 1);
+
+        lsdtt::LandslideStepChangeConfig rc;
+        rc.eff_erate_old_g_cm2_yr = sc.background_eff_erate_g_cm2_yr;
+        rc.eff_erate_new_g_cm2_yr = sc.background_eff_erate_g_cm2_yr;
+        rc.rock_density_kg_m3     = sc.rock_density_kg_m3;
+        rc.scar_density_kg_m3     = sc.scar_density_kg_m3;
+        const lsdtt::lsdtt_raster_cpu tsince =
+            lsdtt::time_since_failure_from_time_of_failure(tfail, 0.0);
+        const lsdtt::LandslideCouplingResult rr =
+            lsdtt::compute_landslide_step_change_concentration(
+                exc, tsince, filled_raster(m, 1.0e6f),
+                filled_raster(m, static_cast<float>(sc.production_scaling)),
+                filled_raster(m, 1.0f), rc);
+        const double raster_at_scar = rr.concentration.get_data_array()(1, 1);
+
+        std::cout << "        background " << background
+                  << ", at the instant of failure: " << at_scar
+                  << " (raster path " << raster_at_scar << ")\n";
+
+        check(at_scar < 0.5 * background,
+              "the scar reports the INHERITED concentration at depth, well "
+              "below background -- the landslide is visible");
+        check(rr.n_failed_pixels == 1,
+              "the raster path now COUNTS a scar that failed at the reporting "
+              "instant (it reported zero before 2026-08-05)");
+        check(std::fabs(raster_at_scar - at_scar) / at_scar < 1.0e-6,
+              "and both kernels agree there, to 1e-6");
+
+        // The other side of the rule: a failure in the FUTURE of the reporting
+        // time still has not happened, and must stay "never".
+        lsdtt::lsdtt_raster_cpu tfuture = filled_raster(m, static_cast<float>(m.no_data_value));
+        tfuture.get_data_array()(1, 1) = 500.0f;          // fails 500 yr from now
+        const lsdtt::lsdtt_raster_cpu ts_future =
+            lsdtt::time_since_failure_from_time_of_failure(tfuture, 0.0);
+        check(ts_future.get_data_array()(1, 1) == lsdtt::k_landslide_never_failed,
+              "a failure in the FUTURE of the reporting time is still 'never'");
+    }
+
+    // -------------------------------------------------------------------------
     std::cout << "\n=== " << (g_checks - g_failures) << " / " << g_checks
               << " checks passed ===\n";
     if (g_failures > 0)

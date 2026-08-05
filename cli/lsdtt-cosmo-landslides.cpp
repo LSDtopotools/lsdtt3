@@ -801,6 +801,35 @@ int main(int argc, char* argv[])
                   << " kg/m3, scar material " << ccfg.scar_density_kg_m3
                   << " kg/m3\n";
         ccfg.t_now_yr           = ff["crn_report_time_yr"];
+
+        // Say plainly what the reporting time means, because the DEFAULT sits
+        // on the boundary: crn_report_time_yr defaults to 0 and a single_event
+        // run defaults to event_time_yr 0, so out of the box every scar is
+        // sampled at the instant it failed. That is well defined -- the surface
+        // is the rock that was at the scar depth, so the concentration is the
+        // INHERITED value with no re-accumulation -- but it is worth saying,
+        // since a user who wanted "some time after the landslides" and left the
+        // default would otherwise not know they were looking at the freshest
+        // possible surface.
+        {
+            const double t_report = static_cast<double>(ff["crn_report_time_yr"]);
+            const double t_last_event =
+                (sf["landslide_mode"] == "series")
+                    ? static_cast<double>(ff["series_end_yr"])
+                    : static_cast<double>(ff["event_time_yr"]);
+            if (t_report <= t_last_event)
+            {
+                std::cout << "\n  NOTE: crn_report_time_yr (" << t_report
+                          << ") is at or before the last landslide ("
+                          << t_last_event << " yr), so scars are sampled AT the\n"
+                          << "        instant of failure. The concentrations are "
+                             "the INHERITED values of the\n"
+                          << "        rock exposed at the scar depth, with no "
+                             "re-accumulation. Set\n"
+                          << "        crn_report_time_yr later than the last "
+                             "event to see recovery.\n\n";
+            }
+        }
         ccfg.nuclide            = sf["nuclide"];
 
         try

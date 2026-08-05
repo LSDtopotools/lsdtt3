@@ -229,8 +229,13 @@ lsdtt_raster_cpu time_since_failure_from_time_of_failure(
                 out(r, c) = static_cast<float>(k_landslide_never_failed);
                 continue;
             }
+            // elapsed == 0 means the scar failed AT the reporting instant. That
+            // IS a failure -- the surface is now the rock that was at depth d --
+            // so it is reported as an elapsed time of zero, not as "never".
+            // Only a failure in the FUTURE of the reporting time is "never".
+            // See the header for the convention this replaced and why.
             const double elapsed = t_report_yr - static_cast<double>(tf(r, c));
-            out(r, c) = (elapsed > 0.0)
+            out(r, c) = (elapsed >= 0.0)
                 ? static_cast<float>(elapsed)
                 : static_cast<float>(k_landslide_never_failed);
         }
@@ -397,7 +402,10 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
             const double t_f = static_cast<double>(tsf(r, c));
             const double t_c = static_cast<double>(tsc(r, c));
 
-            const bool failed = (t_f > 0.0) && (depth(r, c) != dndv) && (d_m > 0.0);
+            // t_f == 0 is a scar that failed AT the reporting instant, and it
+            // counts. "Never failed" is a NEGATIVE sentinel
+            // (k_landslide_never_failed), so >= 0 excludes it correctly.
+            const bool failed = (t_f >= 0.0) && (depth(r, c) != dndv) && (d_m > 0.0);
             if (!failed) continue;
 
             // A failure older than the incision wave at this pixel cannot have
@@ -459,6 +467,46 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
                 const double d_rock_equiv =
                     d_m * config.scar_density_kg_m3 / rho_rock;
 
+                // t_f == 0: the scar failed AT the reporting instant, so there
+                // is no re-accumulation yet and the surface is simply the
+                // PRE-FAILURE column sampled at the scar depth -- inheritance.
+                //
+                // This needs its own branch rather than falling out of the
+                // four-row history below, because that history would have a
+                // ZERO-LENGTH most-recent segment. Measured: the degenerate
+                // form gives 362,047 atoms/g where the correct answer is
+                // 237,058, a factor of 1.53. So the pre-failure column is
+                // evaluated directly, at depth, with no removal row.
+                if (t_f == 0.0)
+                {
+                    // The pre-failure profile at the scar depth, via the same
+                    // steady_state() call compute_landslide_surface_concentration
+                    // makes -- which is the reference for this case.
+                    //
+                    // scaling and shielding are handed over as (site, 1.0): the
+                    // column forms S_tot = scaling * shielding and solves the
+                    // Vermeesch redistribution on the product, so passing the
+                    // already-multiplied site value is exact, not an
+                    // approximation.
+                    //
+                    // APPROXIMATION THAT IS REAL: under a genuine step change
+                    // this uses the NEW rate's steady state rather than the
+                    // mid-transient profile, so it is exact only where the
+                    // incision wave passed long ago (t_c >> Gamma/eps). Good
+                    // enough at the instant of failure, and it is the same
+                    // assumption the scalar path has always made.
+                    lsdtt_crn_column pre(rho_rock);
+                    const CrnColumnSample sample = pre.steady_state(
+                        metres_to_g_cm2(d_m, config.scar_density_kg_m3),
+                        config.eff_erate_new_g_cm2_yr,
+                        site, 1.0, config.muon_scheme);
+                    const double v = pick_nuclide(sample, config.nuclide);
+                    it = cache.emplace(key, v).first;
+                    ++result.n_solves;
+                    out(r, c) = static_cast<float>(it->second);
+                    continue;
+                }
+
                 // Four rows, most recent first, yr BP increasing with index.
                 const std::vector<double> t_yr   {t_f, t_f, t_c, -9999.0};
                 const std::vector<double> rate   {eps_new_m_yr, 0.0,
@@ -512,7 +560,7 @@ LandslideCouplingResult compute_landslide_step_change_concentration(
                     const double d_m = static_cast<double>(depth(r, c));
                     const double t_f = static_cast<double>(tsf(r, c));
                     const double t_c = static_cast<double>(tsc(r, c));
-                    if (t_f > 0.0 && depth(r, c) != dndv && d_m > 0.0 &&
+                    if (t_f >= 0.0 && depth(r, c) != dndv && d_m > 0.0 &&
                         t_f <= t_c && t_f <= config.flush_time_threshold_yr)
                     {
                         mass = config.scar_density_kg_m3 * d_m

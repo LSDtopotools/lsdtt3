@@ -2150,6 +2150,106 @@ That is the specific accident the capability design exists to prevent.
 
 ---
 
+### 7.10g A landslide that just happened has happened (2026-08-05)
+
+**A convention change, decided deliberately.** It is documented at length
+because it changes `lsdtt-cosmo-prediction` output and because the convention it
+replaces was written down in a header, so a future reader will find the old rule
+and need to know it was superseded on purpose.
+
+#### The question
+
+*When a landslide fires at exactly the moment you are sampling, has it
+happened?* Until 2026-08-05 the two tools answered differently:
+
+| tool | answer | reported at a 2 m scar |
+|---|---|---|
+| `lsdtt-cosmo-landslides` | **yes** | 237,058 atoms/g — the depleted rock the scar exposed |
+| `lsdtt-cosmo-prediction` | **no** | 1,295,640 atoms/g — background, as if nothing happened |
+
+A factor of 5.5 on the same scar at the same instant.
+
+The old rule was explicit, in `time_since_failure_from_time_of_failure`:
+*"A failure recorded at or after `t_report_yr` has not happened yet at the
+reporting time and is also returned as never."* It was arbitrary rather than
+reasoned, and it has been replaced.
+
+#### The rule now
+
+**Elapsed time zero means the landslide just happened.** The surface is the rock
+that was at the scar depth, carrying the concentration it had there — inheritance,
+with no re-accumulation. Only a failure in the **future** of the reporting time
+is "never".
+
+Three sites changed, all in `lsdtt_landslide_crn_cpu.cpp`: the conversion helper
+(`elapsed > 0` → `>= 0`), the raster kernel's failed test, and the flush
+selector. The negative sentinel `k_landslide_never_failed` means `>= 0` still
+excludes "never" correctly.
+
+#### Why it needed its own branch, and a number that proves it
+
+At `t_f == 0` the four-row erosion history would have a **zero-length
+most-recent segment**, and that does not reduce to the inherited value: it gives
+**362,047 atoms/g against the correct 237,058**, a factor of 1.53. So the
+instant-of-failure case evaluates the pre-failure column at the scar depth
+directly, via the same `steady_state()` call `compute_landslide_surface_concentration`
+has always used.
+
+Scaling and shielding are handed to that call as `(site, 1.0)`. That is exact,
+not a shortcut: the column forms `S_tot = scaling × shielding` and solves the
+Vermeesch redistribution on the product, so passing the already-multiplied value
+is the same thing.
+
+**One approximation, stated:** under a genuine step change this uses the new
+rate's steady state rather than the mid-transient profile, so it is exact only
+where the incision wave passed long ago. That is the same assumption the scalar
+path has always made.
+
+#### Why this was worth stopping for
+
+`crn_report_time_yr` defaults to 0 and a `single_event` run defaults to
+`event_time_yr: 0` — so **the default configuration of
+`lsdtt-cosmo-landslides` sits exactly on this boundary.** Unifying the two
+kernels without settling it would have silently turned *"the landslide exposed
+depleted rock"* into *"the landslide did nothing"*, while every aggregate check
+still passed, because the affected pixels would simply have read background.
+
+The tool now says so at run time when the reporting time is at or before the
+last event, rather than leaving the user to infer it.
+
+#### The two kernels, and the test that pins them
+
+There are still two landslide → concentration implementations, sharing no code
+260 lines apart: `compute_landslide_surface_concentration` (scalar production
+scaling and shielding) and `compute_landslide_step_change_concentration`
+(per-pixel rasters). Nothing asserted they agreed — the density split of
+2026-08-04 had to be applied to both by hand, and had it reached only one,
+no test would have noticed.
+
+`unit_landslide_crn` T17 now compares them across **384 combinations**: depth ×
+age × production scaling × shielding × scar density × nuclide. They agree to
+**1.2×10⁻⁷** — float32 raster storage, nothing more.
+
+`total_shielding != 1` is in that grid deliberately: scaling and shielding reach
+the column as a product, so a change that merged or reordered them would be
+invisible at shielding = 1. This codebase has already paid 11.4 % for a
+scaling/shielding mistake once.
+
+**Generalisable point, and the reason this section exists.** The first version
+of T17 used ages 50–50,000 yr and reported clean agreement. The disagreement
+lived at `age = 0` — the boundary the grid excluded, and the shipped default. An
+agreement test written only over the "interesting" range can certify an
+equivalence that does not hold.
+
+#### A gap this exposed in the refactor oracle
+
+The oracle was **unchanged at 34/34** through this change, which is not the
+reassurance it looks like: no oracle case exercises the *raster* landslide
+coupling with a scar at elapsed time zero. The behaviour that moved is real and
+simply is not covered. Worth a case when the landslide coupling next changes.
+
+---
+
 ### 7.10b Validity is not capability (`lsdtt-cosmo-landslides`, 2026-08-05)
 
 A shipped defect, found while planning the cosmogenic CLI rationalisation and

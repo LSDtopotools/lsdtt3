@@ -129,8 +129,18 @@ double landslide_crn_background_concentration(const LandslideCrnConfig& config);
 // output is valid everywhere the input is valid, and "never" is carried as a
 // NEGATIVE value.
 //
-// A failure recorded at or after t_report_yr has not happened yet at the
-// reporting time and is also returned as "never".
+// A LANDSLIDE THAT JUST HAPPENED HAS HAPPENED. An elapsed time of ZERO -- a scar
+// sampled at the very instant it failed -- is a failure, not a non-event: the
+// surface is the rock that was at the scar depth, so the concentration is the
+// inherited value with no re-accumulation. Only a failure in the FUTURE of the
+// reporting time is returned as "never".
+//
+// This SUPERSEDES the convention that held until 2026-08-05, under which a
+// failure "at or after" the reporting time was folded into "never". That rule
+// was arbitrary, and it mattered: it is the DEFAULT configuration of
+// lsdtt-cosmo-landslides (crn_report_time_yr 0, event_time_yr 0), where it made
+// a 2 m scar read 1,295,640 atoms/g -- plain background -- instead of the
+// correct 237,058. See docs/testing_and_benchmarking.md sec. 7.10g.
 // -----------------------------------------------------------------------------
 constexpr double k_landslide_never_failed = -1.0;
 
