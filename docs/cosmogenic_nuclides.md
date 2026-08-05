@@ -818,6 +818,16 @@ storage at all — landslide material passes through within one 100 yr timestep
 and mixes homogeneously. How long landslide sediment actually persists in a
 channel network is a separate research question and is not modelled.
 
+**The two landslide rasters are a pair, and the excavation raster is
+per-event.** `_LS_TFAIL` holds the time of a pixel's *most recent* failure and
+`_LS_EXCAVATION` the depth of *that* scar — not the total ever removed. Both
+couplings read them as one event: the scar history strips the excavation depth
+instantaneously at the failure time, and the flush weight delivers that slab
+over the window that failure opened. A cumulative depth carried against a
+single time would re-deliver a pixel's whole history in the last window and
+strip it all in one instant at the wrong time. The cumulative record is the
+DEM, which is lowered on every failure, so nothing is lost.
+
 ### 10.3 Two densities, and why they are not one number
 
 The CRN physics works in **mass depth**, g cm⁻². Metres appear only at the
@@ -885,6 +895,57 @@ saturation concentration `P/λ`.
 > history but not a per-pixel time-varying *shielding*, so a glacial–interglacial
 > cycle cannot be represented at all and concentrations under formerly glaciated
 > ground are overestimated.
+
+### 10.6 Reading the result: apparent against *which* rate?
+
+A landsliding landscape has more than one "true" erosion rate, and the answer to
+"is the cosmogenic estimate biased?" depends entirely on which one you divide
+by. This is the single easiest way to misread these outputs, and it cost lsdtt3
+a fictitious factor of 1.7 before it was noticed.
+
+Three quantities, all defensible, all different:
+
+| Rate | What it is | Spread across basins |
+|---|---|---|
+| **imposed** | the long-term rate the scenario was asked to deliver | none — it is a number you chose |
+| **volumetric**, `E_v` | the mass actually leaving the basin *at the sampling instant*, i.e. background erosion plus whatever debris is in transit | **large** |
+| **apparent**, `E_c` | what an analyst gets: the flux-weighted basin-averaged concentration, inverted through the ordinary steady-state assumption | large, but less than `E_v` |
+
+Niemi's comparison is `E_c` against `E_v`, and both are snapshots. His §2.4.2
+defines the volumetric rate as "the total depth of material removed from the
+watershed divided by the watershed area multiplied by the **model time step**" —
+the same per-timestep depth array that weights his mixing equation. His Fig. 5
+shows `E_v` carrying a *larger* spread than the cosmogenic rates at every
+catchment scale, which a long-term average could not do.
+
+Two consequences follow, and both are results rather than caveats:
+
+- **Both `E_c` and `E_v` median-under-read the imposed rate.** Niemi says so
+  directly: "the median 50% of the CRN-derived **and volumetric** erosion rates
+  generally fall below the total imposed erosion rate." The mass arrives in rare
+  large events, so the median snapshot has less than its share. lsdtt3
+  reproduces this — a median `E_v/E_imposed` of about 0.4–0.55 on the test
+  fixture, **with no cosmogenics involved at all**. A low `E_c/E_imposed` is
+  therefore not evidence of a biased cosmogenic model.
+- **Against `E_v` the apparent rate is close to unbiased**, with a median ratio
+  within 15 % of unity and an interquartile range that brackets it.
+
+The area dependence is the reproducible part, and it is Niemi's practical
+conclusion: "at small catchment scales, CRN-derived rates are typically higher
+than volumetric rates … but converge at larger catchment scales." On the test
+fixture `E_c/E_v` falls monotonically with basin area, from just above 1 in the
+smallest band to about 0.81 in the largest.
+
+> **In short:** to ask whether the *method* is biased, divide by the volumetric
+> rate at the sampling instant. To ask what a single sample tells you about the
+> landscape's long-term rate, divide by the imposed rate — and expect a large
+> shortfall that is a property of episodic erosion, not of cosmogenics.
+
+The ensemble outputs are CSVs rather than rasters, because the result is a
+distribution: one row per basin per realisation (area, landslides upstream, area
+fraction failed, concentration, apparent rate, volumetric rate, ratio), the
+ratio binned by basin area, a per-realisation summary across seeds, and the
+apparent rate through time at a fixed outlet.
 
 ---
 

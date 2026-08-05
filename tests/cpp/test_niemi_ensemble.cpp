@@ -26,12 +26,14 @@
 //       his Eq. 7 rule of thumb
 //   N7  the apparent rate through time: an event makes it EXCURT, and it
 //       relaxes once the debris has left and the scars re-accumulate
-//   N8  a DIAGNOSTIC, not a check: scar depth versus the under-read. Two
-//       candidate mechanisms have been refuted by measurement, so the
-//       magnitude of the under-read is recorded as unexplained
+//   N8  a DIAGNOSTIC, not a check: scar depth versus the under-read
+//   N9  the comparison NIEMI ACTUALLY MAKES -- apparent versus the SNAPSHOT
+//       volumetric rate, plus the mass-conservation check on the delivery
+//       field that guards the excavation/failure-time raster pair
 //
-// Emits niemi_basins.csv, niemi_area_bins.csv, niemi_ensemble.csv and
-// niemi_timeseries.csv.
+// Emits niemi_basins.csv, niemi_area_bins.csv, niemi_ensemble.csv,
+// niemi_timeseries.csv and -- with Niemi's own volumetric denominator --
+// niemi_basins_volumetric.csv and niemi_area_bins_volumetric.csv.
 //
 // Usage: test-niemi-ensemble [output_dir]
 // -----------------------------------------------------------------------------
@@ -60,6 +62,8 @@ namespace
 
 int g_failures = 0;
 int g_checks   = 0;
+std::vector<double> g_domain_delivery;   // per-realisation domain-mean delivery
+std::vector<double> g_domain_expected;
 
 void check(bool ok, const std::string& what)
 {
@@ -230,7 +234,8 @@ int main(int argc, char* argv[])
                                int realisation,
                                std::vector<lsdtt::NiemiBasinSample>& into,
                                lsdtt::AreaVolumeScaling av,
-                               double* fraction_failed_out = nullptr)
+                               double* fraction_failed_out = nullptr,
+                               std::vector<lsdtt::NiemiBasinSample>* into_ev = nullptr)
     {
         lsdtt::lsdtt_raster_cpu work  = filled;
         lsdtt::lsdtt_raster_cpu tfail = uniform(meta, static_cast<float>(meta.no_data_value));
@@ -278,20 +283,20 @@ int main(int argc, char* argv[])
         const auto coupling = lsdtt::compute_landslide_step_change_concentration(
             exc, t_since, tsc, prod, topo, ccfg, &erate);
 
-        // THE TRUE RATE IS THE LONG-TERM ONE, not an instantaneous snapshot.
+        // THE DENOMINATOR HERE IS THE IMPOSED LONG-TERM RATE -- which is NOT
+        // Niemi's denominator. See N9, which does the comparison he makes.
         //
-        // The delivery-mass field is an INSTANTANEOUS flux: it carries the
-        // flushing spike of whichever scars happen to lie inside the flush
-        // window at the reporting time. A cosmogenic concentration integrates
-        // over ~Gamma/eps, so comparing it against an instantaneous flux is not
-        // like for like -- it would measure the luck of the last few hundred
-        // years rather than the erosion rate.
+        // Keeping this one is still worth doing: "what does an analyst's number
+        // do relative to the landscape's actual long-term erosion rate" is the
+        // question a user asks, and its answer is that the median single sample
+        // under-reads badly. But the shortfall is NOT evidence of a bias in the
+        // cosmogenic model, because the volumetric rate a sampler could measure
+        // at the same instant under-reads by almost as much (N9). Reading this
+        // ratio as a model bias is what produced the "unexplained factor of
+        // 1.7" recorded against this module.
         //
-        // Niemi's comparison is the volumetric rate over the model duration, so
-        // that is what is used here: the prescribed background plus the
-        // prescribed landslide rate, which is the rate the series was asked to
-        // deliver and (per the closure test in unit_landslide_series) does
-        // deliver to within ~2 %.
+        // The prescribed rate is what the series was asked to deliver and, per
+        // the closure test in unit_landslide_series, does deliver to ~2 %.
         // The series budget is a VOLUME, so the mass it delivers depends on the
         // density of the material that failed. Using 2650 for a soil-scar run
         // would overstate the true mass rate by 2650/1500 and manufacture an
@@ -327,23 +332,77 @@ int main(int argc, char* argv[])
             coupling.delivery_mass_kg_m2_yr, true_rate, exc,
             prod, topo, snow, self, nuclide, scheme, realisation);
         into.insert(into.end(), s.begin(), s.end());
+
+        // ---------------------------------------------------------------------
+        // NIEMI'S OWN COMPARISON: E_c / E_v, not E_c / E_imposed.
+        //
+        // Niemi 2005 sec. 2.4.2 defines the volumetric rate for a watershed as
+        // "the total depth of material removed from the watershed divided by the
+        // watershed area multiplied by the model time step" -- i.e. the SAME
+        // per-timestep depth array D that weights his Eq. 6 mixture. His E_v is
+        // therefore a short-window snapshot quantity, not a long-term average,
+        // and Fig. 5 shows it carrying a LARGER spread than the CRN rates at
+        // every catchment scale. Comparing a snapshot mixture against the
+        // imposed long-term rate is a different comparison from his.
+        //
+        // The delivery-mass field IS that depth array, in mass units. Convert
+        // kg m^-2 yr^-1 -> g cm^-2 yr^-1 (x 0.1) and evaluate again.
+        if (into_ev)
+        {
+            lsdtt::lsdtt_raster_cpu ev = coupling.delivery_mass_kg_m2_yr;
+            {
+                auto& a = ev.get_data_array();
+                for (int r = 0; r < meta.n_rows; ++r)
+                    for (int c = 0; c < meta.n_cols; ++c)
+                        if (flow.is_valid_cell(flow.flat_index(r, c)))
+                            a(r, c) = static_cast<float>(a(r, c) * 0.1);
+            }
+            // Whole-domain, area-weighted mean of the delivery field. THIS is
+            // the mass-conservation check; a mean over basin means is not, as
+            // it over-weights small basins in a heavy-tailed field.
+            {
+                double sum = 0.0; std::int64_t n = 0;
+                const auto& a = ev.get_data_array();
+                for (int r = 0; r < meta.n_rows; ++r)
+                    for (int c = 0; c < meta.n_cols; ++c)
+                        if (flow.is_valid_cell(flow.flat_index(r, c)))
+                        { sum += a(r, c); ++n; }
+                g_domain_delivery.push_back(n ? sum / double(n) : 0.0);
+                // What the domain mean SHOULD be, from the series' own realised
+                // rate over its own active area:
+                //   background + rho_scar * E_realised * (A_active / A_domain)
+                const double a_dom = double(n) * meta.cell_size * meta.cell_size;
+                g_domain_expected.push_back(
+                    background_eff
+                    + series.realised_erosion_rate_mm_kyr * 1.0e-6
+                      * sp.av.scar_density_kg_m3 * 0.1
+                      * (series.active_area_m2 / a_dom));
+            }
+            const auto sv = lsdtt::evaluate_niemi_basins(
+                flow, outlets, coupling.concentration,
+                coupling.delivery_mass_kg_m2_yr, ev, exc,
+                prod, topo, snow, self, nuclide, scheme, realisation);
+            into_ev->insert(into_ev->end(), sv.begin(), sv.end());
+        }
     };
 
     auto run_realisation = [&](std::uint64_t seed, double ls_rate_mm_kyr,
                                int realisation,
                                std::vector<lsdtt::NiemiBasinSample>& into,
-                               double* fraction_failed_out = nullptr)
+                               double* fraction_failed_out = nullptr,
+                               std::vector<lsdtt::NiemiBasinSample>* into_ev = nullptr)
     {
         run_realisation_av(seed, ls_rate_mm_kyr, realisation, into,
                            lsdtt::AreaVolumeScaling::larsen_soil_scar(),
-                           fraction_failed_out);
+                           fraction_failed_out, into_ev);
     };
 
     // -------------------------------------------------------------------------
     std::cout << "\nN3: the ensemble -- landslides bias and scatter the rate\n";
     std::vector<lsdtt::NiemiBasinSample> ens;
+    std::vector<lsdtt::NiemiBasinSample> ens_ev;   // same basins, E_c / E_v
     std::vector<double> per_seed_median;
-    const int n_seeds = 20;
+    const int n_seeds = 200;
     // 25 mm/kyr against a 7.5 mm/kyr background: landslides supply ~77 % of the
     // mass, which is landslide-dominated in Niemi's sense, while the total
     // removed over the 20 kyr run (0.5 m) stays comparable to a single scar
@@ -363,7 +422,7 @@ int main(int argc, char* argv[])
             std::vector<lsdtt::NiemiBasinSample> one;
             double frac = 0.0;
             run_realisation(1000 + static_cast<std::uint64_t>(i) * 7919,
-                            ls_rate, i, one, &frac);
+                            ls_rate, i, one, &frac, &ens_ev);
             std::vector<double> r;
             for (const auto& s : one) if (s.valid) r.push_back(s.ratio);
             if (!r.empty()) per_seed_median.push_back(median_of(r));
@@ -387,6 +446,154 @@ int main(int argc, char* argv[])
         check(mx - mn > 0.02,
               "landslides SCATTER the apparent rate across basins");
         check(mn > 0.0 && mx < 10.0, "ratios stay physically sensible");
+
+    }
+
+    // -------------------------------------------------------------------------
+    // N9 -- THE COMPARISON NIEMI ACTUALLY MAKES: E_c / E_v.
+    //
+    // N3-N5 above divide the apparent rate by the IMPOSED long-term rate. That
+    // is not Niemi's comparison, and reading its median as a bias in the CRN
+    // model is a category error that cost this module an "unexplained factor of
+    // 1.7".
+    //
+    // Niemi 2005 sec. 2.4.2: "For each watershed, a volumetric erosion rate
+    // (E_v) is calculated by summing the total depth of material removed from
+    // the watershed and dividing it by the watershed area multiplied by the
+    // model time step." That is the SAME per-timestep depth array D that
+    // weights his Eq. 6 mixture -- a SNAPSHOT quantity, not a long-term
+    // average. Fig. 5 shows it carrying a LARGER spread than the CRN rates at
+    // every catchment scale, which a long-term average could not do.
+    //
+    // He then reports two things this section checks:
+    //
+    //   (a) "the median 50% of the CRN-derived AND volumetric erosion rates
+    //       generally fall below the total imposed erosion rate" -- BOTH
+    //       under-read the imposition, because the mass is delivered by rare
+    //       large events and the median snapshot has less than its share. So
+    //       E_c/E_imposed < 1 is his result, not our defect.
+    //
+    //   (b) "At small catchment scales, CRN-derived rates are typically higher
+    //       than volumetric rates ... but converge at larger catchment scales."
+    //       So E_c/E_v starts above 1 and falls with area.
+    //
+    // The delivery-mass field IS his depth array in mass units, so E_v is its
+    // area mean over the basin -- which is what ens_ev was evaluated against.
+    // -------------------------------------------------------------------------
+    std::cout << "\nN9: Niemi's own comparison -- apparent vs VOLUMETRIC rate\n";
+    {
+        std::vector<double> rv, dv;
+        for (const auto& s : ens_ev) if (s.valid)
+        {
+            rv.push_back(s.ratio);
+            dv.push_back(s.true_erate_g_cm2_yr);
+        }
+        check(!rv.empty(), "the volumetric-denominator ensemble is populated");
+
+        std::sort(rv.begin(), rv.end());
+        const double med_ev   = median_of(dv);
+        const double imposed  = background_eff + ls_rate * 1.0e-6 * 1500.0 * 0.1;
+
+        std::cout << "        E_c / E_v : median " << median_of(rv)
+                  << ", p25 " << rv[rv.size() / 4]
+                  << ", p75 " << rv[3 * rv.size() / 4] << "\n"
+                  << "        E_v itself: median " << med_ev
+                  << " g/cm2/yr against an imposed " << imposed
+                  << "  (E_v/E_imposed = " << med_ev / imposed << ")\n";
+
+        // (a) The volumetric rate under-reads the imposition on its own, with
+        //     no cosmogenics involved at all. This is the whole of the
+        //     "unexplained" gap in N3/N5 and it is Niemi's own observation.
+        check(med_ev < 0.9 * imposed,
+              "the VOLUMETRIC rate alone median-under-reads the imposed rate "
+              "(Niemi: the median 50 % of both fall below it)");
+
+        // (b) Against that denominator the apparent rate is close to unbiased.
+        //
+        // TWO STATISTICS, AND THE QUARTILES ARE THE STRONGER ONE. The median of
+        // this ratio converges slowly -- 0.85 at 20 seeds, 0.85 at 50, 0.94 at
+        // 100, 0.96 at 200, 0.97 at 400 -- while the quartiles barely move
+        // (p25 0.52-0.56, p75 1.06-1.08 over that whole range). That is not
+        // noise, it is the shape of the distribution: a basin either has debris
+        // in transit at the sampling instant or it does not, so the ratio is
+        // close to bimodal and the median sits in the sparse trough between the
+        // two modes, where a small shift in mass moves it a lot. The quartiles
+        // sit inside the modes and are stable.
+        //
+        // So the tight, meaningful claim is that the INTERQUARTILE RANGE
+        // BRACKETS UNITY: the volumetric rate lies inside the middle 50 % of
+        // what a sampler would report. The median gets a band wide enough to
+        // survive its own convergence rate and no wider.
+        const double med_ratio = median_of(rv);
+        const double p25 = rv[rv.size() / 4];
+        const double p75 = rv[3 * rv.size() / 4];
+
+        check(p25 < 1.0 && p75 > 1.0,
+              "the middle 50 % of apparent/VOLUMETRIC BRACKETS unity -- the "
+              "volumetric rate is what a typical sample is reporting");
+        check(med_ratio > 0.85 && med_ratio < 1.15,
+              "median apparent/VOLUMETRIC is within 15 % of unity -- the "
+              "cosmogenic model is not the source of the N3 under-read");
+
+        // (c) Small basins read HIGH relative to volumetric and converge down.
+        const auto bev = lsdtt::bin_niemi_by_area(ens_ev, 2, 5);
+        std::cout << "        area band (km2)        n   median E_c/E_v"
+                     "      IQR\n";
+        for (const auto& b : bev)
+            std::cout << "        " << std::setw(8) << b.area_lo_km2 << " - "
+                      << std::setw(8) << b.area_hi_km2 << "  "
+                      << std::setw(4) << b.n << "  "
+                      << std::setw(10) << b.median << "  "
+                      << std::setw(10) << b.iqr << "\n";
+        // MONOTONIC, not merely first-vs-last. At 20 seeds only the endpoints
+        // ordered; at 200 and 400 every band does, so the stronger form is
+        // asserted. Niemi sec. 3.1: "At small catchment scales, CRN-derived
+        // rates are typically higher than volumetric rates ... but converge at
+        // larger catchment scales."
+        bool declines = bev.size() >= 3;
+        for (std::size_t i = 1; i < bev.size(); ++i)
+            if (bev[i].median > bev[i - 1].median) declines = false;
+        check(declines,
+              "E_c/E_v falls monotonically with basin area (Niemi sec. 3.1)");
+        check(!bev.empty() && bev.front().median > 1.0,
+              "the smallest basins read ABOVE the volumetric rate, as he "
+              "reports");
+
+        // MASS CONSERVATION of the delivery field, which is what makes E_v a
+        // legitimate denominator at all. A mean over BASIN means is not this
+        // check -- it over-weights small basins in a heavy-tailed field. The
+        // domain mean over realisations is, and it must agree with what the
+        // series itself reports having excavated, spread over its active area.
+        //
+        // This is the check that catches an excavation raster which accumulates
+        // over a series while time_of_last_failure records only the most recent
+        // event: the pair is then read as one event by every consumer and the
+        // whole history's mass is re-delivered in the last flush window. That
+        // bug inflated this number by 57 %.
+        {
+            const double got = std::accumulate(g_domain_delivery.begin(),
+                                               g_domain_delivery.end(), 0.0)
+                             / double(g_domain_delivery.size());
+            const double want = std::accumulate(g_domain_expected.begin(),
+                                                g_domain_expected.end(), 0.0)
+                              / double(g_domain_expected.size());
+            std::cout << "        domain-mean delivery " << got
+                      << " g/cm2/yr against " << want
+                      << " from the series' realised rate x active fraction"
+                      << "  (ratio " << got / want << ")\n";
+            // Two-sided at 10 %. Measured over 20/50/100/200/400 seeds the
+            // ratio sits at 0.967 / 1.021 / 0.971 / 0.968 / 0.973, so this is
+            // a real bound rather than a tolerance chosen to pass. The small
+            // systematic shortfall is expected and is not a defect: single-
+            // failure memory legitimately loses the mass of repeat failures,
+            // and a flushing pixel delivers its slab INSTEAD OF its background
+            // erosion, not in addition to it.
+            //
+            // The accumulation bug this guards against read 1.57.
+            check(got > 0.90 * want && got < 1.10 * want,
+                  "delivered mass agrees with what the series excavated to 10 % "
+                  "(excavation raster is per-event, not cumulative)");
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -422,48 +629,75 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     std::cout << "\nN5: the median stays representative\n";
     {
-        // Niemi's practical conclusion, stated as he states it: an individual
-        // sample in a landsliding basin may be uninterpretable, but the MEDIAN
-        // over several is representative. The testable form is a comparison,
-        // not an absolute tolerance -- the median must be CLOSER to the truth
-        // than a typical single sample is.
-        std::vector<double> all, err;
-        for (const auto& s : ens) if (s.valid)
-        {
-            all.push_back(s.ratio);
-            err.push_back(std::fabs(s.ratio - 1.0));
-        }
-        const double median_ratio  = median_of(all);
-        const double typical_error = median_of(err);
-        const double median_error  = std::fabs(median_ratio - 1.0);
+        // Niemi's practical conclusion: an individual sample in a landsliding
+        // basin may be uninterpretable, but the MEDIAN over several is
+        // representative.
+        //
+        // TWO COMPARISONS THAT LOOK RIGHT AND ARE NOT. Both were asserted here
+        // before and both are removed, because a passing check that cannot
+        // fail for the right reason is worse than no check:
+        //
+        //  (i) |median(r) - 1| < median(|r - 1|). When every ratio falls below
+        //      1 -- the normal case here, and Niemi's own sec. 3.1 result --
+        //      these are ALGEBRAICALLY IDENTICAL, since |r-1| = 1-r gives
+        //      median(|r-1|) = 1 - median(r). It used to pass by 0.001, on the
+        //      handful of samples above 1, and measured nothing.
+        //
+        // (ii) spread-of-medians < 0.5 x median(|r - 1|). That compares a
+        //      SPREAD against a BIAS: the right-hand side is dominated by the
+        //      systematic offset from 1, not by scatter, so it passed by a
+        //      factor of six while saying nothing about averaging.
+        //
+        // The like-for-like comparison is SPREAD against SPREAD: how much does
+        // the per-realisation median move, against how much a single sample
+        // moves. That is what "sample several catchments" is actually buying.
+        std::vector<double> all;
+        for (const auto& s : ens) if (s.valid) all.push_back(s.ratio);
+        std::sort(all.begin(), all.end());
+        const double median_ratio = median_of(all);
+        const double iqr_singles  = all[3 * all.size() / 4] - all[all.size() / 4];
 
-        std::cout << "        median apparent/true      : " << median_ratio
-                  << "  (error " << median_error << ")\n"
-                  << "        typical SINGLE-sample error: " << typical_error
-                  << "\n";
-        check(median_error < typical_error,
-              "the median is closer to the truth than a typical single sample");
+        std::vector<double> meds = per_seed_median;
+        std::sort(meds.begin(), meds.end());
+        const double iqr_medians = meds[3 * meds.size() / 4] - meds[meds.size() / 4];
 
-        // And it is a property of the model rather than of one draw.
-        const double med_of_medians = median_of(per_seed_median);
-        std::vector<double> dev;
-        for (double m : per_seed_median) dev.push_back(std::fabs(m - med_of_medians));
-        std::cout << "        per-seed median " << med_of_medians
-                  << ", typical seed-to-seed departure " << median_of(dev) << "\n";
-        check(median_of(dev) < 0.5 * typical_error,
-              "the per-seed median varies far less than individual samples do");
+        std::cout << "        median apparent/imposed   : " << median_ratio << "\n"
+                  << "        IQR of single samples     : " << iqr_singles << "\n"
+                  << "        IQR of per-seed medians   : " << iqr_medians
+                  << "  (" << iqr_medians / iqr_singles << "x)\n";
+        check(iqr_medians < 0.9 * iqr_singles,
+              "the median over several basins is more repeatable than a single "
+              "basin");
+
+        // THE IMPROVEMENT IS MODEST (~0.8x, not ~1/sqrt(n)) AND THAT IS A
+        // RESULT, not a weak test. The sampled basins are NESTED -- a large one
+        // contains the small ones and all of them share one landslide field --
+        // so they are nowhere near independent and the median cannot average
+        // down the way independent samples would. Niemi's 46 sub-basins are
+        // nested in exactly the same way, so the caveat applies to his advice
+        // as much as to ours: "sample several catchments" buys much less than
+        // it appears to unless the catchments are genuinely independent.
+        std::cout << "        NOTE: only " << iqr_medians / iqr_singles
+                  << "x tighter, because the sampled basins are NESTED and "
+                     "share one\n"
+                     "        landslide field. They are not independent "
+                     "samples.\n";
 
         // The residual bias is REPORTED, not asserted away. A basin-averaged
         // rate in a landsliding landscape under-reads, because landslide debris
         // is not as depleted as its mass share implies.
         std::cout << "        NOTE: the median sits "
                   << (100.0 * (median_ratio - 1.0))
-                  << " % from the true rate. The DIRECTION is expected -- a\n"
-                     "        basin-averaged rate under-reads when much of the "
-                     "mass arrives as\n"
-                     "        landslide debris that is not strongly depleted -- "
-                     "but the MAGNITUDE is\n"
-                     "        not yet explained. See N8.\n";
+                  << " % from the IMPOSED rate. This is EXPLAINED, and it is\n"
+                     "        Niemi's own result, not a model bias: the "
+                     "volumetric rate a sampler\n"
+                     "        could measure at the same instant under-reads the "
+                     "imposition by a\n"
+                     "        similar factor, because the mass arrives in rare "
+                     "large events and the\n"
+                     "        median snapshot has less than its share. Against "
+                     "THAT denominator the\n"
+                     "        apparent rate is close to unbiased -- see N9.\n";
     }
 
     // -------------------------------------------------------------------------
@@ -585,8 +819,13 @@ int main(int argc, char* argv[])
 
         // NO ASSERTION HERE, DELIBERATELY.
         //
-        // Two mechanisms were proposed for the under-read and BOTH were refuted
-        // by measurement:
+        // RESOLVED, and the resolution is N9: the under-read against the
+        // IMPOSED rate is dominated by the denominator, not by scar geometry.
+        // The volumetric rate a sampler could measure at the same instant
+        // under-reads the imposition by a comparable factor, which is exactly
+        // what Niemi reports for his own model, and against that denominator
+        // the apparent rate is close to unbiased. Two mechanisms proposed
+        // before that was understood were refuted by measurement:
         //   (a) "the model only remembers the last failure" -- refuted: driving
         //       the fixture at 120 mm/kyr, where repeat failures are common,
         //       moves the median by only 0.34 -> 0.37;
@@ -594,12 +833,13 @@ int main(int argc, char* argv[])
         //       should recover more" -- refuted: deep Hovius slabs give a LOWER
         //       ratio than shallow soil scars, the opposite of the prediction.
         //
-        // So the magnitude of the under-read is NOT yet explained, and this is
-        // reported rather than asserted. The bookkeeping that has to be nailed
-        // down before any mechanism claim is credible:
+        // This is still reported rather than asserted, because scar geometry
+        // moves BOTH arms of the ratio at once and neither direction proves
+        // anything on its own:
         //   - the mixture is weighted by an INSTANTANEOUS delivery flux while
-        //     the true rate is a LONG-TERM average; at a snapshot only about one
-        //     event's debris is in transit;
+        //     this ratio's denominator is a LONG-TERM average; at a snapshot
+        //     only about one event's debris is in transit (N9 removes this by
+        //     using the instantaneous rate on both sides);
         //   - the series budget is a volume, so mass depends on scar density
         //     (fixed above, but it changes the two arms of this comparison
         //     unequally);
@@ -721,6 +961,17 @@ int main(int argc, char* argv[])
         lsdtt::write_niemi_basins_csv(out_dir + "/niemi_basins.csv", ens);
         lsdtt::write_niemi_area_bins_csv(out_dir + "/niemi_area_bins.csv", bins);
 
+        // The SAME basins with Niemi's own denominator -- the snapshot
+        // volumetric rate rather than the imposed long-term one (N9). Both are
+        // written because the acceptance script needs both: one answers "is the
+        // method biased", the other "what does a single sample tell me about
+        // the long-term rate", and they have different answers.
+        lsdtt::write_niemi_basins_csv(
+            out_dir + "/niemi_basins_volumetric.csv", ens_ev);
+        lsdtt::write_niemi_area_bins_csv(
+            out_dir + "/niemi_area_bins_volumetric.csv",
+            lsdtt::bin_niemi_by_area(ens_ev, 2, 5));
+
         std::ofstream f(out_dir + "/niemi_ensemble.csv");
         if (f)
         {
@@ -728,8 +979,9 @@ int main(int argc, char* argv[])
             for (std::size_t i = 0; i < per_seed_median.size(); ++i)
                 f << i << "," << per_seed_median[i] << "\n";
         }
-        std::cout << "\nWrote niemi_basins.csv, niemi_area_bins.csv, "
-                     "niemi_ensemble.csv to " << out_dir << "\n";
+        std::cout << "\nWrote niemi_basins{,_volumetric}.csv, "
+                     "niemi_area_bins{,_volumetric}.csv, niemi_ensemble.csv to "
+                  << out_dir << "\n";
     }
 
     std::cout << "\n=====================================================\n"

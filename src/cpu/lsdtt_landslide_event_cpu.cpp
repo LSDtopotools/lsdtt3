@@ -229,12 +229,25 @@ LandslideEventResult trigger_landslide_event(
             dem_data(r, c) = static_cast<float>(
                 static_cast<double>(dem_data(r, c)) - depth_m);
 
-            // Accumulates, so repeated events on one pixel sum correctly.
-            const float exc_ndv =
-                static_cast<float>(excavation_depth.meta().no_data_value);
-            const double prev = (exc_data(r, c) == exc_ndv)
-                ? 0.0 : static_cast<double>(exc_data(r, c));
-            exc_data(r, c) = static_cast<float>(prev + depth_m);
+            // REPLACES, it does not accumulate. This raster is the partner of
+            // time_of_last_failure and the two are read as ONE event by every
+            // consumer: the CRN coupling removes `excavation_depth` in a single
+            // instant at `time_of_last_failure`, and the flush weight delivers
+            // rho * excavation_depth over the flush window that failure opened.
+            //
+            // It used to accumulate, which made the pair inconsistent -- a
+            // total depth stamped with only the most recent time. On a pixel
+            // that failed twice, the whole history's mass was re-delivered in
+            // the last event's flush window and the whole history's depth was
+            // stripped instantaneously at the last failure time. Measured on
+            // the Niemi fixture (20 kyr, 25 mm/kyr of landsliding), that
+            // inflated the domain-mean delivered mass by 57 % over what the
+            // series itself reports having excavated.
+            //
+            // NOTHING IS LOST by replacing: the cumulative record is the DEM,
+            // which is lowered by depth_m on every failure just above, so total
+            // lowering is still (initial DEM - current DEM).
+            exc_data(r, c) = static_cast<float>(depth_m);
 
             // The annealing clock and the cosmogenic time-since-change field
             // are the same number, written once.

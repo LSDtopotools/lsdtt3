@@ -174,9 +174,16 @@ std::vector<int> solve_landslide_count_for_budget(
 // Apply one event.
 //
 // `dem` is lowered by the scar depth; `time_of_last_failure` is stamped with
-// event_time_yr; `excavation_depth` accumulates the depth removed (metres) and
-// may be the same raster across events if a running total is wanted -- pass a
-// freshly zeroed raster for a per-event field.
+// event_time_yr; `excavation_depth` records the depth (metres) of the scar that
+// failed AT THAT TIME, replacing whatever was there before.
+//
+// The last two rasters are a PAIR and every consumer reads them as one event:
+// the CRN coupling strips `excavation_depth` instantaneously at
+// `time_of_last_failure`, and the flush weight delivers that slab over the
+// window that failure opened. So excavation must NOT accumulate over a series
+// -- a total depth stamped with only the most recent time is a pixel that
+// re-delivers its whole history in one window. The cumulative record is the
+// DEM, which is lowered on every failure.
 //
 // Both output rasters must arrive with a mask already covering the domain and
 // the same geometry as the DEM: this function writes data values only, never

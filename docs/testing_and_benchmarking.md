@@ -1750,6 +1750,153 @@ tracked and their absence means a broken checkout, not an optional step.
 
 ---
 
+### 7.10 Landslides and the Niemi (2005) ensemble
+
+`unit_niemi_ensemble` (`tests/cpp/test_niemi_ensemble.cpp`, 24 checks, ~6 s)
+reproduces Niemi et al. (2005) on a synthetic 110×90 fixture at 30 m, over 200
+landslide seeds and 21 basins spanning 1.5 decades of area. It emits
+`niemi_basins.csv`, `niemi_basins_volumetric.csv`, the matching area-bin files,
+`niemi_ensemble.csv` and `niemi_timeseries.csv`. The acceptance script
+`tests/scripts/niemi_ensemble_acceptance.py` reads those CSVs and evaluates the
+paper's claims one at a time, so a failure names the claim rather than the run.
+
+#### The denominator is the whole problem
+
+**A landsliding landscape has three defensible "true" erosion rates and the
+answer to "is the cosmogenic estimate biased?" depends entirely on which one you
+divide by.** Getting this wrong cost this module a fictitious "unexplained
+factor of 1.7", recorded as an open question for a fortnight.
+
+| Rate | What it is | Spread across basins |
+|---|---|---|
+| imposed | the long-term rate the scenario was asked to deliver | none |
+| volumetric, `E_v` | the mass leaving the basin **at the sampling instant** | large |
+| apparent, `E_c` | the flux-weighted basin concentration, inverted as an analyst would | large |
+
+Niemi's comparison is `E_c` against `E_v`, and **both are snapshots**. His
+§2.4.2 defines the volumetric rate as "the total depth of material removed from
+the watershed divided by the watershed area multiplied by the model **time
+step**" — the same per-timestep depth array that weights his Eq. 6 mixture. His
+Fig. 5 shows `E_v` with a *larger* spread than the cosmogenic rates at every
+catchment scale, which a long-term average could not have.
+
+Measured, 200 seeds:
+
+| quantity | median |
+|---|---|
+| `E_c / E_imposed` | 0.46 |
+| **`E_v / E_imposed`** — volumetric alone, no cosmogenics in it at all | **0.44** |
+| **`E_c / E_v`** — Niemi's comparison | **0.96** (IQR 0.56–1.08) |
+
+So essentially the whole apparent shortfall is in the denominator, and it is
+Niemi's own §3.1 result: "the median 50% of the CRN-derived **and volumetric**
+erosion rates generally fall below the total imposed erosion rate." The mass
+arrives in rare large events, so the median snapshot carries less than its
+share. The area trend is his too — `E_c/E_v` falls monotonically, 1.02 → 0.93 →
+0.87 → 0.81, reproducing "at small catchment scales, CRN-derived rates are
+typically higher than volumetric rates … but converge at larger catchment
+scales."
+
+The `E_c/E_v` median converges slowly (0.85 at 20 seeds, 0.94 at 100, 0.96 at
+200, 0.97 at 400) while its quartiles barely move. That is the shape of the
+distribution, not noise: a basin either has debris in transit at the sampling
+instant or it does not, so the ratio is close to bimodal and the median sits in
+the sparse trough between the modes. **The quartiles are the stronger
+statistic**, and the assertion is that the IQR brackets unity.
+
+#### The defect this caught, and the check that caught it
+
+`trigger_landslide_event` accumulated the excavation raster (`exc = prev +
+depth`) while `time_of_last_failure` recorded only the most recent event. Every
+consumer reads the two as **one event** — the scar history strips the excavation
+depth instantaneously at the failure time, and the flush weight delivers that
+slab over the window that failure opened. A twice-failed pixel therefore
+re-delivered its whole history's mass in the last flush window and was stripped
+of the total-ever depth in one instant at the wrong time.
+
+It was invisible to every existing test because the mass-balance check that did
+exist is a **single-event** test, where cumulative and per-event are the same
+number. What found it was a check nobody had written: the **domain mean of the
+delivery field against what the series itself reports having excavated**, over
+its own active area.
+
+| | domain-mean delivery | expected |
+|---|---|---|
+| accumulating | 0.00852 g/cm²/yr | 0.00542 — **57 % excess** |
+| per-event (fixed) | 0.00528 | 0.00542 — 2.7 % short |
+
+The residual shortfall is expected and is asserted as a two-sided 10 % band:
+single-failure memory legitimately loses the mass of repeat failures, and a
+flushing pixel delivers its slab *instead of* its background erosion rather than
+in addition to it. The excavation raster now replaces; nothing is lost, because
+the cumulative record is the DEM.
+
+**Generalisable lesson: a conservation check needs a regime where the quantity
+can actually differ.** A mass balance asserted only on one event cannot see an
+accumulation bug, and reads as coverage while providing none.
+
+#### Two checks removed for being unfalsifiable
+
+Both had passed since the ensemble was written, and neither could have failed
+for the right reason:
+
+- `|median(r) − 1| < median(|r − 1|)`. When every ratio falls below 1 — the
+  normal case, and Niemi's own result — these are **algebraically identical**,
+  since `|r−1| = 1−r` gives `median(|r−1|) = 1 − median(r)`. It passed by 0.001,
+  on the handful of samples above 1.
+- spread-of-medians `< 0.5 ×` `median(|r − 1|)`. That compares a **spread**
+  against a **bias**: the right-hand side is dominated by the systematic offset
+  from 1, so it passed by a factor of six while saying nothing about averaging.
+
+The replacement compares spread against spread, and the honest answer is weaker
+than the old one implied: the IQR of per-realisation medians is **0.77×** that
+of single samples, not the ~6× the old check suggested. **The sampled basins are
+nested** — a large one contains the small ones and all share one landslide field
+— so they are nowhere near independent and the median cannot average down like
+√n. Niemi's 46 sub-basins are nested the same way, so the caveat applies to his
+practical advice as much as to ours: "sample several catchments" buys much less
+than it looks unless the catchments are genuinely independent.
+
+#### What is validated, and what is not
+
+Validated against the paper: the `E_c/E_v` comparison and its area trend; the
+volumetric rate's own under-read of the imposition; the depth-averaging factor
+of his Eq. 5, pathway by pathway, to 7.5×10⁻¹⁵; and the landslide module's rate
+closure at **1.86 %** against the ~3 % he reports. The **control** — no
+landslides, apparent recovers imposed at every basin, worst |ratio − 1| = 0.0016
+— is what makes any of the rest meaningful.
+
+Not validated, and not to be quoted as if it were:
+
+- **Nothing has been run on a real DEM.** Every fixture is synthetic.
+- **Niemi Eq. 7 cannot be measured on this fixture.** `A_avg = 100 / E` predicts
+  ~4700 km² at the fixture's rate, against a sampled range of 0.04–1.2 km², so
+  the criterion never binds. The acceptance script reports it and says so rather
+  than manufacturing a pass. Testing the *scaling* needs a DEM spanning more
+  decades of area.
+- **No realised landslide inventory has been compared with a mapped one.** The
+  size distribution is imposed, so reproducing it proves the sampler works, not
+  that the distribution suits any landscape.
+
+#### Running it
+
+```bash
+ctest --test-dir build -R unit_niemi_ensemble --output-on-failure
+
+cd build/tests/niemi_test_output
+python3 ../../../tests/scripts/niemi_ensemble_acceptance.py \
+    --basins niemi_basins.csv \
+    --volumetric niemi_basins_volumetric.csv --strict
+```
+
+Like `landslide_distribution_acceptance.py`, the script is a diagnostic tool
+rather than a CTest target: it is the thing to reach for when moving to a real
+DEM, where the claims are no longer guaranteed to hold. `--strict` makes an
+unmet claim exit non-zero; without it every claim is reported and the exit
+status reflects only whether the files could be read.
+
+---
+
 ## 8. Implicit hillslope solver validation
 
 The backward-Euler + damped-Picard solver for the Roering (1999) nonlinear
