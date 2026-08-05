@@ -260,12 +260,23 @@ is not offered.
 | `calculate_crn_concentration` | bool | `false` | Compute the post-landslide surface concentration raster. |
 | `nuclide` | string | `Be10` | `Be10`, `Al26` or `C14`. |
 | `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. |
+| `scaling_scheme` | string | `uniform` | Production scaling path for CRN coupling: `uniform`, `stone`, or `lsdn`. `uniform` keeps the legacy scalar path (`production_scaling` and `total_shielding`). `stone`/`lsdn` build a per-pixel `CosmoSite` from the DEM. |
+| `atmosphere` | string | `ERA40` | Atmosphere model for site-based scaling (`stone`/`lsdn`): `ERA40`, `NCEP`, `standard`. |
+| `crn_nc_file` | string | `""` | Path to `crn_parameters.nc` for site-based scaling and atmosphere handling. Empty uses bundled lookup/fallback logic. |
+| `sample_age_yr` | float | `0` | Sample exposure age (yr BP) for time-integrated production correction in site-based scaling. |
 | `background_eff_erate_g_cm2_yr` | float | `0.001` | Background effective erosion rate before and after failure. |
-| `production_scaling` | float | `1.0` | Stone 2000 scaling (1.0 at SLHL). |
-| `total_shielding` | float | `1.0` | Topographic × snow × self. |
+| `production_scaling` | float | `1.0` | Uniform production scaling factor. Used directly when `scaling_scheme: uniform`. |
+| `total_shielding` | float | `1.0` | Uniform total shielding factor. Used directly when `scaling_scheme: uniform`; for site-based scaling use `topo_shield_value`, `snow_shield_eff_thickness`, `self_shield_eff_thickness`. |
+| `topo_shield_value` | float | `1.0` | Uniform topographic shielding scalar (0-1) for site-based scaling. |
+| `snow_shield_eff_thickness` | float | `0` | Uniform snow shielding as effective depth (g/cm2) for site-based scaling. |
+| `self_shield_eff_thickness` | float | `0` | Uniform self/sample shielding as effective depth (g/cm2) for site-based scaling. |
 | `rock_density_kg_m3` | float | `2650` | Density of the **eroding bedrock column**. |
 | `scar_density_kg_m3` | float | `-1` | Density of the material a landslide **excavates**. Negative takes it from `area_volume_preset`. |
 | `crn_report_time_yr` | float | `0` | Time at which concentrations are reported, on the same clock as event times. |
+
+`cronusEmulatorSt` and `cronusEmulatorLSDn` are intentionally rejected in this
+tool's landslide CRN path. The lower-level step-change/transient kernels used
+here do not yet support the emulator parameterisation consistently.
 
 ### Two densities, and why they are not the same number
 

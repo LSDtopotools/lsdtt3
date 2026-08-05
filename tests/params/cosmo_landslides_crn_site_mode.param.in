@@ -1,0 +1,20 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: lscrn
+
+landslide_mode: single_event
+threshold_contributing_pixels: 20
+event_volume_m3: 20
+event_time_yr: 0
+random_seed: 7
+write_output_format: gtiff
+
+calculate_crn_concentration: true
+nuclide: Be10
+muon_scheme: BraucherBorchers
+scaling_scheme: stone
+atmosphere: ERA40
+topo_shield_value: 0.9
+background_eff_erate_g_cm2_yr: 0.001
+crn_report_time_yr: 1000

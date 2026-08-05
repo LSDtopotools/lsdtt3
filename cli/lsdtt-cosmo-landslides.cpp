@@ -38,6 +38,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/cpu/lsdtt_cosmo_site_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_landslide_crn_cpu.hpp"
 #include "../src/cpu/lsdtt_landslide_event_cpu.hpp"
@@ -75,16 +76,10 @@ static void print_banner()
 //
 // CAPABILITY, NOT JUST VALIDITY. lsdtt_crn_parameters::is_valid_muon_scheme()
 // accepts every scheme lsdtt3 knows, including cronusEmulatorSt and
-// cronusEmulatorLSDn. Those are pressure- AND nuclide-dependent, and this tool
-// reaches the column through reset_scaling(), which deliberately throws for
-// them because it is handed neither. So validating against is_valid_muon_scheme
-// alone would accept a name that fails later -- the same trap
-// lsdtt-cosmo-column-tool documents and guards against. Checked against the
-// serviceable subset here instead.
-//
-// TO BE REVISITED AT PLAN PHASE R2c: once this tool builds a real site with a
-// pressure raster, the emulator schemes become serviceable and this rejection
-// must be lifted rather than left to reject something that now works.
+// cronusEmulatorLSDn. This tool now builds a real site (R2c), so pressure is no
+// longer the blocker; the blocker is deeper: the landslide scar/flush kernels
+// run through lsdtt_crn_column and step-change/transient pathways that currently
+// reject the emulator schemes. So we still guard here, but with the true reason.
 static bool landslide_cosmo_parameters_supported(const std::string& muon_scheme,
                                                  const std::string& nuclide)
 {
@@ -92,10 +87,10 @@ static bool landslide_cosmo_parameters_supported(const std::string& muon_scheme,
     {
         std::cerr << "FATAL: muon_scheme \"" << muon_scheme
                   << "\" is not supported by " << k_tool_name << ".\n"
-                  << "       Its muon terms depend on site pressure and "
-                     "nuclide, and this tool applies\n"
-                  << "       a scalar production scaling with no pressure "
-                     "raster. Use lsdtt-cosmo-prediction\n"
+                  << "       The landslide scar/flush concentration kernels run "
+                     "through CRN step-change/transient\n"
+                  << "       pathways that do not yet support the CRONUS v3 "
+                     "emulator schemes. Use lsdtt-cosmo-prediction\n"
                   << "       for the CRONUS v3 emulator schemes.\n"
                   << "       Schemes available here: Braucher, "
                      "BraucherBorchers, Granger, Schaller, newCRONUS.\n";
@@ -354,6 +349,33 @@ int main(int argc, char* argv[])
         "Muon production scheme.","",
         "Cosmogenics","param",""};
 
+    string_default_map["scaling_scheme"] = "uniform";
+    help_map["scaling_scheme"] = {"string","uniform",
+        "Production scaling for the CRN concentration path: uniform, stone or lsdn.",
+        "uniform preserves the legacy scalar path using production_scaling and "
+        "total_shielding (no crn_parameters.nc needed). stone/lsdn build a real "
+        "CosmoSite from the DEM and use per-pixel production and shielding.",
+        "Cosmogenics","param",""};
+
+    string_default_map["atmosphere"] = "ERA40";
+    help_map["atmosphere"] = {"string","ERA40",
+        "Atmosphere model for site-based production: ERA40, NCEP or standard.",
+        "Used only when scaling_scheme is stone or lsdn.",
+        "Cosmogenics","param",""};
+
+    string_default_map["crn_nc_file"] = "";
+    help_map["crn_nc_file"] = {"string","",
+        "Path to crn_parameters.nc for site-based production and atmosphere.",
+        "Used only when scaling_scheme is stone or lsdn. Empty = bundled nc beside "
+        "the executable if found, otherwise standard atmosphere fallback.",
+        "Cosmogenics","param",""};
+
+    float_default_map["sample_age_yr"] = 0.0f;
+    help_map["sample_age_yr"] = {"float","0",
+        "Sample exposure age (yr BP) for the time-integrated production correction.",
+        "Used only when scaling_scheme is stone or lsdn and crn_parameters.nc loads.",
+        "Cosmogenics","param",""};
+
     float_default_map["background_eff_erate_g_cm2_yr"] = 0.001f;
     help_map["background_eff_erate_g_cm2_yr"] = {"float","0.001",
         "Background effective erosion rate (g/cm2/yr), before and after failure.",
@@ -369,7 +391,26 @@ int main(int argc, char* argv[])
     help_map["total_shielding"] = {"float","1.0",
         "Topographic x snow x self shielding.",
         "Applied through the Vermeesch redistribution, separately from "
-        "production_scaling.",
+        "production_scaling. Used directly when scaling_scheme is uniform. With "
+        "site-based scaling, keep this at 1 and use topo/snow/self parameters.",
+        "Cosmogenics","param",""};
+
+    float_default_map["topo_shield_value"] = 1.0f;
+    help_map["topo_shield_value"] = {"float","1",
+        "Uniform topographic shielding factor for site-based scaling (0-1).",
+        "Used when scaling_scheme is stone or lsdn.",
+        "Cosmogenics","param",""};
+
+    float_default_map["snow_shield_eff_thickness"] = 0.0f;
+    help_map["snow_shield_eff_thickness"] = {"float","0",
+        "Uniform snow shielding as effective depth (g/cm2) for site-based scaling.",
+        "Used when scaling_scheme is stone or lsdn.",
+        "Cosmogenics","param",""};
+
+    float_default_map["self_shield_eff_thickness"] = 0.0f;
+    help_map["self_shield_eff_thickness"] = {"float","0",
+        "Uniform self/sample shielding as effective depth (g/cm2) for site-based scaling.",
+        "Used when scaling_scheme is stone or lsdn.",
         "Cosmogenics","param",""};
 
     float_default_map["rock_density_kg_m3"] = 2650.0f;
@@ -776,31 +817,29 @@ int main(int argc, char* argv[])
 
     if (bf["calculate_crn_concentration"])
     {
-        lsdtt::LandslideCrnConfig ccfg;
-        ccfg.background_eff_erate_g_cm2_yr = ff["background_eff_erate_g_cm2_yr"];
-        ccfg.production_scaling = ff["production_scaling"];
-        ccfg.total_shielding    = ff["total_shielding"];
-        ccfg.muon_scheme        = sf["muon_scheme"];
-        ccfg.rock_density_kg_m3 = ff["rock_density_kg_m3"];
+        lsdtt::LandslideStepChangeConfig scfg;
+        scfg.eff_erate_old_g_cm2_yr = ff["background_eff_erate_g_cm2_yr"];
+        scfg.eff_erate_new_g_cm2_yr = ff["background_eff_erate_g_cm2_yr"];
+        scfg.muon_scheme            = sf["muon_scheme"];
+        scfg.rock_density_kg_m3     = ff["rock_density_kg_m3"];
 
         // The scar density is a property of the material that failed, so it
         // comes from the area-volume preset unless the user overrides it. A
         // preset fitted across materials has no defensible value and says so.
         if (ff["scar_density_kg_m3"] > 0.0f)
         {
-            ccfg.scar_density_kg_m3 = ff["scar_density_kg_m3"];
+            scfg.scar_density_kg_m3 = ff["scar_density_kg_m3"];
         }
         else
         {
-            ccfg.scar_density_kg_m3 = sp.av.scar_density_kg_m3;
+            scfg.scar_density_kg_m3 = sp.av.scar_density_kg_m3;
             const std::string note = lsdtt::area_volume_density_note(sp.av);
             if (!note.empty())
                 std::cout << "\n  WARNING: " << note << "\n\n";
         }
-        std::cout << "  Densities: bedrock column " << ccfg.rock_density_kg_m3
-                  << " kg/m3, scar material " << ccfg.scar_density_kg_m3
+        std::cout << "  Densities: bedrock column " << scfg.rock_density_kg_m3
+                  << " kg/m3, scar material " << scfg.scar_density_kg_m3
                   << " kg/m3\n";
-        ccfg.t_now_yr           = ff["crn_report_time_yr"];
 
         // Say plainly what the reporting time means, because the DEFAULT sits
         // on the boundary: crn_report_time_yr defaults to 0 and a single_event
@@ -826,22 +865,110 @@ int main(int argc, char* argv[])
                              "the INHERITED values of the\n"
                           << "        rock exposed at the scar depth, with no "
                              "re-accumulation. Set\n"
-                          << "        crn_report_time_yr later than the last "
-                             "event to see recovery.\n\n";
+                           << "        crn_report_time_yr later than the last "
+                              "event to see recovery.\n\n";
             }
         }
-        ccfg.nuclide            = sf["nuclide"];
+        scfg.nuclide = sf["nuclide"];
+
+        const std::string scaling_scheme = sf["scaling_scheme"];
+        if (scaling_scheme != "uniform" && scaling_scheme != "stone"
+            && scaling_scheme != "lsdn")
+        {
+            std::cerr << "FATAL: unknown scaling_scheme \"" << scaling_scheme
+                      << "\". Allowed values: uniform, stone, lsdn.\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_raster_cpu prod_raster;
+        lsdtt::lsdtt_raster_cpu topo_raster;
+
+        if (scaling_scheme == "uniform")
+        {
+            const double site_factor = static_cast<double>(ff["production_scaling"])
+                                     * static_cast<double>(ff["total_shielding"]);
+            prod_raster = lsdtt::make_uniform_raster(
+                exc, static_cast<float>(site_factor), lsdtt::MaskedFill::Value);
+            topo_raster = lsdtt::make_uniform_raster(
+                exc, 1.0f, lsdtt::MaskedFill::Value);
+            std::cout << "  CRN site mode: uniform scalar fields\n"
+                      << "    production x shielding = " << site_factor << "\n";
+        }
+        else
+        {
+            lsdtt::CosmoSiteConfig site_cfg;
+            site_cfg.nuclide        = sf["nuclide"];
+            site_cfg.muon_scheme    = sf["muon_scheme"];
+            site_cfg.scaling_scheme = scaling_scheme;
+            site_cfg.atmosphere     = sf["atmosphere"];
+            site_cfg.crn_nc_file    = sf["crn_nc_file"];
+            site_cfg.sample_age_yr  = static_cast<double>(ff["sample_age_yr"]);
+
+            double topo_shield = static_cast<double>(ff["topo_shield_value"]);
+            const double snow_shield = static_cast<double>(ff["snow_shield_eff_thickness"]);
+            const double self_shield = static_cast<double>(ff["self_shield_eff_thickness"]);
+
+            // Backward-compatible bridge for legacy files that set
+            // total_shielding only. If the new shielding scalars are untouched,
+            // carry total_shielding into topo_shield_value and say so.
+            if (topo_shield == 1.0 && snow_shield == 0.0 && self_shield == 0.0
+                && static_cast<double>(ff["total_shielding"]) != 1.0)
+            {
+                topo_shield = static_cast<double>(ff["total_shielding"]);
+                std::cout << "  NOTE: using total_shielding="
+                          << static_cast<double>(ff["total_shielding"])
+                          << " as topo_shield_value for site-based scaling.\n";
+            }
+
+            site_cfg.topo_shield_value         = topo_shield;
+            site_cfg.snow_shield_eff_thickness = snow_shield;
+            site_cfg.self_shield_eff_thickness = self_shield;
+            site_cfg.read_path = pp.get_read_path();
+
+            constexpr lsdtt::CosmoSiteCaps k_site_caps =
+                lsdtt::CosmoSiteCaps::Production
+              | lsdtt::CosmoSiteCaps::ShieldingScalars;
+
+            try { lsdtt::validate_cosmo_site_config(site_cfg, k_site_caps); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+
+            lsdtt::CosmoSite site;
+            try { site = lsdtt::build_cosmo_site(filled, site_cfg, k_site_caps); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+
+            prod_raster = site.production();
+            topo_raster = site.topographic_shielding();
+
+            std::cout << "  CRN site mode: per-pixel "
+                      << (scaling_scheme == "lsdn" ? "LSDn" : "Stone")
+                      << " production, atmosphere " << site.atmosphere_report()
+                      << "\n";
+        }
+
+        const lsdtt::lsdtt_raster_cpu t_since_failure =
+            lsdtt::time_since_failure_from_time_of_failure(
+                tfail, static_cast<double>(ff["crn_report_time_yr"]));
+        const lsdtt::lsdtt_raster_cpu t_since_change =
+            lsdtt::make_uniform_raster(exc, 1.0e6f, lsdtt::MaskedFill::Value);
 
         try
         {
-            const lsdtt::lsdtt_raster_cpu conc =
-                lsdtt::compute_landslide_surface_concentration(exc, tfail, ccfg);
+            const lsdtt::LandslideCouplingResult cres =
+                lsdtt::compute_landslide_step_change_concentration(
+                    exc, t_since_failure, t_since_change,
+                    prod_raster, topo_raster, scfg);
+            const lsdtt::lsdtt_raster_cpu& conc = cres.concentration;
             const std::string path = base + "_LS_CONC.tif";
             loader.write_full(conc.get_data(), conc.get_meta(), path, out_fmt);
-            std::cout << "Wrote " << path << "\n"
-                      << "  background (no landslide) concentration: "
-                      << lsdtt::landslide_crn_background_concentration(ccfg)
-                      << " atoms/g\n";
+            std::cout << "Wrote " << path << "\n";
         }
         catch (const std::exception& e)
         {

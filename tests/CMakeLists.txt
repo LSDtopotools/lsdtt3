@@ -1452,6 +1452,17 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "lssmoke_LS_INVENTORY.csv:n_pixels"
 )
 
+# R2c: CRN concentrations in lsdtt-cosmo-landslides can now build a real site
+# (per-pixel production + shielding) instead of only the scalar convenience
+# path.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_landslides_crn_site_mode
+    lsdtt-cosmo-landslides
+    cosmo_landslides_crn_site_mode.param.in
+    lscrn_LS_CONC.tif
+    --stdout-contains "CRN site mode: per-pixel"
+)
+
 # A geographic-CRS DEM must exit cleanly with a diagnosis, NOT abort on an
 # uncaught throw. The deeper check throws; the CLI catches it.
 add_lsdtt_cli_smoke_test(
@@ -1479,6 +1490,15 @@ add_lsdtt_cli_smoke_test(
     lsbadmuon_LS_CONC.tif
     --expect-failure
     --stderr-contains "unknown muon_scheme"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_landslides_bad_scaling_scheme
+    lsdtt-cosmo-landslides
+    cosmo_landslides_bad_scaling_scheme.param.in
+    lsbadscale_LS_CONC.tif
+    --expect-failure
+    --stderr-contains "unknown scaling_scheme"
 )
 
 # VALIDITY IS NOT CAPABILITY. is_valid_muon_scheme() accepts the CRONUS v3
