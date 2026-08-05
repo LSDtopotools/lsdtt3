@@ -2057,6 +2057,99 @@ change and needs a different justification.
 
 ---
 
+### 7.10f The shared cosmogenic site component (2026-08-05)
+
+`src/cpu/lsdtt_cosmo_site_cpu.{hpp,cpp}` now owns everything between "I have a
+DEM and some parameters" and "I have a production raster and three shielding
+rasters": loading `crn_parameters.nc`, resolving the atmosphere and scaling
+scheme, building the pressure raster and the CRONUS emulator inputs, computing
+or loading production, and resolving shielding from a raster or a scalar.
+
+That stretch was written out separately in `lsdtt-cosmo-prediction` and
+`lsdtt-cosmo-tool`, ~150 lines each. Both now call the component; neither
+contains a single reference to `calculate_production_raster`,
+`calculate_pressure_raster`, `load_nc_data` or `AtmSource` any more.
+
+#### What "migrating lsdtt-cosmo-tool" means — and what it does not
+
+`lsdtt-cosmo-tool` **inverts measured concentrations into erosion rates**, so it
+is worth being exact about what was touched.
+
+Its inversion call is one line:
+
+```cpp
+double erate = lsdtt::calculate_eff_erate_from_conc(
+    conc, nuclide, muon_scheme,
+    *prod_for_inversion,                                        // production
+    topo_shield_raster, snow_shield_raster, self_shield_raster, // shielding
+    flow, outlet_node, predicted_conc, emu_inputs);             // emulator inputs
+```
+
+Five of those arguments are **fields the tool must build before it can invert
+anything**. Building them is what moved. Nothing else did:
+
+| moved into the component | untouched |
+|---|---|
+| load `crn_parameters.nc` | reading the sample CSV |
+| resolve atmosphere / scaling scheme | snapping samples to the channel network |
+| check the LSDn grids are present | basin accumulation |
+| build the pressure raster | `calculate_eff_erate_from_conc` itself |
+| compute the production raster | the self-consistent-age iteration |
+| build the three shielding rasters | uncertainty propagation, output CSV |
+
+**Why an inversion tool needs the same setup as a forward tool** — and therefore
+why the duplication existed at all: an inversion is *"find the erosion rate
+whose forward prediction matches the measurement"*. `calculate_eff_erate_from_conc`
+is Newton–Raphson plus bisection over the forward model, so it needs exactly the
+production and shielding fields a forward run needs. The two CLIs had converged
+on near-identical setup because the physics requires it.
+
+**How that claim is held to account.** The refactor oracle (§7.11) hashes
+`_CN_ERATE.csv` — *the inverted erosion rates themselves* — for four
+`lsdtt-cosmo-tool` cases: `stone`, `lsdn`, non-unit shielding, and
+`self_consistent_age`. It came back **34/34 bitwise**. That the oracle genuinely
+reaches the inverted rates is not assumed: the 1-in-10⁶ production perturbation
+run when the oracle was frozen moved `t1_CN_ERATE.csv` and `t2_CN_ERATE.csv`.
+Both CLIs' `-h` parameter sets and **ordering** are also unchanged.
+
+#### Capabilities, not a union — and every predicted difference was real
+
+The two CLIs are **not** the same shape, and a naive merge would have been a
+silent feature change. Each difference below was found by reading or by
+migrating, and each is now an explicit capability flag:
+
+| capability | prediction | tool | what it guards |
+|---|---|---|---|
+| `Production` | ✓ | ✓ | — |
+| `ProductionFromDisk` | ✓ | ✗ | the tool has no `load_production_raster` |
+| `ShieldingScalars` | ✓ | ✓ | — |
+| `ShieldingRasters` | ✓ | ✗ | **the tool has no shielding-raster parameters at all** |
+| `PressureAlways` | ✗ | ✓ | the tool reports basin-mean pressure in its CSV, so pressure is a *result* not an intermediate |
+
+The last one also carries a policy difference: a pressure failure is **fatal**
+where something depends on it, and a **warning → nan** where it is only
+reported. Both behaviours were already in the tree.
+
+Granting `ShieldingRasters` to `lsdtt-cosmo-tool` as a refactor side effect
+would have added four parameters and an untested code path to an inversion tool
+**while passing every numeric check**, because the prefixes default to `NULL`.
+That is the specific accident the capability design exists to prevent.
+
+#### Two design points worth keeping
+
+- **`emulator_inputs()` is built on demand, not stored.**
+  `CronusEmulatorInputs` holds a raw pointer to the pressure raster; a stored
+  copy would dangle the moment the site were moved.
+- **Production is re-computable, not just readable.**
+  `self_consistent_age` rebuilds production over *one basin's pixels* at each
+  iterate, and the original comment records that whole-DEM evaluation "was the
+  dominant cost of this mode". `CosmoSite::recompute_production(dem, age,
+  eval_only)` exposes the configured compute so that survives; a component
+  owning only a finished raster would have forced the loop to bypass it and put
+  the duplication straight back.
+
+---
+
 ### 7.10b Validity is not capability (`lsdtt-cosmo-landslides`, 2026-08-05)
 
 A shipped defect, found while planning the cosmogenic CLI rationalisation and

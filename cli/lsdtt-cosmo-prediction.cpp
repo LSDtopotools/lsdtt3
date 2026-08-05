@@ -57,6 +57,7 @@
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_cosmo_site_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_units.hpp"
 #include "../src/cpu/lsdtt_crn_column.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
@@ -785,25 +786,44 @@ int main(int argc, char* argv[])
     }
     const std::string write_base  = pp.get_full_write_path();
 
-    // Production scaling scheme. Never falls back: an unknown value is FATAL,
-    // and (below, once the nc is loaded) so is lsdn with no LSDn grids.
-    const std::string scheme_name = sf["scaling_scheme"];
-    lsdtt::ScalingScheme scaling_scheme = lsdtt::ScalingScheme::Stone;
-    if (scheme_name == "lsdn")       scaling_scheme = lsdtt::ScalingScheme::LSDn;
-    else if (scheme_name == "stone") scaling_scheme = lsdtt::ScalingScheme::Stone;
-    else
+    // The cosmogenic SITE: scaling scheme, atmosphere, production and
+    // shielding. Validated HERE, before the DEM is read or a step change is
+    // generated, so a typo costs a second rather than a run. The site itself is
+    // built further down, once the DEM and any generated scenario exist.
+    lsdtt::CosmoSiteConfig site_cfg;
+    site_cfg.nuclide        = nuclide;
+    site_cfg.muon_scheme    = muon_scheme;
+    site_cfg.scaling_scheme = sf["scaling_scheme"];
+    site_cfg.atmosphere     = sf["atmosphere"];
+    site_cfg.crn_nc_file    = sf["crn_nc_file"];
+    site_cfg.sample_age_yr  = static_cast<double>(ff["sample_age_yr"]);
+    site_cfg.load_production_raster   = bf["load_production_raster"];
+    site_cfg.production_raster_prefix = sf["production_raster_prefix"];
+    site_cfg.topographic_shielding_raster_prefix =
+        sf["topographic_shielding_raster_prefix"];
+    site_cfg.snow_shielding_raster_prefix = sf["snow_shielding_raster_prefix"];
+    site_cfg.self_shielding_raster_prefix = sf["self_shielding_raster_prefix"];
+    site_cfg.topo_shield_value         = static_cast<double>(ff["topo_shield_value"]);
+    site_cfg.snow_shield_eff_thickness = static_cast<double>(ff["snow_shield_eff_thickness"]);
+    site_cfg.self_shield_eff_thickness = static_cast<double>(ff["self_shield_eff_thickness"]);
+    site_cfg.read_path = pp.get_read_path();
+
+    // This CLI has every capability: it can load production from disk and take
+    // shielding from rasters. lsdtt-cosmo-tool deliberately does not -- see
+    // lsdtt_cosmo_site_cpu.hpp.
+    constexpr lsdtt::CosmoSiteCaps k_site_caps =
+        lsdtt::CosmoSiteCaps::Production
+      | lsdtt::CosmoSiteCaps::ProductionFromDisk
+      | lsdtt::CosmoSiteCaps::ShieldingScalars
+      | lsdtt::CosmoSiteCaps::ShieldingRasters;
+
+    try { lsdtt::validate_cosmo_site_config(site_cfg, k_site_caps); }
+    catch (const std::exception& e)
     {
-        std::cerr << "FATAL: unknown scaling_scheme \"" << scheme_name
-                  << "\". Allowed values: stone, lsdn.\n";
+        std::cerr << "FATAL: " << e.what() << "\n";
         return 1;
     }
-    const bool use_lsdn = (scaling_scheme == lsdtt::ScalingScheme::LSDn);
-    if (use_lsdn && nuclide != "Be10" && nuclide != "Al26" && nuclide != "C14")
-    {
-        std::cerr << "FATAL: scaling_scheme: lsdn supports nuclide Be10, Al26 or C14 "
-                  << "only (got \"" << nuclide << "\").\n";
-        return 1;
-    }
+    const bool use_lsdn = (site_cfg.scaling_scheme == "lsdn");
     std::cout << "Scaling scheme: " << (use_lsdn ? "LSDn" : "Stone") << "\n";
 
     lsdtt::raster_output_format out_fmt = lsdtt::raster_output_format::cog;
@@ -1133,153 +1153,42 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Atmosphere + optional CRN netcdf data (shared by production and pressure)
+    // Build the cosmogenic site: crn_parameters.nc, atmosphere, pressure,
+    // production and the three shielding fields. Extracted to
+    // lsdtt_cosmo_site_cpu so this CLI and lsdtt-cosmo-tool share one
+    // implementation instead of two that drift.
     // -------------------------------------------------------------------------
-    lsdtt::CrnNcData crn_nc;
-    const std::string nc_path = sf["crn_nc_file"].empty()
-        ? lsdtt::default_crn_nc_path()
-        : pp.add_read_path_if_needed(sf["crn_nc_file"]);
-    if (!nc_path.empty())
+    lsdtt::CosmoSite site;
+    try { site = lsdtt::build_cosmo_site(dem, site_cfg, k_site_caps); }
+    catch (const std::exception& e)
     {
-        std::cout << "  Loading CRN NC data: " << nc_path << "\n";
-        crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(nc_path);
-    }
-
-    const std::string atm_name = sf["atmosphere"];
-    lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
-    if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
-    else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
-    else if (atm_name != "ERA40")
-    {
-        std::cerr << "FATAL: unknown atmosphere \"" << atm_name
-                  << "\". Allowed values: ERA40, NCEP, standard.\n";
+        std::cerr << "FATAL: " << e.what() << "\n";
         return 1;
     }
-    const bool nc_ncep = crn_nc.ncep_loaded;
-    const std::string atm_report =
-        (atm_source == lsdtt::AtmSource::NCEP && nc_ncep)          ? "NCEP"
-      : (atm_source == lsdtt::AtmSource::ERA40 && crn_nc.loaded)   ? "ERA40"
-                                                                    : "standard";
+    std::cout << site.summary() << "\n";
 
-    // -------------------------------------------------------------------------
-    // Production raster
-    // -------------------------------------------------------------------------
-    // Pressure raster.  Built before the production raster so that one can
-    // reuse it rather than deriving the same values a second time; also
-    // mandatory for the pressure-dependent emulator muon schemes.
-    lsdtt::lsdtt_raster_cpu emu_pressure_raster;
-    lsdtt::CronusEmulatorInputs emu_inputs;
-    if (muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
-    {
-        std::cout << "Computing pressure raster for " << muon_scheme
-                  << " (" << atm_report << " atmosphere)...\n";
-        try
-        {
-            emu_pressure_raster =
-                lsdtt::calculate_pressure_raster(dem, crn_nc, atm_source);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: pressure raster failed: " << e.what() << "\n";
-            return 1;
-        }
-        emu_inputs.pressure_raster = &emu_pressure_raster;
-        if (muon_scheme == "cronusEmulatorLSDn")
-        {
-            try
-            {
-                emu_inputs.lsdn_slhl_reference =
-                    lsdtt::lsdtt_crn_parameters::cronus_emulator_lsdn_slhl_reference(
-                        crn_nc, nuclide);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: cronusEmulatorLSDn: " << e.what() << "\n";
-                return 1;
-            }
-        }
-    }
-
-    lsdtt::lsdtt_raster_cpu prod_raster;
-    if (bf["load_production_raster"] && sf["production_raster_prefix"] != "NULL")
-    {
-        const std::string prod_path =
-            pp.get_read_path() + sf["production_raster_prefix"] + ".tif";
-        std::cout << "Loading production raster: " << prod_path << "\n";
-        lsdtt::lsdtt_data_loader prod_loader;
-        prod_loader.open_raster(prod_path);
-        prod_raster = lsdtt::lsdtt_raster_cpu(prod_loader);
-    }
-    else
-    {
-        std::cout << "Computing " << (use_lsdn ? "LSDn" : "Stone 2000")
-                  << " production raster...\n";
-        if (use_lsdn && !crn_nc.lsdn_loaded)
-        {
-            std::cerr << "FATAL: scaling_scheme: lsdn requires the LSDn scaling grids in "
-                      << "crn_parameters.nc, but none were found in \""
-                      << (nc_path.empty() ? std::string("<no crn_parameters.nc located>")
-                                          : nc_path)
-                      << "\".\nSet crn_nc_file to an nc that carries the LSDn grids, or "
-                      << "use scaling_scheme: stone.\n";
-            return 1;
-        }
-        double age_yr = static_cast<double>(ff["sample_age_yr"]);
-        std::cout << "  Atmosphere: " << atm_report << "\n";
-
-        try
-        {
-            prod_raster = lsdtt::calculate_production_raster(
-                dem, crn_nc, age_yr, atm_source, scaling_scheme, nuclide);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: production raster failed: " << e.what() << "\n";
-            return 1;
-        }
-        std::cout << "  Production raster computed.\n";
-    }
+    const lsdtt::lsdtt_raster_cpu& prod_raster  = site.production();
+    const lsdtt::lsdtt_raster_cpu& topo_shield  = site.topographic_shielding();
+    const lsdtt::lsdtt_raster_cpu& self_shield  = site.self_shielding();
+    // A COPY, not a reference: apply_ice_mask() takes snow shielding by
+    // non-const reference and rewrites it under ice.
+    lsdtt::lsdtt_raster_cpu snow_shield = site.snow_shielding();
+    const lsdtt::CronusEmulatorInputs emu_inputs = site.emulator_inputs();
 
     if (bf["write_production_raster"])
     {
         const std::string out_path = write_base + "_crn_prod.tif";
         std::cout << "Writing production raster: " << out_path << "\n";
-        loader.write_full(prod_raster.get_data(), prod_raster.get_meta(), out_path, out_fmt);
+        loader.write_full(prod_raster.get_data(), prod_raster.get_meta(),
+                          out_path, out_fmt);
     }
-
-    // -------------------------------------------------------------------------
-    // Shielding rasters
-    // -------------------------------------------------------------------------
-    auto load_or_constant = [&](const std::string& prefix_key, float uniform_val)
-        -> lsdtt::lsdtt_raster_cpu
-    {
-        if (sf[prefix_key] != "NULL")
-        {
-            const std::string path = pp.get_read_path() + sf[prefix_key] + ".tif";
-            std::cout << "  Loading raster: " << path << "\n";
-            lsdtt::lsdtt_data_loader ld;
-            ld.open_raster(path);
-            return lsdtt::lsdtt_raster_cpu(ld);
-        }
-        // MaskedFill::Value preserves the local helper this replaced, which
-        // filled the whole array including pixels outside the mask.
-        return lsdtt::make_uniform_raster(dem, uniform_val,
-                                          lsdtt::MaskedFill::Value);
-    };
-
-    std::cout << "Building shielding rasters...\n";
-    lsdtt::lsdtt_raster_cpu topo_shield = load_or_constant(
-        "topographic_shielding_raster_prefix", ff["topo_shield_value"]);
-    lsdtt::lsdtt_raster_cpu snow_shield = load_or_constant(
-        "snow_shielding_raster_prefix", ff["snow_shield_eff_thickness"]);
-    lsdtt::lsdtt_raster_cpu self_shield = load_or_constant(
-        "self_shielding_raster_prefix", ff["self_shield_eff_thickness"]);
 
     // -------------------------------------------------------------------------
     // Erosion rate raster (for steady-state and accumulation)
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_raster_cpu erosion_raster = load_or_constant(
-        "background_erosion_rate_raster_prefix", ff["effective_erosion_rate"]);
+    lsdtt::lsdtt_raster_cpu erosion_raster = lsdtt::load_raster_or_uniform(
+        dem, sf["background_erosion_rate_raster_prefix"], pp.get_read_path(),
+        static_cast<double>(ff["effective_erosion_rate"]));
 
     // -------------------------------------------------------------------------
     // Quartz fertility and the ice mask
@@ -1548,8 +1457,9 @@ int main(int argc, char* argv[])
 
         lsdtt::lsdtt_raster_cpu time_since_change = have_generated_step
             ? sc_time_since_change
-            : load_or_constant("time_since_change_raster_prefix",
-                               ff["time_since_change_yr"]);
+            : lsdtt::load_raster_or_uniform(
+                  dem, sf["time_since_change_raster_prefix"], pp.get_read_path(),
+                  static_cast<double>(ff["time_since_change_yr"]));
 
         std::cout << "Computing multi-isotope step-change rasters "
                      "(Be10, Al26, C14)...\n"
@@ -1585,8 +1495,9 @@ int main(int argc, char* argv[])
 
         lsdtt::lsdtt_raster_cpu time_since_change = have_generated_step
             ? sc_time_since_change
-            : load_or_constant("time_since_change_raster_prefix",
-                               ff["time_since_change_yr"]);
+            : lsdtt::load_raster_or_uniform(
+                  dem, sf["time_since_change_raster_prefix"], pp.get_read_path(),
+                  static_cast<double>(ff["time_since_change_yr"]));
 
         std::cout << "Computing step-change CRN concentration raster (" << nuclide << ")...\n";
         std::cout << "  eff_erate_old = " << eff_erate_old << " g/cm2/yr"

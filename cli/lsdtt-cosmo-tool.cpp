@@ -61,6 +61,7 @@
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_cosmo_site_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_cronus_v3_input.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
@@ -493,107 +494,60 @@ int main(int argc, char* argv[])
         : pp.add_read_path_if_needed(sf["crn_nc_file"]);
     const double sample_age_yr    = static_cast<double>(ff["sample_age_yr"]);
 
-    // Load ERA40 / Muscheler NC data if available
-    lsdtt::CrnNcData crn_nc;
-    if (!crn_nc_file.empty())
+    // -------------------------------------------------------------------------
+    // The cosmogenic SITE.
+    //
+    // WHAT THIS IS, since this is an INVERSION tool and the distinction matters:
+    // none of the inversion lives here. calculate_eff_erate_from_conc() takes
+    // five fields it cannot build itself -- a production raster, three shielding
+    // rasters and the CRONUS emulator inputs -- and this is where they come
+    // from. An inversion is "find the erosion rate whose FORWARD prediction
+    // matches the measurement", so an inverse tool needs exactly the same
+    // production and shielding fields a forward tool does. That is why this
+    // block was near-identical to the one in lsdtt-cosmo-prediction, and why it
+    // is now shared rather than copied.
+    //
+    // Sample reading, snapping, basin accumulation, the Newton-Raphson +
+    // bisection inversion, the self-consistent-age iteration, uncertainty
+    // propagation and the output CSV are all untouched by the extraction.
+    // -------------------------------------------------------------------------
+    lsdtt::CosmoSiteConfig site_cfg;
+    site_cfg.nuclide        = nuclide;
+    site_cfg.muon_scheme    = muon_scheme;
+    site_cfg.scaling_scheme = sf["scaling_scheme"];
+    site_cfg.atmosphere     = sf["atmosphere"];
+    site_cfg.crn_nc_file    = sf["crn_nc_file"];
+    site_cfg.sample_age_yr  = sample_age_yr;
+    site_cfg.topo_shield_value         = topo_shield_val;
+    site_cfg.snow_shield_eff_thickness = snow_shield;
+    site_cfg.self_shield_eff_thickness = self_shield;
+    site_cfg.read_path = pp.get_read_path();
+
+    // NO ShieldingRasters and NO ProductionFromDisk: this tool declares only the
+    // scalar shielding parameters and always computes production. Granting it
+    // those capabilities here would add untested code paths to an inversion tool
+    // as a side effect of sharing code -- see lsdtt_cosmo_site_cpu.hpp.
+    // PressureAlways because the basin-mean effective pressure is REPORTED in
+    // the output CSV and is required by the CRONUS comparison workflow, so here
+    // the pressure raster is a result rather than an intermediate.
+    constexpr lsdtt::CosmoSiteCaps k_site_caps =
+        lsdtt::CosmoSiteCaps::Production
+      | lsdtt::CosmoSiteCaps::ShieldingScalars
+      | lsdtt::CosmoSiteCaps::PressureAlways;
+
+    // Name checks first, with no I/O, so a typo fails before the DEM is read.
+    try { lsdtt::validate_cosmo_site_config(site_cfg, k_site_caps); }
+    catch (const std::exception& e)
     {
-        std::cout << "Loading CRN NC data: " << crn_nc_file << "\n";
-        crn_nc = lsdtt::lsdtt_crn_parameters::load_nc_data(crn_nc_file);
-    }
-    // Resolve the atmosphere model. ERA40/NCEP fall back to standard if their
-    // grids are absent. Default "ERA40" preserves the historical behaviour.
-    // An UNKNOWN name is FATAL, as for scaling_scheme below. It used to fall
-    // back to ERA40, which meant a typo ("era40", "NCEP2") silently produced a
-    // different atmosphere than asked for -- and since the atmosphere sets the
-    // pressure at every pixel, that biases every rate in the run while looking
-    // entirely normal. The documented ERA40/NCEP -> standard fallback for ABSENT
-    // GRIDS is unaffected; that is a data condition, not a typo.
-    std::string atm_name = sf["atmosphere"];
-    lsdtt::AtmSource atm_source = lsdtt::AtmSource::ERA40;
-    if      (atm_name == "NCEP")     atm_source = lsdtt::AtmSource::NCEP;
-    else if (atm_name == "standard") atm_source = lsdtt::AtmSource::Standard;
-    else if (atm_name != "ERA40")
-    {
-        std::cerr << "FATAL: unknown atmosphere \"" << atm_name
-                  << "\". Allowed values: ERA40, NCEP, standard.\n";
+        std::cerr << "FATAL: " << e.what() << "\n";
         return 1;
     }
-
-    // Resolve the production scaling scheme. Unlike the atmosphere selector,
-    // this NEVER falls back: an unknown value, an LSDn run with no LSDn grids,
-    // or an LSDn run with an unsupported nuclide is FATAL. Silently degrading
-    // LSDn to Stone would change the physics without telling anyone.
-    const std::string scheme_name = sf["scaling_scheme"];
-    lsdtt::ScalingScheme scaling_scheme = lsdtt::ScalingScheme::Stone;
-    if (scheme_name == "lsdn")       scaling_scheme = lsdtt::ScalingScheme::LSDn;
-    else if (scheme_name == "stone") scaling_scheme = lsdtt::ScalingScheme::Stone;
-    else
-    {
-        std::cerr << "FATAL: unknown scaling_scheme \"" << scheme_name
-                  << "\". Allowed values: stone, lsdn.\n";
-        return 1;
-    }
-    const bool use_lsdn = (scaling_scheme == lsdtt::ScalingScheme::LSDn);
-    if (use_lsdn)
-    {
-        if (!crn_nc.lsdn_loaded)
-        {
-            std::cerr << "FATAL: scaling_scheme: lsdn requires the LSDn scaling grids in "
-                      << "crn_parameters.nc, but none were found in \""
-                      << (crn_nc_file.empty() ? std::string("<no crn_parameters.nc located>")
-                                              : crn_nc_file)
-                      << "\".\nSet crn_nc_file to an nc that carries the LSDn grids, or "
-                      << "use scaling_scheme: stone.\n";
-            return 1;
-        }
-        if (nuclide != "Be10" && nuclide != "Al26" && nuclide != "C14")
-        {
-            std::cerr << "FATAL: scaling_scheme: lsdn supports nuclide Be10, Al26 or C14 "
-                      << "only (got \"" << nuclide << "\").\n";
-            return 1;
-        }
-    }
-
-    // Iterating the age is meaningless without a geomagnetic record to evaluate
-    // it against: every iterate would rebuild an identical production raster and
-    // "converge" in one step, reporting a self-consistent age that changed
-    // nothing. Fail rather than let that pass as a result.
-    if (self_consistent_age && !crn_nc.loaded)
-    {
-        std::cerr << "FATAL: self_consistent_age: true requires the geomagnetic "
-                     "record in crn_parameters.nc, which did not load. Without it "
-                     "the sample age has no effect, so the iteration would report "
-                     "a converged age that changed nothing. Set crn_nc_file, or "
-                     "set self_consistent_age: false.\n";
-        return 1;
-    }
-
-    const bool use_ncep      = (atm_source == lsdtt::AtmSource::NCEP) && crn_nc.ncep_loaded;
-    const bool use_era40     = (atm_source == lsdtt::AtmSource::ERA40) && crn_nc.loaded;
-    const bool use_paleomag  = crn_nc.loaded && (sample_age_yr > 0.0);
-    const std::string atm_report = use_ncep ? "NCEP"
-                                 : use_era40 ? "ERA40" : "standard";
-
-    // Time-varying field: under Stone this is the Muscheler VDM correction;
-    // under LSDn it is the Pavon-Carrasco/Lifton record average. Both per pixel.
-    const std::string age_str = std::to_string(static_cast<int>(sample_age_yr));
-    const std::string paleomag_report =
-        use_lsdn ? (sample_age_yr > 0.0
-                        ? "Pavon-Carrasco record (" + age_str + " yr)"
-                        : "off (modern field)")
-                 : (use_paleomag ? "Muscheler VDM (" + age_str + " yr)"
-                                 : "off (modern field)");
+    const bool use_lsdn = (site_cfg.scaling_scheme == "lsdn");
 
     std::cout << "Nuclide       : " << nuclide << "\n"
               << "Muon scheme   : " << muon_scheme << "\n"
               << "Scaling scheme: " << (use_lsdn ? "LSDn" : "Stone") << "\n"
               << "Rock density  : " << rock_density_kg_m3 << " kg/m3\n"
-              << "Atmosphere    : " << atm_report << "\n"
-              << "Palaeomag     : " << paleomag_report
-              << (self_consistent_age
-                      ? "  [self-consistent: t = Gamma_sp/eps per sample, "
-                        "sample_age_yr is only the starting guess]" : "")
-              << "\n"
               << "Points file   : " << points_path << "\n"
               << "Conc column   : " << concentration_col_name << "\n\n";
 
@@ -654,82 +608,61 @@ int main(int argc, char* argv[])
     }
     const auto& flow = dynamic_cast<const lsdtt::lsdtt_flowinfo&>(*flow_ptr);
 
-    //  3a. Pressure raster -- built FIRST so the production raster can reuse
-    //  it instead of deriving the same values from the same inputs a second
-    //  time (a second full reprojection plus a second ERA40/NCEP
-    //  interpolation per pixel).
-    // The pressure raster is always computed.  It no longer feeds any muon
-    // scheme (balcoCRONUSv3PD was removed 2026-08-01), but the basin-mean
-    // effective pressure derived from it is reported in the output CSV and is
-    // required by the CRONUS comparison workflow
-    // (tests/scripts/compare_cosmo_tool_vs_cronus_v3.py).
-    lsdtt::lsdtt_raster_cpu pressure_raster;
-    const lsdtt::lsdtt_raster_cpu* pressure_for_reporting = nullptr;
-    std::cout << "Calculating pressure raster"
-              << " (" << atm_report << " atmosphere)...\n";
-    try
-    {
-        pressure_raster = lsdtt::calculate_pressure_raster(
-            filled_dem, crn_nc, atm_source);
-        pressure_for_reporting = &pressure_raster;
-    }
+    //  3. The cosmogenic site: pressure, production and shielding.
+    //  Built here rather than earlier because it needs the DEM. The
+    //  self_consistent_age guard below moved with it for the same reason: it
+    //  depends on crn_parameters.nc having loaded, which happens inside.
+    lsdtt::CosmoSite site;
+    try { site = lsdtt::build_cosmo_site(filled_dem, site_cfg, k_site_caps); }
     catch (const std::exception& e)
     {
-        std::cerr << "WARNING: pressure raster failed: " << e.what() << "\n"
-                  << "         effective_pressure_hpa will be reported as nan.\n";
-    }
-
-    //  3b. Production raster
-    std::cout << "Calculating " << (use_lsdn ? "LSDn" : "Stone 2000")
-              << " production raster"
-              << " (" << atm_report << " atmosphere)"
-              << ((use_lsdn ? sample_age_yr > 0.0 : use_paleomag)
-                      ? " + palaeomagnetic correction" : "")
-              << "...\n";
-    lsdtt::lsdtt_raster_cpu prod_raster;
-    try
-    {
-        prod_raster = lsdtt::calculate_production_raster(
-            filled_dem, crn_nc, sample_age_yr, atm_source, scaling_scheme, nuclide);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "FATAL: production raster failed: " << e.what() << "\n";
+        std::cerr << "FATAL: " << e.what() << "\n";
         return 1;
     }
 
-    // CRONUS emulator inputs.  The pressure raster is already computed above;
-    // the LSDn variant additionally needs the raw LSDn SLHL grid value, because
-    // v3's refP_LSDn multiplies the RAW LSDn scaling while lsdtt3's
-    // lsdn_scaling() is SLHL-normalised.
-    lsdtt::CronusEmulatorInputs emu_inputs;
-    if (muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
+    // Iterating the age is meaningless without a geomagnetic record to evaluate
+    // it against: every iterate would rebuild an identical production raster and
+    // "converge" in one step, reporting a self-consistent age that changed
+    // nothing. Fail rather than let that pass as a result.
+    if (self_consistent_age && !site.crn_nc().loaded)
     {
-        if (pressure_for_reporting == nullptr)
-        {
-            std::cerr << "FATAL: " << muon_scheme
-                      << " needs a pressure raster but it could not be built.\n";
-            return 1;
-        }
-        emu_inputs.pressure_raster = pressure_for_reporting;
-        if (muon_scheme == "cronusEmulatorLSDn")
-        {
-            try
-            {
-                emu_inputs.lsdn_slhl_reference =
-                    lsdtt::lsdtt_crn_parameters::cronus_emulator_lsdn_slhl_reference(
-                        crn_nc, nuclide);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "FATAL: cronusEmulatorLSDn: " << e.what() << "\n";
-                return 1;
-            }
-        }
-        std::cout << "Muon scheme " << muon_scheme
-                  << ": per-pixel pressure-dependent CRONUS v3 emulator active.\n";
+        std::cerr << "FATAL: self_consistent_age: true requires the geomagnetic "
+                     "record in crn_parameters.nc, which did not load. Without it "
+                     "the sample age has no effect, so the iteration would report "
+                     "a converged age that changed nothing. Set crn_nc_file, or "
+                     "set self_consistent_age: false.\n";
+        return 1;
     }
 
+    const lsdtt::CrnNcData& crn_nc = site.crn_nc();
+    const std::string  atm_report  = site.atmosphere_report();
+    const bool use_paleomag        = crn_nc.loaded && (sample_age_yr > 0.0);
+
+    // Time-varying field: under Stone this is the Muscheler VDM correction;
+    // under LSDn it is the Pavon-Carrasco/Lifton record average. Both per pixel.
+    const std::string age_str = std::to_string(static_cast<int>(sample_age_yr));
+    const std::string paleomag_report =
+        use_lsdn ? (sample_age_yr > 0.0
+                        ? "Pavon-Carrasco record (" + age_str + " yr)"
+                        : "off (modern field)")
+                 : (use_paleomag ? "Muscheler VDM (" + age_str + " yr)"
+                                 : "off (modern field)");
+    std::cout << "Atmosphere    : " << atm_report << "\n"
+              << "Palaeomag     : " << paleomag_report
+              << (self_consistent_age
+                      ? "  [self-consistent: t = Gamma_sp/eps per sample, "
+                        "sample_age_yr is only the starting guess]" : "")
+              << "\n" << site.summary() << "\n\n";
+
+    const lsdtt::lsdtt_raster_cpu& prod_raster        = site.production();
+    const lsdtt::lsdtt_raster_cpu& topo_shield_raster = site.topographic_shielding();
+    const lsdtt::lsdtt_raster_cpu& snow_shield_raster = site.snow_shielding();
+    const lsdtt::lsdtt_raster_cpu& self_shield_raster = site.self_shielding();
+    const lsdtt::CronusEmulatorInputs emu_inputs      = site.emulator_inputs();
+
+    // The basin-mean effective pressure reported in the output CSV. Null when
+    // the pressure raster could not be built, which is a warning rather than a
+    // failure -- effective_pressure_hpa is then nan.
     if (bf["write_production_raster"])
     {
         std::string prod_path = write_base + "_PROD.tif";
@@ -738,19 +671,17 @@ int main(int argc, char* argv[])
         writer.write_full(prod_raster.get_data(), meta, prod_path);
     }
 
-    //  4. Shielding rasters (uniform) 
-    // MaskedFill::NoData preserves the local lambda this replaced. NOTE it
-    // differs from the choice lsdtt-cosmo-prediction and lsdtt-cosmo-landslides
-    // make: they fill the whole array. Both were in use and neither is wrong,
-    // so the shared helper asks rather than assumes.
-    auto make_uniform = [&](float val) -> lsdtt::lsdtt_raster_cpu
-    {
-        return lsdtt::make_uniform_raster(dem, val, lsdtt::MaskedFill::NoData);
-    };
+    const lsdtt::lsdtt_raster_cpu* pressure_for_reporting =
+        site.has_pressure() ? &site.pressure() : nullptr;
 
-    lsdtt::lsdtt_raster_cpu topo_shield_raster = make_uniform(static_cast<float>(topo_shield_val));
-    lsdtt::lsdtt_raster_cpu snow_shield_raster  = make_uniform(static_cast<float>(snow_shield));
-    lsdtt::lsdtt_raster_cpu self_shield_raster  = make_uniform(static_cast<float>(self_shield));
+    if ((muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
+        && pressure_for_reporting == nullptr)
+    {
+        std::cerr << "FATAL: " << muon_scheme
+                  << " needs a pressure raster but it could not be built.\n";
+        return 1;
+    }
+
 
     std::cout << "Shielding: topo=" << topo_shield_val
               << " snow=" << snow_shield << " g/cm2"
@@ -1177,9 +1108,14 @@ int main(int argc, char* argv[])
                     // iterate of every sample was the dominant cost of this
                     // mode.  The staging, transform and surface builds are
                     // unaffected, so the values are bit-identical.
-                    sc_prod_raster = lsdtt::calculate_production_raster(
-                        filled_dem, crn_nc, sc_t_yr, atm_source, scaling_scheme,
-                        nuclide, &sc_eval_set);
+                    // recompute_production() exists FOR this call: the site
+                    // component exposes the configured compute, not just the
+                    // finished raster, so the subset evaluation survives the
+                    // extraction. A component that owned only a finished
+                    // production raster would have forced this loop to bypass
+                    // it, putting the duplication straight back.
+                    sc_prod_raster = site.recompute_production(
+                        filled_dem, sc_t_yr, &sc_eval_set);
                 }
                 catch (const std::exception& e)
                 {
