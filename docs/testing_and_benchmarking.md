@@ -2150,6 +2150,103 @@ That is the specific accident the capability design exists to prevent.
 
 ---
 
+### 7.10h One landslide CRN kernel (2026-08-05)
+
+`compute_landslide_surface_concentration` is now a **thin wrapper** over
+`compute_landslide_step_change_concentration`. There was one erosion history in
+the codebase; there are no longer two.
+
+A steady landscape is the step-change kernel with equal rates, so the wrapper
+expresses its scalar inputs as the uniform fields that kernel takes:
+
+| scalar input | becomes |
+|---|---|
+| `production_scaling` | a uniform production raster |
+| `total_shielding` | a uniform shielding raster — **kept separate**, since the column forms `S_tot = scaling × shielding` and solves the Vermeesch redistribution on the product |
+| background rate | *both* `eff_erate_old` and `eff_erate_new` |
+| — | time-since-change 10⁶ yr: steady for far longer than any scar age |
+| — | flush window 0, so every scar takes the scar treatment |
+
+`set_erosion_time_series` now has **one** call site in the file, down from two,
+and the file is 55 lines shorter.
+
+#### Collapsing two implementations destroys the test that compared them
+
+T17 compared the two kernels across 384 combinations. Once one calls the other
+that comparison is tautological — it cannot fail. If nothing replaced it, the
+collapse could have moved every one of those 384 values undetected.
+
+So T17 gained a **golden checksum**: an order-weighted sum over all 384
+concentrations, asserted to 10⁻¹².
+
+```
+before the collapse   113969168222.3623
+after                 113969169785.83105
+```
+
+The 1.4×10⁻⁸ shift is float32 raster storage — the scalar path used to compute
+in double and store once, and now round-trips through the kernel's raster.
+Nothing physical moved, and T17b independently checks the one value that would
+have if it had.
+
+**The refactor oracle was unchanged at 34/34**, which is worth understanding
+rather than just noting: its `L1` case fires at `event_time_yr: 0` with
+`crn_report_time_yr: 0`, so every scar sits at elapsed time zero and takes the
+`steady_state` branch — identical through either route. The float32 shift lives
+at *positive* scar ages, which `L1` has none of. The golden checksum is what
+covers that range, and the oracle alone would not have.
+
+**Generalisable point.** When two implementations are merged, the test that
+proved they agreed becomes worthless at exactly the moment it is most needed.
+Freeze the absolute values *before* merging, or the merge is unverifiable.
+
+### 7.10f2 "The Niemi closure" — what that number actually is
+
+Quoted throughout this document as **1.86437 %**, so it is worth saying plainly
+what it measures. It is a **mass-balance check on the landslide generator**, and
+it contains **no cosmogenics at all** — the test file has zero CRN references.
+
+The loop it closes:
+
+1. **Prescribe** a landslide erosion rate — say 50 mm/kyr — over the ACTIVE area
+   (the hillslopes that can actually host a landslide, not the whole raster).
+2. The module turns that into a volume budget per event, samples landslide areas
+   from the size distribution, solves for how many landslides that implies,
+   places them, and excavates them.
+3. **Measure** the volume actually removed; divide by active area × duration;
+   convert back to mm/kyr.
+4. Does it come back as 50?
+
+| requested (mm/kyr) | realised | ratio |
+|---|---|---|
+| 20 | 19.63 | 0.981 |
+| 50 | 49.80 | 0.996 |
+| 100 | 100.02 | 1.000 |
+| 200 | 196.97 | 0.985 |
+
+Worst departure **1.86 %**. Niemi et al. (2005) report **~3 %** for their own
+model doing the same thing, which is the external comparison the name refers to.
+
+**Why it is not zero.** The size distribution is heavy-tailed and the landslide
+count is an integer, so one draw from the tail can move an event's whole budget.
+Exact closure is impossible in principle; ~2 % is the achievable level.
+
+**Why it is quoted to five decimal places.** It is a **sentinel, not a result
+being re-established**. It exercises size sampling, placement and the volume
+budget, and nothing cosmogenic — so it must not move when CRN code changes.
+Every phase of the 2026-08-05 work was in CRN territory, and a shift in this
+number would have meant the landslide generator had been perturbed by accident.
+"About 1.9 %" would still read as fine if it had drifted to 1.94; `1.86437 %` is
+a tripwire.
+
+**Do not confuse it with the Niemi ENSEMBLE result** (§7.10, `E_c/E_v`), which
+is a different check that unfortunately also carries his name. The closure is
+volumetric bookkeeping in the landslide module; the ensemble is about what
+landsliding does to a basin-averaged cosmogenic erosion rate.
+
+**What it does not establish.** That the imposed size distribution suits any
+real landscape, or anything about the cosmogenic coupling.
+
 ### 7.10g A landslide that just happened has happened (2026-08-05)
 
 **A convention change, decided deliberately.** It is documented at length

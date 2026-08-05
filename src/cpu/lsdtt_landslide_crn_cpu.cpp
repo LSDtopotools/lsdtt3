@@ -63,120 +63,65 @@ lsdtt_raster_cpu compute_landslide_surface_concentration(
     const lsdtt_raster_cpu&   time_of_last_failure,
     const LandslideCrnConfig& config)
 {
-    const lsdtt_raster_meta& meta = excavation_depth_m.meta();
-    const lsdtt_raster_meta& tmeta = time_of_last_failure.meta();
-    if (meta.n_rows != tmeta.n_rows || meta.n_cols != tmeta.n_cols)
+    // ONE KERNEL. This was a second, independent implementation of
+    // landslide -> concentration until 2026-08-05: ~120 lines that built the
+    // same four-row erosion history, cached on the same key and called the same
+    // column, 260 lines away from the raster version and sharing nothing with
+    // it. Nothing asserted the two agreed, and the density split of 2026-08-04
+    // had to be applied to both by hand.
+    //
+    // It is now a THIN WRAPPER: a steady landscape is the step-change kernel
+    // with equal rates, so the scalar inputs are expressed as the uniform
+    // fields that kernel takes and the work happens in one place. The mapping:
+    //
+    //   production_scaling  -> a uniform production raster
+    //   total_shielding     -> a uniform shielding raster
+    //     (kept SEPARATE, as they must be: the column forms
+    //      S_tot = scaling x shielding and solves the Vermeesch redistribution
+    //      on the product. Merging them before this point is the mistake that
+    //      cost this codebase 11.4 % once.)
+    //   background rate     -> BOTH eff_erate_old and eff_erate_new (no step)
+    //   time since change   -> 1e6 yr, i.e. "the landscape has been steady for
+    //                          far longer than any scar age"
+    //   flush window        -> 0, so every scar takes the scar treatment
+    //
+    // Pinned by unit_landslide_crn T17, which fixes the absolute values across
+    // 384 combinations so the collapse cannot have moved any of them.
+    if (excavation_depth_m.meta().n_rows != time_of_last_failure.meta().n_rows ||
+        excavation_depth_m.meta().n_cols != time_of_last_failure.meta().n_cols)
         throw std::invalid_argument(
             "compute_landslide_surface_concentration: excavation depth and "
             "time-of-last-failure rasters differ in size");
 
-    const auto& depth = excavation_depth_m.get_data_array();
-    const auto& dmask = excavation_depth_m.get_mask_array();
-    const auto& tfail = time_of_last_failure.get_data_array();
-    const auto& tmask = time_of_last_failure.get_mask_array();
+    const lsdtt_raster_cpu t_since =
+        time_since_failure_from_time_of_failure(time_of_last_failure,
+                                                config.t_now_yr);
 
-    const float depth_ndv = static_cast<float>(meta.no_data_value);
-    const float tfail_ndv = static_cast<float>(tmeta.no_data_value);
+    const lsdtt_raster_cpu t_since_change =
+        make_uniform_raster(excavation_depth_m, 1.0e6f, MaskedFill::Value);
+    const lsdtt_raster_cpu prod =
+        make_uniform_raster(excavation_depth_m,
+                            static_cast<float>(config.production_scaling),
+                            MaskedFill::Value);
+    const lsdtt_raster_cpu shld =
+        make_uniform_raster(excavation_depth_m,
+                            static_cast<float>(config.total_shielding),
+                            MaskedFill::Value);
 
-    lsdtt_crn_column col(config.rock_density_kg_m3);
-    const double eps_m_yr =
-        eff_to_m_per_yr(config.background_eff_erate_g_cm2_yr, config.rock_density_kg_m3);
+    LandslideStepChangeConfig cfg;
+    cfg.eff_erate_old_g_cm2_yr = config.background_eff_erate_g_cm2_yr;
+    cfg.eff_erate_new_g_cm2_yr = config.background_eff_erate_g_cm2_yr;
+    cfg.rock_density_kg_m3     = config.rock_density_kg_m3;
+    cfg.scar_density_kg_m3     = config.scar_density_kg_m3;
+    cfg.flush_time_threshold_yr = 0.0;
+    cfg.muon_scheme            = config.muon_scheme;
+    cfg.nuclide                = config.nuclide;
 
-    // Undisturbed surface: the value every unfailed pixel takes.
-    const double background = landslide_crn_background_concentration(config);
-
-    // One transient solve per DISTINCT (depth, time-since-failure). Every pixel
-    // in a scar shares both, so this collapses thousands of pixels onto a
-    // handful of solves. Keys are quantised to avoid float noise splitting what
-    // is physically one scar.
-    std::map<std::pair<long long, long long>, double> cache;
-
-    lsdtt_array2d_f  out(meta.n_rows, meta.n_cols, depth_ndv);
-    lsdtt_array2d_u8 omask(meta.n_rows, meta.n_cols, 0);
-
-    for (int r = 0; r < meta.n_rows; ++r)
-    {
-        for (int c = 0; c < meta.n_cols; ++c)
-        {
-            if (!dmask(r, c)) continue;
-
-            const bool failed =
-                tmask(r, c) && tfail(r, c) != tfail_ndv &&
-                dmask(r, c) && depth(r, c) != depth_ndv && depth(r, c) > 0.0f;
-
-            if (!failed)
-            {
-                out(r, c)   = static_cast<float>(background);
-                omask(r, c) = 1;
-                continue;
-            }
-
-            const double d_m      = static_cast<double>(depth(r, c));
-            const double t_since  = config.t_now_yr - static_cast<double>(tfail(r, c));
-
-            if (!(t_since > 0.0))
-            {
-                // Failed at (or after) the reporting time: the surface is the
-                // rock that was at depth d, with no re-accumulation yet. That
-                // is the inherited concentration, straight from steady state.
-                const CrnColumnSample s = col.steady_state(
-                    metres_to_g_cm2(d_m, config.scar_density_kg_m3),
-                    config.background_eff_erate_g_cm2_yr,
-                    config.production_scaling, config.total_shielding,
-                    config.muon_scheme);
-                out(r, c)   = static_cast<float>(pick_nuclide(s, config.nuclide));
-                omask(r, c) = 1;
-                continue;
-            }
-
-            const std::pair<long long, long long> key{
-                static_cast<long long>(std::llround(d_m * 1000.0)),
-                static_cast<long long>(std::llround(t_since))};
-
-            auto it = cache.find(key);
-            if (it == cache.end())
-            {
-                // Erosion history, row 0 MOST RECENT, yr BP increasing:
-                //   [0] t_since  : background erosion from failure to now
-                //   [1] t_since  : the landslide -- instantaneous removal of
-                //                  d_m metres (rate = 0 marks it as a removal,
-                //                  and it legally shares the time above it)
-                //   [2] long     : background erosion before the failure
-                //   [3] -9999    : background rate sentinel
-                // The removal is handed over as a ROCK-EQUIVALENT thickness:
-                // lsdtt_crn_column carries one density for the whole history,
-                // so a soil scar is expressed as the depth of rock of equal
-                // mass. Mass removed is preserved exactly, which is the only
-                // thing the physics sees.
-                const double d_rock_equiv =
-                    d_m * config.scar_density_kg_m3 / config.rock_density_kg_m3;
-                const std::vector<double> t_yr   {t_since, t_since, 1.0e6, -9999.0};
-                const std::vector<double> rate   {eps_m_yr, 0.0, eps_m_yr, eps_m_yr};
-                const std::vector<double> removal{0.0, d_rock_equiv, 0.0, 0.0};
-
-                lsdtt_crn_column c2(config.rock_density_kg_m3);
-                c2.set_erosion_time_series(t_yr, rate, removal);
-
-                // Initial concentrations left at the default (-1), which starts
-                // the column at steady state under the background rate -- the
-                // pre-failure profile, which is what inheritance requires.
-                const std::vector<CrnColumnSample> prof = c2.run_transient(
-                    std::vector<double>{0.0},
-                    config.production_scaling * config.total_shielding,
-                    config.muon_scheme);
-
-                const double v = prof.empty() ? background
-                                              : pick_nuclide(prof[0], config.nuclide);
-                it = cache.emplace(key, v).first;
-            }
-
-            out(r, c)   = static_cast<float>(it->second);
-            omask(r, c) = 1;
-        }
-    }
-
-    return lsdtt_raster_cpu(std::move(out), std::move(omask), meta);
+    return compute_landslide_step_change_concentration(
+               excavation_depth_m, t_since, t_since_change, prod, shld, cfg)
+           .concentration;
 }
+
 
 // -----------------------------------------------------------------------------
 std::string LandslideCouplingResult::summary() const

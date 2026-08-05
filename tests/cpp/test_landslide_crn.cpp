@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -312,6 +313,7 @@ int main(int argc, char** argv)
         const double huge_t_since_change = 1.0e6;   // matches the scalar path
 
         int n_compared = 0;
+        double golden = 0.0;
         double worst_rel = 0.0;
         std::string worst_case;
 
@@ -374,6 +376,7 @@ int main(int argc, char** argv)
                     const double b = raster_out.concentration.get_data_array()(i, j);
                     const double rel = std::fabs(a - b) / std::max(std::fabs(a), 1.0);
                     ++n_compared;
+                    golden += a * static_cast<double>(n_compared);
                     if (rel > worst_rel)
                     {
                         worst_rel = rel;
@@ -387,14 +390,39 @@ int main(int argc, char** argv)
                 }
         }
 
+        std::cout << "        golden checksum " << std::setprecision(17)
+                  << golden << std::setprecision(6) << "\n";
         std::cout << "        compared " << n_compared
                   << " (depth x age x scaling x shielding x density x nuclide)\n"
                   << "        worst relative difference " << worst_rel
                   << (worst_case.empty() ? "" : ("  at " + worst_case)) << "\n";
         check(n_compared == 4 * 4 * 2 * 2 * 2 * 3,
               "the whole grid was compared");
+        // AFTER 2026-08-05 THIS COMPARISON IS TAUTOLOGICAL and is kept only as
+        // a guard on the wrapper's argument mapping: the scalar entry point is
+        // now a thin wrapper over the raster kernel, so of course they agree.
+        // What still has teeth is the GOLDEN CHECKSUM below, which fixes the
+        // absolute values.
         check(worst_rel < 1.0e-6,
-              "the scalar and raster landslide kernels agree to 1e-6");
+              "the two entry points agree (tautological since the collapse; "
+              "the golden checksum is the real pin)");
+
+        // THE PIN. An order-weighted sum over all 384 values. It exists because
+        // collapsing two implementations into one destroys the test that
+        // compared them -- so the absolute numbers have to be fixed instead,
+        // or the collapse could have moved every one of them undetected.
+        //
+        // Before the collapse: 113969168222.3623
+        // After:               113969169785.83105
+        // The 1.4e-8 shift is float32 raster storage: the scalar path used to
+        // compute in double and store once, and now round-trips through the
+        // kernel's raster. Nothing physical moved -- T17b checks the one value
+        // that would have.
+        const double golden_expected = 113969169785.83105;
+        const double golden_rel =
+            std::fabs(golden - golden_expected) / golden_expected;
+        check(golden_rel < 1.0e-12,
+              "the 384 absolute concentrations are unchanged (golden checksum)");
     }
 
     // -------------------------------------------------------------------------
