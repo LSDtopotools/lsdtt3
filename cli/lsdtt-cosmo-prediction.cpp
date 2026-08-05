@@ -686,12 +686,14 @@ int main(int argc, char* argv[])
     help_map["sample_points_filename"] = {"string","NULL",
         "CSV of latitude,longitude points at which to sample the accumulated CRN raster.",
         "When set (not NULL), each point is snapped to the channel network and the "
-        "accumulated (basin-averaged) concentration at the snapped node is written to "
-        "<write_fname>_sampled_crn_conc.csv with columns latitude, longitude, <nuclide>_CONC "
-        "(plus snapped_contributing_pixels, and sample_name if present). The CSV can be read "
-        "directly by lsdtt-cosmo-tool (points_filename) to invert back to an erosion rate -- "
-        "a forward/inverse round-trip check against the imposed effective_erosion_rate. "
-        "Requires calculate_accumulated_crn_concentration: true.",
+        "accumulated (basin-averaged) result at the snapped node is written to "
+        "<write_fname>_sampled_crn_conc.csv. Single-isotope mode writes <nuclide>_CONC; "
+        "multi-isotope mode writes Be10_CONC, Al26_CONC, C14_CONC and the accumulated "
+        "ratios R2610_ACC and R1410_ACC, plus one per-nuclide bridge CSV "
+        "(<write_fname>_sampled_crn_conc_Be10.csv etc.) for direct inversion with "
+        "lsdtt-cosmo-tool. The CSV is directly usable by lsdtt-cosmo-tool "
+        "via concentration_column_name (for example Be10_CONC). Requires "
+        "calculate_accumulated_crn_concentration: true.",
         "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
 
     string_default_map["sample_column_name"] = "sample_name";
@@ -728,9 +730,9 @@ int main(int argc, char* argv[])
     bool_default_map["write_isotope_ratio_rasters"] = true;
     help_map["write_isotope_ratio_rasters"] = {"bool","true",
         "Write the Al26/Be10 and C14/Be10 ratio rasters.",
-        "Output: write_fname + _R2610_step.tif and _R1410_step.tif. Requires "
-        "calculate_multi_isotope_step_change: true. The three concentration rasters "
-        "are written by write_step_change_concentration_raster, one per nuclide.",
+        "In multi-isotope step-change/transient mode writes _R2610_step.tif and "
+        "_R1410_step.tif. If accumulation is also on, writes _R2610_acc.tif and "
+        "_R1410_acc.tif from the accumulated basin-mean concentrations.",
         "Output write toggles", "switch", "calculate_multi_isotope_step_change"};
 
     bool_default_map["write_accumulated_crn_raster"] = true;
@@ -1353,6 +1355,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu step_conc_raster;
     bool have_step_conc_raster = false;
+    lsdtt::MultiNuclideRasters multi_conc_rasters;
+    bool have_multi_conc_rasters = false;
 
     // -------------------------------------------------------------------------
     // Multi-isotope step change: Be-10, Al-26 and C-14 through ONE scenario.
@@ -1442,6 +1446,8 @@ int main(int argc, char* argv[])
             return 1;
         }
         std::cout << "  Done.\n";
+        multi_conc_rasters = multi;
+        have_multi_conc_rasters = true;
         write_multi_isotope(multi, "_step_crn_conc.tif", "_R2610_step.tif",
                             "_R1410_step.tif");
     }
@@ -1480,6 +1486,8 @@ int main(int argc, char* argv[])
             return 1;
         }
         std::cout << "  Done.\n";
+        multi_conc_rasters = multi;
+        have_multi_conc_rasters = true;
         write_multi_isotope(multi, "_step_crn_conc.tif", "_R2610_step.tif",
                             "_R1410_step.tif");
     }
@@ -1624,34 +1632,50 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     if (do_accum)
     {
-        // Decide which concentration raster to accumulate
-        lsdtt::lsdtt_raster_cpu conc_for_accum;
+        const bool use_multi_accum =
+            have_multi_conc_rasters && (sf["concentration_raster_prefix"] == "NULL");
 
-        if (sf["concentration_raster_prefix"] != "NULL")
+        if (have_multi_conc_rasters && sf["concentration_raster_prefix"] != "NULL")
+            std::cout << "Note: concentration_raster_prefix is set, so accumulation "
+                         "uses that single raster and not the in-memory multi-isotope "
+                         "step-change results.\n";
+
+        // Decide which concentration raster to accumulate (single-isotope path).
+        lsdtt::lsdtt_raster_cpu conc_for_accum;
+        if (!use_multi_accum)
         {
-            const std::string path =
-                pp.get_read_path() + sf["concentration_raster_prefix"] + ".tif";
-            std::cout << "Loading concentration raster for accumulation: " << path << "\n";
-            lsdtt::lsdtt_data_loader ld;
-            ld.open_raster(path);
-            conc_for_accum = lsdtt::lsdtt_raster_cpu(ld);
-        }
-        else if (have_step_conc_raster)
-        {
-            std::cout << "Using step-change concentration raster for accumulation.\n";
-            conc_for_accum = step_conc_raster;
-        }
-        else if (have_conc_raster)
-        {
-            std::cout << "Using steady-state concentration raster for accumulation.\n";
-            conc_for_accum = conc_raster;
+            if (sf["concentration_raster_prefix"] != "NULL")
+            {
+                const std::string path =
+                    pp.get_read_path() + sf["concentration_raster_prefix"] + ".tif";
+                std::cout << "Loading concentration raster for accumulation: "
+                          << path << "\n";
+                lsdtt::lsdtt_data_loader ld;
+                ld.open_raster(path);
+                conc_for_accum = lsdtt::lsdtt_raster_cpu(ld);
+            }
+            else if (have_step_conc_raster)
+            {
+                std::cout << "Using step-change concentration raster for accumulation.\n";
+                conc_for_accum = step_conc_raster;
+            }
+            else if (have_conc_raster)
+            {
+                std::cout << "Using steady-state concentration raster for accumulation.\n";
+                conc_for_accum = conc_raster;
+            }
+            else
+            {
+                std::cout << "No concentration raster available for accumulation.\n"
+                          << "Set concentration_raster_prefix or enable one of the "
+                          << "concentration prediction modes in the same run.\n";
+                return 1;
+            }
         }
         else
         {
-            std::cout << "No concentration raster available for accumulation.\n"
-                      << "Set concentration_raster_prefix or enable one of the "
-                      << "concentration prediction modes in the same run.\n";
-            return 1;
+            std::cout << "Using in-memory multi-isotope concentration rasters for "
+                         "accumulation (Be10, Al26, C14).\n";
         }
 
         // Build flow routing
@@ -1739,18 +1763,95 @@ int main(int argc, char* argv[])
             }
         }
 
-        std::cout << "Accumulating CRN concentration downstream"
-                  << (do_quartz ? " (quartz-weighted)" : "") << "...\n";
-        lsdtt::lsdtt_raster_cpu acc_raster =
-            lsdtt::calculate_accumulated_crn_raster(conc_for_accum,
-                                                    *accum_weight, flow);
-        std::cout << "  Done.\n";
+        lsdtt::lsdtt_raster_cpu acc_raster;
+        lsdtt::MultiNuclideRasters acc_multi;
+        lsdtt::RatioRasterResult acc_r2610;
+        lsdtt::RatioRasterResult acc_r1410;
+        bool have_acc_single = false;
+        bool have_acc_multi = false;
+        bool have_acc_ratios = false;
 
-        if (bf["write_accumulated_crn_raster"])
+        if (use_multi_accum)
         {
-            const std::string out_path = write_base + "_" + nuclide + "_crn_acc.tif";
-            std::cout << "Writing accumulated concentration raster: " << out_path << "\n";
-            loader.write_full(acc_raster.get_data(), acc_raster.get_meta(), out_path, out_fmt);
+            std::cout << "Accumulating multi-isotope concentration downstream"
+                      << (do_quartz ? " (quartz-weighted)" : "")
+                      << " in one shared domain scan...\n";
+            acc_multi = lsdtt::calculate_accumulated_crn_raster_multi(
+                multi_conc_rasters, *accum_weight, flow);
+            have_acc_multi = true;
+            std::cout << "  Done.\n";
+
+            if (bf["write_accumulated_crn_raster"])
+            {
+                const std::pair<const char*, const lsdtt::lsdtt_raster_cpu*> outs[3] = {
+                    {"Be10", &acc_multi.Be10},
+                    {"Al26", &acc_multi.Al26},
+                    {"C14", &acc_multi.C14}};
+                for (const auto& o : outs)
+                {
+                    const std::string out_path =
+                        write_base + "_" + o.first + "_crn_acc.tif";
+                    std::cout << "Writing accumulated " << o.first
+                              << " raster: " << out_path << "\n";
+                    loader.write_full(o.second->get_data(), o.second->get_meta(),
+                                      out_path, out_fmt);
+                }
+            }
+
+            if (bf["write_isotope_ratio_rasters"] || do_sample)
+            {
+                acc_r2610 = lsdtt::make_isotope_ratio_raster(acc_multi.Al26,
+                                                             acc_multi.Be10);
+                acc_r1410 = lsdtt::make_isotope_ratio_raster(acc_multi.C14,
+                                                             acc_multi.Be10);
+                have_acc_ratios = true;
+                if (acc_r2610.n_zero_denominator > 0 ||
+                    acc_r2610.n_one_input_masked > 0 ||
+                    acc_r2610.n_non_finite > 0)
+                    std::cout << "  " << acc_r2610.summary("Al26/Be10 (accumulated)")
+                              << "\n";
+                if (acc_r1410.n_zero_denominator > 0 ||
+                    acc_r1410.n_one_input_masked > 0 ||
+                    acc_r1410.n_non_finite > 0)
+                    std::cout << "  " << acc_r1410.summary("C14/Be10 (accumulated)")
+                              << "\n";
+
+                if (bf["write_isotope_ratio_rasters"])
+                {
+                    const std::string r2610_path = write_base + "_R2610_acc.tif";
+                    const std::string r1410_path = write_base + "_R1410_acc.tif";
+                    std::cout << "Writing Al26/Be10 accumulated ratio raster: "
+                              << r2610_path << "\n";
+                    loader.write_full(acc_r2610.ratio.get_data(),
+                                      acc_r2610.ratio.get_meta(),
+                                      r2610_path, out_fmt);
+                    std::cout << "Writing C14/Be10 accumulated ratio raster: "
+                              << r1410_path << "\n";
+                    loader.write_full(acc_r1410.ratio.get_data(),
+                                      acc_r1410.ratio.get_meta(),
+                                      r1410_path, out_fmt);
+                }
+            }
+        }
+        else
+        {
+            std::cout << "Accumulating CRN concentration downstream"
+                      << (do_quartz ? " (quartz-weighted)" : "") << "...\n";
+            acc_raster = lsdtt::calculate_accumulated_crn_raster(conc_for_accum,
+                                                                 *accum_weight,
+                                                                 flow);
+            have_acc_single = true;
+            std::cout << "  Done.\n";
+
+            if (bf["write_accumulated_crn_raster"])
+            {
+                const std::string out_path =
+                    write_base + "_" + nuclide + "_crn_acc.tif";
+                std::cout << "Writing accumulated concentration raster: "
+                          << out_path << "\n";
+                loader.write_full(acc_raster.get_data(), acc_raster.get_meta(),
+                                  out_path, out_fmt);
+            }
         }
 
         // -----------------------------------------------------------------
@@ -1769,8 +1870,11 @@ int main(int argc, char* argv[])
             std::vector<lsdtt::lsdtt_input_point> pts;
             try
             {
+                const lsdtt::lsdtt_raster_meta& sample_meta =
+                    have_acc_multi ? acc_multi.Be10.get_meta()
+                                   : acc_raster.get_meta();
                 pts = lsdtt::load_csv_latitude_longitude_points_in_raster_crs(
-                    points_path, acc_raster.get_meta());
+                    points_path, sample_meta);
             }
             catch (const std::exception& e)
             {
@@ -1827,19 +1931,40 @@ int main(int argc, char* argv[])
             snap_opts.max_search_radius_pixels = ifs["snap_search_radius_pixels"];
             snap_opts.min_search_radius_pixels = 1;
 
-            const std::string conc_col = nuclide + "_CONC";
-            const auto& acc_data = acc_raster.get_data_array();
-            const auto& acc_mask = acc_raster.get_mask_array();
-
             std::vector<std::string> headers;
-            if (has_names) headers.push_back("sample_name");
+            if (has_names)
+                headers.push_back("sample_name");
             headers.push_back("latitude");
             headers.push_back("longitude");
-            headers.push_back(conc_col);
+            if (have_acc_multi)
+            {
+                headers.push_back("Be10_CONC");
+                headers.push_back("Al26_CONC");
+                headers.push_back("C14_CONC");
+                headers.push_back("R2610_ACC");
+                headers.push_back("R1410_ACC");
+            }
+            else
+            {
+                headers.push_back(nuclide + "_CONC");
+            }
             headers.push_back("snapped_contributing_pixels");
 
             std::vector<std::vector<std::string>> out_rows;
             int n_ok = 0, n_skip = 0;
+
+            const auto& acc_data = acc_raster.get_data_array();
+            const auto& acc_mask = acc_raster.get_mask_array();
+            const auto& acc_be_data = acc_multi.Be10.get_data_array();
+            const auto& acc_be_mask = acc_multi.Be10.get_mask_array();
+            const auto& acc_al_data = acc_multi.Al26.get_data_array();
+            const auto& acc_al_mask = acc_multi.Al26.get_mask_array();
+            const auto& acc_c14_data = acc_multi.C14.get_data_array();
+            const auto& acc_c14_mask = acc_multi.C14.get_mask_array();
+            const auto& acc_r2610_data = acc_r2610.ratio.get_data_array();
+            const auto& acc_r2610_mask = acc_r2610.ratio.get_mask_array();
+            const auto& acc_r1410_data = acc_r1410.ratio.get_data_array();
+            const auto& acc_r1410_mask = acc_r1410.ratio.get_mask_array();
 
             for (const auto& pt : pts)
             {
@@ -1867,17 +1992,28 @@ int main(int argc, char* argv[])
 
                 const int srow = snapped.snapped_row;
                 const int scol = snapped.snapped_col;
-                if (!acc_mask(srow, scol))
+                if (have_acc_single && !acc_mask(srow, scol))
                 {
                     std::cerr << "  Point " << pt.point_id
                               << " snapped to a nodata accumulated cell -- skipping.\n";
                     ++n_skip;
                     continue;
                 }
+                if (have_acc_multi &&
+                    (!acc_be_mask(srow, scol) || !acc_al_mask(srow, scol)
+                     || !acc_c14_mask(srow, scol)))
+                {
+                    std::cerr << "  Point " << pt.point_id
+                              << " snapped to a nodata accumulated multi-isotope "
+                                 "cell -- skipping.\n";
+                    ++n_skip;
+                    continue;
+                }
 
-                const double conc = static_cast<double>(acc_data(srow, scol));
                 const lsdtt::lsdtt_lonlat ll =
-                    lsdtt::cell_center_to_lonlat(acc_raster.get_meta(), srow, scol);
+                    lsdtt::cell_center_to_lonlat(
+                        have_acc_multi ? acc_multi.Be10.get_meta() : acc_raster.get_meta(),
+                        srow, scol);
 
                 std::vector<std::string> row;
                 if (has_names)
@@ -1887,7 +2023,31 @@ int main(int argc, char* argv[])
                 }
                 row.push_back(std::to_string(ll.latitude));
                 row.push_back(std::to_string(ll.longitude));
-                row.push_back(std::to_string(conc));
+                if (have_acc_multi)
+                {
+                    row.push_back(std::to_string(
+                        static_cast<double>(acc_be_data(srow, scol))));
+                    row.push_back(std::to_string(
+                        static_cast<double>(acc_al_data(srow, scol))));
+                    row.push_back(std::to_string(
+                        static_cast<double>(acc_c14_data(srow, scol))));
+
+                    const bool have_r2610 = have_acc_ratios && acc_r2610_mask(srow, scol);
+                    const bool have_r1410 = have_acc_ratios && acc_r1410_mask(srow, scol);
+                    row.push_back(have_r2610
+                                      ? std::to_string(
+                                            static_cast<double>(acc_r2610_data(srow, scol)))
+                                      : "nan");
+                    row.push_back(have_r1410
+                                      ? std::to_string(
+                                            static_cast<double>(acc_r1410_data(srow, scol)))
+                                      : "nan");
+                }
+                else
+                {
+                    row.push_back(std::to_string(
+                        static_cast<double>(acc_data(srow, scol))));
+                }
                 row.push_back(std::to_string(snapped.snapped_contributing_pixels));
                 out_rows.push_back(std::move(row));
                 ++n_ok;
@@ -1895,11 +2055,60 @@ int main(int argc, char* argv[])
 
             const std::string csv_path = write_base + "_sampled_crn_conc.csv";
             loader.write_csv(csv_path, headers, out_rows);
+
+            if (have_acc_multi)
+            {
+                std::vector<std::string> bridge_headers;
+                if (has_names) bridge_headers.push_back("sample_name");
+                bridge_headers.push_back("latitude");
+                bridge_headers.push_back("longitude");
+                bridge_headers.push_back("snapped_contributing_pixels");
+
+                auto write_bridge_csv = [&](const std::string& nuclide_name,
+                                            int col_offset_from_be)
+                {
+                    std::vector<std::string> h = bridge_headers;
+                    h.insert(h.begin() + (has_names ? 3 : 2),
+                             nuclide_name + "_CONC");
+                    std::vector<std::vector<std::string>> rows;
+                    rows.reserve(out_rows.size());
+                    for (const auto& src : out_rows)
+                    {
+                        std::vector<std::string> r;
+                        if (has_names) r.push_back(src[0]);
+                        const int i_lat = has_names ? 1 : 0;
+                        const int i_lon = i_lat + 1;
+                        const int i_be  = i_lon + 1;
+                        const int i_snap = static_cast<int>(src.size()) - 1;
+                        r.push_back(src[static_cast<std::size_t>(i_lat)]);
+                        r.push_back(src[static_cast<std::size_t>(i_lon)]);
+                        r.push_back(src[static_cast<std::size_t>(i_be + col_offset_from_be)]);
+                        r.push_back(src[static_cast<std::size_t>(i_snap)]);
+                        rows.push_back(std::move(r));
+                    }
+
+                    const std::string path = write_base + "_sampled_crn_conc_"
+                                           + nuclide_name + ".csv";
+                    loader.write_csv(path, h, rows);
+                    std::cout << "  Wrote " << path
+                              << " (direct bridge to lsdtt-cosmo-tool, nuclide="
+                              << nuclide_name << ")\n";
+                };
+
+                write_bridge_csv("Be10", 0);
+                write_bridge_csv("Al26", 1);
+                write_bridge_csv("C14", 2);
+            }
+
             std::cout << "  Sampled " << n_ok << " point(s) (" << n_skip
                       << " skipped) -> " << csv_path << "\n"
-                      << "  Concentration column: " << conc_col
-                      << " -- ingest with lsdtt-cosmo-tool (points_filename="
-                      << csv_path << ", nuclide=" << nuclide << ").\n";
+                      << "  Columns: "
+                      << (have_acc_multi
+                              ? "Be10_CONC, Al26_CONC, C14_CONC, R2610_ACC, "
+                                "R1410_ACC"
+                              : (nuclide + "_CONC"))
+                      << " -- ingest with lsdtt-cosmo-tool via concentration_column_name "
+                         "(e.g. Be10_CONC).\n";
         }
     }
 

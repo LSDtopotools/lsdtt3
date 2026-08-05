@@ -1369,6 +1369,87 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
+MultiNuclideRasters calculate_accumulated_crn_raster_multi(
+    const MultiNuclideRasters& conc,
+    const lsdtt_raster_cpu&    weight_raster,
+    const lsdtt_flowinfo&      flow)
+{
+    const lsdtt_raster_meta& meta = conc.Be10.get_meta();
+    auto same_grid = [&](const lsdtt_raster_meta& other, const char* what)
+    {
+        if (other.n_rows != meta.n_rows || other.n_cols != meta.n_cols)
+            throw std::invalid_argument(
+                std::string("calculate_accumulated_crn_raster_multi: ")
+                + what + " does not match the Be10 grid");
+    };
+    same_grid(conc.Al26.get_meta(), "Al26 raster");
+    same_grid(conc.C14.get_meta(), "C14 raster");
+    same_grid(weight_raster.get_meta(), "weight raster");
+
+    const int nr = meta.n_rows;
+    const int nc = meta.n_cols;
+    const int n_total = nr * nc;
+    const float ndv = static_cast<float>(meta.no_data_value);
+
+    const auto& b_data = conc.Be10.get_data_array();
+    const auto& b_mask = conc.Be10.get_mask_array();
+    const auto& a_data = conc.Al26.get_data_array();
+    const auto& a_mask = conc.Al26.get_mask_array();
+    const auto& c_data = conc.C14.get_data_array();
+    const auto& c_mask = conc.C14.get_mask_array();
+    const auto& w_data = weight_raster.get_data_array();
+    const auto& w_mask = weight_raster.get_mask_array();
+
+    std::vector<double> be_flux(static_cast<std::size_t>(n_total), 0.0);
+    std::vector<double> al_flux(static_cast<std::size_t>(n_total), 0.0);
+    std::vector<double> c14_flux(static_cast<std::size_t>(n_total), 0.0);
+    std::vector<double> wt(static_cast<std::size_t>(n_total), 0.0);
+
+    for (std::int64_t k = 0; k < n_total; ++k)
+    {
+        const int row = static_cast<int>(k / nc);
+        const int col = static_cast<int>(k % nc);
+        if (!b_mask(row, col) || !a_mask(row, col) || !c_mask(row, col)
+            || !w_mask(row, col))
+            continue;
+        const double w = static_cast<double>(w_data(row, col));
+        be_flux[static_cast<std::size_t>(k)] = static_cast<double>(b_data(row, col)) * w;
+        al_flux[static_cast<std::size_t>(k)] = static_cast<double>(a_data(row, col)) * w;
+        c14_flux[static_cast<std::size_t>(k)] = static_cast<double>(c_data(row, col)) * w;
+        wt[static_cast<std::size_t>(k)] = w;
+    }
+
+    const std::vector<double> acc_be = flow.accumulate(be_flux);
+    const std::vector<double> acc_al = flow.accumulate(al_flux);
+    const std::vector<double> acc_c14 = flow.accumulate(c14_flux);
+    const std::vector<double> acc_wt = flow.accumulate(wt);
+
+    lsdtt_array2d<float>   be_out(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> be_m(nr, nc, 0);
+    lsdtt_array2d<float>   al_out(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> al_m(nr, nc, 0);
+    lsdtt_array2d<float>   c14_out(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> c14_m(nr, nc, 0);
+
+    for (std::int64_t k = 0; k < n_total; ++k)
+    {
+        const int row = static_cast<int>(k / nc);
+        const int col = static_cast<int>(k % nc);
+        const double w = acc_wt[static_cast<std::size_t>(k)];
+        if (w <= 0.0) continue;
+
+        be_out(row, col) = static_cast<float>(acc_be[static_cast<std::size_t>(k)] / w);
+        al_out(row, col) = static_cast<float>(acc_al[static_cast<std::size_t>(k)] / w);
+        c14_out(row, col) = static_cast<float>(acc_c14[static_cast<std::size_t>(k)] / w);
+        be_m(row, col) = al_m(row, col) = c14_m(row, col) = 1;
+    }
+
+    return MultiNuclideRasters{
+        lsdtt_raster_cpu(std::move(be_out), std::move(be_m), meta),
+        lsdtt_raster_cpu(std::move(al_out), std::move(al_m), meta),
+        lsdtt_raster_cpu(std::move(c14_out), std::move(c14_m), meta)};
+}
+
 // 
 double calculate_accumulated_crn_concentration(
     const lsdtt_raster_cpu& conc_raster,

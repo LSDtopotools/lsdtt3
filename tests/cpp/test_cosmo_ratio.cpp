@@ -45,6 +45,7 @@
 #include <vector>
 
 #include "../../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
+#include "../../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
 
 namespace
@@ -230,6 +231,95 @@ int main()
             }
         check(same, "helper reproduces the original lambda BITWISE on "
                     "shared-mask input");
+    }
+
+    // -------------------------------------------------------------------------
+    // R9 -- SA2 invariant at accumulation/sample points.
+    //
+    // The accumulated ratio must be the RATIO OF ACCUMULATED MEANS, not the
+    // weighted mean of per-pixel ratios. Build a fixture where the two differ
+    // strongly, then assert we get the former.
+    // -------------------------------------------------------------------------
+    std::cout << "\nR9: accumulated ratio is ratio-of-means (not mean-of-ratios)\n";
+    {
+        const lsdtt::lsdtt_raster_meta m = make_meta(2, 2);
+
+        lsdtt::lsdtt_array2d_f  dem(m.n_rows, m.n_cols, 0.0f);
+        lsdtt::lsdtt_array2d_u8 dmask(m.n_rows, m.n_cols, 1);
+        dem(0, 0) = 4.0f; dem(0, 1) = 3.0f;
+        dem(1, 0) = 2.0f; dem(1, 1) = 1.0f;
+
+        lsdtt::lsdtt_flowinfo_options fopts;
+        fopts.build_topological_order = true;
+        fopts.build_s_vector = true;
+        const lsdtt::lsdtt_flowinfo flow(dem, dmask, m, fopts);
+        const std::int64_t outlet = flow.flat_index(1, 1);
+
+        const std::vector<std::uint8_t> all{1, 1, 1, 1};
+        const std::vector<float> be{1.0f, 10.0f, 10.0f, 1.0f};
+        const std::vector<float> al{10.0f, 1.0f, 1.0f, 10.0f};
+        const std::vector<float> c14{20.0f, 2.0f, 2.0f, 20.0f};
+        const std::vector<float> w{1.0f, 100.0f, 100.0f, 1.0f};
+
+        const lsdtt::MultiNuclideRasters multi{
+            make_raster(m, be, all),
+            make_raster(m, al, all),
+            make_raster(m, c14, all)};
+        const lsdtt::lsdtt_raster_cpu wr = make_raster(m, w, all);
+
+        const lsdtt::MultiNuclideRasters acc =
+            lsdtt::calculate_accumulated_crn_raster_multi(multi, wr, flow);
+
+        const auto& be_acc = acc.Be10.get_data_array();
+        const auto& al_acc = acc.Al26.get_data_array();
+        const auto& c14_acc = acc.C14.get_data_array();
+        const auto& amask = acc.Be10.get_mask_array();
+        check(amask(1, 1) == 1, "accumulated outlet is valid");
+
+        const lsdtt::lsdtt_flat_index_slice up = flow.upslope_nodes(outlet);
+        double sum_w = 0.0;
+        double sum_be = 0.0;
+        double sum_al = 0.0;
+        double sum_r2610 = 0.0;
+        for (std::int64_t flat : up)
+        {
+            const int r = flow.row_from_flat_unchecked(flat);
+            const int c = flow.col_from_flat_unchecked(flat);
+            const std::size_t i = static_cast<std::size_t>(r * m.n_cols + c);
+            const double wi = static_cast<double>(w[i]);
+            const double bi = static_cast<double>(be[i]);
+            const double ai = static_cast<double>(al[i]);
+            sum_w += wi;
+            sum_be += bi * wi;
+            sum_al += ai * wi;
+            sum_r2610 += (ai / bi) * wi;
+        }
+
+        const double ratio_of_means = (sum_al / sum_w) / (sum_be / sum_w);
+        const double mean_of_ratios = sum_r2610 / sum_w;
+        const double got_r2610 =
+            static_cast<double>(al_acc(1, 1)) / static_cast<double>(be_acc(1, 1));
+
+        check(std::fabs(got_r2610 - ratio_of_means) < 1.0e-6,
+              "accumulated Al26/Be10 equals ratio of accumulated means");
+        check(std::fabs(got_r2610 - mean_of_ratios) > 0.05,
+              "accumulated Al26/Be10 is NOT the weighted mean of per-pixel ratios");
+
+        const auto rr2610 = lsdtt::make_isotope_ratio_raster(acc.Al26, acc.Be10);
+        check(rr2610.ratio.get_mask_array()(1, 1) == 1,
+              "ratio helper keeps the accumulated outlet valid");
+        check(std::fabs(static_cast<double>(rr2610.ratio.get_data_array()(1, 1))
+                        - got_r2610) < 1.0e-6,
+              "ratio helper agrees with accumulated concentrations at outlet");
+
+        const auto rr1410 = lsdtt::make_isotope_ratio_raster(acc.C14, acc.Be10);
+        const double got_r1410 =
+            static_cast<double>(c14_acc(1, 1)) / static_cast<double>(be_acc(1, 1));
+        check(rr1410.ratio.get_mask_array()(1, 1) == 1,
+              "C14/Be10 accumulated ratio is valid at outlet");
+        check(std::fabs(static_cast<double>(rr1410.ratio.get_data_array()(1, 1))
+                        - got_r1410) < 1.0e-6,
+              "C14/Be10 ratio helper agrees with accumulated concentrations");
     }
 
     std::cout << "\n=====================================================\n"

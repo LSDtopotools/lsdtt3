@@ -1294,6 +1294,17 @@ add_test(NAME rigorous_cosmo_cli_bridge
 set_tests_properties(rigorous_cosmo_cli_bridge PROPERTIES
     LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
 
+# SA2 rigorous check: in multi-isotope step-change + accumulation mode, sampled
+# ratios must be computed as ratios of accumulated basin means (not as means of
+# per-pixel ratios).
+add_test(NAME rigorous_cosmo_multi_accum_ratio
+         COMMAND ${Python3_EXECUTABLE}
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_multi_accum_ratio_check.py"
+                 --pred-exe "$<TARGET_FILE:lsdtt-cosmo-prediction>"
+                 --data-dir "${LSDTT_TEST_DATA_DIR}")
+set_tests_properties(rigorous_cosmo_multi_accum_ratio PROPERTIES
+    LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
+
 # Multi-isotope step change: Be-10, Al-26 and C-14 through ONE scenario, plus
 # the two ratio rasters. The isotope RATIOS are what carry a transient signal,
 # and a ratio is only meaningful if both members saw an identical scenario --
@@ -1321,6 +1332,33 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "C14/Be10 ratio raster"
 )
 set_tests_properties(smoke_cosmo_prediction_multi_isotope
+    PROPERTIES LABELS "smoke;cli;cosmo")
+
+# SA2 end-to-end path: one multi-isotope step-change run produces accumulated
+# basin means, accumulated ratio rasters and sampled point ratios without
+# rerunning for each isotope.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_prediction_multi_isotope_accum_sampling
+    lsdtt-cosmo-prediction
+    cosmo_prediction_multi_isotope_accum_sampling.param.in
+    mi_acc_sampled_crn_conc.csv
+    --expect mi_acc_Be10_crn_acc.tif
+    --expect mi_acc_Al26_crn_acc.tif
+    --expect mi_acc_C14_crn_acc.tif
+    --expect mi_acc_R2610_acc.tif
+    --expect mi_acc_R1410_acc.tif
+    --expect mi_acc_sampled_crn_conc_Be10.csv
+    --expect mi_acc_sampled_crn_conc_Al26.csv
+    --expect mi_acc_sampled_crn_conc_C14.csv
+    --expect-file-contains "mi_acc_sampled_crn_conc.csv:Be10_CONC"
+    --expect-file-contains "mi_acc_sampled_crn_conc.csv:R2610_ACC"
+    --expect-file-contains "mi_acc_sampled_crn_conc.csv:R1410_ACC"
+    --expect-file-contains "mi_acc_sampled_crn_conc_Be10.csv:Be10_CONC"
+    --expect-file-contains "mi_acc_sampled_crn_conc_Al26.csv:Al26_CONC"
+    --expect-file-contains "mi_acc_sampled_crn_conc_C14.csv:C14_CONC"
+    --stdout-contains "Accumulating multi-isotope concentration downstream"
+)
+set_tests_properties(smoke_cosmo_prediction_multi_isotope_accum_sampling
     PROPERTIES LABELS "smoke;cli;cosmo")
 
 # Multi-isotope step change under LSDn scaling: smoke that the prediction CLI

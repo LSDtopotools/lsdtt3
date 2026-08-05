@@ -682,7 +682,7 @@ scenario, in five modes:
 | `calculate_step_change_crn_concentration_raster` | Transient concentration after a step change in erosion rate, with a per-pixel time-since-change |
 | `calculate_multi_isotope_step_change` | ¹⁰Be, ²⁶Al and ¹⁴C through the **same** step change in one particle evolution, plus the two ratio rasters |
 | `calculate_multi_isotope_transient` | The same three nuclides through an arbitrary erosion history from a CSV |
-| `calculate_accumulated_crn_concentration` | Erosion-weighted downstream accumulation, `Σ(C·ε)/Σ(ε)` — what a sediment sample would contain |
+| `calculate_accumulated_crn_concentration` | Downstream accumulation on a shared weight raster (`Σ(C·w)/Σ(w)`, with `w` = erosion rate by default or quartz flux when enabled); in multi-isotope mode, all three nuclides accumulate in one pass |
 
 The multi-isotope modes exist because the **ratios** carry the transient signal:
 half-lives differ by orders of magnitude (¹⁴C 5.7 kyr, ²⁶Al 0.7 Myr, ¹⁰Be
@@ -694,7 +694,14 @@ bit-for-bit what the single-nuclide mode returns.
 
 Sampling the accumulated raster at lat/lon points writes a CSV that
 `lsdtt-cosmo-tool` reads directly, closing a forward → inverse round trip
-against the imposed erosion rate.
+against the imposed erosion rate. In multi-isotope + accumulation runs, the same
+CSV also carries `Be10_CONC`, `Al26_CONC`, `C14_CONC`, `R2610_ACC`, and
+`R1410_ACC`, so ratio workflows do not need multiple model runs.
+
+For field-style apparent-rate checks by isotope, the same run also writes three
+direct bridge CSVs (`..._sampled_crn_conc_Be10.csv`, `..._Al26.csv`,
+`..._C14.csv`) so each isotope can be inverted in `lsdtt-cosmo-tool` without
+editing column names or rerunning prediction.
 
 Use it to design sampling campaigns, to test what a scenario would look like in
 the data, and to check inversion machinery against a known answer.

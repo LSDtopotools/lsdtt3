@@ -74,7 +74,7 @@ At least one must be set to `true`.
 | `calculate_step_change_crn_concentration_raster` | bool | `false` | Compute transient concentration after an instantaneous step change in erosion rate. Requires `step_change_eff_erate_old/new` and `time_since_change`. |
 | `calculate_multi_isotope_step_change` | bool | `false` | Carry Be-10, Al-26 and C-14 through the **same** step change at every pixel, and write the two isotope-ratio rasters. |
 | `calculate_multi_isotope_transient` | bool | `false` | The same three nuclides through an **arbitrary erosion history** from `transient_history_file`. The general case of the step-change mode. |
-| `calculate_accumulated_crn_concentration` | bool | `false` | Accumulate concentration downstream using D8 flow routing. Requires a concentration raster (computed in the same run or loaded separately). |
+| `calculate_accumulated_crn_concentration` | bool | `false` | Accumulate concentration downstream using D8 flow routing. In multi-isotope mode (with no `concentration_raster_prefix`), Be10/Al26/C14 are accumulated together in one pass and accumulated ratios can be written. |
 
 Three further capabilities are *modifiers* rather than modes, each opt-in and a
 no-op when left alone:
@@ -91,7 +91,7 @@ no-op when left alone:
 |---|---|---|---|
 | `transient_history_file` | string | `NULL` | CSV erosion history for `calculate_multi_isotope_transient`: `time,rate,removal` (yr BP, m/yr, m). Rows run most-recent-first; the last row must be `time = -9999` carrying the background rate. Unordered records are rejected fatally. |
 | `transient_rock_density_kg_m3` | float | `2650` | Density converting that history's metre-based rates and removals into effective depths. |
-| `write_isotope_ratio_rasters` | bool | `true` | Write `_R2610_step.tif` (Al26/Be10) and `_R1410_step.tif` (C14/Be10). Needs `calculate_multi_isotope_step_change`. |
+| `write_isotope_ratio_rasters` | bool | `true` | In multi-isotope step-change/transient mode, write `_R2610_step.tif` (Al26/Be10) and `_R1410_step.tif` (C14/Be10). If accumulation is also on, also write `_R2610_acc.tif` and `_R1410_acc.tif` from accumulated basin means. |
 
 ### Scaling scheme
 
@@ -471,6 +471,11 @@ The concentration raster to accumulate is selected in priority order:
 2. Step-change concentration computed in the same run
 3. Steady-state concentration computed in the same run
 
+When a multi-isotope concentration is present in memory and
+`concentration_raster_prefix` is `NULL`, accumulation uses the in-memory
+Be10/Al26/C14 rasters and accumulates all three in one shared pass over the
+domain (shared routing, shared weight raster).
+
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `concentration_raster_prefix` | string | `NULL` | Prefix of a pre-computed concentration raster to use for accumulation. |
@@ -493,9 +498,26 @@ model and recovered by the inversion.
 | `threshold_contributing_pixels` | int | `1000` | Minimum contributing pixels for a node to count as a channel when snapping. Matches `lsdtt-cosmo-tool`. |
 | `snap_search_radius_pixels` | int | `8` | Maximum search radius when snapping a point to the channel network. Matches `lsdtt-cosmo-tool`. |
 
-Output is `<write_fname>_sampled_crn_conc.csv` with columns `latitude`,
-`longitude`, `<nuclide>_CONC` and `snapped_contributing_pixels`. Snapping mirrors
-`lsdtt-cosmo-tool` so both tools resolve the same node.
+Output is `<write_fname>_sampled_crn_conc.csv`.
+
+- Single-isotope accumulation writes `latitude`, `longitude`, `<nuclide>_CONC`,
+  `snapped_contributing_pixels`.
+- Multi-isotope accumulation writes `latitude`, `longitude`, `Be10_CONC`,
+  `Al26_CONC`, `C14_CONC`, `R2610_ACC`, `R1410_ACC`,
+  `snapped_contributing_pixels`.
+
+For apparent-erosion checks in `lsdtt-cosmo-tool`, multi-isotope sampling also
+writes three direct bridge CSVs:
+
+- `<write_fname>_sampled_crn_conc_Be10.csv`
+- `<write_fname>_sampled_crn_conc_Al26.csv`
+- `<write_fname>_sampled_crn_conc_C14.csv`
+
+Each contains one concentration column (`Be10_CONC`, `Al26_CONC`, `C14_CONC`
+respectively) plus coordinates/snapping, so the tool can invert each isotope
+without editing columns or re-running the forward model.
+
+Snapping mirrors `lsdtt-cosmo-tool` so both tools resolve the same node.
 
 `threshold_contributing_pixels` is also used to snap
 `step_change_basin_outlet_csv` when generating a step change.
@@ -508,7 +530,7 @@ Output is `<write_fname>_sampled_crn_conc.csv` with columns `latitude`,
 |---|---|---|---|
 | `write_crn_concentration_raster` | bool | `true` | Write the steady-state concentration raster. Output: `<write_fname>_<nuclide>_crn_conc.tif`. |
 | `write_step_change_concentration_raster` | bool | `true` | Write the step-change concentration raster. Output: `<write_fname>_<nuclide>_step_crn_conc.tif`. |
-| `write_accumulated_crn_raster` | bool | `true` | Write the accumulated concentration raster. Output: `<write_fname>_<nuclide>_crn_acc.tif`. |
+| `write_accumulated_crn_raster` | bool | `true` | Write accumulated concentration raster(s). Single-isotope mode writes `<write_fname>_<nuclide>_crn_acc.tif`; multi-isotope mode writes all three: `_Be10_crn_acc.tif`, `_Al26_crn_acc.tif`, `_C14_crn_acc.tif`. |
 | `write_production_raster` | bool | `false` | Write the Stone 2000 production raster. Output: `<write_fname>_crn_prod.tif`. |
 
 ---
@@ -622,6 +644,12 @@ Outputs: `_Be10_step_crn_conc.tif`, `_Al26_step_crn_conc.tif`,
 `_C14_step_crn_conc.tif`, plus `_R2610_step.tif` and `_R1410_step.tif`. Pixels
 with zero Be-10 are written as nodata in the ratio rasters and the count is
 reported.
+
+If `calculate_accumulated_crn_concentration: true` is also set, and
+`concentration_raster_prefix` is `NULL`, the same run also writes accumulated
+multi-isotope rasters (`_Be10_crn_acc.tif`, `_Al26_crn_acc.tif`,
+`_C14_crn_acc.tif`) and accumulated ratios (`_R2610_acc.tif`, `_R1410_acc.tif`),
+and sampled points include `R2610_ACC`/`R1410_ACC`.
 
 Note that after an erosion-rate *increase* all concentrations fall, C-14 reaches
 its new value first, and the C14/Be10 ratio is therefore **suppressed** and

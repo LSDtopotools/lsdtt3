@@ -351,6 +351,21 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
     const lsdtt_raster_cpu& erosion_raster,
     const lsdtt_flowinfo&   flow);
 
+// Multi-isotope accumulation with a SHARED weight raster.
+//
+// Computes the three accumulated concentration rasters in one domain scan:
+//   Cacc_nuclide = Sigma_upslope(C_nuclide x weight) / Sigma_upslope(weight)
+//
+// The weight is typically either erosion-rate (legacy behaviour) or quartz mass
+// flux (kg quartz m^-2 yr^-1). All three nuclides are accumulated against the
+// SAME weight, so their ratios at a sample point are ratios of basin means.
+//
+// Returns nodata where the accumulated weight is zero.
+MultiNuclideRasters calculate_accumulated_crn_raster_multi(
+    const MultiNuclideRasters& conc,
+    const lsdtt_raster_cpu&    weight_raster,
+    const lsdtt_flowinfo&      flow);
+
 //  Erosion-rate inversion 
 // Inverts a measured nuclide concentration to an effective erosion rate using
 // Newton-Raphson followed by bisection if N-R does not converge.
