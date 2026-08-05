@@ -1463,6 +1463,14 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "CRN site mode: per-pixel"
 )
 
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_landslides_sample_ensemble
+    lsdtt-cosmo-landslides
+    cosmo_landslides_sample_ensemble.param.in
+    lsens_LS_SAMPLE_EFFECT.csv
+    --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:ratio_to_control_median"
+)
+
 # A geographic-CRS DEM must exit cleanly with a diagnosis, NOT abort on an
 # uncaught throw. The deeper check throws; the CLI catches it.
 add_lsdtt_cli_smoke_test(

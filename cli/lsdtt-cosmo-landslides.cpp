@@ -27,21 +27,31 @@
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
+#include <set>
+#include <sstream>
+#include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_point_input.hpp"
 #include "../src/cpu/lsdtt_cosmo_site_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
+#include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
+#include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_landslide_crn_cpu.hpp"
 #include "../src/cpu/lsdtt_landslide_event_cpu.hpp"
+#include "../src/cpu/lsdtt_niemi_ensemble_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 
@@ -111,6 +121,112 @@ static bool landslide_cosmo_parameters_supported(const std::string& muon_scheme,
         return false;
     }
     return true;
+}
+
+
+struct sample_point_row
+{
+    std::string name;
+    double latitude = std::numeric_limits<double>::quiet_NaN();
+    double longitude = std::numeric_limits<double>::quiet_NaN();
+};
+
+static std::vector<std::string> split_csv_row_simple(const std::string& row)
+{
+    std::vector<std::string> out;
+    std::stringstream ss(row);
+    std::string item;
+    while (std::getline(ss, item, ',')) out.push_back(item);
+    return out;
+}
+
+static std::string trim_ws(std::string s)
+{
+    const auto is_ws = [](unsigned char c)
+    { return std::isspace(c) != 0; };
+    while (!s.empty() && is_ws(static_cast<unsigned char>(s.front())))
+        s.erase(s.begin());
+    while (!s.empty() && is_ws(static_cast<unsigned char>(s.back())))
+        s.pop_back();
+    return s;
+}
+
+static std::string to_lower(std::string s)
+{
+    for (char& ch : s)
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return s;
+}
+
+static double percentile_sorted(std::vector<double> v, double p)
+{
+    if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
+    std::sort(v.begin(), v.end());
+    if (v.size() == 1) return v[0];
+    const double x = p * static_cast<double>(v.size() - 1);
+    const std::size_t i = static_cast<std::size_t>(std::floor(x));
+    const double f = x - static_cast<double>(i);
+    if (i + 1 >= v.size()) return v.back();
+    return v[i] * (1.0 - f) + v[i + 1] * f;
+}
+
+static std::vector<sample_point_row> read_sample_point_rows(
+    const std::string& csv_path,
+    const std::string& name_col,
+    const std::string& lat_col,
+    const std::string& lon_col)
+{
+    std::ifstream f(csv_path);
+    if (!f.is_open())
+        throw std::runtime_error("could not open sample_points_csv: " + csv_path);
+
+    std::string header;
+    if (!std::getline(f, header))
+        throw std::runtime_error("sample_points_csv is empty: " + csv_path);
+
+    auto h = split_csv_row_simple(header);
+    int i_name = -1, i_lat = -1, i_lon = -1;
+    for (int i = 0; i < static_cast<int>(h.size()); ++i)
+    {
+        const std::string key = to_lower(trim_ws(h[i]));
+        if (key == to_lower(name_col)) i_name = i;
+        if (key == to_lower(lat_col)) i_lat = i;
+        if (key == to_lower(lon_col)) i_lon = i;
+    }
+    if (i_lat < 0 || i_lon < 0)
+        throw std::runtime_error(
+            "sample_points_csv must contain latitude/longitude columns named "
+            + lat_col + " and " + lon_col + ".");
+
+    std::vector<sample_point_row> out;
+    std::string line;
+    int idx = 1;
+    while (std::getline(f, line))
+    {
+        if (trim_ws(line).empty()) continue;
+        auto t = split_csv_row_simple(line);
+        if (static_cast<int>(t.size()) <= std::max(i_lat, i_lon))
+            throw std::runtime_error("sample_points_csv row is too short at row "
+                                     + std::to_string(idx + 1));
+        sample_point_row r;
+        r.name = (i_name >= 0 && i_name < static_cast<int>(t.size()))
+            ? trim_ws(t[static_cast<std::size_t>(i_name)])
+            : ("sample_" + std::to_string(idx));
+        if (r.name.empty()) r.name = "sample_" + std::to_string(idx);
+        try
+        {
+            r.latitude = std::stod(trim_ws(t[static_cast<std::size_t>(i_lat)]));
+            r.longitude = std::stod(trim_ws(t[static_cast<std::size_t>(i_lon)]));
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error("sample_points_csv has non-numeric lat/lon at row "
+                                     + std::to_string(idx + 1));
+        }
+        out.push_back(r);
+        ++idx;
+    }
+    return out;
 }
 
 
@@ -331,6 +447,53 @@ int main(int argc, char* argv[])
         "one. Filename: <write_fname>_LS_INVENTORY.csv",
         "Output","switch",""};
 
+    bool_default_map["run_sample_point_ensemble"] = false;
+    help_map["run_sample_point_ensemble"] = {"bool","false",
+        "Run an ensemble at user sample points and write sample-effect CSV.",
+        "Computes apparent erosion rates at snapped sample outlets with and "
+        "without landslides over n_realisations. Filename: "
+        "<write_fname>_LS_SAMPLE_EFFECT.csv",
+        "Cosmogenics","switch",""};
+
+    string_default_map["sample_points_csv"] = "NULL";
+    help_map["sample_points_csv"] = {"string","NULL",
+        "CSV of sample points used by run_sample_point_ensemble.",
+        "Must contain latitude/longitude columns (defaults: latitude, longitude).",
+        "Cosmogenics","io",""};
+
+    string_default_map["sample_name_column"] = "sample_name";
+    help_map["sample_name_column"] = {"string","sample_name",
+        "Sample-name column in sample_points_csv.",
+        "If missing or empty, names default to sample_1, sample_2, ...",
+        "Cosmogenics","param",""};
+
+    string_default_map["sample_latitude_column"] = "latitude";
+    help_map["sample_latitude_column"] = {"string","latitude",
+        "Latitude column name in sample_points_csv (EPSG:4326 degrees).","",
+        "Cosmogenics","param",""};
+
+    string_default_map["sample_longitude_column"] = "longitude";
+    help_map["sample_longitude_column"] = {"string","longitude",
+        "Longitude column name in sample_points_csv (EPSG:4326 degrees).","",
+        "Cosmogenics","param",""};
+
+    int_default_map["n_realisations"] = 50;
+    help_map["n_realisations"] = {"int","50",
+        "Number of landslide realisations for run_sample_point_ensemble.","",
+        "Cosmogenics","param",""};
+
+    int_default_map["ensemble_seed_stride"] = 7919;
+    help_map["ensemble_seed_stride"] = {"int","7919",
+        "Seed increment between ensemble realisations.",
+        "Realisation i uses random_seed + i*ensemble_seed_stride.",
+        "Cosmogenics","param",""};
+
+    int_default_map["sample_snap_radius_pixels"] = 25;
+    help_map["sample_snap_radius_pixels"] = {"int","25",
+        "Maximum snap radius (pixels) for sample points to threshold channel.",
+        "Used by expanding-square snapping in run_sample_point_ensemble.",
+        "Cosmogenics","param",""};
+
     // --- Optional CRN coupling ---
     bool_default_map["calculate_crn_concentration"] = false;
     help_map["calculate_crn_concentration"] = {"bool","false",
@@ -487,6 +650,32 @@ int main(int argc, char* argv[])
         !landslide_cosmo_parameters_supported(sf["muon_scheme"], sf["nuclide"]))
     {
         return 1;
+    }
+
+    if (bf["run_sample_point_ensemble"])
+    {
+        if (sf["sample_points_csv"] == "NULL")
+        {
+            std::cerr << "FATAL: run_sample_point_ensemble requires sample_points_csv.\n";
+            return 1;
+        }
+        if (sf["landslide_mode"] != "series")
+        {
+            std::cerr << "FATAL: run_sample_point_ensemble currently requires landslide_mode: series.\n";
+            return 1;
+        }
+        if (!(ff["long_term_erosion_rate_mm_kyr"] > 0.0f)
+            && !(ff["event_volume_m3"] > 0.0f))
+        {
+            std::cerr << "FATAL: run_sample_point_ensemble requires a non-zero landslide rate "
+                         "(long_term_erosion_rate_mm_kyr or event_volume_m3).\n";
+            return 1;
+        }
+        if (ifs["n_realisations"] <= 0)
+        {
+            std::cerr << "FATAL: n_realisations must be > 0.\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -763,6 +952,367 @@ int main(int argc, char* argv[])
     if (realised.empty())
         std::cerr << "\nWarning: no landslides were placed. Check the budget, "
                      "the channel threshold and the mask.\n";
+
+    if (bf["run_sample_point_ensemble"])
+    {
+        std::cout << "\nRunning sample-point ensemble...\n";
+
+        const std::string pts_path = pp.add_read_path_if_needed(sf["sample_points_csv"]);
+        std::vector<sample_point_row> sample_rows;
+        try
+        {
+            sample_rows = read_sample_point_rows(
+                pts_path,
+                sf["sample_name_column"],
+                sf["sample_latitude_column"],
+                sf["sample_longitude_column"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_point_input_options popts;
+        popts.csv_latitude_field_name = sf["sample_latitude_column"];
+        popts.csv_longitude_field_name = sf["sample_longitude_column"];
+        std::vector<lsdtt::lsdtt_input_point> pts;
+        try
+        {
+            pts = lsdtt::load_points_in_raster_crs(pts_path, meta, popts);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: could not load sample points: " << e.what() << "\n";
+            return 1;
+        }
+        if (pts.size() != sample_rows.size())
+        {
+            std::cerr << "FATAL: sample_points_csv parse mismatch between name and coordinate loaders.\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_square_snap_options snap_opts;
+        snap_opts.contributing_pixels_threshold = static_cast<std::uint64_t>(chan_thresh);
+        snap_opts.max_search_radius_pixels = ifs["sample_snap_radius_pixels"];
+        snap_opts.min_search_radius_pixels = 0;
+
+        std::vector<std::string> snap_status(sample_rows.size(), "failed_no_channel");
+        std::vector<std::uint64_t> snapped_contrib(sample_rows.size(), 0);
+        std::vector<double> basin_area_km2(sample_rows.size(),
+            std::numeric_limits<double>::quiet_NaN());
+        std::vector<std::int64_t> outlet_flat(sample_rows.size(), -1);
+        std::vector<int> unique_slot_of_row(sample_rows.size(), -1);
+
+        std::map<std::int64_t, int> first_row_for_outlet;
+        std::vector<std::int64_t> unique_outlets;
+
+        for (std::size_t i = 0; i < pts.size(); ++i)
+        {
+            if (pts[i].status != lsdtt::lsdtt_point_input_status::success)
+            {
+                snap_status[i] = "failed_no_channel";
+                continue;
+            }
+
+            const lsdtt::lsdtt_snap_result sr =
+                lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
+                    *flow, pts[i].row, pts[i].col, snap_opts);
+            if (sr.status != lsdtt::lsdtt_snap_status::success)
+            {
+                snap_status[i] = "failed_no_channel";
+                continue;
+            }
+
+            snapped_contrib[i] = sr.snapped_contributing_pixels;
+            outlet_flat[i] = sr.snapped_flat;
+            const double area_km2 =
+                static_cast<double>(flow->s_vector_size_unchecked(sr.snapped_flat))
+                * cell * cell * 1.0e-6;
+            basin_area_km2[i] = area_km2;
+
+            auto it = first_row_for_outlet.find(sr.snapped_flat);
+            if (it != first_row_for_outlet.end())
+            {
+                unique_slot_of_row[i] = unique_slot_of_row[it->second];
+                snap_status[i] = "duplicate_of:" + sample_rows[it->second].name;
+                continue;
+            }
+
+            first_row_for_outlet[sr.snapped_flat] = static_cast<int>(i);
+            unique_slot_of_row[i] = static_cast<int>(unique_outlets.size());
+            unique_outlets.push_back(sr.snapped_flat);
+
+            if (sr.search_radius_pixels > 0)
+                snap_status[i] = "snapped_" + std::to_string(sr.search_radius_pixels) + "_pixels";
+            else
+                snap_status[i] = "ok";
+        }
+
+        if (unique_outlets.empty())
+        {
+            std::cerr << "FATAL: no sample point could be snapped to a valid outlet.\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_raster_cpu prod_raster;
+        lsdtt::lsdtt_raster_cpu topo_raster;
+        lsdtt::lsdtt_raster_cpu snow_raster;
+        lsdtt::lsdtt_raster_cpu self_raster;
+
+        const std::string scaling_scheme = sf["scaling_scheme"];
+        if (scaling_scheme == "uniform")
+        {
+            const double site_factor = static_cast<double>(ff["production_scaling"])
+                                     * static_cast<double>(ff["total_shielding"]);
+            prod_raster = lsdtt::make_uniform_raster(
+                exc, static_cast<float>(site_factor), lsdtt::MaskedFill::Value);
+            topo_raster = lsdtt::make_uniform_raster(exc, 1.0f, lsdtt::MaskedFill::Value);
+            snow_raster = lsdtt::make_uniform_raster(exc, 0.0f, lsdtt::MaskedFill::Value);
+            self_raster = lsdtt::make_uniform_raster(exc, 0.0f, lsdtt::MaskedFill::Value);
+        }
+        else
+        {
+            lsdtt::CosmoSiteConfig site_cfg;
+            site_cfg.nuclide        = sf["nuclide"];
+            site_cfg.muon_scheme    = sf["muon_scheme"];
+            site_cfg.scaling_scheme = scaling_scheme;
+            site_cfg.atmosphere     = sf["atmosphere"];
+            site_cfg.crn_nc_file    = sf["crn_nc_file"];
+            site_cfg.sample_age_yr  = static_cast<double>(ff["sample_age_yr"]);
+            site_cfg.topo_shield_value         = static_cast<double>(ff["topo_shield_value"]);
+            site_cfg.snow_shield_eff_thickness = static_cast<double>(ff["snow_shield_eff_thickness"]);
+            site_cfg.self_shield_eff_thickness = static_cast<double>(ff["self_shield_eff_thickness"]);
+            site_cfg.read_path = pp.get_read_path();
+
+            constexpr lsdtt::CosmoSiteCaps k_site_caps =
+                lsdtt::CosmoSiteCaps::Production
+              | lsdtt::CosmoSiteCaps::ShieldingScalars;
+            try { lsdtt::validate_cosmo_site_config(site_cfg, k_site_caps); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+
+            lsdtt::CosmoSite site;
+            try { site = lsdtt::build_cosmo_site(filled, site_cfg, k_site_caps); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+            prod_raster = site.production();
+            topo_raster = site.topographic_shielding();
+            snow_raster = site.snow_shielding();
+            self_raster = site.self_shielding();
+        }
+
+        lsdtt::lsdtt_flowinfo_options eval_opts;
+        eval_opts.boundary_conditions = sf["boundary_conditions"];
+        eval_opts.build_s_vector = true;
+        eval_opts.build_topological_order = true;
+        lsdtt::lsdtt_flowinfo flow_eval(filled.get_data_array(), filled.get_mask_array(),
+                                        meta, eval_opts);
+
+        lsdtt::lsdtt_raster_cpu ero_bg = lsdtt::make_uniform_raster(
+            exc, ff["background_eff_erate_g_cm2_yr"], lsdtt::MaskedFill::Value);
+        lsdtt::lsdtt_raster_cpu exc_zero =
+            lsdtt::make_uniform_raster(exc, 0.0f, lsdtt::MaskedFill::Value);
+
+        lsdtt::lsdtt_raster_cpu conc_control = lsdtt::calculate_crn_concentration_raster_whole(
+            sf["nuclide"], sf["muon_scheme"], ero_bg, prod_raster,
+            topo_raster, snow_raster, self_raster);
+
+        const auto control_samples = lsdtt::evaluate_niemi_basins(
+            flow_eval, unique_outlets, conc_control, ero_bg, ero_bg, exc_zero,
+            prod_raster, topo_raster, snow_raster, self_raster,
+            sf["nuclide"], sf["muon_scheme"], 0);
+
+        struct sample_agg
+        {
+            std::vector<double> conc;
+            std::vector<double> erate;
+            std::vector<double> ratio_to_control;
+            std::vector<double> frac_failed;
+            std::vector<double> n_failed_pixels;
+        };
+        std::vector<sample_agg> aggs(unique_outlets.size());
+
+        lsdtt::LandslideSeriesConfig scfg;
+        scfg.start_time_yr      = ff["series_start_yr"];
+        scfg.end_time_yr        = ff["series_end_yr"];
+        scfg.mean_recurrence_yr = ff["mean_recurrence_yr"];
+        scfg.poisson_timing     = bf["poisson_timing"];
+        scfg.target_volume_per_event_m3   = ff["event_volume_m3"];
+        scfg.long_term_erosion_rate_mm_kyr = ff["long_term_erosion_rate_mm_kyr"];
+        scfg.anneal_time_yr     = ff["anneal_time_yr"];
+        scfg.budget_tol         = ff["budget_tolerance"];
+        scfg.budget_max_iter    = ifs["budget_max_iterations"];
+
+        lsdtt::LandslideStepChangeConfig ccfg;
+        ccfg.eff_erate_old_g_cm2_yr = ff["background_eff_erate_g_cm2_yr"];
+        ccfg.eff_erate_new_g_cm2_yr = ff["background_eff_erate_g_cm2_yr"];
+        ccfg.rock_density_kg_m3     = ff["rock_density_kg_m3"];
+        ccfg.scar_density_kg_m3 = (ff["scar_density_kg_m3"] > 0.0f)
+            ? ff["scar_density_kg_m3"] : sp.av.scar_density_kg_m3;
+        ccfg.flush_time_threshold_yr = ff["mean_recurrence_yr"];
+        ccfg.muon_scheme = sf["muon_scheme"];
+
+        for (int ir = 0; ir < ifs["n_realisations"]; ++ir)
+        {
+            scfg.seed = static_cast<std::uint64_t>(ifs["random_seed"])
+                      + static_cast<std::uint64_t>(ir)
+                      * static_cast<std::uint64_t>(ifs["ensemble_seed_stride"]);
+
+            lsdtt::lsdtt_raster_cpu tfail_r = lsdtt::make_uniform_raster(
+                filled, static_cast<float>(meta.no_data_value), lsdtt::MaskedFill::Value);
+            lsdtt::lsdtt_raster_cpu exc_r =
+                lsdtt::make_uniform_raster(filled, 0.0f, lsdtt::MaskedFill::Value);
+            lsdtt::lsdtt_raster_cpu work_r = filled;
+
+            try
+            {
+                (void)lsdtt::run_landslide_series(
+                    work_r, tfail_r, exc_r, placer, *sampler, scfg);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: sample-point ensemble realisation failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            const lsdtt::lsdtt_raster_cpu t_since =
+                lsdtt::time_since_failure_from_time_of_failure(
+                    tfail_r, static_cast<double>(ff["crn_report_time_yr"]));
+            const lsdtt::lsdtt_raster_cpu tsc = lsdtt::make_uniform_raster(
+                exc_r, 1.0e6f, lsdtt::MaskedFill::Value);
+
+            lsdtt::LandslideCouplingResultMulti mres;
+            try
+            {
+                mres = lsdtt::compute_landslide_step_change_concentration_multi(
+                    exc_r, t_since, tsc, prod_raster, topo_raster, ccfg, &ero_bg);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: sample-point ensemble concentration failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            const lsdtt::lsdtt_raster_cpu* selected = &mres.concentration.Be10;
+            if (sf["nuclide"] == "Al26") selected = &mres.concentration.Al26;
+            else if (sf["nuclide"] == "C14") selected = &mres.concentration.C14;
+
+            const auto smp = lsdtt::evaluate_niemi_basins(
+                flow_eval, unique_outlets, *selected,
+                mres.delivery_mass_kg_m2_yr, ero_bg, exc_r,
+                prod_raster, topo_raster, snow_raster, self_raster,
+                sf["nuclide"], sf["muon_scheme"], ir + 1);
+
+            for (std::size_t k = 0; k < smp.size(); ++k)
+            {
+                if (!smp[k].valid) continue;
+                if (k >= control_samples.size() || !control_samples[k].valid) continue;
+                if (!(control_samples[k].apparent_erate_g_cm2_yr > 0.0)) continue;
+
+                aggs[k].conc.push_back(smp[k].accumulated_conc);
+                aggs[k].erate.push_back(smp[k].apparent_erate_g_cm2_yr);
+                aggs[k].ratio_to_control.push_back(
+                    smp[k].apparent_erate_g_cm2_yr
+                    / control_samples[k].apparent_erate_g_cm2_yr);
+                aggs[k].frac_failed.push_back(smp[k].fraction_failed);
+                aggs[k].n_failed_pixels.push_back(static_cast<double>(smp[k].n_failed_pixels));
+            }
+        }
+
+        const std::string eff_path = pp.get_full_write_path() + "_LS_SAMPLE_EFFECT.csv";
+        std::ofstream out(eff_path);
+        if (!out.is_open())
+        {
+            std::cerr << "FATAL: could not write " << eff_path << "\n";
+            return 1;
+        }
+        out.precision(10);
+        out << "sample_name,x,y,snap_status,snapped_contributing_pixels,basin_area_km2,"
+               "conc_control,erate_control_mm_kyr,"
+               "conc_median,erate_median_mm_kyr,erate_p05,erate_p95,"
+               "ratio_to_control_median,ratio_to_control_p05,ratio_to_control_p95,"
+               "n_realisations,n_landslides_upstream_median,area_fraction_failed_median,"
+               "interpretable\n";
+
+        const double erate_scale_mm_kyr = 1.0e7 / static_cast<double>(ff["rock_density_kg_m3"]);
+        for (std::size_t i = 0; i < sample_rows.size(); ++i)
+        {
+            const int slot = unique_slot_of_row[i];
+            const bool has_slot = slot >= 0 && slot < static_cast<int>(aggs.size());
+            const bool has_ctrl = has_slot && slot < static_cast<int>(control_samples.size())
+                               && control_samples[slot].valid;
+
+            double c_ctrl = std::numeric_limits<double>::quiet_NaN();
+            double e_ctrl_mm_kyr = std::numeric_limits<double>::quiet_NaN();
+            if (has_ctrl)
+            {
+                c_ctrl = control_samples[slot].accumulated_conc;
+                e_ctrl_mm_kyr = control_samples[slot].apparent_erate_g_cm2_yr * erate_scale_mm_kyr;
+            }
+
+            double c_med = std::numeric_limits<double>::quiet_NaN();
+            double e_med = std::numeric_limits<double>::quiet_NaN();
+            double e_p05 = std::numeric_limits<double>::quiet_NaN();
+            double e_p95 = std::numeric_limits<double>::quiet_NaN();
+            double r_med = std::numeric_limits<double>::quiet_NaN();
+            double r_p05 = std::numeric_limits<double>::quiet_NaN();
+            double r_p95 = std::numeric_limits<double>::quiet_NaN();
+            double nls_med = std::numeric_limits<double>::quiet_NaN();
+            double frac_med = std::numeric_limits<double>::quiet_NaN();
+            int n_real = 0;
+
+            if (has_slot)
+            {
+                const auto& a = aggs[slot];
+                n_real = static_cast<int>(a.erate.size());
+                c_med = percentile_sorted(a.conc, 0.50);
+                e_med = percentile_sorted(a.erate, 0.50) * erate_scale_mm_kyr;
+                e_p05 = percentile_sorted(a.erate, 0.05) * erate_scale_mm_kyr;
+                e_p95 = percentile_sorted(a.erate, 0.95) * erate_scale_mm_kyr;
+                r_med = percentile_sorted(a.ratio_to_control, 0.50);
+                r_p05 = percentile_sorted(a.ratio_to_control, 0.05);
+                r_p95 = percentile_sorted(a.ratio_to_control, 0.95);
+                nls_med = percentile_sorted(a.n_failed_pixels, 0.50);
+                frac_med = percentile_sorted(a.frac_failed, 0.50);
+            }
+
+            std::string interpretable = "no";
+            if (std::isfinite(r_p05) && std::isfinite(r_p95)
+                && std::isfinite(basin_area_km2[i])
+                && basin_area_km2[i] >= 0.5 && (r_p95 - r_p05) <= 0.4)
+                interpretable = "yes";
+
+            out << sample_rows[i].name << ","
+                << sample_rows[i].longitude << ","
+                << sample_rows[i].latitude << ","
+                << snap_status[i] << ","
+                << snapped_contrib[i] << ","
+                << basin_area_km2[i] << ","
+                << c_ctrl << ","
+                << e_ctrl_mm_kyr << ","
+                << c_med << ","
+                << e_med << ","
+                << e_p05 << ","
+                << e_p95 << ","
+                << r_med << ","
+                << r_p05 << ","
+                << r_p95 << ","
+                << n_real << ","
+                << nls_med << ","
+                << frac_med << ","
+                << interpretable << "\n";
+        }
+        std::cout << "Wrote " << eff_path << "\n";
+    }
 
     // -------------------------------------------------------------------------
     // Outputs

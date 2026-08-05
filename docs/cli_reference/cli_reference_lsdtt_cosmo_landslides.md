@@ -258,6 +258,14 @@ is not offered.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `calculate_crn_concentration` | bool | `false` | Compute the post-landslide surface concentration raster. |
+| `run_sample_point_ensemble` | bool | `false` | Run a multi-realisation sample-point ensemble and write `<write_fname>_LS_SAMPLE_EFFECT.csv`. |
+| `sample_points_csv` | string | `NULL` | Input sample-point CSV for ensemble mode. |
+| `sample_name_column` | string | `sample_name` | Name column in `sample_points_csv`. |
+| `sample_latitude_column` | string | `latitude` | Latitude column in `sample_points_csv` (EPSG:4326 degrees). |
+| `sample_longitude_column` | string | `longitude` | Longitude column in `sample_points_csv` (EPSG:4326 degrees). |
+| `n_realisations` | int | `50` | Number of realisations for ensemble mode. |
+| `ensemble_seed_stride` | int | `7919` | Seed increment between realisations (`random_seed + i*stride`). |
+| `sample_snap_radius_pixels` | int | `25` | Maximum snap radius when mapping sample points to threshold channels. |
 | `nuclide` | string | `Be10` | `Be10`, `Al26` or `C14`. |
 | `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. |
 | `scaling_scheme` | string | `uniform` | Production scaling path for CRN coupling: `uniform`, `stone`, or `lsdn`. `uniform` keeps the legacy scalar path (`production_scaling` and `total_shielding`). `stone`/`lsdn` build a per-pixel `CosmoSite` from the DEM. |
@@ -345,6 +353,7 @@ Two conventions to match across the two tools:
 | `write_time_of_failure_raster` | bool | `true` | `<write_fname>_LS_TFAIL.tif` — time each pixel last failed. |
 | `write_post_landslide_dem` | bool | `false` | `<write_fname>_LS_DEM.tif` — the DEM after excavation. |
 | `write_landslide_csv` | bool | `true` | `<write_fname>_LS_INVENTORY.csv` — one row per landslide. |
+| `run_sample_point_ensemble` | bool | `false` | `<write_fname>_LS_SAMPLE_EFFECT.csv` — per-sample control vs landslide apparent-rate ensemble statistics. |
 
 The inventory CSV has `landslide_id`, `n_pixels`, `area_m2`, `volume_m3`,
 `mean_depth_m`. It is the realised size distribution, for checking against the
