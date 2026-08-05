@@ -1897,6 +1897,201 @@ status reflects only whether the files could be read.
 
 ---
 
+### 7.10c The `lsdtt-cosmo-landslides` rename, and the compartment trap in it (2026-08-05)
+
+`lsdtt-landslides` became **`lsdtt-cosmo-landslides`**, with no compatibility
+alias. Parameter files are unaffected; scripts invoking the old executable name
+are not.
+
+Recorded here for one non-obvious reason. The domain compartments (§2) derive a
+test's domain **from its name, first match wins**, and the rule table has
+`"cosmo"` *before* `"landslide"`. So renaming `smoke_landslides_*` to
+`smoke_cosmo_landslides_*` would silently have moved all six CLI tests out of
+the `landslide` compartment — `ctest -L landslide` would have stopped seeing the
+CLI for the module it is named after, and nothing would have failed to say so.
+
+The fix follows the existing `roering|implicit` precedent, which exists for the
+same reason: a test can legitimately belong to two compartments.
+
+```cmake
+if(_test MATCHES "landslide" AND NOT _domains STREQUAL "landslide")
+    list(APPEND _domains "landslide")
+endif()
+```
+
+Verified: all six renamed tests now carry both `cosmo` and `landslide`, and
+`ctest -L landslide -LE heavy` lists 14 tests as before.
+
+**The generalisable point:** a name-derived classification scheme makes renames
+load-bearing. Any rename that adds a word matching an earlier rule silently
+reclassifies the test, and the "unclassified test is a configure error" guard
+cannot catch it, because the test *is* classified — just not where it was.
+
+**The refactor oracle (§7.11) was re-frozen** for this phase, and the diff is
+the evidence it was behaviour-preserving: every `sha256`, `kind` and
+`exit_code` identical, with only the informational `exe` column changing on the
+four `L1` rows. A re-freeze whose diff touches a hash is a different kind of
+change and needs a different justification.
+
+---
+
+### 7.10b Validity is not capability (`lsdtt-cosmo-landslides`, 2026-08-05)
+
+A shipped defect, found while planning the cosmogenic CLI rationalisation and
+fixed under plan phase R2b. It is recorded because the *shape* of it recurs.
+
+**What it was.** `lsdtt-cosmo-landslides` caught any failure inside its cosmogenic
+block, printed a stderr warning, and fell through to **exit 0** having written
+no concentration raster. Measured on the shipped binary:
+
+```
+$ lsdtt-cosmo-landslides t.param          # muon_scheme: ThisIsNotARealScheme
+EXIT=0 — "Warning: CRN concentration failed: unknown muon scheme ..."  (no raster)
+
+$ lsdtt-cosmo-landslides t2.param         # muon_scheme: cronusEmulatorSt
+EXIT=0 — "Warning: CRN concentration failed: ... cannot be set through
+          reset_scaling() ..."                                        (no raster)
+```
+
+To a scripted workflow both are **successes that produced nothing** — a worse
+failure mode than a crash, because nothing notices.
+
+**The second case is the interesting one.** `cronusEmulatorSt` is a perfectly
+valid lsdtt3 muon scheme; `is_valid_muon_scheme()` accepts it. But it is
+pressure- *and* nuclide-dependent, and this tool reaches the column through
+`reset_scaling()`, which deliberately throws for exactly those two schemes
+because it is handed neither. **Validity is a property of the name; capability
+is a property of the tool.** A single shared validator that checked only the
+name would accept something that fails later — which is precisely what
+`lsdtt-cosmo-column-tool` already documents and guards against with its own
+`column_muon_scheme_is_supported()`.
+
+That has a direct consequence for the planned shared cosmogenic site component:
+**its validator must take a capability set, not just a scheme name.**
+
+**The fix.** Validation up front and fatal, before the DEM is read or a single
+landslide placed, plus the catch-all downgraded from a warning to a fatal. It is
+**conditional on the cosmogenic output actually being requested**, because
+`muon_scheme` and `nuclide` are inert for a pure-geomorphology run and
+rejecting a stale line that changes nothing would be officious.
+
+Three tests pin all three behaviours, and the third is the one that stops the
+natural over-correction:
+
+| test | pins |
+|---|---|
+| `failure_landslides_bad_muon_scheme` | unknown scheme ⇒ nonzero exit |
+| `failure_landslides_emulator_scheme` | valid-but-unserviceable scheme ⇒ nonzero exit, message names the tool that does support it |
+| `smoke_landslides_geomorph_only_ignores_muon_scheme` | a nonsense scheme with the cosmogenic output OFF still runs |
+
+Both failure tests would have failed before the fix with "CLI was expected to
+fail but returned 0", so they pin the change rather than merely accompanying it.
+
+**The refactor oracle (§7.11) was unchanged by this**, at 34/34 — the proof that
+a fix to invalid-input handling disturbed no valid run. That is the intended
+division of labour: the oracle covers valid configurations, the `failure_` tier
+covers invalid ones.
+
+---
+
+### 7.11 The refactor oracle (`regression_cosmo_oracle`)
+
+`tests/data/cosmo_oracle.csv` is a **bitwise hash of every raster and CSV the
+four cosmogenic CLIs produce**, across a matrix of scaling scheme, muon scheme,
+shielding path and prediction mode. 34 artefacts over 15 cases; 8 kB tracked.
+
+It exists because the production, pressure and shielding setup is CLI-local and
+duplicated between `lsdtt-cosmo-prediction` and `lsdtt-cosmo-tool`, and is due
+to be extracted into a shared component. **The oracle for a refactor is the
+pre-refactor binary, and that binary stops existing the moment the refactor
+lands** — so it is captured first, deliberately, as a tracked artefact.
+
+Every subsequent change is one of exactly two kinds and must declare which:
+
+| kind | obligation |
+|---|---|
+| behaviour-**preserving** | `regression_cosmo_oracle` stays green. That is the proof the refactor was safe. |
+| behaviour-**changing** | re-freeze with `--freeze`, and state in the commit message which artefacts moved and why. |
+
+**Do not re-freeze to make a red test pass.**
+
+#### How the hash is exact
+
+Rasters go through `gdal_translate -of ENVI` and the raw bytes are sha256'd —
+bitwise on the pixel values, verified by round-tripping through numpy against
+the source band. CSVs are hashed with absolute paths stripped so the run
+location is irrelevant.
+
+Two alternatives were tried and rejected:
+
+- **`gdalinfo -checksum`** is a 16-bit value, and an all-zero band (a landslide
+  excavation raster) checksums to 0 — it cannot tell "all zeros" from "all
+  zeros in a different shape".
+- **`gdalinfo -stats`** truncates `STATISTICS_MEAN` and `_MAXIMUM` to two
+  decimal places, nowhere near enough for a bitwise claim, and it writes a
+  `.aux.xml` sidecar that then caches stale statistics.
+
+stdout is deliberately **not** hashed: it carries absolute paths and free text
+and is not a stable contract. Everything it reports that matters is expressed in
+the rasters. Exit codes **are** recorded, because a CLI that starts failing — or
+starts succeeding — is a real change.
+
+#### Verified to fail
+
+A 1-part-in-10⁶ perturbation of the production raster moves **16 of the 22
+cheap-tier artefacts**, including `lsdtt-cosmo-tool`'s inverted erosion-rate
+CSVs. So the oracle reaches through the whole forward/inverse chain, not just
+the raster it perturbs. The 6 that survive are the landslide and column-tool
+cases, which take the scalar production path — itself a useful signal about
+which cases exercise which path.
+
+#### A guard on the oracle itself
+
+The parameter parser **ignores unknown names silently**, so a case with a typo
+freezes the CLI's *default* rather than the behaviour it names — an oracle that
+looks fine and guards nothing. This was not hypothetical: the first draft of
+case C1 wrote `effective_erosion_rate` where `lsdtt-cosmo-column-tool` declares
+`effective_erosion_rate_g_cm2_yr`, and froze a run at the default 0.1 g/cm²/yr
+instead of the intended 0.002.
+
+The script now validates every case's parameter names against the CLI's own
+`-h` output — which is rendered from the declarations, so it is authoritative
+rather than a second list to keep in step — and **fails the run** on an
+undeclared name. An unparseable help block is also a hard error rather than an
+empty "nothing to check" set; that caught a missing `re.MULTILINE` immediately.
+
+#### Cross-checks that fall out of it
+
+Freezing the matrix surfaced three consistency properties worth knowing:
+
+- `lsdtt-cosmo-prediction` and `lsdtt-cosmo-tool` produce **byte-identical
+  production rasters** under `stone`. That is direct evidence the shared-site
+  extraction is legitimate rather than merely plausible.
+- The multi-isotope Be-10 raster is **byte-identical** to the single-nuclide
+  step-change raster, confirming at CLI level the equality the unit tier asserts
+  internally.
+- Changing shielding alone leaves the production raster identical and moves the
+  concentration — so the two really are applied separately, which is the
+  property an 11.4 % disagreement once turned on.
+
+#### Running it
+
+```bash
+ctest --test-dir build -R regression_cosmo_oracle            # cheap, ~4 s
+ctest --test-dir build -R regression_cosmo_oracle_heavy      # + LSDn/emulator
+
+# re-freeze — a deliberate act
+python3 tests/scripts/freeze_cosmo_oracle.py --build-dir build \
+    --read-path tests/data --oracle tests/data/cosmo_oracle.csv \
+    --work-dir /tmp/oracle --tier all --freeze
+```
+
+The heavy tier carries the `lsdn` and CRONUS-emulator rows: they need the LSDn
+scaling grids in `crn_parameters.nc` and carry the most setup state, which is
+exactly why they are worth keeping rather than dropping.
+
+---
+
 ## 8. Implicit hillslope solver validation
 
 The backward-Euler + damped-Picard solver for the Roering (1999) nonlinear

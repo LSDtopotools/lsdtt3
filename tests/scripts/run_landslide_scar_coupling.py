@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end check of the landslide 'scar' coupling across two CLIs.
 
-lsdtt-landslides writes a time-of-failure raster and an excavation-depth
+lsdtt-cosmo-landslides writes a time-of-failure raster and an excavation-depth
 raster; lsdtt-cosmo-prediction reads them and superimposes the scars on a
 step-change concentration field. This exercises the bridge between the two,
 which no single-CLI test can.
@@ -104,9 +104,9 @@ def main() -> int:
     ls_out = run(ls_exe, work, LANDSLIDE_PARAMS, "ls")
     for needed in ("ls_LS_TFAIL.tif", "ls_LS_EXCAVATION.tif"):
         if not (work / needed).exists():
-            raise SystemExit(f"lsdtt-landslides did not write {needed}")
+            raise SystemExit(f"lsdtt-cosmo-landslides did not write {needed}")
     if "Densities:" not in ls_out and "scar material" not in ls_out:
-        print("note: lsdtt-landslides did not report densities (CRN off)")
+        print("note: lsdtt-cosmo-landslides did not report densities (CRN off)")
 
     # 2. Baseline: the same step change with no landslides.
     run(pr_exe, work, PREDICTION_COMMON + "write_fname: base\n"

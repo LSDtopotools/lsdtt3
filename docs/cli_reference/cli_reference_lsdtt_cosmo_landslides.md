@@ -1,4 +1,11 @@
-# CLI reference: lsdtt-landslides
+# CLI reference: lsdtt-cosmo-landslides
+
+> **Renamed 2026-08-05.** This tool was `lsdtt-landslides`. There is no
+> compatibility alias — parameter files are unaffected, but scripts invoking the
+> old executable name must be updated. The rename marks it as a cosmogenic tool
+> rather than a purely geomorphic one: it answers *"could landsliding be biasing
+> my cosmogenic samples?"*, and is gaining full production scaling and shielding
+> so the concentrations it reports are real rather than indicative.
 
 Triggers landslides with an **imposed** size distribution. You prescribe *when*
 (a trigger time, or a recurrence) and *how much* (an event volume, or a
@@ -12,10 +19,10 @@ metres.
 ## Usage
 
 ```
-lsdtt-landslides <path> <parameter_file>
-lsdtt-landslides <parameter_file>         # path defaults to ./
-lsdtt-landslides -h                       # print help and exit
-lsdtt-landslides -v                       # print version and exit
+lsdtt-cosmo-landslides <path> <parameter_file>
+lsdtt-cosmo-landslides <parameter_file>         # path defaults to ./
+lsdtt-cosmo-landslides -h                       # print help and exit
+lsdtt-cosmo-landslides -v                       # print version and exit
 ```
 
 ---

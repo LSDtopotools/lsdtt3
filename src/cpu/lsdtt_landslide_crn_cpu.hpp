@@ -118,7 +118,7 @@ double landslide_crn_background_concentration(const LandslideCrnConfig& config);
 // -----------------------------------------------------------------------------
 // time_since_failure_from_time_of_failure
 //
-// lsdtt-landslides writes an ABSOLUTE failure time with nodata on ground that
+// lsdtt-cosmo-landslides writes an ABSOLUTE failure time with nodata on ground that
 // never failed. Every consumer here wants ELAPSED years, and needs "never" to
 // be a distinct state rather than nodata.
 //

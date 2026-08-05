@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare a realised landslide inventory against the distribution that was asked for.
 
-Reads ``<write_fname>_LS_INVENTORY.csv`` from lsdtt-landslides and reports the
+Reads ``<write_fname>_LS_INVENTORY.csv`` from lsdtt-cosmo-landslides and reports the
 realised frequency-area distribution beside the requested one: the tail
 exponent, the mean and modal areas, and where the two diverge.
 
@@ -131,7 +131,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--inventory", required=True, type=Path,
-                    help="<write_fname>_LS_INVENTORY.csv from lsdtt-landslides")
+                    help="<write_fname>_LS_INVENTORY.csv from lsdtt-cosmo-landslides")
     ap.add_argument("--model", default="inverse_gamma",
                     choices=["inverse_gamma", "truncated_pareto"])
     ap.add_argument("--rho", type=float, default=1.40)

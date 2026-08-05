@@ -503,12 +503,12 @@ int main(int argc, char* argv[])
         "both = flush inside flush_time_threshold_yr and scar outside it, which "
         "is the physically complete case. Needs landslide_time_raster_prefix "
         "and landslide_excavation_raster_prefix, both written by "
-        "lsdtt-landslides. Requires a step-change mode.",
+        "lsdtt-cosmo-landslides. Requires a step-change mode.",
         "Landslide coupling", "param", ""};
 
     string_default_map["landslide_time_raster_prefix"] = "NULL";
     help_map["landslide_time_raster_prefix"] = {"string","NULL",
-        "Prefix of the time-of-failure raster (lsdtt-landslides <stem>_LS_TFAIL).",
+        "Prefix of the time-of-failure raster (lsdtt-cosmo-landslides <stem>_LS_TFAIL).",
         "This holds an ABSOLUTE failure time on the model clock, with nodata "
         "where nothing failed. It is converted here to elapsed years using "
         "landslide_report_time_yr; 'never failed' is carried as a distinct "
@@ -518,7 +518,7 @@ int main(int argc, char* argv[])
 
     string_default_map["landslide_excavation_raster_prefix"] = "NULL";
     help_map["landslide_excavation_raster_prefix"] = {"string","NULL",
-        "Prefix of the excavation-depth raster (lsdtt-landslides <stem>_LS_EXCAVATION).",
+        "Prefix of the excavation-depth raster (lsdtt-cosmo-landslides <stem>_LS_EXCAVATION).",
         "Real metres of material removed, not a rock-equivalent thickness. It is "
         "converted to a mass depth with scar_density_kg_m3.",
         "Landslide coupling", "param", ""};
@@ -656,7 +656,7 @@ int main(int argc, char* argv[])
         "1500 kg/m3. Carrying it at 2650 overstates the mass depth by about a "
         "factor of 1.77 and changes the delivered concentration by more than a "
         "factor of two. Set 2650 for bedrock failures. The default matches "
-        "lsdtt-landslides' larsen_soil_scar preset.",
+        "lsdtt-cosmo-landslides' larsen_soil_scar preset.",
         "Landslide coupling", "param", ""};
 
     string_default_map["time_since_change_raster_prefix"] = "NULL";
@@ -874,7 +874,7 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: landslide_coupling: " << ls_coupling
                   << " needs both landslide_time_raster_prefix and\n"
                      "       landslide_excavation_raster_prefix (written by "
-                     "lsdtt-landslides).\n";
+                     "lsdtt-cosmo-landslides).\n";
         return 1;
     }
 

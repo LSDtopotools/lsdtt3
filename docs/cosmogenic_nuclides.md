@@ -777,7 +777,7 @@ and the adjusted area. Report them.
 
 ### 10.2 Landslides: two idealised scenarios
 
-`lsdtt-landslides` produces a landslide field (time of failure, excavation
+`lsdtt-cosmo-landslides` produces a landslide field (time of failure, excavation
 depth); `lsdtt-cosmo-prediction` superimposes it on the step change through
 `landslide_coupling`.
 
@@ -843,7 +843,7 @@ Larsen's `V = αA^γ` is fitted to **measured** scar volumes, so an excavation
 depth is a true geometric thickness of whatever failed — soil, for a shallow
 landslide. Carrying it at the bedrock density overstates the mass depth by a
 factor of **1.77**, which changes spallation production at the scar base by
-**2.05**. `lsdtt-landslides` takes the density from its area–volume preset
+**2.05**. `lsdtt-cosmo-landslides` takes the density from its area–volume preset
 (`larsen_soil_scar` → 1500, `larsen_bedrock_scar` → 2650) and **warns** when the
 preset selected is fitted across both materials, such as the default
 `larsen_global`, which has no defensible value.
@@ -882,7 +882,7 @@ already has a field: the ice column shields cosmic rays (**snow shielding**, as
 an effective mass depth — 10 m of ice is 917 g cm⁻², at which 0.3 % of spallation
 survives), the **erosion rate** differs or is zero, and little or no **quartz**
 reaches the sample. So the ice mask writes three existing rasters rather than
-being a model of its own. `lsdtt-landslides` accepts the same mask and places no
+being a model of its own. `lsdtt-cosmo-landslides` accepts the same mask and places no
 landslide on ice.
 
 A zero erosion rate under cold-based ice is safe: the steady-state kernel forms

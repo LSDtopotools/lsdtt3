@@ -1,4 +1,4 @@
-// lsdtt-landslides.cpp
+// lsdtt-cosmo-landslides.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -38,6 +38,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_landslide_crn_cpu.hpp"
 #include "../src/cpu/lsdtt_landslide_event_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -45,14 +46,14 @@
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
-static const std::string k_tool_name = "lsdtt-landslides";
+static const std::string k_tool_name = "lsdtt-cosmo-landslides";
 
 // ---------------------------------------------------------------------------
 static void print_banner()
 {
     std::cout
         << "========================================================\n"
-        << "|| Welcome to lsdtt-landslides                        ||\n"
+        << "|| Welcome to lsdtt-cosmo-landslides                        ||\n"
         << "|| Triggered landslides, imposed size distribution    ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                    ||\n"
         << "========================================================\n"
@@ -61,6 +62,60 @@ static void print_banner()
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
         << "========================================================\n\n";
+}
+
+// ---------------------------------------------------------------------------
+// Cosmogenic parameters this tool can actually service.
+//
+// VALIDATE UP FRONT AND FATALLY. Until 2026-08-05 a bad muon_scheme or nuclide
+// was discovered only when the CRN block ran, was caught, downgraded to a
+// warning on stderr, and the tool then exited **0** having written no
+// concentration raster. To a scripted workflow that is a success that silently
+// produced nothing -- worse than a crash, because nothing notices.
+//
+// CAPABILITY, NOT JUST VALIDITY. lsdtt_crn_parameters::is_valid_muon_scheme()
+// accepts every scheme lsdtt3 knows, including cronusEmulatorSt and
+// cronusEmulatorLSDn. Those are pressure- AND nuclide-dependent, and this tool
+// reaches the column through reset_scaling(), which deliberately throws for
+// them because it is handed neither. So validating against is_valid_muon_scheme
+// alone would accept a name that fails later -- the same trap
+// lsdtt-cosmo-column-tool documents and guards against. Checked against the
+// serviceable subset here instead.
+//
+// TO BE REVISITED AT PLAN PHASE R2c: once this tool builds a real site with a
+// pressure raster, the emulator schemes become serviceable and this rejection
+// must be lifted rather than left to reject something that now works.
+static bool landslide_cosmo_parameters_supported(const std::string& muon_scheme,
+                                                 const std::string& nuclide)
+{
+    if (muon_scheme == "cronusEmulatorSt" || muon_scheme == "cronusEmulatorLSDn")
+    {
+        std::cerr << "FATAL: muon_scheme \"" << muon_scheme
+                  << "\" is not supported by " << k_tool_name << ".\n"
+                  << "       Its muon terms depend on site pressure and "
+                     "nuclide, and this tool applies\n"
+                  << "       a scalar production scaling with no pressure "
+                     "raster. Use lsdtt-cosmo-prediction\n"
+                  << "       for the CRONUS v3 emulator schemes.\n"
+                  << "       Schemes available here: Braucher, "
+                     "BraucherBorchers, Granger, Schaller, newCRONUS.\n";
+        return false;
+    }
+    if (!lsdtt::lsdtt_crn_parameters::is_valid_muon_scheme(muon_scheme))
+    {
+        std::cerr << "FATAL: unknown muon_scheme \"" << muon_scheme
+                  << "\". Allowed values: "
+                  << lsdtt::lsdtt_crn_parameters::allowed_muon_schemes_csv()
+                  << ".\n";
+        return false;
+    }
+    if (nuclide != "Be10" && nuclide != "Al26" && nuclide != "C14")
+    {
+        std::cerr << "FATAL: unknown nuclide \"" << nuclide
+                  << "\". Allowed values: Be10, Al26, C14.\n";
+        return false;
+    }
+    return true;
 }
 
 // Build a raster matching `ref` in geometry, filled with `value` and carrying
@@ -392,6 +447,21 @@ int main(int argc, char* argv[])
     auto ff  = pp.get_float_parameters();
     auto sf  = pp.get_string_parameters();
     auto ifs = pp.get_int_parameters();
+
+    // -------------------------------------------------------------------------
+    // Cross-parameter validation, BEFORE the DEM is read or a single landslide
+    // is placed. Failing here costs the user a second; failing after the event
+    // series costs them the run.
+    //
+    // Only checked when the cosmogenic output is actually requested: muon_scheme
+    // and nuclide are inert for a pure-geomorphology run, and rejecting a stale
+    // line in a parameter file that changes nothing would be officious.
+    // -------------------------------------------------------------------------
+    if (bf["calculate_crn_concentration"] &&
+        !landslide_cosmo_parameters_supported(sf["muon_scheme"], sf["nuclide"]))
+    {
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Load and prepare the DEM
@@ -752,7 +822,14 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: CRN concentration failed: " << e.what() << "\n";
+            // FATAL, not a warning. The user asked for a concentration raster;
+            // if it could not be produced, the run did not do what it was told.
+            // This used to warn and fall through to exit 0, so a scripted
+            // workflow saw a success that silently produced nothing. The
+            // up-front check above catches the two known causes early and with
+            // a better message; this is the backstop for the rest.
+            std::cerr << "FATAL: CRN concentration failed: " << e.what() << "\n";
+            return 1;
         }
     }
 

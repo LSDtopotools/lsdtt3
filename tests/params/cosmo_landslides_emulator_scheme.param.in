@@ -1,0 +1,16 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: lsemul
+
+landslide_mode: single_event
+threshold_contributing_pixels: 20
+event_volume_m3: 20
+event_time_yr: 0
+random_seed: 7
+
+# A scheme that IS valid lsdtt3-wide but that this tool cannot service: the
+# CRONUS v3 emulators are pressure- and nuclide-dependent and reach the column
+# through reset_scaling(), which throws for them. Validity is not capability.
+calculate_crn_concentration: true
+muon_scheme: cronusEmulatorSt

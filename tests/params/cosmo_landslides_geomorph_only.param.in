@@ -1,0 +1,16 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: lsgeomorph
+
+landslide_mode: single_event
+threshold_contributing_pixels: 20
+event_volume_m3: 20
+event_time_yr: 0
+random_seed: 7
+
+# The other side of the guard: muon_scheme is INERT when no cosmogenic output is
+# requested, so a stale line must NOT fail the run. Rejecting it would make the
+# tool officious about a parameter it never reads.
+calculate_crn_concentration: false
+muon_scheme: ThisIsNotARealScheme

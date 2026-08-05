@@ -257,12 +257,12 @@ calculate_multi_isotope_step_change: true
 ## Landslide coupling
 
 Superimposes landslide scars on a step-change concentration field, using the
-time-of-failure and excavation-depth rasters written by `lsdtt-landslides`.
+time-of-failure and excavation-depth rasters written by `lsdtt-cosmo-landslides`.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `landslide_coupling` | string | `none` | `none`, `scar`, `flush` or `both`. |
-| `landslide_time_raster_prefix` | string | `NULL` | Prefix of `<stem>_LS_TFAIL` from `lsdtt-landslides`. |
+| `landslide_time_raster_prefix` | string | `NULL` | Prefix of `<stem>_LS_TFAIL` from `lsdtt-cosmo-landslides`. |
 | `landslide_excavation_raster_prefix` | string | `NULL` | Prefix of `<stem>_LS_EXCAVATION`. |
 | `landslide_report_time_yr` | float | `0` | Present time on the same clock as the failure-time raster. |
 | `flush_time_threshold_yr` | float | `100` | How long a scar keeps delivering debris (used by `both`). |
@@ -345,14 +345,14 @@ it — replacing a small correction with a large error.
 | `rock_density_kg_m3` | the eroding **bedrock column** | 2650 |
 | `scar_density_kg_m3` | the material a landslide **excavated** | ~1500 soil, 2650 rock |
 
-The excavation depth from `lsdtt-landslides` is a **true geometric thickness**,
+The excavation depth from `lsdtt-cosmo-landslides` is a **true geometric thickness**,
 because Larsen's `V = αA^γ` is fitted to *measured* scar volumes. For a shallow
 landslide the material that failed is soil, at roughly 1500 kg/m³. Carrying it at
 the bedrock density overstates the mass depth by a factor of about 1.77 — and
 since production falls exponentially with mass depth, that is more than a factor
 of two in the concentration of the material delivered.
 
-`lsdtt-landslides` takes its scar density from the `area_volume_preset` in play
+`lsdtt-cosmo-landslides` takes its scar density from the `area_volume_preset` in play
 (`larsen_soil_scar` → 1500, `larsen_bedrock_scar` → 2650) and **warns** if the
 preset selected is one fitted across both materials, such as the default
 `larsen_global`, which has no defensible density. Set the two consistently
@@ -449,7 +449,7 @@ spallation survives.
 safe: the steady-state kernel forms its denominator as `(ε + Γλ)` and never
 divides by ε, so ε = 0 returns the saturation concentration `P/λ`.
 
-`lsdtt-landslides` accepts the same mask as `ice_mask_fname` and places no
+`lsdtt-cosmo-landslides` accepts the same mask as `ice_mask_fname` and places no
 landslide on ice; the pixels excluded are reported, since they change the active
 area and hence the landslide count for a prescribed erosion rate.
 

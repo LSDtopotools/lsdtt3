@@ -1,0 +1,16 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: lsbadmuon
+
+landslide_mode: single_event
+threshold_contributing_pixels: 20
+event_volume_m3: 20
+event_time_yr: 0
+random_seed: 7
+
+# The point of this fixture: an unknown muon scheme with the cosmogenic output
+# requested. Before 2026-08-05 this exited 0 having written no concentration
+# raster, with only a stderr warning -- a silent success.
+calculate_crn_concentration: true
+muon_scheme: ThisIsNotARealScheme

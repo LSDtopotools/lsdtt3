@@ -1373,17 +1373,17 @@ set_tests_properties(failure_cosmo_tool_lsdn_without_grids
 # Help must render every parameter without a parameter file and without
 # touching the DEM or the network. Guards that the parameter declarations for
 # each cosmo CLI stay well-formed.
-# lsdtt-landslides (plan Phase 6).
-add_test(NAME smoke_landslides_help COMMAND lsdtt-landslides -h)
-set_tests_properties(smoke_landslides_help PROPERTIES
+# lsdtt-cosmo-landslides (plan Phase 6).
+add_test(NAME smoke_cosmo_landslides_help COMMAND lsdtt-cosmo-landslides -h)
+set_tests_properties(smoke_cosmo_landslides_help PROPERTIES
     LABELS "smoke;cli;landslide"
     PASS_REGULAR_EXPRESSION "long_term_erosion_rate_mm_kyr")
 
 # End-to-end on the tiny fixture: an event is placed and the inventory written.
 add_lsdtt_cli_smoke_test(
-    smoke_landslides_single_event
-    lsdtt-landslides
-    landslides_single_event.param.in
+    smoke_cosmo_landslides_single_event
+    lsdtt-cosmo-landslides
+    cosmo_landslides_single_event.param.in
     lssmoke_LS_INVENTORY.csv
     --stdout-contains "landslide event:"
     --expect-file-contains "lssmoke_LS_INVENTORY.csv:n_pixels"
@@ -1392,12 +1392,56 @@ add_lsdtt_cli_smoke_test(
 # A geographic-CRS DEM must exit cleanly with a diagnosis, NOT abort on an
 # uncaught throw. The deeper check throws; the CLI catches it.
 add_lsdtt_cli_smoke_test(
-    failure_landslides_geographic_crs
-    lsdtt-landslides
-    landslides_geographic.param.in
+    failure_cosmo_landslides_geographic_crs
+    lsdtt-cosmo-landslides
+    cosmo_landslides_geographic.param.in
     lsgeo_LS_INVENTORY.csv
     --expect-failure
     --stderr-contains "projected"
+)
+
+# ---------------------------------------------------------------------------
+# Cosmogenic parameter validation in lsdtt-cosmo-landslides (plan R2b).
+#
+# Until 2026-08-05 a bad muon_scheme or nuclide was caught inside the CRN block,
+# downgraded to a stderr warning, and the tool exited **0** having written no
+# concentration raster. To a scripted workflow that is a success that silently
+# produced nothing -- a worse failure mode than a crash, because nothing
+# notices. All three cases below were measured on the shipped binary before the
+# fix; the first two exited 0.
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_landslides_bad_muon_scheme
+    lsdtt-cosmo-landslides
+    cosmo_landslides_bad_muon_scheme.param.in
+    lsbadmuon_LS_CONC.tif
+    --expect-failure
+    --stderr-contains "unknown muon_scheme"
+)
+
+# VALIDITY IS NOT CAPABILITY. is_valid_muon_scheme() accepts the CRONUS v3
+# emulator schemes, but they are pressure- and nuclide-dependent and this tool
+# reaches the column through reset_scaling(), which throws for them. A shared
+# validator that only checked the name would accept something that fails later.
+# The message must also point at the tool that DOES support them.
+add_lsdtt_cli_smoke_test(
+    failure_cosmo_landslides_emulator_scheme
+    lsdtt-cosmo-landslides
+    cosmo_landslides_emulator_scheme.param.in
+    lsemul_LS_CONC.tif
+    --expect-failure
+    --stderr-contains "lsdtt-cosmo-prediction"
+)
+
+# The other side of the guard, and the reason it is conditional: muon_scheme is
+# INERT with no cosmogenic output requested, so a stale line must not fail the
+# run. Without this test the natural "fix" is to validate unconditionally, which
+# would break every pure-geomorphology parameter file carrying a cosmo line.
+add_lsdtt_cli_smoke_test(
+    smoke_cosmo_landslides_geomorph_only_ignores_muon_scheme
+    lsdtt-cosmo-landslides
+    cosmo_landslides_geomorph_only.param.in
+    lsgeomorph_LS_INVENTORY.csv
+    --expect lsgeomorph_LS_TFAIL.tif
 )
 
 add_test(NAME smoke_cosmo_tool_help COMMAND lsdtt-cosmo-tool -h)
@@ -1438,19 +1482,72 @@ add_test(NAME regression_step_change_disk_roundtrip
 set_tests_properties(regression_step_change_disk_roundtrip PROPERTIES
     LABELS "cli;cosmo;step_change")
 
-# The scar coupling end to end: lsdtt-landslides writes the failure-time and
+# The scar coupling end to end: lsdtt-cosmo-landslides writes the failure-time and
 # excavation rasters, lsdtt-cosmo-prediction consumes them. Asserts that
 # switching the coupling on leaves unfailed ground BITWISE unchanged -- the
 # property that stops a landslide run silently perturbing the whole raster.
 add_test(NAME regression_landslide_scar_coupling
          COMMAND ${Python3_EXECUTABLE}
                  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_landslide_scar_coupling.py
-                 --landslides-exe $<TARGET_FILE:lsdtt-landslides>
+                 --landslides-exe $<TARGET_FILE:lsdtt-cosmo-landslides>
                  --prediction-exe $<TARGET_FILE:lsdtt-cosmo-prediction>
                  --data-dir ${LSDTT_TEST_DATA_DIR}
                  --work-dir ${CMAKE_CURRENT_BINARY_DIR}/landslide_scar_coupling)
 set_tests_properties(regression_landslide_scar_coupling PROPERTIES
     LABELS "cli;cosmo;landslide;step_change")
+
+# ---------------------------------------------------------------------------
+# The REFACTOR ORACLE (plan R0a).
+#
+# tests/data/cosmo_oracle.csv holds a bitwise hash of every raster and CSV the
+# four cosmogenic CLIs produce across a matrix of scaling scheme, muon scheme,
+# shielding path and prediction mode. It exists because the production/pressure/
+# shielding setup is about to be extracted from the CLIs into a shared
+# component, and THE ORACLE FOR A REFACTOR IS THE PRE-REFACTOR BINARY -- which
+# stops existing the moment the refactor lands.
+#
+# Every subsequent change is one of two kinds and must declare which:
+#   behaviour-PRESERVING  this test must stay green. That is the proof.
+#   behaviour-CHANGING    re-freeze deliberately (--freeze) and say in the
+#                         commit message which artefacts moved and why.
+#
+# Do NOT re-freeze to make a red test pass.
+#
+# Verified to fail: a 1-part-in-1e6 perturbation of the production raster moves
+# 16 of the 22 cheap-tier artefacts, including lsdtt-cosmo-tool's inverted
+# erosion-rate CSVs -- so the oracle reaches through the whole forward/inverse
+# chain, not just the raster it perturbs.
+add_test(NAME regression_cosmo_oracle
+         COMMAND ${Python3_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/freeze_cosmo_oracle.py
+                 --exe lsdtt-cosmo-prediction=$<TARGET_FILE:lsdtt-cosmo-prediction>
+                 --exe lsdtt-cosmo-tool=$<TARGET_FILE:lsdtt-cosmo-tool>
+                 --exe lsdtt-cosmo-column-tool=$<TARGET_FILE:lsdtt-cosmo-column-tool>
+                 --exe lsdtt-cosmo-landslides=$<TARGET_FILE:lsdtt-cosmo-landslides>
+                 --read-path ${LSDTT_TEST_DATA_DIR}
+                 --oracle ${LSDTT_TEST_DATA_DIR}/cosmo_oracle.csv
+                 --work-dir ${CMAKE_CURRENT_BINARY_DIR}/cosmo_oracle
+                 --tier cheap)
+set_tests_properties(regression_cosmo_oracle PROPERTIES
+    LABELS "cli;cosmo;regression")
+
+# The LSDn and CRONUS-emulator rows. Separated because they need the LSDn
+# scaling grids in crn_parameters.nc and carry the most setup state -- which is
+# exactly why they matter to the extraction, and why they are worth the label
+# rather than being dropped.
+add_test(NAME regression_cosmo_oracle_heavy
+         COMMAND ${Python3_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/freeze_cosmo_oracle.py
+                 --exe lsdtt-cosmo-prediction=$<TARGET_FILE:lsdtt-cosmo-prediction>
+                 --exe lsdtt-cosmo-tool=$<TARGET_FILE:lsdtt-cosmo-tool>
+                 --exe lsdtt-cosmo-column-tool=$<TARGET_FILE:lsdtt-cosmo-column-tool>
+                 --exe lsdtt-cosmo-landslides=$<TARGET_FILE:lsdtt-cosmo-landslides>
+                 --read-path ${LSDTT_TEST_DATA_DIR}
+                 --oracle ${LSDTT_TEST_DATA_DIR}/cosmo_oracle.csv
+                 --work-dir ${CMAKE_CURRENT_BINARY_DIR}/cosmo_oracle_heavy
+                 --tier all)
+set_tests_properties(regression_cosmo_oracle_heavy PROPERTIES
+    LABELS "cli;cosmo;regression;heavy")
 
 add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
 set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
@@ -1734,6 +1831,15 @@ foreach(_test IN LISTS _lsdtt_tests)
     # so an LEM test that runs one belongs to both compartments.
     if(_test MATCHES "roering|implicit" AND NOT _domains STREQUAL "hillslope")
         list(APPEND _domains "hillslope")
+    endif()
+
+    # lsdtt-cosmo-landslides is BOTH a cosmogenic tool and the landslide
+    # module's CLI. "cosmo" precedes "landslide" in the rules above and first
+    # match wins, so without this its tests would silently leave the landslide
+    # compartment at the 2026-08-05 rename and `ctest -L landslide` would stop
+    # seeing the CLI for the module it is named after.
+    if(_test MATCHES "landslide" AND NOT _domains STREQUAL "landslide")
+        list(APPEND _domains "landslide")
     endif()
 
     if("${_test}" IN_LIST LSDTT_HEAVY_TESTS)
