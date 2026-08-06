@@ -34,6 +34,27 @@ def manifest_inputs(_wc):
             f"{ROOT}/{RUN_ID}/analysis/cosmo_step_change/sc_R1410_step.tif",
             f"{ROOT}/{RUN_ID}/analysis/cosmo_step_change/sc_SC_STEPTIME.tif",
         ]
+    if MODULE == "cosmo_landslides_synthetic":
+        return [
+            f"{ROOT}/{RUN_ID}/generate/ls_synthetic_network.param",
+            f"{ROOT}/{RUN_ID}/generate/ls_synth_ocn_dem.tif",
+            f"{ROOT}/{RUN_ID}/preprocess/ls_raster_preprocessing.param",
+            f"{ROOT}/{RUN_ID}/preprocess/ls_synth_fill.tif",
+            f"{ROOT}/{RUN_ID}/preprocess/ls_synth_hillshade.tif",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_single/cosmo_landslides_single.param",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_INVENTORY.csv",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_TFAIL.tif",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_EXCAVATION.tif",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_CONC.tif",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_series/sample_points.csv",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_series/cosmo_landslides_series.param",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_series/ls_series_LS_INVENTORY.csv",
+            f"{ROOT}/{RUN_ID}/analysis/cosmo_landslides_series/ls_series_LS_SAMPLE_EFFECT.csv",
+            f"{ROOT}/{RUN_ID}/reports/cosmo_landslides/ls_single_landslide_outlines.fgb",
+            f"{ROOT}/{RUN_ID}/reports/cosmo_landslides/ls_single_larsen_size_comparison.png",
+            f"{ROOT}/{RUN_ID}/reports/cosmo_landslides/ls_series_apparent_vs_true_erosion.png",
+            f"{ROOT}/{RUN_ID}/reports/cosmo_landslides/ls_series_sample_bias_ratio.png",
+        ]
     if MODULE == "check_basins":
         return [
             f"{ROOT}/{RUN_ID}/fetch/fetch_bbox.param",

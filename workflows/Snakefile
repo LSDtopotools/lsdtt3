@@ -5,6 +5,7 @@ include: "rules/common_preprocess.smk"
 include: "rules/common_extract.smk"
 include: "rules/domain_cosmo.smk"
 include: "rules/domain_cosmo_step_change.smk"
+include: "rules/domain_cosmo_landslides_synthetic.smk"
 include: "rules/domain_check_basins.smk"
 include: "rules/reporting.smk"
 
@@ -42,6 +43,22 @@ def _targets():
             f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_R2610_step.tif",
             f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_R1410_step.tif",
             f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_SC_STEPTIME.tif",
+        ])
+    if MODULE == "cosmo_landslides_synthetic" and config["stages"].get("analyze", False):
+        outs.extend([
+            f"{root}/{RUN_ID}/preprocess/ls_synth_hillshade.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_INVENTORY.csv",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_TFAIL.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_EXCAVATION.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides_single/ls_single_LS_CONC.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides_series/ls_series_LS_SAMPLE_EFFECT.csv",
+        ])
+    if MODULE == "cosmo_landslides_synthetic" and config["stages"].get("report", False):
+        outs.extend([
+            f"{root}/{RUN_ID}/reports/cosmo_landslides/ls_single_landslide_outlines.fgb",
+            f"{root}/{RUN_ID}/reports/cosmo_landslides/ls_single_larsen_size_comparison.png",
+            f"{root}/{RUN_ID}/reports/cosmo_landslides/ls_series_apparent_vs_true_erosion.png",
+            f"{root}/{RUN_ID}/reports/cosmo_landslides/ls_series_sample_bias_ratio.png",
         ])
     if config["stages"].get("report", False):
         outs.append(f"{root}/{RUN_ID}/reports/{RUN_ID}_RUN_MANIFEST.json")

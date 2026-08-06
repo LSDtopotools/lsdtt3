@@ -52,6 +52,54 @@ cosmo_landslides:
   total_shielding: 1.0
   crn_report_time_yr: 1000.0
 
+cosmo_landslides_synthetic:
+  target_relief_m: 450.0
+  m_exponent: 0.45
+  n_exponent: 1.0
+
+cosmo_landslides_single:
+  threshold_contributing_pixels: 900
+  event_volume_m3: 3500000.0
+  event_time_yr: 0.0
+  random_seed: 7
+  area_volume_preset: "larsen_bedrock_scar"
+  calculate_crn_concentration: true
+  nuclide: "Be10"
+  muon_scheme: "BraucherBorchers"
+  scaling_scheme: "uniform"
+  background_eff_erate_g_cm2_yr: 0.001
+  production_scaling: 1.0
+  total_shielding: 1.0
+  crn_report_time_yr: 1000.0
+
+cosmo_landslides_series:
+  threshold_contributing_pixels: 200
+  series_start_yr: 0.0
+  series_end_yr: 50000.0
+  mean_recurrence_yr: 1000.0
+  poisson_timing: true
+  long_term_erosion_rate_mm_kyr: 50.0
+  anneal_time_yr: 2000.0
+  random_seed: 19
+  area_volume_preset: "larsen_bedrock_scar"
+  calculate_crn_concentration: true
+  nuclide: "Be10"
+  muon_scheme: "BraucherBorchers"
+  scaling_scheme: "uniform"
+  background_eff_erate_g_cm2_yr: 0.001
+  production_scaling: 1.0
+  total_shielding: 1.0
+  crn_report_time_yr: 50000.0
+  sample_points_count: 5
+  n_realisations: 40
+  ensemble_seed_stride: 7919
+  sample_snap_radius_pixels: 120
+
+cosmo_landslides_diagnostics:
+  larsen_alpha: 0.2344
+  larsen_gamma: 1.410
+  true_rate_mm_kyr: 50.0
+
 synthetic_network:
   n_rows: 128
   n_cols: 128

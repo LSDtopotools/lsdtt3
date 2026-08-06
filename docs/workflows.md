@@ -64,6 +64,21 @@ landslide/CRN products.
 Purpose: generate a seeded synthetic network DEM and run multi-isotope
 step-change prediction.
 
+### `cosmo_landslides_synthetic`
+
+Purpose: generate a seeded synthetic network DEM, run a single-event
+`lsdtt-cosmo-landslides` simulation, run a series+sample-ensemble diagnostic,
+and produce landslide outlines and summary charts.
+
+Key outputs:
+
+- `workflows/results/<run_id>/preprocess/ls_synth_hillshade.tif`
+- `workflows/results/<run_id>/analysis/cosmo_landslides_single/ls_single_LS_INVENTORY.csv`
+- `workflows/results/<run_id>/analysis/cosmo_landslides_series/ls_series_LS_SAMPLE_EFFECT.csv`
+- `workflows/results/<run_id>/reports/cosmo_landslides/ls_single_landslide_outlines.fgb`
+- `workflows/results/<run_id>/reports/cosmo_landslides/ls_single_larsen_size_comparison.png`
+- `workflows/results/<run_id>/reports/cosmo_landslides/ls_series_apparent_vs_true_erosion.png`
+
 ---
 
 ## Reproducibility

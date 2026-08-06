@@ -14,7 +14,8 @@ Current implemented modules:
 
 1. `check_basins` (bbox fetch -> preprocess -> outlet-driven basin extraction),
 2. `cosmo_landslides`,
-3. `cosmo_step_change_random_network`.
+3. `cosmo_step_change_random_network`,
+4. `cosmo_landslides_synthetic`.
 
 Currently configured default module in `config/config.yaml`:
 
@@ -37,6 +38,16 @@ Currently configured default module in `config/config.yaml`:
 
 This module is designed to verify that supplied outlet points select the
 expected basins.
+
+## Synthetic landslide workflow quick start
+
+Use the ready config at `workflows/config/cosmo_landslides_synthetic.yaml`:
+
+`pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile --directory workflows --configfile workflows/config/cosmo_landslides_synthetic.yaml`
+
+This run writes outputs under:
+
+- `data/test_landslide_cosmo/workflow_results/test-landslide-cosmo/`
 
 ## Environment
 
@@ -68,6 +79,9 @@ Edit `workflows/config/config.yaml`:
 - `check_basins.outlets_file` accepts either CSV (`latitude`,`longitude`) or FGB/GPKG point vectors.
 - `check_basins.*` controls outlet snapping and channel-source threshold.
 - `cosmo_landslides.*` configures landslide + CRN analysis.
+- `cosmo_landslides_synthetic.*`, `cosmo_landslides_single.*`,
+  `cosmo_landslides_series.*`, and `cosmo_landslides_diagnostics.*` configure
+  the synthetic landslide workflow (single event + series diagnostics).
 - `synthetic_network.*` and `cosmo_step_change.*` configure random-network
   step-change analysis.
 
@@ -94,3 +108,13 @@ For `cosmo_landslides`, outputs include:
 - `workflows/results/<run_id>/analysis/cosmo_landslides/ls_LS_TFAIL.tif`
 - `workflows/results/<run_id>/analysis/cosmo_landslides/ls_LS_EXCAVATION.tif`
 - `workflows/results/<run_id>/analysis/cosmo_landslides/ls_LS_CONC.tif`
+
+For `cosmo_landslides_synthetic`, outputs include:
+
+- `workflows/results/<run_id>/preprocess/ls_synth_hillshade.tif`
+- `workflows/results/<run_id>/analysis/cosmo_landslides_single/ls_single_LS_INVENTORY.csv`
+- `workflows/results/<run_id>/analysis/cosmo_landslides_series/ls_series_LS_SAMPLE_EFFECT.csv`
+- `workflows/results/<run_id>/reports/cosmo_landslides/ls_single_landslide_outlines.fgb`
+- `workflows/results/<run_id>/reports/cosmo_landslides/ls_single_larsen_size_comparison.png`
+- `workflows/results/<run_id>/reports/cosmo_landslides/ls_series_apparent_vs_true_erosion.png`
+- `workflows/results/<run_id>/reports/cosmo_landslides/ls_series_sample_bias_ratio.png`

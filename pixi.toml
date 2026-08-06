@@ -106,7 +106,9 @@ docs-build = "mkdocs build --strict"
 # Workflow orchestration tools (Snakemake + helpers), kept out of the default
 # env because workflow execution is optional and can pull a larger solve.
 [feature.workflows.dependencies]
+python = ">=3.11,<3.14"
 pyyaml = "*"
+matplotlib = "*"
 
 [feature.workflows.pypi-dependencies]
 snakemake = "*"
