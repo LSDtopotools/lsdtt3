@@ -1587,6 +1587,18 @@ add_test(NAME regression_landslide_scar_coupling
 set_tests_properties(regression_landslide_scar_coupling PROPERTIES
     LABELS "cli;cosmo;landslide;step_change")
 
+# SC path smoke/regression: the combined multi-isotope step-change + landslide
+# coupling route that was previously blocked by a fatal guard.
+add_test(NAME regression_cosmo_multi_landslide_coupling
+         COMMAND ${Python3_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_multi_landslide_coupling.py
+                 --landslides-exe $<TARGET_FILE:lsdtt-cosmo-landslides>
+                 --prediction-exe $<TARGET_FILE:lsdtt-cosmo-prediction>
+                 --data-dir ${LSDTT_TEST_DATA_DIR}
+                 --work-dir ${CMAKE_CURRENT_BINARY_DIR}/cosmo_multi_landslide_coupling)
+set_tests_properties(regression_cosmo_multi_landslide_coupling PROPERTIES
+    LABELS "cli;cosmo;landslide;step_change")
+
 # ---------------------------------------------------------------------------
 # The REFACTOR ORACLE (plan R0a).
 #

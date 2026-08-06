@@ -375,8 +375,8 @@ scar_density_kg_m3: 1500
 write_delivery_mass_raster: true
 ```
 
-Not yet available with `calculate_multi_isotope_step_change`; use a single
-nuclide.
+Available with both `calculate_step_change_crn_concentration_raster` and
+`calculate_multi_isotope_step_change`.
 
 ---
 

@@ -868,14 +868,6 @@ int main(int argc, char* argv[])
                      "calculate_multi_isotope_step_change.\n";
         return 1;
     }
-    if (do_landslide && do_multi)
-    {
-        std::cerr << "FATAL: landslide_coupling is not yet available for "
-                     "calculate_multi_isotope_step_change.\n"
-                     "       Use calculate_step_change_crn_concentration_raster "
-                     "with a single nuclide.\n";
-        return 1;
-    }
     if (do_landslide && (sf["landslide_time_raster_prefix"] == "NULL" ||
                          sf["landslide_excavation_raster_prefix"] == "NULL"))
     {
@@ -1473,17 +1465,105 @@ int main(int argc, char* argv[])
                   << "  eff_erate_new = " << eff_erate_new << " g/cm2/yr\n";
 
         lsdtt::MultiNuclideRasters multi;
-        try
+        if (do_landslide)
         {
-            multi = lsdtt::calculate_crn_concentration_raster_step_change_multi(
-                muon_scheme, time_since_change, prod_raster, topo_shield,
-                eff_erate_old, eff_erate_new);
+            const std::string t_path =
+                pp.get_read_path() + sf["landslide_time_raster_prefix"] + ".tif";
+            const std::string e_path =
+                pp.get_read_path() + sf["landslide_excavation_raster_prefix"] + ".tif";
+            std::cout << "  Landslide coupling: " << ls_coupling << "\n"
+                      << "    time of failure : " << t_path << "\n"
+                      << "    excavation depth: " << e_path << "\n";
+
+            lsdtt::lsdtt_raster_cpu tfail_raster, exc_raster;
+            try
+            {
+                lsdtt::lsdtt_data_loader tl; tl.open_raster(t_path);
+                tfail_raster = lsdtt::lsdtt_raster_cpu(tl);
+                lsdtt::lsdtt_data_loader el; el.open_raster(e_path);
+                exc_raster = lsdtt::lsdtt_raster_cpu(el);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: could not read the landslide rasters: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            const lsdtt::lsdtt_raster_cpu t_since_failure =
+                lsdtt::time_since_failure_from_time_of_failure(
+                    tfail_raster,
+                    static_cast<double>(ff["landslide_report_time_yr"]));
+
+            lsdtt::LandslideStepChangeConfig scfg;
+            scfg.eff_erate_old_g_cm2_yr = eff_erate_old;
+            scfg.eff_erate_new_g_cm2_yr = eff_erate_new;
+            scfg.rock_density_kg_m3     = static_cast<double>(ff["rock_density_kg_m3"]);
+            scfg.scar_density_kg_m3     = static_cast<double>(ff["scar_density_kg_m3"]);
+            scfg.muon_scheme            = muon_scheme;
+
+            if (ls_coupling == "scar")
+                scfg.flush_time_threshold_yr = 0.0;
+            else if (ls_coupling == "flush")
+            {
+                scfg.flush_time_threshold_yr  = std::numeric_limits<double>::max();
+                scfg.flush_delivery_window_yr =
+                    static_cast<double>(ff["flush_time_threshold_yr"]);
+            }
+            else
+                scfg.flush_time_threshold_yr =
+                    static_cast<double>(ff["flush_time_threshold_yr"]);
+
+            if (ls_coupling == "flush")
+                std::cout << "    every scar flushes, regardless of age\n";
+            else if (ls_coupling == "both")
+                std::cout << "    flush window: "
+                          << scfg.flush_time_threshold_yr << " yr\n";
+
+            std::cout << "    densities: bedrock column "
+                      << scfg.rock_density_kg_m3 << ", scar material "
+                      << scfg.scar_density_kg_m3 << " kg/m3\n";
+
+            lsdtt::LandslideCouplingResultMulti mres;
+            try
+            {
+                mres = lsdtt::compute_landslide_step_change_concentration_multi(
+                    exc_raster, t_since_failure, time_since_change,
+                    prod_raster, topo_shield, scfg, &erosion_raster);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: landslide scar coupling failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            std::cout << "\n" << mres.summary();
+            if (bf["write_delivery_mass_raster"] &&
+                mres.delivery_mass_kg_m2_yr.get_meta().n_rows > 0)
+            {
+                const std::string dm_path = write_base + "_LS_DELIVERY.tif";
+                std::cout << "Writing delivery-mass raster: " << dm_path << "\n";
+                loader.write_full(mres.delivery_mass_kg_m2_yr.get_data(),
+                                  mres.delivery_mass_kg_m2_yr.get_meta(),
+                                  dm_path, out_fmt);
+            }
+            multi = std::move(mres.concentration);
         }
-        catch (const std::exception& e)
+        else
         {
-            std::cerr << "FATAL: multi-isotope step change failed: "
-                      << e.what() << "\n";
-            return 1;
+            try
+            {
+                multi = lsdtt::calculate_crn_concentration_raster_step_change_multi(
+                    muon_scheme, time_since_change, prod_raster, topo_shield,
+                    eff_erate_old, eff_erate_new);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: multi-isotope step change failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
         }
         std::cout << "  Done.\n";
         multi_conc_rasters = multi;

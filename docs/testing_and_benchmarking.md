@@ -2406,6 +2406,52 @@ covers invalid ones.
 
 ---
 
+### 7.10i Goal 3 unlocked: multi-isotope step change + landslide coupling (2026-08-06)
+
+Until 2026-08-06, `lsdtt-cosmo-prediction` rejected this combination with
+
+```
+FATAL: landslide_coupling is not yet available for
+       calculate_multi_isotope_step_change.
+```
+
+That guard is now removed. The combined path is implemented by routing through
+the existing multi-nuclide landslide kernel
+`compute_landslide_step_change_concentration_multi`, so Be-10/Al-26/C-14 are
+evolved once under one composed scenario and written consistently with the
+existing ratio policy.
+
+#### What changed in behaviour
+
+- `calculate_multi_isotope_step_change` can now be used with
+  `landslide_coupling: scar|flush|both`.
+- One run writes the three concentration rasters and both ratio rasters for the
+  composed step-change + landslide case.
+- The sampled accumulated outputs continue to carry `R2610_ACC`/`R1410_ACC` as
+  **ratios of accumulated means** (not means of per-pixel ratios).
+
+#### Acceptance evidence
+
+`regression_cosmo_multi_landslide_coupling` is the end-to-end guard for the
+formerly fatal path. It:
+
+1. generates landslide rasters with `lsdtt-cosmo-landslides`,
+2. runs `lsdtt-cosmo-prediction` with
+   `calculate_multi_isotope_step_change + landslide_coupling: both`,
+3. asserts the three nuclide concentration rasters and two ratio rasters exist,
+4. asserts sampled accumulated `R2610_ACC` and `R1410_ACC` equal
+   `Al26_CONC/Be10_CONC` and `C14_CONC/Be10_CONC` within output precision.
+
+Run used for sign-off:
+
+```bash
+ctest --test-dir build -R "regression_cosmo_multi_landslide_coupling|rigorous_cosmo_multi_accum_ratio" --output-on-failure
+```
+
+Both tests passed on 2026-08-06.
+
+---
+
 ### 7.11 The refactor oracle (`regression_cosmo_oracle`)
 
 `tests/data/cosmo_oracle.csv` is a **bitwise hash of every raster and CSV the
