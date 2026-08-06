@@ -103,10 +103,19 @@ mkdocs-material = "*"
 docs-serve = "mkdocs serve"
 docs-build = "mkdocs build --strict"
 
+# Workflow orchestration tools (Snakemake + helpers), kept out of the default
+# env because workflow execution is optional and can pull a larger solve.
+[feature.workflows.dependencies]
+pyyaml = "*"
+
+[feature.workflows.pypi-dependencies]
+snakemake = "*"
+
 [environments]
 osm = ["osm"]
 benchmark = ["reference"]
 docs = ["docs"]
+workflows = ["workflows"]
 
 [tasks]
 # Generic entry points only -- individual test suites are invoked through CTest
@@ -116,4 +125,3 @@ docs = ["docs"]
 # Note there is no DEM-fetching task: fetching is done by the lsdtt3 CLI itself
 # (`lsdtt-fetch-raster`), which needs no Python at all.
 test-python = "pytest tests"
-

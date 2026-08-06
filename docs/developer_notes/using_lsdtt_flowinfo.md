@@ -19,10 +19,8 @@ integer that encodes both row and column. This replaces the old NodeIndex.
 flat_index = row * n_cols + col
 ```
 
-The type is `lsdtt_flowinfo::flat_index_type`, which is currently `int32_t`.
-The alias exists so that if a DEM ever exceeds ~2.15 billion pixels (the
-`int32_t` limit), one typedef change in `lsdtt_flow_types.hpp` widens
-everything without touching analysis code.
+The type is `lsdtt_flowinfo::flat_index_type`, currently `int64_t`
+(`std::int64_t`), so flow indexing is 64-bit throughout.
 
 ### Converting between flat index and row/col
 

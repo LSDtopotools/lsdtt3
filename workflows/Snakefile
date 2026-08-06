@@ -1,0 +1,53 @@
+configfile: "config/config.yaml"
+
+include: "rules/common_fetch.smk"
+include: "rules/common_preprocess.smk"
+include: "rules/common_extract.smk"
+include: "rules/domain_cosmo.smk"
+include: "rules/domain_cosmo_step_change.smk"
+include: "rules/domain_check_basins.smk"
+include: "rules/reporting.smk"
+
+
+RUN_ID = config["run_id"]
+MODULE = config["analysis"]["module"]
+
+
+def _targets():
+    root = config["io"]["root"]
+    outs = []
+    if config["stages"].get("extract", False) and MODULE == "cosmo_landslides":
+        outs.extend([
+            f"{root}/{RUN_ID}/extract/dem_junction_basin_outlines.fgb",
+            f"{root}/{RUN_ID}/extract/dem_channel_network_lines.fgb",
+            f"{root}/{RUN_ID}/extract/dem_channel_network_junctions.fgb",
+        ])
+    if config["stages"].get("extract", False) and MODULE == "check_basins":
+        outs.extend([
+            f"{root}/{RUN_ID}/extract/check_junction_basin_outlines.fgb",
+            f"{root}/{RUN_ID}/extract/check_channel_network_lines.fgb",
+        ])
+    if config["stages"].get("analyze", False) and MODULE == "cosmo_landslides":
+        outs.extend([
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides/ls_LS_INVENTORY.csv",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides/ls_LS_TFAIL.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides/ls_LS_EXCAVATION.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_landslides/ls_LS_CONC.tif",
+        ])
+    if config["stages"].get("analyze", False) and MODULE == "cosmo_step_change_random_network":
+        outs.extend([
+            f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_Be10_step_crn_conc.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_Al26_step_crn_conc.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_C14_step_crn_conc.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_R2610_step.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_R1410_step.tif",
+            f"{root}/{RUN_ID}/analysis/cosmo_step_change/sc_SC_STEPTIME.tif",
+        ])
+    if config["stages"].get("report", False):
+        outs.append(f"{root}/{RUN_ID}/reports/{RUN_ID}_RUN_MANIFEST.json")
+    return outs
+
+
+rule all:
+    input:
+        _targets()

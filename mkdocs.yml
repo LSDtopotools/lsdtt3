@@ -46,6 +46,8 @@ nav:
   - Home: index.md
   - What is lsdtt3:
     - Overview: overview.md
+    - Workflows: workflows.md
+    - Flow routing: flow_routing.md
   - Installation:
     - Install lsdtt3: install_lsdtt3.md
   - Command-line reference:

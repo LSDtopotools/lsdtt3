@@ -1,0 +1,11 @@
+# Snakemake working state
+.snakemake/
+
+# Generated outputs
+results/
+manifests/*.json
+manifests/*.csv
+
+# Keep directory placeholders tracked
+!manifests/.gitkeep
+!results/.gitkeep

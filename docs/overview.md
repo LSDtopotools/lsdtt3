@@ -113,6 +113,9 @@ lsdtt3 is aimed at geomorphologists, physical geographers, hydrologists and eart
 - run reproducible analyses from parameter files,
 - integrate topographic analysis into scripted pipelines.
 
+For reproducible multi-stage pipelines with Snakemake + Pixi, see
+[Workflows](workflows.md).
+
 It is not a GIS — it has no interactive GUI. Inputs and outputs are files. 
 
 However we have provided a lightweight QGIS plugin (which is under development). The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R.
