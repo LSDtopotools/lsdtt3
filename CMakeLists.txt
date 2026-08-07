@@ -467,6 +467,13 @@ if(LSDTT_GPU)
         src/gpu/lsdtt_surface_gpu.cu
     )
     add_library(lsdtt3_gpu STATIC ${LSDTT3_GPU_SOURCES})
+    # NVCC generates intermediary host C++ with GCC-style #line directives.
+    # With global -Wpedantic this triggers noisy, non-actionable warnings like:
+    # "style of line directive is a GCC extension".
+    target_compile_options(lsdtt3_gpu
+        PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-pedantic>
+    )
     target_include_directories(lsdtt3_gpu
         PUBLIC
             ${CMAKE_SOURCE_DIR}/src
