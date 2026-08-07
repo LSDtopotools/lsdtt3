@@ -1343,6 +1343,11 @@ int main(int argc, char* argv[])
 
             if (!requested_polyfit_metrics.empty())
             {
+                std::cout << "\n--- Polyfit metrics (" << method_str << ") ---\n";
+                std::cout << "  Calculating/writing requested polyfit metrics..."
+                          << std::flush;
+                const auto metrics_t0 = std::chrono::steady_clock::now();
+
                 lsdtt::polyfit_metric_request request;
                 request.metrics              = requested_polyfit_metrics;
                 request.z_factor             = static_cast<double>(ff["polyfit_z_factor"]);
@@ -1365,6 +1370,11 @@ int main(int argc, char* argv[])
                         o, out_fmt
                     );
                 }
+
+                const auto metrics_t1 = std::chrono::steady_clock::now();
+                const double metrics_seconds =
+                    std::chrono::duration<double>(metrics_t1 - metrics_t0).count();
+                std::cout << "  done (" << metrics_seconds << " s)\n";
 
                 // --- Surface shape classification (SMAP) ---
                 // The two principal curvatures come either from the polyfit
