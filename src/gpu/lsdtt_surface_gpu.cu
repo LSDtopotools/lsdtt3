@@ -796,6 +796,9 @@ struct polyfit_device_bundle
     float* d_e = nullptr;
     float* d_f = nullptr;
     unsigned char* d_mask = nullptr;
+    float* d_metric_out_data = nullptr;
+    unsigned char* d_metric_out_mask = nullptr;
+    int* d_metric_id = nullptr;
 };
 
 namespace {
@@ -810,6 +813,9 @@ void free_polyfit_device_bundle_arrays(polyfit_device_bundle* bundle)
     if (bundle->d_e) cudaFree(bundle->d_e);
     if (bundle->d_f) cudaFree(bundle->d_f);
     if (bundle->d_mask) cudaFree(bundle->d_mask);
+    if (bundle->d_metric_out_data) cudaFree(bundle->d_metric_out_data);
+    if (bundle->d_metric_out_mask) cudaFree(bundle->d_metric_out_mask);
+    if (bundle->d_metric_id) cudaFree(bundle->d_metric_id);
     bundle->d_a = nullptr;
     bundle->d_b = nullptr;
     bundle->d_c = nullptr;
@@ -817,6 +823,9 @@ void free_polyfit_device_bundle_arrays(polyfit_device_bundle* bundle)
     bundle->d_e = nullptr;
     bundle->d_f = nullptr;
     bundle->d_mask = nullptr;
+    bundle->d_metric_out_data = nullptr;
+    bundle->d_metric_out_mask = nullptr;
+    bundle->d_metric_id = nullptr;
 }
 
 } // anonymous namespace
@@ -878,6 +887,9 @@ bool direct_polyfit_gpu_bundle_create(
         (cudaMalloc(&bundle->d_e,     fbytes) == cudaSuccess) &&
         (cudaMalloc(&bundle->d_f,     fbytes) == cudaSuccess) &&
         (cudaMalloc(&bundle->d_mask, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_metric_out_data, fbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_metric_out_mask, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_metric_id, sizeof(int)) == cudaSuccess) &&
         (cudaMalloc(&d_H0,    dbytes) == cudaSuccess) &&
         (cudaMalloc(&d_H1,    dbytes) == cudaSuccess) &&
         (cudaMalloc(&d_H2,    dbytes) == cudaSuccess) &&
@@ -1169,34 +1181,15 @@ bool compute_polyfit_metric_from_bundle_gpu(
 {
     if (!bundle || !out_data || !out_mask)
         return false;
+    if (!bundle->d_metric_out_data || !bundle->d_metric_out_mask || !bundle->d_metric_id)
+        return false;
 
     const std::size_t npix = static_cast<std::size_t>(bundle->nrows) * bundle->ncols;
     const std::size_t fbytes = npix * sizeof(float);
     const std::size_t mbytes = npix * sizeof(unsigned char);
 
-    int* d_metric_id = nullptr;
-    float* d_out_data = nullptr;
-    unsigned char* d_out_mask = nullptr;
-
-    auto cleanup = [&]() {
-        if (d_metric_id) cudaFree(d_metric_id);
-        if (d_out_data) cudaFree(d_out_data);
-        if (d_out_mask) cudaFree(d_out_mask);
-    };
-
-    if (cudaMalloc(&d_metric_id, sizeof(int)) != cudaSuccess ||
-        cudaMalloc(&d_out_data, fbytes) != cudaSuccess ||
-        cudaMalloc(&d_out_mask, mbytes) != cudaSuccess)
-    {
-        cleanup();
+    if (cudaMemcpy(bundle->d_metric_id, &metric_id, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess)
         return false;
-    }
-
-    if (cudaMemcpy(d_metric_id, &metric_id, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess)
-    {
-        cleanup();
-        return false;
-    }
 
     const int threads = 256;
     const unsigned int blocks = static_cast<unsigned int>((static_cast<long>(npix) + threads - 1) / threads);
@@ -1207,23 +1200,19 @@ bool compute_polyfit_metric_from_bundle_gpu(
         bundle->d_mask, bundle->d_mask, bundle->d_mask,
         bundle->nrows, bundle->ncols,
         bundle->nodata, z_factor, flat_slope_tolerance,
-        d_metric_id, 1,
-        d_out_data, d_out_mask);
+        bundle->d_metric_id, 1,
+        bundle->d_metric_out_data, bundle->d_metric_out_mask);
 
     cudaError_t err = cudaGetLastError();
     if (err == cudaSuccess)
         err = cudaDeviceSynchronize();
     if (err != cudaSuccess)
-    {
-        cleanup();
         return false;
-    }
 
     const bool ok =
-        (cudaMemcpy(out_data, d_out_data, fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
-        (cudaMemcpy(out_mask, d_out_mask, mbytes, cudaMemcpyDeviceToHost) == cudaSuccess);
+        (cudaMemcpy(out_data, bundle->d_metric_out_data, fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_mask, bundle->d_metric_out_mask, mbytes, cudaMemcpyDeviceToHost) == cudaSuccess);
 
-    cleanup();
     return ok;
 }
 

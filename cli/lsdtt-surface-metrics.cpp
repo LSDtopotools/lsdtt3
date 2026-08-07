@@ -1344,37 +1344,42 @@ int main(int argc, char* argv[])
             if (!requested_polyfit_metrics.empty())
             {
                 std::cout << "\n--- Polyfit metrics (" << method_str << ") ---\n";
-                std::cout << "  Calculating/writing requested polyfit metrics..."
-                          << std::flush;
-                const auto metrics_t0 = std::chrono::steady_clock::now();
-
-                lsdtt::polyfit_metric_request request;
-                request.metrics              = requested_polyfit_metrics;
-                request.z_factor             = static_cast<double>(ff["polyfit_z_factor"]);
-                request.n_threads            = n_threads;
-                request.flat_slope_tolerance =
-                    static_cast<double>(ff["polyfit_flat_slope_tolerance"]);
-
-                lsdtt::polyfit_metric_result metric_result =
-                    lsdtt::compute_polyfit_metrics(fitted, request);
-
                 for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
                 {
+                    lsdtt::polyfit_metric_request request;
+                    request.metrics              = {metric};
+                    request.z_factor             = static_cast<double>(ff["polyfit_z_factor"]);
+                    request.n_threads            = n_threads;
+                    request.flat_slope_tolerance =
+                        static_cast<double>(ff["polyfit_flat_slope_tolerance"]);
+
+                    const auto compute_t0 = std::chrono::steady_clock::now();
+                    lsdtt::polyfit_metric_result metric_result =
+                        lsdtt::compute_polyfit_metrics(fitted, request);
+                    const auto compute_t1 = std::chrono::steady_clock::now();
+
                     if (!metric_result.has(metric)) continue;
+
                     const std::string o =
                         pp.make_output_path( polyfit_metric_suffix(metric, method_str));
                     std::cout << "Writing: " << o << "\n";
+
+                    const auto write_t0 = std::chrono::steady_clock::now();
                     loader.write_full(
                         metric_result.at(metric).get_data(),
                         metric_result.at(metric).get_meta(),
                         o, out_fmt
                     );
-                }
 
-                const auto metrics_t1 = std::chrono::steady_clock::now();
-                const double metrics_seconds =
-                    std::chrono::duration<double>(metrics_t1 - metrics_t0).count();
-                std::cout << "  done (" << metrics_seconds << " s)\n";
+                    const auto write_t1 = std::chrono::steady_clock::now();
+                    const double compute_seconds =
+                        std::chrono::duration<double>(compute_t1 - compute_t0).count();
+                    const double write_seconds =
+                        std::chrono::duration<double>(write_t1 - write_t0).count();
+
+                    std::cout << "  Compute time: " << compute_seconds << " s\n";
+                    std::cout << "  Write time: " << write_seconds << " s\n";
+                }
 
                 // --- Surface shape classification (SMAP) ---
                 // The two principal curvatures come either from the polyfit
@@ -1383,6 +1388,20 @@ int main(int argc, char* argv[])
                 // logic above guarantees the needed metrics were requested.
                 if (bf["write_shape_classification"])
                 {
+                    lsdtt::polyfit_metric_request shape_request;
+                    shape_request.metrics = {
+                        lsdtt::polyfit_metric::fitted_surface,
+                        lsdtt::polyfit_metric::maximum_curvature,
+                        lsdtt::polyfit_metric::minimum_curvature
+                    };
+                    shape_request.z_factor = static_cast<double>(ff["polyfit_z_factor"]);
+                    shape_request.n_threads = n_threads;
+                    shape_request.flat_slope_tolerance =
+                        static_cast<double>(ff["polyfit_flat_slope_tolerance"]);
+
+                    lsdtt::polyfit_metric_result shape_metric_result =
+                        lsdtt::compute_polyfit_metrics(fitted, shape_request);
+
                     const bool use_ff =
                         (sf["shape_curvature_method"] == "fundamental_form");
 
@@ -1392,12 +1411,12 @@ int main(int argc, char* argv[])
 
                     if (use_ff)
                     {
-                        if (metric_result.has(lsdtt::polyfit_metric::fitted_surface))
+                        if (shape_metric_result.has(lsdtt::polyfit_metric::fitted_surface))
                         {
                             std::cout << "  Computing fundamental-form principal "
                                          "curvatures (TopoCurve CurveCalc)...\n";
                             ff_pc = lsdtt::fundamental_form_principal_curvatures(
-                                metric_result.at(lsdtt::polyfit_metric::fitted_surface),
+                                shape_metric_result.at(lsdtt::polyfit_metric::fitted_surface),
                                 n_threads
                             );
                             kmax_r = &ff_pc->maximum_curvature;
@@ -1422,11 +1441,11 @@ int main(int argc, char* argv[])
                             );
                         }
                     }
-                    else if (metric_result.has(lsdtt::polyfit_metric::maximum_curvature) &&
-                             metric_result.has(lsdtt::polyfit_metric::minimum_curvature))
+                    else if (shape_metric_result.has(lsdtt::polyfit_metric::maximum_curvature) &&
+                             shape_metric_result.has(lsdtt::polyfit_metric::minimum_curvature))
                     {
-                        kmax_r = &metric_result.at(lsdtt::polyfit_metric::maximum_curvature);
-                        kmin_r = &metric_result.at(lsdtt::polyfit_metric::minimum_curvature);
+                        kmax_r = &shape_metric_result.at(lsdtt::polyfit_metric::maximum_curvature);
+                        kmin_r = &shape_metric_result.at(lsdtt::polyfit_metric::minimum_curvature);
                     }
 
                     if (kmax_r != nullptr && kmin_r != nullptr)

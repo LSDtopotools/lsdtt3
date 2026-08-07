@@ -74,6 +74,8 @@ uses a staged GPU bundle to cut redundant transfers:
   device in a `polyfit_device_bundle`.
 - `compute_polyfit_metrics` then computes requested metrics on that bundle and
   downloads **one metric at a time** for writing.
+- The bundle owns reusable per-metric device output buffers, so metric loops do
+  not `cudaMalloc`/`cudaFree` temporary outputs every iteration.
 - If the bundle path is unavailable, the code falls back to the stateless
   per-call launcher path and then to CPU if needed.
 

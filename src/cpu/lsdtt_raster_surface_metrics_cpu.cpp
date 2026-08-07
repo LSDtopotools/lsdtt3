@@ -1702,9 +1702,6 @@ polyfit_metric_result compute_polyfit_metrics(
 
         if (all_ok)
         {
-            if (can_use_cached_bundle)
-                clear_gpu_polyfit_cache();
-
             polyfit_metric_result result;
             for (auto& kv : outputs)
             {
