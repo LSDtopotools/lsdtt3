@@ -784,7 +784,44 @@ bool direct_polyfit_gpu_bruteforce(
     return copy_ok;
 }
 
-bool direct_polyfit_gpu_rolling(
+struct polyfit_device_bundle
+{
+    int nrows = 0;
+    int ncols = 0;
+    float nodata = 0.0f;
+    float* d_a = nullptr;
+    float* d_b = nullptr;
+    float* d_c = nullptr;
+    float* d_d = nullptr;
+    float* d_e = nullptr;
+    float* d_f = nullptr;
+    unsigned char* d_mask = nullptr;
+};
+
+namespace {
+
+void free_polyfit_device_bundle_arrays(polyfit_device_bundle* bundle)
+{
+    if (!bundle) return;
+    if (bundle->d_a) cudaFree(bundle->d_a);
+    if (bundle->d_b) cudaFree(bundle->d_b);
+    if (bundle->d_c) cudaFree(bundle->d_c);
+    if (bundle->d_d) cudaFree(bundle->d_d);
+    if (bundle->d_e) cudaFree(bundle->d_e);
+    if (bundle->d_f) cudaFree(bundle->d_f);
+    if (bundle->d_mask) cudaFree(bundle->d_mask);
+    bundle->d_a = nullptr;
+    bundle->d_b = nullptr;
+    bundle->d_c = nullptr;
+    bundle->d_d = nullptr;
+    bundle->d_e = nullptr;
+    bundle->d_f = nullptr;
+    bundle->d_mask = nullptr;
+}
+
+} // anonymous namespace
+
+bool direct_polyfit_gpu_bundle_create(
     const float*        z,
     const std::uint8_t* mask,
     int                 nrows,
@@ -792,16 +829,13 @@ bool direct_polyfit_gpu_rolling(
     double              cell_size,
     double              nodata_value,
     int                 W,
-    float*              out_a,
-    float*              out_b,
-    float*              out_c,
-    float*              out_d,
-    float*              out_e,
-    float*              out_f,
-    std::uint8_t*       out_mask)
+    polyfit_device_bundle** out_bundle)
 {
     if (!gpu_available())
         return false;
+    if (out_bundle == nullptr)
+        return false;
+    *out_bundle = nullptr;
 
     polyfit_constants k;
     if (!build_polyfit_constants(nrows, ncols, cell_size, nodata_value, W, k))
@@ -815,38 +849,35 @@ bool direct_polyfit_gpu_rolling(
 
     float*         d_z = nullptr;
     unsigned char* d_mask = nullptr;
-    float*         d_a = nullptr; float* d_b = nullptr; float* d_c = nullptr;
-    float*         d_d = nullptr; float* d_e = nullptr; float* d_f = nullptr;
-    unsigned char* d_omask = nullptr;
+    polyfit_device_bundle* bundle = new polyfit_device_bundle();
+    bundle->nrows = nrows;
+    bundle->ncols = ncols;
+    bundle->nodata = static_cast<float>(nodata_value);
+
     double*        d_H0 = nullptr; double* d_H1 = nullptr; double* d_H2 = nullptr;
     int*           d_Hn = nullptr;
 
     auto cleanup = [&]() {
         if (d_z)     cudaFree(d_z);
         if (d_mask)  cudaFree(d_mask);
-        if (d_a)     cudaFree(d_a);
-        if (d_b)     cudaFree(d_b);
-        if (d_c)     cudaFree(d_c);
-        if (d_d)     cudaFree(d_d);
-        if (d_e)     cudaFree(d_e);
-        if (d_f)     cudaFree(d_f);
-        if (d_omask) cudaFree(d_omask);
         if (d_H0)    cudaFree(d_H0);
         if (d_H1)    cudaFree(d_H1);
         if (d_H2)    cudaFree(d_H2);
         if (d_Hn)    cudaFree(d_Hn);
+        free_polyfit_device_bundle_arrays(bundle);
+        delete bundle;
     };
 
     bool alloc_ok =
         (cudaMalloc(&d_z,     fbytes) == cudaSuccess) &&
         (cudaMalloc(&d_mask,  mbytes) == cudaSuccess) &&
-        (cudaMalloc(&d_a,     fbytes) == cudaSuccess) &&
-        (cudaMalloc(&d_b,     fbytes) == cudaSuccess) &&
-        (cudaMalloc(&d_c,     fbytes) == cudaSuccess) &&
-        (cudaMalloc(&d_d,     fbytes) == cudaSuccess) &&
-        (cudaMalloc(&d_e,     fbytes) == cudaSuccess) &&
-        (cudaMalloc(&d_f,     fbytes) == cudaSuccess) &&
-        (cudaMalloc(&d_omask, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_a,     fbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_b,     fbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_c,     fbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_d,     fbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_e,     fbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_f,     fbytes) == cudaSuccess) &&
+        (cudaMalloc(&bundle->d_mask, mbytes) == cudaSuccess) &&
         (cudaMalloc(&d_H0,    dbytes) == cudaSuccess) &&
         (cudaMalloc(&d_H1,    dbytes) == cudaSuccess) &&
         (cudaMalloc(&d_H2,    dbytes) == cudaSuccess) &&
@@ -881,7 +912,9 @@ bool direct_polyfit_gpu_rolling(
     const int v_threads = 256;
     const unsigned int v_blocks = static_cast<unsigned int>((static_cast<long>(npix) + v_threads - 1) / v_threads);
     direct_polyfit_kernel_rolling<<<v_blocks, v_threads>>>(
-        d_H0, d_H1, d_H2, d_Hn, k, d_a, d_b, d_c, d_d, d_e, d_f, d_omask);
+        d_H0, d_H1, d_H2, d_Hn, k,
+        bundle->d_a, bundle->d_b, bundle->d_c,
+        bundle->d_d, bundle->d_e, bundle->d_f, bundle->d_mask);
 
     err = cudaGetLastError();
     if (err == cudaSuccess)
@@ -892,17 +925,78 @@ bool direct_polyfit_gpu_rolling(
         return false;
     }
 
-    bool copy_ok =
-        (cudaMemcpy(out_a,    d_a,     fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
-        (cudaMemcpy(out_b,    d_b,     fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
-        (cudaMemcpy(out_c,    d_c,     fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
-        (cudaMemcpy(out_d,    d_d,     fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
-        (cudaMemcpy(out_e,    d_e,     fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
-        (cudaMemcpy(out_f,    d_f,     fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
-        (cudaMemcpy(out_mask, d_omask, mbytes, cudaMemcpyDeviceToHost) == cudaSuccess);
+    if (d_z) cudaFree(d_z);
+    if (d_mask) cudaFree(d_mask);
+    if (d_H0) cudaFree(d_H0);
+    if (d_H1) cudaFree(d_H1);
+    if (d_H2) cudaFree(d_H2);
+    if (d_Hn) cudaFree(d_Hn);
 
-    cleanup();
-    return copy_ok;
+    *out_bundle = bundle;
+    return true;
+}
+
+bool direct_polyfit_gpu_bundle_download(
+    const polyfit_device_bundle* bundle,
+    float*                       out_a,
+    float*                       out_b,
+    float*                       out_c,
+    float*                       out_d,
+    float*                       out_e,
+    float*                       out_f,
+    std::uint8_t*                out_mask)
+{
+    if (!bundle || !out_a || !out_b || !out_c || !out_d || !out_e || !out_f || !out_mask)
+        return false;
+
+    const std::size_t npix = static_cast<std::size_t>(bundle->nrows) * bundle->ncols;
+    const std::size_t fbytes = npix * sizeof(float);
+    const std::size_t mbytes = npix * sizeof(unsigned char);
+
+    return
+        (cudaMemcpy(out_a,    bundle->d_a,    fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_b,    bundle->d_b,    fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_c,    bundle->d_c,    fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_d,    bundle->d_d,    fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_e,    bundle->d_e,    fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_f,    bundle->d_f,    fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_mask, bundle->d_mask, mbytes, cudaMemcpyDeviceToHost) == cudaSuccess);
+}
+
+void destroy_polyfit_device_bundle(polyfit_device_bundle* bundle)
+{
+    if (!bundle) return;
+    free_polyfit_device_bundle_arrays(bundle);
+    delete bundle;
+}
+
+bool direct_polyfit_gpu_rolling(
+    const float*        z,
+    const std::uint8_t* mask,
+    int                 nrows,
+    int                 ncols,
+    double              cell_size,
+    double              nodata_value,
+    int                 W,
+    float*              out_a,
+    float*              out_b,
+    float*              out_c,
+    float*              out_d,
+    float*              out_e,
+    float*              out_f,
+    std::uint8_t*       out_mask)
+{
+    polyfit_device_bundle* bundle = nullptr;
+    if (!direct_polyfit_gpu_bundle_create(
+            z, mask, nrows, ncols, cell_size, nodata_value, W, &bundle))
+    {
+        return false;
+    }
+
+    const bool ok = direct_polyfit_gpu_bundle_download(
+        bundle, out_a, out_b, out_c, out_d, out_e, out_f, out_mask);
+    destroy_polyfit_device_bundle(bundle);
+    return ok;
 }
 
 bool direct_polyfit_gpu(
@@ -1063,6 +1157,74 @@ bool compute_polyfit_metrics_gpu(
 
     cleanup();
     return copy_out_ok;
+}
+
+bool compute_polyfit_metric_from_bundle_gpu(
+    const polyfit_device_bundle* bundle,
+    double                       z_factor,
+    double                       flat_slope_tolerance,
+    int                          metric_id,
+    float*                       out_data,
+    std::uint8_t*                out_mask)
+{
+    if (!bundle || !out_data || !out_mask)
+        return false;
+
+    const std::size_t npix = static_cast<std::size_t>(bundle->nrows) * bundle->ncols;
+    const std::size_t fbytes = npix * sizeof(float);
+    const std::size_t mbytes = npix * sizeof(unsigned char);
+
+    int* d_metric_id = nullptr;
+    float* d_out_data = nullptr;
+    unsigned char* d_out_mask = nullptr;
+
+    auto cleanup = [&]() {
+        if (d_metric_id) cudaFree(d_metric_id);
+        if (d_out_data) cudaFree(d_out_data);
+        if (d_out_mask) cudaFree(d_out_mask);
+    };
+
+    if (cudaMalloc(&d_metric_id, sizeof(int)) != cudaSuccess ||
+        cudaMalloc(&d_out_data, fbytes) != cudaSuccess ||
+        cudaMalloc(&d_out_mask, mbytes) != cudaSuccess)
+    {
+        cleanup();
+        return false;
+    }
+
+    if (cudaMemcpy(d_metric_id, &metric_id, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess)
+    {
+        cleanup();
+        return false;
+    }
+
+    const int threads = 256;
+    const unsigned int blocks = static_cast<unsigned int>((static_cast<long>(npix) + threads - 1) / threads);
+    compute_polyfit_metrics_kernel<<<blocks, threads>>>(
+        bundle->d_a, bundle->d_b, bundle->d_c,
+        bundle->d_d, bundle->d_e, bundle->d_f,
+        bundle->d_mask, bundle->d_mask, bundle->d_mask,
+        bundle->d_mask, bundle->d_mask, bundle->d_mask,
+        bundle->nrows, bundle->ncols,
+        bundle->nodata, z_factor, flat_slope_tolerance,
+        d_metric_id, 1,
+        d_out_data, d_out_mask);
+
+    cudaError_t err = cudaGetLastError();
+    if (err == cudaSuccess)
+        err = cudaDeviceSynchronize();
+    if (err != cudaSuccess)
+    {
+        cleanup();
+        return false;
+    }
+
+    const bool ok =
+        (cudaMemcpy(out_data, d_out_data, fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_mask, d_out_mask, mbytes, cudaMemcpyDeviceToHost) == cudaSuccess);
+
+    cleanup();
+    return ok;
 }
 
 } // namespace gpu

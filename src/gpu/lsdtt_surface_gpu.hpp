@@ -35,6 +35,8 @@
 namespace lsdtt {
 namespace gpu {
 
+struct polyfit_device_bundle;
+
 // -----------------------------------------------------------------------------
 // gpu_available
 //
@@ -76,6 +78,44 @@ bool direct_polyfit_gpu(
     float*              out_f,
     std::uint8_t*       out_mask
 );
+
+// Creates a device-resident coefficient bundle for direct polyfit.
+// Caller owns the returned handle and must destroy it.
+bool direct_polyfit_gpu_bundle_create(
+    const float*        z,
+    const std::uint8_t* mask,
+    int                 nrows,
+    int                 ncols,
+    double              cell_size,
+    double              nodata_value,
+    int                 W,
+    polyfit_device_bundle** out_bundle
+);
+
+// Downloads coefficient rasters and mask from a device bundle to host arrays.
+bool direct_polyfit_gpu_bundle_download(
+    const polyfit_device_bundle* bundle,
+    float*                       out_a,
+    float*                       out_b,
+    float*                       out_c,
+    float*                       out_d,
+    float*                       out_e,
+    float*                       out_f,
+    std::uint8_t*                out_mask
+);
+
+// Computes one polyfit metric from a device-resident coefficient bundle and
+// downloads it to host arrays.
+bool compute_polyfit_metric_from_bundle_gpu(
+    const polyfit_device_bundle* bundle,
+    double                       z_factor,
+    double                       flat_slope_tolerance,
+    int                          metric_id,
+    float*                       out_data,
+    std::uint8_t*                out_mask
+);
+
+void destroy_polyfit_device_bundle(polyfit_device_bundle* bundle);
 
 // -----------------------------------------------------------------------------
 // compute_polyfit_metrics_gpu

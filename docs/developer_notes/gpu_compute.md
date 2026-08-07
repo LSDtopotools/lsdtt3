@@ -67,10 +67,18 @@ parameter); do not flip it from multiple threads during a dispatched call.
 
 ### Host ↔ device transfers
 
-The current `lsdtt_raster_cpu` lives in host memory, so each GPU kernel call
-copies its inputs up to the device and the result back down. Chaining several
-GPU kernels therefore incurs redundant transfers today; keeping intermediate
-rasters resident on the device is a deliberate future optimisation.
+`lsdtt_raster_cpu` still lives in host memory, but the direct-polyfit path now
+uses a staged GPU bundle to cut redundant transfers:
+
+- `direct_polyfit` can keep its coefficient rasters (`a..f` + mask) resident on
+  device in a `polyfit_device_bundle`.
+- `compute_polyfit_metrics` then computes requested metrics on that bundle and
+  downloads **one metric at a time** for writing.
+- If the bundle path is unavailable, the code falls back to the stateless
+  per-call launcher path and then to CPU if needed.
+
+This keeps memory bounded for `polyfit_metrics: all` on large rasters while
+avoiding repeated host->device uploads of the same coefficient rasters.
 
 ---
 
@@ -83,8 +91,10 @@ compute_backend: auto    # auto (default) | cpu | gpu
 ```
 
 `auto`/`gpu` route `direct_polyfit` (used by the `polyfit_method: direct` path)
-to the GPU when available; all other metrics run on the CPU regardless. In a
-`-DLSDTT_GPU=OFF` build the parameter is accepted but has no effect.
+to the GPU when available. Polyfit-derived metrics (`compute_polyfit_metrics`)
+are also GPU-dispatched when possible (metric-by-metric download), with CPU
+fallback on failure. In a `-DLSDTT_GPU=OFF` build the parameter is accepted but
+has no effect.
 
 ---
 
@@ -109,11 +119,15 @@ src/core/lsdtt_backend_factory.{hpp,cpp}
 src/gpu/lsdtt_surface_gpu.hpp        POD interface (no CUDA/lsdtt types)
     lsdtt::gpu::gpu_available()
     lsdtt::gpu::direct_polyfit_gpu(raw pointers + dims) -> bool
+    lsdtt::gpu::direct_polyfit_gpu_bundle_create(...) -> bundle handle
+    lsdtt::gpu::compute_polyfit_metric_from_bundle_gpu(...) -> bool
+    lsdtt::gpu::destroy_polyfit_device_bundle(...)
 
 src/gpu/lsdtt_surface_gpu.cu         CUDA kernels + launchers   (lsdtt3_gpu)
 
 src/cpu/lsdtt_raster_surface_metrics_cpu.cpp
-    direct_polyfit(): #ifdef LSDTT_GPU_KERNELS dispatch block, else CPU body
+    direct_polyfit(): GPU dispatch + optional bundle cache
+    compute_polyfit_metrics(): GPU metric dispatch (bundle first, fallbacks)
 ```
 
 The kernel interface takes only raw row-major pointers and dimensions, so the
