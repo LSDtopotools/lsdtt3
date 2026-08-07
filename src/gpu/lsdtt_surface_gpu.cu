@@ -394,6 +394,237 @@ __global__ void direct_polyfit_kernel_rolling(
     out_mask[idx] = 1;
 }
 
+// IDs must match lsdtt::polyfit_metric enum order in
+// src/cpu/lsdtt_raster_surface_metrics_cpu.hpp.
+enum polyfit_metric_id : int
+{
+    PM_FITTED_SURFACE = 0,
+    PM_DZDX,
+    PM_DZDY,
+    PM_D2ZDX2,
+    PM_D2ZDXDY,
+    PM_D2ZDY2,
+    PM_SLOPE,
+    PM_SLOPE_DEGREES,
+    PM_ASPECT_RADIANS,
+    PM_ASPECT_DEGREES,
+    PM_LAPLACIAN,
+    PM_HESSIAN_DETERMINANT,
+    PM_MEAN_CURVATURE,
+    PM_GAUSSIAN_CURVATURE,
+    PM_MAXIMUM_CURVATURE,
+    PM_MINIMUM_CURVATURE,
+    PM_CURVEDNESS,
+    PM_SHAPE_INDEX,
+    PM_PROFILE_CURVATURE,
+    PM_PLAN_CURVATURE,
+    PM_TANGENTIAL_CURVATURE,
+    PM_DIFFERENCE_CURVATURE,
+    PM_HORIZONTAL_EXCESS_CURVATURE,
+    PM_VERTICAL_EXCESS_CURVATURE,
+    PM_ACCUMULATION_CURVATURE,
+    PM_RING_CURVATURE,
+    PM_ROTOR
+};
+
+constexpr double k_pi_gpu = 3.14159265358979323846;
+
+__global__ void compute_polyfit_metrics_kernel(
+    const float* a_data,
+    const float* b_data,
+    const float* c_data,
+    const float* d_data,
+    const float* e_data,
+    const float* f_data,
+    const unsigned char* a_mask,
+    const unsigned char* b_mask,
+    const unsigned char* c_mask,
+    const unsigned char* d_mask,
+    const unsigned char* e_mask,
+    const unsigned char* f_mask,
+    int nrows,
+    int ncols,
+    float nodata,
+    double z_factor,
+    double flat_tol,
+    const int* metric_ids,
+    int n_metrics,
+    float* out_data,
+    unsigned char* out_mask)
+{
+    const long idx = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const long npix = static_cast<long>(nrows) * ncols;
+    if (idx >= npix) return;
+
+    // Initialize all requested outputs at this pixel to nodata/mask0.
+    for (int m = 0; m < n_metrics; ++m)
+    {
+        const long o = static_cast<long>(m) * npix + idx;
+        out_data[o] = nodata;
+        out_mask[o] = 0;
+    }
+
+    const bool coeff_valid =
+        a_mask[idx] != 0 && b_mask[idx] != 0 && c_mask[idx] != 0 &&
+        d_mask[idx] != 0 && e_mask[idx] != 0 && f_mask[idx] != 0 &&
+        (a_data[idx] != nodata) && (b_data[idx] != nodata) &&
+        (c_data[idx] != nodata) && (d_data[idx] != nodata) &&
+        (e_data[idx] != nodata) && (f_data[idx] != nodata) &&
+        isfinite(a_data[idx]) && isfinite(b_data[idx]) &&
+        isfinite(c_data[idx]) && isfinite(d_data[idx]) &&
+        isfinite(e_data[idx]) && isfinite(f_data[idx]);
+
+    if (!coeff_valid) return;
+
+    const double a = z_factor * static_cast<double>(a_data[idx]);
+    const double b = z_factor * static_cast<double>(b_data[idx]);
+    const double c = z_factor * static_cast<double>(c_data[idx]);
+    const double d = z_factor * static_cast<double>(d_data[idx]);
+    const double e = z_factor * static_cast<double>(e_data[idx]);
+    const double f = z_factor * static_cast<double>(f_data[idx]);
+
+    const double p = d;
+    const double q = e;
+    const double r = 2.0 * a;
+    const double s = c;
+    const double t = 2.0 * b;
+
+    const double p2 = p * p;
+    const double q2 = q * q;
+    const double g2 = p2 + q2;
+    const double g  = sqrt(g2);
+    const double w2 = 1.0 + g2;
+    const double w  = sqrt(w2);
+    const double w3 = w2 * w;
+    const double w4 = w2 * w2;
+
+    double H = NAN;
+    double K = NAN;
+    if (w3 > 0.0)
+        H = ((1.0 + q2) * r - 2.0 * p * q * s + (1.0 + p2) * t) / (2.0 * w3);
+    if (w4 > 0.0)
+        K = (r * t - s * s) / w4;
+
+    const double disc = fmax(0.0, H * H - K);
+    const double root = sqrt(disc);
+    const double kmax = H + root;
+    const double kmin = H - root;
+
+    const double flat_tol_sq = flat_tol * flat_tol;
+    const double denom_g3 = g2 * sqrt(g2);
+
+    double plan_curv = NAN;
+    if (denom_g3 > 0.0 && g2 > flat_tol_sq)
+        plan_curv = (q2 * r - 2.0 * p * q * s + p2 * t) / denom_g3;
+
+    double tan_curv = NAN;
+    {
+        const double denom = g2 * w;
+        if (denom > 0.0 && g2 > flat_tol_sq)
+            tan_curv = (q2 * r - 2.0 * p * q * s + p2 * t) / denom;
+    }
+
+    double vert_curv = NAN;
+    {
+        const double denom = g2 * w3;
+        if (denom > 0.0 && g2 > flat_tol_sq)
+            vert_curv = (p2 * r + 2.0 * p * q * s + q2 * t) / denom;
+    }
+
+    double rotor = NAN;
+    if (denom_g3 > 0.0 && g2 > flat_tol_sq)
+        rotor = ((p2 - q2) * s - p * q * (r - t)) / denom_g3;
+
+    const double diff_curv = (isfinite(vert_curv) && isfinite(tan_curv))
+        ? 0.5 * (vert_curv - tan_curv) : NAN;
+    const double h_excess = (isfinite(tan_curv) && isfinite(kmin))
+        ? (tan_curv - kmin) : NAN;
+    const double v_excess = (isfinite(vert_curv) && isfinite(kmin))
+        ? (vert_curv - kmin) : NAN;
+    const double accum_curv = (isfinite(tan_curv) && isfinite(vert_curv))
+        ? (tan_curv * vert_curv) : NAN;
+    const double ring_curv = (isfinite(h_excess) && isfinite(v_excess))
+        ? (h_excess * v_excess) : NAN;
+
+    for (int m = 0; m < n_metrics; ++m)
+    {
+        const int metric = metric_ids[m];
+        const long o = static_cast<long>(m) * npix + idx;
+
+        double v = NAN;
+        bool valid = false;
+
+        switch (metric)
+        {
+            case PM_FITTED_SURFACE:      v = f; valid = true; break;
+            case PM_DZDX:                v = p; valid = true; break;
+            case PM_DZDY:                v = q; valid = true; break;
+            case PM_D2ZDX2:              v = r; valid = true; break;
+            case PM_D2ZDXDY:             v = s; valid = true; break;
+            case PM_D2ZDY2:              v = t; valid = true; break;
+            case PM_SLOPE:               v = g; valid = true; break;
+            case PM_SLOPE_DEGREES:       v = atan(g) * (180.0 / k_pi_gpu); valid = true; break;
+            case PM_ASPECT_RADIANS:
+                if (g2 > flat_tol_sq)
+                {
+                    v = atan2(-p, -q);
+                    if (v < 0.0) v += 2.0 * k_pi_gpu;
+                    valid = true;
+                }
+                break;
+            case PM_ASPECT_DEGREES:
+                if (g2 > flat_tol_sq)
+                {
+                    v = atan2(-p, -q);
+                    if (v < 0.0) v += 2.0 * k_pi_gpu;
+                    v *= (180.0 / k_pi_gpu);
+                    valid = true;
+                }
+                break;
+            case PM_LAPLACIAN:           v = r + t; valid = true; break;
+            case PM_HESSIAN_DETERMINANT: v = r * t - s * s; valid = true; break;
+            case PM_MEAN_CURVATURE:      v = H; valid = isfinite(v); break;
+            case PM_GAUSSIAN_CURVATURE:  v = K; valid = isfinite(v); break;
+            case PM_MAXIMUM_CURVATURE:   v = kmax; valid = isfinite(v); break;
+            case PM_MINIMUM_CURVATURE:   v = kmin; valid = isfinite(v); break;
+            case PM_CURVEDNESS:
+                if (isfinite(kmax) && isfinite(kmin))
+                {
+                    v = sqrt(0.5 * (kmax * kmax + kmin * kmin));
+                    valid = isfinite(v);
+                }
+                break;
+            case PM_SHAPE_INDEX:
+                if (isfinite(kmax) && isfinite(kmin))
+                {
+                    const double denom = kmin - kmax;
+                    if (fabs(denom) > 1e-15)
+                    {
+                        v = (2.0 / k_pi_gpu) * atan((kmin + kmax) / denom);
+                        valid = isfinite(v);
+                    }
+                }
+                break;
+            case PM_PROFILE_CURVATURE:           v = vert_curv; valid = isfinite(v); break;
+            case PM_PLAN_CURVATURE:              v = plan_curv; valid = isfinite(v); break;
+            case PM_TANGENTIAL_CURVATURE:        v = tan_curv; valid = isfinite(v); break;
+            case PM_DIFFERENCE_CURVATURE:        v = diff_curv; valid = isfinite(v); break;
+            case PM_HORIZONTAL_EXCESS_CURVATURE: v = h_excess; valid = isfinite(v); break;
+            case PM_VERTICAL_EXCESS_CURVATURE:   v = v_excess; valid = isfinite(v); break;
+            case PM_ACCUMULATION_CURVATURE:      v = accum_curv; valid = isfinite(v); break;
+            case PM_RING_CURVATURE:              v = ring_curv; valid = isfinite(v); break;
+            case PM_ROTOR:                       v = rotor; valid = isfinite(v); break;
+            default: break;
+        }
+
+        if (valid)
+        {
+            out_data[o] = static_cast<float>(v);
+            out_mask[o] = 1;
+        }
+    }
+}
+
 } // anonymous namespace
 
 bool gpu_available()
@@ -700,6 +931,138 @@ bool direct_polyfit_gpu(
     return direct_polyfit_gpu_bruteforce(
         z, mask, nrows, ncols, cell_size, nodata_value, W,
         out_a, out_b, out_c, out_d, out_e, out_f, out_mask);
+}
+
+bool compute_polyfit_metrics_gpu(
+    const float*        a_data,
+    const float*        b_data,
+    const float*        c_data,
+    const float*        d_data,
+    const float*        e_data,
+    const float*        f_data,
+    const std::uint8_t* a_mask,
+    const std::uint8_t* b_mask,
+    const std::uint8_t* c_mask,
+    const std::uint8_t* d_mask,
+    const std::uint8_t* e_mask,
+    const std::uint8_t* f_mask,
+    int                 nrows,
+    int                 ncols,
+    double              nodata_value,
+    double              z_factor,
+    double              flat_slope_tolerance,
+    const int*          metric_ids,
+    int                 n_metrics,
+    float*              out_data,
+    std::uint8_t*       out_mask)
+{
+    if (!gpu_available())
+        return false;
+    if (nrows <= 0 || ncols <= 0 || n_metrics <= 0 || metric_ids == nullptr)
+        return false;
+
+    const std::size_t npix = static_cast<std::size_t>(nrows) * ncols;
+    const std::size_t fbytes = npix * sizeof(float);
+    const std::size_t mbytes = npix * sizeof(unsigned char);
+    const std::size_t out_fbytes = static_cast<std::size_t>(n_metrics) * fbytes;
+    const std::size_t out_mbytes = static_cast<std::size_t>(n_metrics) * mbytes;
+    const std::size_t id_bytes = static_cast<std::size_t>(n_metrics) * sizeof(int);
+
+    float *d_a = nullptr, *d_b = nullptr, *d_c = nullptr;
+    float *d_d = nullptr, *d_e = nullptr, *d_f = nullptr;
+    unsigned char *d_am = nullptr, *d_bm = nullptr, *d_cm = nullptr;
+    unsigned char *d_dm = nullptr, *d_em = nullptr, *d_fm = nullptr;
+    int* d_ids = nullptr;
+    float* d_out_data = nullptr;
+    unsigned char* d_out_mask = nullptr;
+
+    auto cleanup = [&]() {
+        if (d_a) cudaFree(d_a);
+        if (d_b) cudaFree(d_b);
+        if (d_c) cudaFree(d_c);
+        if (d_d) cudaFree(d_d);
+        if (d_e) cudaFree(d_e);
+        if (d_f) cudaFree(d_f);
+        if (d_am) cudaFree(d_am);
+        if (d_bm) cudaFree(d_bm);
+        if (d_cm) cudaFree(d_cm);
+        if (d_dm) cudaFree(d_dm);
+        if (d_em) cudaFree(d_em);
+        if (d_fm) cudaFree(d_fm);
+        if (d_ids) cudaFree(d_ids);
+        if (d_out_data) cudaFree(d_out_data);
+        if (d_out_mask) cudaFree(d_out_mask);
+    };
+
+    bool alloc_ok =
+        (cudaMalloc(&d_a, fbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_b, fbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_c, fbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_d, fbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_e, fbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_f, fbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_am, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_bm, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_cm, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_dm, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_em, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_fm, mbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_ids, id_bytes) == cudaSuccess) &&
+        (cudaMalloc(&d_out_data, out_fbytes) == cudaSuccess) &&
+        (cudaMalloc(&d_out_mask, out_mbytes) == cudaSuccess);
+
+    if (!alloc_ok)
+    {
+        cleanup();
+        return false;
+    }
+
+    bool copy_in_ok =
+        (cudaMemcpy(d_a, a_data, fbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_b, b_data, fbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_c, c_data, fbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_d, d_data, fbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_e, e_data, fbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_f, f_data, fbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_am, a_mask, mbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_bm, b_mask, mbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_cm, c_mask, mbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_dm, d_mask, mbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_em, e_mask, mbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_fm, f_mask, mbytes, cudaMemcpyHostToDevice) == cudaSuccess) &&
+        (cudaMemcpy(d_ids, metric_ids, id_bytes, cudaMemcpyHostToDevice) == cudaSuccess);
+
+    if (!copy_in_ok)
+    {
+        cleanup();
+        return false;
+    }
+
+    const int threads = 256;
+    const unsigned int blocks = static_cast<unsigned int>((static_cast<long>(npix) + threads - 1) / threads);
+    compute_polyfit_metrics_kernel<<<blocks, threads>>>(
+        d_a, d_b, d_c, d_d, d_e, d_f,
+        d_am, d_bm, d_cm, d_dm, d_em, d_fm,
+        nrows, ncols,
+        static_cast<float>(nodata_value), z_factor, flat_slope_tolerance,
+        d_ids, n_metrics,
+        d_out_data, d_out_mask);
+
+    cudaError_t err = cudaGetLastError();
+    if (err == cudaSuccess)
+        err = cudaDeviceSynchronize();
+    if (err != cudaSuccess)
+    {
+        cleanup();
+        return false;
+    }
+
+    const bool copy_out_ok =
+        (cudaMemcpy(out_data, d_out_data, out_fbytes, cudaMemcpyDeviceToHost) == cudaSuccess) &&
+        (cudaMemcpy(out_mask, d_out_mask, out_mbytes, cudaMemcpyDeviceToHost) == cudaSuccess);
+
+    cleanup();
+    return copy_out_ok;
 }
 
 } // namespace gpu

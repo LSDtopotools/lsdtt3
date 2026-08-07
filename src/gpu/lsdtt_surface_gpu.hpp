@@ -77,5 +77,46 @@ bool direct_polyfit_gpu(
     std::uint8_t*       out_mask
 );
 
+// -----------------------------------------------------------------------------
+// compute_polyfit_metrics_gpu
+//
+// GPU batch for polyfit-derived metrics from coefficient rasters a..f.
+//
+// Inputs:
+//   - a_data..f_data and a_mask..f_mask: host arrays of length nrows*ncols.
+//   - metric_ids: list of requested metric enum values (lsdtt::polyfit_metric
+//     cast to int), length n_metrics.
+//
+// Outputs:
+//   - out_data and out_mask are host arrays sized n_metrics * nrows*ncols.
+//   - Layout is metric-major: slice k starts at k*npix where npix=nrows*ncols.
+//
+// Return:
+//   - true on success; false if GPU path cannot run.
+// -----------------------------------------------------------------------------
+bool compute_polyfit_metrics_gpu(
+    const float*        a_data,
+    const float*        b_data,
+    const float*        c_data,
+    const float*        d_data,
+    const float*        e_data,
+    const float*        f_data,
+    const std::uint8_t* a_mask,
+    const std::uint8_t* b_mask,
+    const std::uint8_t* c_mask,
+    const std::uint8_t* d_mask,
+    const std::uint8_t* e_mask,
+    const std::uint8_t* f_mask,
+    int                 nrows,
+    int                 ncols,
+    double              nodata_value,
+    double              z_factor,
+    double              flat_slope_tolerance,
+    const int*          metric_ids,
+    int                 n_metrics,
+    float*              out_data,
+    std::uint8_t*       out_mask
+);
+
 } // namespace gpu
 } // namespace lsdtt

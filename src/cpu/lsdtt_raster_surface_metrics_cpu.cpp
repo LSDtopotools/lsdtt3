@@ -1568,6 +1568,66 @@ polyfit_metric_result compute_polyfit_metrics(
     output_slot out_ring_curvature              = make_slot(polyfit_metric::ring_curvature);
     output_slot out_rotor                       = make_slot(polyfit_metric::rotor);
 
+#ifdef LSDTT_GPU_KERNELS
+    if (get_compute_backend() != backend_type::cpu && gpu::gpu_available())
+    {
+        std::vector<int> metric_ids;
+        metric_ids.reserve(requested.size());
+        for (polyfit_metric metric : requested)
+            metric_ids.push_back(static_cast<int>(metric));
+
+        std::vector<float> gpu_out_data(metric_ids.size() * npix, nodata);
+        std::vector<uint8_t> gpu_out_mask(metric_ids.size() * npix, uint8_t{0});
+
+        const bool ok = gpu::compute_polyfit_metrics_gpu(
+            a_data.data(), b_data.data(), c_data.data(),
+            d_data.data(), e_data.data(), f_data.data(),
+            a_mask.data(), b_mask.data(), c_mask.data(),
+            d_mask.data(), e_mask.data(), f_mask.data(),
+            nrows, ncols,
+            meta.no_data_value,
+            request.z_factor,
+            request.flat_slope_tolerance,
+            metric_ids.data(),
+            static_cast<int>(metric_ids.size()),
+            gpu_out_data.data(),
+            gpu_out_mask.data());
+
+        if (ok)
+        {
+            for (std::size_t m = 0; m < metric_ids.size(); ++m)
+            {
+                const polyfit_metric metric = static_cast<polyfit_metric>(metric_ids[m]);
+                auto it = outputs.find(metric);
+                if (it == outputs.end()) continue;
+
+                const std::size_t base = m * npix;
+                std::copy(gpu_out_data.begin() + base,
+                          gpu_out_data.begin() + (base + npix),
+                          it->second.data.begin());
+                std::copy(gpu_out_mask.begin() + base,
+                          gpu_out_mask.begin() + (base + npix),
+                          it->second.mask.begin());
+            }
+
+            polyfit_metric_result result;
+            for (auto& kv : outputs)
+            {
+                result.rasters.emplace(
+                    kv.first,
+                    lsdtt_raster_cpu(
+                        std::move(kv.second.data),
+                        std::move(kv.second.mask),
+                        meta
+                    )
+                );
+            }
+            return result;
+        }
+        // If the GPU batch fails, fall through to the CPU implementation.
+    }
+#endif
+
     const bool need_first_derivs =
         out_dzdx.requested() ||
         out_dzdy.requested() ||
