@@ -74,6 +74,32 @@ double crn_steady_state_ratio(const std::string& nuclide_num,
                               double eff_erate_g_cm2_yr,
                               const lsdtt_crn_parameters& params);
 
+//  Apparent (steady-state, no-burial) effective erosion rate from a SURFACE
+//  concentration
+//
+// This is the number a single-nuclide study reports. It uses the same monotone
+// bisection over crn_steady_state_conc that
+// crn_burial_diagnostics_pair::apparent_erate_no_burial already uses, so it adds
+// no new physics -- it only makes the existing primitive callable.
+//
+// SURFACE ONLY. crn_steady_state_conc is the d = 0 form, so a shielded sample
+// must not be passed through here: it would be inverted as if it were exposed.
+//
+// total_scaling: production_scaling x shielding, ONE factor, exactly as
+// lsdtt_crn_parameters::scale_F_values expects and as
+// lsdtt_crn_column::make_params_shielded forms it. Passing the same product the
+// forward model used makes the inversion exactly consistent with it.
+//
+// Returns 0 and sets status != Converged when the concentration is outside the
+// model's reachable range (erosion rates 1e-7 to 10 g/cm2/yr). That is a real
+// answer about the measurement, not a solver failure, and must not be papered
+// over with a nearest fit.
+double crn_apparent_erate_from_conc(const std::string& nuclide,
+                                    double conc_atoms_g,
+                                    double total_scaling,
+                                    const std::string& muon_scheme,
+                                    CrnSolveStatus& status);
+
 //  Burial / inheritance diagnostics
 struct CrnBurialResult
 {

@@ -37,9 +37,11 @@
 //   lsdtt-cosmo-prediction -h
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -695,6 +697,14 @@ int main(int argc, char* argv[])
         "via concentration_column_name (for example Be10_CONC). Requires "
         "calculate_accumulated_crn_concentration: true.",
         "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
+
+    int_default_map["sample_points_stride"] = 1;
+    help_map["sample_points_stride"] = {"int","1",
+        "Keep every Nth point from sample_points_filename (1 = keep all).",
+        "For thinning a dense channel-node CSV to a manageable sample set. Points are "
+        "thinned BEFORE snapping, in input order. Values < 1 are treated as 1.",
+        "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)",
+        "param", ""};
 
     string_default_map["sample_column_name"] = "sample_name";
     help_map["sample_column_name"] = {"string","sample_name",
@@ -1962,6 +1972,27 @@ int main(int argc, char* argv[])
                 return 1;
             }
 
+            // Thinning. A channel-node CSV from lsdtt-channel-extraction holds
+            // every channel cell, which is thousands of points; keeping every
+            // Nth of them in input (row-major) order scatters the survivors
+            // across the network rather than tracing one profile. Done BEFORE
+            // snapping so the cost is paid once, and point_id is untouched so
+            // the sample_column_name passthrough (keyed by 1-based input row)
+            // still resolves.
+            const int sample_stride = std::max(1, ifs["sample_points_stride"]);
+            if (sample_stride > 1)
+            {
+                std::vector<lsdtt::lsdtt_input_point> thinned;
+                thinned.reserve(pts.size() / static_cast<std::size_t>(sample_stride) + 1);
+                for (std::size_t i = 0; i < pts.size();
+                     i += static_cast<std::size_t>(sample_stride))
+                    thinned.push_back(pts[i]);
+                std::cout << "  Thinned " << pts.size() << " point(s) to "
+                          << thinned.size() << " with sample_points_stride = "
+                          << sample_stride << "\n";
+                pts = std::move(thinned);
+            }
+
             // Optional sample-name passthrough, keyed by 1-based input order
             // (lsdtt_input_point::point_id). Failure to parse simply omits names.
             const std::string sample_col = sf["sample_column_name"];
@@ -2029,6 +2060,35 @@ int main(int argc, char* argv[])
                 headers.push_back(nuclide + "_CONC");
             }
             headers.push_back("snapped_contributing_pixels");
+
+            const lsdtt::lsdtt_raster_meta& meta_sample =
+                have_acc_multi ? acc_multi.Be10.get_meta() : acc_raster.get_meta();
+
+            // Step-change context, so a downstream analysis can plot a sample
+            // against its OWN step time without an out-of-band raster join.
+            // Only meaningful when this run generated the step-change fields;
+            // the three bridge CSVs deliberately do NOT get these columns
+            // because their schema is a contract with lsdtt-cosmo-tool.
+            if (have_generated_step)
+            {
+                headers.push_back("sc_steptime_yr");
+                headers.push_back("sc_erate_m_yr");
+                headers.push_back("sc_eff_erate_g_cm2_yr");
+                headers.push_back("sc_elevation_m");
+            }
+
+            // std::to_string is fixed-notation with 6 decimals, which throws
+            // away all but two significant figures of an erosion rate of 1e-4
+            // and hangs six meaningless decimals off a step time of 1e5. The
+            // context columns therefore go through a stream at precision 10,
+            // matching precise_string in lsdtt_junction_network_cpu.cpp.
+            auto precise_string = [](double value) -> std::string
+            {
+                std::ostringstream ss;
+                ss.precision(10);
+                ss << value;
+                return ss.str();
+            };
 
             std::vector<std::vector<std::string>> out_rows;
             int n_ok = 0, n_skip = 0;
@@ -2129,6 +2189,28 @@ int main(int argc, char* argv[])
                         static_cast<double>(acc_data(srow, scol))));
                 }
                 row.push_back(std::to_string(snapped.snapped_contributing_pixels));
+
+                if (have_generated_step)
+                {
+                    // A nodata cell in any of these is written as nan rather
+                    // than dropping the row: the concentration is still valid.
+                    auto sample_or_nan =
+                        [&](const lsdtt::lsdtt_raster_cpu& r) -> std::string
+                    {
+                        const auto& d = r.get_data_array();
+                        const auto& m = r.get_mask_array();
+                        if (d.n_rows() != meta_sample.n_rows ||
+                            d.n_cols() != meta_sample.n_cols)
+                            return "nan";
+                        if (!m(srow, scol)) return "nan";
+                        return precise_string(static_cast<double>(d(srow, scol)));
+                    };
+                    row.push_back(sample_or_nan(sc_time_since_change));
+                    row.push_back(sample_or_nan(sc_erosion_rate));
+                    row.push_back(sample_or_nan(erosion_raster));
+                    row.push_back(sample_or_nan(dem));
+                }
+
                 out_rows.push_back(std::move(row));
                 ++n_ok;
             }
@@ -2159,7 +2241,11 @@ int main(int argc, char* argv[])
                         const int i_lat = has_names ? 1 : 0;
                         const int i_lon = i_lat + 1;
                         const int i_be  = i_lon + 1;
-                        const int i_snap = static_cast<int>(src.size()) - 1;
+                        // Fixed offset, NOT src.size() - 1: the sampled CSV may
+                        // carry the step-change context columns after this one.
+                        // The multi-isotope block is Be10, Al26, C14, R2610,
+                        // R1410, so the snapped count sits five past Be10.
+                        const int i_snap = i_be + 5;
                         r.push_back(src[static_cast<std::size_t>(i_lat)]);
                         r.push_back(src[static_cast<std::size_t>(i_lon)]);
                         r.push_back(src[static_cast<std::size_t>(i_be + col_offset_from_be)]);

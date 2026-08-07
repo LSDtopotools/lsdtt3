@@ -26,6 +26,17 @@
 //                 eff_erate_new_g_cm2_yr, time_since_step_yr,
 //                 production_scaling
 //
+//   step_change_sweep
+//     The step_change solution swept over a range of times since the step, one
+//     row per time, with all three nuclides normalised against their old- and
+//     new-rate steady states and (optionally) inverted to apparent erosion
+//     rates and their ratios. This is the 1-D curve family that a spatial
+//     step-change prediction is compared against.
+//     Parameters: effective_depth_g_cm2, effective_erosion_rate_old_g_cm2_yr,
+//                 effective_erosion_rate_g_cm2_yr, production_scaling,
+//                 total_shielding, sweep_time_start_yr, sweep_time_end_yr,
+//                 sweep_n_times, sweep_invert_apparent_erate, run_label
+//
 //   full_transient
 //     Column of N evenly-spaced particles driven by a user-supplied erosion
 //     history CSV (time,rate,removal; rates in m/yr, depths in m).
@@ -189,6 +200,21 @@ static int status_code(const lsdtt::CrnSolveStatus s)
         case lsdtt::CrnSolveStatus::NotConverged: return 3;
     }
     return 4;
+}
+
+// Machine-readable status token for the sweep CSV. lsdtt::to_string gives the
+// human form ("no solution"); a tidy table wants a single word that a loader can
+// compare without normalising case or whitespace.
+static const char* sweep_status_token(const lsdtt::CrnSolveStatus s)
+{
+    switch (s)
+    {
+        case lsdtt::CrnSolveStatus::Converged:    return "Converged";
+        case lsdtt::CrnSolveStatus::NoSolution:   return "NoSolution";
+        case lsdtt::CrnSolveStatus::NotUnique:    return "NotUnique";
+        case lsdtt::CrnSolveStatus::NotConverged: return "NotConverged";
+    }
+    return "Unknown";
 }
 
 struct UncertaintySummary
@@ -479,8 +505,8 @@ int main(int argc, char* argv[])
     string_default_map["column_mode"] = "steady_state";
     help_map["column_mode"] = {"string","steady_state",
         "Simulation mode.",
-        "Options: steady_state, step_change, full_transient, burial_pair, step_pair, "
-        "burial_pair_batch, step_pair_batch.",
+        "Options: steady_state, step_change, step_change_sweep, full_transient, "
+        "burial_pair, step_pair, burial_pair_batch, step_pair_batch.",
         "-", "param", "use_initial_concentration"};
 
     string_default_map["nuclide"] = "Be10";
@@ -549,6 +575,44 @@ int main(int argc, char* argv[])
     help_map["time_since_step_yr"] = {"float","10000",
         "Time since the erosion-rate step change (yr).",
         "Used only in step_change mode.",
+        "-", "param", "use_initial_concentration"};
+
+    //  step_change_sweep parameters
+    // Only the time axis and the inversion switch are new: everything else the
+    // sweep needs (the two rates, the scaling, the shielding, the depth, the
+    // output file) is the step_change mode's existing parameter surface, reused
+    // verbatim rather than duplicated under a second set of names.
+    float_default_map["sweep_time_start_yr"] = 0.0f;
+    help_map["sweep_time_start_yr"] = {"float","0",
+        "First time since the step change in the sweep (yr).",
+        "Used only in step_change_sweep mode.",
+        "-", "param", "use_initial_concentration"};
+
+    float_default_map["sweep_time_end_yr"] = 50000.0f;
+    help_map["sweep_time_end_yr"] = {"float","50000",
+        "Last time since the step change in the sweep (yr).",
+        "Must be greater than sweep_time_start_yr. Used only in step_change_sweep mode.",
+        "-", "param", "use_initial_concentration"};
+
+    int_default_map["sweep_n_times"] = 1001;
+    help_map["sweep_n_times"] = {"int","1001",
+        "Number of times in the sweep, inclusive of both ends.",
+        "Must be at least 2. Used only in step_change_sweep mode.",
+        "-", "param", "use_initial_concentration"};
+
+    bool_default_map["sweep_invert_apparent_erate"] = true;
+    help_map["sweep_invert_apparent_erate"] = {"bool","true",
+        "If true, invert each nuclide's concentration to an apparent erosion rate.",
+        "Adds the three apparent rates, the two C14/Be10 and C14/Al26 ratios and the "
+        "three solver statuses. The inversion is a SURFACE steady-state solution, so "
+        "it requires effective_depth_g_cm2 = 0. When false the columns are still "
+        "written, filled with nan and NotAttempted, so the schema never changes.",
+        "-", "switch", "use_initial_concentration"};
+
+    string_default_map["run_label"] = "";
+    help_map["run_label"] = {"string","",
+        "Free-text tag echoed as a constant column in the step_change_sweep CSV.",
+        "Lets several sweeps be concatenated and grouped without parsing filenames.",
         "-", "param", "use_initial_concentration"};
 
     //  Two-nuclide diagnostics parameters
@@ -700,7 +764,10 @@ int main(int argc, char* argv[])
         "Output CSV filename for the results.",
         "All modes write it. steady_state/step_change/full_transient use columns "
         "(depth_m, effective_depth_g_cm2, C_10Be, C_26Al, C_14C); burial_pair and "
-        "step_pair write one-row diagnostic tables including solver status; batch "
+        "step_pair write one-row diagnostic tables including solver status; "
+        "step_change_sweep writes one row per swept time with constant run metadata, "
+        "the three concentrations, their old/new steady-state references, three "
+        "normalisations and the apparent erosion rates and ratios; batch "
         "diagnostic modes write one row per input sample with explicit status fields. "
         "Written relative to write_path.",
         "-", "param", "use_initial_concentration"};
@@ -950,6 +1017,184 @@ int main(int argc, char* argv[])
 
         write_point_result(pp, sf["output_file"], result);
         add_forward_cronus_sample(cronus_samples, "step_change", d_eff, result);
+    }
+
+    // ===========================================================================
+    else if (mode == "step_change_sweep")
+    {
+        const double d_eff     = static_cast<double>(ff["effective_depth_g_cm2"]);
+        const double erate_old = static_cast<double>(ff["effective_erosion_rate_old_g_cm2_yr"]);
+        const double erate_new = static_cast<double>(ff["effective_erosion_rate_g_cm2_yr"]);
+        const double t_start   = static_cast<double>(ff["sweep_time_start_yr"]);
+        const double t_end     = static_cast<double>(ff["sweep_time_end_yr"]);
+        const int    n_times   = ifs["sweep_n_times"];
+        const bool   do_invert = bf["sweep_invert_apparent_erate"];
+        const std::string run_label = sf["run_label"];
+
+        if (n_times < 2)
+        {
+            std::cerr << "FATAL: sweep_n_times must be at least 2 (got "
+                      << n_times << ").\n";
+            return 1;
+        }
+        if (!(t_end > t_start))
+        {
+            std::cerr << "FATAL: sweep_time_end_yr must be greater than "
+                         "sweep_time_start_yr (got "
+                      << t_start << " to " << t_end << ").\n";
+            return 1;
+        }
+        if (!(erate_old > 0.0) || !(erate_new > 0.0))
+        {
+            std::cerr << "FATAL: both effective_erosion_rate_old_g_cm2_yr and "
+                         "effective_erosion_rate_g_cm2_yr must be > 0 (got "
+                      << erate_old << " and " << erate_new << ").\n";
+            return 1;
+        }
+        // The inversion runs on the SURFACE steady-state form, so a shielded
+        // sample would be inverted as if it were exposed. Refuse rather than
+        // quietly return a wrong rate.
+        if (do_invert && d_eff != 0.0)
+        {
+            std::cerr << "FATAL: sweep_invert_apparent_erate requires "
+                         "effective_depth_g_cm2 = 0 (the apparent-rate inversion "
+                         "is a SURFACE steady-state solution). Set the depth to 0 "
+                         "or turn the inversion off.\n";
+            return 1;
+        }
+
+        // ONE factor, the product, exactly as scale_F_values and
+        // lsdtt_crn_column::make_params_shielded form it. Passing the same
+        // product to the inversion is what makes it consistent with the forward
+        // model above it; do not split it.
+        const double s_tot = production_scaling * total_shielding;
+
+        const lsdtt::CrnColumnSample ss_old = col.steady_state(
+            d_eff, erate_old, production_scaling, total_shielding, muon_scheme);
+        const lsdtt::CrnColumnSample ss_new = col.steady_state(
+            d_eff, erate_new, production_scaling, total_shielding, muon_scheme);
+
+        const double nan_v = std::numeric_limits<double>::quiet_NaN();
+
+        // conc / ss_old: 1 at t = 0, falling toward ss_old/ss_new.
+        auto norm_conc = [&](double c, double c_old) {
+            return (std::isfinite(c_old) && c_old != 0.0) ? c / c_old : nan_v;
+        };
+        // (conc - ss_new) / (ss_old - ss_new): 1 -> 0 exactly.
+        auto norm_full = [&](double c, double c_old, double c_new) {
+            const double den = c_old - c_new;
+            return (std::isfinite(den) && den != 0.0) ? (c - c_new) / den : nan_v;
+        };
+        // (ss_old - conc) / (ss_old - ss_new): 0 at t = 0, rising to 1. This is
+        // the one the published figures use -- the concentration FALLS when
+        // erosion speeds up, so both of the normalisations above decrease, and a
+        // curve that rises from zero can only be this one.
+        auto approach_frac = [&](double c, double c_old, double c_new) {
+            const double den = c_old - c_new;
+            return (std::isfinite(den) && den != 0.0) ? (c_old - c) / den : nan_v;
+        };
+
+        const std::string out_path = pp.get_write_path() + sf["output_file"];
+        std::ofstream f(out_path);
+        if (!f.is_open())
+        {
+            std::cerr << "FATAL: cannot open output file: " << out_path << "\n";
+            return 1;
+        }
+        f.precision(10);
+
+        // Constant metadata as columns rather than a comment header, so
+        // pandas.read_csv needs no options and several sweeps concatenate.
+        // The schema is FIXED: the inversion columns are written whether or not
+        // the inversion ran, so a loader never has to branch.
+        f << "run_label,production_scaling,total_shielding,muon_scheme,"
+             "rock_density_kg_m3,eff_erate_old_g_cm2_yr,eff_erate_new_g_cm2_yr,"
+             "erosion_ratio,time_since_step_yr,"
+             "conc_Be10_atoms_g,conc_Al26_atoms_g,conc_C14_atoms_g,"
+             "conc_Be10_ss_old_atoms_g,conc_Al26_ss_old_atoms_g,conc_C14_ss_old_atoms_g,"
+             "conc_Be10_ss_new_atoms_g,conc_Al26_ss_new_atoms_g,conc_C14_ss_new_atoms_g,"
+             "norm_conc_Be10,norm_conc_Al26,norm_conc_C14,"
+             "norm_full_Be10,norm_full_Al26,norm_full_C14,"
+             "approach_frac_Be10,approach_frac_Al26,approach_frac_C14,"
+             "app_eff_erate_Be10_g_cm2_yr,app_eff_erate_Al26_g_cm2_yr,"
+             "app_eff_erate_C14_g_cm2_yr,"
+             "app_erate_ratio_C14_Be10,app_erate_ratio_C14_Al26,"
+             "app_status_Be10,app_status_Al26,app_status_C14\n";
+
+        const double erosion_ratio = erate_new / erate_old;
+        const double dt = (t_end - t_start) / static_cast<double>(n_times - 1);
+        int n_not_converged = 0;
+
+        for (int i = 0; i < n_times; ++i)
+        {
+            const double t = t_start + dt * static_cast<double>(i);
+
+            const lsdtt::CrnColumnSample s = col.step_change(
+                d_eff, erate_old, erate_new, t,
+                production_scaling, total_shielding, muon_scheme);
+
+            double app[3] = {nan_v, nan_v, nan_v};
+            std::string status_tok[3] = {"NotAttempted", "NotAttempted", "NotAttempted"};
+            if (do_invert)
+            {
+                const char* nucs[3] = {"Be10", "Al26", "C14"};
+                const double concs[3] = {s.conc_10Be, s.conc_26Al, s.conc_14C};
+                for (int k = 0; k < 3; ++k)
+                {
+                    lsdtt::CrnSolveStatus st = lsdtt::CrnSolveStatus::NoSolution;
+                    const double e = lsdtt::crn_apparent_erate_from_conc(
+                        nucs[k], concs[k], s_tot, muon_scheme, st);
+                    status_tok[k] = sweep_status_token(st);
+                    if (st == lsdtt::CrnSolveStatus::Converged) app[k] = e;
+                    else ++n_not_converged;
+                }
+            }
+
+            // A ratio of two rates is only meaningful when both converged.
+            auto ratio_of = [&](double num, double den) {
+                return (std::isfinite(num) && std::isfinite(den) && den != 0.0)
+                           ? num / den : nan_v;
+            };
+
+            f << run_label << ","
+              << production_scaling << ","
+              << total_shielding << ","
+              << muon_scheme << ","
+              << density << ","
+              << erate_old << ","
+              << erate_new << ","
+              << erosion_ratio << ","
+              << t << ","
+              << s.conc_10Be << "," << s.conc_26Al << "," << s.conc_14C << ","
+              << ss_old.conc_10Be << "," << ss_old.conc_26Al << "," << ss_old.conc_14C << ","
+              << ss_new.conc_10Be << "," << ss_new.conc_26Al << "," << ss_new.conc_14C << ","
+              << norm_conc(s.conc_10Be, ss_old.conc_10Be) << ","
+              << norm_conc(s.conc_26Al, ss_old.conc_26Al) << ","
+              << norm_conc(s.conc_14C,  ss_old.conc_14C)  << ","
+              << norm_full(s.conc_10Be, ss_old.conc_10Be, ss_new.conc_10Be) << ","
+              << norm_full(s.conc_26Al, ss_old.conc_26Al, ss_new.conc_26Al) << ","
+              << norm_full(s.conc_14C,  ss_old.conc_14C,  ss_new.conc_14C)  << ","
+              << approach_frac(s.conc_10Be, ss_old.conc_10Be, ss_new.conc_10Be) << ","
+              << approach_frac(s.conc_26Al, ss_old.conc_26Al, ss_new.conc_26Al) << ","
+              << approach_frac(s.conc_14C,  ss_old.conc_14C,  ss_new.conc_14C)  << ","
+              << app[0] << "," << app[1] << "," << app[2] << ","
+              << ratio_of(app[2], app[0]) << ","
+              << ratio_of(app[2], app[1]) << ","
+              << status_tok[0] << "," << status_tok[1] << "," << status_tok[2] << "\n";
+        }
+
+        std::cout << "=== Step-change sweep ===\n"
+                  << "Times            : " << n_times << " from " << t_start
+                  << " to " << t_end << " yr\n"
+                  << "Old erosion rate : " << erate_old << " g/cm2/yr\n"
+                  << "New erosion rate : " << erate_new << " g/cm2/yr\n"
+                  << "S_tot            : " << s_tot << "\n"
+                  << "Non-converged inversions : " << n_not_converged << "\n";
+        std::cout << "Written : " << out_path << "  (" << n_times << " rows)\n";
+
+        // A sweep is a curve, not a point sample, so there is no CRONUS v3 site
+        // record to build -- the same rule full_transient follows.
+        write_cronus_input = false;
     }
 
     // ===========================================================================
@@ -1473,8 +1718,9 @@ int main(int argc, char* argv[])
     else
     {
         std::cerr << "Unknown column_mode \"" << mode << "\".\n"
-                  << "Valid options: steady_state, step_change, full_transient, "
-                  << "burial_pair, step_pair, burial_pair_batch, step_pair_batch\n";
+                  << "Valid options: steady_state, step_change, step_change_sweep, "
+                  << "full_transient, burial_pair, step_pair, burial_pair_batch, "
+                  << "step_pair_batch\n";
         return 1;
     }
 
