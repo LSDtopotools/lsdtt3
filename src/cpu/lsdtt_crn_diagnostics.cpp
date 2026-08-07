@@ -154,6 +154,28 @@ double crn_steady_state_ratio(const std::string& nuclide_num,
 }
 
 //
+double crn_apparent_erate_from_conc(const std::string& nuclide,
+                                    double conc_atoms_g,
+                                    double total_scaling,
+                                    const std::string& muon_scheme,
+                                    CrnSolveStatus& status)
+{
+    status = CrnSolveStatus::NoSolution;
+    if (!(conc_atoms_g > 0.0)) return 0.0;
+
+    const lsdtt_crn_parameters params = scaled_params(total_scaling, muon_scheme);
+    const NuclideView v = view_of(nuclide, params);   // throws on a bad nuclide
+
+    double eps = 0.0;
+    if (!bisect_decreasing([&](double e) { return ss_conc_view(v, e); },
+                           conc_atoms_g, eps))
+        return 0.0;
+
+    status = CrnSolveStatus::Converged;
+    return eps;
+}
+
+//
 CrnBurialResult crn_burial_diagnostics_pair(const std::string& nuclide_fast,
                                             const std::string& nuclide_slow,
                                             double conc_fast_atoms_g,
