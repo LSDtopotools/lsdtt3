@@ -751,6 +751,16 @@ int main(int argc, char* argv[])
         "Output: write_fname + _<nuclide>_crn_acc.tif",
         "Output write toggles", "switch", ""};
 
+    bool_default_map["write_upstream_mean_erate_raster"] = false;
+    help_map["write_upstream_mean_erate_raster"] = {"bool","false",
+        "Write the arithmetic upstream mean erosion rate (g/cm2/yr) -- the "
+        "basin's ACTUAL mean erosion rate above each pixel, which is what an "
+        "erosion rate inverted from the accumulated concentration should be "
+        "compared against. Sampled to CSV as upstream_mean_eff_erate_g_cm2_yr "
+        "regardless of this switch.",
+        "Output: write_fname + _mean_erate_acc.tif",
+        "Output write toggles", "switch", ""};
+
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
@@ -1328,6 +1338,18 @@ int main(int argc, char* argv[])
                      "(g/cm2/yr) for steady state and accumulation.\n";
     }
 
+    // The step-change kernels use this raster ONLY where the change has not yet
+    // reached a pixel, to put that pixel at steady state for its own pre-change
+    // rate. It is passed only when it really is a per-pixel field -- the
+    // generated _SC_ERATE, or a raster the user supplied. A uniform raster made
+    // from the scalar effective_erosion_rate is a different quantity from
+    // step_change_eff_erate_old, so in that case the kernels fall back to the
+    // old scalar rate instead.
+    const lsdtt::lsdtt_raster_cpu* pre_change_erate =
+        (have_generated_step ||
+         sf["background_erosion_rate_raster_prefix"] != "NULL")
+            ? &erosion_raster : nullptr;
+
     // -------------------------------------------------------------------------
     // Steady-state concentration raster
     // -------------------------------------------------------------------------
@@ -1566,7 +1588,7 @@ int main(int argc, char* argv[])
             {
                 multi = lsdtt::calculate_crn_concentration_raster_step_change_multi(
                     muon_scheme, time_since_change, prod_raster, topo_shield,
-                    eff_erate_old, eff_erate_new);
+                    eff_erate_old, eff_erate_new, pre_change_erate);
             }
             catch (const std::exception& e)
             {
@@ -1703,7 +1725,7 @@ int main(int argc, char* argv[])
             step_conc_raster = lsdtt::calculate_crn_concentration_raster_step_change(
                 nuclide, muon_scheme,
                 time_since_change, prod_raster, topo_shield,
-                eff_erate_old, eff_erate_new);
+                eff_erate_old, eff_erate_new, pre_change_erate);
         }
         have_step_conc_raster = true;
         std::cout << "  Done.\n";
@@ -1945,6 +1967,27 @@ int main(int argc, char* argv[])
         }
 
         // -----------------------------------------------------------------
+        // The basin's ACTUAL mean erosion rate above every pixel: total mass
+        // flux over basin area, so an arithmetic upslope mean and NOT the
+        // flux-weighted mean used for the concentrations. This is the ground
+        // truth an erosion rate inverted from the accumulated concentration is
+        // scored against -- that inversion assumes spatially uniform erosion,
+        // as nearly all published interpretations do, and the gap between the
+        // two is the whole signal of a transient or landslide scenario.
+        // -----------------------------------------------------------------
+        lsdtt::lsdtt_raster_cpu upstream_mean_erate =
+            lsdtt::calculate_upstream_arithmetic_mean_raster(erosion_raster, flow);
+
+        if (bf["write_upstream_mean_erate_raster"])
+        {
+            const std::string out_path = write_base + "_mean_erate_acc.tif";
+            std::cout << "Writing upstream mean erosion rate raster (g/cm2/yr): "
+                      << out_path << "\n";
+            loader.write_full(upstream_mean_erate.get_data(),
+                              upstream_mean_erate.get_meta(), out_path, out_fmt);
+        }
+
+        // -----------------------------------------------------------------
         // Bridge to lsdtt-cosmo-tool: sample the accumulated (basin-averaged)
         // concentration at lat/lon points and write a CSV that lsdtt-cosmo-tool
         // can read directly (columns: latitude, longitude, <nuclide>_CONC).
@@ -2060,6 +2103,10 @@ int main(int argc, char* argv[])
                 headers.push_back(nuclide + "_CONC");
             }
             headers.push_back("snapped_contributing_pixels");
+            // The basin-averaged ground truth. Always emitted, because a
+            // basin-averaged concentration is uninterpretable without the
+            // basin-averaged rate it should be compared against.
+            headers.push_back("upstream_mean_eff_erate_g_cm2_yr");
 
             const lsdtt::lsdtt_raster_meta& meta_sample =
                 have_acc_multi ? acc_multi.Be10.get_meta() : acc_raster.get_meta();
@@ -2190,21 +2237,23 @@ int main(int argc, char* argv[])
                 }
                 row.push_back(std::to_string(snapped.snapped_contributing_pixels));
 
+                // A nodata cell in any sampled context raster is written as nan
+                // rather than dropping the row: the concentration is still valid.
+                auto sample_or_nan =
+                    [&](const lsdtt::lsdtt_raster_cpu& r) -> std::string
+                {
+                    const auto& d = r.get_data_array();
+                    const auto& m = r.get_mask_array();
+                    if (d.n_rows() != meta_sample.n_rows ||
+                        d.n_cols() != meta_sample.n_cols)
+                        return "nan";
+                    if (!m(srow, scol)) return "nan";
+                    return precise_string(static_cast<double>(d(srow, scol)));
+                };
+                row.push_back(sample_or_nan(upstream_mean_erate));
+
                 if (have_generated_step)
                 {
-                    // A nodata cell in any of these is written as nan rather
-                    // than dropping the row: the concentration is still valid.
-                    auto sample_or_nan =
-                        [&](const lsdtt::lsdtt_raster_cpu& r) -> std::string
-                    {
-                        const auto& d = r.get_data_array();
-                        const auto& m = r.get_mask_array();
-                        if (d.n_rows() != meta_sample.n_rows ||
-                            d.n_cols() != meta_sample.n_cols)
-                            return "nan";
-                        if (!m(srow, scol)) return "nan";
-                        return precise_string(static_cast<double>(d(srow, scol)));
-                    };
                     row.push_back(sample_or_nan(sc_time_since_change));
                     row.push_back(sample_or_nan(sc_erosion_rate));
                     row.push_back(sample_or_nan(erosion_raster));

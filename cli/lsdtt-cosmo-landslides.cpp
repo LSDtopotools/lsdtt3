@@ -451,7 +451,10 @@ int main(int argc, char* argv[])
     help_map["run_sample_point_ensemble"] = {"bool","false",
         "Run an ensemble at user sample points and write sample-effect CSV.",
         "Computes apparent erosion rates at snapped sample outlets with and "
-        "without landslides over n_realisations. Filename: "
+        "without landslides over n_realisations. Reports both the ratio to the "
+        "no-landslide control and the ratio of the apparent rate to the basin's "
+        "TRUE mean erosion rate (arithmetic area mean), the latter being the "
+        "error a real detrital study would incur. Filename: "
         "<write_fname>_LS_SAMPLE_EFFECT.csv",
         "Cosmogenics","switch",""};
 
@@ -1134,6 +1137,13 @@ int main(int argc, char* argv[])
             std::vector<double> conc;
             std::vector<double> erate;
             std::vector<double> ratio_to_control;
+            // The basin's ACTUAL mean erosion rate (arithmetic area mean of the
+            // delivery mass) and the apparent/true ratio. ratio_to_control only
+            // says how far landsliding moved the answer from the no-landslide
+            // case; apparent/true says how wrong the answer is, which is the
+            // quantity a real detrital study is exposed to.
+            std::vector<double> true_erate;
+            std::vector<double> ratio_to_true;
             std::vector<double> frac_failed;
             std::vector<double> n_failed_pixels;
         };
@@ -1223,6 +1233,11 @@ int main(int argc, char* argv[])
                 aggs[k].ratio_to_control.push_back(
                     smp[k].apparent_erate_g_cm2_yr
                     / control_samples[k].apparent_erate_g_cm2_yr);
+                aggs[k].true_erate.push_back(smp[k].true_erate_g_cm2_yr);
+                // smp[k].ratio is apparent/true, already formed and guarded by
+                // evaluate_niemi_basins; it is only non-zero when valid.
+                if (smp[k].ratio > 0.0)
+                    aggs[k].ratio_to_true.push_back(smp[k].ratio);
                 aggs[k].frac_failed.push_back(smp[k].fraction_failed);
                 aggs[k].n_failed_pixels.push_back(static_cast<double>(smp[k].n_failed_pixels));
             }
@@ -1240,6 +1255,9 @@ int main(int argc, char* argv[])
                "conc_control,erate_control_mm_kyr,"
                "conc_median,erate_median_mm_kyr,erate_p05,erate_p95,"
                "ratio_to_control_median,ratio_to_control_p05,ratio_to_control_p95,"
+               "true_erate_mm_kyr_median,"
+               "ratio_apparent_to_true_median,ratio_apparent_to_true_p05,"
+               "ratio_apparent_to_true_p95,"
                "n_realisations,n_landslides_upstream_median,area_fraction_failed_median,"
                "interpretable\n";
 
@@ -1268,6 +1286,10 @@ int main(int argc, char* argv[])
             double r_p95 = std::numeric_limits<double>::quiet_NaN();
             double nls_med = std::numeric_limits<double>::quiet_NaN();
             double frac_med = std::numeric_limits<double>::quiet_NaN();
+            double t_med = std::numeric_limits<double>::quiet_NaN();
+            double rt_med = std::numeric_limits<double>::quiet_NaN();
+            double rt_p05 = std::numeric_limits<double>::quiet_NaN();
+            double rt_p95 = std::numeric_limits<double>::quiet_NaN();
             int n_real = 0;
 
             if (has_slot)
@@ -1283,6 +1305,15 @@ int main(int argc, char* argv[])
                 r_p95 = percentile_sorted(a.ratio_to_control, 0.95);
                 nls_med = percentile_sorted(a.n_failed_pixels, 0.50);
                 frac_med = percentile_sorted(a.frac_failed, 0.50);
+                t_med = percentile_sorted(a.true_erate, 0.50) * erate_scale_mm_kyr;
+                // Left as nan when every realisation was invalid, rather than
+                // reported as a number built from nothing.
+                if (!a.ratio_to_true.empty())
+                {
+                    rt_med = percentile_sorted(a.ratio_to_true, 0.50);
+                    rt_p05 = percentile_sorted(a.ratio_to_true, 0.05);
+                    rt_p95 = percentile_sorted(a.ratio_to_true, 0.95);
+                }
             }
 
             std::string interpretable = "no";
@@ -1306,6 +1337,10 @@ int main(int argc, char* argv[])
                 << r_med << ","
                 << r_p05 << ","
                 << r_p95 << ","
+                << t_med << ","
+                << rt_med << ","
+                << rt_p05 << ","
+                << rt_p95 << ","
                 << n_real << ","
                 << nls_med << ","
                 << frac_med << ","

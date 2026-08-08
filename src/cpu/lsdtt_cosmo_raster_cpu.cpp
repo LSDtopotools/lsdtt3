@@ -1022,7 +1022,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     double                  eff_erate_old_g_cm2_yr,
-    double                  eff_erate_new_g_cm2_yr)
+    double                  eff_erate_new_g_cm2_yr,
+    const lsdtt_raster_cpu* pre_change_erate_g_cm2_yr)
 {
     if (is_cronus_emulator(muon_scheme))
         throw_emulator_unsupported(muon_scheme);
@@ -1043,9 +1044,23 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     const auto& t_data  = time_since_change.get_data_array();
     const auto& t_mask  = time_since_change.get_mask_array();
 
+    // Optional pre-change erosion rate, used only in the t_step <= 0 branch.
+    const lsdtt_array2d<float>*   e_data = nullptr;
+    const lsdtt_array2d<uint8_t>* e_mask = nullptr;
+    if (pre_change_erate_g_cm2_yr)
+    {
+        if (pre_change_erate_g_cm2_yr->get_meta().n_rows != nr ||
+            pre_change_erate_g_cm2_yr->get_meta().n_cols != nc)
+            throw std::invalid_argument(
+                "calculate_crn_concentration_raster_step_change: the pre-change "
+                "erosion-rate raster does not match the production raster grid");
+        e_data = &pre_change_erate_g_cm2_yr->get_data_array();
+        e_mask = &pre_change_erate_g_cm2_yr->get_mask_array();
+    }
+
 #pragma omp parallel default(none) \
     shared(nr, nc, n_total, p_data, p_mask, ts_data, ts_mask, t_data, t_mask, \
-           out_data, out_mask, nuclide, muon_scheme, \
+           e_data, e_mask, out_data, out_mask, nuclide, muon_scheme, \
            eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr)
     {
         // reset_scaling() runs up to five std::string comparisons and rewrites
@@ -1110,20 +1125,33 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
             }
             else
             {
-                // No step change at this pixel: SS at new erosion rate (surface sample)
+                // The change has NOT reached this pixel yet, so it is still
+                // eroding at its pre-change rate and sits at steady state for
+                // THAT rate (surface sample). Where a per-pixel erosion-rate
+                // raster is supplied its own value is used -- in a generated
+                // landscape that value is the old rate at exactly these pixels,
+                // which is what keeps the concentration field consistent with
+                // the erosion-rate field written beside it.
+                double e_pre = eff_erate_old_g_cm2_yr;
+                if (e_data && (*e_mask)(row, col))
+                {
+                    const double e_here = static_cast<double>((*e_data)(row, col));
+                    if (std::isfinite(e_here) && e_here > 0.0) e_pre = e_here;
+                }
+
                 if (nuclide == "Al26")
                 {
-                    particle.update_26Al_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                    particle.update_26Al_ss(e_pre, params, 0.0, 0.0);
                     conc = particle.get_conc_26Al();
                 }
                 else if (nuclide == "C14")
                 {
-                    particle.update_14C_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                    particle.update_14C_ss(e_pre, params, 0.0, 0.0);
                     conc = particle.get_conc_14C();
                 }
                 else
                 {
-                    particle.update_10Be_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                    particle.update_10Be_ss(e_pre, params, 0.0, 0.0);
                     conc = particle.get_conc_10Be();
                 }
             }
@@ -1220,7 +1248,8 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     double                  eff_erate_old_g_cm2_yr,
-    double                  eff_erate_new_g_cm2_yr)
+    double                  eff_erate_new_g_cm2_yr,
+    const lsdtt_raster_cpu* pre_change_erate_g_cm2_yr)
 {
     if (is_cronus_emulator(muon_scheme))
         throw_emulator_unsupported(muon_scheme);
@@ -1243,8 +1272,25 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
     const auto& t_data  = time_since_change.get_data_array();
     const auto& t_mask  = time_since_change.get_mask_array();
 
+    // Optional pre-change erosion rate, used only in the t_step <= 0 branch --
+    // same treatment as the single-nuclide kernel above.
+    const lsdtt_array2d<float>*   e_data = nullptr;
+    const lsdtt_array2d<uint8_t>* e_mask = nullptr;
+    if (pre_change_erate_g_cm2_yr)
+    {
+        if (pre_change_erate_g_cm2_yr->get_meta().n_rows != nr ||
+            pre_change_erate_g_cm2_yr->get_meta().n_cols != nc)
+            throw std::invalid_argument(
+                "calculate_crn_concentration_raster_step_change_multi: the "
+                "pre-change erosion-rate raster does not match the production "
+                "raster grid");
+        e_data = &pre_change_erate_g_cm2_yr->get_data_array();
+        e_mask = &pre_change_erate_g_cm2_yr->get_mask_array();
+    }
+
 #pragma omp parallel default(none) \
     shared(nr, nc, n_total, p_data, p_mask, ts_data, ts_mask, t_data, t_mask, \
+           e_data, e_mask, \
            be_data, be_mask, al_data, al_mask, c14_data, c14_mask, muon_scheme, \
            eff_erate_old_g_cm2_yr, eff_erate_new_g_cm2_yr)
     {
@@ -1298,10 +1344,19 @@ MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
             }
             else
             {
-                // No step change at this pixel: SS at the new rate, surface.
-                particle.update_10Be_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
-                particle.update_26Al_ss(eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
-                particle.update_14C_ss (eff_erate_new_g_cm2_yr, params, 0.0, 0.0);
+                // The change has NOT reached this pixel yet: it is still eroding
+                // at its pre-change rate, so it sits at steady state for THAT
+                // rate at the surface. The per-pixel raster wins where it is
+                // supplied and valid; otherwise the old scalar rate is used.
+                double e_pre = eff_erate_old_g_cm2_yr;
+                if (e_data && (*e_mask)(row, col))
+                {
+                    const double e_here = static_cast<double>((*e_data)(row, col));
+                    if (std::isfinite(e_here) && e_here > 0.0) e_pre = e_here;
+                }
+                particle.update_10Be_ss(e_pre, params, 0.0, 0.0);
+                particle.update_26Al_ss(e_pre, params, 0.0, 0.0);
+                particle.update_14C_ss (e_pre, params, 0.0, 0.0);
             }
 
             be_data(row, col)  = static_cast<float>(particle.get_conc_10Be());
@@ -1450,7 +1505,60 @@ MultiNuclideRasters calculate_accumulated_crn_raster_multi(
         lsdtt_raster_cpu(std::move(c14_out), std::move(c14_m), meta)};
 }
 
-// 
+//
+lsdtt_raster_cpu calculate_upstream_arithmetic_mean_raster(
+    const lsdtt_raster_cpu& value_raster,
+    const lsdtt_flowinfo&   flow)
+{
+    const lsdtt_raster_meta& meta = value_raster.get_meta();
+    const int nr = meta.n_rows;
+    const int nc = meta.n_cols;
+    const int n_total = nr * nc;
+    const float ndv = static_cast<float>(meta.no_data_value);
+
+    const auto& v_data = value_raster.get_data_array();
+    const auto& v_mask = value_raster.get_mask_array();
+
+    // Two accumulations: the value itself, and a 1-per-valid-cell counter. The
+    // counter is NOT the drainage area -- a nodata cell inside the basin drains
+    // through but contributes nothing, so dividing by contributing_pixels would
+    // bias the mean low. The counter tracks exactly the cells that entered the
+    // numerator.
+    std::vector<double> value_sum(static_cast<std::size_t>(n_total), 0.0);
+    std::vector<double> cell_count(static_cast<std::size_t>(n_total), 0.0);
+
+    for (std::int64_t k = 0; k < n_total; ++k)
+    {
+        const int row = static_cast<int>(k / nc);
+        const int col = static_cast<int>(k % nc);
+        if (!v_mask(row, col)) continue;
+        const double v = static_cast<double>(v_data(row, col));
+        if (!std::isfinite(v)) continue;
+        value_sum[static_cast<std::size_t>(k)]  = v;
+        cell_count[static_cast<std::size_t>(k)] = 1.0;
+    }
+
+    const std::vector<double> acc_value = flow.accumulate(value_sum);
+    const std::vector<double> acc_count = flow.accumulate(cell_count);
+
+    lsdtt_array2d<float>   out_data(nr, nc, ndv);
+    lsdtt_array2d<uint8_t> out_mask(nr, nc, 0);
+
+    for (std::int64_t k = 0; k < n_total; ++k)
+    {
+        const int row = static_cast<int>(k / nc);
+        const int col = static_cast<int>(k % nc);
+        const double n = acc_count[static_cast<std::size_t>(k)];
+        if (n <= 0.0) continue;
+        out_data(row, col) =
+            static_cast<float>(acc_value[static_cast<std::size_t>(k)] / n);
+        out_mask(row, col) = 1;
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+//
 double calculate_accumulated_crn_concentration(
     const lsdtt_raster_cpu& conc_raster,
     const lsdtt_raster_cpu& erosion_raster,

@@ -323,13 +323,22 @@ MultiNuclideRasters calculate_crn_concentration_raster_transient_multi(
     const lsdtt_raster_cpu& topo_shield,
     double                  sampling_depth_m = 0.0);
 
+// pre_change_erate_g_cm2_yr is OPTIONAL (may be null) and is only consulted
+// where time_since_change <= 0, i.e. where the change has NOT yet reached the
+// pixel. Such a pixel is still eroding at its pre-change rate, so it sits at
+// steady state for that rate; when the raster is supplied its own per-pixel
+// value is used, and otherwise eff_erate_old_g_cm2_yr is. This is what keeps a
+// generated step-change concentration field consistent with the erosion-rate
+// field (_SC_ERATE) written alongside it, which carries the old rate at exactly
+// those pixels. It must share the production raster's grid.
 MultiNuclideRasters calculate_crn_concentration_raster_step_change_multi(
     const std::string&      muon_scheme,
     const lsdtt_raster_cpu& time_since_change,
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     double                  eff_erate_old_g_cm2_yr,
-    double                  eff_erate_new_g_cm2_yr);
+    double                  eff_erate_new_g_cm2_yr,
+    const lsdtt_raster_cpu* pre_change_erate_g_cm2_yr = nullptr);
 
 lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     const std::string&      nuclide,
@@ -338,7 +347,8 @@ lsdtt_raster_cpu calculate_crn_concentration_raster_step_change(
     const lsdtt_raster_cpu& prod_raster,
     const lsdtt_raster_cpu& topo_shield,
     double                  eff_erate_old_g_cm2_yr,
-    double                  eff_erate_new_g_cm2_yr);
+    double                  eff_erate_new_g_cm2_yr,
+    const lsdtt_raster_cpu* pre_change_erate_g_cm2_yr = nullptr);
 
 //  Whole-raster CRN accumulation 
 // Computes the erosion-weighted mean concentration at every pixel using D8
@@ -365,6 +375,23 @@ MultiNuclideRasters calculate_accumulated_crn_raster_multi(
     const MultiNuclideRasters& conc,
     const lsdtt_raster_cpu&    weight_raster,
     const lsdtt_flowinfo&      flow);
+
+// Arithmetic (unweighted) upstream mean of any value raster:
+//   V_mean[i] = Sigma_upslope(V) / N_upslope
+// where N counts only the cells that carried valid data.
+//
+// This is deliberately NOT the flux-weighted mean used for concentrations. For
+// an erosion-rate raster it gives the basin's actual mean erosion rate -- total
+// mass flux over basin area -- which is the ground truth that an erosion rate
+// inverted from a detrital concentration (under the usual assumption of
+// spatially uniform erosion) should be scored against. Weighting it by erosion
+// would answer a different question and could not be compared with an inverted
+// rate.
+//
+// Requires flow routing built with build_topological_order = true.
+lsdtt_raster_cpu calculate_upstream_arithmetic_mean_raster(
+    const lsdtt_raster_cpu& value_raster,
+    const lsdtt_flowinfo&   flow);
 
 //  Erosion-rate inversion 
 // Inverts a measured nuclide concentration to an effective erosion rate using

@@ -866,10 +866,13 @@ void phase1_E2_step_change_library(const single_basin_fixture& fx)
     const double c_ss_old = ss_conc(eps_o);
     const double c_ss_new = ss_conc(eps_n);
 
-    // Documented behaviour: time_since_change <= 0 returns SS at eps_new.
-    check("E2: library step-change t=0 == SS(eps_new) [documented]",
-          approx_rel(step_conc(0.0, eps_o, eps_n), c_ss_new, 1e-5),
-          diff_str(step_conc(0.0, eps_o, eps_n), c_ss_new));
+    // time_since_change <= 0 means the change has NOT reached this pixel, so it
+    // is still at SS for the OLD rate -- the START of the trajectory, not its
+    // end.  Corrected 2026-08-08: this previously asserted SS(eps_new), which
+    // put t=0 at the same value the system only relaxes to as t -> infinity.
+    check("E2: library step-change t=0 == SS(eps_old) (change not yet arrived)",
+          approx_rel(step_conc(0.0, eps_o, eps_n), c_ss_old, 1e-5),
+          diff_str(step_conc(0.0, eps_o, eps_n), c_ss_old));
 
     // t -> infinity relaxes to SS at eps_new.
     check("E2: library step-change t->inf -> SS(eps_new)",
@@ -4770,15 +4773,17 @@ void phaseX_multi_isotope_raster(const single_basin_fixture& fx)
                 { masks_agree = false; break; }
         check("M3: all three nuclide masks agree, so a ratio raster can never "
               "divide a valid pixel by a nodata one", masks_agree);
-        // t = 0 is the documented "no change" branch: SS at the NEW rate.
+        // t = 0 is the "change has not arrived" branch: SS at the OLD rate.
+        // Corrected 2026-08-08 alongside E2 -- the multi and single-nuclide
+        // kernels must stay bit-identical, so they move together.
         const double ss_be =
             lsdtt::calculate_crn_concentration_raster_whole(
                 "Be10", "BraucherBorchers",
-                make_uniform_raster(fx, static_cast<float>(en)),
+                make_uniform_raster(fx, static_cast<float>(eo)),
                 prod, topo, make_uniform_raster(fx, 0.0f),
                 make_uniform_raster(fx, 0.0f)).get_data()[idx];
-        check("M3: at t = 0 the multi kernel returns SS at the NEW rate, "
-              "matching the documented single-nuclide behaviour",
+        check("M3: at t = 0 the multi kernel returns SS at the OLD rate, "
+              "matching the single-nuclide behaviour",
               approx_rel(m.Be10.get_data()[idx], ss_be, 1e-6),
               diff_str(m.Be10.get_data()[idx], ss_be));
     }
@@ -7320,8 +7325,13 @@ void phase8_L14_stone_paleomag_surface(const lsdtt::CrnNcData& nc_real,
     // and Sec5.4.  If either moves, STOP: it means something outside the Stone
     // paleomag path was touched.  NEVER regenerate a sentinel to clear this.
     {
+        // Moved once, 2026-08-08, signed off by Simon Mudd: the three
+        // conc_step rows at time_since_change = 0 were the NEW-rate steady
+        // state, where a pixel the change has not yet reached must be at the
+        // OLD-rate one.  The old C14 t=0 entry was numerically identical to the
+        // t=50000 entry, which is what exposed it.  Only those three rows moved.
         const std::string want_stone =
-            "c1272061958bf66d44a7a1bea6ff8a519ee7bdda09e2db602f4b9323cc085736";
+            "ebdf207f8a7c79e6b27e9527405b4fa20502aadaa7b6772ed8fcb35fbe982648";
         const std::string want_lsdn =
             "2e2fc2f4a89d02e9af20da949002050168aa82fbba654be5719eb0745862cc2d";
         const std::string got_stone = sha256_of_file(sentinel_path);
