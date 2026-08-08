@@ -47,6 +47,83 @@ namespace lsdtt {
 static constexpr double k_pi      = M_PI;
 static constexpr double k_deg2rad = k_pi / 180.0;
 
+#ifdef LSDTT_GPU_KERNELS
+namespace {
+
+struct gpu_polyfit_bundle_cache
+{
+    gpu::polyfit_device_bundle* bundle = nullptr;
+    const float* a_ptr = nullptr;
+    const float* b_ptr = nullptr;
+    const float* c_ptr = nullptr;
+    const float* d_ptr = nullptr;
+    const float* e_ptr = nullptr;
+    const float* f_ptr = nullptr;
+    const std::uint8_t* am_ptr = nullptr;
+    const std::uint8_t* bm_ptr = nullptr;
+    const std::uint8_t* cm_ptr = nullptr;
+    const std::uint8_t* dm_ptr = nullptr;
+    const std::uint8_t* em_ptr = nullptr;
+    const std::uint8_t* fm_ptr = nullptr;
+    int nrows = 0;
+    int ncols = 0;
+};
+
+gpu_polyfit_bundle_cache g_gpu_polyfit_cache;
+
+void clear_gpu_polyfit_cache()
+{
+    if (g_gpu_polyfit_cache.bundle)
+        gpu::destroy_polyfit_device_bundle(g_gpu_polyfit_cache.bundle);
+    g_gpu_polyfit_cache = gpu_polyfit_bundle_cache{};
+}
+
+void cache_gpu_polyfit_bundle(
+    gpu::polyfit_device_bundle* bundle,
+    const poly_fit_coeffs& result)
+{
+    clear_gpu_polyfit_cache();
+    g_gpu_polyfit_cache.bundle = bundle;
+    g_gpu_polyfit_cache.a_ptr = result.a.get_data().data();
+    g_gpu_polyfit_cache.b_ptr = result.b.get_data().data();
+    g_gpu_polyfit_cache.c_ptr = result.c.get_data().data();
+    g_gpu_polyfit_cache.d_ptr = result.d.get_data().data();
+    g_gpu_polyfit_cache.e_ptr = result.e.get_data().data();
+    g_gpu_polyfit_cache.f_ptr = result.f.get_data().data();
+    g_gpu_polyfit_cache.am_ptr = result.a.get_mask().data();
+    g_gpu_polyfit_cache.bm_ptr = result.b.get_mask().data();
+    g_gpu_polyfit_cache.cm_ptr = result.c.get_mask().data();
+    g_gpu_polyfit_cache.dm_ptr = result.d.get_mask().data();
+    g_gpu_polyfit_cache.em_ptr = result.e.get_mask().data();
+    g_gpu_polyfit_cache.fm_ptr = result.f.get_mask().data();
+    g_gpu_polyfit_cache.nrows = result.a.get_meta().n_rows;
+    g_gpu_polyfit_cache.ncols = result.a.get_meta().n_cols;
+}
+
+bool gpu_polyfit_cache_matches(const poly_fit_coeffs& polycoeff)
+{
+    if (!g_gpu_polyfit_cache.bundle) return false;
+    const lsdtt_raster_meta& meta = polycoeff.a.get_meta();
+    return
+        g_gpu_polyfit_cache.nrows == meta.n_rows &&
+        g_gpu_polyfit_cache.ncols == meta.n_cols &&
+        g_gpu_polyfit_cache.a_ptr == polycoeff.a.get_data().data() &&
+        g_gpu_polyfit_cache.b_ptr == polycoeff.b.get_data().data() &&
+        g_gpu_polyfit_cache.c_ptr == polycoeff.c.get_data().data() &&
+        g_gpu_polyfit_cache.d_ptr == polycoeff.d.get_data().data() &&
+        g_gpu_polyfit_cache.e_ptr == polycoeff.e.get_data().data() &&
+        g_gpu_polyfit_cache.f_ptr == polycoeff.f.get_data().data() &&
+        g_gpu_polyfit_cache.am_ptr == polycoeff.a.get_mask().data() &&
+        g_gpu_polyfit_cache.bm_ptr == polycoeff.b.get_mask().data() &&
+        g_gpu_polyfit_cache.cm_ptr == polycoeff.c.get_mask().data() &&
+        g_gpu_polyfit_cache.dm_ptr == polycoeff.d.get_mask().data() &&
+        g_gpu_polyfit_cache.em_ptr == polycoeff.e.get_mask().data() &&
+        g_gpu_polyfit_cache.fm_ptr == polycoeff.f.get_mask().data();
+}
+
+} // unnamed namespace
+#endif
+
 // -----------------------------------------------------------------------------
 // Internal helper - build lsdtt_array2d views from a raster base object.
 //
@@ -1568,6 +1645,85 @@ polyfit_metric_result compute_polyfit_metrics(
     output_slot out_ring_curvature              = make_slot(polyfit_metric::ring_curvature);
     output_slot out_rotor                       = make_slot(polyfit_metric::rotor);
 
+#ifdef LSDTT_GPU_KERNELS
+    if (get_compute_backend() != backend_type::cpu && gpu::gpu_available())
+    {
+        const bool can_use_cached_bundle = gpu_polyfit_cache_matches(polycoeff);
+        bool all_ok = true;
+        std::vector<float> gpu_metric_data(npix, nodata);
+        std::vector<uint8_t> gpu_metric_mask(npix, uint8_t{0});
+
+        for (polyfit_metric metric : requested)
+        {
+            const int metric_id = static_cast<int>(metric);
+            bool ok = false;
+            if (can_use_cached_bundle)
+            {
+                ok = gpu::compute_polyfit_metric_from_bundle_gpu(
+                    g_gpu_polyfit_cache.bundle,
+                    request.z_factor,
+                    request.flat_slope_tolerance,
+                    metric_id,
+                    gpu_metric_data.data(),
+                    gpu_metric_mask.data());
+            }
+            else
+            {
+                ok = gpu::compute_polyfit_metrics_gpu(
+                    a_data.data(), b_data.data(), c_data.data(),
+                    d_data.data(), e_data.data(), f_data.data(),
+                    a_mask.data(), b_mask.data(), c_mask.data(),
+                    d_mask.data(), e_mask.data(), f_mask.data(),
+                    nrows, ncols,
+                    meta.no_data_value,
+                    request.z_factor,
+                    request.flat_slope_tolerance,
+                    &metric_id,
+                    1,
+                    gpu_metric_data.data(),
+                    gpu_metric_mask.data());
+            }
+
+            if (!ok)
+            {
+                all_ok = false;
+                break;
+            }
+
+            auto it = outputs.find(metric);
+            if (it != outputs.end())
+            {
+                std::copy(gpu_metric_data.begin(), gpu_metric_data.end(),
+                          it->second.data.begin());
+                std::copy(gpu_metric_mask.begin(), gpu_metric_mask.end(),
+                          it->second.mask.begin());
+            }
+        }
+
+        if (all_ok)
+        {
+            polyfit_metric_result result;
+            for (auto& kv : outputs)
+            {
+                result.rasters.emplace(
+                    kv.first,
+                    lsdtt_raster_cpu(
+                        std::move(kv.second.data),
+                        std::move(kv.second.mask),
+                        meta
+                    )
+                );
+            }
+            return result;
+        }
+
+        if (can_use_cached_bundle)
+            clear_gpu_polyfit_cache();
+
+        // If the GPU batch fails, fall through to the CPU implementation.
+    }
+#endif
+
     const bool need_first_derivs =
         out_dzdx.requested() ||
         out_dzdy.requested() ||
@@ -2550,8 +2706,16 @@ poly_fit_coeffs direct_polyfit(
     // below, so correctness never depends on the GPU path succeeding.
     // -------------------------------------------------------------------------
 #ifdef LSDTT_GPU_KERNELS
+    clear_gpu_polyfit_cache();
     if (get_compute_backend() != backend_type::cpu && gpu::gpu_available())
     {
+        gpu::polyfit_device_bundle* bundle = nullptr;
+        const bool launched = gpu::direct_polyfit_gpu_bundle_create(
+            src.data(), msk.data(), nrows, ncols, d, meta.no_data_value, W,
+            &bundle);
+
+        if (launched)
+        {
         std::vector<float>   g_a(npix, nodata_f);
         std::vector<float>   g_b(npix, nodata_f);
         std::vector<float>   g_c(npix, nodata_f);
@@ -2560,8 +2724,8 @@ poly_fit_coeffs direct_polyfit(
         std::vector<float>   g_f(npix, nodata_f);
         std::vector<uint8_t> g_mask(npix, uint8_t{0});
 
-        const bool ok = gpu::direct_polyfit_gpu(
-            src.data(), msk.data(), nrows, ncols, d, meta.no_data_value, W,
+        const bool ok = gpu::direct_polyfit_gpu_bundle_download(
+            bundle,
             g_a.data(), g_b.data(), g_c.data(),
             g_d.data(), g_e.data(), g_f.data(), g_mask.data());
 
@@ -2574,7 +2738,12 @@ poly_fit_coeffs direct_polyfit(
             result.d = lsdtt_raster_cpu(std::move(g_d), std::vector<uint8_t>(g_mask), meta);
             result.e = lsdtt_raster_cpu(std::move(g_e), std::vector<uint8_t>(g_mask), meta);
             result.f = lsdtt_raster_cpu(std::move(g_f), std::move(g_mask),            meta);
+
+            cache_gpu_polyfit_bundle(bundle, result);
             return result;
+        }
+
+        gpu::destroy_polyfit_device_bundle(bundle);
         }
         // GPU path failed - fall through to the CPU implementation.
     }
