@@ -280,12 +280,31 @@ def main():
                 row = inverse(tool_exe, workdir, args.data_dir, points_csv,
                               {"rock_density_kg_m3": rho}, tag)
                 eff = float(row["apparent_eff_e_g_cm2_yr"])
-                mmkyr = float(row["apparent_e_mm_yr"])
-                expect = eff * 1.0e7 / rho
-                rel = abs(mmkyr - expect) / expect
-                ok = rel <= 1.0e-6      # a printed-precision check, not physics
-                print(f"[{'PASS' if ok else 'FAIL'}] {tag}: mm/kyr {mmkyr:.6g} "
-                      f"vs eff*1e7/rho {expect:.6g} rel={rel:.3g}")
+                # BOTH conversions are asserted. This check previously read
+                # apparent_e_mm_yr and compared it to the mm/KYR formula, which
+                # passed only because the column was written with the mm/kyr
+                # factor -- the test was pinning the bug in place. Checking the
+                # two columns against their own formulas is what makes a
+                # repeat of that impossible.
+                for col, factor, unit in (
+                        ("apparent_e_mm_kyr", 1.0e7, "mm/kyr"),
+                        ("apparent_e_mm_yr", 1.0e4, "mm/yr")):
+                    got = float(row[col])
+                    expect = eff * factor / rho
+                    rel = abs(got - expect) / expect
+                    ok = rel <= 1.0e-6  # a printed-precision check, not physics
+                    print(f"[{'PASS' if ok else 'FAIL'}] {tag}: {unit} "
+                          f"{got:.6g} vs eff*{factor:.0e}/rho {expect:.6g} "
+                          f"rel={rel:.3g}")
+                    n_pass, n_fail = ((n_pass + 1, n_fail) if ok
+                                      else (n_pass, n_fail + 1))
+                # The two must also differ by exactly 1000, which is the
+                # relationship the bug destroyed.
+                ratio = (float(row["apparent_e_mm_kyr"])
+                         / float(row["apparent_e_mm_yr"]))
+                ok = abs(ratio - 1000.0) / 1000.0 <= 1.0e-6
+                print(f"[{'PASS' if ok else 'FAIL'}] {tag}: mm/kyr / mm/yr "
+                      f"= {ratio:.6g} (must be 1000)")
                 n_pass, n_fail = (n_pass + 1, n_fail) if ok else (n_pass, n_fail + 1)
             except Exception as exc:                       # noqa: BLE001
                 print(f"[FAIL] {tag}: {exc}")

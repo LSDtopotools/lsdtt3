@@ -34,6 +34,7 @@
 //   Concentration     : atoms g^-1
 //   Effective e-rate  : g cm^-2 yr^-1
 //   E-rate in mm/kyr  : multiply g/cm^2/yr by 1e7 / rock_density_kg_m3
+//   E-rate in mm/yr   : multiply g/cm^2/yr by 1e4 / rock_density_kg_m3
 //
 // Usage:
 //   lsdtt-cosmo-tool <path> <parameter_file>
@@ -148,7 +149,7 @@ int main(int argc, char* argv[])
     float_default_map["rock_density_kg_m3"] = 2650.0f;
     help_map["rock_density_kg_m3"] = {"float","2650",
         "Rock (bulk) density in kg/m3.",
-        "Used to convert effective erosion rate (g/cm2/yr) to mm/kyr.",
+        "Used to convert effective erosion rate (g/cm2/yr) to mm/kyr and mm/yr.",
         "CRN physics", "param", ""};
 
     // --- Atmosphere and palaeomagnetic correction ---
@@ -862,6 +863,12 @@ int main(int argc, char* argv[])
     bool cronus_missing_sigma = false;
 
     const double e_scale = 1.0e7 / rock_density_kg_m3;  // g/cm2/yr -> mm/kyr
+    // g/cm2/yr -> mm/yr, a factor of 1000 below mm/kyr. Every _mm_yr column
+    // used to be written with e_scale, so it carried the mm/kyr value under a
+    // mm/yr label -- correct numbers, wrong header, 1000x too large if read as
+    // written. Kept as its own named constant so the two can never be confused
+    // by eye at the point of use again.
+    const double e_scale_mm_yr = 1.0e4 / rock_density_kg_m3;
     lsdtt::lsdtt_crn_parameters crn_params;
 
     // Spallation attenuation length for the selected muon scheme, read from the
@@ -1165,7 +1172,7 @@ int main(int argc, char* argv[])
                 << eff_pressure_hpa << "," << basin_centroid_lat_deg << ","
                 << conc << "," << predicted_conc << ","
                 << erate << "," << erate * e_scale
-                << "," << erate * e_scale;
+                << "," << erate * e_scale_mm_yr;
 
         // Uncertainty bounds
         if (has_uncertainty)
@@ -1214,14 +1221,14 @@ int main(int argc, char* argv[])
 
             csv_out << "," << conc_minus << "," << pred_minus << ","
                     << erate_minus << "," << erate_minus * e_scale
-                    << "," << erate_minus * e_scale
+                    << "," << erate_minus * e_scale_mm_yr
                     << "," << conc_plus  << "," << pred_plus  << ","
                     << erate_plus  << "," << erate_plus  * e_scale
-                    << "," << erate_plus  * e_scale
+                    << "," << erate_plus  * e_scale_mm_yr
                     << "," << unc_int_g_cm2_yr << "," << unc_int_g_cm2_yr * e_scale
-                    << "," << unc_int_g_cm2_yr * e_scale
+                    << "," << unc_int_g_cm2_yr * e_scale_mm_yr
                     << "," << unc_ext_g_cm2_yr << "," << unc_ext_g_cm2_yr * e_scale
-                    << "," << unc_ext_g_cm2_yr * e_scale;
+                    << "," << unc_ext_g_cm2_yr * e_scale_mm_yr;
 
             // NOTE: the +/- bounds are inverted against the CENTRAL sample's
             // converged production raster, not against one re-converged at each
