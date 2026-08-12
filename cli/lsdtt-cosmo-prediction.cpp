@@ -2153,6 +2153,15 @@ int main(int argc, char* argv[])
             const auto& acc_r1410_data = acc_r1410.ratio.get_data_array();
             const auto& acc_r1410_mask = acc_r1410.ratio.get_mask_array();
 
+            // Built ONCE. Constructing a transform parses the CRS WKT and builds
+            // a PROJ pipeline (~74 us against ~0.4 us to use one), so the 3-arg
+            // cell_center_to_lonlat -- which rebuilds it internally on every
+            // call -- must not appear inside a loop.
+            const lsdtt::lsdtt_raster_meta& sample_meta =
+                have_acc_multi ? acc_multi.Be10.get_meta() : acc_raster.get_meta();
+            const lsdtt::lsdtt_coordinate_transform sample_to_wgs84 =
+                lsdtt::lsdtt_coordinate_transform::from_epsg(sample_meta.crs_wkt, 4326);
+
             for (const auto& pt : pts)
             {
                 if (pt.status != lsdtt::lsdtt_point_input_status::success)
@@ -2199,8 +2208,7 @@ int main(int argc, char* argv[])
 
                 const lsdtt::lsdtt_lonlat ll =
                     lsdtt::cell_center_to_lonlat(
-                        have_acc_multi ? acc_multi.Be10.get_meta() : acc_raster.get_meta(),
-                        srow, scol);
+                        sample_meta, srow, scol, sample_to_wgs84);
 
                 std::vector<std::string> row;
                 if (has_names)

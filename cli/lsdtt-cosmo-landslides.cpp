@@ -52,6 +52,7 @@
 #include "../src/cpu/lsdtt_landslide_crn_cpu.hpp"
 #include "../src/cpu/lsdtt_landslide_event_cpu.hpp"
 #include "../src/cpu/lsdtt_niemi_ensemble_cpu.hpp"
+#include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 
@@ -158,16 +159,14 @@ static std::string to_lower(std::string s)
     return s;
 }
 
-static double percentile_sorted(std::vector<double> v, double p)
+// Thin adapter over lsdtt::compute_percentile so this file keeps its
+// fraction-in-[0,1] call convention. The shared routine takes 0-100 and is the
+// single definition of what a percentile means in lsdtt3; do not reintroduce a
+// local one. Both are R type-7 (linear interpolation at p*(n-1)) with the same
+// empty -> NaN and single-value -> that value handling.
+static double percentile_sorted(const std::vector<double>& v, double p)
 {
-    if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
-    std::sort(v.begin(), v.end());
-    if (v.size() == 1) return v[0];
-    const double x = p * static_cast<double>(v.size() - 1);
-    const std::size_t i = static_cast<std::size_t>(std::floor(x));
-    const double f = x - static_cast<double>(i);
-    if (i + 1 >= v.size()) return v.back();
-    return v[i] * (1.0 - f) + v[i + 1] * f;
+    return lsdtt::compute_percentile(v, p * 100.0);
 }
 
 static std::vector<sample_point_row> read_sample_point_rows(

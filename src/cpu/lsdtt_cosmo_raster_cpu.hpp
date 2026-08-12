@@ -22,7 +22,9 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_crn_parameters.hpp"
+#include "../core/lsdtt_vector_utils.hpp"
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -393,7 +395,48 @@ lsdtt_raster_cpu calculate_upstream_arithmetic_mean_raster(
     const lsdtt_raster_cpu& value_raster,
     const lsdtt_flowinfo&   flow);
 
-//  Erosion-rate inversion 
+//  Basin summary over a snapped sample's upslope set
+// Reporting-only aggregates over the EXACT upslope pixel set the CRN inversion
+// averages over. None of these feed the erosion-rate inversion; they populate
+// the diagnostic columns of <write_fname>_CN_ERATE.csv and _BASIN_PROD.csv.
+//
+// The three groups deliberately have DIFFERENT denominators, matching what the
+// CSV columns have always meant. Do not collapse them into one count:
+//   centroid latitude   - every upslope pixel, with no mask test
+//   pressure            - pixels where the pressure raster is valid
+//   scaling + elevation - pixels where BOTH production and elevation are valid
+struct lsdtt_basin_summary
+{
+    std::int64_t n_upslope_pixels   = 0;  // all upslope pixels (latitude denominator)
+    std::int64_t n_pressure_pixels  = 0;  // pressure-valid
+    std::int64_t n_prod_elev_pixels = 0;  // production AND elevation valid
+    double centroid_latitude_deg   = std::numeric_limits<double>::quiet_NaN();
+    double mean_pressure_hpa       = std::numeric_limits<double>::quiet_NaN();
+    double mean_production_scaling = std::numeric_limits<double>::quiet_NaN();
+    double mean_elevation_m        = std::numeric_limits<double>::quiet_NaN();
+};
+
+// One traversal of the upslope set for every aggregate above. Any of the three
+// rasters may be null, in which case its aggregate stays NaN and its count 0.
+//
+// to_wgs84 is taken by reference DELIBERATELY, and there is no convenience
+// overload that builds it here. Constructing a transform parses the CRS WKT and
+// builds a PROJ pipeline: measured at ~74 us against ~0.4 us to use an existing
+// one. Building it per pixel -- which is what this function replaces at
+// cli/lsdtt-cosmo-tool.cpp -- was ~99 % of the inversion's entire runtime.
+// Build it once per run and pass it down.
+//
+// Requires flow routing built with build_topological_order = true.
+lsdtt_basin_summary summarise_upslope_basin(
+    const lsdtt_flowinfo&             flow,
+    std::int64_t                      outlet_node,
+    const lsdtt_raster_meta&          meta,
+    const lsdtt_coordinate_transform& to_wgs84,
+    const lsdtt_raster_cpu*           pressure_raster,
+    const lsdtt_raster_cpu*           production_raster,
+    const lsdtt_raster_cpu*           elevation_raster);
+
+//  Erosion-rate inversion
 // Inverts a measured nuclide concentration to an effective erosion rate using
 // Newton-Raphson followed by bisection if N-R does not converge.
 //

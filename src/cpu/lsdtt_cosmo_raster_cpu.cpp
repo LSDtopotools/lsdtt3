@@ -1591,6 +1591,70 @@ double calculate_accumulated_crn_concentration(
 }
 
 // 
+lsdtt_basin_summary summarise_upslope_basin(
+    const lsdtt_flowinfo&             flow,
+    std::int64_t                      outlet_node,
+    const lsdtt_raster_meta&          meta,
+    const lsdtt_coordinate_transform& to_wgs84,
+    const lsdtt_raster_cpu*           pressure_raster,
+    const lsdtt_raster_cpu*           production_raster,
+    const lsdtt_raster_cpu*           elevation_raster)
+{
+    lsdtt_basin_summary out{};
+
+    lsdtt_flat_index_slice up = flow.upslope_nodes(outlet_node);
+    const int nc = meta.n_cols;
+
+    const auto* p_data  = pressure_raster   ? &pressure_raster->get_data_array()   : nullptr;
+    const auto* p_mask  = pressure_raster   ? &pressure_raster->get_mask_array()   : nullptr;
+    const auto* ps_data = production_raster ? &production_raster->get_data_array() : nullptr;
+    const auto* ps_mask = production_raster ? &production_raster->get_mask_array() : nullptr;
+    const auto* dz_data = elevation_raster  ? &elevation_raster->get_data_array()  : nullptr;
+    const auto* dz_mask = elevation_raster  ? &elevation_raster->get_mask_array()  : nullptr;
+
+    double sum_lat = 0.0, sum_p = 0.0, sum_scal = 0.0, sum_elev = 0.0;
+    std::int64_t n_lat = 0, n_p = 0, n_pe = 0;
+
+    for (std::size_t kk = 0; kk < up.size(); ++kk)
+    {
+        const std::int64_t f = up[kk];
+        const int rr = static_cast<int>(f / nc);
+        const int cc = static_cast<int>(f % nc);
+
+        // No mask test: the centroid is of the basin's GEOMETRY, so a pixel
+        // with no data still occupies space and still counts.
+        const lsdtt_lonlat pll = cell_center_to_lonlat(meta, rr, cc, to_wgs84);
+        sum_lat += pll.latitude;
+        ++n_lat;
+
+        if (p_data && p_mask && (*p_mask)(rr, cc))
+        {
+            sum_p += static_cast<double>((*p_data)(rr, cc));
+            ++n_p;
+        }
+
+        // Production and elevation share one denominator: they are averaged
+        // over the pixels where BOTH are valid, so the pair stays consistent.
+        if (ps_data && ps_mask && dz_data && dz_mask &&
+            (*ps_mask)(rr, cc) && (*dz_mask)(rr, cc))
+        {
+            sum_scal += static_cast<double>((*ps_data)(rr, cc));
+            sum_elev += static_cast<double>((*dz_data)(rr, cc));
+            ++n_pe;
+        }
+    }
+
+    out.n_upslope_pixels   = n_lat;
+    out.n_pressure_pixels  = n_p;
+    out.n_prod_elev_pixels = n_pe;
+    if (n_lat > 0) out.centroid_latitude_deg   = sum_lat  / static_cast<double>(n_lat);
+    if (n_p   > 0) out.mean_pressure_hpa       = sum_p    / static_cast<double>(n_p);
+    if (n_pe  > 0) out.mean_production_scaling = sum_scal / static_cast<double>(n_pe);
+    if (n_pe  > 0) out.mean_elevation_m        = sum_elev / static_cast<double>(n_pe);
+    return out;
+}
+
+
 double calculate_eff_erate_from_conc(
     double                  measured_conc,
     const std::string&      nuclide,

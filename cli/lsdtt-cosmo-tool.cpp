@@ -902,7 +902,14 @@ int main(int argc, char* argv[])
     int n_processed = 0;
     int n_skipped   = 0;
 
-    //  7. Process each sample 
+    // Built ONCE for the whole run. Constructing a coordinate transform parses
+    // the CRS WKT and builds a PROJ pipeline (~74 us) against ~0.4 us to use an
+    // existing one, so this must never be rebuilt inside the sample loop -- let
+    // alone inside the per-pixel loop, where it was ~99 % of total runtime.
+    const lsdtt::lsdtt_coordinate_transform to_wgs84 =
+        lsdtt::lsdtt_coordinate_transform::from_epsg(meta.crs_wkt, 4326);
+
+    //  7. Process each sample
     for (const auto& pt : pts)
     {
         const int csv_row = pt.point_id - 1;   // point_id is 1-based
@@ -943,46 +950,21 @@ int main(int argc, char* argv[])
 
         // Convert snapped position to WGS84 lat/lon for output
         lsdtt::lsdtt_lonlat ll = lsdtt::cell_center_to_lonlat(
-            meta, snapped.snapped_row, snapped.snapped_col);
+            meta, snapped.snapped_row, snapped.snapped_col, to_wgs84);
         double out_lat = ll.latitude;
         double out_lon = ll.longitude;
-        double basin_centroid_lat_deg = std::numeric_limits<double>::quiet_NaN();
-        double eff_pressure_hpa = std::numeric_limits<double>::quiet_NaN();
 
-        {
-            const int nc_cols = meta.n_cols;
-            double sum_lat = 0.0;
-            std::int64_t n_lat = 0;
-            double sum_p = 0.0;
-            std::int64_t n_p = 0;
+        // One traversal of the upslope set for every reporting aggregate; see
+        // lsdtt::summarise_upslope_basin for why the transform is passed in.
+        const lsdtt::lsdtt_basin_summary basin_summary =
+            lsdtt::summarise_upslope_basin(
+                flow, outlet_node, meta, to_wgs84,
+                pressure_for_reporting,
+                write_basin_prod ? &prod_raster : nullptr,
+                write_basin_prod ? &dem         : nullptr);
 
-            const auto* p_data = pressure_for_reporting
-                ? &pressure_for_reporting->get_data_array()
-                : nullptr;
-            const auto* p_mask = pressure_for_reporting
-                ? &pressure_for_reporting->get_mask_array()
-                : nullptr;
-
-            for (std::size_t kk = 0; kk < up.size(); ++kk)
-            {
-                std::int64_t f = up[kk];
-                int rr = static_cast<int>(f / nc_cols);
-                int cc = static_cast<int>(f % nc_cols);
-
-                lsdtt::lsdtt_lonlat pll = lsdtt::cell_center_to_lonlat(meta, rr, cc);
-                sum_lat += pll.latitude;
-                ++n_lat;
-
-                if (p_data != nullptr && p_mask != nullptr && (*p_mask)(rr, cc))
-                {
-                    sum_p += static_cast<double>((*p_data)(rr, cc));
-                    ++n_p;
-                }
-            }
-
-            if (n_lat > 0) basin_centroid_lat_deg = sum_lat / static_cast<double>(n_lat);
-            if (n_p > 0)   eff_pressure_hpa = sum_p / static_cast<double>(n_p);
-        }
+        double basin_centroid_lat_deg = basin_summary.centroid_latitude_deg;
+        double eff_pressure_hpa       = basin_summary.mean_pressure_hpa;
 
         // Fallbacks if the per-basin aggregates were unavailable.
         if (!std::isfinite(basin_centroid_lat_deg)) basin_centroid_lat_deg = out_lat;
@@ -1007,25 +989,10 @@ int main(int argc, char* argv[])
         // the erosion-rate result below.
         if (write_basin_prod)
         {
-            const int nc_cols = meta.n_cols;
-            const auto& ps_data = prod_raster.get_data_array();
-            const auto& ps_mask = prod_raster.get_mask_array();
-            const auto& dz_data = dem.get_data_array();
-            const auto& dz_mask = dem.get_mask_array();
-            double sum_scal = 0.0, sum_elev = 0.0;
-            std::int64_t n_pix = 0;
-            for (std::size_t kk = 0; kk < up.size(); ++kk)
-            {
-                std::int64_t f = up[kk];
-                int rr = static_cast<int>(f / nc_cols);
-                int cc = static_cast<int>(f % nc_cols);
-                if (!ps_mask(rr, cc) || !dz_mask(rr, cc)) continue;
-                sum_scal += static_cast<double>(ps_data(rr, cc));
-                sum_elev += static_cast<double>(dz_data(rr, cc));
-                ++n_pix;
-            }
-            double mean_scal = n_pix > 0 ? sum_scal / n_pix : 0.0;
-            double mean_elev = n_pix > 0 ? sum_elev / n_pix : 0.0;
+            // Same aggregates as before, from the single traversal above.
+            const std::int64_t n_pix = basin_summary.n_prod_elev_pixels;
+            double mean_scal = n_pix > 0 ? basin_summary.mean_production_scaling : 0.0;
+            double mean_elev = n_pix > 0 ? basin_summary.mean_elevation_m        : 0.0;
             basin_prod_out << (has_sample_name ? get_col_str(sample_col_name, csv_row) : "")
                            << "," << out_lat << "," << out_lon
                            << "," << n_pix << "," << mean_scal << "," << mean_elev << "\n";
