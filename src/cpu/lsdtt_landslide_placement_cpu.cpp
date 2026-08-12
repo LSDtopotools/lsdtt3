@@ -66,11 +66,38 @@ LandslidePlacer::LandslidePlacer(const lsdtt_flow_base& flow,
 
         if (have_mask)
         {
-            const int r = static_cast<int>(flat / meta_.n_cols);
-            const int c = static_cast<int>(flat % meta_.n_cols);
-            if (!mask->get_mask_array()(r, c)) continue;
-            const float mv = mask->get_data_array()(r, c);
-            if (mv == mask_ndv || mv == 0.0f) continue;
+            // The mask must hold over the WHOLE landslide, not just its seed.
+            // A landslide occupies the host's upslope set, and testing only the
+            // host lets a scar seeded just inside the mask spill across the
+            // boundary -- measured at 40 of 1941 excavated pixels on a
+            // step-change tag mask, 35 of them on ground UPSTREAM of the
+            // knickpoint, which is the exact population the mask existed to
+            // exclude. A mask that leaks is not a mask.
+            //
+            // Rejecting the host (rather than trimming the scar) is deliberate:
+            // trimming would silently shrink landslides near the boundary and
+            // so distort the imposed area distribution, which is the one thing
+            // this module guarantees. The cost is that hosts within a
+            // landslide's reach of the edge are unusable, which is the honest
+            // consequence of demanding containment.
+            const auto& mmask = mask->get_mask_array();
+            const auto& mdata = mask->get_data_array();
+            auto inside = [&](std::int64_t f) -> bool
+            {
+                const int rr = static_cast<int>(f / meta_.n_cols);
+                const int cc = static_cast<int>(f % meta_.n_cols);
+                if (!mmask(rr, cc)) return false;
+                const float mv = mdata(rr, cc);
+                return !(mv == mask_ndv || mv == 0.0f);
+            };
+
+            if (!inside(flat)) continue;
+            bool contained = true;
+            for (std::int64_t up : flow_.upslope_nodes_unchecked(flat))
+            {
+                if (!inside(up)) { contained = false; break; }
+            }
+            if (!contained) continue;
         }
 
         hosts_.push_back(Host{flat, n_up});

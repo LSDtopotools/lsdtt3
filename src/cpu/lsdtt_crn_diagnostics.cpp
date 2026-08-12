@@ -24,6 +24,58 @@ const char* to_string(CrnSolveStatus s)
     return "unknown";
 }
 
+const char* crn_solve_status_token(CrnSolveStatus s)
+{
+    switch (s)
+    {
+        case CrnSolveStatus::Converged:    return "Converged";
+        case CrnSolveStatus::NoSolution:   return "NoSolution";
+        case CrnSolveStatus::NotUnique:    return "NotUnique";
+        case CrnSolveStatus::NotConverged: return "NotConverged";
+    }
+    return "Unknown";
+}
+
+int crn_solve_status_code(CrnSolveStatus s)
+{
+    switch (s)
+    {
+        case CrnSolveStatus::Converged:    return 0;
+        case CrnSolveStatus::NoSolution:   return 1;
+        case CrnSolveStatus::NotUnique:    return 2;
+        case CrnSolveStatus::NotConverged: return 3;
+    }
+    return 4;
+}
+
+CrnUncertaintySummary summarise_crn_uncertainty(
+    const std::vector<double>& values,
+    const double center,
+    const bool   add_production_uncertainty,
+    const double production_rel_sigma,
+    const bool   add_decay_uncertainty,
+    const double decay_rel_sigma)
+{
+    CrnUncertaintySummary u;
+    if (values.empty()) return u;
+    double vmin = values[0], vmax = values[0];
+    for (double v : values)
+    {
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+    u.lo = vmin;
+    u.hi = vmax;
+    u.unc_int = 0.5 * std::fabs(vmax - vmin);
+    const double up = add_production_uncertainty
+                          ? std::fabs(center) * production_rel_sigma : 0.0;
+    const double ud = add_decay_uncertainty
+                          ? std::fabs(center) * decay_rel_sigma : 0.0;
+    u.unc_ext = std::sqrt(u.unc_int * u.unc_int + up * up + ud * ud);
+    u.n_valid = static_cast<int>(values.size());
+    return u;
+}
+
 namespace
 {
 

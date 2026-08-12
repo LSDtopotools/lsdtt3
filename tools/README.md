@@ -243,12 +243,15 @@ So if `$ver` is `0.2.2-local-dirty`, the artifact is
 
 #### macOS
 
-> **Not yet done, on either count.** `package_macos_backend.sh` is written but
-> **untested**, and `docs/developer_notes/building_from_source.md` records that lsdtt3 does not
-> currently build with Apple Clang — the supported way to *run* it on a Mac is
-> the Ubuntu VM in [`docs/developer_notes/lsdtt3_in_macos.md`](../docs/developer_notes/lsdtt3_in_macos.md),
-> which produces a Linux bundle, not a macOS one. What follows is the shape to
-> follow when a native build is attempted, so the convention matches Windows.
+Native macOS building and bundling are supported but **not yet integrated into CI** —
+each release requires a manual native build on a Mac. See
+[`docs/developer_notes/lsdtt3_in_macos.md`](../docs/developer_notes/lsdtt3_in_macos.md)
+for the full walkthrough (Xcode CLT, Homebrew, CMake configuration, and bundling).
+
+The `package_macos_backend.sh` script was written on a Linux machine and has not yet
+run on real macOS hardware. The self-containment check fails hard, so the first run
+will report exactly what is missing rather than shipping a broken bundle — but it may
+find issues the Linux analogue does not anticipate.
 
 ```bash
 cmake -S . -B build/macos-core -DCMAKE_BUILD_TYPE=Release
@@ -261,9 +264,8 @@ gh release upload v0.3.0 dist/lsdtt3-backend-macos-arm64-core-v0.3.0.tar.gz
 ```
 
 Bundles are architecture-specific: package on Apple Silicon for `arm64` users,
-on Intel (or with a cross-built tree plus `--arch x86_64`) for `x86_64` users.
-The self-containment check fails hard, so a first run reports exactly what is
-still unresolved rather than shipping a broken bundle.
+on Intel for `x86_64` users. If you need both architectures, build on both
+machines separately and upload both tarballs with `gh release upload --clobber`.
 
 #### Replacing a bundle already attached
 

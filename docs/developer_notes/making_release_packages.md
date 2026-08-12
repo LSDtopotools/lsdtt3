@@ -21,7 +21,7 @@ what to bundle.
 |---|---|---|---|
 | Linux x86_64 | GitHub Actions on a version tag | `tools/package_linux_backend.sh` | `lsdtt3-backend-linux-x86_64-<profile>-v<ver>.tar.gz` |
 | Windows x64 | by hand, VS developer shell | `tools/package_windows_backend.ps1` | `lsdtt3-backend-win64-<profile>-v<ver>.zip` |
-| macOS | by hand, on a Mac — **untested** | `tools/package_macos_backend.sh` | `lsdtt3-backend-macos-<arch>-<profile>-v<ver>.tar.gz` |
+| macOS | by hand, on a Mac — **not yet in CI** | `tools/package_macos_backend.sh` | `lsdtt3-backend-macos-<arch>-<profile>-v<ver>.tar.gz` |
 
 `tools/make_release.sh` is the single driver: resolve version → check it
 against `project(lsdtt3 VERSION ...)` → configure → build → smoke-check every

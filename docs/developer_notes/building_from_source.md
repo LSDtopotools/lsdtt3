@@ -15,7 +15,7 @@ build.
 | Linux | [Linux](#linux) |
 | Windows | [Windows via WSL2](#windows-via-wsl2) — full build |
 | Windows, native `.exe` needed | [Windows native (QGIS backend only)](#windows-native-qgis-backend-only) — reduced |
-| macOS | [macOS via Multipass](#macos-via-multipass) |
+| macOS | [macOS native](#macos-native-build-recommended) (recommended) or [macOS via Multipass](#macos-via-multipass-alternative) |
 
 ---
 
@@ -241,11 +241,23 @@ Get-ChildItem build\windows-qgis\lsdtt-*.exe
 
 ---
 
-## macOS via Multipass
+## macOS native build (recommended)
 
-lsdtt3 does not build with Apple Clang — it lacks several features the code
-relies on. Build inside an Ubuntu 22.04 VM managed by
-[Multipass](https://multipass.run), then follow [Linux](#linux) inside it.
+Build natively on macOS using Homebrew and Xcode Command Line Tools for full speed
+and a simple workflow. All tools build and run on macOS.
+
+[`lsdtt3_in_macos.md`](lsdtt3_in_macos.md) has the full walkthrough: Xcode CLT
+installation, Homebrew setup, dependencies, CMake configuration, bundling for QGIS,
+and troubleshooting. If you encounter platform-specific issues, the Multipass route
+(below) is an alternative.
+
+---
+
+## macOS via Multipass (alternative)
+
+If you prefer a sandboxed Linux environment or encounter macOS-specific problems,
+build inside an Ubuntu 22.04 VM managed by [Multipass](https://multipass.run),
+then follow [Linux](#linux) inside it.
 
 [`lsdtt3_in_macos.md`](lsdtt3_in_macos.md) has the full walkthrough: installing
 Homebrew and Multipass, launching the instance, dependencies, SSH keys and

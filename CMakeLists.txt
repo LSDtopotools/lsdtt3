@@ -230,6 +230,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_outlet_bounds_discovery.cpp
     src/core/lsdtt_coastal_mask.cpp
     src/core/lsdtt_dem_grouping.cpp
+    src/core/lsdtt_csv_table.cpp
     src/core/lsdtt_stat_csv.cpp
     src/core/lsdtt_outlet_clusters.cpp
 )

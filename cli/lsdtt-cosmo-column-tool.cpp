@@ -96,6 +96,7 @@
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_crn_column.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/cpu/lsdtt_crn_diagnostics.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_cronus_v3_input.hpp"
@@ -190,68 +191,6 @@ static void write_point_result(lsdtt::lsdtt_param_parser& pp,
     std::cout << "Written : " << path << "  (1 sample)\n";
 }
 
-static int status_code(const lsdtt::CrnSolveStatus s)
-{
-    switch (s)
-    {
-        case lsdtt::CrnSolveStatus::Converged:    return 0;
-        case lsdtt::CrnSolveStatus::NoSolution:   return 1;
-        case lsdtt::CrnSolveStatus::NotUnique:    return 2;
-        case lsdtt::CrnSolveStatus::NotConverged: return 3;
-    }
-    return 4;
-}
-
-// Machine-readable status token for the sweep CSV. lsdtt::to_string gives the
-// human form ("no solution"); a tidy table wants a single word that a loader can
-// compare without normalising case or whitespace.
-static const char* sweep_status_token(const lsdtt::CrnSolveStatus s)
-{
-    switch (s)
-    {
-        case lsdtt::CrnSolveStatus::Converged:    return "Converged";
-        case lsdtt::CrnSolveStatus::NoSolution:   return "NoSolution";
-        case lsdtt::CrnSolveStatus::NotUnique:    return "NotUnique";
-        case lsdtt::CrnSolveStatus::NotConverged: return "NotConverged";
-    }
-    return "Unknown";
-}
-
-struct UncertaintySummary
-{
-    double lo = std::numeric_limits<double>::quiet_NaN();
-    double hi = std::numeric_limits<double>::quiet_NaN();
-    double unc_int = std::numeric_limits<double>::quiet_NaN();
-    double unc_ext = std::numeric_limits<double>::quiet_NaN();
-    int n_valid = 0;
-};
-
-static UncertaintySummary summarize_uncertainty(
-    const std::vector<double>& values,
-    const double center,
-    const bool add_prod,
-    const double prod_rel_sigma,
-    const bool add_decay,
-    const double decay_rel_sigma)
-{
-    UncertaintySummary u;
-    if (values.empty()) return u;
-    double vmin = values[0], vmax = values[0];
-    for (double v : values)
-    {
-        if (v < vmin) vmin = v;
-        if (v > vmax) vmax = v;
-    }
-    u.lo = vmin;
-    u.hi = vmax;
-    u.unc_int = 0.5 * std::fabs(vmax - vmin);
-    const double up = add_prod ? std::fabs(center) * prod_rel_sigma : 0.0;
-    const double ud = add_decay ? std::fabs(center) * decay_rel_sigma : 0.0;
-    u.unc_ext = std::sqrt(u.unc_int * u.unc_int + up * up + ud * ud);
-    u.n_valid = static_cast<int>(values.size());
-    return u;
-}
-
 static void write_burial_result(lsdtt::lsdtt_param_parser& pp,
                                 const std::string& output_file,
                                 const lsdtt::CrnBurialResult& r,
@@ -263,7 +202,7 @@ static void write_burial_result(lsdtt::lsdtt_param_parser& pp,
                                 const double conc_slow_sigma_atoms_g,
                                 const double total_shielding,
                                 const std::string& muon_scheme,
-                                const UncertaintySummary& u,
+                                const lsdtt::CrnUncertaintySummary& u,
                                 const double e_scale)
 {
     const std::string path = pp.get_write_path() + output_file;
@@ -284,7 +223,7 @@ static void write_burial_result(lsdtt::lsdtt_param_parser& pp,
       << "burial_age_yr,"
       << "apparent_erate_no_burial_g_cm2_yr,apparent_erate_no_burial_mm_kyr\n";
     f << lsdtt::to_string(r.status) << ","
-      << status_code(r.status) << ","
+      << lsdtt::crn_solve_status_code(r.status) << ","
       << muon_scheme << ","
       << total_shielding << ","
       << nuclide_fast << ","
@@ -323,8 +262,8 @@ static void write_step_pair_result(lsdtt::lsdtt_param_parser& pp,
                                    const double eff_erate_old_g_cm2_yr,
                                    const double total_shielding,
                                    const std::string& muon_scheme,
-                                   const UncertaintySummary& ue,
-                                   const UncertaintySummary& ut,
+                                   const lsdtt::CrnUncertaintySummary& ue,
+                                   const lsdtt::CrnUncertaintySummary& ut,
                                    const double e_scale)
 {
     const std::string path = pp.get_write_path() + output_file;
@@ -346,7 +285,7 @@ static void write_step_pair_result(lsdtt::lsdtt_param_parser& pp,
       << "time_since_change_unc_int_yr,time_since_change_unc_n_valid,"
       << "conc_fast_predicted,conc_slow_predicted\n";
     f << lsdtt::to_string(r.status) << ","
-      << status_code(r.status) << ","
+      << lsdtt::crn_solve_status_code(r.status) << ","
       << muon_scheme << ","
       << total_shielding << ","
       << nuclide_fast << ","
@@ -376,115 +315,6 @@ static void write_step_pair_result(lsdtt::lsdtt_param_parser& pp,
     std::cout << "Written : " << path << "  (1 sample)\n";
 }
 
-static std::string trim_copy(const std::string& s)
-{
-    const std::size_t b = s.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return "";
-    const std::size_t e = s.find_last_not_of(" \t\r\n");
-    return s.substr(b, e - b + 1);
-}
-
-struct CsvTable
-{
-    std::vector<std::string> headers;
-    std::vector<std::unordered_map<std::string, std::string>> rows;
-};
-
-static CsvTable load_csv_table(const std::string& path)
-{
-    std::ifstream f(path);
-    if (!f.is_open())
-        throw std::runtime_error("Cannot open input CSV: " + path);
-
-    CsvTable t;
-    std::string line;
-    if (!std::getline(f, line))
-        throw std::runtime_error("Input CSV is empty: " + path);
-
-    std::istringstream hs(line);
-    std::string tok;
-    while (std::getline(hs, tok, ','))
-        t.headers.push_back(trim_copy(tok));
-    if (t.headers.empty())
-        throw std::runtime_error("Input CSV has no header columns: " + path);
-
-    while (std::getline(f, line))
-    {
-        if (trim_copy(line).empty()) continue;
-        std::unordered_map<std::string, std::string> row;
-        std::istringstream rs(line);
-        std::size_t i = 0;
-        while (std::getline(rs, tok, ',') && i < t.headers.size())
-        {
-            row[t.headers[i]] = trim_copy(tok);
-            ++i;
-        }
-        while (i < t.headers.size())
-        {
-            row[t.headers[i]] = "";
-            ++i;
-        }
-        t.rows.push_back(std::move(row));
-    }
-    return t;
-}
-
-static bool has_col(const CsvTable& t, const std::string& key)
-{
-    for (const std::string& h : t.headers)
-        if (h == key) return true;
-    return false;
-}
-
-static std::string row_string(const std::unordered_map<std::string, std::string>& row,
-                              const std::string& key,
-                              const std::string& fallback = "")
-{
-    auto it = row.find(key);
-    if (it == row.end()) return fallback;
-    return it->second.empty() ? fallback : it->second;
-}
-
-static double row_double_required(const std::unordered_map<std::string, std::string>& row,
-                                  const std::string& key,
-                                  const std::string& csv_path,
-                                  const int row_index_1based)
-{
-    auto it = row.find(key);
-    if (it == row.end() || trim_copy(it->second).empty())
-        throw std::runtime_error("Missing required field \"" + key + "\" in " +
-                                 csv_path + " row " + std::to_string(row_index_1based));
-    try
-    {
-        return std::stod(it->second);
-    }
-    catch (...)
-    {
-        throw std::runtime_error("Field \"" + key + "\" is not numeric in " +
-                                 csv_path + " row " + std::to_string(row_index_1based) +
-                                 " (value: \"" + it->second + "\")");
-    }
-}
-
-static double row_double_optional(const std::unordered_map<std::string, std::string>& row,
-                                  const std::string& key,
-                                  const double fallback,
-                                  const std::string& csv_path,
-                                  const int row_index_1based)
-{
-    auto it = row.find(key);
-    if (it == row.end() || trim_copy(it->second).empty()) return fallback;
-    try
-    {
-        return std::stod(it->second);
-    }
-    catch (...)
-    {
-        throw std::runtime_error("Field \"" + key + "\" is not numeric in " +
-                                 csv_path + " row " + std::to_string(row_index_1based) +
-                                 " (value: \"" + it->second + "\")");
-    }
-}
 
 // ===========================================================================
 int main(int argc, char* argv[])
@@ -1144,7 +974,7 @@ int main(int argc, char* argv[])
                     lsdtt::CrnSolveStatus st = lsdtt::CrnSolveStatus::NoSolution;
                     const double e = lsdtt::crn_apparent_erate_from_conc(
                         nucs[k], concs[k], s_tot, muon_scheme, st);
-                    status_tok[k] = sweep_status_token(st);
+                    status_tok[k] = lsdtt::crn_solve_status_token(st);
                     if (st == lsdtt::CrnSolveStatus::Converged) app[k] = e;
                     else ++n_not_converged;
                 }
@@ -1287,7 +1117,7 @@ int main(int argc, char* argv[])
             nuclide_fast, nuclide_slow, conc_fast, conc_slow,
             total_shielding, muon_scheme);
 
-        UncertaintySummary ue;
+        lsdtt::CrnUncertaintySummary ue;
         if (conc_fast_sigma > 0.0 || conc_slow_sigma > 0.0)
         {
             std::vector<double> fast_vals;
@@ -1319,7 +1149,7 @@ int main(int argc, char* argv[])
                         erates.push_back(rr.erate_preburial_g_cm2_yr);
                 }
             }
-            ue = summarize_uncertainty(erates, r.erate_preburial_g_cm2_yr,
+            ue = lsdtt::summarise_crn_uncertainty(erates, r.erate_preburial_g_cm2_yr,
                                        propagate_prod_unc, production_rel_sigma,
                                        propagate_decay_unc, decay_rel_sigma);
         }
@@ -1368,8 +1198,8 @@ int main(int argc, char* argv[])
             nuclide_fast, nuclide_slow, conc_fast, conc_slow, erate_old,
             total_shielding, muon_scheme);
 
-        UncertaintySummary ue;
-        UncertaintySummary ut;
+        lsdtt::CrnUncertaintySummary ue;
+        lsdtt::CrnUncertaintySummary ut;
         if (conc_fast_sigma > 0.0 || conc_slow_sigma > 0.0)
         {
             std::vector<double> fast_vals;
@@ -1405,10 +1235,10 @@ int main(int argc, char* argv[])
                     }
                 }
             }
-            ue = summarize_uncertainty(erates, r.erate_new_g_cm2_yr,
+            ue = lsdtt::summarise_crn_uncertainty(erates, r.erate_new_g_cm2_yr,
                                        propagate_prod_unc, production_rel_sigma,
                                        propagate_decay_unc, decay_rel_sigma);
-            ut = summarize_uncertainty(times, r.time_since_change_yr,
+            ut = lsdtt::summarise_crn_uncertainty(times, r.time_since_change_yr,
                                        false, 0.0, false, 0.0);
         }
 
@@ -1445,9 +1275,9 @@ int main(int argc, char* argv[])
     else if (mode == "burial_pair_batch")
     {
         const std::string in_csv = pp.add_read_path_if_needed(sf["burial_pairs_csv_file"]);
-        const CsvTable t = load_csv_table(in_csv);
-        const bool has_new = has_col(t, "conc_fast_atoms_g") && has_col(t, "conc_slow_atoms_g");
-        const bool has_legacy = has_col(t, "conc_10Be_atoms_g") && has_col(t, "conc_26Al_atoms_g");
+        const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(in_csv);
+        const bool has_new = lsdtt::csv_has_column(t, "conc_fast_atoms_g") && lsdtt::csv_has_column(t, "conc_slow_atoms_g");
+        const bool has_legacy = lsdtt::csv_has_column(t, "conc_10Be_atoms_g") && lsdtt::csv_has_column(t, "conc_26Al_atoms_g");
         if (!has_new && !has_legacy)
         {
             std::cerr << "FATAL: burial_pair_batch requires CSV columns "
@@ -1481,35 +1311,35 @@ int main(int argc, char* argv[])
         {
             const auto& row = t.rows[i];
             const int row_id = static_cast<int>(i) + 2;
-            const std::string sample_name = row_string(row, "sample_name",
+            const std::string sample_name = lsdtt::csv_row_string(row, "sample_name",
                 "row_" + std::to_string(static_cast<int>(i) + 1));
-            std::string fast = row_string(row, "nuclide_fast", sf["nuclide_fast"]);
-            std::string slow = row_string(row, "nuclide_slow", sf["nuclide_slow"]);
+            std::string fast = lsdtt::csv_row_string(row, "nuclide_fast", sf["nuclide_fast"]);
+            std::string slow = lsdtt::csv_row_string(row, "nuclide_slow", sf["nuclide_slow"]);
             double cf = 0.0;
             double cs = 0.0;
-            double sf_fast = row_double_optional(row, "conc_fast_sigma_atoms_g",
+            double sf_fast = lsdtt::csv_row_double_optional(row, "conc_fast_sigma_atoms_g",
                 static_cast<double>(ff["conc_fast_sigma_atoms_g"]), in_csv, row_id);
-            double sf_slow = row_double_optional(row, "conc_slow_sigma_atoms_g",
+            double sf_slow = lsdtt::csv_row_double_optional(row, "conc_slow_sigma_atoms_g",
                 static_cast<double>(ff["conc_slow_sigma_atoms_g"]), in_csv, row_id);
             if (has_new)
             {
-                cf = row_double_required(row, "conc_fast_atoms_g", in_csv, row_id);
-                cs = row_double_required(row, "conc_slow_atoms_g", in_csv, row_id);
+                cf = lsdtt::csv_row_double_required(row, "conc_fast_atoms_g", in_csv, row_id);
+                cs = lsdtt::csv_row_double_required(row, "conc_slow_atoms_g", in_csv, row_id);
             }
             else
             {
                 fast = "Al26";
                 slow = "Be10";
-                cf = row_double_required(row, "conc_26Al_atoms_g", in_csv, row_id);
-                cs = row_double_required(row, "conc_10Be_atoms_g", in_csv, row_id);
-                sf_fast = row_double_optional(row, "conc_26Al_sigma_atoms_g",
+                cf = lsdtt::csv_row_double_required(row, "conc_26Al_atoms_g", in_csv, row_id);
+                cs = lsdtt::csv_row_double_required(row, "conc_10Be_atoms_g", in_csv, row_id);
+                sf_fast = lsdtt::csv_row_double_optional(row, "conc_26Al_sigma_atoms_g",
                     static_cast<double>(ff["conc_26Al_sigma_atoms_g"]), in_csv, row_id);
-                sf_slow = row_double_optional(row, "conc_10Be_sigma_atoms_g",
+                sf_slow = lsdtt::csv_row_double_optional(row, "conc_10Be_sigma_atoms_g",
                     static_cast<double>(ff["conc_10Be_sigma_atoms_g"]), in_csv, row_id);
             }
-            const double S = row_double_optional(row, "total_shielding", total_shielding,
+            const double S = lsdtt::csv_row_double_optional(row, "total_shielding", total_shielding,
                                                 in_csv, row_id);
-            const std::string scheme = row_string(row, "muon_scheme", muon_scheme);
+            const std::string scheme = lsdtt::csv_row_string(row, "muon_scheme", muon_scheme);
             if (!column_muon_scheme_is_supported(
                     scheme, in_csv + " row " + std::to_string(row_id) + ": "))
                 return 1;
@@ -1523,7 +1353,7 @@ int main(int argc, char* argv[])
             const lsdtt::CrnBurialResult r =
                 lsdtt::crn_burial_diagnostics_pair(fast, slow, cf, cs, S, scheme);
 
-            UncertaintySummary ue;
+            lsdtt::CrnUncertaintySummary ue;
             if (sf_fast > 0.0 || sf_slow > 0.0)
             {
                 std::vector<double> fast_vals;
@@ -1542,7 +1372,7 @@ int main(int argc, char* argv[])
                             if (rr.status == lsdtt::CrnSolveStatus::Converged)
                                 erates.push_back(rr.erate_preburial_g_cm2_yr);
                         }
-                ue = summarize_uncertainty(erates, r.erate_preburial_g_cm2_yr,
+                ue = lsdtt::summarise_crn_uncertainty(erates, r.erate_preburial_g_cm2_yr,
                                            propagate_prod_unc, production_rel_sigma,
                                            propagate_decay_unc, decay_rel_sigma);
             }
@@ -1552,7 +1382,7 @@ int main(int argc, char* argv[])
 
             out << sample_name << ","
                 << lsdtt::to_string(r.status) << ","
-                << status_code(r.status) << ","
+                << lsdtt::crn_solve_status_code(r.status) << ","
                 << scheme << ","
                 << S << ","
                 << fast << ","
@@ -1584,8 +1414,8 @@ int main(int argc, char* argv[])
     else if (mode == "step_pair_batch")
     {
         const std::string in_csv = pp.add_read_path_if_needed(sf["step_pairs_csv_file"]);
-        const CsvTable t = load_csv_table(in_csv);
-        if (!has_col(t, "conc_fast_atoms_g") || !has_col(t, "conc_slow_atoms_g"))
+        const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(in_csv);
+        if (!lsdtt::csv_has_column(t, "conc_fast_atoms_g") || !lsdtt::csv_has_column(t, "conc_slow_atoms_g"))
         {
             std::cerr << "FATAL: step_pair_batch requires CSV columns "
                       << "conc_fast_atoms_g and conc_slow_atoms_g.\n";
@@ -1618,22 +1448,22 @@ int main(int argc, char* argv[])
         {
             const auto& row = t.rows[i];
             const int row_id = static_cast<int>(i) + 2;
-            const std::string sample_name = row_string(row, "sample_name",
+            const std::string sample_name = lsdtt::csv_row_string(row, "sample_name",
                 "row_" + std::to_string(static_cast<int>(i) + 1));
-            const std::string fast = row_string(row, "nuclide_fast", sf["nuclide_fast"]);
-            const std::string slow = row_string(row, "nuclide_slow", sf["nuclide_slow"]);
-            const double cf = row_double_required(row, "conc_fast_atoms_g", in_csv, row_id);
-            const double cs = row_double_required(row, "conc_slow_atoms_g", in_csv, row_id);
-            const double sf_fast = row_double_optional(row, "conc_fast_sigma_atoms_g",
+            const std::string fast = lsdtt::csv_row_string(row, "nuclide_fast", sf["nuclide_fast"]);
+            const std::string slow = lsdtt::csv_row_string(row, "nuclide_slow", sf["nuclide_slow"]);
+            const double cf = lsdtt::csv_row_double_required(row, "conc_fast_atoms_g", in_csv, row_id);
+            const double cs = lsdtt::csv_row_double_required(row, "conc_slow_atoms_g", in_csv, row_id);
+            const double sf_fast = lsdtt::csv_row_double_optional(row, "conc_fast_sigma_atoms_g",
                 static_cast<double>(ff["conc_fast_sigma_atoms_g"]), in_csv, row_id);
-            const double sf_slow = row_double_optional(row, "conc_slow_sigma_atoms_g",
+            const double sf_slow = lsdtt::csv_row_double_optional(row, "conc_slow_sigma_atoms_g",
                 static_cast<double>(ff["conc_slow_sigma_atoms_g"]), in_csv, row_id);
-            const double e_old = row_double_optional(row, "effective_erosion_rate_old_g_cm2_yr",
+            const double e_old = lsdtt::csv_row_double_optional(row, "effective_erosion_rate_old_g_cm2_yr",
                                                      static_cast<double>(ff["effective_erosion_rate_old_g_cm2_yr"]),
                                                      in_csv, row_id);
-            const double S = row_double_optional(row, "total_shielding", total_shielding,
+            const double S = lsdtt::csv_row_double_optional(row, "total_shielding", total_shielding,
                                                 in_csv, row_id);
-            const std::string scheme = row_string(row, "muon_scheme", muon_scheme);
+            const std::string scheme = lsdtt::csv_row_string(row, "muon_scheme", muon_scheme);
             if (!column_muon_scheme_is_supported(
                     scheme, in_csv + " row " + std::to_string(row_id) + ": "))
                 return 1;
@@ -1647,8 +1477,8 @@ int main(int argc, char* argv[])
             const lsdtt::CrnStepPairResult r = lsdtt::crn_invert_step_change_pair(
                 fast, slow, cf, cs, e_old, S, scheme);
 
-            UncertaintySummary ue;
-            UncertaintySummary ut;
+            lsdtt::CrnUncertaintySummary ue;
+            lsdtt::CrnUncertaintySummary ut;
             if (sf_fast > 0.0 || sf_slow > 0.0)
             {
                 std::vector<double> fast_vals;
@@ -1671,10 +1501,10 @@ int main(int argc, char* argv[])
                                 times.push_back(rr.time_since_change_yr);
                             }
                         }
-                ue = summarize_uncertainty(erates, r.erate_new_g_cm2_yr,
+                ue = lsdtt::summarise_crn_uncertainty(erates, r.erate_new_g_cm2_yr,
                                            propagate_prod_unc, production_rel_sigma,
                                            propagate_decay_unc, decay_rel_sigma);
-                ut = summarize_uncertainty(times, r.time_since_change_yr,
+                ut = lsdtt::summarise_crn_uncertainty(times, r.time_since_change_yr,
                                            false, 0.0, false, 0.0);
             }
 
@@ -1683,7 +1513,7 @@ int main(int argc, char* argv[])
 
             out << sample_name << ","
                 << lsdtt::to_string(r.status) << ","
-                << status_code(r.status) << ","
+                << lsdtt::crn_solve_status_code(r.status) << ","
                 << scheme << ","
                 << S << ","
                 << fast << ","

@@ -415,6 +415,56 @@ int main(int argc, char** argv)
     }
 
     // -------------------------------------------------------------------------
+    // T13 -- a placement mask must contain the WHOLE scar, not just its seed
+    //
+    // The mask is a promise about where landslides may occur. Testing it only
+    // at the initiation pixel breaks that promise, because a scar occupies its
+    // host's upslope set and can spill across the boundary. Measured on a real
+    // step-change tag mask before this was fixed: 40 of 1941 excavated pixels
+    // lay outside the mask, 35 of them on ground upstream of the knickpoint --
+    // exactly the population the mask existed to exclude.
+    // -------------------------------------------------------------------------
+    {
+        std::cout << "\nT13: a mask contains the whole scar, not just its seed\n";
+
+        // Left half active. The boundary runs down the middle of a landscape
+        // whose flow crosses it, so an unmasked-upslope bug leaks immediately.
+        lsdtt::lsdtt_raster_cpu mask_raster = filled;
+        auto& md = mask_raster.get_data_array();
+        for (int r = 0; r < meta.n_rows; ++r)
+            for (int c = 0; c < meta.n_cols; ++c)
+                md(r, c) = (c < meta.n_cols / 2) ? 1.0f : 0.0f;
+
+        auto inside_mask = [&](std::int64_t f) -> bool
+        {
+            const int rr = static_cast<int>(f / meta.n_cols);
+            const int cc = static_cast<int>(f % meta.n_cols);
+            return mask_raster.get_mask_array()(rr, cc) &&
+                   mask_raster.get_data_array()(rr, cc) != 0.0f;
+        };
+
+        lsdtt::LandslidePlacer pm(fi, meta, cfg, &mask_raster);
+        pm.begin_event();
+
+        std::uint64_t rng = 987654321;
+        int  n_placed = 0;
+        long n_outside = 0;
+        for (int i = 0; i < 200; ++i)
+        {
+            lsdtt::LandslideScar scar;
+            if (!pm.place_scar_seeded(20, rng, scar)) continue;
+            ++n_placed;
+            for (std::int64_t f : scar.pixels)
+                if (!inside_mask(f)) ++n_outside;
+        }
+
+        std::cout << "  placed " << n_placed << " scars, "
+                  << n_outside << " pixel(s) outside the mask\n";
+        check(n_placed > 0, "scars still place inside a half-domain mask");
+        check(n_outside == 0, "no scar pixel falls outside the mask");
+    }
+
+    // -------------------------------------------------------------------------
     std::cout << "\n=== " << (g_checks - g_failures) << " / " << g_checks
               << " checks passed ===\n";
     if (g_failures > 0)

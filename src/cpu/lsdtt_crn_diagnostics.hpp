@@ -37,7 +37,9 @@
 #ifndef LSDTT_CRN_DIAGNOSTICS_HPP
 #define LSDTT_CRN_DIAGNOSTICS_HPP
 
+#include <limits>
 #include <string>
+#include <vector>
 #include "lsdtt_crn_parameters.hpp"
 
 namespace lsdtt
@@ -51,7 +53,17 @@ enum class CrnSolveStatus
     NotConverged      // bracketed but the solver did not tighten (should not happen)
 };
 
+// Human-readable form, e.g. "no solution". For prose and log lines.
 const char* to_string(CrnSolveStatus s);
+
+// Machine-readable single-word token for CSV columns, e.g. "NoSolution". A tidy
+// table wants a token a loader can compare without normalising case or
+// whitespace, which to_string() deliberately is not.
+const char* crn_solve_status_token(CrnSolveStatus s);
+
+// Small integer status for callers that want a numeric column or an exit code.
+// Converged is 0 so that "nonzero means look at it" holds.
+int crn_solve_status_code(CrnSolveStatus s);
 
 //  Steady-state concentration of one nuclide at a surface sample
 // C(eps) = P0 * sum_j F_j * Gamma_j / (eps + Gamma_j * lambda), the same
@@ -185,6 +197,38 @@ CrnStepPairResult crn_invert_step_change_pair(
     double eff_erate_old_g_cm2_yr,
     double total_shielding,
     const std::string& muon_scheme);
+
+//  Uncertainty summary over a set of inverted values
+// Summarises the spread of a set of solutions obtained by re-inverting at the
+// measurement's uncertainty bounds, and combines it with the systematic terms.
+//
+//   unc_int : INTERNAL (measurement) uncertainty, the half-range of `values`
+//   unc_ext : EXTERNAL uncertainty, unc_int combined in quadrature with the
+//             production-rate and decay-constant terms, each taken as a
+//             relative sigma on |center|
+//
+// The internal/external split is the usual cosmogenic reporting convention:
+// quote internal when comparing samples measured the same way, external when
+// comparing against other methods or other laboratories.
+struct CrnUncertaintySummary
+{
+    double lo      = std::numeric_limits<double>::quiet_NaN();
+    double hi      = std::numeric_limits<double>::quiet_NaN();
+    double unc_int = std::numeric_limits<double>::quiet_NaN();
+    double unc_ext = std::numeric_limits<double>::quiet_NaN();
+    int    n_valid = 0;
+};
+
+// An empty `values` returns the default-constructed summary (all NaN, n_valid
+// 0) rather than throwing: a sample whose bounds could not be inverted still
+// has a central estimate worth reporting.
+CrnUncertaintySummary summarise_crn_uncertainty(
+    const std::vector<double>& values,
+    double center,
+    bool   add_production_uncertainty,
+    double production_rel_sigma,
+    bool   add_decay_uncertainty,
+    double decay_rel_sigma);
 
 } // namespace lsdtt
 

@@ -52,6 +52,7 @@
 #include "../src/cpu/lsdtt_landslide_crn_cpu.hpp"
 #include "../src/cpu/lsdtt_landslide_event_cpu.hpp"
 #include "../src/cpu/lsdtt_niemi_ensemble_cpu.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -132,26 +133,6 @@ struct sample_point_row
     double longitude = std::numeric_limits<double>::quiet_NaN();
 };
 
-static std::vector<std::string> split_csv_row_simple(const std::string& row)
-{
-    std::vector<std::string> out;
-    std::stringstream ss(row);
-    std::string item;
-    while (std::getline(ss, item, ',')) out.push_back(item);
-    return out;
-}
-
-static std::string trim_ws(std::string s)
-{
-    const auto is_ws = [](unsigned char c)
-    { return std::isspace(c) != 0; };
-    while (!s.empty() && is_ws(static_cast<unsigned char>(s.front())))
-        s.erase(s.begin());
-    while (!s.empty() && is_ws(static_cast<unsigned char>(s.back())))
-        s.pop_back();
-    return s;
-}
-
 static std::string to_lower(std::string s)
 {
     for (char& ch : s)
@@ -183,11 +164,11 @@ static std::vector<sample_point_row> read_sample_point_rows(
     if (!std::getline(f, header))
         throw std::runtime_error("sample_points_csv is empty: " + csv_path);
 
-    auto h = split_csv_row_simple(header);
+    auto h = lsdtt::csv_split_row(header);
     int i_name = -1, i_lat = -1, i_lon = -1;
     for (int i = 0; i < static_cast<int>(h.size()); ++i)
     {
-        const std::string key = to_lower(trim_ws(h[i]));
+        const std::string key = to_lower(lsdtt::csv_trim(h[i]));
         if (key == to_lower(name_col)) i_name = i;
         if (key == to_lower(lat_col)) i_lat = i;
         if (key == to_lower(lon_col)) i_lon = i;
@@ -202,20 +183,20 @@ static std::vector<sample_point_row> read_sample_point_rows(
     int idx = 1;
     while (std::getline(f, line))
     {
-        if (trim_ws(line).empty()) continue;
-        auto t = split_csv_row_simple(line);
+        if (lsdtt::csv_trim(line).empty()) continue;
+        auto t = lsdtt::csv_split_row(line);
         if (static_cast<int>(t.size()) <= std::max(i_lat, i_lon))
             throw std::runtime_error("sample_points_csv row is too short at row "
                                      + std::to_string(idx + 1));
         sample_point_row r;
         r.name = (i_name >= 0 && i_name < static_cast<int>(t.size()))
-            ? trim_ws(t[static_cast<std::size_t>(i_name)])
+            ? lsdtt::csv_trim(t[static_cast<std::size_t>(i_name)])
             : ("sample_" + std::to_string(idx));
         if (r.name.empty()) r.name = "sample_" + std::to_string(idx);
         try
         {
-            r.latitude = std::stod(trim_ws(t[static_cast<std::size_t>(i_lat)]));
-            r.longitude = std::stod(trim_ws(t[static_cast<std::size_t>(i_lon)]));
+            r.latitude = std::stod(lsdtt::csv_trim(t[static_cast<std::size_t>(i_lat)]));
+            r.longitude = std::stod(lsdtt::csv_trim(t[static_cast<std::size_t>(i_lon)]));
         }
         catch (const std::exception&)
         {
@@ -277,7 +258,26 @@ int main(int argc, char* argv[])
     string_default_map["mask_fname"] = "NULL";
     help_map["mask_fname"] = {"string","NULL",
         "Optional raster restricting where landslides may occur.",
-        "Non-zero and valid = active. NULL uses the whole DEM.",
+        "Non-zero and valid = active, unless mask_active_values narrows it. "
+        "NULL uses the whole DEM.",
+        "Placement","param",""};
+
+    string_default_map["mask_active_values"] = "";
+    help_map["mask_active_values"] = {"string","",
+        "Comma-separated list of mask values to treat as active, e.g. \"4\" or "
+        "\"3,4\". Empty (the default) keeps the historical rule: any non-zero "
+        "valid pixel is active.",
+        "This exists so a CLASSIFIED raster can be used directly as a mask "
+        "instead of having to be reclassified to 0/1 first. The motivating case "
+        "is the step-change tag raster from lsdtt-cosmo-prediction "
+        "(<stem>_SC_TAG.tif: 1 = fluvial-old, 2 = hillslope-old, 3 = "
+        "fluvial-new, 4 = hillslope-new), where landsliding only on ground that "
+        "has already felt the faster post-knickpoint erosion means "
+        "mask_active_values: 4. Passing that raster without this parameter "
+        "would make ALL FOUR classes active, putting landslides upstream of the "
+        "knickpoint and quietly inverting the result. Values are matched to the "
+        "nearest integer, so this is for class/tag rasters, not continuous "
+        "ones. The realised host-pixel count is always reported -- check it.",
         "Placement","param",""};
 
     // --- Size distribution ---
@@ -801,6 +801,66 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         { std::cerr << "FATAL: could not load mask: " << e.what() << "\n"; return 1; }
+
+        // Narrow a CLASSIFIED mask to the requested classes by reclassifying it
+        // to 0/1 here. Everything downstream -- the ice intersection below and
+        // LandslidePlacer -- keeps the single "non-zero and valid = active"
+        // rule, so this parameter adds no new placement semantics.
+        if (!sf["mask_active_values"].empty())
+        {
+            std::vector<long> wanted;
+            for (const std::string& tok : lsdtt::csv_split_row(sf["mask_active_values"]))
+            {
+                const std::string t = lsdtt::csv_trim(tok);
+                if (t.empty()) continue;
+                try { wanted.push_back(std::lround(std::stod(t))); }
+                catch (...)
+                {
+                    std::cerr << "FATAL: mask_active_values entry \"" << t
+                              << "\" is not a number.\n";
+                    return 1;
+                }
+            }
+            if (wanted.empty())
+            {
+                std::cerr << "FATAL: mask_active_values was set but parsed to no "
+                             "values. Leave it empty for 'any non-zero'.\n";
+                return 1;
+            }
+
+            auto&       m_data = mask_raster.get_data_array();
+            const auto& m_mask = mask_raster.get_mask_array();
+            const auto& m_meta = mask_raster.get_meta();
+            std::int64_t n_active = 0;
+            for (int r = 0; r < m_meta.n_rows; ++r)
+                for (int c = 0; c < m_meta.n_cols; ++c)
+                {
+                    bool keep = false;
+                    if (m_mask(r, c))
+                    {
+                        const long v = std::lround(
+                            static_cast<double>(m_data(r, c)));
+                        for (long w : wanted) if (v == w) { keep = true; break; }
+                    }
+                    m_data(r, c) = keep ? 1.0f : 0.0f;
+                    if (keep) ++n_active;
+                }
+
+            std::cout << "Mask values   : " << sf["mask_active_values"]
+                      << " -> " << n_active << " host pixels\n";
+            if (n_active == 0)
+            {
+                std::cerr << "FATAL: mask_active_values matched no pixels. "
+                             "Nothing could host a landslide.\n";
+                return 1;
+            }
+        }
+    }
+    else if (!sf["mask_active_values"].empty())
+    {
+        std::cerr << "FATAL: mask_active_values was set but mask_fname is NULL, "
+                     "so there is no mask to narrow.\n";
+        return 1;
     }
 
     // Ice excludes ground from landsliding. The placer takes ONE mask, so the
