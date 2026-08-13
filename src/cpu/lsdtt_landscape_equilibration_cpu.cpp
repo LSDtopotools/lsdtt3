@@ -252,8 +252,60 @@ lsdtt_equilibration_result equilibrate_landscape(
             snap,
             elapsed_seconds);
 
-        // TODO(divide-diagnostics): populate divide-step and cross-divide
-        // diagnostics in the cycle record once divide diagnostics are wired in.
+        rec.divide = compute_divide_step_stats(
+            flow,
+            delivered,
+            opts.convergence.divide_opts);
+
+        if (has_previous_flow)
+        {
+            const int ancestor_steps =
+                opts.convergence.divide_opts.divide_merge_search_steps;
+            const std::vector<std::int64_t> anc_prev =
+                compute_downstream_ancestor_labels(previous_flow, ancestor_steps);
+
+            const std::vector<std::int64_t>& cur_recv =
+                flow.receiver_array().get_vector();
+            const std::vector<std::uint8_t>& cur_mask =
+                flow.mask_array().get_vector();
+
+            std::int64_t n_edges = 0;
+            std::int64_t n_cross = 0;
+            const std::int64_t n_flow_cells = static_cast<std::int64_t>(
+                std::min(cur_recv.size(), anc_prev.size()));
+
+            for (std::int64_t flat = 0; flat < n_flow_cells; ++flat)
+            {
+                const std::size_t s = static_cast<std::size_t>(flat);
+                if (cur_mask[s] == 0)
+                    continue;
+
+                const std::int64_t r = cur_recv[s];
+                if (r < 0 || r >= n_flow_cells)
+                    continue;
+
+                ++n_edges;
+
+                const std::size_t rs = static_cast<std::size_t>(r);
+                if (anc_prev[s] != anc_prev[rs])
+                    ++n_cross;
+            }
+
+            rec.n_cross_divide = n_cross;
+            if (n_edges > 0)
+            {
+                rec.frac_cross_divide =
+                    static_cast<double>(n_cross) / static_cast<double>(n_edges);
+            }
+        }
+        else
+        {
+            rec.n_cross_divide = 0;
+            rec.frac_cross_divide = 0.0;
+        }
+
+        // TODO(divide-diagnostics): add richer cross-divide metrics (e.g.,
+        // weighted counts and persistence tracking) once requirements settle.
 
         result.cycles.push_back(rec);
         result.elevation = delivered;

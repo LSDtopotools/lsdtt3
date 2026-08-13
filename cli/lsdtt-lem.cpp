@@ -704,6 +704,12 @@ int main(int argc, char* argv[])
         "Default false keeps legacy steady-state behavior unchanged.",
         "Analytical steady-state", "param", "run_steady_state"};
 
+    int_default_map["divide_merge_search_steps"] = 5;
+    help_map["divide_merge_search_steps"] = {"int","5",
+        "Downstream search depth used by divide diagnostics in equilibration-cycle runs.",
+        "Must be > 0 when use_landscape_equilibration_cycle is true.",
+        "Analytical steady-state", "param", "use_landscape_equilibration_cycle"};
+
     // --- Hillslope steady-state ---
     bool_default_map["run_hillslope_steady_state"] = false;
     help_map["run_hillslope_steady_state"] = {"bool","false",
@@ -813,6 +819,12 @@ int main(int argc, char* argv[])
     help_map["write_elevation_stats_csv"] = {"bool","true",
         "Write per-timestep elevation statistics to a CSV file.",
         "",
+        "Output", "switch", ""};
+
+    bool_default_map["write_snap_convergence_csv"] = true;
+    help_map["write_snap_convergence_csv"] = {"bool","true",
+        "Write per-cycle snap convergence diagnostics for the landscape equilibration path.",
+        "Only used when run_steady_state and use_landscape_equilibration_cycle are both true.",
         "Output", "switch", ""};
 
     // --- Routing and threading ---
@@ -1370,6 +1382,8 @@ int main(int argc, char* argv[])
             eq_opts.fill_min_slope = ff["fill_min_slope"];
             eq_opts.n_threads = ifs["n_threads"];
             eq_opts.convergence.check_convergence = false;
+            eq_opts.convergence.divide_opts.divide_merge_search_steps =
+                ifs["divide_merge_search_steps"];
 
             lsdtt::lsdtt_equilibration_result eq_result;
             try
@@ -1387,6 +1401,62 @@ int main(int argc, char* argv[])
             area_d = std::move(eq_result.drainage_area);
 
             std::cout << "  Cycles completed: " << eq_result.cycles.size() << "\n";
+
+            if (bf["write_snap_convergence_csv"])
+            {
+                const std::string snap_csv = pp.make_output_path("_snap_convergence", ".csv");
+                std::cout << "Writing snap convergence CSV: " << snap_csv << "\n";
+
+                const std::vector<std::string> snap_headers = {
+                    "cycle",
+                    "seconds",
+                    "max_abs_dz_m",
+                    "mean_abs_dz_m",
+                    "rms_dz_m",
+                    "max_dz_over_relief",
+                    "n_receiver_changed",
+                    "frac_receiver_changed",
+                    "n_cross_divide",
+                    "frac_cross_divide",
+                    "divide_n_divide_pairs",
+                    "divide_step_median_m",
+                    "divide_step_p90_m",
+                    "divide_step_max_m",
+                    "K_used",
+                    "computed_relief"
+                };
+
+                std::vector<std::vector<std::string>> snap_rows;
+                snap_rows.reserve(eq_result.cycles.size());
+                for (const auto& rec : eq_result.cycles)
+                {
+                    snap_rows.push_back({
+                        std::to_string(rec.cycle),
+                        std::to_string(rec.seconds),
+                        std::to_string(rec.max_abs_dz_m),
+                        std::to_string(rec.mean_abs_dz_m),
+                        std::to_string(rec.rms_dz_m),
+                        std::to_string(rec.max_dz_over_relief),
+                        std::to_string(rec.n_receiver_changed),
+                        std::to_string(rec.frac_receiver_changed),
+                        std::to_string(rec.n_cross_divide),
+                        std::to_string(rec.frac_cross_divide),
+                        std::to_string(rec.divide.n_divide_pairs),
+                        std::to_string(rec.divide.step_median_m),
+                        std::to_string(rec.divide.step_p90_m),
+                        std::to_string(rec.divide.step_max_m),
+                        std::to_string(rec.K_used),
+                        std::to_string(rec.computed_relief)
+                    });
+                }
+
+                try { loader.write_csv(snap_csv, snap_headers, snap_rows); }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: snap convergence CSV write failed: "
+                              << e.what() << "\n";
+                }
+            }
         }
         else
         {

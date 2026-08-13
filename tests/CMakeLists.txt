@@ -402,6 +402,23 @@ set_tests_properties(smoke_lem_roering_implicit_strip PROPERTIES
     FIXTURES_REQUIRED lem_strip_fixture)
 
 add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_cycle
+    lsdtt-lem
+    lem_equilibration_cycle_smoke.param.in
+    tiny_eqcycle_steady_state_elevation.tif
+    --stdout-contains "Path           : landscape_equilibration_cycle"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_lem_equilibration_bad_divide_steps
+    lsdtt-lem
+    lem_equilibration_bad_divide_steps.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "divide_merge_search_steps must be > 0"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_hydraulic_routing_invalid_mode
     lsdtt-hydraulic-routing
     hydraulic_routing_invalid_mode.param.in

@@ -14,7 +14,7 @@
 // intentionally conservative:
 //   - D8 path only
 //   - fluvial steady-state snap only
-//   - no divide diagnostics integration yet
+//   - divide diagnostics integrated with conservative per-cycle metrics
 //   - hillslope options are carried but not yet applied in the cycle
 //
 // It provides a stable interface so CLI integration can follow without carrying
@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "lsdtt_divide_diagnostics_cpu.hpp"
 #include "lsdtt_hillslope_steady_state_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_steady_state_cpu.hpp"
@@ -52,6 +53,10 @@ struct lsdtt_snap_cycle_record
     std::int64_t n_receiver_changed = 0;
     double       frac_receiver_changed = 0.0;
 
+    std::int64_t n_cross_divide = 0;
+    double       frac_cross_divide = 0.0;
+    lsdtt_divide_step_stats divide;
+
     double K_used = 0.0;
     double computed_relief = 0.0;
 };
@@ -63,6 +68,7 @@ struct lsdtt_snap_convergence_options
     double tolerance_dz_m = 0.0;
     double tolerance_receiver_fraction = 1e-3;
     int    patience_cycles = 2;
+    lsdtt_divide_diagnostic_options divide_opts;
 };
 
 struct lsdtt_equilibration_options
