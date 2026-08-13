@@ -55,6 +55,36 @@ def manifest_inputs(_wc):
             f"{ROOT}/{RUN_ID}/reports/cosmo_landslides/ls_series_apparent_vs_true_erosion.png",
             f"{ROOT}/{RUN_ID}/reports/cosmo_landslides/ls_series_sample_bias_ratio.png",
         ]
+    if MODULE == "cosmo_transient_landslides":
+        ctl = config["cosmo_transient_landslides"]
+        mags = list(ctl["magnitudes"].keys())
+        seeds = [f"s{int(s):02d}" for s in ctl["seeds"]]
+        scens = list(ctl["scenarios"].keys())
+        control = ctl["control_scenario"]["name"]
+        runs = f"{ROOT}/{RUN_ID}/runs"
+        out = []
+        for mag in mags:
+            out.append(f"{ROOT}/{RUN_ID}/prep/{mag}/sc_{mag}_gen.param")
+            out.append(f"{ROOT}/{RUN_ID}/prep/{mag}/sc_{mag}_SC_DEM.tif")
+            out.append(f"{ROOT}/{RUN_ID}/prep/{mag}/sc_{mag}_SC_TAG.tif")
+            out.append(
+                f"{ROOT}/{RUN_ID}/prep/{mag}/sc_{mag}_chan_channel_network_points.csv")
+            out.append(f"{runs}/{mag}/CTRL/{control}_conc.param")
+            out.append(f"{runs}/{mag}/CTRL/{control}_joined_samples.csv")
+            for seed in seeds:
+                out.append(f"{runs}/{mag}/{seed}/ls.param")
+                out.append(f"{runs}/{mag}/{seed}/ls_LS_INVENTORY.csv")
+                for scen in scens:
+                    out.append(f"{runs}/{mag}/{seed}/{scen}_conc.param")
+                    out.append(f"{runs}/{mag}/{seed}/{scen}_joined_samples.csv")
+        reports = f"{ROOT}/{RUN_ID}/reports/cosmo_transient_landslides"
+        out.extend([
+            f"{reports}/ensemble_per_seed.csv",
+            f"{reports}/ensemble_summary.csv",
+            f"{reports}/ensemble_anchor_check.csv",
+            f"{reports}/ensemble_report.txt",
+        ])
+        return out
     if MODULE == "check_basins":
         return [
             f"{ROOT}/{RUN_ID}/fetch/fetch_bbox.param",

@@ -122,13 +122,152 @@ cosmo_step_change:
   atmosphere: "ERA40"
   topo_shield_value: 1.0
 
+# ---------------------------------------------------------------------------
+# Cosmogenic transient step-change + landslide ensemble.
+# Translation of docs/plan_docs/plan_cosmo_transient_landslides.md, phase 5.
+# Every value below is taken from the hand-run param files in
+# data/cosmo_transient_test/lsdtt3_version/ls_phase3/.
+# ---------------------------------------------------------------------------
+cosmo_transient_landslides:
+  # The directory holding the source DEM. It is used verbatim as read_path for
+  # the prep stage, so it MUST also contain crn_nc_file and basin_outlet_csv:
+  # crn_nc_file is resolved as read_path + crn_nc_file, never relative to the
+  # working directory, and without it atmosphere: ERA40 silently degrades to
+  # standard.
+  source_dir: "/mnt/c/LSDTopoTools/data/cosmo_transient_test/lsdtt3_version"
+  source_dem_fname: "Mega_clp.bil"
+  crn_nc_file: "crn_parameters.nc"
+  basin_outlet_csv: "basin_outlet.csv"
+
+  # --- ensemble axes -------------------------------------------------------
+  # The full phase-5 ensemble is 10 seeds x 2 magnitudes x 4 couplings,
+  # plus one control per magnitude: 82 forward runs.
+  seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  magnitudes:
+    5x:
+      uplift_new_m_yr: 0.0005
+    10x:
+      uplift_new_m_yr: 0.001
+  # SC_TAG is identical in 5x and 10x (same K, same celerity, same knickpoint),
+  # and the hand runs used the 5x tag raster as the landslide mask for both.
+  mask_magnitude: "5x"
+  nuclides: ["Be10", "Al26", "C14"]
+
+  # The scenario matrix of plan section 3. S1 - S1f - S2 decomposes the
+  # fresh-failure effect into debris dilution and scar depletion.
+  scenarios:
+    S1:                                  # landslides just happened, debris sampled
+      coupling: "both"
+      report_time_yr: 0
+    S1f:                                 # debris dilution alone
+      coupling: "flush"
+      report_time_yr: 0
+    S2:                                  # scar depletion alone
+      coupling: "scar"
+      report_time_yr: 0
+    S3:                                  # landslides happened 1000 yr ago
+      coupling: "both"
+      report_time_yr: 1000
+  control_scenario:
+    name: "S0"
+    coupling: "none"
+    report_time_yr: 0
+
+  # --- step-change landscape generation ------------------------------------
+  step_change:
+    uplift_old_m_yr: 0.0001
+    age_yr: 500000
+    target_relief_m: 200
+    m_over_n: 0.5
+    n: 1.0
+    A_0: 1.0
+    channel_pixels: 50
+    Sc_old: 0.15
+    Sc_new: "0.30"                    # quoted so the emitted param text is
+                                      # byte-identical to the hand runs
+    production_from_generated_dem: true
+    # FALSE for the final runs, and this is not a detail. The generated
+    # step-change DEM has a ~56 m elevation cliff along drainage divides
+    # (the two sides are snapped to Sc_new and Sc_old independently and never
+    # made to meet), so rebuilding D8 on it sends 5.4 % of tag-4 pixels
+    # draining across the divide into the unadjusted catchment. Routing on the
+    # ORIGINAL DEM removes the contamination entirely: old-zone contaminated
+    # pixels go from 1168 to 0 and the anchor drift from 9.4e-4 to 3.0e-7.
+    # See plan_cosmo_transient_landslides.md section 7.2.
+    route_on_generated_dem: false
+
+  # --- CRN physics: PINNED, and identical in every forward and inverse run --
+  crn:
+    scaling_scheme: "stone"
+    muon_scheme: "BraucherBorchers"
+    atmosphere: "ERA40"
+    rock_density_kg_m3: 2650          # ROCK density; not scar_density_kg_m3
+    sample_age_yr: 0
+    topo_shield_value: 1.0
+    snow_shield_eff_thickness: 0.0
+    self_shield_eff_thickness: 0.0
+
+  inversion:
+    self_consistent_age: false
+
+  # --- landslide field -----------------------------------------------------
+  landslides:
+    landslide_mode: "single_event"
+    event_time_yr: 0
+    # Host only post-knickpoint hillslopes. mask_fname alone treats any
+    # non-zero valid cell as active, which would put scars on tags 1-3.
+    mask_active_values: 4
+    area_volume_preset: "larsen_soil_scar"
+    landslide_size_model: "inverse_gamma"
+    threshold_contributing_pixels: 1000
+    # GEOMETRIC scar density, used to turn a rock-equivalent erosion depth into
+    # the soil thickness that Larsen's V = alpha * A^gamma is fitted to. It is
+    # NOT interchangeable with crn.rock_density_kg_m3.
+    scar_density_kg_m3: 1500
+    # Event magnitude as years of post-step erosion (plan section 5, "low"):
+    #   event_volume_per_area_m = uplift_new * recurrence * rho_rock/rho_scar
+    # which gives 0.17667 m at 5x and 0.35333 m at 10x, matching the hand runs.
+    # Set event_volume_per_area_m to pin the value directly instead.
+    recurrence_yr: 200
+    event_volume_per_area_m: null
+
+  coupling:
+    flush_time_threshold_yr: 100
+
+  # --- flow routing and sampling -------------------------------------------
+  routing:
+    fill_before_routing: true
+    min_slope_for_fill: 0.0001
+    boundary_conditions: "oooo"
+    threshold_contributing_pixels: 1000
+    snap_search_radius_pixels: 8
+  sampling:
+    source_pixels_threshold: 2000
+    sample_points_stride: 20
+
+  # --- statistics and validation -------------------------------------------
+  analysis:
+    ratios: ["app_erate_ratio_C14_Be10", "app_erate_ratio_C14_Al26"]
+    join_rel_tol: 1.0e-6
+    # Samples whose control sc_steptime_yr == 0 are entirely upstream of the
+    # knickpoint, so no landslide can lie above them and their paired delta
+    # must be zero to floating point. There are 32 of them.
+    expected_anchor_count: 32
+    anchor_eps: 1.0e-6                # float32 epsilon scale
+    anchor_alarm: 1.0e-4              # divide-artefact scale was ~1e-3
+    # With flush_time_threshold_yr: 100 the flush window is long closed at the
+    # report time, so these must be identical row for row.
+    assert_equal_scenarios: ["S1=S1f"]
+
 executables:
   fetch_raster: "../build/lsdtt-fetch-raster"
   raster_preprocessing: "../build/lsdtt-raster-preprocessing"
   basin_extraction: "../build/lsdtt-basin-extraction"
+  channel_extraction: "../build/lsdtt-channel-extraction"
   cosmo_landslides: "../build/lsdtt-cosmo-landslides"
   synthetic_network: "../build/lsdtt-synthetic-networks"
   cosmo_prediction: "../build/lsdtt-cosmo-prediction"
+  cosmo_tool: "../build/lsdtt-cosmo-tool"
 
 io:
   root: "results"

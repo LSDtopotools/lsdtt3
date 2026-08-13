@@ -15,7 +15,8 @@ Current implemented modules:
 1. `check_basins` (bbox fetch -> preprocess -> outlet-driven basin extraction),
 2. `cosmo_landslides`,
 3. `cosmo_step_change_random_network`,
-4. `cosmo_landslides_synthetic`.
+4. `cosmo_landslides_synthetic`,
+5. `cosmo_transient_landslides`.
 
 Currently configured default module in `config/config.yaml`:
 
@@ -48,6 +49,64 @@ Use the ready config at `workflows/config/cosmo_landslides_synthetic.yaml`:
 This run writes outputs under:
 
 - `data/test_landslide_cosmo/workflow_results/test-landslide-cosmo/`
+
+## Cosmogenic transient + landslide ensemble
+
+`analysis.module: cosmo_transient_landslides` is the Snakemake translation of
+the experiment in `docs/plan_docs/plan_cosmo_transient_landslides.md`. It runs
+
+1. a step-change landscape per magnitude (`lsdtt-cosmo-prediction`), giving
+   `SC_DEM`, `SC_ERATE`, `SC_STEPTIME`, `SC_TAG`, `SC_CHI`;
+2. the channel-network sample points on that surface
+   (`lsdtt-channel-extraction`);
+3. a landslide field per (magnitude, seed) confined to `SC_TAG == 4` -- the
+   post-knickpoint hillslopes -- with a Larsen area-volume scaling and a
+   Malamud inverse-gamma size distribution (`lsdtt-cosmo-landslides`);
+4. a forward multi-isotope prediction per (magnitude, seed, coupling) and three
+   inversions per run, one each for `Be10`, `Al26` and `C14`
+   (`lsdtt-cosmo-prediction`, `lsdtt-cosmo-tool`);
+5. the paired join and the seed-ensemble statistics.
+
+The ensemble is declarative: seed, step magnitude and coupling are wildcards,
+so `cosmo_transient_landslides.seeds`, `.magnitudes` and `.scenarios` in
+`config/config.yaml` are the only place the matrix size is stated. The shipped
+configuration is 10 seeds x 2 magnitudes x 4 couplings plus one control per
+magnitude = 82 forward runs and 246 inversions.
+
+Run it with:
+
+`pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile --directory workflows --config analysis='{"module":"cosmo_transient_landslides"}'`
+
+These runs take minutes each; check the DAG with `-n` first.
+
+Points that are easy to get wrong, and are pinned in the config:
+
+- `step_change.route_on_generated_dem` is **false**. The generated step-change
+  DEM has a ~56 m elevation cliff along drainage divides, so rebuilding D8 on
+  it sends 5.4 % of tag-4 pixels draining into the unadjusted catchment.
+- `crn_nc_file` resolves against `read_path`, not the working directory, so the
+  CRN netCDF is staged next to every DEM a run reads. The same is true of the
+  landslide `*_raster_prefix` parameters.
+- `crn.rock_density_kg_m3` (2650) and `landslides.scar_density_kg_m3` (1500)
+  are different quantities and are not interchangeable.
+- the comparison is paired per sample point against the matching control at the
+  same magnitude; the per-seed statistic is the median of those paired deltas
+  and the ensemble statistic is the median over seeds with an IQR.
+
+Outputs:
+
+- `workflows/results/<run_id>/reports/cosmo_transient_landslides/ensemble_per_seed.csv`
+- `workflows/results/<run_id>/reports/cosmo_transient_landslides/ensemble_summary.csv`
+- `workflows/results/<run_id>/reports/cosmo_transient_landslides/ensemble_anchor_check.csv`
+- `workflows/results/<run_id>/reports/cosmo_transient_landslides/ensemble_report.txt`
+
+`ensemble_anchor_check.csv` is the validation output: the 32 samples that lie
+entirely upstream of the knickpoint cannot have a landslide above them, so
+their paired delta must be zero to floating point. The rule reports
+max|delta| per combination and fails if any exceeds
+`analysis.anchor_alarm`. The same rule asserts that S1 (`both`) and S1f
+(`flush`) are identical row for row, and that every scenario sample pairs 1:1
+with the control.
 
 ## Environment
 
@@ -84,6 +143,8 @@ Edit `workflows/config/config.yaml`:
   the synthetic landslide workflow (single event + series diagnostics).
 - `synthetic_network.*` and `cosmo_step_change.*` configure random-network
   step-change analysis.
+- `cosmo_transient_landslides.*` configures the transient step-change +
+  landslide seed ensemble.
 
 For `check_basins`, outputs include:
 
