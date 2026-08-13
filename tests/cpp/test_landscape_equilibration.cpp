@@ -859,6 +859,18 @@ void test_hillslope_solve_runs_inside_the_cycle()
     check("hillslope_every_cycle=false names itself in the stop reason",
           once_result.stop_reason.find("final cycle only") != std::string::npos,
           "stop_reason='" + once_result.stop_reason + "'");
+
+    check("hillslope pre-flight metrics are reported",
+          once_result.mean_hillslope_length_m > 0.0
+          && once_result.predicted_hillslope_relief_m >= 0.0
+          && once_result.predicted_max_hillslope_gradient >= 0.0,
+          "Lh=" + std::to_string(once_result.mean_hillslope_length_m)
+          + " relief=" + std::to_string(once_result.predicted_hillslope_relief_m)
+          + " Smax=" + std::to_string(once_result.predicted_max_hillslope_gradient));
+
+    check("hillslope_every_cycle=false warning is emitted",
+          once_result.stop_reason.find("speed mode") != std::string::npos,
+          "stop_reason='" + once_result.stop_reason + "'");
 }
 
 // The practical payoff: does solving the hillslopes actually smooth the

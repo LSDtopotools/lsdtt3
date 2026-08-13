@@ -29,6 +29,132 @@ namespace lsdtt
 namespace
 {
 
+double flow_step_length_to_receiver(const lsdtt_flowinfo& flow, std::int64_t flat)
+{
+    constexpr double k_sqrt_2 = 1.4142135623730950488;
+    const std::uint8_t dir = flow.receiver_dir_of_unchecked(flat);
+    return ((dir & 1u) == 0u) ? flow.cell_size() : (flow.cell_size() * k_sqrt_2);
+}
+
+double tolerance_multiplier_for_cycle(double schedule, int cycle, int max_cycles)
+{
+    if (!std::isfinite(schedule) || schedule <= 1.0 || max_cycles <= 1)
+        return 1.0;
+
+    const double frac_remaining =
+        static_cast<double>(max_cycles - cycle) / static_cast<double>(max_cycles - 1);
+    return std::pow(schedule, std::max(0.0, frac_remaining));
+}
+
+double estimate_mean_hillslope_length_m(
+    const lsdtt_flowinfo& flow,
+    const std::vector<std::uint8_t>& is_channel)
+{
+    const std::size_t n = flow.full_grid_size();
+    std::vector<double> dist_to_channel(n, -1.0);
+    for (std::size_t s = 0; s < n; ++s)
+    {
+        if (s < is_channel.size() && is_channel[s] != 0)
+            dist_to_channel[s] = 0.0;
+    }
+
+    double sum = 0.0;
+    std::int64_t count = 0;
+
+    for (std::int64_t flat = 0; flat < static_cast<std::int64_t>(n); ++flat)
+    {
+        if (!flow.is_valid_cell(flat)) continue;
+        const std::size_t s0 = static_cast<std::size_t>(flat);
+        if (s0 >= is_channel.size() || is_channel[s0] != 0) continue;
+
+        if (dist_to_channel[s0] >= 0.0)
+        {
+            sum += dist_to_channel[s0];
+            ++count;
+            continue;
+        }
+
+        std::vector<std::int64_t> path;
+        std::vector<double> step_lens;
+        std::int64_t cur = flat;
+        double known_tail = 0.0;
+        bool anchored = false;
+
+        for (std::size_t guard = 0; guard <= n; ++guard)
+        {
+            if (!flow.is_valid_cell(cur))
+            {
+                anchored = true;
+                known_tail = 0.0;
+                break;
+            }
+
+            const std::size_t cs = static_cast<std::size_t>(cur);
+            if (dist_to_channel[cs] >= 0.0)
+            {
+                anchored = true;
+                known_tail = dist_to_channel[cs];
+                break;
+            }
+
+            path.push_back(cur);
+
+            const std::int64_t rec = flow.receiver_of_unchecked(cur);
+            if (rec < 0 || !flow.is_valid_cell(rec))
+            {
+                anchored = true;
+                known_tail = 0.0;
+                break;
+            }
+
+            step_lens.push_back(flow_step_length_to_receiver(flow, cur));
+            cur = rec;
+        }
+
+        if (!anchored)
+            continue;
+
+        double tail = known_tail;
+        for (std::size_t p = path.size(); p-- > 0;)
+        {
+            if (p < step_lens.size())
+                tail += step_lens[p];
+            dist_to_channel[static_cast<std::size_t>(path[p])] = tail;
+        }
+
+        if (dist_to_channel[s0] >= 0.0)
+        {
+            sum += dist_to_channel[s0];
+            ++count;
+        }
+    }
+
+    return (count > 0) ? (sum / static_cast<double>(count)) : 0.0;
+}
+
+double predict_max_hillslope_gradient(double U, double D, double Sc, double length_m)
+{
+    if (!std::isfinite(U) || !std::isfinite(D) || !std::isfinite(Sc) || !std::isfinite(length_m)
+        || U <= 0.0 || D <= 0.0 || Sc <= 0.0 || length_m <= 0.0)
+    {
+        return 0.0;
+    }
+
+    const double rhs = U * length_m / D;
+    double lo = 0.0;
+    double hi = Sc * (1.0 - 1e-12);
+
+    for (int it = 0; it < 80; ++it)
+    {
+        const double mid = 0.5 * (lo + hi);
+        const double ratio = mid / Sc;
+        const double lhs = mid / (1.0 - ratio * ratio);
+        if (lhs < rhs) lo = mid;
+        else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
 lsdtt_snap_cycle_record make_cycle_record(
     int                           cycle,
     const lsdtt_raster_cpu&       previous_surface,
@@ -422,6 +548,7 @@ lsdtt_equilibration_result equilibrate_landscape(
     int n_good_cycles = 0;
 
     bool hillslope_requested = opts.run_hillslope;
+    std::string preflight_note;
 
     lsdtt_raster_cpu cycle_dem = initial_dem;
     lsdtt_raster_cpu previous_delivered = initial_dem;
@@ -492,6 +619,7 @@ lsdtt_equilibration_result equilibrate_landscape(
 
     const auto run_hillslope_solve =
         [&](const lsdtt_flowinfo&             flow,
+            int                               cycle,
             const lsdtt_raster_cpu&           fluvial_surface,
             const std::vector<std::uint8_t>&  is_channel,
             const lsdtt_raster_cpu*           warm_start,
@@ -511,6 +639,12 @@ lsdtt_equilibration_result equilibrate_landscape(
         lsdtt_hillslope_steady_state_options hs_opts = opts.hillslope;
         hs_opts.boundary_conditions = opts.boundary_conditions;
         hs_opts.n_threads = opts.n_threads;
+        hs_opts.tolerance = static_cast<float>(
+            static_cast<double>(hs_opts.tolerance)
+            * tolerance_multiplier_for_cycle(
+                opts.hillslope_tolerance_schedule,
+                cycle,
+                max_cycles));
 
         std::string model = opts.hillslope_model;
         for (char& c : model)
@@ -549,7 +683,8 @@ lsdtt_equilibration_result equilibrate_landscape(
         // guess available. Channel pixels keep the current snap elevations,
         // which are the Dirichlet values.
         lsdtt_raster_cpu solve_input = fluvial_surface;
-        if (warm_start != nullptr
+        if (opts.warm_start_hillslope
+            && warm_start != nullptr
             && warm_start->get_data().size() == solve_input.get_data().size())
         {
             std::vector<float>& z = solve_input.get_data();
@@ -595,6 +730,7 @@ lsdtt_equilibration_result equilibrate_landscape(
     bool has_previous_is_channel = false;
     lsdtt_raster_cpu previous_hillslope_surface;
     bool has_previous_hillslope_surface = false;
+    bool preflight_done = false;
 
     for (int cycle = 1; cycle <= max_cycles; ++cycle)
     {
@@ -628,11 +764,74 @@ lsdtt_equilibration_result equilibrate_landscape(
             area_d,
             has_previous_is_channel ? &previous_is_channel : nullptr);
 
+        if (!preflight_done && opts.run_hillslope)
+        {
+            result.mean_hillslope_length_m =
+                estimate_mean_hillslope_length_m(flow, is_channel);
+
+            const double U = static_cast<double>(opts.hillslope.U);
+            const double D = static_cast<double>(opts.hillslope.D);
+            const double Sc = static_cast<double>(opts.hillslope.Sc);
+            const double Lh = result.mean_hillslope_length_m;
+
+            if (U > 0.0 && D > 0.0 && Lh > 0.0)
+            {
+                result.predicted_hillslope_relief_m =
+                    U * Lh * Lh / (2.0 * D);
+            }
+            result.predicted_max_hillslope_gradient =
+                predict_max_hillslope_gradient(U, D, Sc, Lh);
+
+            std::ostringstream pf;
+            const double resolved_threshold_specific = fluvial_opts.divide_area_by_dx
+                ? opts.channel_threshold_area
+                : (opts.channel_threshold_area / std::max(1e-12, flow.cell_size()));
+            const double resolved_threshold_map_area = fluvial_opts.divide_area_by_dx
+                ? (opts.channel_threshold_area * flow.cell_size())
+                : opts.channel_threshold_area;
+
+            pf << " Pre-flight: mean_hillslope_length_m="
+               << result.mean_hillslope_length_m
+               << ", predicted_hillslope_relief_m="
+               << result.predicted_hillslope_relief_m
+               << ", predicted_max_hillslope_gradient="
+               << result.predicted_max_hillslope_gradient
+               << ", channel_threshold_area(specific)="
+               << resolved_threshold_specific
+               << ", channel_threshold_area(map)="
+               << resolved_threshold_map_area << ".";
+
+            const double relief_ratio =
+                result.predicted_hillslope_relief_m
+                / std::max(1e-12, static_cast<double>(snap.computed_relief));
+            if (relief_ratio > 0.5)
+            {
+                pf << " WARNING: predicted_hillslope_relief/computed_relief="
+                   << relief_ratio << " (>0.5).";
+            }
+            if (Sc > 0.0 && result.predicted_max_hillslope_gradient > 0.9 * Sc)
+            {
+                pf << " WARNING: predicted_max_hillslope_gradient="
+                   << result.predicted_max_hillslope_gradient
+                   << " exceeds 0.9*Sc; consider lower sor_omega (e.g. 1.3).";
+            }
+            if (!opts.hillslope_every_cycle && max_cycles > 1)
+            {
+                pf << " WARNING: hillslope_every_cycle=false with max_cycles>1"
+                   << " is a speed mode, not full route∘snap∘diffuse equilibration.";
+            }
+
+            preflight_note = pf.str();
+            std::cerr << "Info:" << preflight_note << "\n";
+            preflight_done = true;
+        }
+
         hillslope_outcome hs;
         if (opts.run_hillslope && opts.hillslope_every_cycle)
         {
             hs = run_hillslope_solve(
                 flow,
+                cycle,
                 snap.elevation,
                 is_channel,
                 has_previous_hillslope_surface ? &previous_hillslope_surface
@@ -955,6 +1154,7 @@ lsdtt_equilibration_result equilibrate_landscape(
                     lsdtt_raster_cpu replay_delivered = result.elevation;
                     const hillslope_outcome replay_hs = run_hillslope_solve(
                         replay_flow,
+                        best_cycle,
                         result.fluvial_only,
                         result.is_channel,
                         nullptr,
@@ -1019,6 +1219,7 @@ lsdtt_equilibration_result equilibrate_landscape(
         lsdtt_raster_cpu final_delivered = result.elevation;
         const hillslope_outcome final_hs = run_hillslope_solve(
             final_flow,
+            std::max(1, result.delivered_cycle),
             result.fluvial_only,
             result.is_channel,
             nullptr,
@@ -1078,6 +1279,9 @@ lsdtt_equilibration_result equilibrate_landscape(
         oss << ".";
 
         result.stop_reason += oss.str();
+
+        if (!preflight_note.empty())
+            result.stop_reason += preflight_note;
 
         if (result.hillslope_bc_mismatch)
         {

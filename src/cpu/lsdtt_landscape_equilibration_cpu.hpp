@@ -119,6 +119,8 @@ struct lsdtt_equilibration_options
     bool        run_hillslope = false;
     std::string hillslope_model = "roering";
     bool        hillslope_every_cycle = true;
+    bool        warm_start_hillslope = true;
+    double      hillslope_tolerance_schedule = 1.0;
 
     double      channel_threshold_area = 0.0;
 
@@ -168,6 +170,10 @@ struct lsdtt_equilibration_result
     // stop_reason for the affected edges.
     bool hillslope_bc_mismatch = false;
     bool hillslope_ran = false;
+
+    double mean_hillslope_length_m = 0.0;
+    double predicted_hillslope_relief_m = 0.0;
+    double predicted_max_hillslope_gradient = 0.0;
 };
 
 [[nodiscard]] lsdtt_equilibration_result equilibrate_landscape(
