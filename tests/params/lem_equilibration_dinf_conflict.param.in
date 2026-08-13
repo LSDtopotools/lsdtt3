@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+
+write_path: __WRITE_PATH__
+write_fname: tiny_eq_dinf_conflict
+write_output_format: gtiff
+
+run_steady_state: true
+use_landscape_equilibration_cycle: true
+enable_dinf_fluvial_erosion: true
+steady_state_n_cycles: 2

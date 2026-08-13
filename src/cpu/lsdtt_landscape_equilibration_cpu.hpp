@@ -13,9 +13,11 @@
 // deltas for convergence diagnostics. For this milestone the implementation is
 // intentionally conservative:
 //   - D8 path only
-//   - fluvial steady-state snap only
 //   - divide diagnostics integrated with conservative per-cycle metrics
-//   - hillslope options are carried but not yet applied in the cycle
+//
+// The cycle is: pit-fill -> route -> accumulate -> fluvial chi snap -> channel
+// mask (with hysteresis) -> optional hillslope steady-state solve with the
+// channels pinned as Dirichlet nodes -> deliver.
 //
 // It provides a stable interface so CLI integration can follow without carrying
 // the cycle logic inline.
@@ -53,9 +55,28 @@ struct lsdtt_snap_cycle_record
     std::int64_t n_receiver_changed = 0;
     double       frac_receiver_changed = 0.0;
 
+    // The same measure restricted to pixels that are hillslope (is_channel == 0)
+    // in both the previous and the current cycle. The whole-grid number is
+    // confounded by the channel set moving; this one is not, and it is the
+    // number the elliptic-stabilisation hypothesis is about.
+    std::int64_t n_receiver_changed_hillslope = 0;
+    double       frac_receiver_changed_hillslope = 0.0;
+    std::int64_t n_hillslope_compared = 0;
+
+    // Fraction of valid cells whose downstream ancestor label moved between the
+    // previous cycle's flow graph and this cycle's flow graph. Same cell, two
+    // graphs: anc_K_prev[i] vs anc_K_cur[i]. An unchanged graph gives exactly 0.
     std::int64_t n_cross_divide = 0;
     double       frac_cross_divide = 0.0;
     lsdtt_divide_step_stats divide;
+
+    // Limit-cycle bookkeeping. Non-zero only on the cycle where a repeat of an
+    // earlier flow graph was confirmed.
+    std::uint64_t receiver_hash = 0;
+    int           limit_cycle_detected = 0;
+    int           limit_cycle_period = 0;
+    int           limit_cycle_first = 0;
+    std::int64_t  limit_cycle_n_pixels = 0;
 
     double divide_gradient_target_used = 0.0;
     double divide_gradient_target_margin = 0.0;
@@ -63,6 +84,13 @@ struct lsdtt_snap_cycle_record
 
     double K_used = 0.0;
     double computed_relief = 0.0;
+
+    // Hillslope solve bookkeeping. hillslope_converged is -1 when no solve ran
+    // on this cycle.
+    std::int64_t n_channel_pixels = 0;
+    int          hillslope_iterations = 0;
+    double       hillslope_residual = 0.0;
+    int          hillslope_converged = -1;
 
     static std::vector<std::string> csv_headers();
     std::vector<std::string> csv_row() const;
@@ -84,12 +112,22 @@ struct lsdtt_equilibration_options
     lsdtt_fluvial_steady_state_options   fluvial;
     lsdtt_hillslope_steady_state_options hillslope;
 
+    // Carried but NOT implemented: the cycle routes D8 only. lsdtt-lem rejects
+    // enable_dinf_fluvial_erosion together with the equilibration cycle rather
+    // than silently running D8 when D-infinity was asked for.
     bool        use_dinf = false;
     bool        run_hillslope = false;
     std::string hillslope_model = "roering";
     bool        hillslope_every_cycle = true;
 
     double      channel_threshold_area = 0.0;
+
+    // Hysteresis on the channel (Dirichlet) set: a pixel already flagged as
+    // channel stays channel until its area drops below
+    // channel_hysteresis_factor * channel_threshold_area. Without it the
+    // Dirichlet set can flicker between cycles, which would confound any
+    // measurement of hillslope routing stability. 1.0 disables the hysteresis.
+    double      channel_hysteresis_factor = 0.5;
 
     float       fill_min_slope = 1e-4f;
     std::string boundary_conditions = "nnnn";
@@ -110,6 +148,26 @@ struct lsdtt_equilibration_result
 
     bool        converged = false;
     std::string stop_reason;
+
+    // Limit-cycle detection (see equilibrate_landscape). A period of 1 is a
+    // genuine fixed point and sets converged = true; a period > 1 is an orbit
+    // and leaves converged = false.
+    bool         limit_cycle_detected = false;
+    int          limit_cycle_period = 0;
+    int          limit_cycle_first = 0;
+    std::int64_t limit_cycle_n_pixels = 0;
+
+    // Which cycle's surface was actually delivered in `elevation`. For an orbit
+    // this is the member with the smallest divide.step_p90_m, not the cycle the
+    // loop stopped on.
+    int delivered_cycle = 0;
+
+    // True when run_hillslope is set and the boundary_conditions string asks the
+    // router to drain through an edge ('o') or pin it to baselevel ('b') that
+    // the hillslope solver reflects at instead. See the warning text in
+    // stop_reason for the affected edges.
+    bool hillslope_bc_mismatch = false;
+    bool hillslope_ran = false;
 };
 
 [[nodiscard]] lsdtt_equilibration_result equilibrate_landscape(

@@ -17,6 +17,14 @@
 namespace lsdtt
 {
 
+// -----------------------------------------------------------------------------
+// lsdtt_divide_diagnostic_options
+//
+// divide_merge_search_steps (K) is the merge tolerance: two adjacent pixels are
+// a divide pair if their flow paths do not meet within K steps. K >= 1.
+// n_threads <= 0 means "use the OpenMP/hardware maximum"; the results do not
+// depend on the thread count.
+// -----------------------------------------------------------------------------
 struct lsdtt_divide_diagnostic_options
 {
     int  divide_merge_search_steps = 5;
@@ -47,6 +55,16 @@ struct lsdtt_divide_step_stats
     double class_step_median_m   = 0.0;
 };
 
+// -----------------------------------------------------------------------------
+// compute_downstream_ancestor_labels
+//
+// anc_K[i] = the node reached by following receivers K times from i, with
+// outlets absorbing. NOTE: anc_K equality is NOT "the paths have merged within
+// K steps" for K >= 2 -- merged paths share a node sequence but not a step
+// index. The divide-pair test below therefore uses a path-set test, not this
+// array (K == 1 excepted, where the two agree exactly). Kept because the
+// equilibration cycle uses these labels directly.
+// -----------------------------------------------------------------------------
 [[nodiscard]] std::vector<std::int64_t> compute_downstream_ancestor_labels(
     const lsdtt_flowinfo& flow,
     int merge_search_steps);

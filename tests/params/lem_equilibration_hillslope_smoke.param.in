@@ -1,0 +1,21 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+
+write_path: __WRITE_PATH__
+write_fname: tiny_eqhs
+write_output_format: gtiff
+
+run_steady_state: true
+use_landscape_equilibration_cycle: true
+steady_state_n_cycles: 2
+
+run_hillslope_steady_state: true
+hillslope_ss_model: linear
+hillslope_every_cycle: true
+incision_threshold_area: 2.0
+hillslope_diffusivity: 0.01
+hillslope_ss_tolerance: 1e-3
+hillslope_ss_max_iterations: 5000
+
+write_snap_convergence_csv: true

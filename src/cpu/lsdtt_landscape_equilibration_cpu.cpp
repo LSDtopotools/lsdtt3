@@ -12,6 +12,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cctype>
+#include <cstring>
+#include <iostream>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 
@@ -31,6 +35,8 @@ lsdtt_snap_cycle_record make_cycle_record(
     const lsdtt_flowinfo*         previous_flow,
     const lsdtt_flowinfo&         current_flow,
     const lsdtt_fluvial_steady_state_result& snap_result,
+    const std::vector<std::uint8_t>* previous_is_channel,
+    const std::vector<std::uint8_t>& current_is_channel,
     double                        elapsed_seconds)
 {
     lsdtt_snap_cycle_record rec;
@@ -115,6 +121,8 @@ lsdtt_snap_cycle_record make_cycle_record(
 
         std::int64_t n_compare = 0;
         std::int64_t n_changed = 0;
+        std::int64_t n_hillslope_compare = 0;
+        std::int64_t n_hillslope_changed = 0;
         const std::int64_t n_flow_cells = static_cast<std::int64_t>(std::min(
             prev_recv.size(), cur_recv.size()));
 
@@ -125,8 +133,23 @@ lsdtt_snap_cycle_record make_cycle_record(
                 continue;
 
             ++n_compare;
-            if (prev_recv[s] != cur_recv[s])
+            const bool changed = prev_recv[s] != cur_recv[s];
+            if (changed)
                 ++n_changed;
+
+            // Restrict to pixels that were hillslope on both cycles. A pixel
+            // that entered or left the channel set is a channel-set movement,
+            // not a hillslope routing instability.
+            if (previous_is_channel != nullptr
+                && s < previous_is_channel->size()
+                && s < current_is_channel.size()
+                && (*previous_is_channel)[s] == 0
+                && current_is_channel[s] == 0)
+            {
+                ++n_hillslope_compare;
+                if (changed)
+                    ++n_hillslope_changed;
+            }
         }
 
         rec.n_receiver_changed = n_changed;
@@ -135,15 +158,138 @@ lsdtt_snap_cycle_record make_cycle_record(
             rec.frac_receiver_changed =
                 static_cast<double>(n_changed) / static_cast<double>(n_compare);
         }
+
+        rec.n_receiver_changed_hillslope = n_hillslope_changed;
+        rec.n_hillslope_compared = n_hillslope_compare;
+        if (n_hillslope_compare > 0)
+        {
+            rec.frac_receiver_changed_hillslope =
+                static_cast<double>(n_hillslope_changed)
+                / static_cast<double>(n_hillslope_compare);
+        }
     }
     else
     {
         // First cycle has no prior flow graph for a receiver-change comparison.
         rec.n_receiver_changed = 0;
         rec.frac_receiver_changed = 0.0;
+        rec.n_receiver_changed_hillslope = 0;
+        rec.frac_receiver_changed_hillslope = 0.0;
+        rec.n_hillslope_compared = 0;
     }
 
     return rec;
+}
+
+// 64-bit FNV-1a over the raw bytes of the receiver vector. O(N) and negligible
+// against a snap; used only as a cheap index into the seen-graph table. Every
+// suspected repeat is confirmed with a memcmp against the stored array, so a
+// hash collision cannot produce a false limit-cycle report.
+std::uint64_t fnv1a_receivers(const std::vector<std::int64_t>& receivers)
+{
+    constexpr std::uint64_t fnv_offset_basis = 1469598103934665603ULL;
+    constexpr std::uint64_t fnv_prime        = 1099511628211ULL;
+
+    std::uint64_t hash = fnv_offset_basis;
+    const unsigned char* bytes =
+        reinterpret_cast<const unsigned char*>(receivers.data());
+    const std::size_t n_bytes = receivers.size() * sizeof(std::int64_t);
+
+    for (std::size_t b = 0; b < n_bytes; ++b)
+    {
+        hash ^= static_cast<std::uint64_t>(bytes[b]);
+        hash *= fnv_prime;
+    }
+
+    return hash;
+}
+
+// One previously visited flow graph, kept so that a suspected repeat can be
+// confirmed byte-for-byte and so that an orbit member can be re-delivered.
+struct lsdtt_seen_graph
+{
+    int                       cycle = 0;
+    std::vector<std::int64_t> receivers;
+};
+
+// Count the cells that take part in an orbit: those whose receiver differs from
+// the orbit's first member on at least one visited state.
+std::int64_t count_orbit_pixels(
+    const std::vector<const std::vector<std::int64_t>*>& orbit_receivers)
+{
+    if (orbit_receivers.size() < 2)
+        return 0;
+
+    const std::vector<std::int64_t>& first = *orbit_receivers.front();
+    std::vector<std::uint8_t> participates(first.size(), 0);
+
+    for (std::size_t m = 1; m < orbit_receivers.size(); ++m)
+    {
+        const std::vector<std::int64_t>& other = *orbit_receivers[m];
+        const std::size_t n = std::min(first.size(), other.size());
+        for (std::size_t s = 0; s < n; ++s)
+        {
+            if (first[s] != other[s])
+                participates[s] = 1;
+        }
+    }
+
+    std::int64_t n_pixels = 0;
+    for (const std::uint8_t flag : participates)
+        n_pixels += flag;
+
+    return n_pixels;
+}
+
+// The router and the hillslope solver do not share a boundary-condition
+// vocabulary (see lsdtt_hillslope_steady_state_cpu.hpp:40-43). They agree on
+// 'p' (periodic) and on 'n' (no-flux in the router, zero-flux Neumann in the
+// solver, which is the solver's 'o' branch). They disagree on:
+//   'o' - the router lets water leave the grid; the solver reflects it back.
+//   'b' - baselevel in the router; the solver reflects.
+// Fixing that means editing the solver's numeric core, which is protected, so
+// the cycle warns instead. Returns an empty string when the two are consistent.
+std::string make_hillslope_bc_warning(const std::string& boundary_conditions)
+{
+    static const char* edge_names[4] = {"north", "east", "south", "west"};
+
+    std::vector<std::string> offending;
+    const std::size_t n_edges =
+        std::min<std::size_t>(4, boundary_conditions.size());
+
+    for (std::size_t e = 0; e < n_edges; ++e)
+    {
+        const char bc = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(boundary_conditions[e])));
+        if (bc == 'o' || bc == 'b')
+        {
+            offending.push_back(
+                std::string(edge_names[e]) + " ('" + bc + "')");
+        }
+    }
+
+    if (offending.empty())
+        return std::string();
+
+    std::ostringstream oss;
+    oss << " WARNING: hillslope boundary-condition mismatch on the ";
+    for (std::size_t i = 0; i < offending.size(); ++i)
+    {
+        if (i > 0)
+            oss << (i + 1 == offending.size() ? " and " : ", ");
+        oss << offending[i];
+    }
+    oss << " edge" << (offending.size() > 1 ? "s" : "") << ":"
+        << " the flow router drains through "
+        << (offending.size() > 1 ? "these edges" : "this edge")
+        << " while the hillslope steady-state solver reflects at "
+        << (offending.size() > 1 ? "them" : "it")
+        << " (zero-flux Neumann). The two steps are not solving the same"
+        << " problem there, so divides within roughly one hillslope length of"
+        << " the affected edge(s) are not trustworthy. Use 'n' or 'p' edges for"
+        << " hillslope work.";
+
+    return oss.str();
 }
 
 std::string make_non_converged_reason(
@@ -182,6 +328,9 @@ std::vector<std::string> lsdtt_snap_cycle_record::csv_headers()
         "max_dz_over_relief",
         "n_receiver_changed",
         "frac_receiver_changed",
+        "n_receiver_changed_hillslope",
+        "frac_receiver_changed_hillslope",
+        "n_hillslope_compared",
         "n_cross_divide",
         "frac_cross_divide",
         "divide_n_divide_pairs",
@@ -194,7 +343,16 @@ std::vector<std::string> lsdtt_snap_cycle_record::csv_headers()
         "divide_gradient_p90",
         "divide_gradient_target_used",
         "divide_gradient_target_margin",
-        "divide_gradient_target_met"
+        "divide_gradient_target_met",
+        "receiver_hash",
+        "limit_cycle_detected",
+        "limit_cycle_period",
+        "limit_cycle_first",
+        "limit_cycle_n_pixels",
+        "n_channel_pixels",
+        "hillslope_iterations",
+        "hillslope_residual",
+        "hillslope_converged"
     };
 }
 
@@ -209,6 +367,9 @@ std::vector<std::string> lsdtt_snap_cycle_record::csv_row() const
         std::to_string(max_dz_over_relief),
         std::to_string(n_receiver_changed),
         std::to_string(frac_receiver_changed),
+        std::to_string(n_receiver_changed_hillslope),
+        std::to_string(frac_receiver_changed_hillslope),
+        std::to_string(n_hillslope_compared),
         std::to_string(n_cross_divide),
         std::to_string(frac_cross_divide),
         std::to_string(divide.n_divide_pairs),
@@ -221,7 +382,16 @@ std::vector<std::string> lsdtt_snap_cycle_record::csv_row() const
         std::to_string(divide.gradient_p90),
         std::to_string(divide_gradient_target_used),
         std::to_string(divide_gradient_target_margin),
-        std::to_string(divide_gradient_target_met)
+        std::to_string(divide_gradient_target_met),
+        std::to_string(receiver_hash),
+        std::to_string(limit_cycle_detected),
+        std::to_string(limit_cycle_period),
+        std::to_string(limit_cycle_first),
+        std::to_string(limit_cycle_n_pixels),
+        std::to_string(n_channel_pixels),
+        std::to_string(hillslope_iterations),
+        std::to_string(hillslope_residual),
+        std::to_string(hillslope_converged)
     };
 }
 
@@ -258,6 +428,155 @@ lsdtt_equilibration_result equilibrate_landscape(
     lsdtt_flowinfo previous_flow;
     bool has_previous_flow = false;
 
+    // Limit-cycle bookkeeping. surface_history[0] is the input DEM and
+    // surface_history[c] is the surface delivered by cycle c, so the input to
+    // any cycle b is surface_history[b - 1] and an orbit member can be replayed
+    // exactly. seen_graphs indexes previously visited flow graphs by an FNV-1a
+    // hash of the receiver array, keeping the array itself so that a suspected
+    // repeat is confirmed by memcmp rather than trusted on the hash.
+    std::vector<lsdtt_raster_cpu> surface_history;
+    surface_history.push_back(initial_dem);
+    std::map<std::uint64_t, lsdtt_seen_graph> seen_graphs;
+    int last_executed_cycle = 0;
+
+    // Channel mask from a surface and its drainage areas. Shared by the cycle
+    // loop and the best-of-orbit replay so the two cannot drift. A pixel that
+    // was already channel stays channel until its area falls below
+    // channel_hysteresis_factor * threshold, so the Dirichlet set handed to the
+    // hillslope solver does not flicker from cycle to cycle.
+    const auto make_is_channel = [&](const lsdtt_raster_cpu& surface,
+                                     const std::vector<double>& area_d,
+                                     const std::vector<std::uint8_t>* previous)
+    {
+        std::vector<std::uint8_t> is_channel(surface.get_mask().size(), 0);
+        if (opts.channel_threshold_area <= 0.0)
+            return is_channel;
+
+        const double on_threshold = opts.channel_threshold_area;
+        const double off_threshold = std::min(
+            on_threshold,
+            std::max(0.0, opts.channel_hysteresis_factor) * on_threshold);
+
+        const double dx = surface.get_meta().cell_size;
+        for (std::size_t s = 0; s < area_d.size(); ++s)
+        {
+            if (!surface.get_mask()[s])
+                continue;
+
+            double area_for_threshold = area_d[s];
+            if (fluvial_opts.divide_area_by_dx)
+                area_for_threshold /= dx;
+
+            const bool was_channel = previous != nullptr
+                && s < previous->size() && (*previous)[s] != 0;
+
+            if (area_for_threshold >= on_threshold)
+                is_channel[s] = 1;
+            else if (was_channel && area_for_threshold >= off_threshold)
+                is_channel[s] = 1;
+        }
+        return is_channel;
+    };
+
+    // Hillslope steady-state solve on a snapped surface with the channel set
+    // pinned as Dirichlet nodes. Returns the outcome and writes the solved
+    // surface into out_surface; a no-op (ran = false) leaves out_surface alone.
+    struct hillslope_outcome
+    {
+        bool  ran = false;
+        int   iterations = 0;
+        float residual = 0.0f;
+        bool  converged = false;
+    };
+
+    const auto run_hillslope_solve =
+        [&](const lsdtt_raster_cpu&           fluvial_surface,
+            const std::vector<std::uint8_t>&  is_channel,
+            const lsdtt_raster_cpu*           warm_start,
+            lsdtt_raster_cpu&                 out_surface) -> hillslope_outcome
+    {
+        hillslope_outcome outcome;
+
+        const std::int64_t n_channel = std::count(
+            is_channel.begin(), is_channel.end(), static_cast<std::uint8_t>(1));
+        if (n_channel == 0)
+        {
+            // With no Dirichlet nodes the elliptic problem has no unique
+            // solution; skip rather than hand the solver an ill-posed system.
+            return outcome;
+        }
+
+        lsdtt_hillslope_steady_state_options hs_opts = opts.hillslope;
+        hs_opts.boundary_conditions = opts.boundary_conditions;
+        hs_opts.n_threads = opts.n_threads;
+
+        std::string model = opts.hillslope_model;
+        for (char& c : model)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        if (model == "roering")
+            hs_opts.nonlinear = true;
+        else if (model == "linear")
+            hs_opts.nonlinear = false;
+        else if (model != "cidre")
+        {
+            throw std::invalid_argument(
+                "equilibrate_landscape: unknown hillslope_model '"
+                + opts.hillslope_model
+                + "'; expected linear, roering or cidre");
+        }
+
+        // Warm start: the previous cycle's hillslope field is the best initial
+        // guess available. Channel pixels keep the current snap elevations,
+        // which are the Dirichlet values.
+        lsdtt_raster_cpu solve_input = fluvial_surface;
+        if (warm_start != nullptr
+            && warm_start->get_data().size() == solve_input.get_data().size())
+        {
+            std::vector<float>& z = solve_input.get_data();
+            const std::vector<float>& z_warm = warm_start->get_data();
+            const std::vector<std::uint8_t>& m = solve_input.get_mask();
+            for (std::size_t s = 0; s < z.size(); ++s)
+            {
+                if (m[s] != 0 && is_channel[s] == 0)
+                    z[s] = z_warm[s];
+            }
+        }
+
+        const lsdtt_hillslope_steady_state_result hs_result =
+            (model == "cidre")
+                ? compute_cidre_hillslope_steady_state(
+                      solve_input, is_channel, hs_opts)
+                : compute_hillslope_steady_state(
+                      solve_input, is_channel, hs_opts);
+
+        out_surface = hs_result.elevation;
+
+        outcome.ran = true;
+        outcome.iterations = hs_result.n_iterations;
+        outcome.residual = hs_result.final_residual;
+        outcome.converged = hs_result.converged;
+        return outcome;
+    };
+
+    // The router and the solver disagree about 'o' and 'b' edges. Warn once,
+    // loudly, and record it; do not throw, because 'o' is the lsdtt-lem default.
+    if (opts.run_hillslope)
+    {
+        const std::string bc_warning =
+            make_hillslope_bc_warning(opts.boundary_conditions);
+        if (!bc_warning.empty())
+        {
+            result.hillslope_bc_mismatch = true;
+            std::cerr << "Warning:" << bc_warning << "\n";
+        }
+    }
+
+    std::vector<std::uint8_t> previous_is_channel;
+    bool has_previous_is_channel = false;
+    lsdtt_raster_cpu previous_hillslope_surface;
+    bool has_previous_hillslope_surface = false;
+
     for (int cycle = 1; cycle <= max_cycles; ++cycle)
     {
         const auto t0 = std::chrono::steady_clock::now();
@@ -283,14 +602,45 @@ lsdtt_equilibration_result equilibrate_landscape(
 
         lsdtt_raster_cpu delivered = snap.elevation;
 
-        // TODO(hillslope_every_cycle): integrate hillslope solver in-cycle and
-        // support "run once at final cycle" behaviour when
-        // hillslope_every_cycle == false.
-        // For this scaffold, delivery is fluvial-only even when run_hillslope is
-        // requested.
-        (void)opts.hillslope_every_cycle;
-        (void)opts.hillslope_model;
-        (void)opts.hillslope;
+        // The channel set is an INPUT to the hillslope solve, not just an
+        // output: it is the Dirichlet set that pins the elliptic problem.
+        std::vector<std::uint8_t> is_channel = make_is_channel(
+            snap.elevation,
+            area_d,
+            has_previous_is_channel ? &previous_is_channel : nullptr);
+
+        hillslope_outcome hs;
+        if (opts.run_hillslope && opts.hillslope_every_cycle)
+        {
+            hs = run_hillslope_solve(
+                snap.elevation,
+                is_channel,
+                has_previous_hillslope_surface ? &previous_hillslope_surface
+                                               : nullptr,
+                delivered);
+
+            if (hs.ran)
+            {
+                previous_hillslope_surface = delivered;
+                has_previous_hillslope_surface = true;
+                result.hillslope_ran = true;
+
+                if (!hs.converged)
+                {
+                    // Worth shouting about: an unconverged surface is not a
+                    // steady state, so every divide metric taken from it is
+                    // meaningless. The nonlinear solver in particular can
+                    // diverge under the auto-omega estimate; try sor_omega=1.3.
+                    std::cerr << "Warning: hillslope solve did not converge on"
+                              << " cycle " << cycle << " (" << hs.iterations
+                              << " iterations, residual " << hs.residual
+                              << " vs tolerance " << opts.hillslope.tolerance
+                              << "). Divide metrics for this cycle are not"
+                                 " trustworthy; try a smaller sor_omega"
+                                 " (e.g. 1.3) or more iterations.\n";
+                }
+            }
+        }
 
         const auto t1 = std::chrono::steady_clock::now();
         const double elapsed_seconds =
@@ -304,7 +654,18 @@ lsdtt_equilibration_result equilibrate_landscape(
             has_previous_flow ? &previous_flow : nullptr,
             flow,
             snap,
+            has_previous_is_channel ? &previous_is_channel : nullptr,
+            is_channel,
             elapsed_seconds);
+
+        rec.n_channel_pixels = std::count(
+            is_channel.begin(), is_channel.end(), static_cast<std::uint8_t>(1));
+        if (hs.ran)
+        {
+            rec.hillslope_iterations = hs.iterations;
+            rec.hillslope_residual = static_cast<double>(hs.residual);
+            rec.hillslope_converged = hs.converged ? 1 : 0;
+        }
 
         rec.divide = compute_divide_step_stats(
             flow,
@@ -325,43 +686,49 @@ lsdtt_equilibration_result equilibrate_landscape(
 
         if (has_previous_flow)
         {
+            // Cross-divide fraction: SAME cell, TWO graphs. anc_K_prev[i] is
+            // where cell i drained to before the re-route, anc_K_cur[i] is where
+            // it drains to after it. An unchanged flow graph therefore gives
+            // elementwise equality and exactly 0.0.
+            //
+            // The earlier formulation compared anc_prev[s] with
+            // anc_prev[receiver(s)]; that is definitionally empty because a cell
+            // and its own receiver drain to the same place by construction, so
+            // it measured the one-step chain offset and returned ~1 under no
+            // change at all.
             const int ancestor_steps =
                 opts.convergence.divide_opts.divide_merge_search_steps;
             const std::vector<std::int64_t> anc_prev =
                 compute_downstream_ancestor_labels(previous_flow, ancestor_steps);
+            const std::vector<std::int64_t> anc_cur =
+                compute_downstream_ancestor_labels(flow, ancestor_steps);
 
-            const std::vector<std::int64_t>& cur_recv =
-                flow.receiver_array().get_vector();
+            const std::vector<std::uint8_t>& prev_flow_mask =
+                previous_flow.mask_array().get_vector();
             const std::vector<std::uint8_t>& cur_mask =
                 flow.mask_array().get_vector();
 
-            std::int64_t n_edges = 0;
+            std::int64_t n_compare = 0;
             std::int64_t n_cross = 0;
             const std::int64_t n_flow_cells = static_cast<std::int64_t>(
-                std::min(cur_recv.size(), anc_prev.size()));
+                std::min(anc_prev.size(), anc_cur.size()));
 
             for (std::int64_t flat = 0; flat < n_flow_cells; ++flat)
             {
                 const std::size_t s = static_cast<std::size_t>(flat);
-                if (cur_mask[s] == 0)
+                if (cur_mask[s] == 0 || prev_flow_mask[s] == 0)
                     continue;
 
-                const std::int64_t r = cur_recv[s];
-                if (r < 0 || r >= n_flow_cells)
-                    continue;
-
-                ++n_edges;
-
-                const std::size_t rs = static_cast<std::size_t>(r);
-                if (anc_prev[s] != anc_prev[rs])
+                ++n_compare;
+                if (anc_prev[s] != anc_cur[s])
                     ++n_cross;
             }
 
             rec.n_cross_divide = n_cross;
-            if (n_edges > 0)
+            if (n_compare > 0)
             {
                 rec.frac_cross_divide =
-                    static_cast<double>(n_cross) / static_cast<double>(n_edges);
+                    static_cast<double>(n_cross) / static_cast<double>(n_compare);
             }
         }
         else
@@ -370,30 +737,19 @@ lsdtt_equilibration_result equilibrate_landscape(
             rec.frac_cross_divide = 0.0;
         }
 
-        // TODO(divide-diagnostics): add richer cross-divide metrics (e.g.,
-        // weighted counts and persistence tracking) once requirements settle.
+        // Fingerprint this cycle's flow graph before it is moved into
+        // previous_flow, so a repeat of an earlier graph can be recognised.
+        const std::vector<std::int64_t>& cycle_recv =
+            flow.receiver_array().get_vector();
+        rec.receiver_hash = fnv1a_receivers(cycle_recv);
 
-        result.cycles.push_back(rec);
         result.elevation = delivered;
+        result.delivered_cycle = cycle;
+        result.is_channel = is_channel;
+        surface_history.push_back(delivered);
+        last_executed_cycle = cycle;
 
-        std::vector<uint8_t> is_channel(delivered.get_mask().size(), 0);
-        if (opts.channel_threshold_area > 0.0)
-        {
-            const double dx = delivered.get_meta().cell_size;
-            for (std::size_t s = 0; s < area_d.size(); ++s)
-            {
-                if (!delivered.get_mask()[s])
-                    continue;
-
-                double area_for_threshold = area_d[s];
-                if (fluvial_opts.divide_area_by_dx)
-                    area_for_threshold /= dx;
-
-                if (area_for_threshold >= opts.channel_threshold_area)
-                    is_channel[s] = 1;
-            }
-        }
-        result.is_channel = std::move(is_channel);
+        bool stop_now = false;
 
         if (opts.convergence.check_convergence)
         {
@@ -415,7 +771,12 @@ lsdtt_equilibration_result equilibrate_landscape(
                     opts.convergence.tolerance_receiver_fraction;
             }
 
-            if (dz_ok && receiver_ok)
+            // Cycle 1 has no prior flow graph, so frac_receiver_changed is
+            // forced to 0.0 and every clause can be satisfied vacuously -- with
+            // both dz tolerances disabled a patience-1 run would otherwise
+            // declare convergence having compared nothing. A cycle must have a
+            // predecessor to count.
+            if (cycle >= 2 && dz_ok && receiver_ok)
             {
                 ++n_good_cycles;
             }
@@ -435,17 +796,170 @@ lsdtt_equilibration_result equilibrate_landscape(
                     << ", receiver_changed=" << rec.frac_receiver_changed
                     << ")";
                 result.stop_reason = oss.str();
-                break;
+                stop_now = true;
             }
         }
+
+        // Limit-cycle detection. A repeat of an earlier flow graph means the
+        // iteration has closed an orbit: every subsequent cycle is an exact
+        // replay, so there is nothing further to learn.
+        if (!stop_now && !result.limit_cycle_detected)
+        {
+            const auto it = seen_graphs.find(rec.receiver_hash);
+            const bool confirmed_repeat =
+                it != seen_graphs.end()
+                && it->second.receivers.size() == cycle_recv.size()
+                && std::memcmp(it->second.receivers.data(),
+                               cycle_recv.data(),
+                               cycle_recv.size() * sizeof(std::int64_t)) == 0;
+
+            if (confirmed_repeat)
+            {
+                const int first_cycle = it->second.cycle;
+
+                // Orbit members are the states visited at cycles
+                // [first_cycle, cycle - 1]; the state at `cycle` repeats the
+                // one at first_cycle.
+                std::vector<const std::vector<std::int64_t>*> orbit_receivers;
+                orbit_receivers.push_back(&it->second.receivers);
+                for (const auto& entry : seen_graphs)
+                {
+                    if (entry.second.cycle > first_cycle
+                        && entry.second.cycle < cycle)
+                    {
+                        orbit_receivers.push_back(&entry.second.receivers);
+                    }
+                }
+
+                result.limit_cycle_detected = true;
+                result.limit_cycle_first = first_cycle;
+                result.limit_cycle_period = cycle - first_cycle;
+                result.limit_cycle_n_pixels = count_orbit_pixels(orbit_receivers);
+
+                rec.limit_cycle_detected = 1;
+                rec.limit_cycle_first = result.limit_cycle_first;
+                rec.limit_cycle_period = result.limit_cycle_period;
+                rec.limit_cycle_n_pixels = result.limit_cycle_n_pixels;
+
+                // Stopping is a convergence decision; a fixed-cycle run still
+                // reports the orbit but must run the cycles it was asked for.
+                if (opts.convergence.check_convergence)
+                    stop_now = true;
+            }
+            else if (it == seen_graphs.end())
+            {
+                lsdtt_seen_graph entry;
+                entry.cycle = cycle;
+                entry.receivers = cycle_recv;
+                seen_graphs.emplace(rec.receiver_hash, std::move(entry));
+            }
+            // A hash hit that fails memcmp is a collision: leave the stored
+            // array in place and carry on rather than mis-report an orbit.
+        }
+
+        result.cycles.push_back(rec);
+
+        if (stop_now)
+            break;
 
         previous_delivered = delivered;
         previous_flow = std::move(flow);
         has_previous_flow = true;
+        previous_is_channel = std::move(is_channel);
+        has_previous_is_channel = true;
         cycle_dem = delivered;
     }
 
-    if (!result.converged)
+    if (result.limit_cycle_detected && opts.convergence.check_convergence)
+    {
+        std::ostringstream oss;
+
+        if (result.limit_cycle_period == 1)
+        {
+            // The flow graph reproduced itself exactly: a genuine fixed point.
+            result.converged = true;
+            oss << "Converged at cycle " << last_executed_cycle
+                << ": flow graph is a fixed point (limit_cycle_period=1,"
+                << " first seen at cycle " << result.limit_cycle_first << ")";
+        }
+        else
+        {
+            // An orbit: deliver the smoothest member visited, not whatever
+            // phase of the orbit the loop happened to stop on.
+            int    best_cycle = result.limit_cycle_first;
+            double best_p90 = -1.0;
+            for (const lsdtt_snap_cycle_record& r : result.cycles)
+            {
+                if (r.cycle < result.limit_cycle_first
+                    || r.cycle > last_executed_cycle - 1)
+                    continue;
+
+                if (best_p90 < 0.0 || r.divide.step_p90_m < best_p90)
+                {
+                    best_p90 = r.divide.step_p90_m;
+                    best_cycle = r.cycle;
+                }
+            }
+
+            if (best_cycle != last_executed_cycle
+                && best_cycle >= 1
+                && static_cast<std::size_t>(best_cycle) < surface_history.size())
+            {
+                // Replay the single cycle that produced the chosen orbit member
+                // so the delivered elevation, snap, areas and channel mask are
+                // all the same state rather than a mix of two phases.
+                lsdtt_raster_cpu replay_dem = fill_pits(
+                    surface_history[static_cast<std::size_t>(best_cycle) - 1],
+                    opts.fill_min_slope,
+                    opts.n_threads);
+
+                lsdtt_flowinfo replay_flow(
+                    replay_dem.get_data_array(),
+                    replay_dem.get_mask_array(),
+                    replay_dem.get_meta(),
+                    fi_opts);
+
+                std::vector<double> replay_area = replay_flow.accumulate();
+                lsdtt_fluvial_steady_state_result replay_snap =
+                    compute_d8_fluvial_steady_state(replay_flow, fluvial_opts);
+
+                result.final_snap = replay_snap;
+                result.fluvial_only = replay_snap.elevation;
+                result.drainage_area = std::move(replay_area);
+                result.elevation = replay_snap.elevation;
+                result.is_channel = make_is_channel(
+                    result.elevation, result.drainage_area, nullptr);
+
+                if (opts.run_hillslope && opts.hillslope_every_cycle)
+                {
+                    lsdtt_raster_cpu replay_delivered = result.elevation;
+                    const hillslope_outcome replay_hs = run_hillslope_solve(
+                        result.fluvial_only,
+                        result.is_channel,
+                        nullptr,
+                        replay_delivered);
+                    if (replay_hs.ran)
+                        result.elevation = replay_delivered;
+                }
+            }
+
+            result.delivered_cycle = best_cycle;
+            result.converged = false;
+
+            oss << "Limit cycle detected at cycle " << last_executed_cycle
+                << ": flow graph repeats cycle " << result.limit_cycle_first
+                << " (limit_cycle_period=" << result.limit_cycle_period
+                << ", " << result.limit_cycle_n_pixels
+                << " pixel(s) change receiver within the orbit)."
+                << " Not converged. Delivered cycle " << best_cycle
+                << ", the orbit member with the smallest divide step_p90="
+                << best_p90 << " m";
+        }
+
+        result.stop_reason = oss.str();
+    }
+
+    if (!result.converged && result.stop_reason.empty())
     {
         if (!opts.convergence.check_convergence)
         {
@@ -461,6 +975,39 @@ lsdtt_equilibration_result equilibrate_landscape(
         else
         {
             result.stop_reason = "No cycles executed.";
+        }
+    }
+
+    // hillslope_every_cycle == false: one solve on the surface actually
+    // delivered, after the cycle loop (and after any best-of-orbit replay) has
+    // decided which surface that is. Faster, but it never proves the divide is
+    // stable under re-routing, which is the whole point of solving every cycle.
+    if (opts.run_hillslope && !opts.hillslope_every_cycle
+        && !result.cycles.empty())
+    {
+        result.fluvial_only = result.elevation;
+        result.is_channel = make_is_channel(
+            result.elevation, result.drainage_area, nullptr);
+
+        lsdtt_raster_cpu final_delivered = result.elevation;
+        const hillslope_outcome final_hs = run_hillslope_solve(
+            result.fluvial_only,
+            result.is_channel,
+            nullptr,
+            final_delivered);
+
+        if (final_hs.ran)
+        {
+            result.elevation = final_delivered;
+            result.hillslope_ran = true;
+
+            lsdtt_snap_cycle_record& last = result.cycles.back();
+            last.hillslope_iterations = final_hs.iterations;
+            last.hillslope_residual = static_cast<double>(final_hs.residual);
+            last.hillslope_converged = final_hs.converged ? 1 : 0;
+            last.n_channel_pixels = std::count(
+                result.is_channel.begin(), result.is_channel.end(),
+                static_cast<std::uint8_t>(1));
         }
     }
 
@@ -480,8 +1027,35 @@ lsdtt_equilibration_result equilibrate_landscape(
 
     if (hillslope_requested)
     {
-        result.stop_reason +=
-            " Hillslope solve requested but deferred in this scaffold.";
+        std::ostringstream oss;
+        oss << " Hillslope solve: " << opts.hillslope_model
+            << (opts.hillslope_every_cycle ? ", every cycle"
+                                           : ", final cycle only");
+        if (!result.hillslope_ran)
+        {
+            oss << " -- REQUESTED BUT NOT RUN: no channel pixels were"
+                   " identified, so the elliptic problem had no Dirichlet set."
+                   " Set channel_threshold_area.";
+        }
+        else if (!result.cycles.empty())
+        {
+            const lsdtt_snap_cycle_record& last = result.cycles.back();
+            oss << " (" << last.n_channel_pixels << " channel pixels, "
+                << last.hillslope_iterations << " iterations, residual "
+                << last.hillslope_residual
+                << (last.hillslope_converged == 1 ? ", converged"
+                                                  : ", DID NOT CONVERGE")
+                << ")";
+        }
+        oss << ".";
+
+        result.stop_reason += oss.str();
+
+        if (result.hillslope_bc_mismatch)
+        {
+            result.stop_reason +=
+                make_hillslope_bc_warning(opts.boundary_conditions);
+        }
     }
 
     return result;

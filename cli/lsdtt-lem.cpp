@@ -787,6 +787,23 @@ int main(int argc, char* argv[])
         "elevation field (Carretier et al. 2016 Sec3.3).",
         "Hillslope steady-state", "param", "run_hillslope_steady_state"};
 
+    bool_default_map["hillslope_every_cycle"] = true;
+    help_map["hillslope_every_cycle"] = {"bool","true",
+        "Solve the hillslopes on every equilibration cycle, not just the last one.",
+        "Only used when use_landscape_equilibration_cycle and "
+        "run_hillslope_steady_state are both true. Solving every cycle costs one "
+        "extra solve per cycle but is the only way to show the divide is stable "
+        "under re-routing; false solves once on the delivered surface.",
+        "Hillslope steady-state", "param", "run_hillslope_steady_state"};
+
+    float_default_map["channel_hysteresis_factor"] = 0.5f;
+    help_map["channel_hysteresis_factor"] = {"float","0.5",
+        "Hysteresis on the channel (Dirichlet) set between equilibration cycles.",
+        "A pixel already flagged as channel stays channel until its drainage area "
+        "falls below channel_hysteresis_factor * incision_threshold_area. Stops the "
+        "Dirichlet set flickering from cycle to cycle. 1.0 disables the hysteresis.",
+        "Hillslope steady-state", "param", "run_hillslope_steady_state"};
+
     float_default_map["hillslope_sor_omega"] = 0.0f;
     help_map["hillslope_sor_omega"] = {"float","0",
         "SOR relaxation factor omega for hillslope steady-state (0 = auto).",
@@ -1411,16 +1428,29 @@ int main(int argc, char* argv[])
         lsdtt::lsdtt_fluvial_steady_state_result ss_result;
         std::vector<double> area_d;  // updated on each cycle; used by hillslope step
 
+        // Set when the equilibration cycle has already solved the hillslopes,
+        // so the one-shot post-step below does not solve them a second time.
+        bool eq_hillslope_done = false;
+
         // Working copy of the DEM - updated between cycles.
         lsdtt::lsdtt_raster_cpu cycle_dem = dem;
 
         if (use_equilibration_cycle)
         {
             std::cout << "  Path           : landscape_equilibration_cycle\n";
+
+            // The equilibration cycle is D8-only. Silently routing D8 when the
+            // user asked for D-infinity is the one failure here that could
+            // mislead a science result, so refuse the combination outright.
             if (use_dinf)
             {
-                std::cout << "  Note           : module currently runs D8 routing; "
-                             "enable_dinf_fluvial_erosion is ignored in this path.\n";
+                std::cerr
+                    << "FATAL: enable_dinf_fluvial_erosion: true is not supported "
+                       "together with use_landscape_equilibration_cycle: true; "
+                       "the equilibration cycle routes D8 only. Set one of "
+                       "enable_dinf_fluvial_erosion or "
+                       "use_landscape_equilibration_cycle to false.\n";
+                return 1;
             }
 
             const bool steady_state_check_convergence = bf["steady_state_check_convergence"];
@@ -1500,6 +1530,41 @@ int main(int argc, char* argv[])
             eq_opts.convergence.divide_opts.use_d8_diagonals =
                 bf["divide_use_d8_diagonals"];
 
+            // Hillslope solve inside the cycle. Same parameter names as the
+            // one-shot path below, so the two stay learnable.
+            eq_opts.run_hillslope          = bf["run_hillslope_steady_state"];
+            eq_opts.hillslope_model        = sf["hillslope_ss_model"];
+            eq_opts.hillslope_every_cycle  = bf["hillslope_every_cycle"];
+            eq_opts.channel_threshold_area = ff["incision_threshold_area"];
+            eq_opts.channel_hysteresis_factor =
+                ff["channel_hysteresis_factor"];
+            eq_opts.hillslope.D              = ff["hillslope_diffusivity"];
+            eq_opts.hillslope.U              = ff["uplift_rate"];
+            eq_opts.hillslope.Sc             = ff["critical_hillslope_slope"];
+            eq_opts.hillslope.tolerance      = ff["hillslope_ss_tolerance"];
+            eq_opts.hillslope.max_iterations = ifs["hillslope_ss_max_iterations"];
+            eq_opts.hillslope.sor_omega      = ff["hillslope_sor_omega"];
+            eq_opts.hillslope.nonlinear      = bf["enable_nonlinear_hillslopes"];
+
+            if (eq_opts.run_hillslope && eq_opts.channel_threshold_area <= 0.0)
+            {
+                std::cerr
+                    << "FATAL: run_hillslope_steady_state: true requires "
+                       "incision_threshold_area > 0; the channel pixels are the "
+                       "Dirichlet set that pins the hillslope solve.\n";
+                return 1;
+            }
+
+            if (eq_opts.run_hillslope)
+            {
+                std::cout << "  Hillslope      : " << eq_opts.hillslope_model
+                          << " (" << (eq_opts.hillslope_every_cycle
+                                        ? "every cycle" : "final cycle only")
+                          << ", D=" << eq_opts.hillslope.D
+                          << ", channel A>=" << eq_opts.channel_threshold_area
+                          << ")\n";
+            }
+
             lsdtt::lsdtt_equilibration_result eq_result;
             try
             {
@@ -1514,6 +1579,26 @@ int main(int argc, char* argv[])
 
             ss_result = eq_result.final_snap;
             area_d = std::move(eq_result.drainage_area);
+
+            // _steady_state_elevation keeps meaning the fluvial surface, as in
+            // the legacy path; the hillslope-solved surface is written under
+            // the same name the one-shot path uses.
+            if (eq_result.hillslope_ran)
+            {
+                eq_hillslope_done = true;
+
+                const std::string eq_hs_path = pp.make_output_path(
+                    "_hillslope_steady_state_elevation", fmt_ext(out_fmt));
+                std::cout << "Writing hillslope steady-state elevation: "
+                          << eq_hs_path << "\n";
+                try { safe_write(eq_result.elevation, eq_hs_path); }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing hillslope elevation failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+            }
 
             if (bf["write_divide_step_raster"])
             {
@@ -1704,7 +1789,13 @@ int main(int argc, char* argv[])
         // ---------------------------------------------------------------------
         // Hillslope steady-state (optional post-step)
         // ---------------------------------------------------------------------
-        if (bf["run_hillslope_steady_state"])
+        if (bf["run_hillslope_steady_state"] && eq_hillslope_done)
+        {
+            std::cout << "\n--- Hillslope steady-state ---\n"
+                      << "  Solved inside the equilibration cycle; skipping the "
+                         "one-shot post-step.\n";
+        }
+        else if (bf["run_hillslope_steady_state"])
         {
             const float thresh = ff["incision_threshold_area"];
             if (thresh <= 0.0f)

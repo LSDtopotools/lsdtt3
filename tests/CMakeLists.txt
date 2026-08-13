@@ -446,7 +446,7 @@ add_lsdtt_cli_smoke_test(
     tiny_eqtarget_steady_state_elevation.tif
     --expect tiny_eqtarget_snap_convergence.csv
     --stdout-contains "Divide grad med:"
-    --stdout-contains "met"
+    --stdout-contains ", met)"
     --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_median"
     --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_p90"
     --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_target_used"
@@ -461,7 +461,7 @@ add_lsdtt_cli_smoke_test(
     tiny_eqtarget_nodiag_steady_state_elevation.tif
     --expect tiny_eqtarget_nodiag_snap_convergence.csv
     --stdout-contains "Divide grad med:"
-    --stdout-contains "met"
+    --stdout-contains ", met)"
     --expect-file-contains "tiny_eqtarget_nodiag_snap_convergence.csv:divide_gradient_target_met"
 )
 
@@ -500,12 +500,40 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_hillslope
+    lsdtt-lem
+    lem_equilibration_hillslope_smoke.param.in
+    tiny_eqhs_steady_state_elevation.tif
+    --expect tiny_eqhs_hillslope_steady_state_elevation.tif
+    --expect tiny_eqhs_snap_convergence.csv
+    --expect-file-contains "tiny_eqhs_snap_convergence.csv:frac_receiver_changed_hillslope"
+    --expect-file-contains "tiny_eqhs_snap_convergence.csv:n_receiver_changed_hillslope"
+    --expect-file-contains "tiny_eqhs_snap_convergence.csv:n_hillslope_compared"
+    --expect-file-contains "tiny_eqhs_snap_convergence.csv:n_channel_pixels"
+    --expect-file-contains "tiny_eqhs_snap_convergence.csv:hillslope_iterations"
+    --expect-file-contains "tiny_eqhs_snap_convergence.csv:hillslope_residual"
+    --expect-file-contains "tiny_eqhs_snap_convergence.csv:hillslope_converged"
+    --stdout-contains "Hillslope      : linear (every cycle"
+    --stdout-contains "skipping the one-shot post-step"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_lem_equilibration_bad_divide_steps
     lsdtt-lem
     lem_equilibration_bad_divide_steps.param.in
     unused_expected_output
     --expect-failure
     --stderr-contains "divide_merge_search_steps must be > 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_lem_equilibration_dinf_conflict
+    lsdtt-lem
+    lem_equilibration_dinf_conflict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "enable_dinf_fluvial_erosion"
+    --stderr-contains "use_landscape_equilibration_cycle"
 )
 
 add_lsdtt_cli_smoke_test(
@@ -2094,7 +2122,7 @@ set(LSDTT_DOMAIN_RULES
     "cosmo"                  "cosmo"
     "landslide"              "landslide"
     "step_change"            "step_change"
-    "landscape_equilibration" "landscape_equilibration"
+    "landscape_equilibration|lem_equilibration" "landscape_equilibration"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
     "fetch"                  "fetch"
