@@ -117,9 +117,14 @@ void run_case(const synthetic_case& sc)
     bool d8_receiver_ok = true;
     bool receiver_walk_terminates = true;
     bool area_sane = true;
+    bool downstream_dem_strictly_decreases = true;
+    bool outlet_dem_at_baselevel = true;
 
     std::size_t n_land = 0;
     double outlet_area_sum = 0.0;
+    const double baselevel = static_cast<double>(sc.opts.baselevel_elevation);
+    const double baselevel_tolerance =
+        1e-9 * std::max(1.0, std::abs(baselevel));
 
     for (std::size_t i = 0; i < expected; ++i)
     {
@@ -141,6 +146,16 @@ void run_case(const synthetic_case& sc)
         {
             if (rec[i] != flat) outlet_maps_to_self = false;
             outlet_area_sum += a;
+
+            if (dem.mask[i] != 0)
+            {
+                const double z_outlet = static_cast<double>(dem.data[i]);
+                if (!std::isfinite(z_outlet) ||
+                    std::abs(z_outlet - baselevel) > baselevel_tolerance)
+                {
+                    outlet_dem_at_baselevel = false;
+                }
+            }
             continue;
         }
 
@@ -149,7 +164,16 @@ void run_case(const synthetic_case& sc)
         {
             non_outlet_land_not_to_sea = false;
             d8_receiver_ok = false;
+            downstream_dem_strictly_decreases = false;
             continue;
+        }
+
+        if (dem.mask[i] != 0 && dem.mask[static_cast<std::size_t>(r)] != 0)
+        {
+            const double z_i = static_cast<double>(dem.data[i]);
+            const double z_r = static_cast<double>(dem.data[static_cast<std::size_t>(r)]);
+            if (!std::isfinite(z_i) || !std::isfinite(z_r) || !(z_i > z_r))
+                downstream_dem_strictly_decreases = false;
         }
 
         const int row = static_cast<int>(flat) / n_cols;
@@ -224,6 +248,14 @@ void run_case(const synthetic_case& sc)
                "outlet area sums to land count",
                outlet_area_partitions_land,
                "sum(area[outlets]) should equal total number of land cells");
+    check_case(sc.name,
+               "DEM decreases strictly downstream",
+               downstream_dem_strictly_decreases,
+               "for non-outlet land pixels, DEM must be > DEM[receiver]");
+    check_case(sc.name,
+               "outlet DEM equals baselevel",
+               outlet_dem_at_baselevel,
+               "outlet DEM should equal baselevel_elevation");
 }
 
 } // namespace

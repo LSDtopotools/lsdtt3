@@ -406,6 +406,9 @@ add_lsdtt_cli_smoke_test(
     lsdtt-lem
     lem_equilibration_cycle_smoke.param.in
     tiny_eqcycle_steady_state_elevation.tif
+    --expect tiny_eqcycle_snap_convergence.csv
+    --expect-file-contains "tiny_eqcycle_snap_convergence.csv:max_abs_dz_m"
+    --expect-file-contains "tiny_eqcycle_snap_convergence.csv:divide_step_median_m"
     --stdout-contains "Path           : landscape_equilibration_cycle"
 )
 
@@ -717,6 +720,9 @@ target_link_libraries(lsdtt-test-divide-migration PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-divide-diagnostics cpp/test_divide_diagnostics.cpp)
 target_link_libraries(lsdtt-test-divide-diagnostics PRIVATE lsdtt3_cpu)
 
+add_executable(lsdtt-test-landscape-equilibration cpp/test_landscape_equilibration.cpp)
+target_link_libraries(lsdtt-test-landscape-equilibration PRIVATE lsdtt3_cpu)
+
 add_test(NAME unit_divide_diagnostics
          COMMAND lsdtt-test-divide-diagnostics)
 set_tests_properties(unit_divide_diagnostics PROPERTIES
@@ -728,6 +734,11 @@ add_test(NAME unit_divide_migration
 set_tests_properties(unit_divide_migration PROPERTIES
     LABELS "unit;divide_migration"
     FIXTURES_SETUP divide_migration_fixture)
+
+add_test(NAME unit_landscape_equilibration
+         COMMAND lsdtt-test-landscape-equilibration)
+set_tests_properties(unit_landscape_equilibration PROPERTIES
+    LABELS "unit;landscape_equilibration")
 
 # Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
 # (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the
@@ -1987,6 +1998,7 @@ set(LSDTT_DOMAIN_RULES
     "cosmo"                  "cosmo"
     "landslide"              "landslide"
     "step_change"            "step_change"
+    "landscape_equilibration" "landscape_equilibration"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
     "fetch"                  "fetch"
