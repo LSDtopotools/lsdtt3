@@ -847,6 +847,9 @@ target_link_libraries(lsdtt-test-divide-diagnostics PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-landscape-equilibration cpp/test_landscape_equilibration.cpp)
 target_link_libraries(lsdtt-test-landscape-equilibration PRIVATE lsdtt3_cpu)
 
+add_executable(lsdtt-test-critical-slope cpp/test_critical_slope.cpp)
+target_link_libraries(lsdtt-test-critical-slope PRIVATE lsdtt3_cpu)
+
 add_test(NAME unit_divide_diagnostics
          COMMAND lsdtt-test-divide-diagnostics)
 set_tests_properties(unit_divide_diagnostics PROPERTIES
@@ -863,6 +866,11 @@ add_test(NAME unit_landscape_equilibration
          COMMAND lsdtt-test-landscape-equilibration)
 set_tests_properties(unit_landscape_equilibration PROPERTIES
     LABELS "unit;landscape_equilibration")
+
+add_test(NAME unit_hillslope_critical_slope
+         COMMAND lsdtt-test-critical-slope)
+set_tests_properties(unit_hillslope_critical_slope PROPERTIES
+    LABELS "unit;hillslope")
 
 # Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
 # (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the

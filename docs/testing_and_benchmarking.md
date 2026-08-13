@@ -2452,6 +2452,43 @@ Both tests passed on 2026-08-06.
 
 ---
 
+### 7.10j SC divide-step gate (A'6) reproduced (2026-08-13)
+
+This is the Phase A'6 acceptance measurement from
+`docs/plan_docs/plan_hillslope_equilibration_and_synthetic_georef.md`: the
+known divide-cliff signature on the generated SC DEM must be reproducible with
+the corrected diagnostics before any Phase C claims are trusted.
+
+Dataset used:
+
+- DEM: `/mnt/c/LSDTopoTools/data/cosmo_transient_test/lsdtt3_version/mega_sc5x_conc_SC_DEM.tif`
+- tags: `/mnt/c/LSDTopoTools/data/cosmo_transient_test/lsdtt3_version/mega_sc5x_conc_SC_TAG.tif`
+
+Method used (same counting convention as the original transient report):
+
+1. Divide-step baseline on directed 4-neighbour tag-4 vs tag-(1,2)
+   adjacencies, measured as `z_tag4 - z_tag12`.
+2. Cross-divide drainage fraction by D8 routing rebuilt on the SC DEM,
+   counting tag-4 pixels whose D8 receiver is tag-1 or tag-2.
+
+Measured values:
+
+| metric | measured | reference (2026-08-12 transient report) |
+|---|---:|---:|
+| tag-4 vs tag-(1,2) adjacency count | 12,589 | 12,589 |
+| median divide step (m) | +55.9469 | +55.95 |
+| mean divide step (m) | +64.7419 | +64.74 |
+| p10 / p90 (m) | +6.4191 / +140.8479 | +6.42 / +140.85 |
+| fraction with affected side higher | 0.92398 | 0.924 |
+| tag-4 -> tag-(1,2) crossings | 8,919 / 165,523 | 8,919 / 165,523 |
+| cross-divide fraction | 0.0538838 | 0.0539 |
+
+Verdict: **gate reproduced**. The corrected diagnostic path recovers the SC DEM
+signature at the expected values, so A'6 is numerically satisfied and the
+Phase C work can proceed on a validated baseline.
+
+---
+
 ### 7.11 The refactor oracle (`regression_cosmo_oracle`)
 
 `tests/data/cosmo_oracle.csv` is a **bitwise hash of every raster and CSV the
