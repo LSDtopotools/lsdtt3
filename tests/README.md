@@ -13,6 +13,7 @@ CTest-driven test suite, selected by label:
 | `rigorous` | nothing | exact output checks — checksums, sizes, feature counts, hashes |
 | `failure` | nothing | bad parameters are rejected with the expected message |
 | `unit` | nothing | C++ unit tests (parameter parser, cosmogenic physics, flow properties) |
+| `divide_diagnostics` | nothing | divide-diagnostics compute-layer unit tests |
 | `cosmo` | nothing | cosmogenic-nuclide physics vs frozen CRONUS + numerics sentinel |
 | `flow` | nothing | flow routing and depression-handling properties |
 | `cosmo_realworld` | network | inverted erosion rates vs frozen published/OCTOPUS rates on real DEMs (opt-in) |

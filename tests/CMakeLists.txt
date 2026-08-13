@@ -697,6 +697,14 @@ set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "unit;hydraulic")
 add_executable(lsdtt-test-divide-migration cpp/test_divide_migration.cpp)
 target_link_libraries(lsdtt-test-divide-migration PRIVATE lsdtt3_cpu)
 
+add_executable(lsdtt-test-divide-diagnostics cpp/test_divide_diagnostics.cpp)
+target_link_libraries(lsdtt-test-divide-diagnostics PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_divide_diagnostics
+         COMMAND lsdtt-test-divide-diagnostics)
+set_tests_properties(unit_divide_diagnostics PROPERTIES
+    LABELS "unit;divide_diagnostics")
+
 add_test(NAME unit_divide_migration
          COMMAND lsdtt-test-divide-migration
                  "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}")
@@ -1962,6 +1970,7 @@ set(LSDTT_DOMAIN_RULES
     "cosmo"                  "cosmo"
     "landslide"              "landslide"
     "step_change"            "step_change"
+    "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
     "fetch"                  "fetch"
     "hydraulic"              "hydraulic"

@@ -50,6 +50,7 @@
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
+#include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
 static const std::string k_version  = "0.1.0";
@@ -697,6 +698,12 @@ int main(int argc, char* argv[])
         "The DEM is pit-filled between cycles.",
         "Analytical steady-state", "param", "run_steady_state"};
 
+    bool_default_map["use_landscape_equilibration_cycle"] = false;
+    help_map["use_landscape_equilibration_cycle"] = {"bool","false",
+        "Route analytical steady-state through the landscape equilibration cycle module.",
+        "Default false keeps legacy steady-state behavior unchanged.",
+        "Analytical steady-state", "param", "run_steady_state"};
+
     // --- Hillslope steady-state ---
     bool_default_map["run_hillslope_steady_state"] = false;
     help_map["run_hillslope_steady_state"] = {"bool","false",
@@ -1311,6 +1318,7 @@ int main(int argc, char* argv[])
     {
         const int  n_cycles  = std::max(1, ifs["steady_state_n_cycles"]);
         const bool use_dinf  = bf["enable_dinf_fluvial_erosion"];
+        const bool use_equilibration_cycle = bf["use_landscape_equilibration_cycle"];
 
         std::cout << "\n--- Analytical steady-state mode ---\n";
         if (n_cycles > 1)
@@ -1345,47 +1353,86 @@ int main(int argc, char* argv[])
         // Working copy of the DEM - updated between cycles.
         lsdtt::lsdtt_raster_cpu cycle_dem = dem;
 
-        for (int cycle = 1; cycle <= n_cycles; ++cycle)
+        if (use_equilibration_cycle)
         {
-            if (n_cycles > 1)
-                std::cout << "\rSnapping cycle " << cycle << " / " << n_cycles
-                          << "  " << std::flush;
-            else
-                std::cout << "  ";
+            std::cout << "  Path           : landscape_equilibration_cycle\n";
+            if (use_dinf)
+            {
+                std::cout << "  Note           : module currently runs D8 routing; "
+                             "enable_dinf_fluvial_erosion is ignored in this path.\n";
+            }
 
-            // Pit-fill before flow routing (mandatory on every cycle because
-            // the previous cycle's steady-state surface may have depressions).
-            try { cycle_dem = lsdtt::fill_pits(
-                    cycle_dem, ff["fill_min_slope"], ifs["n_threads"]); }
+            lsdtt::lsdtt_equilibration_options eq_opts;
+            eq_opts.fluvial = ss_opts;
+            eq_opts.use_dinf = use_dinf;
+            eq_opts.max_cycles = n_cycles;
+            eq_opts.boundary_conditions = sf["boundary_conditions"];
+            eq_opts.fill_min_slope = ff["fill_min_slope"];
+            eq_opts.n_threads = ifs["n_threads"];
+            eq_opts.convergence.check_convergence = false;
+
+            lsdtt::lsdtt_equilibration_result eq_result;
+            try
+            {
+                eq_result = lsdtt::equilibrate_landscape(dem, eq_opts);
+            }
             catch (const std::exception& e)
             {
-                std::cerr << "\nFATAL: pit filling failed (cycle " << cycle
-                          << "): " << e.what() << "\n";
+                std::cerr << "FATAL: landscape equilibration cycle failed: "
+                          << e.what() << "\n";
                 return 1;
             }
 
-            if (!use_dinf)
-            {
-                lsdtt::lsdtt_flowinfo flow(
-                    cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
-                    cycle_dem.get_meta(), fi_opts);
-                area_d    = flow.accumulate();
-                ss_result = lsdtt::compute_d8_fluvial_steady_state(flow, ss_opts);
-            }
-            else
-            {
-                lsdtt::lsdtt_flowgraph_cpu flow(
-                    cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
-                    cycle_dem.get_meta(), fg_opts);
-                area_d    = flow.accumulate();
-                ss_result = lsdtt::compute_dinf_fluvial_steady_state(flow, ss_opts);
-            }
+            ss_result = eq_result.final_snap;
+            area_d = std::move(eq_result.drainage_area);
 
-            if (cycle < n_cycles)
-                cycle_dem = ss_result.elevation;   // feed result into next cycle
+            std::cout << "  Cycles completed: " << eq_result.cycles.size() << "\n";
         }
+        else
+        {
+            std::cout << "  Path           : legacy_steady_state\n";
+            for (int cycle = 1; cycle <= n_cycles; ++cycle)
+            {
+                if (n_cycles > 1)
+                    std::cout << "\rSnapping cycle " << cycle << " / " << n_cycles
+                              << "  " << std::flush;
+                else
+                    std::cout << "  ";
 
-        if (n_cycles > 1) std::cout << "\n";
+                // Pit-fill before flow routing (mandatory on every cycle because
+                // the previous cycle's steady-state surface may have depressions).
+                try { cycle_dem = lsdtt::fill_pits(
+                        cycle_dem, ff["fill_min_slope"], ifs["n_threads"]); }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "\nFATAL: pit filling failed (cycle " << cycle
+                              << "): " << e.what() << "\n";
+                    return 1;
+                }
+
+                if (!use_dinf)
+                {
+                    lsdtt::lsdtt_flowinfo flow(
+                        cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
+                        cycle_dem.get_meta(), fi_opts);
+                    area_d    = flow.accumulate();
+                    ss_result = lsdtt::compute_d8_fluvial_steady_state(flow, ss_opts);
+                }
+                else
+                {
+                    lsdtt::lsdtt_flowgraph_cpu flow(
+                        cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
+                        cycle_dem.get_meta(), fg_opts);
+                    area_d    = flow.accumulate();
+                    ss_result = lsdtt::compute_dinf_fluvial_steady_state(flow, ss_opts);
+                }
+
+                if (cycle < n_cycles)
+                    cycle_dem = ss_result.elevation;   // feed result into next cycle
+            }
+
+            if (n_cycles > 1) std::cout << "\n";
+        }
 
         const std::string mode_str = ss_opts.relief_mode ? "relief" : "K";
         const std::string flow_str = use_dinf ? "d_infinity" : "d8";
