@@ -94,7 +94,8 @@ sediment-routing tools' problem.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `threshold_contributing_pixels` | int | `1000` | Channel initiation threshold, in pixels. Landslides start only **below** this. It also caps the largest landslide. |
-| `mask_fname` | string | `NULL` | Optional raster restricting where landslides may occur. Non-zero and valid = active. |
+| `mask_fname` | string | `NULL` | Optional raster restricting where landslides may occur. Non-zero and valid = active, unless `mask_active_values` narrows it. |
+| `mask_active_values` | string | `` | Comma-separated list of mask values to treat as active (e.g. `4` or `3,4`). Empty = historical rule: any non-zero valid pixel is active. |
 | `ice_mask_fname` | string | `NULL` | Raster marking ice cover (non-zero = ice). No landslide is placed on ice. |
 
 `ice_mask_fname` is **intersected** with `mask_fname` when both are given: a
@@ -102,6 +103,19 @@ pixel can host a landslide only if it is inside the active mask *and* not under
 ice. The number of pixels excluded is reported, because it changes the **active
 area** — and the active area sets the landslide count for a prescribed erosion
 rate, so two runs differing only in an ice mask are not comparable by count.
+
+**`mask_active_values`: selecting a subset of a classified raster.** By default,
+any non-zero valid pixel in the mask raster is active. `mask_active_values` allows
+you to specify which values count as active, so a pre-classified raster can be used
+directly without reclassifying to 0/1 first. **Example use case:** the step-change
+tag raster from `lsdtt-cosmo-prediction` has four classes: 1 = fluvial-old,
+2 = hillslope-old, 3 = fluvial-new, 4 = hillslope-new. Landslides only on
+ground that has already experienced the faster post-knickpoint erosion means
+`mask_fname: _SC_TAG.tif` and `mask_active_values: 4`. Without
+`mask_active_values`, all four classes would be active, placing landslides
+upstream of the knickpoint — silently inverting the intended scenario. The values
+are matched to the nearest integer, so this works for integer class/tag rasters,
+not continuous ones. The realised active-pixel count is always reported.
 
 Initiation pixels are drawn uniformly from the eligible set. This is what Niemi
 and Yanites both do, and both flag it as a simplification — real triggered

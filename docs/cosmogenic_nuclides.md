@@ -3,7 +3,7 @@
 This page consolidates the cosmogenic nuclide capability of lsdtt3: where it
 came from, what physics it implements, what choices it makes that differ from
 other calculators, and how those choices are tested. It is intended to be read
-before using any of the three cosmogenic command-line tools, and to be citable
+before using any of the four cosmogenic command-line tools, and to be citable
 when reporting results produced with them.
 
 Five points to take away if you read nothing else:
@@ -653,7 +653,40 @@ from another; read the emitting test before combining any two numbers.
 
 ---
 
-## 9. The three command-line tools
+## 9. The four command-line tools
+
+### 9.0 Units, and the one conversion that has already caused a bug
+
+Everything internal is in **effective** (mass) units, because that is what the
+production and attenuation physics is written in:
+
+| Quantity | Unit |
+|---|---|
+| Concentration | atoms g⁻¹ (quartz) |
+| Effective erosion rate | g cm⁻² yr⁻¹ |
+| Attenuation length Γ, sample depth | g cm⁻² |
+
+Linear rates are a *reporting* convenience, converted with the rock density:
+
+```
+mm/kyr  =  eff_erate_g_cm2_yr * 1e7 / rock_density_kg_m3
+mm/yr   =  eff_erate_g_cm2_yr * 1e4 / rock_density_kg_m3
+```
+
+**The factor between them is exactly 1000, and getting it wrong is not
+hypothetical.** `lsdtt-cosmo-tool` writes both `apparent_e_mm_kyr` and
+`apparent_e_mm_yr`, and for a period the `mm_yr` column was computed with the
+`1e7` factor — the right number under the wrong label, a thousand times too
+large if read as written. It affected the central estimate and both uncertainty
+bounds. The physics was never wrong; only the printed column was, which is
+precisely why it survived: every internal comparison used
+`apparent_eff_e_g_cm2_yr` and agreed.
+
+Two lessons worth carrying: **prefer `apparent_eff_e_g_cm2_yr` for anything
+quantitative**, and note that the regression test which should have caught this
+was instead holding it in place, because it checked the `mm_yr` column against
+the `mm/kyr` formula. It now checks each column against its own formula and
+additionally asserts the two differ by exactly 1000.
 
 ### 9.1 `lsdtt-cosmo-tool` — measured concentrations → erosion rates
 
@@ -729,6 +762,35 @@ no warning.
 
 [Full parameter reference](cli_reference/cli_reference_lsdtt_cosmo_column_tool.md)
 
+### 9.4 `lsdtt-cosmo-landslides` — landslide fields for cosmogenic coupling
+
+Triggers landslides with an imposed size distribution and writes the fields that
+feed `lsdtt-cosmo-prediction`'s landslide coupling. You prescribe *when* (a trigger
+time, or a recurrence) and *how much* (an event volume or long-term erosion rate);
+the tool computes how many landslides that implies, what sizes they are, and where
+they go, then excavates them and writes time-of-failure and excavation-depth rasters.
+
+Sizes are imposed, not emergent — sampled from a prescribed distribution (Malamud
+inverse gamma by default) rather than derived from slope stability. That is
+deliberate: the purpose is to impose a *known* landslide flux and ask what it does
+to cosmogenic samples. Landslides come from hillslopes only: no scar can reach into
+a channel, and no landslide can be larger than the hillslope it comes from.
+
+A placement mask (`mask_fname`) restricts where landslides may occur, and
+`mask_active_values` lets you select which values of a classified raster count as
+active — so a step-change tag raster can be used directly to limit landsliding to
+rejuvenated ground only.
+
+An optional cosmogenic coupling mode computes the post-landslide surface
+concentration raster. Optionally run an ensemble of scenarios at user sample points
+to answer "is landsliding biasing my basin-averaged samples?".
+
+Use it to test how landslide-induced variability in cosmogenic concentrations
+affects erosion-rate studies, and to design sampling strategies that are robust to
+landsliding.
+
+[Full parameter reference](cli_reference/cli_reference_lsdtt_cosmo_landslides.md)
+
 ---
 
 ## 10. Landscape scenarios: generating the perturbation
@@ -782,6 +844,16 @@ and the adjusted area. Report them.
 > chi. That is correct — a hillslope belongs to its channel — but it means a chi
 > comparison misclassifies hillslopes.
 
+**Generated DEM vs original DEM for flow routing.** The generator creates an
+elevation cliff along the drainage divide, where hillslopes on different sides are
+snapped to different critical gradients. When this cliff is large, rebuilding D8
+flow routing on the generated surface can cause cross-divide flow from the
+steepened side into the unadjusted catchment. Setting `step_change_route_on_generated_dem: false`
+routes on the original DEM instead, avoiding the cross-divide artefact but routing
+against topography whose rates no longer match the model. For coupling to
+landslides and concentration accumulation, check whether this choice affects your
+basin-scale results, since the entire downstream mix depends on the routing.
+
 ### 10.2 Landslides: two idealised scenarios
 
 `lsdtt-cosmo-landslides` produces a landslide field (time of failure, excavation
@@ -834,6 +906,14 @@ over the window that failure opened. A cumulative depth carried against a
 single time would re-deliver a pixel's whole history in the last window and
 strip it all in one instant at the wrong time. The cumulative record is the
 DEM, which is lowered on every failure, so nothing is lost.
+
+**Placement masks: the whole landslide, not just the seed.** When a placement mask
+(`mask_fname`) is supplied to `lsdtt-cosmo-landslides`, the entire upslope set of
+a seeded landslide must lie inside the mask — the scar cannot spill outside it.
+This is a change from an earlier convention (seed inside, scar can spill outside).
+The new rule prevents unintended excursions: a carefully masked region stays
+masked, and `mask_active_values` can select which classes of a tagged DEM host
+landslides, e.g. only newly rejuvenated ground downstream of a knickpoint.
 
 ### 10.3 Two densities, and why they are not one number
 

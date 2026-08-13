@@ -193,6 +193,7 @@ concentration kernel **in memory** — there is no round trip through disk.
 | `step_change_basin_outlet_csv` | string | `NULL` | CSV of `latitude,longitude` giving the basin outlet. The first point is used and snapped to the channel network. `NULL` uses the largest basin in the DEM. |
 | `rock_density_kg_m3` | float | `2650` | Converts the uplift rates (m/yr) to effective erosion rates (g/cm²/yr). |
 | `step_change_production_from_generated_dem` | bool | `true` | Compute production from the generated topography rather than the input DEM. |
+| `step_change_route_on_generated_dem` | bool | `true` | Build D8 flow routing on the generated topography for accumulation. Set `false` to route on the original DEM instead. |
 | `write_step_change_rasters` | bool | `false` | Write `_SC_DEM`, `_SC_ERATE`, `_SC_STEPTIME`, `_SC_TAG` and `_SC_CHI`. |
 
 **Read the derived numbers.** `K` is back-calculated from
@@ -229,8 +230,18 @@ hillslopes.
 concentration output is restricted to it. The generated topography is offset so
 its outlet sits at the input DEM's outlet elevation, keeping base level real.
 The generated per-pixel erosion rate is used for steady-state concentrations and
-as the flux weight in downstream accumulation. Flow routing for accumulation
-still uses the **input** DEM, not the generated one.
+as the flux weight in downstream accumulation.
+
+**Flow routing: generated or original DEM.** Set `step_change_route_on_generated_dem`
+to control which DEM is used for D8 flow accumulation. The default (`true`) rebuilds
+routing on the generated topography, which matches the scenario's rates and times.
+However, the generator snaps hillslopes to different critical gradients on each side
+of the knickpoint, creating an elevation cliff along the drainage divide that can
+cause cross-divide flow artefacts. Setting `false` routes on the original DEM,
+avoiding the cliff but routing against a topography whose rates no longer match the
+model. Production, elevation and the step-change fields still come from the generated
+surface either way. Accumulation needs routing; set `step_change_route_on_generated_dem: false`
+if cross-divide flow is biasing your basin averages.
 
 ### Example: generate and consume in one run
 

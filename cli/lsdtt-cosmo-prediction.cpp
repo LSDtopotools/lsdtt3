@@ -467,6 +467,32 @@ int main(int argc, char* argv[])
         "production from the input DEM.",
         "Generate the step change", "switch", "make_step_change_rasters"};
 
+    bool_default_map["step_change_route_on_generated_dem"] = true;
+    help_map["step_change_route_on_generated_dem"] = {"bool","true",
+        "Build the accumulation flow routing on the GENERATED topography. Set "
+        "false to route on the ORIGINAL input DEM instead.",
+        "Only has an effect when step_change_production_from_generated_dem is "
+        "true, since that is what replaces the working DEM. The default "
+        "preserves historical behaviour, but false is the more defensible "
+        "choice and here is why. The generator snaps hillslopes draining below "
+        "the knickpoint to step_change_Sc_new and the rest to "
+        "step_change_Sc_old. Each side is built up from its own channel and "
+        "nothing reconciles them at the drainage divide, so the generated "
+        "surface carries an elevation CLIFF along the divide -- measured on the "
+        "Meghalaya 5x case at a median 56 m, with the steepened side higher in "
+        "92 % of boundary cells. Rebuilding D8 on that surface makes divide "
+        "pixels drain ACROSS the divide into the neighbouring unadjusted "
+        "catchment: 5.4 % of hillslope-new pixels did so there, carrying "
+        "post-knickpoint material into basins that are supposed to be entirely "
+        "pre-knickpoint. A real landscape would migrate the divide rather than "
+        "hold a cliff on it; representing that needs the divides iterated as "
+        "the canyons steepen, which the one-pass construction cannot do. "
+        "Routing on the original DEM sidesteps the artefact, at the cost of a "
+        "flow network that no longer matches the modelled topography. "
+        "Production, elevation and the step-change fields still come from the "
+        "generated surface either way.",
+        "Generate the step change", "switch", "make_step_change_rasters"};
+
     bool_default_map["write_step_change_rasters"] = false;
     help_map["write_step_change_rasters"] = {"bool","false",
         "Write the generated topography, erosion rate, time-since-change, tag "
@@ -985,6 +1011,10 @@ int main(int argc, char* argv[])
     // memory; nothing round-trips through disk.
     // -------------------------------------------------------------------------
     bool have_generated_step = false;
+    // The original surface, kept only when the accumulation routing must be
+    // built on it rather than on the generated step-change topography.
+    bool have_routing_dem = false;
+    lsdtt::lsdtt_raster_cpu dem_for_routing;
     lsdtt::lsdtt_raster_cpu sc_time_since_change;
     lsdtt::lsdtt_raster_cpu sc_erosion_rate;
     double sc_eff_erate_old = 0.0;
@@ -1158,6 +1188,17 @@ int main(int argc, char* argv[])
         {
             std::cout << "  Production will be computed from the GENERATED "
                          "topography.\n";
+            // Keep the ORIGINAL surface before it is overwritten. This flag is
+            // named for production, but replacing `dem` also silently decides
+            // what the accumulation flow routing is built on -- see
+            // step_change_route_on_generated_dem.
+            if (!bf["step_change_route_on_generated_dem"])
+            {
+                dem_for_routing     = dem;
+                have_routing_dem    = true;
+                std::cout << "  Flow routing will use the ORIGINAL topography "
+                             "(divide-inversion artefact avoided).\n";
+            }
             dem = sc.topography;
         }
 
@@ -1792,12 +1833,17 @@ int main(int argc, char* argv[])
 
         // Build flow routing
         std::cout << "Building D8 flow routing for accumulation...\n";
-        lsdtt::lsdtt_raster_cpu dem_for_flow = dem;
+        const lsdtt::lsdtt_raster_cpu& routing_source =
+            have_routing_dem ? dem_for_routing : dem;
+        if (have_routing_dem)
+            std::cout << "  Routing on the ORIGINAL topography, not the "
+                         "generated one.\n";
+        lsdtt::lsdtt_raster_cpu dem_for_flow = routing_source;
         if (bf["fill_before_routing"])
         {
             std::cout << "  Filling pits (min_slope = "
                       << ff["min_slope_for_fill"] << ")...\n";
-            dem_for_flow = lsdtt::fill_pits(dem,
+            dem_for_flow = lsdtt::fill_pits(routing_source,
                                             static_cast<float>(ff["min_slope_for_fill"]));
         }
 
