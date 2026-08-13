@@ -740,6 +740,13 @@ int main(int argc, char* argv[])
         "Set <= 0 to disable this convergence criterion.",
         "Analytical steady-state", "param", "steady_state_check_convergence"};
 
+    float_default_map["divide_gradient_target"] = 0.0f;
+    help_map["divide_gradient_target"] = {"float","0",
+        "Optional divide-gradient acceptance target for equilibration diagnostics.",
+        "Reporting-only threshold: when > 0, the final cycle reports whether divide "
+        "gradient median <= this target; it does not change stopping.",
+        "Analytical steady-state", "param", "use_landscape_equilibration_cycle"};
+
     int_default_map["steady_state_convergence_patience"] = 2;
     help_map["steady_state_convergence_patience"] = {"int","2",
         "Required number of consecutive converged cycles before early stopping.",
@@ -1429,6 +1436,8 @@ int main(int argc, char* argv[])
             eq_opts.convergence.tolerance_dz_m = ff["steady_state_tolerance_dz_m"];
             eq_opts.convergence.tolerance_receiver_fraction =
                 ff["steady_state_tolerance_receiver_fraction"];
+            eq_opts.convergence.divide_gradient_target =
+                ff["divide_gradient_target"];
             eq_opts.convergence.patience_cycles =
                 std::max(1, ifs["steady_state_convergence_patience"]);
             eq_opts.convergence.divide_opts.divide_merge_search_steps =
@@ -1492,53 +1501,31 @@ int main(int argc, char* argv[])
 
             std::cout << "  Cycles completed: " << eq_result.cycles.size() << "\n";
             std::cout << "  Stop reason    : " << eq_result.stop_reason << "\n";
+            if (ff["divide_gradient_target"] > 0.0f && !eq_result.cycles.empty())
+            {
+                const lsdtt::lsdtt_snap_cycle_record& final_cycle =
+                    eq_result.cycles.back();
+                const bool target_met =
+                    final_cycle.divide.gradient_median <= ff["divide_gradient_target"];
+                std::cout << "  Divide grad med: "
+                          << final_cycle.divide.gradient_median
+                          << " (target <= " << ff["divide_gradient_target"]
+                          << ", " << (target_met ? "met" : "not met") << ")\n";
+            }
 
             if (bf["write_snap_convergence_csv"])
             {
                 const std::string snap_csv = pp.make_output_path("_snap_convergence", ".csv");
                 std::cout << "Writing snap convergence CSV: " << snap_csv << "\n";
 
-                const std::vector<std::string> snap_headers = {
-                    "cycle",
-                    "seconds",
-                    "max_abs_dz_m",
-                    "mean_abs_dz_m",
-                    "rms_dz_m",
-                    "max_dz_over_relief",
-                    "n_receiver_changed",
-                    "frac_receiver_changed",
-                    "n_cross_divide",
-                    "frac_cross_divide",
-                    "divide_n_divide_pairs",
-                    "divide_step_median_m",
-                    "divide_step_p90_m",
-                    "divide_step_max_m",
-                    "K_used",
-                    "computed_relief"
-                };
+                const std::vector<std::string> snap_headers =
+                    lsdtt::lsdtt_snap_cycle_record::csv_headers();
 
                 std::vector<std::vector<std::string>> snap_rows;
                 snap_rows.reserve(eq_result.cycles.size());
                 for (const auto& rec : eq_result.cycles)
                 {
-                    snap_rows.push_back({
-                        std::to_string(rec.cycle),
-                        std::to_string(rec.seconds),
-                        std::to_string(rec.max_abs_dz_m),
-                        std::to_string(rec.mean_abs_dz_m),
-                        std::to_string(rec.rms_dz_m),
-                        std::to_string(rec.max_dz_over_relief),
-                        std::to_string(rec.n_receiver_changed),
-                        std::to_string(rec.frac_receiver_changed),
-                        std::to_string(rec.n_cross_divide),
-                        std::to_string(rec.frac_cross_divide),
-                        std::to_string(rec.divide.n_divide_pairs),
-                        std::to_string(rec.divide.step_median_m),
-                        std::to_string(rec.divide.step_p90_m),
-                        std::to_string(rec.divide.step_max_m),
-                        std::to_string(rec.K_used),
-                        std::to_string(rec.computed_relief)
-                    });
+                    snap_rows.push_back(rec.csv_row());
                 }
 
                 try { loader.write_csv(snap_csv, snap_headers, snap_rows); }

@@ -171,6 +171,60 @@ std::string make_non_converged_reason(
 
 } // namespace
 
+std::vector<std::string> lsdtt_snap_cycle_record::csv_headers()
+{
+    return {
+        "cycle",
+        "seconds",
+        "max_abs_dz_m",
+        "mean_abs_dz_m",
+        "rms_dz_m",
+        "max_dz_over_relief",
+        "n_receiver_changed",
+        "frac_receiver_changed",
+        "n_cross_divide",
+        "frac_cross_divide",
+        "divide_n_divide_pairs",
+        "divide_step_median_m",
+        "divide_step_p90_m",
+        "divide_step_max_m",
+        "K_used",
+        "computed_relief",
+        "divide_gradient_median",
+        "divide_gradient_p90",
+        "divide_gradient_target_used",
+        "divide_gradient_target_margin",
+        "divide_gradient_target_met"
+    };
+}
+
+std::vector<std::string> lsdtt_snap_cycle_record::csv_row() const
+{
+    return {
+        std::to_string(cycle),
+        std::to_string(seconds),
+        std::to_string(max_abs_dz_m),
+        std::to_string(mean_abs_dz_m),
+        std::to_string(rms_dz_m),
+        std::to_string(max_dz_over_relief),
+        std::to_string(n_receiver_changed),
+        std::to_string(frac_receiver_changed),
+        std::to_string(n_cross_divide),
+        std::to_string(frac_cross_divide),
+        std::to_string(divide.n_divide_pairs),
+        std::to_string(divide.step_median_m),
+        std::to_string(divide.step_p90_m),
+        std::to_string(divide.step_max_m),
+        std::to_string(K_used),
+        std::to_string(computed_relief),
+        std::to_string(divide.gradient_median),
+        std::to_string(divide.gradient_p90),
+        std::to_string(divide_gradient_target_used),
+        std::to_string(divide_gradient_target_margin),
+        std::to_string(divide_gradient_target_met)
+    };
+}
+
 lsdtt_equilibration_result equilibrate_landscape(
     const lsdtt_raster_cpu& initial_dem,
     const lsdtt_equilibration_options& opts)
@@ -256,6 +310,18 @@ lsdtt_equilibration_result equilibrate_landscape(
             flow,
             delivered,
             opts.convergence.divide_opts);
+
+        if (opts.convergence.divide_gradient_target > 0.0)
+        {
+            rec.divide_gradient_target_used =
+                opts.convergence.divide_gradient_target;
+            rec.divide_gradient_target_margin =
+                opts.convergence.divide_gradient_target
+                - rec.divide.gradient_median;
+            rec.divide_gradient_target_met =
+                rec.divide.gradient_median
+                <= opts.convergence.divide_gradient_target ? 1 : 0;
+        }
 
         if (has_previous_flow)
         {
@@ -396,6 +462,20 @@ lsdtt_equilibration_result equilibrate_landscape(
         {
             result.stop_reason = "No cycles executed.";
         }
+    }
+
+    if (opts.convergence.divide_gradient_target > 0.0
+        && !result.cycles.empty())
+    {
+        const lsdtt_snap_cycle_record& last = result.cycles.back();
+        const bool target_met =
+            last.divide.gradient_median <= opts.convergence.divide_gradient_target;
+        std::ostringstream oss;
+        oss << " Divide-gradient target check: final median="
+            << last.divide.gradient_median
+            << ", target<=" << opts.convergence.divide_gradient_target
+            << " (" << (target_met ? "met" : "not met") << ").";
+        result.stop_reason += oss.str();
     }
 
     if (hillslope_requested)

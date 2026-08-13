@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+
+write_path: __WRITE_PATH__
+write_fname: tiny_eqfixed
+write_output_format: gtiff
+
+run_steady_state: true
+use_landscape_equilibration_cycle: true
+write_snap_convergence_csv: true
+steady_state_n_cycles: 4
+steady_state_check_convergence: false

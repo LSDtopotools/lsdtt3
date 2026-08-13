@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -258,6 +259,109 @@ void run_case(const synthetic_case& sc)
                "outlet DEM should equal baselevel_elevation");
 }
 
+void run_determinism_checks(const std::string& case_name,
+                            lsdtt::lsdtt_ocn_options opts)
+{
+    std::cout << "running case: " << case_name << "\n";
+
+    // Same-seed repeatability check.
+    lsdtt::lsdtt_synthetic_network_cpu run1(opts);
+    lsdtt::lsdtt_synthetic_network_cpu run2(opts);
+    run1.run();
+    run2.run();
+
+    const auto& rec1 = run1.receivers();
+    const auto& rec2 = run2.receivers();
+    check_case(case_name,
+               "same-seed receivers exactly equal",
+               rec1 == rec2,
+               "receiver arrays should match exactly for identical options and seed");
+
+    const auto& a1 = run1.areas();
+    const auto& a2 = run2.areas();
+    bool areas_same = (a1.size() == a2.size());
+    constexpr double area_tol = 1e-12;
+    if (areas_same)
+    {
+        for (std::size_t i = 0; i < a1.size(); ++i)
+        {
+            const double lhs = static_cast<double>(a1[i]);
+            const double rhs = static_cast<double>(a2[i]);
+            const double tol = area_tol * std::max(1.0, std::max(std::abs(lhs), std::abs(rhs)));
+            if (!std::isfinite(lhs) || !std::isfinite(rhs) || std::abs(lhs - rhs) > tol)
+            {
+                areas_same = false;
+                break;
+            }
+        }
+    }
+    check_case(case_name,
+               "same-seed areas equal (tiny tolerance)",
+               areas_same,
+               "drainage area arrays should be identical up to tiny floating-point tolerance");
+
+    const auto dem1 = run1.get_elevation_raster();
+    const auto dem2 = run2.get_elevation_raster();
+    bool dem_same_valid = dem1.mask.size() == dem2.mask.size() &&
+                          dem1.data.size() == dem2.data.size() &&
+                          dem1.mask == dem2.mask;
+    if (dem_same_valid)
+    {
+        for (std::size_t i = 0; i < dem1.data.size(); ++i)
+        {
+            if (dem1.mask[i] == 0) continue;
+            if (dem1.data[i] != dem2.data[i])
+            {
+                dem_same_valid = false;
+                break;
+            }
+        }
+    }
+    check_case(case_name,
+               "same-seed DEM data equal on valid cells",
+               dem_same_valid,
+               "DEM masks should match and valid-cell DEM values should be exactly equal");
+
+    // Different-seed diversity check.
+    opts.seed = 1;
+    lsdtt::lsdtt_synthetic_network_cpu seed1(opts);
+    seed1.run();
+
+    opts.seed = 2;
+    lsdtt::lsdtt_synthetic_network_cpu seed2(opts);
+    seed2.run();
+
+    const auto& r1 = seed1.receivers();
+    const auto& r2 = seed2.receivers();
+    const std::size_t n = std::min(r1.size(), r2.size());
+
+    std::size_t land_pixels = 0;
+    std::size_t different_receivers = 0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const auto idx = static_cast<std::int64_t>(i);
+        if (!seed1.is_land(idx)) continue;
+        ++land_pixels;
+        if (r1[i] != r2[i]) ++different_receivers;
+    }
+
+    const double diff_fraction =
+        (land_pixels > 0)
+            ? static_cast<double>(different_receivers) / static_cast<double>(land_pixels)
+            : 0.0;
+    const bool diff_seed_receivers_sufficiently_different = diff_fraction >= 0.01;
+
+    std::ostringstream diff_detail;
+    diff_detail << "different receivers=" << different_receivers
+                << "/" << land_pixels
+                << " (fraction=" << diff_fraction << ")";
+
+    check_case(case_name,
+               "different seeds change >=1% of land receivers",
+               diff_seed_receivers_sufficiently_different,
+               diff_detail.str());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -301,6 +405,12 @@ int main(int argc, char** argv)
     {
         run_case(sc);
     }
+
+    lsdtt::lsdtt_ocn_options deterministic_opts = base_opts;
+    deterministic_opts.gamma = 0.5;
+    deterministic_opts.temperature_scale = 0.0;
+    run_determinism_checks("D determinism rectangle 8x10 gamma=0.5 Tscale=0",
+                           deterministic_opts);
 
     std::cout << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL")
               << "  (" << (g_n_checks - g_n_failed) << "/" << g_n_checks

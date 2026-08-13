@@ -57,8 +57,15 @@ struct lsdtt_snap_cycle_record
     double       frac_cross_divide = 0.0;
     lsdtt_divide_step_stats divide;
 
+    double divide_gradient_target_used = 0.0;
+    double divide_gradient_target_margin = 0.0;
+    int    divide_gradient_target_met = -1;
+
     double K_used = 0.0;
     double computed_relief = 0.0;
+
+    static std::vector<std::string> csv_headers();
+    std::vector<std::string> csv_row() const;
 };
 
 struct lsdtt_snap_convergence_options
@@ -67,6 +74,7 @@ struct lsdtt_snap_convergence_options
     double tolerance_dz_over_relief = 1e-3;
     double tolerance_dz_m = 0.0;
     double tolerance_receiver_fraction = 1e-3;
+    double divide_gradient_target = 0.0;
     int    patience_cycles = 2;
     lsdtt_divide_diagnostic_options divide_opts;
 };

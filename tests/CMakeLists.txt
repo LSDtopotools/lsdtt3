@@ -409,6 +409,11 @@ add_lsdtt_cli_smoke_test(
     --expect tiny_eqcycle_snap_convergence.csv
     --expect-file-contains "tiny_eqcycle_snap_convergence.csv:max_abs_dz_m"
     --expect-file-contains "tiny_eqcycle_snap_convergence.csv:divide_step_median_m"
+    --expect-file-contains "tiny_eqcycle_snap_convergence.csv:divide_gradient_median"
+    --expect-file-contains "tiny_eqcycle_snap_convergence.csv:divide_gradient_p90"
+    --expect-file-contains "tiny_eqcycle_snap_convergence.csv:divide_gradient_target_used"
+    --expect-file-contains "tiny_eqcycle_snap_convergence.csv:divide_gradient_target_margin"
+    --expect-file-contains "tiny_eqcycle_snap_convergence.csv:divide_gradient_target_met"
     --stdout-contains "Path           : landscape_equilibration_cycle"
 )
 
@@ -425,12 +430,73 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_divide_step_nodiag
+    lsdtt-lem
+    lem_equilibration_divide_step_nodiag_smoke.param.in
+    tiny_eqdiv_nodiag_steady_state_elevation.tif
+    --expect tiny_eqdiv_nodiag_divide_step.tif
+    --expect tiny_eqdiv_nodiag_snap_convergence.csv
+    --expect-file-contains "tiny_eqdiv_nodiag_snap_convergence.csv:divide_step_median_m"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_divide_target
+    lsdtt-lem
+    lem_equilibration_divide_target_smoke.param.in
+    tiny_eqtarget_steady_state_elevation.tif
+    --expect tiny_eqtarget_snap_convergence.csv
+    --stdout-contains "Divide grad med:"
+    --stdout-contains "met"
+    --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_median"
+    --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_p90"
+    --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_target_used"
+    --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_target_margin"
+    --expect-file-contains "tiny_eqtarget_snap_convergence.csv:divide_gradient_target_met"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_divide_target_nodiag
+    lsdtt-lem
+    lem_equilibration_divide_target_nodiag_smoke.param.in
+    tiny_eqtarget_nodiag_steady_state_elevation.tif
+    --expect tiny_eqtarget_nodiag_snap_convergence.csv
+    --stdout-contains "Divide grad med:"
+    --stdout-contains "met"
+    --expect-file-contains "tiny_eqtarget_nodiag_snap_convergence.csv:divide_gradient_target_met"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_divide_target_notmet
+    lsdtt-lem
+    lem_equilibration_divide_target_notmet_smoke.param.in
+    tiny_eqtarget_notmet_steady_state_elevation.tif
+    --expect tiny_eqtarget_notmet_snap_convergence.csv
+    --stdout-contains "Divide grad med:"
+    --stdout-contains "not met"
+    --expect-file-contains "tiny_eqtarget_notmet_snap_convergence.csv:divide_gradient_median"
+    --expect-file-contains "tiny_eqtarget_notmet_snap_convergence.csv:divide_gradient_p90"
+    --expect-file-contains "tiny_eqtarget_notmet_snap_convergence.csv:divide_gradient_target_used"
+    --expect-file-contains "tiny_eqtarget_notmet_snap_convergence.csv:divide_gradient_target_margin"
+    --expect-file-contains "tiny_eqtarget_notmet_snap_convergence.csv:divide_gradient_target_met"
+)
+
+add_lsdtt_cli_smoke_test(
     smoke_lem_equilibration_convergence
     lsdtt-lem
     lem_equilibration_convergence_smoke.param.in
     tiny_eqconv_steady_state_elevation.tif
     --expect tiny_eqconv_snap_convergence.csv
     --stdout-contains "Converged at cycle"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_fixed_cycles
+    lsdtt-lem
+    lem_equilibration_fixed_cycles_smoke.param.in
+    tiny_eqfixed_steady_state_elevation.tif
+    --expect tiny_eqfixed_snap_convergence.csv
+    --expect-file-contains "tiny_eqfixed_snap_convergence.csv:cycle"
+    --stdout-contains "Cycles completed: 4"
 )
 
 add_lsdtt_cli_smoke_test(
