@@ -1423,6 +1423,62 @@ int main(int argc, char* argv[])
                              "enable_dinf_fluvial_erosion is ignored in this path.\n";
             }
 
+            const bool steady_state_check_convergence = bf["steady_state_check_convergence"];
+            const int steady_state_convergence_patience =
+                ifs["steady_state_convergence_patience"];
+            const float steady_state_tolerance_dz_m =
+                ff["steady_state_tolerance_dz_m"];
+            const float steady_state_tolerance_dz_over_relief =
+                ff["steady_state_tolerance_dz_over_relief"];
+            const float steady_state_tolerance_receiver_fraction =
+                ff["steady_state_tolerance_receiver_fraction"];
+            const float divide_gradient_target = ff["divide_gradient_target"];
+
+            if (steady_state_check_convergence &&
+                steady_state_convergence_patience < 1)
+            {
+                std::cerr
+                    << "FATAL: invalid steady_state_convergence_patience="
+                    << steady_state_convergence_patience
+                    << "; must be >= 1 when steady_state_check_convergence=true.\n";
+                return 1;
+            }
+
+            if (steady_state_tolerance_dz_m < 0.0f)
+            {
+                std::cerr << "FATAL: invalid steady_state_tolerance_dz_m="
+                          << steady_state_tolerance_dz_m
+                          << "; must be >= 0.\n";
+                return 1;
+            }
+
+            if (steady_state_tolerance_dz_over_relief < 0.0f)
+            {
+                std::cerr
+                    << "FATAL: invalid steady_state_tolerance_dz_over_relief="
+                    << steady_state_tolerance_dz_over_relief
+                    << "; must be >= 0.\n";
+                return 1;
+            }
+
+            if (steady_state_tolerance_receiver_fraction < 0.0f ||
+                steady_state_tolerance_receiver_fraction > 1.0f)
+            {
+                std::cerr
+                    << "FATAL: invalid steady_state_tolerance_receiver_fraction="
+                    << steady_state_tolerance_receiver_fraction
+                    << "; must be in [0, 1].\n";
+                return 1;
+            }
+
+            if (divide_gradient_target < 0.0f)
+            {
+                std::cerr << "FATAL: invalid divide_gradient_target="
+                          << divide_gradient_target
+                          << "; must be >= 0.\n";
+                return 1;
+            }
+
             lsdtt::lsdtt_equilibration_options eq_opts;
             eq_opts.fluvial = ss_opts;
             eq_opts.use_dinf = use_dinf;
@@ -1430,16 +1486,15 @@ int main(int argc, char* argv[])
             eq_opts.boundary_conditions = sf["boundary_conditions"];
             eq_opts.fill_min_slope = ff["fill_min_slope"];
             eq_opts.n_threads = ifs["n_threads"];
-            eq_opts.convergence.check_convergence = bf["steady_state_check_convergence"];
+            eq_opts.convergence.check_convergence = steady_state_check_convergence;
             eq_opts.convergence.tolerance_dz_over_relief =
-                ff["steady_state_tolerance_dz_over_relief"];
-            eq_opts.convergence.tolerance_dz_m = ff["steady_state_tolerance_dz_m"];
+                steady_state_tolerance_dz_over_relief;
+            eq_opts.convergence.tolerance_dz_m = steady_state_tolerance_dz_m;
             eq_opts.convergence.tolerance_receiver_fraction =
-                ff["steady_state_tolerance_receiver_fraction"];
+                steady_state_tolerance_receiver_fraction;
             eq_opts.convergence.divide_gradient_target =
-                ff["divide_gradient_target"];
-            eq_opts.convergence.patience_cycles =
-                std::max(1, ifs["steady_state_convergence_patience"]);
+                divide_gradient_target;
+            eq_opts.convergence.patience_cycles = steady_state_convergence_patience;
             eq_opts.convergence.divide_opts.divide_merge_search_steps =
                 ifs["divide_merge_search_steps"];
             eq_opts.convergence.divide_opts.use_d8_diagonals =

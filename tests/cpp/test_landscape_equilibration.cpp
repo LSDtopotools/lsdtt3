@@ -327,6 +327,63 @@ void test_divide_gradient_target_not_met_with_fixed_cycles()
     }
 }
 
+void test_divide_gradient_target_met_with_fixed_cycles()
+{
+    const lsdtt::lsdtt_raster_cpu dem = make_ramp_dem(8, 9, 30.0);
+
+    lsdtt::lsdtt_equilibration_options opts;
+    opts.max_cycles = 2;
+    opts.boundary_conditions = "oooo";
+    opts.convergence.check_convergence = false;
+    opts.convergence.divide_gradient_target = 1e9;
+
+    const lsdtt::lsdtt_equilibration_result result =
+        lsdtt::equilibrate_landscape(dem, opts);
+
+    check("target-met run executes fixed cycle count",
+          result.cycles.size() == 2,
+          "got=" + std::to_string(result.cycles.size()));
+
+    check("target-enabled stop reason reports met",
+          result.stop_reason.find("met") != std::string::npos,
+          "stop_reason='" + result.stop_reason + "'");
+
+    if (!result.cycles.empty())
+    {
+        const lsdtt::lsdtt_snap_cycle_record& last_cycle = result.cycles.back();
+
+        check("final cycle divide_gradient_target_used is positive (met case)",
+              last_cycle.divide_gradient_target_used > 0.0,
+              "got=" + std::to_string(last_cycle.divide_gradient_target_used));
+
+        check("final cycle divide_gradient_target_met expected met",
+              last_cycle.divide_gradient_target_met == 1,
+              "got=" + std::to_string(last_cycle.divide_gradient_target_met));
+
+        check("final cycle divide_gradient_target_margin is positive",
+              last_cycle.divide_gradient_target_margin > 0.0,
+              "got=" + std::to_string(last_cycle.divide_gradient_target_margin));
+
+        const std::vector<std::string> headers =
+            lsdtt::lsdtt_snap_cycle_record::csv_headers();
+        const std::vector<std::string> row = last_cycle.csv_row();
+        const std::size_t target_met_col =
+            index_of_text(headers, "divide_gradient_target_met");
+        const bool has_target_col = target_met_col < headers.size()
+            && target_met_col < row.size();
+
+        check("snap-cycle CSV row includes divide_gradient_target_met field (met case)",
+              has_target_col);
+
+        if (has_target_col)
+        {
+            check("snap-cycle CSV divide_gradient_target_met is 1 for met cycle",
+                  row[target_met_col] == "1",
+                  "csv='" + row[target_met_col] + "'");
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -339,6 +396,7 @@ int main()
     test_early_convergence_with_loose_thresholds();
     test_convergence_respects_patience_cycles();
     test_divide_gradient_target_not_met_with_fixed_cycles();
+    test_divide_gradient_target_met_with_fixed_cycles();
 
     std::cout << "\nChecks: " << g_n_checks
               << "  Failed: " << g_n_failed << "\n";

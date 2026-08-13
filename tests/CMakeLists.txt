@@ -509,6 +509,15 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    failure_lem_equilibration_bad_patience
+    lsdtt-lem
+    lem_equilibration_bad_patience.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "steady_state_convergence_patience"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_hydraulic_routing_invalid_mode
     lsdtt-hydraulic-routing
     hydraulic_routing_invalid_mode.param.in
