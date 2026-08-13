@@ -59,4 +59,9 @@ struct lsdtt_divide_step_stats
     float                                  class_high = 0.0f,
     float                                  class_low  = 0.0f);
 
+[[nodiscard]] lsdtt_raster_cpu make_divide_step_raster(
+    const lsdtt_flowinfo&                  flow,
+    const lsdtt_raster_cpu&                dem,
+    const lsdtt_divide_diagnostic_options& opts = {});
+
 } // namespace lsdtt

@@ -413,6 +413,27 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_divide_step
+    lsdtt-lem
+    lem_equilibration_divide_step_smoke.param.in
+    tiny_eqdiv_steady_state_elevation.tif
+    --expect tiny_eqdiv_divide_step.tif
+    --expect tiny_eqdiv_snap_convergence.csv
+    --expect-raster-size tiny_eqdiv_divide_step.tif:5x5
+    --expect-raster-stat tiny_eqdiv_divide_step.tif:max:0.0001:1000000.0
+    --expect-file-contains "tiny_eqdiv_snap_convergence.csv:divide_step_median_m"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_equilibration_convergence
+    lsdtt-lem
+    lem_equilibration_convergence_smoke.param.in
+    tiny_eqconv_steady_state_elevation.tif
+    --expect tiny_eqconv_snap_convergence.csv
+    --stdout-contains "Converged at cycle"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_lem_equilibration_bad_divide_steps
     lsdtt-lem
     lem_equilibration_bad_divide_steps.param.in

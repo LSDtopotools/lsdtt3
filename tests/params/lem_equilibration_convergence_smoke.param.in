@@ -1,0 +1,15 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+
+write_path: __WRITE_PATH__
+write_fname: tiny_eqconv
+write_output_format: gtiff
+
+run_steady_state: true
+use_landscape_equilibration_cycle: true
+steady_state_n_cycles: 5
+steady_state_check_convergence: true
+steady_state_tolerance_dz_m: 1e9
+steady_state_tolerance_receiver_fraction: 1.0
+steady_state_convergence_patience: 1

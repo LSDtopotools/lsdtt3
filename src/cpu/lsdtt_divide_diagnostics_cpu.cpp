@@ -281,4 +281,88 @@ lsdtt_divide_step_stats compute_divide_step_stats(
     return out;
 }
 
+lsdtt_raster_cpu make_divide_step_raster(
+    const lsdtt_flowinfo&                  flow,
+    const lsdtt_raster_cpu&                dem,
+    const lsdtt_divide_diagnostic_options& opts)
+{
+    if (opts.divide_merge_search_steps <= 0)
+    {
+        throw std::runtime_error(
+            "make_divide_step_raster: divide_merge_search_steps must be > 0");
+    }
+
+    validate_divide_inputs(flow, dem, nullptr);
+
+    const std::vector<std::int64_t> anc =
+        compute_downstream_ancestor_labels(flow, opts.divide_merge_search_steps);
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const std::vector<float>& dem_data = dem.get_data();
+    const std::vector<std::uint8_t>& dem_mask = dem.get_mask();
+
+    const int n_rows = meta.n_rows;
+    const int n_cols = meta.n_cols;
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float> out_data(flow.full_grid_size(), 0.0f);
+    std::vector<std::uint8_t> out_mask = dem_mask;
+
+    for (std::int64_t flat = 0;
+         flat < static_cast<std::int64_t>(flow.full_grid_size());
+         ++flat)
+    {
+        if (!is_valid_for_divide(flat, flow, dem_mask, dem_data))
+        {
+            out_data[static_cast<std::size_t>(flat)] = nodata;
+        }
+    }
+
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const std::int64_t a = flow.flat_index_unchecked(row, col);
+            if (!is_valid_for_divide(a, flow, dem_mask, dem_data)) continue;
+
+            for (int k = 0; k < (opts.use_d8_diagonals ? 4 : 2); ++k)
+            {
+                int nr = row;
+                int nc = col;
+                if (k == 0) nc = col + 1;
+                if (k == 1) nr = row + 1;
+                if (k == 2) { nr = row + 1; nc = col + 1; }
+                if (k == 3) { nr = row + 1; nc = col - 1; }
+
+                if (nr < 0 || nr >= n_rows || nc < 0 || nc >= n_cols) continue;
+
+                const std::int64_t b = flow.flat_index_unchecked(nr, nc);
+                if (!is_valid_for_divide(b, flow, dem_mask, dem_data)) continue;
+
+                if (flow.receiver_of_unchecked(a) == b ||
+                    flow.receiver_of_unchecked(b) == a)
+                {
+                    continue;
+                }
+
+                if (anc[static_cast<std::size_t>(a)] == anc[static_cast<std::size_t>(b)])
+                {
+                    continue;
+                }
+
+                const double za = static_cast<double>(dem_data[static_cast<std::size_t>(a)]);
+                const double zb = static_cast<double>(dem_data[static_cast<std::size_t>(b)]);
+                const float dz = static_cast<float>(std::fabs(za - zb));
+
+                float& out_a = out_data[static_cast<std::size_t>(a)];
+                float& out_b = out_data[static_cast<std::size_t>(b)];
+                if (dz > out_a) out_a = dz;
+                if (dz > out_b) out_b = dz;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
 } // namespace lsdtt

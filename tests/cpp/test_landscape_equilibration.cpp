@@ -118,6 +118,33 @@ void test_three_cycles_with_convergence_disabled()
     check("per-cycle divide stats are finite and non-negative", divide_stats_ok);
 }
 
+void test_early_convergence_with_loose_thresholds()
+{
+    const lsdtt::lsdtt_raster_cpu dem = make_ramp_dem(8, 9, 30.0);
+
+    lsdtt::lsdtt_equilibration_options opts;
+    opts.max_cycles = 5;
+    opts.boundary_conditions = "oooo";
+    opts.convergence.check_convergence = true;
+    opts.convergence.tolerance_dz_m = 1e9;
+    opts.convergence.tolerance_receiver_fraction = 1.0;
+    opts.convergence.patience_cycles = 1;
+
+    const lsdtt::lsdtt_equilibration_result result =
+        lsdtt::equilibrate_landscape(dem, opts);
+
+    check("result reports converged for loose thresholds",
+          result.converged == true);
+
+    check("cycles count is one due to immediate convergence",
+          result.cycles.size() == 1,
+          "got=" + std::to_string(result.cycles.size()));
+
+    check("stop reason contains Converged",
+          result.stop_reason.find("Converged") != std::string::npos,
+          "stop_reason='" + result.stop_reason + "'");
+}
+
 } // namespace
 
 int main()
@@ -127,6 +154,7 @@ int main()
               << "==============================================\n";
 
     test_three_cycles_with_convergence_disabled();
+    test_early_convergence_with_loose_thresholds();
 
     std::cout << "\nChecks: " << g_n_checks
               << "  Failed: " << g_n_failed << "\n";

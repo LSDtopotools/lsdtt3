@@ -710,6 +710,42 @@ int main(int argc, char* argv[])
         "Must be > 0 when use_landscape_equilibration_cycle is true.",
         "Analytical steady-state", "param", "use_landscape_equilibration_cycle"};
 
+    bool_default_map["divide_use_d8_diagonals"] = true;
+    help_map["divide_use_d8_diagonals"] = {"bool","true",
+        "Include diagonal neighbors in divide-step diagnostics (D8 adjacency).",
+        "Only used by equilibration-cycle diagnostics outputs/convergence checks.",
+        "Analytical steady-state", "param", "use_landscape_equilibration_cycle"};
+
+    bool_default_map["steady_state_check_convergence"] = false;
+    help_map["steady_state_check_convergence"] = {"bool","false",
+        "Enable convergence-based early stopping in equilibration-cycle steady-state runs.",
+        "Default false keeps current behavior (always runs steady_state_n_cycles).",
+        "Analytical steady-state", "param", "use_landscape_equilibration_cycle"};
+
+    float_default_map["steady_state_tolerance_dz_over_relief"] = 1e-3f;
+    help_map["steady_state_tolerance_dz_over_relief"] = {"float","1e-3",
+        "Convergence tolerance for max|dz|/relief between equilibration cycles.",
+        "Used when steady_state_check_convergence is true and tolerance_dz_m is 0.",
+        "Analytical steady-state", "param", "steady_state_check_convergence"};
+
+    float_default_map["steady_state_tolerance_dz_m"] = 0.0f;
+    help_map["steady_state_tolerance_dz_m"] = {"float","0",
+        "Absolute convergence tolerance for max|dz| (m) between equilibration cycles.",
+        "If > 0 this overrides steady_state_tolerance_dz_over_relief.",
+        "Analytical steady-state", "param", "steady_state_check_convergence"};
+
+    float_default_map["steady_state_tolerance_receiver_fraction"] = 1e-3f;
+    help_map["steady_state_tolerance_receiver_fraction"] = {"float","1e-3",
+        "Convergence tolerance for fraction of pixels changing receiver each cycle.",
+        "Set <= 0 to disable this convergence criterion.",
+        "Analytical steady-state", "param", "steady_state_check_convergence"};
+
+    int_default_map["steady_state_convergence_patience"] = 2;
+    help_map["steady_state_convergence_patience"] = {"int","2",
+        "Required number of consecutive converged cycles before early stopping.",
+        "Only used when steady_state_check_convergence is true.",
+        "Analytical steady-state", "param", "steady_state_check_convergence"};
+
     // --- Hillslope steady-state ---
     bool_default_map["run_hillslope_steady_state"] = false;
     help_map["run_hillslope_steady_state"] = {"bool","false",
@@ -824,6 +860,12 @@ int main(int argc, char* argv[])
     bool_default_map["write_snap_convergence_csv"] = true;
     help_map["write_snap_convergence_csv"] = {"bool","true",
         "Write per-cycle snap convergence diagnostics for the landscape equilibration path.",
+        "Only used when run_steady_state and use_landscape_equilibration_cycle are both true.",
+        "Output", "switch", ""};
+
+    bool_default_map["write_divide_step_raster"] = false;
+    help_map["write_divide_step_raster"] = {"bool","false",
+        "Write a divide-step raster from the final equilibration-cycle steady-state DEM.",
         "Only used when run_steady_state and use_landscape_equilibration_cycle are both true.",
         "Output", "switch", ""};
 
@@ -1381,9 +1423,18 @@ int main(int argc, char* argv[])
             eq_opts.boundary_conditions = sf["boundary_conditions"];
             eq_opts.fill_min_slope = ff["fill_min_slope"];
             eq_opts.n_threads = ifs["n_threads"];
-            eq_opts.convergence.check_convergence = false;
+            eq_opts.convergence.check_convergence = bf["steady_state_check_convergence"];
+            eq_opts.convergence.tolerance_dz_over_relief =
+                ff["steady_state_tolerance_dz_over_relief"];
+            eq_opts.convergence.tolerance_dz_m = ff["steady_state_tolerance_dz_m"];
+            eq_opts.convergence.tolerance_receiver_fraction =
+                ff["steady_state_tolerance_receiver_fraction"];
+            eq_opts.convergence.patience_cycles =
+                std::max(1, ifs["steady_state_convergence_patience"]);
             eq_opts.convergence.divide_opts.divide_merge_search_steps =
                 ifs["divide_merge_search_steps"];
+            eq_opts.convergence.divide_opts.use_d8_diagonals =
+                bf["divide_use_d8_diagonals"];
 
             lsdtt::lsdtt_equilibration_result eq_result;
             try
@@ -1400,7 +1451,47 @@ int main(int argc, char* argv[])
             ss_result = eq_result.final_snap;
             area_d = std::move(eq_result.drainage_area);
 
+            if (bf["write_divide_step_raster"])
+            {
+                lsdtt::lsdtt_divide_diagnostic_options divide_opts;
+                divide_opts.divide_merge_search_steps = ifs["divide_merge_search_steps"];
+                divide_opts.use_d8_diagonals = bf["divide_use_d8_diagonals"];
+                divide_opts.n_threads = ifs["n_threads"];
+
+                lsdtt::lsdtt_raster_cpu divide_step_raster;
+                try
+                {
+                    lsdtt::lsdtt_flowinfo divide_flow(
+                        ss_result.elevation.get_data_array(),
+                        ss_result.elevation.get_mask_array(),
+                        ss_result.elevation.get_meta(), fi_opts);
+                    divide_step_raster = lsdtt::make_divide_step_raster(
+                        divide_flow, ss_result.elevation, divide_opts);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: divide-step raster computation failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+
+                const std::string divide_step_path =
+                    pp.make_output_path("_divide_step", fmt_ext(out_fmt));
+                std::cout << "Writing divide-step raster: " << divide_step_path << "\n";
+                try
+                {
+                    safe_write(divide_step_raster, divide_step_path);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: writing divide-step raster failed: "
+                              << e.what() << "\n";
+                    return 1;
+                }
+            }
+
             std::cout << "  Cycles completed: " << eq_result.cycles.size() << "\n";
+            std::cout << "  Stop reason    : " << eq_result.stop_reason << "\n";
 
             if (bf["write_snap_convergence_csv"])
             {
