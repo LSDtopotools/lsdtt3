@@ -162,6 +162,73 @@ struct lsdtt_raster_meta
         CPLFree(wkt_raw);
     }
 
+    // Places a synthetic grid at an arbitrary geographic anchor. The output
+    // grid is centred on (centre_lat_deg, centre_lon_deg) in the selected
+    // projected CRS. If epsg == 0, a WGS84 UTM EPSG is derived from
+    // (centre_lon_deg, centre_lat_deg).
+    //
+    // Throws std::runtime_error when the anchor is non-finite or when
+    // epsg == 0 and |centre_lat_deg| > 84 (UTM undefined at polar latitudes).
+    // n_rows, n_cols and cell_size must already be set. Requires OGR.
+    void set_synthetic_georeference(double centre_lat_deg,
+                                    double centre_lon_deg,
+                                    int    epsg = 0)
+    {
+        if (!std::isfinite(centre_lat_deg) || !std::isfinite(centre_lon_deg))
+        {
+            throw std::runtime_error(
+                "lsdtt_raster_meta::set_synthetic_georeference: anchor latitude "
+                "and longitude must be finite");
+        }
+
+        int target_epsg = epsg;
+        if (target_epsg == 0)
+        {
+            if (std::abs(centre_lat_deg) > 84.0)
+            {
+                throw std::runtime_error(
+                    "lsdtt_raster_meta::set_synthetic_georeference: "
+                    "epsg=0 derives UTM, but UTM is undefined for |latitude| > 84. "
+                    "Set projection_epsg explicitly (e.g. 3413 north, 3976 south).");
+            }
+
+            // Keep this logic aligned with utm_epsg_for_point in
+            // lsdtt_raster_fetch.cpp.
+            double normalised = std::fmod(centre_lon_deg + 180.0, 360.0);
+            if (normalised < 0.0) normalised += 360.0;
+
+            int zone = static_cast<int>(normalised / 6.0) + 1;
+            if (zone > 60) zone = 60;
+            if (zone < 1)  zone = 1;
+            target_epsg = (centre_lat_deg >= 0.0 ? 32600 : 32700) + zone;
+        }
+
+        set_crs_from_epsg(target_epsg);
+
+        OGRSpatialReference wgs84;
+        OGRSpatialReference target;
+        if (wgs84.importFromEPSG(4326) != OGRERR_NONE ||
+            target.importFromEPSG(target_epsg) != OGRERR_NONE)
+        {
+            return;
+        }
+        wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        target.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+        OGRCoordinateTransformation* ct =
+            OGRCreateCoordinateTransformation(&wgs84, &target);
+        if (!ct) return;
+
+        double e = centre_lon_deg;
+        double n = centre_lat_deg;
+        const bool ok = ct->Transform(1, &e, &n) != 0;
+        OGRCoordinateTransformation::DestroyCT(ct);
+        if (!ok) return;
+
+        x_min = e - 0.5 * static_cast<double>(n_cols) * cell_size;
+        y_min = n - 0.5 * static_cast<double>(n_rows) * cell_size;
+    }
+
     // Gives a synthetically generated raster (no input DEM) a sensible default
     // georeference: the grid is centred on Teanu Island, Solomon Islands
     // (11.633 S, 166.967 E) - the real-world location to which Zwift's fictional
@@ -178,37 +245,13 @@ struct lsdtt_raster_meta
 
         try
         {
-            set_crs_from_epsg(epsg);
+            set_synthetic_georeference(watopia_lat, watopia_lon, epsg);
         }
         catch (const std::exception&)
         {
             crs_wkt = "";
             return;
         }
-
-        OGRSpatialReference wgs84;
-        OGRSpatialReference utm;
-        if (wgs84.importFromEPSG(4326) != OGRERR_NONE ||
-            utm.importFromEPSG(epsg)   != OGRERR_NONE)
-        {
-            return;
-        }
-        wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-        utm.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-
-        OGRCoordinateTransformation* ct =
-            OGRCreateCoordinateTransformation(&wgs84, &utm);
-        if (!ct) return;
-
-        double e = watopia_lon;
-        double n = watopia_lat;
-        const bool ok = ct->Transform(1, &e, &n) != 0;
-        OGRCoordinateTransformation::DestroyCT(ct);
-        if (!ok) return;
-
-        // Centre the grid on the anchor point.
-        x_min = e - 0.5 * static_cast<double>(n_cols) * cell_size;
-        y_min = n - 0.5 * static_cast<double>(n_rows) * cell_size;
     }
 
     // Returns true if the CRS is geographic (latitude/longitude).

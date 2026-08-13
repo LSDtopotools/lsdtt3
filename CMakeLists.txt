@@ -383,6 +383,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_ridgeline_cpu.cpp
     src/cpu/lsdtt_channel_sources_wiener_cpu.cpp
     src/cpu/lsdtt_divide_migration_cpu.cpp
+    src/cpu/lsdtt_divide_diagnostics_cpu.cpp
+    src/cpu/lsdtt_landscape_equilibration_cpu.cpp
 )
 
 if(LSDTT_HAS_OPENCV)

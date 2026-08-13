@@ -32,6 +32,7 @@
 // -----------------------------------------------------------------------------
 
 #include <fstream>
+#include <cmath>
 #include <iostream>
 #include <map>
 #include <string>
@@ -259,6 +260,28 @@ int main(int argc, char* argv[])
         "Chi is integrated upstream from this elevation. Fluvial relief only.",
         "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
+    // --- Georeference ---
+    float_default_map["centre_latitude"] = -9999.0f;
+    help_map["centre_latitude"] = {"float","-9999",
+        "Latitude of the synthetic grid centre in decimal degrees.",
+        "Must be supplied together with centre_longitude. -9999 keeps the "
+        "historical default synthetic anchor.",
+        "Georeference", "param", ""};
+
+    float_default_map["centre_longitude"] = -9999.0f;
+    help_map["centre_longitude"] = {"float","-9999",
+        "Longitude of the synthetic grid centre in decimal degrees.",
+        "Must be supplied together with centre_latitude. -9999 keeps the "
+        "historical default synthetic anchor.",
+        "Georeference", "param", ""};
+
+    int_default_map["projection_epsg"] = 0;
+    help_map["projection_epsg"] = {"int","0",
+        "Projected CRS EPSG for synthetic georeference.",
+        "0 derives WGS84 UTM from centre_latitude/centre_longitude. Non-zero "
+        "uses the supplied EPSG directly.",
+        "Georeference", "param", ""};
+
     int_default_map["random_seed"] = 1;
     help_map["random_seed"] = {"int","1",
         "Seed for the annealing RNG.",
@@ -324,6 +347,49 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
+    const double baselevel_elevation = static_cast<double>(ff["baselevel_elevation"]);
+    if (!std::isfinite(baselevel_elevation))
+    {
+        std::cerr << "FATAL: baselevel_elevation must be finite.\n";
+        return 1;
+    }
+    if (!(baselevel_elevation > -9000.0))
+    {
+        std::cerr << "FATAL: baselevel_elevation must be > -9000.\n";
+        return 1;
+    }
+
+    constexpr float k_geo_sentinel = -9999.0f;
+    const bool has_centre_lat = ff["centre_latitude"] != k_geo_sentinel;
+    const bool has_centre_lon = ff["centre_longitude"] != k_geo_sentinel;
+    if (has_centre_lat != has_centre_lon)
+    {
+        std::cerr << "FATAL: centre_latitude and centre_longitude must be set "
+                  << "together.\n";
+        return 1;
+    }
+
+    if (has_centre_lat)
+    {
+        if (!std::isfinite(ff["centre_latitude"]) ||
+            !std::isfinite(ff["centre_longitude"]))
+        {
+            std::cerr << "FATAL: centre_latitude and centre_longitude must be "
+                      << "finite.\n";
+            return 1;
+        }
+    }
+
+    const bool has_projection_epsg = ifs["projection_epsg"] != 0;
+    const bool polygon_true_area =
+        (sf["domain_type"] == "polygon" && sf["polygon_sizing"] == "true_area");
+    if (polygon_true_area && (has_centre_lat || has_projection_epsg))
+    {
+        std::cerr << "Warning: centre_latitude/centre_longitude/projection_epsg "
+                  << "are ignored for domain_type=polygon with "
+                  << "polygon_sizing=true_area; using polygon CRS and extent.\n";
+    }
+
     lsdtt::raster_output_format out_fmt = lsdtt::raster_output_format::cog;
     if (sf["write_output_format"] == "gtiff")
         out_fmt = lsdtt::raster_output_format::gtiff;
@@ -353,6 +419,14 @@ int main(int argc, char* argv[])
     opts.baselevel_elevation = ff["baselevel_elevation"];
     opts.seed       = static_cast<std::uint64_t>(ifs["random_seed"]);
     opts.outlet_col = ifs["outlet_col"];
+
+    if (has_centre_lat && !polygon_true_area)
+    {
+        opts.use_geographic_anchor = true;
+        opts.centre_latitude_deg   = static_cast<double>(ff["centre_latitude"]);
+        opts.centre_longitude_deg  = static_cast<double>(ff["centre_longitude"]);
+        opts.projection_epsg       = ifs["projection_epsg"];
+    }
 
     // -------------------------------------------------------------------------
     // Build the domain mask (rectangle / island / imported polygon)

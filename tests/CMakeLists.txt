@@ -37,6 +37,16 @@ function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_
 endfunction()
 
 add_lsdtt_cli_smoke_test(
+    smoke_synthetic_networks_rect
+    lsdtt-synthetic-networks
+    synthetic_networks_smoke.param.in
+    ocnsmoke_ocn_dem.tif
+    --expect ocnsmoke_ocn_drainage_cells.tif
+    --expect ocnsmoke_ocn_summary.csv
+    --expect-raster-size ocnsmoke_ocn_dem.tif:32x32
+)
+
+add_lsdtt_cli_smoke_test(
     smoke_raster_preprocessing
     lsdtt-raster-preprocessing
     raster_preprocessing_smoke.param.in
@@ -648,6 +658,15 @@ target_link_libraries(lsdtt-test-landslide-series PRIVATE lsdtt3_cpu)
 # network, no RichDEM, so this runs in the default CTest suite.
 add_executable(lsdtt-test-flow-properties cpp/test_flow_properties.cpp)
 target_link_libraries(lsdtt-test-flow-properties PRIVATE lsdtt3_cpu)
+
+add_executable(lsdtt-test-synthetic-networks cpp/test_synthetic_networks.cpp)
+target_link_libraries(lsdtt-test-synthetic-networks PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_synthetic_networks
+         COMMAND lsdtt-test-synthetic-networks
+                 ${CMAKE_CURRENT_BINARY_DIR}/synthetic_networks_output)
+set_tests_properties(unit_synthetic_networks PROPERTIES LABELS "unit;synthetic_networks")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/synthetic_networks_output)
 
 add_test(NAME unit_flow_properties
          COMMAND lsdtt-test-flow-properties
@@ -1937,6 +1956,7 @@ endif()
 # =============================================================================
 
 set(LSDTT_DOMAIN_RULES
+    "synthetic_networks|_ocn_" "synthetic_networks"
     "niemi"                  "cosmo"
     "quartz|fertility"       "quartz"
     "cosmo"                  "cosmo"

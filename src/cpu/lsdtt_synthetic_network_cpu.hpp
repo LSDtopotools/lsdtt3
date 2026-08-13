@@ -75,6 +75,13 @@ struct lsdtt_ocn_options
     bool              use_supplied_meta = false;
     lsdtt_raster_meta supplied_meta;
 
+    // Optional synthetic georeference anchor. Ignored when use_supplied_meta is
+    // true.
+    bool   use_geographic_anchor = false;
+    double centre_latitude_deg   = 0.0;
+    double centre_longitude_deg  = 0.0;
+    int    projection_epsg       = 0;
+
     double    gamma     = 0.5;     // energy exponent (OCNet expEnergy)
 
     // Annealing schedule. n_iter <= 0 means 40 * n_rows * n_cols (OCNet default).
