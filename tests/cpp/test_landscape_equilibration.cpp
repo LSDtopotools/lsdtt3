@@ -895,6 +895,42 @@ void test_hillslope_solve_reduces_divide_step()
           "off=" + std::to_string(p90_off) + " on=" + std::to_string(p90_on));
 }
 
+void test_critical_slope_model_runs_inside_cycle()
+{
+    const lsdtt::lsdtt_raster_cpu dem =
+        make_noisy_cone_dem(32, 33, 30.0, 20.0, 2);
+
+    lsdtt::lsdtt_equilibration_options opts = hillslope_fixture_options(2);
+    opts.run_hillslope = true;
+    opts.hillslope_model = "critical_slope";
+    opts.hillslope.Sc = 0.6f;
+
+    const lsdtt::lsdtt_equilibration_result result =
+        lsdtt::equilibrate_landscape(dem, opts);
+
+    check("critical_slope model runs in-cycle",
+          result.hillslope_ran == true,
+          "stop_reason='" + result.stop_reason + "'");
+
+    bool per_cycle_ok = true;
+    for (const lsdtt::lsdtt_snap_cycle_record& r : result.cycles)
+    {
+        per_cycle_ok = per_cycle_ok
+            && r.n_channel_pixels > 0
+            && r.hillslope_iterations == 1
+            && r.hillslope_converged == 1
+            && r.hillslope_residual == 0.0;
+    }
+    check("critical_slope cycle bookkeeping is deterministic", per_cycle_ok);
+
+    check("critical_slope model changes delivered surface",
+          result.elevation.get_data() != result.fluvial_only.get_data());
+
+    check("stop reason names critical_slope model",
+          result.stop_reason.find("critical_slope") != std::string::npos,
+          "stop_reason='" + result.stop_reason + "'");
+}
+
 // ---------------------------------------------------------------------------
 // S1-S3: the elliptic-stabilisation hypothesis of plan section 3.3.3b.
 //
@@ -1029,6 +1065,7 @@ int main()
     test_hillslope_boundary_condition_mismatch_warns();
     test_hillslope_solve_runs_inside_the_cycle();
     test_hillslope_solve_reduces_divide_step();
+    test_critical_slope_model_runs_inside_cycle();
     test_elliptic_stabilisation_hypothesis("linear");
     test_elliptic_stabilisation_hypothesis("roering");
 

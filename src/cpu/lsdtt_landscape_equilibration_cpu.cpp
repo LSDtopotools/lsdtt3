@@ -20,6 +20,7 @@
 #include <stdexcept>
 
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "lsdtt_critical_slope_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 
 namespace lsdtt
@@ -490,7 +491,8 @@ lsdtt_equilibration_result equilibrate_landscape(
     };
 
     const auto run_hillslope_solve =
-        [&](const lsdtt_raster_cpu&           fluvial_surface,
+        [&](const lsdtt_flowinfo&             flow,
+            const lsdtt_raster_cpu&           fluvial_surface,
             const std::vector<std::uint8_t>&  is_channel,
             const lsdtt_raster_cpu*           warm_start,
             lsdtt_raster_cpu&                 out_surface) -> hillslope_outcome
@@ -518,12 +520,29 @@ lsdtt_equilibration_result equilibrate_landscape(
             hs_opts.nonlinear = true;
         else if (model == "linear")
             hs_opts.nonlinear = false;
+        else if (model == "critical_slope" || model == "critical-slope")
+        {
+            lsdtt_critical_slope_options cs_opts;
+            cs_opts.mode = critical_slope_mode::fixed_gradient;
+            cs_opts.S_c = static_cast<double>(opts.hillslope.Sc);
+            cs_opts.is_channel_override = is_channel;
+
+            const lsdtt_critical_slope_result cs_result =
+                impose_critical_slope_hillslopes(flow, fluvial_surface, cs_opts);
+            out_surface = cs_result.elevation;
+
+            outcome.ran = true;
+            outcome.iterations = 1;
+            outcome.residual = 0.0f;
+            outcome.converged = true;
+            return outcome;
+        }
         else if (model != "cidre")
         {
             throw std::invalid_argument(
                 "equilibrate_landscape: unknown hillslope_model '"
                 + opts.hillslope_model
-                + "'; expected linear, roering or cidre");
+                + "'; expected linear, roering, cidre, or critical_slope");
         }
 
         // Warm start: the previous cycle's hillslope field is the best initial
@@ -613,6 +632,7 @@ lsdtt_equilibration_result equilibrate_landscape(
         if (opts.run_hillslope && opts.hillslope_every_cycle)
         {
             hs = run_hillslope_solve(
+                flow,
                 snap.elevation,
                 is_channel,
                 has_previous_hillslope_surface ? &previous_hillslope_surface
@@ -934,6 +954,7 @@ lsdtt_equilibration_result equilibrate_landscape(
                 {
                     lsdtt_raster_cpu replay_delivered = result.elevation;
                     const hillslope_outcome replay_hs = run_hillslope_solve(
+                        replay_flow,
                         result.fluvial_only,
                         result.is_channel,
                         nullptr,
@@ -989,8 +1010,15 @@ lsdtt_equilibration_result equilibrate_landscape(
         result.is_channel = make_is_channel(
             result.elevation, result.drainage_area, nullptr);
 
+        lsdtt_flowinfo final_flow(
+            result.fluvial_only.get_data_array(),
+            result.fluvial_only.get_mask_array(),
+            result.fluvial_only.get_meta(),
+            fi_opts);
+
         lsdtt_raster_cpu final_delivered = result.elevation;
         const hillslope_outcome final_hs = run_hillslope_solve(
+            final_flow,
             result.fluvial_only,
             result.is_channel,
             nullptr,

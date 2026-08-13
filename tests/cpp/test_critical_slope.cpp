@@ -151,6 +151,11 @@ void test_channel_classification_and_profile()
     check("max hillslope steps is tracked",
           out.max_hillslope_steps == 3,
           "got=" + std::to_string(out.max_hillslope_steps));
+
+    check("predicted divide step is finite and non-negative",
+          std::isfinite(out.predicted_divide_step_m)
+          && out.predicted_divide_step_m >= 0.0,
+          "got=" + std::to_string(out.predicted_divide_step_m));
 }
 
 void test_restrict_mask_blocks_updates()
@@ -181,6 +186,93 @@ void test_restrict_mask_blocks_updates()
           "got=" + std::to_string(z[2]));
 }
 
+void test_low_concavity_limit_matches_fixed_gradient()
+{
+    const lsdtt::lsdtt_raster_cpu dem = make_single_column_ramp_dem(6, 10.0);
+    const lsdtt::lsdtt_flowinfo flow = make_flow(dem);
+
+    lsdtt::lsdtt_critical_slope_options fixed;
+    fixed.channel_threshold_pixels = 3;
+    fixed.S_c = 0.5;
+    fixed.mode = lsdtt::critical_slope_mode::fixed_gradient;
+
+    lsdtt::lsdtt_critical_slope_options low;
+    low.channel_threshold_pixels = 3;
+    low.mode = lsdtt::critical_slope_mode::low_concavity_channel;
+    low.hillslope_m_over_n = 0.0;
+    low.hillslope_ksn = 0.5;
+    low.match_channel_steepness = false;
+
+    const lsdtt::lsdtt_critical_slope_result out_fixed =
+        lsdtt::impose_critical_slope_hillslopes(flow, dem, fixed);
+    const lsdtt::lsdtt_critical_slope_result out_low =
+        lsdtt::impose_critical_slope_hillslopes(flow, dem, low);
+
+    const std::vector<float>& z_fixed = out_fixed.elevation.get_data();
+    const std::vector<float>& z_low = out_low.elevation.get_data();
+
+    bool same = true;
+    for (std::size_t i = 0; i < z_fixed.size(); ++i)
+    {
+        if (!nearly_equal(static_cast<double>(z_fixed[i]), static_cast<double>(z_low[i]), 1e-6))
+        {
+            same = false;
+            break;
+        }
+    }
+    check("low-concavity m/n=0 equals fixed-gradient", same);
+}
+
+void test_match_hillslope_ksn_to_channel()
+{
+    const double ksn_h = lsdtt::match_hillslope_ksn_to_channel(
+        200.0, 0.5, 0.1, 100.0, 1.0);
+    const double g_channel = 200.0 * std::pow(100.0, -0.5);
+    const double g_hillslope = ksn_h * std::pow(100.0, -0.1);
+
+    check("channel-head continuity helper matches gradients",
+          nearly_equal(g_channel, g_hillslope, 1e-10),
+          "channel=" + std::to_string(g_channel)
+          + " hillslope=" + std::to_string(g_hillslope));
+}
+
+void test_predicted_divide_step_reports_asymmetric_hillslope_lengths()
+{
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = 3;
+    meta.n_cols = 2;
+    meta.cell_size = 10.0;
+    meta.no_data_value = -9999.0;
+    meta.set_default_synthetic_georeference();
+
+    std::vector<float> data = {
+        100.0f, 100.0f,
+         90.0f,  90.0f,
+         80.0f,  80.0f
+    };
+    std::vector<std::uint8_t> mask(6, 1);
+    const lsdtt::lsdtt_raster_cpu dem(std::move(data), std::move(mask), meta);
+    const lsdtt::lsdtt_flowinfo flow = make_flow(dem);
+
+    lsdtt::lsdtt_critical_slope_options opts;
+    opts.mode = lsdtt::critical_slope_mode::fixed_gradient;
+    opts.S_c = 1.0;
+    opts.channel_threshold_pixels = 1000;
+    opts.divide_merge_search_steps = 1;
+    opts.is_channel_override = {
+        0, 0,
+        1, 0,
+        1, 1
+    };
+
+    const lsdtt::lsdtt_critical_slope_result out =
+        lsdtt::impose_critical_slope_hillslopes(flow, dem, opts);
+
+    check("predicted divide step reflects unequal channel distances",
+          nearly_equal(out.predicted_divide_step_m, 10.0, 1e-5),
+          "got=" + std::to_string(out.predicted_divide_step_m));
+}
+
 } // namespace
 
 int main()
@@ -192,6 +284,9 @@ int main()
     test_invalid_options_throw();
     test_channel_classification_and_profile();
     test_restrict_mask_blocks_updates();
+    test_low_concavity_limit_matches_fixed_gradient();
+    test_match_hillslope_ksn_to_channel();
+    test_predicted_divide_step_reports_asymmetric_hillslope_lengths();
 
     std::cout << "\nChecks: " << g_n_checks
               << "  Failed: " << g_n_failed << "\n";

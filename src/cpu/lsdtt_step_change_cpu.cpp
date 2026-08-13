@@ -20,6 +20,8 @@
 #include <vector>
 
 #include "lsdtt_chi_extraction_cpu.hpp"
+#include "lsdtt_critical_slope_cpu.hpp"
+#include "lsdtt_flowinfo_cpu.hpp"
 
 namespace lsdtt
 {
@@ -27,24 +29,9 @@ namespace lsdtt
 namespace
 {
 
-constexpr double k_sqrt_2 = 1.4142135623730950488;
-
 // Relative tolerance for "the two uplift rates are the same". Below this there
 // is no step to solve and the shock/fan algebra is 0/0.
 constexpr double k_no_step_rel_tol = 1.0e-12;
-
-// Step length to the receiver. Even direction codes are cardinal, odd are
-// diagonal -- the same convention the chi extraction uses.
-double step_length_to_receiver(std::uint8_t dir, double cell_size)
-{
-    if (dir == lsdtt_flow_base::no_direction)
-    {
-        throw std::runtime_error(
-            "lsdtt_step_change_cpu: encountered no_direction on a non-outlet "
-            "node while walking the drainage stack.");
-    }
-    return (dir % 2u == 0u) ? cell_size : cell_size * k_sqrt_2;
-}
 
 bool tag_is_adjusted(StepChangeTag t)
 {
@@ -440,11 +427,10 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
         ts_m[idx] = 1;
     }
 
-    // ---- pass 2: impose hillslopes -----------------------------------------
-    // Walk the stack again in the same receiver-before-donor order. A hillslope
-    // pixel sits one step length above its receiver at the critical gradient,
-    // and inherits the receiver's erosion rate, time-since-change and class --
-    // a hillslope belongs to the channel it drains to.
+    // ---- pass 2a: hillslope inheritance tags/fields ------------------------
+    // Walk the stack again in the same receiver-before-donor order. Hillslopes
+    // inherit erosion rate, time-since-change and class from their receiver.
+    // Topography is imposed in pass 2b via lsdtt_critical_slope_cpu.
     bool outlet_seen = false;
     for (std::int64_t flat : basin)
     {
@@ -469,7 +455,7 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
         if (topo_m[idx] != 0) continue;   // already a channel
 
         const std::int64_t rec = flow.receiver_of_unchecked(flat);
-        if (rec < 0 || topo_m[static_cast<std::size_t>(rec)] == 0)
+        if (rec < 0)
         {
             // Receiver outside the basin or not yet solved: cannot happen given
             // the ordering, but leave the pixel as nodata rather than invent a
@@ -478,31 +464,74 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
         }
 
         const std::size_t ridx = static_cast<std::size_t>(rec);
+        if (tag_of[ridx] == StepChangeTag::outside_basin)
+            continue;
         const StepChangeTag rec_tag = tag_of[ridx];
         const StepChangeTag my_tag  = hillslope_tag_for(rec_tag);
-
-        double s_c;
-        switch (my_tag)
-        {
-            case StepChangeTag::hillslope_new: s_c = config.S_c_new; break;
-            case StepChangeTag::hillslope_fan:
-                s_c = 0.5 * (config.S_c_old + config.S_c_new);  break;
-            default:                           s_c = config.S_c_old; break;
-        }
-
-        const double dx = step_length_to_receiver(
-            flow.receiver_dir_of_unchecked(flat), cell_size);
-
-        topo_d[idx] = static_cast<float>(
-            static_cast<double>(topo_d[ridx]) + dx * s_c);
-        topo_m[idx] = 1;
-
         tag_of[idx] = my_tag;
         er_d[idx]   = er_d[ridx];
         ts_d[idx]   = ts_d[ridx];
         er_m[idx]   = 1;
         ts_m[idx]   = 1;
     }
+
+    // ---- pass 2b: impose hillslope topography via extracted component ------
+    const lsdtt_flowinfo* fi = dynamic_cast<const lsdtt_flowinfo*>(&flow);
+    if (fi == nullptr)
+    {
+        throw std::invalid_argument(
+            "lsdtt_step_change_cpu: critical-slope refactor requires a D8 "
+            "lsdtt_flowinfo object.");
+    }
+
+    std::vector<std::uint8_t> basin_mask(
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols),
+        static_cast<std::uint8_t>(0));
+    std::vector<std::uint8_t> is_channel_override = topo_m;
+    std::vector<float> gradient_scale(is_channel_override.size(), 1.0f);
+
+    // Preserve legacy behaviour for tiny basins below threshold: the outlet is
+    // the elevation datum even if it is not a channel by threshold.
+    const std::size_t outlet_idx = static_cast<std::size_t>(outlet_flat);
+    is_channel_override[outlet_idx] = 1;
+
+    for (std::int64_t flat : basin)
+    {
+        const std::size_t idx = static_cast<std::size_t>(flat);
+        basin_mask[idx] = 1;
+
+        const StepChangeTag tg = tag_of[idx];
+        switch (tg)
+        {
+            case StepChangeTag::hillslope_new:
+                gradient_scale[idx] = static_cast<float>(config.S_c_new / config.S_c_old);
+                break;
+            case StepChangeTag::hillslope_fan:
+                gradient_scale[idx] = static_cast<float>(
+                    (0.5 * (config.S_c_old + config.S_c_new)) / config.S_c_old);
+                break;
+            default:
+                gradient_scale[idx] = 1.0f;
+                break;
+        }
+    }
+
+    lsdtt_critical_slope_options cs_opts;
+    cs_opts.mode = critical_slope_mode::fixed_gradient;
+    cs_opts.S_c = config.S_c_old;
+    cs_opts.restrict_mask = std::move(basin_mask);
+    cs_opts.is_channel_override = std::move(is_channel_override);
+    cs_opts.gradient_scale = std::move(gradient_scale);
+
+    std::vector<float> topo_work = topo_d;
+    std::vector<std::uint8_t> topo_mask_work = topo_m;
+    lsdtt_raster_cpu topo_in(std::move(topo_work), std::move(topo_mask_work), meta);
+
+    const lsdtt_critical_slope_result cs_out =
+        impose_critical_slope_hillslopes(*fi, topo_in, cs_opts);
+
+    topo_d = cs_out.elevation.get_data();
+    topo_m = cs_out.elevation.get_mask();
 
     // ---- tags raster and counts --------------------------------------------
     for (std::int64_t flat : basin)
