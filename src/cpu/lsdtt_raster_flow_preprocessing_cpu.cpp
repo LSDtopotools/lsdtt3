@@ -253,7 +253,9 @@ static void priority_flood_core(
     const lsdtt_raster_meta& meta,
     float                    min_slope,
     int r0, int r1,
-    int c0, int c1)
+    int c0, int c1,
+    bool per_ns,
+    bool per_ew)
 {
     const float L = static_cast<float>(meta.cell_size);
     pf_fifo flat_q;
@@ -282,8 +284,25 @@ static void priority_flood_core(
 
         for (int n = 0; n < 8; ++n)
         {
-            const int nr = row + k_dr[n];
-            const int nc = col + k_dc[n];
+            int nr = row + k_dr[n];
+            int nc = col + k_dc[n];
+
+            // Periodic wrap. A periodic edge is not a boundary at all: the
+            // cell across the seam is an ordinary neighbour, so a depression
+            // that spills across the seam must be allowed to do so. Wrapping
+            // is applied BEFORE the bounds test, and only over the full grid
+            // (r0/c0 == 0 and r1/c1 == n_rows/n_cols), which is how every
+            // caller invokes this.
+            if (per_ns)
+            {
+                if      (nr < 0)      nr += (r1 - r0);
+                else if (nr >= r1)    nr -= (r1 - r0);
+            }
+            if (per_ew)
+            {
+                if      (nc < 0)      nc += (c1 - c0);
+                else if (nc >= c1)    nc -= (c1 - c0);
+            }
 
             if (nr < r0 || nr >= r1 || nc < c0 || nc >= c1) continue;
             if (idx(nr, nc) != k_open) continue;
@@ -325,7 +344,9 @@ static void seed_raster_boundary(
     lsdtt_array2d<int>&         idx,
     pf_heap&                    pq,
     int nrows, int ncols,
-    int r0, int r1)
+    int r0, int r1,
+    bool per_ns,
+    bool per_ew)
 {
     // The 8-neighbour scan below exists solely to find cells adjacent to an
     // INTERIOR nodata void, so that those voids also act as drainage exits.
@@ -354,8 +375,13 @@ static void seed_raster_boundary(
         {
             if (idx(r, c) == k_nodata) continue;
 
-            bool seed = (r == 0 || r == nrows - 1 ||
-                         c == 0 || c == ncols - 1);
+            // A PERIODIC edge is not a drainage exit. Seeding it would let
+            // water leave the grid through a boundary that is really joined to
+            // the far side, which both under-fills the depressions that should
+            // spill across the seam and leaves cells with no downhill
+            // neighbour once the router wraps.
+            bool seed = (!per_ns && (r == 0 || r == nrows - 1)) ||
+                        (!per_ew && (c == 0 || c == ncols - 1));
 
             if (!seed && has_interior_nodata)
             {
@@ -383,14 +409,18 @@ static void fill_serial(
     lsdtt_array2d<float>&        filled,
     lsdtt_array2d<int>&          idx,
     const lsdtt_raster_meta&     meta,
-    float                        min_slope)
+    float                        min_slope,
+    bool                         per_ns = false,
+    bool                         per_ew = false)
 {
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;
 
     pf_heap pq;
-    seed_raster_boundary(filled, idx, pq, nrows, ncols, 0, nrows);
-    priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols);
+    seed_raster_boundary(filled, idx, pq, nrows, ncols, 0, nrows,
+                         per_ns, per_ew);
+    priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols,
+                        per_ns, per_ew);
 }
 
 // -----------------------------------------------------------------------------
@@ -460,6 +490,65 @@ lsdtt_raster_cpu fill_pits(
         return fill_pits_reconstruction(raster, n_threads);
     }
     return fill_pits_priority_flood(raster, min_slope, n_threads);
+}
+
+// -----------------------------------------------------------------------------
+// fill_pits (periodic-aware overload)
+// -----------------------------------------------------------------------------
+
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    int                     n_threads)
+{
+    const std::string& bc = boundary_conditions;
+    auto is_p = [&](std::size_t i)
+    {
+        return bc.size() > i && (bc[i] == 'p' || bc[i] == 'P');
+    };
+
+    // NESW, the same order the router uses.
+    const bool per_ns = is_p(0);
+    const bool per_ew = is_p(1);
+
+    if (per_ns != is_p(2))
+        throw std::runtime_error(
+            "lsdtt::fill_pits: north and south periodic flags must match "
+            "(boundary_conditions '" + bc + "')");
+    if (per_ew != is_p(3))
+        throw std::runtime_error(
+            "lsdtt::fill_pits: east and west periodic flags must match "
+            "(boundary_conditions '" + bc + "')");
+
+    if (per_ns && per_ew)
+        throw std::runtime_error(
+            "lsdtt::fill_pits: boundary_conditions '" + bc + "' is periodic in "
+            "BOTH directions, so the grid has no drainage exit at all and every "
+            "cell would fill to the global maximum. Leave one pair open.");
+
+    // No periodic direction: nothing here differs from the plain overload, so
+    // defer to it and keep its reconstruction fast path.
+    if (!per_ns && !per_ew)
+        return fill_pits(raster, min_slope, n_threads);
+
+    // Periodic always takes the priority-flood backend. The reconstruction
+    // backend is a separate implementation with its own neighbour walk and has
+    // not been given the wrap, so routing through it would silently ignore the
+    // seam. Cost is the O(N log N) flood instead of O(N); correctness first.
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::fill_pits: invalid raster metadata");
+
+    fill_inputs inputs = make_fill_inputs(raster);
+    fill_serial(inputs.dem, inputs.idx, meta, min_slope, per_ns, per_ew);
+
+    return lsdtt_raster_cpu(
+        std::move(inputs.dem.get_vector()),
+        std::move(inputs.mask.get_vector()),
+        meta
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -966,7 +1055,8 @@ lsdtt_raster_cpu fill_pits_with_boundary(
         }
     }
 
-    priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols);
+    priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols,
+                        false, false);
 
     return lsdtt_raster_cpu(
         std::move(filled.get_vector()),

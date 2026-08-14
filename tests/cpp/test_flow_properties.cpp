@@ -43,6 +43,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -299,6 +300,131 @@ double seconds_since(std::chrono::steady_clock::time_point t0)
     return std::chrono::duration<double>(t1 - t0).count();
 }
 
+
+// =============================================================================
+// PP -- periodic-aware filling
+//
+// A periodic edge is not a boundary: the cell across the seam is an ordinary
+// neighbour. Filling with the edges treated as spill points and then ROUTING
+// with 'p' leaves cells that have no downhill neighbour once the router wraps,
+// and routing fails outright with "could not assign a receiver".
+//
+// The regression this guards is exactly that pairing, so the test does the
+// pairing: fill periodic, then route periodic, and require it to succeed. Just
+// checking that the fill returns something would pass in the broken state.
+// =============================================================================
+void test_periodic_fill()
+{
+    const int    nr = 40, nc = 60;
+    const double cell = 30.0;
+
+    // A surface with no imposed east-west trend and plenty of small closed
+    // depressions, so the fill has real work to do and the seam matters.
+    const lsdtt::lsdtt_raster_meta meta = make_meta(nr, nc, cell);
+
+    std::vector<float>   z(static_cast<std::size_t>(nr) * nc);
+    std::vector<uint8_t> m(z.size(), 1);
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> u(0.0, 1.0);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+            // Falls toward both the north and south edges (the open ones), with
+            // noise big enough to create closed depressions.
+            z[static_cast<std::size_t>(r) * nc + c] = static_cast<float>(
+                40.0 * std::abs(r - (nr - 1) / 2.0) / ((nr - 1) / 2.0)
+                + 6.0 * u(rng));
+
+    const lsdtt::lsdtt_raster_cpu dem(std::move(z), std::move(m), meta);
+
+    const lsdtt::lsdtt_raster_cpu open_filled =
+        lsdtt::fill_pits(dem, 0.0001f, 0);
+    const lsdtt::lsdtt_raster_cpu per_filled =
+        lsdtt::fill_pits(dem, 0.0001f, std::string("opop"), 0);
+
+    // -- PP1: the periodic fill differs from the open one -------------------
+    // Without this the option could be accepted and ignored, and every other
+    // check here would still pass.
+    {
+        const std::vector<float>& a = open_filled.get_data();
+        const std::vector<float>& b = per_filled.get_data();
+        std::int64_t n_diff = 0;
+        double max_diff = 0.0;
+        for (std::size_t i = 0; i < a.size(); ++i)
+        {
+            const double d = std::abs(static_cast<double>(a[i]) - b[i]);
+            if (d > 1e-6) ++n_diff;
+            max_diff = std::max(max_diff, d);
+        }
+        std::cout << "      [PP] periodic vs open fill: " << n_diff
+                  << " cells differ, max " << max_diff << " m\n";
+        check("PP1 periodic fill is not the same as the open fill",
+              n_diff > 0,
+              "identical, so boundary_conditions was ignored");
+    }
+
+    // -- PP2: the pairing that used to fail now works -----------------------
+    {
+        lsdtt::lsdtt_flowinfo_options fi;
+        fi.boundary_conditions = "opop";
+        bool routed = true;
+        std::string err;
+        try
+        {
+            lsdtt::lsdtt_flowinfo flow(per_filled.get_data_array(),
+                                       per_filled.get_mask_array(),
+                                       per_filled.get_meta(), fi);
+            (void)flow.accumulate();
+        }
+        catch (const std::exception& e) { routed = false; err = e.what(); }
+
+        check("PP2 a periodically filled surface routes under 'opop'",
+              routed, err);
+    }
+
+    // -- PP3: filling open and routing periodic is what breaks --------------
+    // Pins the CAUSE, so that if the periodic path is ever quietly dropped the
+    // suite says which pairing broke rather than just that something failed.
+    {
+        lsdtt::lsdtt_flowinfo_options fi;
+        fi.boundary_conditions = "opop";
+        bool routed = true;
+        try
+        {
+            lsdtt::lsdtt_flowinfo flow(open_filled.get_data_array(),
+                                       open_filled.get_mask_array(),
+                                       open_filled.get_meta(), fi);
+            (void)flow.accumulate();
+        }
+        catch (const std::exception&) { routed = false; }
+
+        std::cout << "      [PP] open fill routed under 'opop': "
+                  << (routed ? "yes" : "no (as expected)") << "\n";
+        check("PP3 the open fill is what fails under periodic routing",
+              !routed,
+              "the open fill routed fine, so this fixture no longer "
+              "demonstrates the defect and PP2 proves less than it claims");
+    }
+
+    // -- PP4: both axes periodic is refused ---------------------------------
+    // With no open edge there is no drainage exit and every cell would fill to
+    // the global maximum, which is a silently useless result.
+    {
+        bool threw = false;
+        try   { (void)lsdtt::fill_pits(dem, 0.0001f, std::string("pppp"), 0); }
+        catch (const std::exception&) { threw = true; }
+        check("PP4 periodic on both axes is refused", threw,
+              "accepted a grid with no drainage exit");
+    }
+
+    // -- PP5: mismatched pairs are refused ----------------------------------
+    {
+        bool threw = false;
+        try   { (void)lsdtt::fill_pits(dem, 0.0001f, std::string("opoo"), 0); }
+        catch (const std::exception&) { threw = true; }
+        check("PP5 mismatched east/west periodic flags are refused", threw,
+              "accepted 'opoo', where east is periodic and west is not");
+    }
+}
 
 // =============================================================================
 // P1 / P2 / P6 -- fill properties
@@ -988,6 +1114,8 @@ int main(int argc, char** argv)
 
     // Analytic oracle: independent of any fixture, so run it once.
     std::cout << "--- reconstruction backend: edge cases ---\n";
+    test_periodic_fill();
+
     test_reconstruction_edge_cases();
     std::cout << "\n";
 

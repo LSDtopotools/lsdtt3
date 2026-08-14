@@ -1408,7 +1408,7 @@ int main(int argc, char* argv[])
         std::cout << "Filling initial surface (min_slope=" << ff["fill_min_slope"] << ")...\n";
         try
         {
-            dem = lsdtt::fill_pits(dem, ff["fill_min_slope"], ifs["n_threads"]);
+            dem = lsdtt::fill_pits(dem, ff["fill_min_slope"], sf["boundary_conditions"], ifs["n_threads"]);
         }
         catch (const std::exception& e)
         {
@@ -1857,15 +1857,30 @@ int main(int argc, char* argv[])
                 divide_opts.use_d8_diagonals = bf["divide_use_d8_diagonals"];
                 divide_opts.n_threads = ifs["n_threads"];
 
+                // Measure the DELIVERED surface, which is the hillslope-solved
+                // one when a hillslope solve ran.
+                //
+                // This raster used to be built from ss_result.elevation, the
+                // FLUVIAL-only snap, while the _snap_convergence.csv in the same
+                // run reported the delivered surface -- so the two disagreed by
+                // orders of magnitude with nothing to say why. Measured on a
+                // 400x200 strip: the fluvial surface has a 116.7 m maximum
+                // divide step, the delivered surface 3.9 m. Removing the
+                // hillslope contribution is exactly what the raster must not do,
+                // since the whole point of the hillslope solve is to close those
+                // steps.
+                const lsdtt::lsdtt_raster_cpu& divide_surface =
+                    eq_hillslope_done ? eq_result.elevation : ss_result.elevation;
+
                 lsdtt::lsdtt_raster_cpu divide_step_raster;
                 try
                 {
                     lsdtt::lsdtt_flowinfo divide_flow(
-                        ss_result.elevation.get_data_array(),
-                        ss_result.elevation.get_mask_array(),
-                        ss_result.elevation.get_meta(), fi_opts);
+                        divide_surface.get_data_array(),
+                        divide_surface.get_mask_array(),
+                        divide_surface.get_meta(), fi_opts);
                     divide_step_raster = lsdtt::make_divide_step_raster(
-                        divide_flow, ss_result.elevation, divide_opts);
+                        divide_flow, divide_surface, divide_opts);
                 }
                 catch (const std::exception& e)
                 {
@@ -1940,7 +1955,8 @@ int main(int argc, char* argv[])
                 // Pit-fill before flow routing (mandatory on every cycle because
                 // the previous cycle's steady-state surface may have depressions).
                 try { cycle_dem = lsdtt::fill_pits(
-                        cycle_dem, ff["fill_min_slope"], ifs["n_threads"]); }
+                        cycle_dem, ff["fill_min_slope"],
+                        sf["boundary_conditions"], ifs["n_threads"]); }
                 catch (const std::exception& e)
                 {
                     std::cerr << "\nFATAL: pit filling failed (cycle " << cycle

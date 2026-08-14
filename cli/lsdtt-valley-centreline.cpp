@@ -662,7 +662,8 @@ int main(int argc, char* argv[])
 
     std::cout << "Filling DEM for flow routing...\n";
     lsdtt::lsdtt_raster_cpu routing_dem = lsdtt::fill_pits(
-        dem, ff["fill_min_slope_for_routing"], ifs["n_threads"]);
+        dem, ff["fill_min_slope_for_routing"],
+        sf["boundary_conditions"], ifs["n_threads"]);
 
     std::cout << "Building flow object...\n";
     lsdtt::lsdtt_flowinfo_options fi_opts;

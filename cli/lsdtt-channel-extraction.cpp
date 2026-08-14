@@ -546,9 +546,13 @@ int main(int argc, char* argv[])
 
         try
         {
+            // Pass the boundary conditions: a periodic edge must not be
+            // treated as a drainage exit by the fill, or the router that comes
+            // next will find cells with no downhill neighbour once it wraps.
             routed_dem = lsdtt::fill_pits(
                 dem,
                 ff["fill_min_slope"],
+                sf["boundary_conditions"],
                 ifs["n_threads"]
             );
         }

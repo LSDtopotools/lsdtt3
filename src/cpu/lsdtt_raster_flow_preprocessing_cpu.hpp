@@ -113,6 +113,35 @@ lsdtt_raster_cpu fill_pits(
 );
 
 // -----------------------------------------------------------------------------
+// fill_pits (periodic-aware overload)
+//
+// Same filling, but honouring a NESW boundary_conditions string so that a
+// PERIODIC edge is treated as what it is: not a boundary. Two things change on
+// a periodic axis --
+//
+//   1. its edges are NOT seeded as spill points, because water does not leave
+//      the grid there; and
+//   2. the neighbour walk WRAPS across the seam, so a depression that spills
+//      round the edge is filled to the level it actually spills at.
+//
+// Without this, filling with open edges and then routing with 'p' leaves cells
+// that have no downhill neighbour once the router wraps, and routing fails with
+// "could not assign a receiver".
+//
+// Periodic in BOTH directions is refused: the grid would then have no drainage
+// exit at all and every cell would fill to the global maximum.
+//
+// Always uses the priority-flood backend, even at min_slope <= 0: the
+// reconstruction fast path has its own neighbour walk and does not wrap.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    int                     n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
 // fill_pits_priority_flood
 //
 // The Barnes et al. (2014) Improved Priority-Flood backend, always, regardless

@@ -459,7 +459,8 @@ int main(int argc, char* argv[])
     if (!bf["raster_is_filled"]) {
         std::cout << "\n--- Flow Preprocessing ---\nFilling Pits...\n";
         routed_dem = lsdtt::fill_pits(
-            dem, ff["fill_min_slope"], ifs["n_threads"]);
+            dem, ff["fill_min_slope"],
+            sf["boundary_conditions"], ifs["n_threads"]);
     } else {
         std::cout << "\nRaster is marked as already filled. Skipping fill step.\n";
     }

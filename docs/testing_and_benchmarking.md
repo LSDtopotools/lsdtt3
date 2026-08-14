@@ -511,6 +511,72 @@ faithful port, not drift. The invariant that *does* hold, and which the property
 tests assert, is the bounded form: only pit/flat cells may rise, and never above
 the elevation of their lowest original neighbour.
 
+### 5.3b Pit filling is periodic-aware only through the boundary overload (2026-08-14)
+
+`fill_pits(raster, min_slope, n_threads)` treats **all four edges as spill
+points** and its neighbour walk does not wrap. That is right for open boundaries
+and wrong for periodic ones, and the failure is not subtle: fill with open
+edges, then route with `'p'`, and cells next to the seam have no downhill
+neighbour, so routing aborts with
+
+```
+lsdtt_flowinfo: could not assign a receiver at row 3, col 0.
+```
+
+There is now an overload that takes the NESW boundary string:
+
+```cpp
+lsdtt_raster_cpu fill_pits(const lsdtt_raster_cpu&, float min_slope,
+                           const std::string& boundary_conditions,
+                           int n_threads = 0);
+```
+
+Two things change on a periodic axis: its edges are **not seeded** as spill
+points, and the neighbour walk **wraps** across the seam so a depression that
+spills round the edge fills to the level it actually spills at. Measured on a
+40x60 noisy fixture, the periodic and open fills differ on **2182 cells, up to
+37.7 m**.
+
+Guard rails, all pinned by `unit_flow_properties` case PP:
+
+- periodic on **both** axes is refused -- the grid would have no drainage exit
+  at all and every cell would fill to the global maximum;
+- mismatched pairs (`'opoo'`) are refused, matching the router's own validation;
+- with no periodic flag the overload defers to the plain one, so it is
+  bit-identical and keeps the reconstruction fast path;
+- with a periodic flag it always takes the priority-flood backend, because the
+  reconstruction backend has its own neighbour walk and has **not** been given
+  the wrap.
+
+PP3 is the check worth knowing about: it asserts that the OPEN fill still fails
+under periodic routing. Without it, PP2 ("the periodic fill routes") could pass
+on a fixture where nothing was ever broken.
+
+#### The CLIs had the same latent bug
+
+21 CLIs call `fill_pits`, and every one that also exposes `boundary_conditions`
+was filling open and then routing with whatever the user asked for. Ten were
+wired to pass the boundary string through:
+
+`lsdtt-basin-extraction`, `lsdtt-basin-surface-metrics`,
+`lsdtt-channel-extraction`, `lsdtt-channel-network-analysis`,
+`lsdtt-chi-analysis`, `lsdtt-cross-sections`, `lsdtt-divide-migration`,
+`lsdtt-drainage-analysis`, `lsdtt-lem`, `lsdtt-valley-centreline`.
+
+The change is a no-op for every non-periodic run, which is why the whole suite
+is unchanged at 134/134. **Still unwired**, because their call sites did not
+match the mechanical pattern and each needs a look: `lsdtt-cosmo-landslides`,
+`lsdtt-cosmo-prediction`, `lsdtt-cosmo-tool`, `lsdtt-flat-surface-finder`,
+`lsdtt-hydraulic-routing`, `lsdtt-ridgeline-analysis`, `lsdtt-sediment-routing`,
+`lsdtt-stream-burning`. Those will still fail on a periodic run.
+`lsdtt-basin-stats`, `lsdtt-feature-finder` and `lsdtt-mountain-front` do not
+expose `boundary_conditions` at all, so they cannot route periodically anyway.
+
+`breach_depressions` was **not** made periodic-aware; its seeding helper is a
+separate path.
+
+---
+
 ### 5.4 lsdtt3's D8 router requires a gradient on flats
 
 Feeding lsdtt3 a `fill_min_slope: 0` DEM produces:
@@ -3174,6 +3240,64 @@ genuinely still moving a little between cycles. The consequence for anyone
 tempted by the obvious fix: deterministic D8 tie-breaking in the router would
 reduce the flip count and is worth doing on its own merits, but **it would not
 by itself drive the hillslope receiver-change fraction to zero**.
+
+### 8b.3b The snap cycle needs tens to hundreds of cycles, and does not approach smoothly (2026-08-14)
+
+`steady_state_n_cycles` defaults to 1, the equilibration smoke fixture pins 5,
+and the synthetic-network sweeps were first run at 8 and then 20. **Measured
+cycles to convergence on a 400x200 strip, gamma 0.5, length-weighted OCN:**
+
+| hillslope model | T = 0 | T = 0.5 | T = 1.0 |
+|---|---:|---:|---:|
+| linear | 68 | 28 | 30 |
+| Roering | 73 | 36 | 31 |
+| critical slope | never (500) | never (500) | never (500) |
+
+Three things follow.
+
+**Both elliptic models converge; critical slope does not, at any budget tried
+(8, 20, 500).** Its median divide step sits at exactly 14.06 m throughout, and
+29-50% of pixels change receiver on every cycle. Linear leads Roering slightly
+because max hillslope gradients here are ~0.05 against Sc = 0.8, so the
+nonlinear term is nearly inactive and Roering pays for Picard lagging it does
+not need.
+
+**The approach is NOT monotone.** On T = 0 linear, max|dz| per cycle runs 17.6
+(cycle 10), 18.4 (20), 29.1 (30), **45.9 (40)**, 14.6 (50), 6.7 (60), 13.9 (65),
+then **0.10 at cycle 66** and converged at 68. The excursion at cycle 40 is
+larger than the value at cycle 10, and the collapse happens inside one cycle.
+**A truncated run therefore lands somewhere on the wandering path, not near the
+answer, and its residual gives no indication of how far from the end it is.**
+Simon reports the same behaviour in lsdtopotools2, sometimes needing ~1000
+cycles to reach oscillating divides.
+
+Do not read "reached max_cycles" as "the landscape will not settle" without
+having given it hundreds of cycles. Two earlier reports in this project made
+exactly that error at 8 and at 20 cycles.
+
+**A more aligned network is harder to equilibrate.** T = 0 needs 68-73 cycles
+against 28-36 at T = 0.5-1.0, and it is the greedy case that produces the
+strongly axially aligned comb (R2 = 0.879 against ~0.32; see 8b.1b). Trunks that
+are near-parallel and nearly equal in elevation leave the divide between them
+weakly constrained, so the set of flipping pixels empties slowly. The same
+comparison at fixed settings across the ENERGY change: the unweighted OCNet
+network converges at cycle 17, the length-weighted one at 68 -- so the
+better-oriented default costs roughly 4x in equilibration cycles.
+
+#### Why it wanders: the cycle is a closed feedback
+
+`lsdtt_landscape_equilibration_cpu.cpp:820-1226`. Each cycle fills last cycle's
+**delivered** surface (hillslopes included), re-routes it, **recomputes drainage
+area**, **re-snaps channel elevations** by chi integration on those areas,
+rebuilds the Dirichlet channel set with hysteresis, solves hillslopes against
+the new channel elevations, and then sets `cycle_dem = delivered` (`:1226`).
+
+That last assignment is what closes the loop -- were it `snap.elevation`,
+hillslopes could never move a divide. So one pixel flip perturbs downstream
+area, which shifts channel elevation, which moves the hillslope solution and can
+flip further pixels. The wandering is that feedback, not solver noise.
+
+---
 
 ### 8b.4 What the hillslope solve buys: the divide step
 

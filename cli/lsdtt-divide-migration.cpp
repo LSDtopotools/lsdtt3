@@ -695,7 +695,7 @@ int main(int argc, char* argv[])
     {
         try
         {
-            routed_dem = lsdtt::fill_pits(dem, ff.at("fill_min_slope"), ifs.at("n_threads"));
+            routed_dem = lsdtt::fill_pits(dem, ff.at("fill_min_slope"), sf.at("boundary_conditions"), ifs.at("n_threads"));
         }
         catch (const std::exception& e)
         {

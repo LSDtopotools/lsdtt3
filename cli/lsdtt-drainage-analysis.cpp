@@ -869,6 +869,7 @@ int main(int argc, char* argv[])
             routed_dem = lsdtt::fill_pits(
                 dem,
                 ff["fill_min_slope"],
+                sf["boundary_conditions"],
                 ifs["n_threads"]
             );
         }
