@@ -303,6 +303,24 @@ int main(int argc, char* argv[])
         "Flow routing output", "param", "write_flow_lines"};
 
     // --- Output --- flow direction raster
+    bool_default_map["write_drainage_area_raster"] = false;
+    help_map["write_drainage_area_raster"] = {"bool","false",
+        "Write the D8 drainage-area raster.",
+        "Contributing area at every pixel, from the same flow routing used for "
+        "channel extraction. Pair it with "
+        "write_distance_to_farthest_ridge_raster for the length-area (Hack) "
+        "scaling, or use it to weight channel lines by discharge. "
+        "Output: <write_fname>_drainage_area.",
+        "Flow routing output", "switch", ""};
+
+    bool_default_map["write_distance_to_farthest_ridge_raster"] = false;
+    help_map["write_distance_to_farthest_ridge_raster"] = {"bool","false",
+        "Write the D8 flow-path length from the farthest upslope headwater to each pixel.",
+        "This is the L of Hack's law (L ~ A^h); pair it with the drainage-area "
+        "raster to get the length-area scaling of the network. Headwater pixels "
+        "are 0. Output: <write_fname>_distance_to_farthest_ridge.",
+        "Flow routing output", "switch", ""};
+
     bool_default_map["write_arcmap_d8_flowdirection_raster"] = false;
     help_map["write_arcmap_d8_flowdirection_raster"] = {"bool","false",
         "Write a D8 flow-direction raster using ArcMap conventions.",
@@ -600,6 +618,55 @@ int main(int argc, char* argv[])
         {
             std::cerr << "FATAL: writing ArcMap D8 flow-direction raster failed: "
                       << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (bf["write_drainage_area_raster"])
+    {
+        const std::string area_file =
+            pp.make_output_path("_drainage_area",
+                                raster_ext(flow_direction_output_format));
+
+        std::cout << "\n--- Writing drainage-area raster ---\n";
+        std::cout << "Writing: " << area_file << "\n";
+
+        try
+        {
+            lsdtt::lsdtt_raster_result a = flow->get_drainage_area_raster();
+            loader.write_full(a, area_file, flow_direction_output_format);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing drainage-area raster failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // Longest upslope flow-path length to each pixel. This is the L of Hack's
+    // law (L ~ A^h): paired with the drainage-area raster it gives the
+    // length-area scaling of the network, which is a shape statistic
+    // independent of the branching-ratio statistics.
+    if (bf["write_distance_to_farthest_ridge_raster"])
+    {
+        const std::string ridge_file =
+            pp.make_output_path("_distance_to_farthest_ridge",
+                                raster_ext(flow_direction_output_format));
+
+        std::cout << "\n--- Writing distance-to-farthest-ridge raster ---\n";
+        std::cout << "Writing: " << ridge_file << "\n";
+
+        try
+        {
+            lsdtt::lsdtt_raster_result d =
+                flow->get_distance_to_farthest_ridge_raster();
+            loader.write_full(d, ridge_file, flow_direction_output_format);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing distance-to-farthest-ridge raster "
+                         "failed: " << e.what() << "\n";
             return 1;
         }
     }
