@@ -124,11 +124,33 @@ enum class StepChangeTag : int
     hillslope_old  = 2,
     fluvial_new    = 3,
     hillslope_new  = 4,
-    // Fluvial pixel inside a rarefaction fan: partially adjusted, eroding at a
-    // rate strictly between U_old and U_new. Only occurs when the transition
-    // stretches rather than steepening (see the header discussion).
-    fluvial_fan    = 5,
-    hillslope_fan  = 6
+    // Fluvial pixel inside the stretched transition: partially adjusted,
+    // eroding at a rate strictly between U_old and U_new.
+    //
+    // NAMING: mathematically this zone is a rarefaction fan -- the spreading
+    // solution of the kinematic wave, as opposed to the shock. It is NOT an
+    // alluvial fan, and nothing here is depositional, so the tags are named for
+    // the transient state rather than for the mathematics. "Fan" survives only
+    // where it labels the mathematical object itself, notably chi_fan_lower /
+    // chi_fan_upper, which are the edges of the fan in chi.
+    //
+    // WHEN THESE EXIST: only when n != 1, and then only for one direction of
+    // uplift change. Celerity goes as ksn^(n-1), so:
+    //   n == 1  -> celerity is independent of ksn, every part of the wave
+    //              travels at the same speed, the transition translates without
+    //              distorting and stays sharp. is_shock is forced true and
+    //              NO pixel ever carries a transient tag.
+    //   n  > 1  -> steeper travels faster. Rising uplift steepens into a shock;
+    //              only a FALLING step stretches.
+    //   n  < 1  -> steeper travels slower. A RISING step stretches.
+    // See the celerity comparison in make_step_change_rasters; the code decides
+    // on c_new < c_old rather than on n and the sign of dU separately, so both
+    // directions fall out without a special case.
+    fluvial_transient   = 5,
+    // Hillslope draining to a fluvial_transient channel. This is inherited, not
+    // solved: see hillslope_tag_for and the gradient_scale switch for what that
+    // inheritance does and does not represent.
+    hillslope_transient = 6
 };
 
 // -----------------------------------------------------------------------------

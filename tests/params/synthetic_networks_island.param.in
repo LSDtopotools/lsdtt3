@@ -1,0 +1,25 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ocnisl
+
+n_rows: 40
+n_cols: 40
+cell_size: 100.0
+
+domain_type: noise_island
+outlet_mode: auto
+island_fill_fraction: 0.6
+noise_blur_passes: 6
+
+energy_exponent_gamma: 0.5
+n_iter: 20000
+temperature_scale: 0.0
+random_seed: 5
+
+steady_state_mode: relief
+target_relief: 1000.0
+
+write_dem_raster: true
+write_drainage_area_raster: true
+verify_routing: true
+write_output_format: gtiff

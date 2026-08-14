@@ -1,0 +1,17 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ocnbad_gamma
+
+n_rows: 16
+n_cols: 16
+cell_size: 100.0
+
+domain_type: rectangle
+outlet_mode: single
+
+energy_exponent_gamma: 1.0
+n_iter: 200
+temperature_scale: 0.0
+random_seed: 1
+
+write_output_format: gtiff

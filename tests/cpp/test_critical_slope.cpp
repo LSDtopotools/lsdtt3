@@ -5,14 +5,18 @@
 // Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "lsdtt_critical_slope_cpu.hpp"
+#include "lsdtt_divide_diagnostics_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 
@@ -273,6 +277,187 @@ void test_predicted_divide_step_reports_asymmetric_hillslope_lengths()
           "got=" + std::to_string(out.predicted_divide_step_m));
 }
 
+// -----------------------------------------------------------------------------
+// The divide set must shrink monotonically as the merge horizon K grows: if two
+// flow paths have not met within K steps they cannot have met within K-1. So
+// pairs(K+1) is a subset of pairs(K), and predicted_divide_step_m -- a max over
+// that set -- is non-increasing in K.
+//
+// This is a general invariant, not the anc_K regression guard -- anc_K happens
+// to satisfy subset monotonicity too. The discriminating case is
+// test_pair_merging_at_unequal_distances_is_not_a_divide below.
+// -----------------------------------------------------------------------------
+void test_divide_set_shrinks_monotonically_with_merge_horizon()
+{
+    const int n = 60;
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n;
+    meta.n_cols = n;
+    meta.cell_size = 10.0;
+    meta.no_data_value = -9999.0;
+    meta.set_default_synthetic_georeference();
+
+    // A valley plunging down-row: flanks drain diagonally onto the axis, so
+    // neighbouring paths merge after a varying number of steps -- the case that
+    // separates the path-set test from anc_K equality. The down-row drop (5 m)
+    // exceeds the noise range (0.4 m), so every cell has a lower neighbour and
+    // the surface needs no sink filling.
+    std::vector<float> data(static_cast<std::size_t>(n) * n);
+    std::vector<std::uint8_t> mask(static_cast<std::size_t>(n) * n, 1);
+    std::uint32_t seed = 20260813u;
+    const auto rnd = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<double>((seed >> 8) & 0xFFFFu) / 65535.0;
+    };
+    for (int r = 0; r < n; ++r)
+    {
+        for (int c = 0; c < n; ++c)
+        {
+            const double axis = std::abs(c - n / 2.0);
+            data[static_cast<std::size_t>(r) * n + c] =
+                static_cast<float>(400.0 - 5.0 * r + 3.0 * axis
+                                   + 0.4 * (rnd() - 0.5));
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu dem(std::move(data), std::move(mask), meta);
+    const lsdtt::lsdtt_flowinfo flow = make_flow(dem);
+
+    const auto key_of = [](const lsdtt::lsdtt_divide_pair& p) {
+        return std::make_pair(p.flat_a, p.flat_b);
+    };
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> previous;
+    double previous_step = std::numeric_limits<double>::infinity();
+    bool subset_ok = true, step_ok = true, responds = false;
+    std::size_t first_count = 0, last_count = 0;
+
+    for (int k = 1; k <= 6; ++k)
+    {
+        lsdtt::lsdtt_divide_diagnostic_options div_opts;
+        div_opts.divide_merge_search_steps = k;
+        div_opts.use_d8_diagonals = true;
+
+        const std::vector<lsdtt::lsdtt_divide_pair> pairs =
+            lsdtt::compute_divide_pairs(flow, dem, div_opts);
+
+        std::vector<std::pair<std::int64_t, std::int64_t>> current;
+        current.reserve(pairs.size());
+        for (const auto& p : pairs) current.push_back(key_of(p));
+        std::sort(current.begin(), current.end());
+
+        if (k == 1) first_count = current.size();
+        last_count = current.size();
+
+        if (k > 1)
+        {
+            for (const auto& c : current)
+            {
+                if (!std::binary_search(previous.begin(), previous.end(), c))
+                {
+                    subset_ok = false;
+                    break;
+                }
+            }
+            if (current.size() < previous.size()) responds = true;
+        }
+
+        lsdtt::lsdtt_critical_slope_options opts;
+        opts.mode = lsdtt::critical_slope_mode::fixed_gradient;
+        opts.S_c = 0.6;
+        opts.channel_threshold_pixels = 40;
+        opts.divide_merge_search_steps = k;
+        opts.use_d8_diagonals = true;
+
+        const lsdtt::lsdtt_critical_slope_result out =
+            lsdtt::impose_critical_slope_hillslopes(flow, dem, opts);
+
+        if (out.predicted_divide_step_m > previous_step + 1e-9) step_ok = false;
+        previous_step = out.predicted_divide_step_m;
+
+        previous.swap(current);
+    }
+
+    std::cout << "  divide pairs K=1 " << first_count
+              << " -> K=6 " << last_count << "\n";
+
+    check("divide pairs at K+1 are a subset of those at K", subset_ok);
+    check("the merge horizon actually removes pairs", responds,
+          "K=1 " + std::to_string(first_count)
+          + " K=6 " + std::to_string(last_count));
+    check("predicted divide step is non-increasing in K", step_ok);
+}
+
+// -----------------------------------------------------------------------------
+// The anc_K regression guard.
+//
+// Two adjacent cells A=(1,1) and B=(1,0) both deliver to the junction J=(2,1),
+// but at different distances: A reaches it in one step, B in two (via X=(2,0)).
+//
+//     A -> J          P_2[A] = { A, J, (3,1) }
+//     B -> X -> J     P_2[B] = { B, X, J    }
+//
+// Their paths share J, so at K = 2 they are NOT a divide pair. The old test
+// anc_K[a] != anc_K[b] gets this wrong: anc_2[A] = (3,1) while anc_2[B] = J, so
+// it reports a divide long after the paths have met. Merged paths share a node
+// sequence but not a step index -- which is why the terminal-node label can
+// never be the merge test for K >= 2.
+// -----------------------------------------------------------------------------
+void test_pair_merging_at_unequal_distances_is_not_a_divide()
+{
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = 4;
+    meta.n_cols = 3;
+    meta.cell_size = 10.0;
+    meta.no_data_value = -9999.0;
+    meta.set_default_synthetic_georeference();
+
+    std::vector<float> data = {
+        100.0f, 100.0f, 100.0f,
+         90.0f,  80.0f, 100.0f,   // B=(1,0)  A=(1,1)
+         60.0f,  52.0f, 100.0f,   // X=(2,0)  J=(2,1)
+        100.0f,  50.0f, 100.0f
+    };
+    std::vector<std::uint8_t> mask(12, 1);
+    const lsdtt::lsdtt_raster_cpu dem(std::move(data), std::move(mask), meta);
+    const lsdtt::lsdtt_flowinfo flow = make_flow(dem);
+
+    const std::int64_t A = flow.flat_index_unchecked(1, 1);
+    const std::int64_t B = flow.flat_index_unchecked(1, 0);
+    const std::int64_t X = flow.flat_index_unchecked(2, 0);
+    const std::int64_t J = flow.flat_index_unchecked(2, 1);
+
+    check("fixture routes A directly to the junction",
+          flow.receiver_of_unchecked(A) == J);
+    check("fixture routes B to the junction via X",
+          flow.receiver_of_unchecked(B) == X
+          && flow.receiver_of_unchecked(X) == J);
+
+    const auto pair_present = [&](int k) {
+        lsdtt::lsdtt_divide_diagnostic_options o;
+        o.divide_merge_search_steps = k;
+        o.use_d8_diagonals = true;
+        for (const auto& p : lsdtt::compute_divide_pairs(flow, dem, o))
+        {
+            if ((p.flat_a == A && p.flat_b == B)
+                || (p.flat_a == B && p.flat_b == A))
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // K = 1: the paths have genuinely not met yet, so this IS a divide pair.
+    check("unmerged at K=1 is still a divide pair", pair_present(1));
+
+    // K >= 2: the paths share J. anc_K reports a divide here; the path-set
+    // test must not.
+    check("pair that merges at unequal distances is not a divide at K=2",
+          !pair_present(2));
+    check("and stays merged at K=3", !pair_present(3));
+    check("and stays merged at K=5", !pair_present(5));
+}
+
 } // namespace
 
 int main()
@@ -287,6 +472,8 @@ int main()
     test_low_concavity_limit_matches_fixed_gradient();
     test_match_hillslope_ksn_to_channel();
     test_predicted_divide_step_reports_asymmetric_hillslope_lengths();
+    test_divide_set_shrinks_monotonically_with_merge_horizon();
+    test_pair_merging_at_unequal_distances_is_not_a_divide();
 
     std::cout << "\nChecks: " << g_n_checks
               << "  Failed: " << g_n_failed << "\n";

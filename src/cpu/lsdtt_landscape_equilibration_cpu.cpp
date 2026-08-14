@@ -46,7 +46,17 @@ double tolerance_multiplier_for_cycle(double schedule, int cycle, int max_cycles
     return std::pow(schedule, std::max(0.0, frac_remaining));
 }
 
-double estimate_mean_hillslope_length_m(
+// Flow-path distance to the nearest channel, summarised. The mean is the
+// obvious summary; the p90 is the one the gradient prediction needs, because
+// the solver is pushed hardest by the LONGEST hillslopes, not the average one.
+// Both come from the same distance sweep, so the percentile is nearly free.
+struct hillslope_length_stats
+{
+    double mean_m = 0.0;
+    double p90_m = 0.0;
+};
+
+hillslope_length_stats estimate_hillslope_length_stats(
     const lsdtt_flowinfo& flow,
     const std::vector<std::uint8_t>& is_channel)
 {
@@ -60,6 +70,7 @@ double estimate_mean_hillslope_length_m(
 
     double sum = 0.0;
     std::int64_t count = 0;
+    std::vector<double> sampled;
 
     for (std::int64_t flat = 0; flat < static_cast<std::int64_t>(n); ++flat)
     {
@@ -70,6 +81,7 @@ double estimate_mean_hillslope_length_m(
         if (dist_to_channel[s0] >= 0.0)
         {
             sum += dist_to_channel[s0];
+            sampled.push_back(dist_to_channel[s0]);
             ++count;
             continue;
         }
@@ -125,11 +137,67 @@ double estimate_mean_hillslope_length_m(
         if (dist_to_channel[s0] >= 0.0)
         {
             sum += dist_to_channel[s0];
+            sampled.push_back(dist_to_channel[s0]);
             ++count;
         }
     }
 
-    return (count > 0) ? (sum / static_cast<double>(count)) : 0.0;
+    hillslope_length_stats stats;
+    if (count > 0)
+    {
+        stats.mean_m = sum / static_cast<double>(count);
+
+        // Nearest-rank p90, matching the convention used by the divide-step
+        // percentiles in lsdtt_divide_diagnostics_cpu.
+        std::sort(sampled.begin(), sampled.end());
+        const std::size_t idx = std::min(
+            sampled.size() - 1,
+            static_cast<std::size_t>(0.9 * static_cast<double>(sampled.size())));
+        stats.p90_m = sampled[idx];
+    }
+    return stats;
+}
+
+// Steady-state relief of a 1-D hillslope of length L under the nonlinear
+// (Roering) transport law, obtained by integrating the closed-form gradient.
+// With flux q(x) = U*x measured from the divide and q = D*S/(1-(S/Sc)^2),
+//
+//     S(x) = Sc^2 * ( sqrt(1 + (2*a*x/Sc)^2) - 1 ) / (2*a*x),   a = U/D
+//
+// and the relief is the integral of S over [0, L]. As a -> 0 this tends to
+// S = a*x and the relief to U*L^2/(2D), i.e. it reduces to the linear answer,
+// which is the check the unit test makes. Integrated numerically (composite
+// trapezium, 4096 intervals) rather than by the analytic antiderivative: this
+// runs once per equilibration, and the numerical form is far easier to read
+// and to verify against the linear limit.
+double predict_roering_hillslope_relief(double U, double D, double Sc, double L)
+{
+    if (!std::isfinite(U) || !std::isfinite(D) || !std::isfinite(Sc)
+        || !std::isfinite(L) || U <= 0.0 || D <= 0.0 || Sc <= 0.0 || L <= 0.0)
+    {
+        return 0.0;
+    }
+
+    const double a = U / D;
+    constexpr int    n_steps = 4096;
+    const double     h = L / static_cast<double>(n_steps);
+
+    const auto gradient_at = [&](double x)
+    {
+        if (x <= 0.0)
+            return 0.0;
+        const double t = 2.0 * a * x / Sc;
+        // Sc^2 * (sqrt(1 + t^2) - 1) / (2*a*x). Written this way to stay
+        // accurate when t is small, where sqrt(1+t^2)-1 cancels badly.
+        const double num = t * t / (std::sqrt(1.0 + t * t) + 1.0);
+        return Sc * Sc * num / (2.0 * a * x);
+    };
+
+    double relief = 0.5 * (gradient_at(0.0) + gradient_at(L));
+    for (int i = 1; i < n_steps; ++i)
+        relief += gradient_at(static_cast<double>(i) * h);
+
+    return relief * h;
 }
 
 double predict_max_hillslope_gradient(double U, double D, double Sc, double length_m)
@@ -562,8 +630,17 @@ lsdtt_equilibration_result equilibrate_landscape(
     // exactly. seen_graphs indexes previously visited flow graphs by an FNV-1a
     // hash of the receiver array, keeping the array itself so that a suspected
     // repeat is confirmed by memcmp rather than trusted on the hash.
+    // channel_history[c] and hillslope_ran_history[c] are the channel mask and
+    // the solve flag of cycle c, index 0 being an unused placeholder that keeps
+    // them aligned with surface_history. The best-of-orbit replay needs both:
+    // the channel mask carries hysteresis from the preceding cycle and the
+    // preceding delivered surface is the warm start, so a replay that dropped
+    // them re-ran the cycle under DIFFERENT inputs and handed back a surface
+    // that was not the orbit member whose divide step was reported.
     std::vector<lsdtt_raster_cpu> surface_history;
     surface_history.push_back(initial_dem);
+    std::vector<std::vector<std::uint8_t>> channel_history(1);
+    std::vector<std::uint8_t> hillslope_ran_history(1, 0);
     std::map<std::uint64_t, lsdtt_seen_graph> seen_graphs;
     int last_executed_cycle = 0;
 
@@ -660,6 +737,15 @@ lsdtt_equilibration_result equilibrate_landscape(
             cs_opts.mode = critical_slope_mode::fixed_gradient;
             cs_opts.S_c = static_cast<double>(opts.hillslope.Sc);
             cs_opts.is_channel_override = is_channel;
+
+            // The cycle measures the divide step itself, on the delivered
+            // surface, through compute_divide_step_stats and with its own
+            // use_d8_diagonals setting. impose_critical_slope_hillslopes'
+            // predicted_divide_step_m would be computed over a different pair
+            // population (use_d8_diagonals defaults false there, true in
+            // lsdtt_divide_diagnostic_options) and is discarded here, so the
+            // path-set build it costs on every cycle is pure waste.
+            cs_opts.compute_predicted_divide_step = false;
 
             const lsdtt_critical_slope_result cs_result =
                 impose_critical_slope_hillslopes(flow, fluvial_surface, cs_opts);
@@ -766,20 +852,61 @@ lsdtt_equilibration_result equilibrate_landscape(
 
         if (!preflight_done && opts.run_hillslope)
         {
-            result.mean_hillslope_length_m =
-                estimate_mean_hillslope_length_m(flow, is_channel);
+            const hillslope_length_stats lh_stats =
+                estimate_hillslope_length_stats(flow, is_channel);
+            result.mean_hillslope_length_m = lh_stats.mean_m;
+            result.p90_hillslope_length_m  = lh_stats.p90_m;
 
             const double U = static_cast<double>(opts.hillslope.U);
             const double D = static_cast<double>(opts.hillslope.D);
             const double Sc = static_cast<double>(opts.hillslope.Sc);
             const double Lh = result.mean_hillslope_length_m;
+            const double Lh90 = result.p90_hillslope_length_m;
+
+            std::string preflight_model = opts.hillslope_model;
+            for (char& c : preflight_model)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
             if (U > 0.0 && D > 0.0 && Lh > 0.0)
             {
-                result.predicted_hillslope_relief_m =
+                result.predicted_hillslope_relief_linear_m =
                     U * Lh * Lh / (2.0 * D);
             }
+
+            // Model-aware relief. The linear form badly under-predicts what
+            // critical-slope path integration imposes (Sc*L, an order of
+            // magnitude more on a typical fixture), which is where using it for
+            // every model made the relief_ratio warning quietest in exactly the
+            // case that needs it loudest. For Roering it errs the other way --
+            // the nonlinear law is the more efficient transporter, so its
+            // relief is strictly SMALLER than linear and saturates at Sc*L.
+            // Either way the right thing to report is the relief of the model
+            // that was actually asked for.
+            if (preflight_model == "roering")
+            {
+                result.predicted_hillslope_relief_m =
+                    predict_roering_hillslope_relief(U, D, Sc, Lh);
+            }
+            else if (preflight_model == "critical_slope"
+                     || preflight_model == "critical-slope")
+            {
+                // Path integration imposes exactly Sc per unit flow distance.
+                result.predicted_hillslope_relief_m =
+                    (Sc > 0.0 && Lh > 0.0) ? (Sc * Lh) : 0.0;
+            }
+            else
+            {
+                result.predicted_hillslope_relief_m =
+                    result.predicted_hillslope_relief_linear_m;
+            }
+
+            // Evaluated at the p90 length: the gradient that pushes the
+            // nonlinear solver towards Sc lives on the longest hillslopes, and
+            // the mean-length value systematically under-fires the warning.
+            // Both are reported so the size of that bias is visible.
             result.predicted_max_hillslope_gradient =
+                predict_max_hillslope_gradient(U, D, Sc, Lh90 > 0.0 ? Lh90 : Lh);
+            result.predicted_max_hillslope_gradient_at_mean_length =
                 predict_max_hillslope_gradient(U, D, Sc, Lh);
 
             std::ostringstream pf;
@@ -792,10 +919,18 @@ lsdtt_equilibration_result equilibrate_landscape(
 
             pf << " Pre-flight: mean_hillslope_length_m="
                << result.mean_hillslope_length_m
+               << ", p90_hillslope_length_m="
+               << result.p90_hillslope_length_m
                << ", predicted_hillslope_relief_m="
                << result.predicted_hillslope_relief_m
+               << " (model '" << preflight_model
+               << "'; linear-diffusion reference "
+               << result.predicted_hillslope_relief_linear_m << " m)"
                << ", predicted_max_hillslope_gradient="
                << result.predicted_max_hillslope_gradient
+               << " (at the p90 hillslope length; at the mean length it would"
+                  " be "
+               << result.predicted_max_hillslope_gradient_at_mean_length << ")"
                << ", channel_threshold_area(specific)="
                << resolved_threshold_specific
                << ", channel_threshold_area(map)="
@@ -966,6 +1101,8 @@ lsdtt_equilibration_result equilibrate_landscape(
         result.delivered_cycle = cycle;
         result.is_channel = is_channel;
         surface_history.push_back(delivered);
+        channel_history.push_back(is_channel);
+        hillslope_ran_history.push_back(hs.ran ? 1u : 0u);
         last_executed_cycle = cycle;
 
         bool stop_now = false;
@@ -1142,22 +1279,42 @@ lsdtt_equilibration_result equilibrate_landscape(
                 lsdtt_fluvial_steady_state_result replay_snap =
                     compute_d8_fluvial_steady_state(replay_flow, fluvial_opts);
 
+                // Reproduce cycle best_cycle exactly: same hysteresis input to
+                // the channel mask and same warm start as the loop used. With
+                // either dropped the replay is a DIFFERENT cycle and the
+                // elevation handed back does not match the divide step_p90
+                // reported for the chosen orbit member.
+                const std::size_t prev_idx =
+                    static_cast<std::size_t>(best_cycle) - 1;
+                const std::vector<std::uint8_t>* replay_prev_channel =
+                    (best_cycle >= 2 && prev_idx < channel_history.size()
+                     && !channel_history[prev_idx].empty())
+                        ? &channel_history[prev_idx]
+                        : nullptr;
+
                 result.final_snap = replay_snap;
                 result.fluvial_only = replay_snap.elevation;
                 result.drainage_area = std::move(replay_area);
                 result.elevation = replay_snap.elevation;
                 result.is_channel = make_is_channel(
-                    result.elevation, result.drainage_area, nullptr);
+                    result.elevation, result.drainage_area, replay_prev_channel);
 
                 if (opts.run_hillslope && opts.hillslope_every_cycle)
                 {
+                    const lsdtt_raster_cpu* replay_warm_start =
+                        (best_cycle >= 2
+                         && prev_idx < hillslope_ran_history.size()
+                         && hillslope_ran_history[prev_idx] != 0)
+                            ? &surface_history[prev_idx]
+                            : nullptr;
+
                     lsdtt_raster_cpu replay_delivered = result.elevation;
                     const hillslope_outcome replay_hs = run_hillslope_solve(
                         replay_flow,
                         best_cycle,
                         result.fluvial_only,
                         result.is_channel,
-                        nullptr,
+                        replay_warm_start,
                         replay_delivered);
                     if (replay_hs.ran)
                         result.elevation = replay_delivered;

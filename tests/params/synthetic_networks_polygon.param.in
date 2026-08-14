@@ -1,0 +1,23 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ocnpoly
+
+cell_size: 250.0
+
+domain_type: polygon
+polygon_sizing: true_area
+polygon_file: ocn_square_polygon.fgb
+outlet_mode: auto
+
+energy_exponent_gamma: 0.5
+n_iter: 5000
+temperature_scale: 0.0
+random_seed: 3
+
+steady_state_mode: relief
+target_relief: 500.0
+
+write_dem_raster: true
+write_drainage_area_raster: true
+verify_routing: true
+write_output_format: gtiff

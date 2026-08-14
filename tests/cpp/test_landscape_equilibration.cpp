@@ -1058,6 +1058,509 @@ void test_elliptic_stabilisation_hypothesis(const std::string& model)
           + " period=" + std::to_string(s3_result.limit_cycle_period));
 }
 
+
+// ---------------------------------------------------------------------------
+// S4/S5: the critical-slope half of the plan section 3.3.3b claim.
+//
+// The claim: critical-slope hillslopes may limit-cycle, where an elliptic
+// steady-state solve stabilises, because critical slope is path integration
+// (z_i = z_receiver + Sc*L_i) on a piecewise-constant non-variational map with
+// no Lyapunov functional, while the elliptic problem with the channel set as a
+// fixed Dirichlet set has a UNIQUE solution whose divide is an output.
+//
+// MEASURED on the same 48x49 noisy-cone fixture S1-S3 use (D=0.3, Sc=0.8,
+// tol 1e-4, sor_omega 1.3, 'nnnn' edges):
+//
+//   model           cycles  fixed point?  hillslope churn        delivered p90
+//   linear               5  period 1 @ 5  0.773 -> 0.022 -> 0.0        2.011 m
+//   roering              5  period 1 @ 5  0.774 -> 0.029 -> 0.0        1.936 m
+//   critical_slope      20  NONE          stays 0.23-0.36            261.5 m
+//
+// So the mechanism claim is strongly supported: the elliptic route settles onto
+// an exact fixed point in 5 cycles while critical slope never stops moving.
+//
+// BUT S4 AS LITERALLY WRITTEN IS NOT MET ON THIS FIXTURE. S4 asks that the run
+// "records limit_cycle_detected"; on this fixture the critical-slope iteration
+// does not close a short orbit within 20 cycles (nor within 120 -- checked),
+// so the detector records nothing and the run ends with the generic
+// "Reached max_cycles" message that section 3.3.3a set out to replace. That is
+// a real coverage gap in the detector, not a pass, and it is asserted and
+// printed as NOT MET here rather than glossed. A period > 1 orbit IS reachable
+// on the critical-slope path at smaller Sc -- see
+// test_critical_slope_orbit_period_greater_than_one.
+// ---------------------------------------------------------------------------
+lsdtt::lsdtt_equilibration_result run_hypothesis_fixture(
+    const lsdtt::lsdtt_raster_cpu& snapped,
+    const std::string& model,
+    double Sc,
+    int max_cycles)
+{
+    lsdtt::lsdtt_equilibration_options o = hillslope_fixture_options(max_cycles);
+    o.run_hillslope = true;
+    o.hillslope_model = model;
+    o.hillslope.Sc = static_cast<float>(Sc);
+
+    // Only an exactly reproduced state may stop the run, so the cycle count is
+    // a measurement of when the iteration stops moving rather than of a
+    // tolerance choice.
+    o.convergence.check_convergence = true;
+    o.convergence.tolerance_dz_m = 1e-12;
+    o.convergence.tolerance_dz_over_relief = 0.0;
+    o.convergence.tolerance_receiver_fraction = 1e-12;
+    o.convergence.patience_cycles = 2;
+
+    return lsdtt::equilibrate_landscape(snapped, o);
+}
+
+// step_p90_m of the surface the run actually handed back. For an orbit that is
+// the best-of-orbit member, not the cycle the loop stopped on, so it must be
+// read from the record of delivered_cycle.
+double delivered_step_p90(const lsdtt::lsdtt_equilibration_result& r)
+{
+    for (const lsdtt::lsdtt_snap_cycle_record& c : r.cycles)
+    {
+        if (c.cycle == r.delivered_cycle)
+            return c.divide.step_p90_m;
+    }
+    return -1.0;
+}
+
+void test_s4_s5_critical_slope_versus_elliptic()
+{
+    const lsdtt::lsdtt_raster_cpu dem =
+        make_noisy_cone_dem(48, 49, 30.0, 20.0, 2);
+    lsdtt::lsdtt_equilibration_options pre = hillslope_fixture_options(4);
+    const lsdtt::lsdtt_raster_cpu snapped =
+        lsdtt::equilibrate_landscape(dem, pre).elevation;
+
+    const lsdtt::lsdtt_equilibration_result r_crit =
+        run_hypothesis_fixture(snapped, "critical_slope", 0.8, 20);
+    const lsdtt::lsdtt_equilibration_result r_lin =
+        run_hypothesis_fixture(snapped, "linear", 0.8, 20);
+    const lsdtt::lsdtt_equilibration_result r_roe =
+        run_hypothesis_fixture(snapped, "roering", 0.8, 20);
+
+    // Sc = 0.8 over a ~233 m mean hillslope length imposes ~186 m of hillslope
+    // relief on a 200 m cone, which is a deliberately extreme regime. Sc = 0.1
+    // puts the imposed relief in the same ballpark as the linear solution
+    // (U*L^2/2D = 9.0 m), so S5 is not decided by the relief scale alone.
+    const lsdtt::lsdtt_equilibration_result r_crit_fair =
+        run_hypothesis_fixture(snapped, "critical_slope", 0.1, 20);
+
+    std::cout << "      [critical_slope Sc=0.8] per-cycle hillslope stability\n";
+    double min_churn = 1.0;
+    for (const lsdtt::lsdtt_snap_cycle_record& c : r_crit.cycles)
+    {
+        if (c.cycle >= 2)
+            min_churn = std::min(min_churn, c.frac_receiver_changed_hillslope);
+        std::cout << "        cycle " << c.cycle
+                  << ": frac_receiver_changed_hillslope="
+                  << c.frac_receiver_changed_hillslope
+                  << " (" << c.n_receiver_changed_hillslope << "/"
+                  << c.n_hillslope_compared << ")"
+                  << "  step_p90_m=" << c.divide.step_p90_m
+                  << "  n_channel=" << c.n_channel_pixels << "\n";
+    }
+
+    std::cout << "      [critical_slope] S4 (plan: records limit_cycle_detected"
+                 " within 20 cycles) measured detected="
+              << r_crit.limit_cycle_detected
+              << " period=" << r_crit.limit_cycle_period
+              << " -> " << (r_crit.limit_cycle_detected ? "MET" : "NOT MET")
+              << "\n";
+
+    // What is true, and what the claim is actually about: critical slope never
+    // settles, where both elliptic models reach an exact fixed point.
+    check("S4: critical_slope never reaches a fixed point in 20 cycles",
+          r_crit.converged == false
+          && r_crit.limit_cycle_period != 1
+          && r_crit.cycles.size() == 20u,
+          "converged=" + std::to_string(r_crit.converged)
+          + " period=" + std::to_string(r_crit.limit_cycle_period)
+          + " cycles=" + std::to_string(r_crit.cycles.size()));
+
+    check("S4: critical_slope hillslope churn stays above 10% on every cycle",
+          min_churn > 0.1,
+          "min churn over cycles 2..20 = " + std::to_string(min_churn));
+
+    check("S4 contrast: both elliptic models reach a period-1 fixed point",
+          r_lin.limit_cycle_period == 1 && r_lin.converged
+          && r_roe.limit_cycle_period == 1 && r_roe.converged,
+          "linear period=" + std::to_string(r_lin.limit_cycle_period)
+          + " roering period=" + std::to_string(r_roe.limit_cycle_period));
+
+    check("S4 contrast: elliptic settles in far fewer cycles than 20",
+          r_lin.cycles.size() < 10u && r_roe.cycles.size() < 10u,
+          "linear=" + std::to_string(r_lin.cycles.size())
+          + " roering=" + std::to_string(r_roe.cycles.size()));
+
+    // The gap the detector leaves: with no orbit closed there is nothing to
+    // report but the generic stall message. Asserted so that if the detector is
+    // ever extended to name aperiodic wandering, this test fails and says so.
+    check("S4 gap: an undetected wander only produces the generic stall message",
+          r_crit.stop_reason.find("Reached max_cycles") != std::string::npos
+          && r_crit.stop_reason.find("Limit cycle detected") == std::string::npos,
+          "stop_reason='" + r_crit.stop_reason + "'");
+
+    const double p90_crit      = delivered_step_p90(r_crit);
+    const double p90_crit_fair = delivered_step_p90(r_crit_fair);
+    const double p90_lin       = delivered_step_p90(r_lin);
+    const double p90_roe       = delivered_step_p90(r_roe);
+
+    std::cout << "      S5 delivered divide step_p90_m:"
+              << " critical_slope(Sc=0.8)=" << p90_crit
+              << ", critical_slope(Sc=0.1)=" << p90_crit_fair
+              << ", linear=" << p90_lin
+              << ", roering=" << p90_roe << "\n"
+              << "      [S5] plan: elliptic strictly smaller -> "
+              << ((p90_lin < p90_crit && p90_roe < p90_crit) ? "MET" : "NOT MET")
+              << "\n";
+
+    check("S5: linear delivers a strictly smaller divide step than "
+          "critical_slope",
+          p90_lin > 0.0 && p90_crit > 0.0 && p90_lin < p90_crit,
+          "linear=" + std::to_string(p90_lin)
+          + " critical_slope=" + std::to_string(p90_crit));
+
+    check("S5: roering delivers a strictly smaller divide step than "
+          "critical_slope",
+          p90_roe > 0.0 && p90_crit > 0.0 && p90_roe < p90_crit,
+          "roering=" + std::to_string(p90_roe)
+          + " critical_slope=" + std::to_string(p90_crit));
+
+    // The result must not be an artefact of Sc = 0.8 imposing far more relief
+    // than the linear solution carries. At the matched Sc it still holds, and
+    // by more than a factor of two.
+    check("S5 is not a relief-scale artefact: elliptic still wins at matched Sc",
+          p90_lin < p90_crit_fair && p90_roe < p90_crit_fair,
+          "critical_slope(Sc=0.1)=" + std::to_string(p90_crit_fair)
+          + " linear=" + std::to_string(p90_lin)
+          + " roering=" + std::to_string(p90_roe));
+}
+
+// ---------------------------------------------------------------------------
+// The period > 1 branch of the limit-cycle detector. It was written for the
+// critical-slope case and had never once executed: a scan of 150 fluvial
+// fixtures reached a period-1 fixed point every time, and the S1-S3 elliptic
+// fixture does the same.
+//
+// This fixture makes it fire. 32x33 noisy cone, Sc = 0.1, critical-slope
+// hillslopes: the iteration closes a period-2 orbit at cycle 25, having first
+// visited that flow graph at cycle 23, with 18 pixels flipping receiver inside
+// the orbit.
+//
+// The period, first cycle and pixel count are pinned. They are the output of a
+// chaotic fixed-point iteration, so a change in them means the iteration path
+// moved -- which is exactly what a test of this branch should notice. The
+// structural checks below it (period > 1 at all, a non-empty orbit,
+// best-of-orbit delivery) are the ones that survive any such move.
+// ---------------------------------------------------------------------------
+void test_critical_slope_orbit_period_greater_than_one()
+{
+    const lsdtt::lsdtt_raster_cpu dem =
+        make_noisy_cone_dem(32, 33, 30.0, 5.0, 2);
+    lsdtt::lsdtt_equilibration_options pre = hillslope_fixture_options(4);
+    const lsdtt::lsdtt_raster_cpu snapped =
+        lsdtt::equilibrate_landscape(dem, pre).elevation;
+
+    const lsdtt::lsdtt_equilibration_result r =
+        run_hypothesis_fixture(snapped, "critical_slope", 0.1, 60);
+
+    std::cout << "      [orbit] detected=" << r.limit_cycle_detected
+              << " period=" << r.limit_cycle_period
+              << " first=" << r.limit_cycle_first
+              << " n_pixels=" << r.limit_cycle_n_pixels
+              << " delivered_cycle=" << r.delivered_cycle
+              << " of " << r.cycles.size() << " cycles\n";
+
+    check("orbit: a period > 1 limit cycle is detected on the "
+          "critical-slope path",
+          r.limit_cycle_detected && r.limit_cycle_period > 1,
+          "detected=" + std::to_string(r.limit_cycle_detected)
+          + " period=" + std::to_string(r.limit_cycle_period));
+
+    check("orbit: a period > 1 orbit leaves the run not converged",
+          r.converged == false);
+
+    check("orbit: pinned period, first cycle and participating pixel count",
+          r.limit_cycle_period == 2
+          && r.limit_cycle_first == 23
+          && r.limit_cycle_n_pixels == 18
+          && r.cycles.size() == 25u,
+          "period=" + std::to_string(r.limit_cycle_period)
+          + " first=" + std::to_string(r.limit_cycle_first)
+          + " n_pixels=" + std::to_string(r.limit_cycle_n_pixels)
+          + " cycles=" + std::to_string(r.cycles.size()));
+
+    check("orbit: at least one pixel participates in the orbit",
+          r.limit_cycle_n_pixels > 0,
+          "n_pixels=" + std::to_string(r.limit_cycle_n_pixels));
+
+    check("orbit: the stop reason names the period and the pixel count",
+          r.stop_reason.find("Limit cycle detected") != std::string::npos
+          && r.stop_reason.find("limit_cycle_period="
+                                + std::to_string(r.limit_cycle_period))
+             != std::string::npos
+          && r.stop_reason.find(std::to_string(r.limit_cycle_n_pixels)
+                                + " pixel(s)") != std::string::npos,
+          "stop_reason='" + r.stop_reason + "'");
+
+    // Best-of-orbit delivery: the delivered cycle must be the argmin of
+    // step_p90_m over the orbit members, which are cycles
+    // [limit_cycle_first, last_executed_cycle - 1].
+    const int last_cycle = static_cast<int>(r.cycles.size());
+    int    best_cycle = -1;
+    double best_p90 = -1.0;
+    int    n_members = 0;
+    for (const lsdtt::lsdtt_snap_cycle_record& c : r.cycles)
+    {
+        if (c.cycle < r.limit_cycle_first || c.cycle > last_cycle - 1)
+            continue;
+        ++n_members;
+        if (best_p90 < 0.0 || c.divide.step_p90_m < best_p90)
+        {
+            best_p90 = c.divide.step_p90_m;
+            best_cycle = c.cycle;
+        }
+    }
+
+    check("orbit: the orbit spans exactly `period` recorded cycles",
+          n_members == r.limit_cycle_period,
+          "members=" + std::to_string(n_members)
+          + " period=" + std::to_string(r.limit_cycle_period));
+
+    check("orbit: the delivered cycle is the orbit member with the smallest "
+          "step_p90_m",
+          r.delivered_cycle == best_cycle,
+          "delivered=" + std::to_string(r.delivered_cycle)
+          + " argmin=" + std::to_string(best_cycle)
+          + " p90=" + std::to_string(best_p90));
+
+    check("orbit: best-of-orbit delivery is not simply the last cycle",
+          r.delivered_cycle != last_cycle,
+          "delivered=" + std::to_string(r.delivered_cycle)
+          + " last=" + std::to_string(last_cycle));
+
+    // The elevation handed back must BE that orbit member, not a re-run of the
+    // cycle under different inputs. The reference is a plain run stopped at
+    // that cycle. Before the channel-mask/warm-start history was carried into
+    // the replay this differed by up to 23 m: the delivered surface was not the
+    // state whose divide step_p90 was reported.
+    lsdtt::lsdtt_equilibration_options ref = hillslope_fixture_options(best_cycle);
+    ref.run_hillslope = true;
+    ref.hillslope_model = "critical_slope";
+    ref.hillslope.Sc = 0.1f;
+    const lsdtt::lsdtt_equilibration_result r_ref =
+        lsdtt::equilibrate_landscape(snapped, ref);
+
+    const std::vector<float>& z_delivered = r.elevation.get_data();
+    const std::vector<float>& z_ref = r_ref.elevation.get_data();
+    double max_diff = -1.0;
+    if (z_delivered.size() == z_ref.size())
+    {
+        max_diff = 0.0;
+        for (std::size_t s = 0; s < z_delivered.size(); ++s)
+        {
+            max_diff = std::max(max_diff,
+                                std::abs(static_cast<double>(z_delivered[s])
+                                         - static_cast<double>(z_ref[s])));
+        }
+    }
+
+    std::cout << "      [orbit] replay fidelity: max |z_delivered - z_ref| = "
+              << max_diff << " m\n";
+
+    check("orbit: the replayed surface reproduces the chosen orbit member "
+          "exactly",
+          max_diff == 0.0,
+          "max_diff=" + std::to_string(max_diff));
+}
+
+// ---------------------------------------------------------------------------
+// The two pre-flight reporting biases of plan section 3.3.3c. Both made the
+// warnings quietest in exactly the nonlinear case where the divergence lives.
+//
+// (1) predicted_hillslope_relief_m used U*L^2/(2D) -- the LINEAR steady-state
+//     relief -- whatever hillslope_model was asked for. Fixed by making it
+//     model-aware and keeping the linear value alongside as an explicit
+//     reference.
+//
+//     MEASURED CORRECTION TO THE PLAN. Section 3.3.3c says the Roering relief
+//     is "strictly larger" than the linear one; it is strictly SMALLER. Under
+//     q = D*S/(1 - (S/Sc)^2) the nonlinear law transports more for a given
+//     gradient, so it needs less gradient for the same flux, and its relief is
+//     bounded above by Sc*L while the linear form is unbounded. On this fixture
+//     15.82 m against a 15.95 m linear reference, and 1087 m against 1595 m at
+//     ten times the erosion rate. So for Roering the old field OVER-predicted
+//     and the warning over-fired.
+//
+//     The real, large under-fire is critical_slope: it imposes Sc*L outright,
+//     247 m here against the 15.9 m the linear form reported -- a factor of 15,
+//     and the difference between the relief warning firing and staying silent.
+//     The assertions below are written to the measurement, not to the plan.
+// (2) predicted_max_hillslope_gradient was evaluated at the MEAN hillslope
+//     length, but the gradient that drives the solver to Sc is the one on the
+//     longest hillslopes. Now evaluated at the p90 length, with the mean-length
+//     value retained so the size of the bias is visible.
+// ---------------------------------------------------------------------------
+lsdtt::lsdtt_equilibration_result run_preflight(const lsdtt::lsdtt_raster_cpu& dem,
+                                                const std::string& model,
+                                                double Sc,
+                                                float U = 1e-4f)
+{
+    lsdtt::lsdtt_equilibration_options o = hillslope_fixture_options(1);
+    o.run_hillslope = true;
+    o.hillslope_model = model;
+    o.hillslope.Sc = static_cast<float>(Sc);
+    o.hillslope.U = U;
+    return lsdtt::equilibrate_landscape(dem, o);
+}
+
+void test_preflight_predictions_are_model_aware_and_tail_weighted()
+{
+    const lsdtt::lsdtt_raster_cpu dem =
+        make_noisy_cone_dem(48, 49, 30.0, 20.0, 2);
+
+    const lsdtt::lsdtt_equilibration_result lin =
+        run_preflight(dem, "linear", 0.8);
+    const lsdtt::lsdtt_equilibration_result roe =
+        run_preflight(dem, "roering", 0.8);
+    const lsdtt::lsdtt_equilibration_result crit =
+        run_preflight(dem, "critical_slope", 0.8);
+
+    std::cout << "      pre-flight: L_mean=" << lin.mean_hillslope_length_m
+              << " m, L_p90=" << lin.p90_hillslope_length_m << " m\n"
+              << "      relief_m: linear=" << lin.predicted_hillslope_relief_m
+              << ", roering=" << roe.predicted_hillslope_relief_m
+              << ", critical_slope=" << crit.predicted_hillslope_relief_m
+              << "  (linear reference "
+              << roe.predicted_hillslope_relief_linear_m << ")\n"
+              << "      predicted_max_gradient: at p90="
+              << roe.predicted_max_hillslope_gradient
+              << ", at mean="
+              << roe.predicted_max_hillslope_gradient_at_mean_length << "\n";
+
+    // Bias 1. The linear model must still report the linear value exactly, so
+    // the fix cannot have moved the model it was already right for.
+    check("pre-flight: the linear model still reports the linear relief exactly",
+          lin.predicted_hillslope_relief_m
+              == lin.predicted_hillslope_relief_linear_m
+          && lin.predicted_hillslope_relief_m > 0.0,
+          "relief=" + std::to_string(lin.predicted_hillslope_relief_m)
+          + " reference=" + std::to_string(lin.predicted_hillslope_relief_linear_m));
+
+    check("pre-flight: the roering relief is strictly SMALLER than the linear "
+          "reference on the same parameters",
+          roe.predicted_hillslope_relief_m
+              < roe.predicted_hillslope_relief_linear_m
+          && roe.predicted_hillslope_relief_m > 0.0,
+          "roering=" + std::to_string(roe.predicted_hillslope_relief_m)
+          + " linear=" + std::to_string(roe.predicted_hillslope_relief_linear_m));
+
+    // Sc is a float, so compare against the float value the module used.
+    const double sc_used = static_cast<double>(0.8f);
+    check("pre-flight: the critical-slope relief is Sc times the hillslope "
+          "length",
+          std::abs(crit.predicted_hillslope_relief_m
+                   - sc_used * crit.mean_hillslope_length_m)
+              <= 1e-9 * sc_used * crit.mean_hillslope_length_m,
+          "relief=" + std::to_string(crit.predicted_hillslope_relief_m)
+          + " Sc*L=" + std::to_string(sc_used * crit.mean_hillslope_length_m));
+
+    check("pre-flight: critical_slope predicts an order of magnitude more "
+          "relief than the linear reference the old field reported",
+          crit.predicted_hillslope_relief_m
+              > 10.0 * lin.predicted_hillslope_relief_m,
+          "critical_slope=" + std::to_string(crit.predicted_hillslope_relief_m)
+          + " linear=" + std::to_string(lin.predicted_hillslope_relief_m));
+
+    // At ten times the erosion rate the two forms part company properly: the
+    // linear relief grows without bound while the Roering relief saturates
+    // below Sc*L. A test at the near-linear rate alone would pass for any
+    // function that is merely a little smaller.
+    const lsdtt::lsdtt_equilibration_result roe_fast =
+        run_preflight(dem, "roering", 0.8, 1e-3f);
+    std::cout << "      at U=1e-3: roering relief="
+              << roe_fast.predicted_hillslope_relief_m
+              << " m, linear reference="
+              << roe_fast.predicted_hillslope_relief_linear_m
+              << " m, Sc*L="
+              << sc_used * roe_fast.mean_hillslope_length_m << " m\n";
+
+    check("pre-flight: at ten times the erosion rate the roering relief falls "
+          "well below the linear reference",
+          roe_fast.predicted_hillslope_relief_m
+              < 0.9 * roe_fast.predicted_hillslope_relief_linear_m,
+          "roering=" + std::to_string(roe_fast.predicted_hillslope_relief_m)
+          + " linear=" + std::to_string(
+                roe_fast.predicted_hillslope_relief_linear_m));
+
+    check("pre-flight: the roering relief stays bounded by Sc*L",
+          roe_fast.predicted_hillslope_relief_m
+              < sc_used * roe_fast.mean_hillslope_length_m,
+          "roering=" + std::to_string(roe_fast.predicted_hillslope_relief_m)
+          + " Sc*L=" + std::to_string(
+                sc_used * roe_fast.mean_hillslope_length_m));
+
+    // The Roering integral must reduce to the linear answer as U/D -> 0. This
+    // is the correctness guard on the new quadrature; an ordering check alone
+    // would pass for any function that is merely larger.
+    const lsdtt::lsdtt_equilibration_result roe_lin_limit =
+        run_preflight(dem, "roering", 0.8, 1e-9f);
+    const double limit_ratio =
+        roe_lin_limit.predicted_hillslope_relief_m
+        / std::max(1e-30, roe_lin_limit.predicted_hillslope_relief_linear_m);
+    std::cout << "      roering relief / linear relief at U=1e-9: "
+              << limit_ratio << "\n";
+    check("pre-flight: the roering relief reduces to the linear relief as "
+          "U/D -> 0",
+          std::abs(limit_ratio - 1.0) <= 1e-6,
+          "ratio=" + std::to_string(limit_ratio));
+
+    // The warning is the point of the field. It must fire for the model whose
+    // hillslopes really are over-tall and stay quiet for the one that is not.
+    check("pre-flight: the relief-ratio warning fires for critical_slope",
+          crit.stop_reason.find("WARNING: predicted_hillslope_relief")
+              != std::string::npos,
+          "stop_reason='" + crit.stop_reason + "'");
+
+    check("pre-flight: the relief-ratio warning stays quiet for linear",
+          lin.stop_reason.find("WARNING: predicted_hillslope_relief")
+              == std::string::npos,
+          "stop_reason='" + lin.stop_reason + "'");
+
+    // Bias 2. The cone fixture has a right-skewed hillslope-length
+    // distribution, so the p90 length is strictly longer than the mean and the
+    // predicted gradient is strictly steeper.
+    check("pre-flight: the p90 hillslope length exceeds the mean on a skewed "
+          "distribution",
+          roe.p90_hillslope_length_m > roe.mean_hillslope_length_m,
+          "p90=" + std::to_string(roe.p90_hillslope_length_m)
+          + " mean=" + std::to_string(roe.mean_hillslope_length_m));
+
+    check("pre-flight: the predicted max gradient is evaluated at the p90 "
+          "length and is strictly steeper than at the mean",
+          roe.predicted_max_hillslope_gradient
+              > roe.predicted_max_hillslope_gradient_at_mean_length,
+          "p90=" + std::to_string(roe.predicted_max_hillslope_gradient)
+          + " mean=" + std::to_string(
+                roe.predicted_max_hillslope_gradient_at_mean_length));
+
+    check("pre-flight: the predicted max gradient stays below Sc",
+          roe.predicted_max_hillslope_gradient < 0.8
+          && roe.predicted_max_hillslope_gradient > 0.0,
+          "S=" + std::to_string(roe.predicted_max_hillslope_gradient));
+
+    check("pre-flight: the printed note reports both hillslope lengths and "
+          "both gradient evaluations",
+          roe.stop_reason.find("p90_hillslope_length_m") != std::string::npos
+          && roe.stop_reason.find("at the p90 hillslope length")
+                 != std::string::npos
+          && roe.stop_reason.find("linear-diffusion reference")
+                 != std::string::npos,
+          "stop_reason='" + roe.stop_reason + "'");
+}
+
 } // namespace
 
 int main()
@@ -1080,6 +1583,9 @@ int main()
     test_critical_slope_model_runs_inside_cycle();
     test_elliptic_stabilisation_hypothesis("linear");
     test_elliptic_stabilisation_hypothesis("roering");
+    test_s4_s5_critical_slope_versus_elliptic();
+    test_critical_slope_orbit_period_greater_than_one();
+    test_preflight_predictions_are_model_aware_and_tail_weighted();
 
     std::cout << "\nChecks: " << g_n_checks
               << "  Failed: " << g_n_failed << "\n";

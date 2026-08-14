@@ -28,11 +28,24 @@
 // LEM (K-mode or relief-mode). Fluvial relief only - so an OCN and a LEM steady
 // state on the same graph and parameters produce the same surface.
 //
-// IMPORTANT round-trip caveat: the chi DEM reproduces the OCN graph under
-// independent D8 routing only for fully-relaxed (low-T) networks, where the OCN
-// local-minimum condition makes each node's receiver its steepest-descent
-// neighbour. High-T / sub-optimal networks are NOT self-consistent and D8 will
-// not exactly reproduce them. The CLI reports the realised fidelity.
+// IMPORTANT round-trip caveat: the chi DEM does NOT exactly reproduce the OCN
+// graph under independent D8 routing, at ANY temperature. A greedy local
+// minimum of sum(A^gamma) under single-flip moves is not identically the
+// steepest-descent graph of the chi surface, so some interior pixels always
+// re-route: a pixel is guaranteed to be strictly higher than its OCN receiver
+// (that invariant does hold everywhere), but a different neighbour may be lower
+// still and D8 will then take it.
+//
+// Measured 2026-08-13 (48x48, gamma 0.5, seed 42, default schedule
+// n_iter = 40*n_rows*n_cols): fidelity is 0.916352 at temperature_scale = 0 and
+// 0.845936 at temperature_scale = 1. Relaxing further does not close the gap -
+// fidelity PLATEAUS near 0.935 and never reaches 1, even at 400000 iterations.
+// Anneal LENGTH dominates temperature: the same configuration truncated to
+// n_iter = 20000 gives only ~0.703 at temperature_scale = 0, so any comparison
+// across temperatures must hold n_iter fixed. Low temperature helps at the
+// endpoints but fidelity is not monotone in the interior of the temperature
+// range. The CLI reports the realised fidelity; unit_synthetic_networks pins a
+// floor on it (see tests/cpp/test_synthetic_networks.cpp).
 //
 // Design reference: Carraro et al. (2020) OCNet; Rodriguez-Iturbe & Rinaldo
 // (1997); see ../OCNet for the reference R package.

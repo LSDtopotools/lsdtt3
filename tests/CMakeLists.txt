@@ -9,6 +9,12 @@ set(LSDTT_TEST_PARAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/params")
 set(LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/divide_migration_fixture")
 
+# Written by lsdtt-test-synthetic-networks (the unit_synthetic_networks CTest
+# fixture): the 3000 m square polygon in EPSG:32758 that the polygon/true_area
+# CLI test rasterises.
+set(LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/synthetic_networks_output")
+
 function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
     set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
 
@@ -36,6 +42,25 @@ function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_
     set_tests_properties(${TEST_NAME} PROPERTIES LABELS "${test_labels}")
 endfunction()
 
+# =============================================================================
+# lsdtt-synthetic-networks (OCN generator)
+#
+# The engine properties (forest invariants, energy, D8 round-trip fidelity,
+# cross-tool agreement with the LEM steady state) live in the C++ driver
+# lsdtt-test-synthetic-networks; these CLI tests carry only what is genuinely
+# CLI: parameter plumbing, output filenames, the failure paths, the polygon /
+# CRS path, and the characterisation ORACLES on the shipped artefacts.
+#
+# Artefact classification (docs/testing_and_benchmarking.md): the GDAL checksum
+# of *_ocn_drainage_cells.tif and the sha256 of *_ocn_summary.csv are ORACLES
+# (refactor tripwires, re-freezable by a deliberate act). The --expect-raster-stat
+# bands on *_ocn_dem.tif are BANDS, not oracles, because float chi accumulation
+# is pow-implementation sensitive. There is NO numerics sentinel for this module
+# and there must not be one: the OCN has no validated numeric standard.
+#
+# Every param file pins n_iter explicitly. Leaving it at the 40*n_rows*n_cols
+# default would couple every pinned artefact to a tuning knob.
+# =============================================================================
 add_lsdtt_cli_smoke_test(
     smoke_synthetic_networks_rect
     lsdtt-synthetic-networks
@@ -44,6 +69,170 @@ add_lsdtt_cli_smoke_test(
     --expect ocnsmoke_ocn_drainage_cells.tif
     --expect ocnsmoke_ocn_summary.csv
     --expect-raster-size ocnsmoke_ocn_dem.tif:32x32
+    --expect-valid-percent-100 ocnsmoke_ocn_dem.tif
+    --expect-file-contains "ocnsmoke_ocn_summary.csv:n_rows,n_cols,cell_size,gamma,n_iter,cooling_rate,temperature_scale,initial_no_cooling_fraction,seed,initial_energy,final_energy,routing_fidelity"
+    --stdout-contains "D8 round-trip fidelity (interior)"
+)
+
+# The parameter declarations must all render; -h needs no parameter file.
+add_test(NAME smoke_synthetic_networks_help
+         COMMAND lsdtt-synthetic-networks -h)
+set_tests_properties(smoke_synthetic_networks_help PROPERTIES
+    LABELS "smoke;cli;synthetic_networks"
+    PASS_REGULAR_EXPRESSION "energy_exponent_gamma")
+
+# noise_island + outlet_mode auto. The valid percent is the assertion that the
+# MASK actually reached the raster: 890 land pixels of 1600 = 55.62 %. A run
+# that silently ignored domain_type would come back 100 % valid.
+add_lsdtt_cli_smoke_test(
+    smoke_synthetic_networks_island
+    lsdtt-synthetic-networks
+    synthetic_networks_island.param.in
+    ocnisl_ocn_dem.tif
+    --expect ocnisl_ocn_drainage_cells.tif
+    --expect ocnisl_ocn_summary.csv
+    --expect-raster-size ocnisl_ocn_dem.tif:40x40
+    --expect-valid-percent ocnisl_ocn_dem.tif:55.62
+    --stdout-contains "Domain: noise_island - 890 land pixels of 1600"
+)
+
+# polygon + true_area: the grid is DERIVED from the polygon extent and
+# cell_size, not taken from n_rows/n_cols, and the polygon's CRS is inherited.
+# The fixture is the 3000 m square in EPSG:32758 written by
+# lsdtt-test-synthetic-networks, so the expected 14x14 is exact arithmetic
+# (ceil(3000/250) = 12 plus a one-cell margin each side) rather than a band.
+add_test(
+    NAME smoke_synthetic_networks_polygon_area
+    COMMAND
+        ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-synthetic-networks>"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/synthetic_networks_polygon.param.in"
+        --read-path "${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_synthetic_networks_polygon_area"
+        --expect ocnpoly_ocn_dem.tif
+        --expect ocnpoly_ocn_drainage_cells.tif
+        --expect-raster-size ocnpoly_ocn_dem.tif:14x14
+        --stdout-contains "Polygon true-area grid: 14 x 14 @ 250 m"
+        --stdout-contains "Domain: polygon - 144 land pixels of 196"
+)
+set_tests_properties(smoke_synthetic_networks_polygon_area PROPERTIES
+    LABELS "smoke;cli;synthetic_networks"
+    FIXTURES_REQUIRED synthetic_networks_fixture)
+
+# An unknown domain_type is DOCUMENTED to warn and fall back to the rectangle.
+# Pinning it makes a future decision to reject it a deliberate one.
+add_lsdtt_cli_smoke_test(
+    smoke_synthetic_networks_unknown_domain
+    lsdtt-synthetic-networks
+    synthetic_networks_unknown_domain.param.in
+    ocnbanana_ocn_dem.tif
+    --expect-raster-size ocnbanana_ocn_dem.tif:16x16
+    --expect-valid-percent-100 ocnbanana_ocn_dem.tif
+    --stderr-contains "Warning: unknown domain_type 'banana' - using rectangle."
+)
+
+# ORACLE (refactor tripwire), measured 2026-08-13 with GDAL from the repo
+# toolchain on the same param file as smoke_synthetic_networks_rect. The
+# drainage-area field is integer-valued and exactly representable in float32, so
+# its GDAL checksum is a complete fingerprint of the whole tree; the summary CSV
+# prints energies at 6 significant figures, robust to last-bit drift. Both are
+# re-freezable by a deliberate act, NOT numerics sentinels.
+add_lsdtt_cli_smoke_test(
+    rigorous_synthetic_networks_oracle
+    lsdtt-synthetic-networks
+    synthetic_networks_smoke.param.in
+    ocnsmoke_ocn_drainage_cells.tif
+    --expect ocnsmoke_ocn_summary.csv
+    --expect-raster-checksum ocnsmoke_ocn_drainage_cells.tif:3275
+    --expect-sha256 ocnsmoke_ocn_summary.csv:8b356826390366b3e894a3679dd974bfb358ea129bfb9e758fdaf165c5e68e48
+    --expect-file-contains "ocnsmoke_ocn_summary.csv:32,32,100,0.5,20000,1,0,0,7,3118.46,2384.26,0.87"
+)
+
+# BANDS, not an oracle: float chi accumulation is pow-implementation sensitive,
+# so a hash on the DEM would be flaky across libm versions. Two-sided on
+# purpose - a flat surface would satisfy a one-sided bound. Measured 2026-08-13:
+# min 0, max 1000.0000610352, mean 435.14471304324.
+add_lsdtt_cli_smoke_test(
+    rigorous_synthetic_networks_dem_band
+    lsdtt-synthetic-networks
+    synthetic_networks_smoke.param.in
+    ocnsmoke_ocn_dem.tif
+    --expect-raster-stat ocnsmoke_ocn_dem.tif:min:0.0:0.0
+    --expect-raster-stat ocnsmoke_ocn_dem.tif:max:999.9:1000.1
+    --expect-raster-stat ocnsmoke_ocn_dem.tif:mean:430.0:441.0
+)
+
+# Failure tier - exact messages from the engine guards and the CLI guards.
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_bad_gamma
+    lsdtt-synthetic-networks
+    synthetic_networks_bad_gamma.param.in
+    ocnbad_gamma_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: network generation failed: lsdtt_synthetic_network_cpu: gamma must be in (0, 1)"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_bad_gamma_zero
+    lsdtt-synthetic-networks
+    synthetic_networks_bad_gamma_zero.param.in
+    ocnbad_gamma_zero_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: network generation failed: lsdtt_synthetic_network_cpu: gamma must be in (0, 1)"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_bad_grid
+    lsdtt-synthetic-networks
+    synthetic_networks_bad_grid.param.in
+    ocnbadgrid_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: network generation failed: lsdtt_synthetic_network_cpu: n_rows and n_cols must be >= 2"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_bad_cell_size
+    lsdtt-synthetic-networks
+    synthetic_networks_bad_cell_size.param.in
+    ocnbadcell_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: network generation failed: lsdtt_synthetic_network_cpu: cell_size must be finite and > 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_polygon_no_file
+    lsdtt-synthetic-networks
+    synthetic_networks_polygon_no_file.param.in
+    ocnpolynofile_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: domain_type=polygon requires polygon_file."
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_polygon_missing_file
+    lsdtt-synthetic-networks
+    synthetic_networks_polygon_missing_file.param.in
+    ocnpolymissing_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: domain construction failed:"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_bad_baselevel
+    lsdtt-synthetic-networks
+    synthetic_networks_bad_baselevel.param.in
+    ocnbadbase_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: baselevel_elevation must be > -9000."
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_lat_without_lon
+    lsdtt-synthetic-networks
+    synthetic_networks_lat_without_lon.param.in
+    ocnlatonly_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: centre_latitude and centre_longitude must be set together."
 )
 
 add_lsdtt_cli_smoke_test(
@@ -808,9 +997,24 @@ target_link_libraries(lsdtt-test-synthetic-networks PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_synthetic_networks
          COMMAND lsdtt-test-synthetic-networks
-                 ${CMAKE_CURRENT_BINARY_DIR}/synthetic_networks_output)
-set_tests_properties(unit_synthetic_networks PROPERTIES LABELS "unit;synthetic_networks")
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/synthetic_networks_output)
+                 ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
+set_tests_properties(unit_synthetic_networks PROPERTIES
+    LABELS "unit;synthetic_networks"
+    FIXTURES_SETUP synthetic_networks_fixture)
+file(MAKE_DIRECTORY ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
+
+# Reported, never asserted: the fidelity / energy table over temperature at
+# FIXED n_iter (anneal length dominates temperature, so a sweep that let n_iter
+# float would confound the two). Writes ocn_fidelity_vs_temperature.csv, which
+# is the table the downstream science reads to choose a temperature.
+# MEASURED 2026-08-13: 1.3 s for 15 anneals of 64x64 x 163840 iterations, so it
+# is NOT in LSDTT_HEAVY_TESTS - it is cheap enough for the inner loop and the
+# table is then always fresh.
+add_test(NAME unit_synthetic_networks_sweep
+         COMMAND lsdtt-test-synthetic-networks
+                 ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR} --sweep)
+set_tests_properties(unit_synthetic_networks_sweep PROPERTIES
+    LABELS "unit;synthetic_networks" TIMEOUT 1800)
 
 add_test(NAME unit_flow_properties
          COMMAND lsdtt-test-flow-properties

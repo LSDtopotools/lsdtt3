@@ -69,6 +69,30 @@ struct lsdtt_divide_step_stats
     const lsdtt_flowinfo& flow,
     int merge_search_steps);
 
+// -----------------------------------------------------------------------------
+// lsdtt_divide_pair / compute_divide_pairs
+//
+// The divide-pair set itself, exposed so that callers wanting a metric other
+// than the elevation step (relief difference, gradient, class contrast, ...)
+// can reuse the one path-set test rather than re-deriving a divide from
+// anc_K equality -- which is wrong for K >= 2, see the note above.
+//
+// Pairs are returned in row-major sweep order with each unordered adjacent
+// pair present exactly once, so the result is deterministic and independent of
+// the thread count. `flat_a` is always the cell at the lower (row, col).
+// -----------------------------------------------------------------------------
+struct lsdtt_divide_pair
+{
+    std::int64_t flat_a      = -1;
+    std::int64_t flat_b      = -1;
+    bool         is_diagonal = false;
+};
+
+[[nodiscard]] std::vector<lsdtt_divide_pair> compute_divide_pairs(
+    const lsdtt_flowinfo&                  flow,
+    const lsdtt_raster_cpu&                dem,
+    const lsdtt_divide_diagnostic_options& opts = {});
+
 [[nodiscard]] lsdtt_divide_step_stats compute_divide_step_stats(
     const lsdtt_flowinfo&                  flow,
     const lsdtt_raster_cpu&                dem,

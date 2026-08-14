@@ -31,19 +31,29 @@
 //   S9  n < 1 produces a fan: erosion rates strictly between the two uplift
 //       rates, a continuous profile, and monotone time-since-change
 //   S10 hillslopes sit at the critical gradient above their receiver and
-//       inherit that receiver's erosion rate and time-since-change
+//       inherit that receiver's erosion rate and time-since-change. The
+//       gradient is per-TAG, and all three hillslope tags are exercised:
+//       hillslope_old -> S_c_old, hillslope_new -> S_c_new and
+//       hillslope_transient -> the MEAN of the two. hillslope_transient only exists in a
+//       rarefaction configuration, so the same check is run against the n<1
+//       fan result as well as the n=1 shock result, and the fan run is
+//       required to contain fan hillslopes -- otherwise that branch of the
+//       assertion is vacuous.
 //   S11 degenerate and edge configurations: no step, wave past the top of the
 //       basin, and invalid parameters rejected
 //
 // Usage: test-step-change [output_dir]
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../../src/cpu/lsdtt_flowinfo_cpu.hpp"
@@ -267,7 +277,7 @@ int main(int argc, char* argv[])
             const bool is_channel =
                 gi == static_cast<int>(lsdtt::StepChangeTag::fluvial_old)
              || gi == static_cast<int>(lsdtt::StepChangeTag::fluvial_new)
-             || gi == static_cast<int>(lsdtt::StepChangeTag::fluvial_fan);
+             || gi == static_cast<int>(lsdtt::StepChangeTag::fluvial_transient);
             if (is_channel) ++n_channel;
 
             // The chi-versus-knickpoint test applies to CHANNELS only. A
@@ -334,54 +344,229 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    std::cout << "\nS10: hillslopes\n";
+    // S10 machinery, shared between the shock run below and the fan run in S9.
+    //
+    // The imposed hillslope gradient is per-TAG. Written out as a slope rather
+    // than as the code's gradient_scale multiplier, so the test states the
+    // geometry independently of how the generator happens to parameterise it:
+    //
+    //   hillslope_old       -> S_c_old
+    //   hillslope_new       -> S_c_new
+    //   hillslope_transient -> interpolated on the pixel's own erosion rate,
+    //                          S_c_old + f*(S_c_new - S_c_old) with
+    //                          f = (e - U_old)/(U_new - U_old)
+    //
+    // The transient case is the one the critical-slope refactor reformulated
+    // most heavily and it is only reachable in a rarefaction, so it must be
+    // checked on a configuration that actually produces it.
+    //
+    // Restating the interpolation here does duplicate the generator's formula,
+    // so on its own this would be close to tautological. What it genuinely
+    // checks is the GEOMETRY -- that the imposed elevation really is
+    // rec_elev + dx*S_c for that pixel's own f, i.e. that the per-cell
+    // gradient_scale reaches pass 2b intact and is applied to the right pixel.
+    // The formula-independent properties (bounds, spread, monotonicity in e)
+    // are asserted separately below.
+    auto expected_S_c = [](int tag, const lsdtt::StepChangeConfig& c,
+                           double e_here) -> double
     {
-        const std::vector<float>&   z  = res.topography.get_data();
-        const std::vector<float>&   e  = res.erosion_rate_m_yr.get_data();
-        const std::vector<float>&   ts = res.time_since_change_yr.get_data();
-        const std::vector<float>&   tg = res.tags.get_data();
-        const std::vector<uint8_t>& zm = res.topography.get_mask();
+        if (tag == static_cast<int>(lsdtt::StepChangeTag::hillslope_new))
+            return c.S_c_new;
+        if (tag == static_cast<int>(lsdtt::StepChangeTag::hillslope_transient))
+        {
+            const double dU = c.uplift_new_m_yr - c.uplift_old_m_yr;
+            double f = (dU == 0.0) ? 0.5 : (e_here - c.uplift_old_m_yr) / dU;
+            f = std::min(1.0, std::max(0.0, f));
+            return c.S_c_old + f * (c.S_c_new - c.S_c_old);
+        }
+        return c.S_c_old;                       // hillslope_old
+    };
 
-        const auto basin = flow.upslope_nodes(outlet);
-        int n_hill = 0, n_bad_slope = 0, n_bad_inherit = 0;
+    // Tolerance. The elevations are float32 and are built by accumulating
+    // rec_elev + dx*S_c down a chain of hillslope steps, so the error floor is
+    // the float32 representation of the elevation itself: ~1.2e-7 relative,
+    // which on the ~1.5e3 m elevations these fixtures reach is ~2e-4 m, twice
+    // over because two stored floats are differenced. 1e-3 m keeps headroom
+    // above that and is still three orders of magnitude below the ~2.25 m by
+    // which a fan pixel would miss if it were given S_c_old instead of the
+    // mean (the smallest such miss is cell*0.5*(S_c_new - S_c_old) = 2.25 m).
+    const double slope_tol_m = 1e-3;
+
+    // Returns the per-tag hillslope count, indexed 0 = old, 1 = new, 2 = fan.
+    auto check_hillslopes = [&](const lsdtt::StepChangeResult& s,
+                                const lsdtt::StepChangeConfig& c,
+                                const std::string& label,
+                                std::array<int, 3>& n_tag)
+    {
+        const std::vector<float>&   z  = s.topography.get_data();
+        const std::vector<float>&   e  = s.erosion_rate_m_yr.get_data();
+        const std::vector<float>&   ts = s.time_since_change_yr.get_data();
+        const std::vector<float>&   tg = s.tags.get_data();
+        const std::vector<uint8_t>& zm = s.topography.get_mask();
+
+        n_tag = {0, 0, 0};
+        std::array<int, 3>    n_bad{0, 0, 0};
+        std::array<double, 3> worst{0.0, 0.0, 0.0};
+        int n_hill = 0, n_bad_inherit = 0;
+
+        // Discrimination guard: how far a fan pixel would be from the WRONG
+        // expectation, S_c_old. If this ever collapses towards zero the fan
+        // assertion has stopped distinguishing the two, and the check below
+        // will say so rather than quietly passing.
+        double fan_max_miss_under_midpoint = 0.0;
+        double fan_S_c_min = 1e30;
+        double fan_S_c_max = -1e30;
+        std::vector<std::pair<double, double>> fan_pairs;   // (erosion rate, S_c)
+
         bool first = true;
-
-        for (std::int64_t flat : basin)
+        for (std::int64_t flat : flow.upslope_nodes(outlet))
         {
             if (first) { first = false; continue; }   // outlet
             const std::size_t i = static_cast<std::size_t>(flat);
             if (zm[i] == 0) continue;
 
             const int gi = static_cast<int>(tg[i]);
-            const bool is_hill =
-                gi == static_cast<int>(lsdtt::StepChangeTag::hillslope_old)
-             || gi == static_cast<int>(lsdtt::StepChangeTag::hillslope_new)
-             || gi == static_cast<int>(lsdtt::StepChangeTag::hillslope_fan);
-            if (!is_hill) continue;
+            int slot;
+            if (gi == static_cast<int>(lsdtt::StepChangeTag::hillslope_old))
+                slot = 0;
+            else if (gi == static_cast<int>(lsdtt::StepChangeTag::hillslope_new))
+                slot = 1;
+            else if (gi == static_cast<int>(lsdtt::StepChangeTag::hillslope_transient))
+                slot = 2;
+            else
+                continue;
+
             ++n_hill;
+            ++n_tag[slot];
 
             const std::int64_t rec = flow.receiver_of_unchecked(flat);
             const std::size_t  ri  = static_cast<std::size_t>(rec);
 
             const std::uint8_t dir = flow.receiver_dir_of_unchecked(flat);
             const double dx = (dir % 2u == 0u) ? cell : cell * std::sqrt(2.0);
-            const double s_c =
-                (gi == static_cast<int>(lsdtt::StepChangeTag::hillslope_new))
-                    ? cfg.S_c_new : cfg.S_c_old;
 
-            const double want = static_cast<double>(z[ri]) + dx * s_c;
-            if (std::fabs(static_cast<double>(z[i]) - want) > 1e-3)
-                ++n_bad_slope;
+            const double e_here = static_cast<double>(e[i]);
+            const double want = static_cast<double>(z[ri])
+                              + dx * expected_S_c(gi, c, e_here);
+            const double err  = std::fabs(static_cast<double>(z[i]) - want);
+            worst[slot] = std::max(worst[slot], err);
+            if (err > slope_tol_m) ++n_bad[slot];
+
+            if (slot == 2)
+            {
+                // How far this pixel is from the OLD midpoint rule. At least
+                // one transient pixel must be far from it, or the interpolation
+                // has silently collapsed back to the midpoint.
+                const double want_mid = static_cast<double>(z[ri])
+                                      + dx * 0.5 * (c.S_c_old + c.S_c_new);
+                fan_max_miss_under_midpoint =
+                    std::max(fan_max_miss_under_midpoint,
+                             std::fabs(static_cast<double>(z[i]) - want_mid));
+
+                // Realised S_c, recovered from the geometry rather than from
+                // the formula, for the bounds/spread/monotonicity checks.
+                const double S_c_realised =
+                    (static_cast<double>(z[i]) - static_cast<double>(z[ri])) / dx;
+                fan_S_c_min = std::min(fan_S_c_min, S_c_realised);
+                fan_S_c_max = std::max(fan_S_c_max, S_c_realised);
+                fan_pairs.emplace_back(e_here, S_c_realised);
+            }
 
             if (e[i] != e[ri] || ts[i] != ts[ri]) ++n_bad_inherit;
         }
 
-        std::cout << "  hillslope pixels " << n_hill << "\n";
-        check(n_hill > 0, "the fixture has hillslope pixels");
-        check(n_bad_slope == 0,
-              "each hillslope pixel is dx*S_c above its receiver");
+        std::cout << "  [" << label << "] hillslope pixels " << n_hill
+                  << "  (old " << n_tag[0] << ", new " << n_tag[1]
+                  << ", fan " << n_tag[2] << ")\n"
+                  << "  [" << label << "] worst slope error, m: old "
+                  << worst[0] << ", new " << worst[1] << ", fan " << worst[2]
+                  << "  (tolerance " << slope_tol_m << ")\n";
+
+        check(n_hill > 0, label + ": the fixture has hillslope pixels");
+        check(n_bad[0] == 0,
+              label + ": hillslope_old sits dx*S_c_old above its receiver ("
+              + std::to_string(n_bad[0]) + " of " + std::to_string(n_tag[0])
+              + " off by more than the tolerance)");
+        check(n_bad[1] == 0,
+              label + ": hillslope_new sits dx*S_c_new above its receiver ("
+              + std::to_string(n_bad[1]) + " of " + std::to_string(n_tag[1])
+              + " off by more than the tolerance)");
+        check(n_bad[2] == 0,
+              label + ": hillslope_transient sits dx*S_c(e) above its receiver, "
+              "S_c interpolated on its own erosion rate ("
+              + std::to_string(n_bad[2]) + " of " + std::to_string(n_tag[2])
+              + " off by more than the tolerance)");
         check(n_bad_inherit == 0,
-              "hillslopes inherit erosion rate and time-since-change");
+              label + ": hillslopes inherit erosion rate and time-since-change");
+
+        if (n_tag[2] > 0)
+        {
+            // Properties of the interpolation that do not restate its formula.
+            const double S_lo = std::min(c.S_c_old, c.S_c_new);
+            const double S_hi = std::max(c.S_c_old, c.S_c_new);
+
+            std::cout << "  [" << label << "] realised transient S_c range: "
+                      << fan_S_c_min << " to " << fan_S_c_max
+                      << "  (S_c_old " << c.S_c_old
+                      << ", S_c_new " << c.S_c_new << ")\n"
+                      << "  [" << label << "] largest departure from the old "
+                         "midpoint rule: " << fan_max_miss_under_midpoint
+                      << " m\n";
+
+            // 1. The midpoint rule is genuinely superseded. Without this the
+            //    interpolation could collapse back to a constant unnoticed.
+            check(fan_max_miss_under_midpoint > 1.0,
+                  label + ": at least one transient hillslope is more than 1 m "
+                  "from the old midpoint rule, so the interpolation is live");
+
+            // 2. Interpolation, not extrapolation: every realised S_c lies
+            //    within the two endpoints, up to the slope tolerance.
+            const double edge = slope_tol_m;
+            check(fan_S_c_min >= S_lo - edge && fan_S_c_max <= S_hi + edge,
+                  label + ": every transient S_c lies between S_c_old and "
+                  "S_c_new (got " + std::to_string(fan_S_c_min) + " to "
+                  + std::to_string(fan_S_c_max) + ")");
+
+            // 3. The transient set actually spans a range. A single-valued
+            //    result would satisfy every check above and still be the old
+            //    behaviour under a different constant.
+            check(fan_S_c_max - fan_S_c_min > 0.01 * (S_hi - S_lo),
+                  label + ": transient S_c spans a real range rather than "
+                  "sitting at one value (spread "
+                  + std::to_string(fan_S_c_max - fan_S_c_min) + ")");
+
+            // 4. Monotone in erosion rate: a channel further through the
+            //    transition must carry its hillslope further towards S_c_new.
+            //    This is the physical content of the interpolation, and it is
+            //    checked pairwise so it holds for the whole population, not
+            //    just the extremes.
+            std::sort(fan_pairs.begin(), fan_pairs.end());
+            int n_non_monotone = 0;
+            for (std::size_t k = 1; k < fan_pairs.size(); ++k)
+            {
+                const double d_S = fan_pairs[k].second - fan_pairs[k - 1].second;
+                // S_c_new may be either side of S_c_old, so the required sign
+                // follows the direction of the step.
+                const double want_sign = (c.S_c_new >= c.S_c_old) ? 1.0 : -1.0;
+                if (d_S * want_sign < -slope_tol_m) ++n_non_monotone;
+            }
+            check(n_non_monotone == 0,
+                  label + ": transient S_c is monotone in erosion rate ("
+                  + std::to_string(n_non_monotone) + " inversions)");
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    std::cout << "\nS10: hillslopes (shock, n = 1)\n";
+    std::array<int, 3> n_hill_shock{0, 0, 0};
+    {
+        check_hillslopes(res, cfg, "shock n=1", n_hill_shock);
+        // A shock has no fan reach at all, so no fan hillslopes can inherit.
+        check(n_hill_shock[2] == 0,
+              "shock: no hillslope_transient pixels exist (got "
+              + std::to_string(n_hill_shock[2]) + ")");
+        check(n_hill_shock[0] > 0 && n_hill_shock[1] > 0,
+              "shock: both hillslope_old and hillslope_new are populated");
     }
 
     // -------------------------------------------------------------------------
@@ -435,7 +620,7 @@ int main(int argc, char* argv[])
             const std::size_t i = static_cast<std::size_t>(flat);
             if (zm[i] == 0) continue;
             if (static_cast<int>(tgv[i])
-                != static_cast<int>(lsdtt::StepChangeTag::fluvial_fan)) continue;
+                != static_cast<int>(lsdtt::StepChangeTag::fluvial_transient)) continue;
             ++n_fan;
             const double ei = static_cast<double>(e[i]);
             lo = std::min(lo, ei);
@@ -472,6 +657,25 @@ int main(int argc, char* argv[])
                     "fan steepness at the trailing edge equals ksn_new");
         check_close(s_hi, f.ksn_old, 1e-9,
                     "fan steepness at the leading edge equals ksn_old");
+
+        // S10 on the fan run. This is the ONLY configuration in which
+        // hillslope_transient exists, and it is the branch on which the imposed
+        // gradient departs furthest from S_c_old, so the per-tag slope check
+        // is repeated here. The count assertion is what stops the fan branch
+        // being vacuous: if the fixture stops producing fan hillslopes the
+        // test must fail, not pass.
+        std::cout << "\nS10 (fan, n = 0.7): hillslopes including hillslope_transient\n";
+        std::array<int, 3> n_hill_fan{0, 0, 0};
+        check_hillslopes(f, fcfg, "fan n=0.7", n_hill_fan);
+        check(n_hill_fan[2] > 0,
+              "fan: the fixture actually produces hillslope_transient pixels (got "
+              + std::to_string(n_hill_fan[2])
+              + "); a zero count makes the fan slope check vacuous");
+        check(n_hill_fan[0] > 0 && n_hill_fan[1] > 0,
+              "fan: hillslope_old and hillslope_new are populated too, so all "
+              "three tags are exercised (old "
+              + std::to_string(n_hill_fan[0]) + ", new "
+              + std::to_string(n_hill_fan[1]) + ")");
     }
 
     // -------------------------------------------------------------------------

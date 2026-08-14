@@ -2454,10 +2454,11 @@ Both tests passed on 2026-08-06.
 
 ### 7.10j SC divide-step gate (A'6) reproduced (2026-08-13)
 
-This is the Phase A'6 acceptance measurement from
-`docs/plan_docs/plan_hillslope_equilibration_and_synthetic_georef.md`: the
+This is the acceptance measurement that gates the divide-equilibration work: the
 known divide-cliff signature on the generated SC DEM must be reproducible with
-the corrected diagnostics before any Phase C claims are trusted.
+the corrected divide diagnostics before anything built on top of them is
+trusted. It is recorded here because it is the baseline every later divide
+measurement is compared against.
 
 Dataset used:
 
@@ -2486,6 +2487,115 @@ Measured values:
 Verdict: **gate reproduced**. The corrected diagnostic path recovers the SC DEM
 signature at the expected values, so A'6 is numerically satisfied and the
 Phase C work can proceed on a validated baseline.
+
+---
+
+### 7.10k Transient (rarefaction) pixels and hillslope `S_c` (2026-08-14)
+
+#### Naming: transient, not fan
+
+The step-change tags for partially adjusted pixels were called `fluvial_fan` and
+`hillslope_fan`. They are now `fluvial_transient` and `hillslope_transient`.
+
+The zone is a **rarefaction fan** in the kinematic-wave sense — the spreading
+solution, as opposed to the shock. It is emphatically **not an alluvial fan**,
+and nothing about it is depositional, so in a geomorphology toolbox the old
+names invited exactly the wrong reading of a tag raster. The mathematical
+vocabulary survives only where it names the mathematical object itself:
+`chi_fan_lower` / `chi_fan_upper` are the fan's edges in χ, and the `summary()`
+line still reports "fan in chi".
+
+#### When transient pixels exist at all
+
+Only when `n != 1`, and then only for one direction of the uplift step.
+Celerity goes as `ksn^(n-1)`, so:
+
+| `n` | behaviour | stretches when |
+|---|---|---|
+| `n == 1` | celerity independent of `ksn`; the wave translates rigidly | never — no transient pixel is ever emitted |
+| `n > 1` | steeper travels faster | the step **falls** |
+| `n < 1` | steeper travels slower | the step **rises** |
+
+The code decides on `c_new < c_old` rather than on `n` and the sign of `dU`
+separately, so both directions fall out without a special case. `n == 1` is
+excluded explicitly rather than left to that comparison: it is what guarantees
+no transient tag at `n == 1`, and it keeps the fan algebra — which divides by
+`(n - 1)` — off a singular branch.
+
+#### Hillslope transience is inherited, and used to be flat
+
+A hillslope is tagged transient because the channel it drains to is
+mid-transition, not because anything was solved on the hillslope. The channel
+side is resolved properly: a transient channel pixel takes its erosion rate from
+its position within the fan, strictly between `U_old` and `U_new`.
+
+That position used to be discarded at the hillslope boundary. Every transient
+hillslope received the arithmetic midpoint `0.5*(S_c_old + S_c_new)` regardless
+of how far through the transition its channel actually was, so a hillslope above
+a 5%-adjusted channel and one above a 95%-adjusted channel got identical `S_c`.
+
+Since 2026-08-14 `S_c` is interpolated on the pixel's **own erosion rate**:
+
+```
+f   = (e - U_old) / (U_new - U_old)
+S_c = S_c_old + f * (S_c_new - S_c_old)
+```
+
+Erosion rate, not position in χ, is the interpolant: `S_c` is paired with the
+rate the landscape carries (`S_c_old` with `U_old`, `S_c_new` with `U_new`).
+Interpolating on χ would be a geometric proxy that does *not* reduce to the
+endpoints correctly, because `e` is not linear in χ inside the fan
+(`S ~ χ^(1/(n-1))`, hence `e ~ χ^(n/(n-1))`).
+
+No new plumbing was required: pass 2a already inherits the receiving channel's
+erosion rate onto the hillslope, which is exactly the channel that hillslope
+hangs off. `f` is clamped to `[0,1]` because `e` is stored as float and the
+endpoints must not overshoot; `dU` cannot be zero on this branch, since that is
+the `no_step` case and it emits no transient pixels.
+
+Measured on the `n = 0.7` fixture (47 transient hillslope pixels, `S_c_old`
+0.25, `S_c_new` 0.40):
+
+| quantity | before | after |
+|---|---:|---:|
+| realised `S_c` range | 0.325 only | 0.2504 – 0.3909 |
+| largest departure from the midpoint rule | — | 3.17 m |
+
+#### How it is tested, and what the test deliberately does not do
+
+Restating the interpolation formula in the test would be near-tautological, so
+the per-pixel assertion checks only the **geometry** — that the imposed
+elevation really is `rec_elev + dx*S_c` for that pixel's own `f`, i.e. that the
+per-cell `gradient_scale` reaches pass 2b intact and lands on the right pixel.
+
+The physics is asserted separately and formula-independently, from `S_c`
+recovered out of the elevations:
+
+- **bounded** — every realised `S_c` lies between the two endpoints;
+  interpolation, never extrapolation;
+- **spans a range** — guards against collapse to *any* single constant, which
+  every other check here would tolerate;
+- **monotone in erosion rate**, checked pairwise across the whole population
+  rather than at the extremes; the required sign follows the direction of the
+  step, so a falling `S_c` is handled too (0 inversions measured);
+- **departs from the midpoint rule by > 1 m**, so the interpolation cannot
+  silently revert.
+
+The previous guard — "every transient pixel is more than 1 m from `S_c_old`" —
+was removed rather than repaired. Under interpolation, pixels near the leading
+edge legitimately sit close to `S_c_old`; that is the point of the change.
+
+#### The oracle is silent on this branch
+
+`regression_cosmo_oracle` passes across this change, and that is **not**
+evidence the change is correct. Its step-change parameter file does not set `n`,
+so it takes the default `n = 1.0`, `is_shock` is forced, and zero transient
+pixels are produced — the rasters are bit-identical because the altered branch
+never executes. The oracle confirms nothing else was disturbed; it says nothing
+about the transient treatment.
+
+Closing that gap means an `n != 1` oracle tier. Until it exists,
+`unit_step_change` is the only guard on transient hillslope `S_c`.
 
 ---
 
@@ -2539,6 +2649,18 @@ CSVs. So the oracle reaches through the whole forward/inverse chain, not just
 the raster it perturbs. The 6 that survive are the landslide and column-tool
 cases, which take the scalar production path — itself a useful signal about
 which cases exercise which path.
+
+#### A branch the matrix does not reach: `n != 1`
+
+The step-change case does not set `n`, so it runs at the default `n = 1.0`. That
+forces the shock branch, and **no transient (rarefaction) pixel is ever
+produced** in any frozen artefact. A change confined to transient pixels — the
+hillslope `S_c` interpolation of 2026-08-14 is exactly that — leaves every hash
+untouched, so the oracle goes green without having exercised the change at all.
+
+This is the general trap: a green oracle proves only that the *covered* branches
+did not move. Before reading it as a safety result, check that the matrix
+actually reaches the branch you edited. See §7.10k.
 
 #### A guard on the oracle itself
 
@@ -2745,6 +2867,228 @@ post-step rejection are built around the singularity.
 **Float versus double.** Assembly and solve are in double for conditioning;
 raster I/O stays float. Test 4's agreement with the SOR solver bottoms out at the
 SOR float32 floor, which is why the pinned tolerance sits there and not lower.
+
+---
+
+## 8b. Synthetic networks, routing fidelity, and divide equilibration
+
+`lsdtt-synthetic-networks` generates an Optimal Channel Network (OCN) by
+simulated annealing and then paints elevations on it as a chi-based fluvial
+steady state. Everything downstream — the LEM, the cosmogenic scenarios, any
+basin analysis — throws the graph away and re-routes the DEM. So the question
+that decides whether the generator is usable at all is: **does the DEM it writes
+still carry the network it was asked to generate?**
+
+The measurements below answer that, and then record what the in-cycle hillslope
+solve does about the answer. All of them were made on 2026-08-13.
+
+### 8b.1 D8 routing fidelity is bounded well below 1 — and that is structural
+
+Fidelity here is the fraction of interior, non-outlet land pixels whose D8
+receiver on the synthesised DEM equals their OCN receiver. It is computed by the
+CLI itself (`verify_routing`, reported as `routing_fidelity` in
+`<write_fname>_ocn_summary.csv`) and asserted in-process by
+`unit_synthetic_networks` (case `E`), which regenerates the OCN, synthesises the
+DEM, routes it with D8 and compares receiver for receiver.
+
+Measured on a 48×48 grid, cell 50 m, γ = 0.5, seed 42, `single_south` outlet,
+2116 interior pixels:
+
+| `n_iter` | Tscale = 0 | 0.01 | 0.1 | 0.3 | 1 |
+|---|---:|---:|---:|---:|---:|
+| 5 000 | 0.4660 | 0.3374 | 0.3077 | 0.3119 | 0.3053 |
+| 20 000 | 0.7032 | 0.5723 | 0.4693 | 0.4031 | 0.3620 |
+| **92 160 (production default, 40·N)** | **0.916352** | 0.879962 | 0.856805 | 0.873819 | **0.845936** |
+| 400 000 | 0.9353 | 0.9069 | 0.9008 | 0.8993 | 0.8974 |
+
+On the production default schedule the endpoints are **0.916352 (1939/2116) at
+`temperature_scale = 0`** against **0.845936 (1790/2116) at
+`temperature_scale = 1`**, same seed and same grid.
+
+Three things follow, and the first is the load-bearing one.
+
+**1. Fidelity plateaus near 0.935 and never reaches 1, however long the anneal
+runs.** Even at 400 000 iterations — more than four times the production
+schedule — roughly 6–8 % of interior pixels re-route under independent D8. This
+is not a defect in the annealer: a local minimum of `sum(A^γ)` under single-flip
+moves is simply not the same object as the steepest-descent graph of the chi
+surface built from it. The consequence for the whole synthetic-landscape chain
+is that **the OCN chi DEM does not exactly carry the graph that generated it**,
+so re-routing always perturbs the network — most visibly at divides, where the
+chi surface has one-pixel discontinuities by construction (fluvial relief only,
+no hillslope component). That makes divide equilibration a **structural
+requirement of the generator, not cosmetic polish**: there is no anneal length
+at which it becomes unnecessary. Anything that reads a generated DEM and cares
+about which basin a pixel belongs to has to deal with this.
+
+**2. Anneal length dominates temperature.** Truncating `n_iter` from 92 160 to
+20 000 costs more fidelity (0.916 → 0.703 at `Tscale = 0`) than the entire
+temperature range costs at fixed `n_iter` (0.916 → 0.846). A branching study
+that varies `temperature_scale` must therefore hold `n_iter` at the default or
+scale it with N, or it confounds "more side branching" with "under-relaxed". At
+`n_iter = 5000` with `Tscale ≥ 0.1` the anneal ends *above* its starting energy
+(`E_final/E_0` = 1.06–1.11) — it never cools at all. Put `n_iter` and
+`E_final/E_0` in any screening table so that failure is visible.
+
+**3. Fidelity is not monotone in the interior of the temperature range** (0.8568
+at `Tscale = 0.1` against 0.8738 at 0.3). Only the endpoint inequality is safe
+to assert, and that is all the test asserts.
+
+The gate is therefore a **floor pinned at 0.90**, about 1.8 % under the measured
+0.916352, plus the endpoint inequality `fidelity(Tscale = 1) < fidelity(Tscale = 0)`.
+Negative controls were verified: truncating `n_iter` to 20 000 and flattening the
+hot run's temperature each fail the relevant assertion and nothing else.
+
+A weaker property is asserted unconditionally and should not be mistaken for
+this one: because `z[i] = baselevel + f·chi[i]` and chi strictly increases
+upstream, **every land pixel is strictly higher than its OCN receiver at any
+temperature**, so the OCN DEM has no interior local minimum. That is necessary
+but nowhere near sufficient for fidelity — a pixel can be higher than its OCN
+receiver while a *different* neighbour is lower still, which is exactly the
+failure the D8 round trip catches and monotonicity does not.
+
+### 8b.2 Regression artefacts for the OCN — oracle, band, pin, and no sentinel
+
+These four words are not interchangeable, and the OCN is a good example of why.
+
+| Artefact | Kind | Why |
+|---|---|---|
+| GDAL checksum of `*_ocn_drainage_cells.tif` | **oracle** (refactor tripwire) | The area field is integer-valued and exactly representable in float32, so the checksum fingerprints the whole tree and is robust across toolchains. Primary. |
+| sha256 of `*_ocn_summary.csv` | **oracle** | Energies print at six significant figures — robust to last-bit drift, sensitive to any real change. Secondary. |
+| `--expect-raster-stat` min/max/mean on `*_ocn_dem.tif` | **band**, not an oracle | Float chi accumulation is `pow`-implementation sensitive; a hash here would be flaky across libm versions. |
+| pinned `final_energy()` in the C++ driver, 1e-9 relative | **characterisation pin** | It records what the code does today so a refactor cannot move it silently. It is not a validated numeric standard. |
+
+**There is no numerics sentinel for the OCN, and there must not be one.** A
+sentinel asserts a *validated* numeric standard. No such standard exists here:
+the OCNet R package uses a different RNG and a different initial tree, so it can
+validate *statistics* (Horton and Tokunaga ratios, energy scaling) but never
+values. Calling any of the above a sentinel would claim a guarantee that has
+never been established.
+
+### 8b.3 The elliptic hillslope solve in the snap cycle: contraction, not one-shot stabilisation
+
+The design claim under test was this. Critical-slope hillslope construction is
+path integration (`z_i = z_receiver + Sc·L_i`): the elevation depends on the
+receiver and the receiver depends on the elevations, a fixed-point iteration on
+a piecewise-constant, non-variational map with no Lyapunov functional forcing it
+downhill — so period-2 orbits are its natural failure mode. A steady-state
+elliptic solve is a different kind of object: with the channel network fixed as
+a Dirichlet set, `D∇²z = −U` (or the Roering form, which stays elliptic and
+monotone for `|∇z| < Sc`) has a unique solution, and the divide is wherever
+`∇z = 0` in that solution — an *output* rather than an imposed integration path.
+The prediction was therefore that re-routing on that surface reproduces the same
+divide, and the second cycle is a no-op on hillslope pixels: **the solve
+"stabilises on the first try"**.
+
+The literal criteria were: **S1** — cycle-2 `frac_receiver_changed` on hillslope
+pixels is exactly 0.0; **S2** — cycle-2 `divide.step_p90_m` within 1e-6 of cycle
+1; **S3** — the limit-cycle detector reports `limit_cycle_period == 1` by cycle
+3.
+
+**Measured result: S1 and S2 FAIL. S3 passes.** The mechanism is right; the
+literal claim is wrong. Measured on a 48×49 noisy cone with a nodata-ring
+outlet, `'nnnn'` edges, D = 0.3, Sc = 0.8, tolerance 1e-4, `sor_omega = 1.3`:
+
+| cycle | `frac_receiver_changed_hillslope` (linear) | `divide.step_p90_m` |
+|---|---:|---:|
+| 2 | 0.773429 (1502/1942) | 2.01537 |
+| 3 | 0.0216272 (42/1942) | 2.01052 |
+| 4 | 0.0015448 (3/1942) | 2.01069 |
+| 5 | 0.0 (0/1942) | 2.01069 |
+
+Roering behaves the same way (0.0293512 at cycle 2→3). So the elliptic route
+does **not** stabilise in one cycle. What it does instead is contract by better
+than 10× per cycle and reach a genuine period-1 fixed point at cycle 4 —
+qualitatively unlike a limit cycle, which is the distinction that mattered.
+**The operational expectation is 3–4 cycles, not 2.** That is a revision forced
+by the measurement, not the original prediction. `hillslope_every_cycle = true`
+remains the right default.
+
+The committed tests assert what is *true* — >10× contraction per cycle, exactly
+0.0 by cycle 5, period 1 — and **print** the literal S1/S2 values marked
+`NOT MET` rather than quietly rewriting the criteria to match the outcome.
+
+**What the residual instability is not.** Three candidate explanations were
+measured and two were eliminated:
+
+- **Not solver error.** Sweeping the hillslope tolerance across four decades
+  (1e-2 → 1e-5) moves the cycle-2→3 number by less than 5 %: 0.0227 / 0.0216 /
+  0.0216 / 0.0216.
+- **Not a flickering Dirichlet set.** The channel count was constant at 38
+  pixels across cycles, so the channel network is not moving underneath the
+  solve.
+- **It scales with diffusivity**: D = 0.3 → 0.0216, D = 1.0 → 0.0509,
+  D = 3.0 → 0.157. The smoother the hillslope, the more pixels flip.
+
+**Near-routing-ties are a contributing but incomplete cause.** For hillslope
+pixels, the ratio of the second-steepest to the steepest D8 descent candidate
+(1.0 being an exact tie):
+
+| | median | p10 | p90 | within 1 % of a tie |
+|---|---:|---:|---:|---:|
+| flipped pixels | 0.917 | 0.736 | 0.9915 | 13.0 % |
+| stable pixels | 0.717 | 0.425 | 0.921 | 2.1 % |
+
+Flipped pixels sit far closer to a routing tie than stable ones — an 8 % margin
+against 28 % — and the top decile of flips are effectively exact ties. But the
+median flipped pixel still has a real 8 % margin, so the surface itself is
+genuinely still moving a little between cycles. The consequence for anyone
+tempted by the obvious fix: deterministic D8 tie-breaking in the router would
+reduce the flip count and is worth doing on its own merits, but **it would not
+by itself drive the hillslope receiver-change fraction to zero**.
+
+### 8b.4 What the hillslope solve buys: the divide step
+
+This is the practical payoff and the real deliverable. Same fixture, hillslope
+solve on against off:
+
+| metric | solve off | solve on | change |
+|---|---:|---:|---|
+| divide `step_p90_m` | 8.32 m | 3.27 m | 2.5× smaller |
+| divide gradient, median | 0.0961 | 0.0235 | 4× smaller |
+
+Read this against §8b.1: the generated DEM never exactly carries its own
+network, and the divide is where that shows up as a cliff. The elliptic solve
+does not remove the effect, but it reduces the divide step by a factor of 2.5
+and the divide gradient by a factor of 4 — which is why the solve is on by
+default in the equilibration cycle even though it costs an extra solve per
+cycle.
+
+Note also that convergence and acceptability are separate questions. A landscape
+can reach a period-1 fixed point that still has a cliff across the divide — the
+OCN chi surface with no hillslope treatment does exactly that.
+`divide_gradient_target` reports the acceptance criterion ("is the landscape
+smooth across divides") as distinct from "has the iteration stopped moving", and
+it is reported rather than enforced by default.
+
+### 8b.5 Two solver traps, recorded because they cost real time
+
+Both were found while wiring the hillslope solve into the equilibration cycle,
+and both are warned about rather than fixed — the hillslope steady-state solver
+is a protected numeric core.
+
+**(i) The nonlinear (Roering) SOR solve diverges under auto-omega.** With
+`sor_omega = 0` — the default, meaning "auto-estimate from grid size" — and
+`nonlinear = true`, the solve ran to the 50 000-iteration cap at a residual of
+~480 m and produced ~145 m of divide-step nonsense, **at every diffusivity and
+tolerance tried** on the 48×49 cone fixture. `sor_omega = 1.3` converges in
+~1000 iterations. The plausible mechanism is that the auto-omega formula is the
+optimal-SOR result for the *linear* Poisson problem with Dirichlet boundaries on
+a rectangle, and has no derivation behind it for the Picard-lagged nonlinear
+operator, whose effective coefficient `1/(1 − (|∇z|/Sc)²)` changes between
+sweeps. Nothing currently caps omega when `nonlinear = true`. The equilibration
+cycle warns on stderr and writes `DID NOT CONVERGE` into its `stop_reason`.
+
+> If a solve is used as the *reference* for another solve, assert that the
+> reference converged before comparing fields. A reference that silently hit its
+> iteration cap makes the comparison pass or fail for the wrong reason.
+
+**(ii) An absolute tolerance that cannot be reached.** The residual floors near
+**2e-4 m on a ~200 m elevation range** — consistent with float32 round-off. The
+solver's `tolerance` is an *absolute* `max|Δz|` criterion, so
+`hillslope_ss_tolerance: 1e-5` cannot succeed on a landscape of that relief and
+simply burns `max_iterations`. The symptom looks like "the solver is slow"; the
+cause is "the criterion is unreachable".
 
 ---
 

@@ -41,10 +41,20 @@ struct lsdtt_critical_slope_options
     std::vector<float> gradient_scale;
 
     // Divide-pair horizon used for predicted_divide_step_m. A pair is treated
-    // as a divide when adjacent cells have different downstream ancestor labels
-    // at this many receiver steps.
+    // as a divide when the two flow paths do not meet within this many receiver
+    // steps -- the same path-set test compute_divide_step_stats uses, via
+    // compute_divide_pairs.
+    //
+    // NOTE: use_d8_diagonals defaults to false here but true in
+    // lsdtt_divide_diagnostic_options. Set both the same way when comparing
+    // predicted_divide_step_m against a measured divide step, or the two are
+    // computed over different pair populations.
     int divide_merge_search_steps = 5;
     bool use_d8_diagonals = false;
+
+    // predicted_divide_step_m costs a path-set build plus a full neighbour
+    // sweep. Callers that only want the imposed topography can switch it off.
+    bool compute_predicted_divide_step = true;
 
     // Optional channel classification override (size n_rows*n_cols). Empty
     // means classify internally from channel_threshold_pixels.

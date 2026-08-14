@@ -310,6 +310,52 @@ std::vector<std::int64_t> compute_downstream_ancestor_labels(
     return previous;
 }
 
+std::vector<lsdtt_divide_pair> compute_divide_pairs(
+    const lsdtt_flowinfo&                  flow,
+    const lsdtt_raster_cpu&                dem,
+    const lsdtt_divide_diagnostic_options& opts)
+{
+    if (opts.divide_merge_search_steps <= 0)
+    {
+        throw std::runtime_error(
+            "compute_divide_pairs: divide_merge_search_steps must be > 0");
+    }
+
+    validate_divide_inputs(flow, dem, nullptr);
+
+    const divide_pair_tester tester(
+        flow, opts.divide_merge_search_steps, opts.n_threads);
+
+    const lsdtt_raster_meta&         meta     = dem.get_meta();
+    const std::vector<float>&        dem_data = dem.get_data();
+    const std::vector<std::uint8_t>& dem_mask = dem.get_mask();
+
+    const int n_rows = meta.n_rows;
+    const int n_cols = meta.n_cols;
+
+    // Serial in row order. The pair set is usually a small fraction of the grid
+    // and the caller's metric is cheap, so the row-accumulator machinery that
+    // compute_divide_step_stats needs would cost more than it saves here.
+    std::vector<lsdtt_divide_pair> pairs;
+
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for_each_divide_pair_in_row(
+            row, flow, dem_mask, dem_data, tester, opts.use_d8_diagonals,
+            n_rows, n_cols,
+            [&](std::int64_t a, std::int64_t b, int, int, int, bool is_diag)
+            {
+                lsdtt_divide_pair p;
+                p.flat_a      = a;
+                p.flat_b      = b;
+                p.is_diagonal = is_diag;
+                pairs.push_back(p);
+            });
+    }
+
+    return pairs;
+}
+
 lsdtt_divide_step_stats compute_divide_step_stats(
     const lsdtt_flowinfo&                  flow,
     const lsdtt_raster_cpu&                dem,

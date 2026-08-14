@@ -171,9 +171,46 @@ struct lsdtt_equilibration_result
     bool hillslope_bc_mismatch = false;
     bool hillslope_ran = false;
 
+    // Pre-flight predictions, computed once from the first cycle's flow graph
+    // and channel set. They exist to warn an operator BEFORE a long run that
+    // the hillslope solve is heading somewhere bad, so both of them are
+    // deliberately evaluated in the regime where trouble appears rather than in
+    // the average one.
+    //
+    // Flow-path distance to the nearest channel: mean, and the 90th percentile.
+    // The p90 is the one the gradient prediction uses; see below.
     double mean_hillslope_length_m = 0.0;
+    double p90_hillslope_length_m = 0.0;
+
+    // Steady-state hillslope relief predicted for the hillslope_model actually
+    // requested:
+    //   linear / cidre  -> U*L^2/(2D)
+    //   roering         -> the 1-D nonlinear profile integrated numerically
+    //   critical_slope  -> Sc*L, which is what path integration imposes
+    //
+    // NOTE ON DIRECTION, because it is easy to get backwards: with the Roering
+    // 1999 flux law q = D*S/(1 - (S/Sc)^2) the transporter is MORE efficient
+    // than linear diffusion, so it needs LESS gradient to carry the same flux.
+    // The Roering relief is therefore strictly SMALLER than U*L^2/(2D) and is
+    // bounded above by Sc*L, where the linear form is unbounded. Measured on
+    // the 48x49 cone fixture: 15.82 m against a 15.95 m linear reference at
+    // U = 1e-4, and 1087 m against 1595 m at ten times the erosion rate.
+    // Critical slope, by contrast, imposes Sc*L outright -- 247 m on the same
+    // fixture, 15x the linear value -- and THAT is where using the linear form
+    // for every model made the relief_ratio > 0.5 warning badly under-fire.
+    // predicted_hillslope_relief_linear_m keeps the linear value as an explicit
+    // reference so the two can be compared.
     double predicted_hillslope_relief_m = 0.0;
+    double predicted_hillslope_relief_linear_m = 0.0;
+
+    // Steepest gradient the Roering solve is expected to reach, from
+    // S/(1-(S/Sc)^2) = U*L/D. Evaluated at the p90 hillslope length, because
+    // the gradient that drives the solver towards Sc -- and that the
+    // "> 0.9*Sc, consider sor_omega = 1.3" warning is about -- lives on the
+    // LONGEST hillslopes, not the average one. The mean-length value is kept
+    // alongside it so the size of that bias is visible rather than assumed.
     double predicted_max_hillslope_gradient = 0.0;
+    double predicted_max_hillslope_gradient_at_mean_length = 0.0;
 };
 
 [[nodiscard]] lsdtt_equilibration_result equilibrate_landscape(

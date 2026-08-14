@@ -35,20 +35,32 @@ constexpr double k_no_step_rel_tol = 1.0e-12;
 
 bool tag_is_adjusted(StepChangeTag t)
 {
-    return t == StepChangeTag::fluvial_new  || t == StepChangeTag::hillslope_new
-        || t == StepChangeTag::fluvial_fan  || t == StepChangeTag::hillslope_fan;
+    return t == StepChangeTag::fluvial_new || t == StepChangeTag::hillslope_new
+        || t == StepChangeTag::fluvial_transient
+        || t == StepChangeTag::hillslope_transient;
 }
 
 // Hillslope counterpart of a channel tag, for inheritance down the stack.
+//
+// Hillslope transience is INHERITED, never solved. A hillslope pixel is called
+// transient because the channel it drains to is mid-transition, not because
+// anything was computed about the hillslope itself. The channel side is
+// resolved properly -- a transient channel pixel gets an erosion rate from its
+// position within the fan, strictly between U_old and U_new -- and that
+// position information is then discarded at the hillslope boundary. See the
+// gradient_scale switch in make_step_change_rasters for the consequence.
 StepChangeTag hillslope_tag_for(StepChangeTag channel_tag)
 {
     switch (channel_tag)
     {
         case StepChangeTag::fluvial_new:
-        case StepChangeTag::hillslope_new:   return StepChangeTag::hillslope_new;
-        case StepChangeTag::fluvial_fan:
-        case StepChangeTag::hillslope_fan:   return StepChangeTag::hillslope_fan;
-        default:                             return StepChangeTag::hillslope_old;
+        case StepChangeTag::hillslope_new:
+            return StepChangeTag::hillslope_new;
+        case StepChangeTag::fluvial_transient:
+        case StepChangeTag::hillslope_transient:
+            return StepChangeTag::hillslope_transient;
+        default:
+            return StepChangeTag::hillslope_old;
     }
 }
 
@@ -229,6 +241,15 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
     // a shock; if it travels slower the transition stretches. Doing it this way
     // means a DECREASE in uplift -- which swaps the two cases -- comes out right
     // without a special branch.
+    //
+    // n == 1 is excluded explicitly rather than left to the comparison. With
+    // celerity ~ ksn^(n-1) it is independent of ksn at n == 1, so c_new and
+    // c_old are equal to the last bit and the wave translates rigidly: no
+    // stretching, no steepening, nothing to spread. Excluding it here is what
+    // guarantees that no *_transient tag is ever emitted for n == 1, and it
+    // also keeps the fan algebra below -- which divides by (n - 1) -- off a
+    // singular branch. For n != 1 the stretching case is the falling step when
+    // n > 1, and the rising step when n < 1.
     const double c_old = step_change_celerity(r.ksn_old, r.K, config.n,
                                               config.m_over_n, config.A_0);
     const double c_new = step_change_celerity(r.ksn_new, r.K, config.n,
@@ -253,9 +274,12 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
     }
     else
     {
-        // Rarefaction: the fan runs from the trailing edge (new steepness,
-        // faster... no -- slower, which is why it stretches) to the leading
-        // edge (old steepness). c_new < c_old here by construction.
+        // Rarefaction. The fan runs from the trailing edge, travelling at the
+        // new steepness's celerity, to the leading edge at the old one. It
+        // stretches precisely because the trailing edge is the SLOWER of the
+        // two: c_new < c_old here by construction, so the gap between the edges
+        // widens as c_old - c_new per unit time. Pixels between them are the
+        // fluvial_transient set, and the fan has zero width at t = 0.
         r.chi_fan_lower  = c_new * t;
         r.chi_fan_upper  = c_old * t;
         r.chi_knickpoint = r.chi_fan_upper;
@@ -395,7 +419,10 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
             e  = r.K * std::pow(config.A_0, config.m_over_n * config.n)
                * std::pow(s_here, config.n);
             ts = t * (1.0 - chi_here / r.chi_fan_upper);
-            tg = StepChangeTag::fluvial_fan;
+            // This is where the transient tag is EARNED: s_here, and so the
+            // erosion rate, is a continuous function of position within the
+            // fan. Hillslopes inherit the tag from here but not this position.
+            tg = StepChangeTag::fluvial_transient;
         }
         else
         {
@@ -506,10 +533,46 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
             case StepChangeTag::hillslope_new:
                 gradient_scale[idx] = static_cast<float>(config.S_c_new / config.S_c_old);
                 break;
-            case StepChangeTag::hillslope_fan:
-                gradient_scale[idx] = static_cast<float>(
-                    (0.5 * (config.S_c_old + config.S_c_new)) / config.S_c_old);
+            case StepChangeTag::hillslope_transient:
+            {
+                // Interpolate S_c on how far this pixel's channel has actually
+                // adjusted, rather than giving every transient hillslope the
+                // midpoint of the two critical slopes.
+                //
+                // The fraction comes from the EROSION RATE, not from position
+                // in chi. S_c is a property paired with the erosion rate the
+                // landscape is carrying -- S_c_old goes with U_old, S_c_new
+                // with U_new -- so the natural interpolant is where this
+                // pixel's rate sits between them:
+                //
+                //     f   = (e - U_old) / (U_new - U_old)
+                //     S_c = S_c_old + f * (S_c_new - S_c_old)
+                //
+                // Interpolating on chi instead would be a geometric proxy for
+                // the same thing and would NOT reduce to the endpoints
+                // correctly, because e is not linear in chi inside the fan
+                // (S ~ chi^(1/(n-1)), so e ~ chi^(n/(n-1))).
+                //
+                // e is available per pixel with no extra plumbing: pass 2a
+                // already inherits the receiving channel's erosion rate onto
+                // the hillslope, which is exactly the channel this hillslope
+                // hangs off. f = 0 at the leading edge (unadjusted, S_c_old)
+                // and f = 1 at the trailing edge (fully adjusted, S_c_new).
+                //
+                // dU cannot be zero here: that is the no_step case, which
+                // produces no transient pixels at all. Clamped anyway, since e
+                // is stored as float and the endpoints must not overshoot.
+                const double e_here = static_cast<double>(er_d[idx]);
+                double f = (e_here - config.uplift_old_m_yr) / dU;
+                if (!std::isfinite(f)) f = 0.5;
+                f = std::min(1.0, std::max(0.0, f));
+
+                const double S_c_here =
+                    config.S_c_old + f * (config.S_c_new - config.S_c_old);
+                gradient_scale[idx] =
+                    static_cast<float>(S_c_here / config.S_c_old);
                 break;
+            }
             default:
                 gradient_scale[idx] = 1.0f;
                 break;
@@ -519,6 +582,8 @@ StepChangeResult make_step_change_rasters(const lsdtt_flow_base&  flow,
     lsdtt_critical_slope_options cs_opts;
     cs_opts.mode = critical_slope_mode::fixed_gradient;
     cs_opts.S_c = config.S_c_old;
+    // Only the imposed topography is used here; skip the divide-step sweep.
+    cs_opts.compute_predicted_divide_step = false;
     cs_opts.restrict_mask = std::move(basin_mask);
     cs_opts.is_channel_override = std::move(is_channel_override);
     cs_opts.gradient_scale = std::move(gradient_scale);

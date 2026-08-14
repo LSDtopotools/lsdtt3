@@ -333,65 +333,43 @@ lsdtt_critical_slope_result impose_critical_slope_hillslopes(
     result.elevation = lsdtt_raster_cpu(
         std::move(out_data), std::move(out_mask), meta);
 
-    const std::vector<std::int64_t> anc =
-        compute_downstream_ancestor_labels(flow, opts.divide_merge_search_steps);
-
-    const int n_rows = meta.n_rows;
-    const int n_cols = meta.n_cols;
-
-    const auto flat_of = [n_cols](int row, int col) -> std::int64_t
+    // Predicted divide step: the largest relief contrast across a divide pair.
+    //
+    // The divide set comes from compute_divide_pairs so that this module and
+    // compute_divide_step_stats agree on what a divide is. Deriving it here
+    // from anc_K equality would be wrong for divide_merge_search_steps >= 2 --
+    // merged paths share a node sequence but not a step index, so the terminal
+    // labels differ long after the paths have met. See the note in
+    // lsdtt_divide_diagnostics_cpu.hpp.
+    if (opts.compute_predicted_divide_step)
     {
-        return static_cast<std::int64_t>(row) * static_cast<std::int64_t>(n_cols)
-            + static_cast<std::int64_t>(col);
-    };
+        lsdtt_divide_diagnostic_options div_opts;
+        div_opts.divide_merge_search_steps = opts.divide_merge_search_steps;
+        div_opts.use_d8_diagonals          = opts.use_d8_diagonals;
 
-    std::vector<std::pair<int, int>> deltas;
-    deltas.emplace_back(0, 1);
-    deltas.emplace_back(1, 0);
-    if (opts.use_d8_diagonals)
-    {
-        deltas.emplace_back(1, 1);
-        deltas.emplace_back(1, -1);
-    }
+        const std::vector<lsdtt_divide_pair> pairs =
+            compute_divide_pairs(flow, result.elevation, div_opts);
 
-    const std::vector<float>& z_out = result.elevation.get_data();
-    const std::vector<std::uint8_t>& m_out = result.elevation.get_mask();
+        const std::vector<float>& z_out = result.elevation.get_data();
 
-    for (int row = 0; row < n_rows; ++row)
-    {
-        for (int col = 0; col < n_cols; ++col)
+        for (const lsdtt_divide_pair& p : pairs)
         {
-            const std::int64_t fa = flat_of(row, col);
-            if (!flow.is_valid_cell(fa)) continue;
+            const std::size_t a = static_cast<std::size_t>(p.flat_a);
+            const std::size_t b = static_cast<std::size_t>(p.flat_b);
 
-            const std::size_t a = static_cast<std::size_t>(fa);
-            if (m_out[a] == 0) continue;
+            // Relief is measured against the channel each cell drains to, so a
+            // pair is only comparable when both ends are anchored.
             if (!std::isfinite(channel_elevation[a])) continue;
+            if (!std::isfinite(channel_elevation[b])) continue;
 
             const double relief_a =
                 static_cast<double>(z_out[a]) - channel_elevation[a];
+            const double relief_b =
+                static_cast<double>(z_out[b]) - channel_elevation[b];
 
-            for (const auto& d : deltas)
-            {
-                const int rn = row + d.first;
-                const int cn = col + d.second;
-                if (rn < 0 || rn >= n_rows || cn < 0 || cn >= n_cols)
-                    continue;
-
-                const std::int64_t fb = flat_of(rn, cn);
-                if (!flow.is_valid_cell(fb)) continue;
-
-                const std::size_t b = static_cast<std::size_t>(fb);
-                if (m_out[b] == 0) continue;
-                if (!std::isfinite(channel_elevation[b])) continue;
-                if (anc[a] == anc[b]) continue;
-
-                const double relief_b =
-                    static_cast<double>(z_out[b]) - channel_elevation[b];
-                const double pred = std::abs(relief_a - relief_b);
-                if (pred > result.predicted_divide_step_m)
-                    result.predicted_divide_step_m = pred;
-            }
+            const double pred = std::abs(relief_a - relief_b);
+            if (pred > result.predicted_divide_step_m)
+                result.predicted_divide_step_m = pred;
         }
     }
 
